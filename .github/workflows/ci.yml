@@ -168,6 +168,18 @@ jobs:
           echo "resolving from a directory with no mise config:"
           ( cd "$(mktemp -d)" && bun --version && zig version )
 
+      # MUST precede the Zig test steps, not just the TypeScript one. Several Zig
+      # tests spawn the Bun island sidecar, which imports preact-render-to-string
+      # from runtime/src — without node_modules those tests fail on a missing
+      # package. They used to pass only because `bun` was unresolvable, so
+      # `Sidecar.spawn` returned FileNotFound and the tests took their
+      # `error.SkipZigTest` path: the sidecar was never actually exercised in CI.
+      # Fixing the shim resolution above un-skipped them and exposed this
+      # ordering bug.
+      - name: Install runtime dependencies (Zig sidecar tests spawn bun)
+        working-directory: runtime
+        run: bun install --frozen-lockfile
+
       - name: Subsystem unit tests (islands, SPA, dev/serve, migrate, runtime sidecar)
         env:
           ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
