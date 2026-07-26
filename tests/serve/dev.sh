@@ -239,7 +239,15 @@ echo "running: zig build dev (tsx-site, stub zigbase on PATH; first build may ta
 ( cd "$REPO/runtime" && mise exec -- bun install ) >/dev/null 2>&1 || fail "runtime bun install failed"
 ( cd "$SITE" && mise exec -- bun install ) >/dev/null 2>&1 || fail "consumer bun install failed"
 TSX_PID="$(launch_group "$SITE" "$WORK/tsx-dev.log" mise exec -- zig build dev)"
-poll 300 grep -q 'dev: ready' "$WORK/tsx-dev.log" || { tail -50 "$WORK/tsx-dev.log"; fail "tsx-site zig build dev never became ready"; }
+# This is the slowest thing in the suite by a wide margin: a COLD nested `zig
+# build` of the whole example (five .spa.tsx entries plus islands, each bundled
+# through bun) against a fresh .zig-cache. 300s is comfortable on a warm dev
+# machine and is NOT enough on a CI runner building it for the first time — it
+# timed out here at exactly 300s with the build still making progress and no
+# error, which reads as a hang when it is only slow. Overridable so a
+# constrained runner can raise it without editing this file.
+poll "${ZIGAPAGOS_E2E_TSX_DEV_TIMEOUT:-900}" grep -q 'dev: ready' "$WORK/tsx-dev.log" \
+  || { tail -50 "$WORK/tsx-dev.log"; fail "tsx-site zig build dev never became ready"; }
 TSX_ORIGIN="$(origin_from_log "$WORK/tsx-dev.log")"
 curl -sf "$TSX_ORIGIN/" | grep -q 'data-z-island' || fail "tsx-site / missing islands SSR"
 curl -sf "$TSX_ORIGIN/app/" | grep -q 'id="z-spa-root"' || fail "tsx-site /app/ not a SPA shell"
