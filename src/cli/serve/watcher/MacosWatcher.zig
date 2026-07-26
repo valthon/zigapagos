@@ -49,10 +49,17 @@ pub fn listen(watcher: *MacosWatcher) void {
     defer watcher.gpa.free(macos_paths);
 
     for (watcher.dir_paths, macos_paths) |str, *ref| {
+        // Returns null when `str` is not valid UTF-8 (e.g. a non-UTF-8 byte in a
+        // path on an exFAT/SMB/NFS volume). A null element would propagate into
+        // CFArrayCreate/FSEventStreamCreate and crash the watcher thread, so
+        // fail cleanly here.
         ref.* = c.CFStringCreateWithCString(
             null,
             str.ptr,
             c.kCFStringEncodingUTF8,
+        ) orelse fatal.msg(
+            "error: unable to encode watched path as a CFString (not valid UTF-8?): {s}",
+            .{str},
         );
     }
 
@@ -61,7 +68,7 @@ pub fn listen(watcher: *MacosWatcher) void {
         @ptrCast(macos_paths.ptr),
         @intCast(macos_paths.len),
         null,
-    );
+    ) orelse fatal.msg("error: macos watcher unable to create the watch-paths array", .{});
 
     var stream_context: c.FSEventStreamContext = .{ .info = watcher };
     const stream: c.FSEventStreamRef = c.FSEventStreamCreate(
@@ -72,7 +79,7 @@ pub fn listen(watcher: *MacosWatcher) void {
         c.kFSEventStreamEventIdSinceNow,
         0.05,
         c.kFSEventStreamCreateFlagFileEvents,
-    );
+    ) orelse fatal.msg("error: macos watcher unable to create the FSEventStream", .{});
 
     c.FSEventStreamScheduleWithRunLoop(
         stream,

@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title :text="$page.title"></title>
+    <meta name="description"
+      content="Zigapagos: a static site generator with a fast Zig binary core and Astro-style TSX islands. No Node, no Vite, no lock-in.">
+    <link type="text/css" rel="stylesheet" href="$site.asset('style.css').link()">
+  </head>
+  <body>
+    <main class="wrap">
+      <header class="hero">
+        <p class="kicker">zigapagos</p>
+        <h1>Astro's islands. A native core. No Node.</h1>
+        <p class="lede">
+          Zigapagos is a static site generator that renders pages with a fast
+          Zig binary and adds interactivity per-component with TSX islands
+          &mdash; server-rendered at build time, hydrated in the browser only
+          where you ask.
+        </p>
+
+        <div class="demo">
+          <island src="components/Counter.island.tsx" client:visible></island>
+          <p class="demo-caption">
+            <strong>This button is a live island on this very page.</strong>
+            View source: the rest of the page is plain HTML, and this is the
+            only component that shipped JS.
+          </p>
+        </div>
+      </header>
+
+      <div class="content" :html="$page.content()"></div>
+
+      <footer class="site-footer">
+        <p>
+          Zigapagos is a fork of
+          <a href="https://github.com/valthon/zigapagos#acknowledgements">Loris Cro's SSG</a>,
+          extended with islands architecture. MIT licensed.
+          <a href="https://github.com/valthon/zigapagos">Source on GitHub</a>.
+        </p>
+      </footer>
+    </main>
+  </body>
+</html>

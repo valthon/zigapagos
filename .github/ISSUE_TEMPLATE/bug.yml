@@ -12,8 +12,8 @@ body:
   - type: input
     id: version
     attributes:
-      label: Zine Version
-      description: "The output of `zine version`"
+      label: Zigapagos Version
+      description: "The output of `zigapagos version`"
       placeholder: "0.10.3"
     validations:
       required: true
@@ -21,13 +21,13 @@ body:
     id: repro
     attributes:
       label: Steps to Reproduce 
-      description: Ideally this should be a link to a repository that contains a Zine website that exhibits the problem, allowing maintainers to repro the issue simply by cloning it. 
+      description: Ideally this should be a link to a repository that contains a Zigapagos website that exhibits the problem, allowing maintainers to repro the issue simply by cloning it.
     validations:
       required: true
   - type: textarea
     id: expected
     attributes:
       label: Describe the issue
-      description: What did go wrong? If not entirely obvious, what should Zine have done instead?
+      description: What did go wrong? If not entirely obvious, what should Zigapagos have done instead?
     validations:
       required: true

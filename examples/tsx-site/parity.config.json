@@ -1,0 +1,5 @@
+{
+  "reference": { "kind": "static-dir", "path": "zig-out/site" },
+  "build": { "outDir": "zig-out/site" },
+  "routes": [{ "path": "/" }]
+}

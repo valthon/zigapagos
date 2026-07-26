@@ -137,8 +137,9 @@ pub const ScriptyParam = union(enum) {
                     return std.fmt.comptimePrint(
                         \\[[{0t}]($link.ref("{0t}")){1s}]{2s}
                     , .{
-                        m, dots, if (is_fn_param or m == .any) "" else 
-                        \\ *(see also [[any]]($link.ref("Array")))*   
+                        m, dots,
+                        if (is_fn_param or m == .any) "" else
+                            \\ *(see also [[any]]($link.ref("Array")))*   
                     });
                 },
             },

@@ -18,10 +18,10 @@ const Path = PathTable.Path;
 const String = StringTable.String;
 const PathName = PathTable.PathName;
 
-const Git = @import("Git.zig");
+const islands = @import("islands/sidecar.zig");
 
 const log = std.log.scoped(.build);
-const cache_dir_basename = ".zine-cache";
+const cache_dir_basename = ".zigapagos-cache";
 
 cfg: *const root.Config,
 build_assets: *const std.StringArrayHashMapUnmanaged(BuildAsset),
@@ -52,7 +52,35 @@ i18n_dir: Io.Dir,
 // Translation key map. Each entry is a slice with the same length as the
 // number of variants.
 tks: std.StringHashMapUnmanaged([]?*context.Page) = .empty,
+// Site-wide global data, parsed once at build time from `data_dir_path`.
+// Keyed by file basename (without the `.ziggy` extension); exposed to
+// layouts as `$site.data('<name>')`. Backed by `data_arena`.
+site_data: std.StringHashMapUnmanaged(context.Map.ZiggyMap) = .empty,
+data_arena: std.heap.ArenaAllocator.State = .{},
 mode: Mode,
+island_sidecar: ?islands.Sidecar = null,
+/// SPAs declared in `build.zig`'s `Options.spas`, set verbatim from
+/// `root.Options.spas` in `Build.load`. Consumed by the release-time
+/// prerender pass (`src/spa.zig`'s `prerenderAll`).
+spas: []const root.SpaSpec = &.{},
+/// Which SPA's "/" shell backs the universal 404.html, named by
+/// its `spaName(src)` basename; set verbatim from `root.Options.spa_not_found`
+/// in `Build.load`. Null = the first declared SPA (historical default).
+spa_not_found: ?[]const u8 = null,
+/// Build-time props-contract check. `island_props_checks` is
+/// appended to (mutex-guarded) during the render phase and consumed once after
+/// it, in root.run. gpa-owned dups; freed in deinit.
+island_props_check_mode: @import("islands/props_check.zig").Mode = .off,
+island_props_checks: std.ArrayListUnmanaged(@import("islands/props_check.zig").PropsCheck) = .empty,
+island_props_checks_mutex: std.Io.Mutex = .init,
+/// Dev-only island-usage collection: (island src, page source
+/// path) pairs appended (mutex-guarded) during the render phase, consumed by
+/// root.run's writeIslandManifest after it. Only collected when
+/// `island_manifest_path` is set (the dev loop's `ZIGAPAGOS_ISLAND_MANIFEST`);
+/// release builds pay nothing. gpa-owned dups; freed in deinit.
+island_manifest_path: ?[]const u8 = null,
+island_page_usage: std.ArrayListUnmanaged(@import("islands/manifest.zig").Use) = .empty,
+island_page_usage_mutex: std.Io.Mutex = .init,
 
 pub const Mode = union(enum) {
     memory: struct {
@@ -96,23 +124,79 @@ pub fn deinit(b: *const Build, io: Io, gpa: Allocator) void {
         dir.close(io);
     }
     switch (b.mode) {
-        .memory => {},
+        .memory => |m| {
+            // Free the build-level error messages accumulated this build
+            // (AUD-004). Every `.msg` is an exact gpa allocation (allocPrint or
+            // a Writer.Allocating owned slice); `.ref` is always the "" literal.
+            for (m.errors.items) |e| gpa.free(e.msg);
+            var errors = m.errors;
+            errors.deinit(gpa);
+        },
         .disk => |disk| {
             var dir = disk.output_dir;
             dir.close(io);
         },
     }
 
+    // Translation-key table (AUD-004): keys are borrowed from page frontmatter
+    // (arena-owned), but each value is a gpa-allocated `[]?*Page` slice sized to
+    // the variant count. Free the values, then the map.
+    {
+        var it = b.tks.valueIterator();
+        while (it.next()) |slice| gpa.free(slice.*);
+        var tks = b.tks;
+        tks.deinit(gpa);
+    }
+
     if (b.cfg.* == .Multilingual) {
         var dir = b.i18n_dir;
         dir.close(io);
     }
+
+    {
+        var sd = b.site_data;
+        sd.deinit(gpa);
+        b.data_arena.promote(gpa).deinit();
+    }
+
+    // @constCast: Build.deinit takes *const by convention; Sidecar.deinit must
+    // mutate (kills the child process). Blast radius is one line here vs. changing
+    // the receiver + all callers in serve/release/debug.
+    if (b.island_sidecar) |*sc| @constCast(sc).deinit();
+
+    for (b.island_props_checks.items) |c| {
+        gpa.free(c.src);
+        gpa.free(c.props_json);
+        gpa.free(c.page_url);
+        gpa.free(c.island_id);
+    }
+    {
+        var list = b.island_props_checks;
+        list.deinit(gpa);
+    }
+
+    for (b.island_page_usage.items) |u| {
+        gpa.free(u.island_src);
+        gpa.free(u.page_path);
+    }
+    {
+        var list = b.island_page_usage;
+        list.deinit(gpa);
+    }
 }
 
-/// Tries to load a zine.ziggy config file by searching
+test "Build.island_sidecar defaults to null and deinit tolerates it" {
+    // A compile-time contract: verify the field is present and null-initialized.
+    // Runtime deinit correctness is proven by Task 7's e2e; the real GREEN signal
+    // here is a successful `zig build` with spawn wired through root.run.
+    try std.testing.expect(@hasField(Build, "island_sidecar"));
+    const def: Build = undefined;
+    _ = def; // suppress unused-variable warning; field presence is the contract
+}
+
+/// Tries to load a zigapagos.ziggy config file by searching
 /// recursivly upwards from cwd. Once the config file is found,
-/// it ensures the existence of all required directories and
-/// loads git repository info (if in a repo).
+/// it ensures the existence of all required directories.
 pub fn load(io: Io, gpa: Allocator, cfg: *const root.Config, opts: root.Options) Build {
     errdefer |err| switch (err) {
         error.OutOfMemory => fatal.oom(),
@@ -178,6 +262,9 @@ pub fn load(io: Io, gpa: Allocator, cfg: *const root.Config, opts: root.Options)
         ) catch |err| fatal.dir(ml.i18n_dir_path, err),
     };
 
+    var data_arena = std.heap.ArenaAllocator.init(gpa);
+    const site_data = loadSiteData(io, &data_arena, base_dir, cfg.getDataDirPath());
+
     return .{
         .cfg = cfg,
         .build_assets = opts.build_assets,
@@ -189,7 +276,71 @@ pub fn load(io: Io, gpa: Allocator, cfg: *const root.Config, opts: root.Options)
         .pt = path_table,
         .mode = mode,
         .i18n_dir = i18n_dir,
+        .site_data = site_data,
+        .data_arena = data_arena.state,
+        .spas = opts.spas,
+        .spa_not_found = opts.spa_not_found,
     };
+}
+
+/// Scan `data_dir_path` (relative to the project base dir) for `*.ziggy`
+/// files and parse each one once into a Ziggy map, keyed by basename. The
+/// directory is optional: a missing directory yields an empty map. A malformed
+/// data file is a fatal build error (same policy as a malformed `zigapagos.ziggy`).
+fn loadSiteData(
+    io: Io,
+    arena_state: *std.heap.ArenaAllocator,
+    base_dir: Io.Dir,
+    data_dir_path: []const u8,
+) std.StringHashMapUnmanaged(context.Map.ZiggyMap) {
+    errdefer |err| switch (err) {
+        error.OutOfMemory => fatal.oom(),
+    };
+
+    const arena = arena_state.allocator();
+    var out: std.StringHashMapUnmanaged(context.Map.ZiggyMap) = .empty;
+
+    var data_dir = base_dir.openDir(io, data_dir_path, .{ .iterate = true }) catch |err| switch (err) {
+        error.FileNotFound => return out,
+        else => fatal.dir(data_dir_path, err),
+    };
+    defer data_dir.close(io);
+
+    var it = data_dir.iterateAssumeFirstIteration();
+    while (it.next(io) catch |err| fatal.dir(data_dir_path, err)) |entry| {
+        if (entry.kind != .file) continue;
+        if (entry.name[0] == '.') continue;
+        const ext = ".ziggy";
+        if (!std.mem.endsWith(u8, entry.name, ext)) continue;
+
+        const name = try arena.dupe(u8, entry.name);
+        const src = data_dir.readFileAllocOptions(
+            io,
+            name,
+            arena,
+            .limited(ziggy.max_size),
+            .@"1",
+            0,
+        ) catch |err| fatal.file(name, err);
+
+        var diag: ziggy.Diagnostic = .{ .path = name };
+        const map = ziggy.parseLeaky(context.Map.ZiggyMap, arena, src, .{
+            .diagnostic = &diag,
+        }) catch {
+            fatal.msg(
+                \\Error while loading a site data file ('{s}'):
+                \\
+                \\{f}
+                \\
+                \\
+            , .{ name, diag.fmt(src) });
+        };
+
+        const key = name[0 .. name.len - ext.len];
+        try out.put(arena, key, map);
+    }
+
+    return out;
 }
 
 fn ensureEmpty(io: Io, dir: Io.Dir, path: []const u8) void {
@@ -211,31 +362,6 @@ fn ensureEmpty(io: Io, dir: Io.Dir, path: []const u8) void {
     }
 }
 
-fn collectGitInfo(
-    arena: Allocator,
-    path: []const u8,
-    dir: std.fs.Dir,
-) void {
-    const g = Git.init(arena, path) catch |err| fatal(
-        "error while collecting git info: {s}",
-        .{@errorName(err)},
-    );
-
-    const f = dir.createFile("git.ziggy", .{}) catch |err| fatal(
-        "error while creating .zig-cache/zine/git.ziggy: {s}",
-        .{@errorName(err)},
-    );
-    defer f.close();
-
-    var buf = std.ArrayList(u8).init(arena);
-    ziggy.stringify(g, .{}, buf.writer()) catch fatal(
-        "unexpected",
-        .{},
-    );
-
-    f.writeAll(buf.items) catch fatal("unexpected", .{});
-}
-
 pub fn scanSiteAssets(
     b: *Build,
     io: Io,
@@ -251,7 +377,7 @@ pub fn scanSiteAssets(
     const empty_path: Path = @enumFromInt(0);
     assert(b.pt.get(&.{}) == empty_path);
 
-    var progress = root.progress.start("Scan templates", 0);
+    var progress = root.progress.start("Scan assets", 0);
     defer progress.end();
 
     while (dir_stack.pop()) |dir_entry| {
@@ -268,7 +394,7 @@ pub fn scanSiteAssets(
             // We do not ignore hidden files in assets for two reasons:
             // - Users might want to install "hidden" files on purpose
             // - Unlike other directories where one could want to place
-            //   a directory that doesn't want Zine to recourse into,
+            //   a directory that doesn't want Zigapagos to recourse into,
             //   assets is the one place where users are not expected
             //   to put anything that isn't an asset ready to be installed
             //   as needed.

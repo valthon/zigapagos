@@ -1,0 +1,344 @@
+import { expect, test } from "bun:test";
+import { createHash } from "node:crypto";
+import {
+  emitNginx, emitApache, emitZigbase, assertSafeManifest, zigStringLiteral,
+  scanInlineScriptHashes, scanExternalLinkOrigins, cspHeaderValue, emitCsp, emitAllCsp,
+  type Manifest,
+} from "./emit-host-config.ts";
+
+const m: Manifest = {
+  base: "/app",
+  deploy_target: "nginx",
+  static: ["/app/", "/app/booking/"],
+  dynamic: [{ pattern: "/app/club/:id", shell: "/app/club/_shell.html" }],
+  fallback: "/app/index.html",
+  bundle: "/spa/app.js",
+};
+
+test("nginx emits a catch-all try_files for the base and each dynamic dir", () => {
+  const [file] = emitNginx(m);
+  expect(file.name).toBe("nginx.nginx.conf");
+  // Route values are emitted as QUOTED nginx tokens (nginx strips the quotes at
+  // parse time, so the directive still sees the exact path).
+  expect(file.content).toContain(`location "/app/" {`);
+  expect(file.content).toContain(`try_files $uri $uri/ "/app/index.html";`);
+  expect(file.content).toContain(`location "/app/club/" {`);
+  expect(file.content).toContain(`try_files $uri "/app/club/_shell.html" "/app/index.html";`);
+});
+
+test("apache emits valid mod_rewrite directives (no <Directory>, which is forbidden in .htaccess)", () => {
+  const [file] = emitApache(m);
+  expect(file.name).toBe("apache.htaccess");
+  expect(file.content).toContain("RewriteEngine On");
+  expect(file.content).toContain("RewriteRule ^app/club/.*$ /app/club/_shell.html [L]");
+  expect(file.content).toContain("RewriteRule ^app/.*$ /app/index.html [L]");
+  expect(file.content).not.toContain("<Directory");
+});
+
+test("zigbase emits a presence-only .spa marker (ZigBase >= 0.10.0 reads this, not a manifest)", () => {
+  const files = emitZigbase(m);
+  const marker = files.find((f) => f.name === ".spa");
+  expect(marker).toBeDefined();
+  expect(marker!.content).toBe(""); // presence-only: contents are ignored
+  // The stale zigbase.zigbase.json manifest copy must NOT be emitted anymore.
+  expect(files.some((f) => f.name.endsWith(".json"))).toBe(false);
+});
+
+test("zigbase also emits an optional comptime static_routes snippet for per-pattern shells", () => {
+  const snippet = emitZigbase(m).find((f) => f.name === "zigbase.static_routes.zig");
+  expect(snippet).toBeDefined();
+  expect(snippet!.content).toContain(".static_routes = &.{");
+  // dynamic route → its dedicated shell, then the namespace fallback (first-match-wins order)
+  expect(snippet!.content).toContain(`.{ .match = "/app/club/:id", .serve = "/app/club/_shell.html" },`);
+  expect(snippet!.content).toContain(`.{ .match = "/app/**", .serve = "/app/index.html" },`);
+});
+
+test("zigbase static_routes translates a trailing catch-all '*' to ZigBase's '**'", () => {
+  const catchAll: Manifest = {
+    ...m,
+    dynamic: [{ pattern: "/app/admin/*", shell: "/app/admin/_shell.html" }],
+  };
+  const snippet = emitZigbase(catchAll).find((f) => f.name === "zigbase.static_routes.zig")!;
+  expect(snippet.content).toContain(`.{ .match = "/app/admin/**", .serve = "/app/admin/_shell.html" },`);
+  // never emit a bare terminal "*" (ZigBase's "*" means one-or-more, changing semantics)
+  expect(snippet.content).not.toContain(`.match = "/app/admin/*"`);
+});
+
+// ── Route values are validated + per-language encoded ───────────────────────
+// These are CORRECTNESS defects, not an attack surface: every value comes from
+// the site author's own .spa.tsx. But an honest author's legitimate route must
+// not emit a rule that means something other than what they wrote.
+
+test("apache escapes a literal '.' in a route dir — 'v1.0' must not match 'v1X0'", () => {
+  const dotted: Manifest = {
+    ...m,
+    dynamic: [{ pattern: "/docs/v1.0/:page", shell: "/docs/v1.0/_shell.html" }],
+  };
+  const [file] = emitApache(dotted);
+  expect(file.content).toContain(`RewriteRule ^docs/v1\\.0/.*$ /docs/v1.0/_shell.html [L]`);
+  // The unescaped form would shadow every /docs/v1X0/… URL under the same docroot.
+  expect(file.content).not.toContain(`^docs/v1.0/.*$`);
+});
+
+test("apache escapes a literal '.' in the namespace base too", () => {
+  const [file] = emitApache({ ...m, base: "/v1.0", fallback: "/v1.0/index.html", dynamic: [] });
+  expect(file.content).toContain(`RewriteRule ^v1\\.0/.*$ /v1.0/index.html [L]`);
+});
+
+test("nginx special-cases a root-mounted SPA — `location /`, never `location //`", () => {
+  const root: Manifest = {
+    ...m, base: "/", fallback: "/index.html",
+    dynamic: [{ pattern: "/club/:id", shell: "/club/_shell.html" }],
+  };
+  const [file] = emitNginx(root);
+  expect(file.content).toContain(`location "/" {`);
+  // "//" matches no request path: deep links would 404 instead of reaching the shell.
+  expect(file.content).not.toContain(`location "//"`);
+});
+
+test("nginx never emits `location //` for a root-level dynamic route either", () => {
+  const rootDynamic: Manifest = {
+    ...m, base: "/", fallback: "/index.html",
+    dynamic: [{ pattern: "/:id", shell: "/_shell.html" }],
+  };
+  const [file] = emitNginx(rootDynamic);
+  expect(file.content).not.toContain(`location "//"`);
+  expect(file.content).toContain(`try_files $uri "/_shell.html" "/index.html";`);
+});
+
+test("assertSafeManifest rejects an unsafe route value, naming it", () => {
+  // A value that would terminate the nginx token and inject a directive.
+  expect(() => assertSafeManifest({ ...m, base: "/app; return 302 http://evil" }))
+    .toThrow(/manifest base .*is not a safe URL path/);
+  expect(() => assertSafeManifest({ ...m, fallback: "/app/index.html\nadd_header X 1" }))
+    .toThrow(/manifest fallback/);
+  expect(() => assertSafeManifest({ ...m, dynamic: [{ pattern: "/app/(a|b)/:id", shell: "/app/_shell.html" }] }))
+    .toThrow(/dynamic route pattern/);
+  expect(() => assertSafeManifest({ ...m, dynamic: [{ pattern: "/app/x/:id", shell: "/app/x/../../etc/passwd" }] }))
+    .toThrow(/dynamic route shell .*".." segment/);
+  expect(() => assertSafeManifest({ ...m, base: "app" })).toThrow(/is not a safe URL path/);
+  // …and accepts the legitimate dotted route the Apache escaper exists for.
+  expect(() => assertSafeManifest({
+    ...m, dynamic: [{ pattern: "/docs/v1.0/:page", shell: "/docs/v1.0/_shell.html" }],
+  })).not.toThrow();
+});
+
+test("every emitter validates before interpolating", () => {
+  const bad: Manifest = { ...m, base: '/app"; evil' };
+  expect(() => emitNginx(bad)).toThrow();
+  expect(() => emitApache(bad)).toThrow();
+  expect(() => emitZigbase(bad)).toThrow();
+});
+
+test("zigStringLiteral escapes quotes, backslashes and control bytes", () => {
+  expect(zigStringLiteral("/app/club")).toBe(`"/app/club"`);
+  expect(zigStringLiteral('a"b')).toBe(`"a\\"b"`);
+  expect(zigStringLiteral("a\\b")).toBe(`"a\\\\b"`);
+  expect(zigStringLiteral("a\nb")).toBe(`"a\\x0ab"`);
+  expect(zigStringLiteral("a\u{1F600}b")).toBe(`"a\\u{1f600}b"`);
+});
+
+// ── Strict-CSP inline-script hashing ────────────────────────────────────────
+
+const IMPORTMAP = `{"imports":{"@z/runtime":"/zigapagos-runtime.js"}}`;
+const BOOTSTRAP = `import*as m from"/spa/app.js";import{mountSpa}from"@z/runtime";mountSpa(m.default,"#z-spa-root",m);`;
+
+// A realistic page: importmap (inline) + external runtime + inline module boot +
+// a json data block (data-z-props) whose value even contains an ESCAPED nested
+// </script> (data-z-slots) — the browser treats that as content, not markup.
+const PAGE = [
+  `<!DOCTYPE html><html><head>`,
+  `<script type="importmap">${IMPORTMAP}</script>`,
+  `<script type="module" src="/zigapagos-runtime.js"></script>`,
+  `<script type="module">${BOOTSTRAP}</script>`,
+  `</head><body>`,
+  `<script type="application/json" data-z-props="z-0">{"headline":"Hi"}</script>`,
+  `<script type="application/json" data-z-slots="z-1">{"default":"<p>x<\\/p><script type=\\"application/json\\">{}<\\/script>"}</script>`,
+  `</body></html>`,
+].join("");
+
+// The SPA shell's baked-flag-defaults snapshot is a JSON data
+// block too — inert, never executed, so it must contribute NO script-src hash.
+const FLAGS_BLOCK = `<script type="application/json" data-z-flags>{"flags":{"bookAsGuest":true},"experiments":{}}</script>`;
+
+// A CSP hash-source token: the base64 digest wrapped in the single quotes the
+// grammar requires (an unquoted `sha256-…` is parsed as a host source).
+const b64 = (s: string) => "'sha256-" + createHash("sha256").update(s, "utf8").digest("base64") + "'";
+
+/** The `script-src …;` directive text (the XSS-critical one that must stay strict). */
+const scriptSrcOf = (csp: string) => csp.match(/script-src[^;]*/)![0];
+
+test("scanInlineScriptHashes returns EXACTLY the two inline hashes (json + external excluded)", () => {
+  const hashes = scanInlineScriptHashes([PAGE]);
+  expect(hashes).toEqual([b64(IMPORTMAP), b64(BOOTSTRAP)].sort());
+  expect(hashes.length).toBe(2);
+});
+
+test("the data-z-flags snapshot is a data block — no script-src hash needed or emitted", () => {
+  const withFlags = PAGE.replace("</head>", FLAGS_BLOCK + "</head>");
+  expect(scanInlineScriptHashes([withFlags])).toEqual(scanInlineScriptHashes([PAGE]));
+});
+
+test("a scanned hash equals an independently-computed sha256-base64 of the exact content", () => {
+  const hashes = scanInlineScriptHashes([PAGE]);
+  const independent = "'sha256-" + createHash("sha256").update(BOOTSTRAP, "utf8").digest("base64") + "'";
+  expect(hashes).toContain(independent);
+});
+
+test("hash tokens are single-quoted (unquoted is parsed as a host source and ignored)", () => {
+  for (const hsh of scanInlineScriptHashes([PAGE])) {
+    expect(hsh.startsWith("'sha256-")).toBe(true);
+    expect(hsh.endsWith("'")).toBe(true);
+  }
+});
+
+test("hashes are deduped and sorted across multiple pages", () => {
+  // Two SPA shells share the same importmap + bootstrap → still only two hashes.
+  const other = `<html><head><script type="importmap">${IMPORTMAP}</script>` +
+    `<script type="module">${BOOTSTRAP}</script></head></html>`;
+  const hashes = scanInlineScriptHashes([PAGE, other]);
+  expect(hashes).toEqual([b64(IMPORTMAP), b64(BOOTSTRAP)].sort());
+  const sorted = [...hashes].sort();
+  expect(hashes).toEqual(sorted); // stable/sorted output
+});
+
+test("nginx CSP snippet has script-src 'self' + both hashes and NO unsafe-inline in script-src", () => {
+  const hashes = scanInlineScriptHashes([PAGE]);
+  const file = emitCsp(hashes, "nginx");
+  expect(file.name).toBe("csp.nginx.conf");
+  expect(file.content).toContain(`script-src 'self' ${hashes[0]} ${hashes[1]}`);
+  expect(file.content).toContain("add_header Content-Security-Policy");
+  expect(file.content).toContain("always;");
+  // script-src stays strict; only style-src carries unsafe-inline (framework styles).
+  expect(scriptSrcOf(file.content)).not.toContain("unsafe-inline");
+});
+
+test("cspHeaderValue is a strict baseline: script-src has hashes + no unsafe-inline, styles lenient", () => {
+  const v = cspHeaderValue(scanInlineScriptHashes([PAGE]));
+  expect(v).toContain("default-src 'self'");
+  expect(v).toContain("script-src 'self' 'sha256-");
+  expect(v).toContain("object-src 'none'");
+  expect(v).toContain("base-uri 'self'");
+  expect(scriptSrcOf(v)).not.toContain("unsafe-inline"); // script-src is strict
+  expect(v).toContain("style-src 'self' 'unsafe-inline'"); // framework inline styles
+});
+
+test("apache + zigbase CSP artifacts carry the same header value, script-src strict", () => {
+  const hashes = scanInlineScriptHashes([PAGE]);
+  const value = cspHeaderValue(hashes);
+  const files = emitAllCsp(hashes);
+  expect(files.map((f) => f.name).sort()).toEqual(
+    ["csp.apache.conf", "csp.nginx.conf", "csp.zigbase.txt"],
+  );
+  const apache = files.find((f) => f.name === "csp.apache.conf")!;
+  const zigbase = files.find((f) => f.name === "csp.zigbase.txt")!;
+  expect(apache.content).toContain(`Header set Content-Security-Policy "${value}"`);
+  expect(zigbase.content).toContain(`Content-Security-Policy: ${value}`);
+  expect(scriptSrcOf(apache.content)).not.toContain("unsafe-inline");
+  expect(scriptSrcOf(zigbase.content)).not.toContain("unsafe-inline");
+});
+
+// ── CSP must include spa.head external origins ──────────────────────────────
+// A `spa.head` like
+//   [{ rel: "preconnect", href: "https://fonts.gstatic.com", crossorigin: "anonymous" },
+//    { rel: "stylesheet", href: "https://fonts.googleapis.com/css2?family=Inter" }]
+// renders into every shell's <head> as <link> tags. The emitted CSP must allow
+// those origins or the deployed conf blocks the fonts the build itself linked.
+// Rule: every external origin referenced by a <link> href in the built HTML is
+// unioned into BOTH style-src and font-src (simple + predictable; a stylesheet
+// origin and the font origin it pulls from both end up allowed).
+
+// Rendered exactly like src/spa.zig's renderHeadLinks output (attribute values
+// HTML-escaped, so a query "&" appears as "&amp;").
+const FONT_PAGE = [
+  `<!DOCTYPE html><html><head>`,
+  `<script type="importmap">${IMPORTMAP}</script>`,
+  `<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">`,
+  `<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter&amp;display=swap">`,
+  `<link rel="stylesheet" href="/site.css">`,
+  `<link rel="modulepreload" href="/spa/app.js">`,
+  `<script type="module">${BOOTSTRAP}</script>`,
+  `</head><body></body></html>`,
+].join("");
+
+const styleSrcOf = (csp: string) => csp.match(/style-src[^;]*/)![0];
+
+test("scanExternalLinkOrigins returns the sorted, deduped external <link> origins (local hrefs excluded)", () => {
+  const origins = scanExternalLinkOrigins([FONT_PAGE]);
+  expect(origins).toEqual(["https://fonts.googleapis.com", "https://fonts.gstatic.com"]);
+});
+
+test("scanExternalLinkOrigins dedupes across pages and strips path/query (incl. HTML-escaped &amp;)", () => {
+  const other = `<html><head><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Other&amp;display=swap"></head></html>`;
+  const origins = scanExternalLinkOrigins([FONT_PAGE, other, FONT_PAGE]);
+  expect(origins).toEqual(["https://fonts.googleapis.com", "https://fonts.gstatic.com"]);
+});
+
+test("scanExternalLinkOrigins folds protocol-relative hrefs in, defaulting the scheme to https", () => {
+  // docs/spa.md promises protocol-relative (`//host`) origins are folded into
+  // the CSP like absolute ones; a strict-CSP deployment is https, so that is
+  // the scheme the browser resolves them to.
+  const page = `<html><head>` +
+    `<link rel="stylesheet" href="//fonts.googleapis.com/css2?family=Inter&amp;display=swap">` +
+    `<link rel="preconnect" href="//fonts.gstatic.com">` +
+    `<link rel="stylesheet" href="/local.css">` +
+    `</head></html>`;
+  expect(scanExternalLinkOrigins([page])).toEqual([
+    "https://fonts.googleapis.com",
+    "https://fonts.gstatic.com",
+  ]);
+  // …and dedupes against the same origins spelled absolutely.
+  expect(scanExternalLinkOrigins([page, FONT_PAGE])).toEqual([
+    "https://fonts.googleapis.com",
+    "https://fonts.gstatic.com",
+  ]);
+});
+
+test("scanExternalLinkOrigins keeps an explicit port and ignores non-link tags and root-relative hrefs", () => {
+  const page = `<html><head>` +
+    `<link rel="stylesheet" href="https://cdn.example.com:8443/x.css">` +
+    `<a href="https://not-a-link-tag.example.com/">x</a>` +
+    `<link rel="stylesheet" href="/local.css">` +
+    `</head></html>`;
+  expect(scanExternalLinkOrigins([page])).toEqual(["https://cdn.example.com:8443"]);
+});
+
+test("cspHeaderValue unions external link origins into style-src AND font-src", () => {
+  const hashes = scanInlineScriptHashes([FONT_PAGE]);
+  const origins = scanExternalLinkOrigins([FONT_PAGE]);
+  const v = cspHeaderValue(hashes, origins);
+  expect(styleSrcOf(v)).toBe(
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com",
+  );
+  expect(v).toContain(
+    "font-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com",
+  );
+  // script-src stays strict: origins are NOT added there.
+  expect(scriptSrcOf(v)).not.toContain("fonts.");
+});
+
+test("cspHeaderValue without external origins is byte-identical to the pre-linkOrigins value (no font-src)", () => {
+  const hashes = scanInlineScriptHashes([PAGE]);
+  expect(cspHeaderValue(hashes, [])).toBe(cspHeaderValue(hashes));
+  expect(cspHeaderValue(hashes)).not.toContain("font-src");
+  expect(styleSrcOf(cspHeaderValue(hashes))).toBe("style-src 'self' 'unsafe-inline'");
+});
+
+test("all three emitted CSP flavors carry the head origins (nginx/apache/zigbase)", () => {
+  const hashes = scanInlineScriptHashes([FONT_PAGE]);
+  const origins = scanExternalLinkOrigins([FONT_PAGE]);
+  const value = cspHeaderValue(hashes, origins);
+  for (const f of emitAllCsp(hashes, origins)) {
+    expect(f.content).toContain(value);
+    expect(f.content).toContain("font-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com");
+  }
+  const nginx = emitCsp(hashes, "nginx", origins);
+  expect(styleSrcOf(nginx.content)).toContain("https://fonts.googleapis.com");
+});
+
+test("no-type inline script IS hashed; application/json is NOT", () => {
+  const classic = `<html><script>console.log(1)</script>` +
+    `<script type="application/json">{"a":1}</script></html>`;
+  const hashes = scanInlineScriptHashes([classic]);
+  expect(hashes).toEqual([b64("console.log(1)")]);
+});

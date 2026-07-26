@@ -1,0 +1,10 @@
+---
+interface Props {
+  site: Site;
+}
+const { site } = Astro.props;
+---
+
+<footer>
+  <p>© {site.year} {site.name}</p>
+</footer>

@@ -1,0 +1,10 @@
+<!DOCTYPE html>
+<html>
+<head><title :text="$page.title"></title></head>
+<body>
+  <p id="owner" :text="$site.data('site').get('owner').get('name')"></p>
+  <p id="email" :text="$site.data('site').get('owner').get('email')"></p>
+  <p id="hours" :text="$site.data('site').get('hours')"></p>
+  <ul :loop="$site.data('site').get('nav')"><li :text="$loop.it"></li></ul>
+</body>
+</html>

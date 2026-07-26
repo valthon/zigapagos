@@ -11,7 +11,7 @@
 This is where you should describe to your users what your devlog is about.
 Refer to the corresponding section in the home page to learn more about devlogs.
 
-For example this is how the Zine devlog describes itself:
+For example here's a sample of the kind of description you might write:
 
 > This is a non-exhaustive, curated list of changes meant to help users quickly see what has improved since they last checked.
 >
@@ -33,6 +33,6 @@ This is the third entry.
 ## [Second Entry]($section.id("1990-01-02T00:00:00"))
 This is the second entry.
 
-## [Hello Zine]($section.id("1990-01-01T00:00:00"))
+## [Hello Zigapagos]($section.id("1990-01-01T00:00:00"))
 This is the first entry in this year's devlog created with
-[Zine](https://zine-ssg.io)!
+[Zigapagos](https://github.com/valthon/zigapagos)!

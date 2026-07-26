@@ -5,7 +5,7 @@ root = Frontmatter
 
 struct Frontmatter {
     ///The title of this page.
-    title: ?bytes,
+    title: bytes,
     ///A short description that the section page has 
     ///access to.
     description: ?bytes,

@@ -3,12 +3,24 @@ zig-cache/
 zig-out/
 .zig-cache/
 
+# JS/Bun deps (runtime/ package)
+node_modules/
+
 # SDD scratch (briefs, reports, ledger, review diffs)
 .superpowers/
 
-# Zine
+# Zigapagos
 public
-.zine-cache
+.zigapagos-cache
 zig-pkg
 scratch
 result
+
+# built island wasm artifacts
+*.wasm
+public_scout
+.claude/worktrees
+
+# python bytecode from the example browser tests
+__pycache__/
+*.pyc

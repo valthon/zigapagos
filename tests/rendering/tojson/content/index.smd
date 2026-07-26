@@ -1,0 +1,12 @@
+---
+.title = "Home",
+.layout = "index.shtml",
+.custom = {
+    .cfg = { .name = "Jane", .age = 33, .vip = true, .price = 1.5 },
+    .faq = [
+        { .q = "Q1", .a = "A1" },
+        { .q = "Q2", .a = "A2" },
+    ],
+},
+---
+# toJson

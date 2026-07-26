@@ -1,0 +1,10 @@
+.{
+    .name = .tsx_site,
+    .version = "0.0.0",
+    .fingerprint = 0x858d8bfb24f740f5,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .zigapagos = .{ .path = "../.." },
+    },
+    .paths = .{"."},
+}

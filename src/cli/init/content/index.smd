@@ -39,23 +39,22 @@ interests and audience. Maybe a "foodlog", a "catlog" or a "treklog" could also
 work well.
 
 The devlog section contains more information about how devlogs can be implemented
-in Zine.
+in Zigapagos.
 
 Some examples of devlogs in the wild:
- - https://zine-ssg.io/log/
  - https://ziglang.org/devlog/
 
 
 ## Next steps
 
-Make sure to read the [official Zine docs](https://zine-ssg.io/docs/)
+Make sure to read the [official Zigapagos docs](https://github.com/valthon/zigapagos/tree/main/docs)
 and then start editing this website!
 
-Start by putting the correct information in `zine.ziggy` and then start editing
+Start by putting the correct information in `zigapagos.ziggy` and then start editing
 the existing pages. Before deleting existing copy consider giving it a brief
 look as it will show you some SuperMD specific syntax.
 
-HTML markup in Zine is defined via SuperHTML templates:
+HTML markup in Zigapagos is defined via SuperHTML templates:
 - `layouts/index.shtml`
 - `layouts/page.shtml`
 - `layouts/post.shtml`
@@ -66,7 +65,7 @@ HTML markup in Zine is defined via SuperHTML templates:
 - `layouts/devlog-archive.shtml`
 - `layouts/templates/base.shtml`
 
-**If you're running the Zine development server (by running `zine`), then all
+**If you're running the Zigapagos development server (by running `zigapagos`), then all
 changes you make will be picked up immediately, causing the website to rebuild
 and the page in your browser to refresh**.
 
@@ -80,9 +79,9 @@ Lastly, this sample website also includes the following asset files:
 - `assets/katex-tag.js`
 - `assets/katex0.16.21.css`
 - `assets/katex0.16.21.js`
-- `content/blog/first-post/fanzine.jpg`
+- `content/blog/first-post/retro-cover.jpg`
 
 The first few asset files are **site assets**, while the last is a **page asset** that belongs to the "first post" page.
 
-The Zine docs contain more information about [dealing with assets](https://zine-ssg.io/docs/assets/).
+The Zigapagos docs contain more information about [dealing with assets](https://github.com/valthon/zigapagos/tree/main/docs).
 

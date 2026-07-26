@@ -67,6 +67,39 @@ pub const Fields = struct {
 };
 
 pub const Builtins = struct {
+    pub const toJson = struct {
+        pub const signature: Signature = .{
+            .ret = .String,
+        };
+        pub const docs_description =
+            \\Serializes the array to a JSON string.
+            \\
+            \\Use it to pass a collection into a typed island prop:
+            \\`prop-items="$page.custom.get('faq').toJson()"` (or with
+            \\`$site.data(...)`). The island's `Props` field — e.g.
+            \\`[]const Item` — is parsed from that JSON, so the whole list
+            \\arrives at once. The dynamic-attribute analogue of an inline
+            \\`:props='{ .items = [ ... ] }'` literal.
+        ;
+        pub const examples =
+            \\<island src="Faq.zig" prop-items="$page.custom.get('faq').toJson()"></island>
+        ;
+        pub fn call(
+            arr: Array,
+            gpa: Allocator,
+            _: *const context.Root,
+            args: []const Value,
+        ) context.CallError!Value {
+            if (args.len != 0) return .{ .err = "expected 0 arguments" };
+            var aw: std.Io.Writer.Allocating = .init(gpa);
+            context.writeValueJson(gpa, &aw.writer, .{ .array = arr }) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => return .{ .err = "array contains a value that cannot be serialized to JSON" },
+            };
+            return context.String.init(aw.written());
+        }
+    };
+
     pub const slice = struct {
         pub const signature: Signature = .{
             .params = &.{ .Int, .{ .Opt = .Int } },

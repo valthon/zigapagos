@@ -1,17 +1,110 @@
-<h1 align="center">Zine</h1>
-<h3 align="center"><em>Fast, Scalable, Flexible Static Site Generator (SSG)</em></h3>
-<p align="center">Zine is pronounced like in <a href="https://en.wikipedia.org/wiki/Zine">fan<em>zine</em></a></a>.</p>
+<h1 align="center">🏝️ Zigapagos</h1>
 
-## Development Status
-Zine is still a young project, not yet at feature parity with more popular
-alternatives (e.g. Hugo), but it's perfectly able to handle a personal website
-with a blog.
+<p align="center">
+  <b>The islands-architecture static site generator with a native core.</b><br/>
+  Author interactive components in TSX. Ship zero-JS-by-default pages.<br/>
+  One fast Zig binary + Bun — no Node, no Vite, no framework lock-in.
+</p>
 
-## Getting Started
-Go to https://zine-ssg.io to get started.
+<p align="center">
+  <a href="https://valthon.github.io/zigapagos/">Website</a> ·
+  <a href="docs/islands.md">Islands</a> ·
+  <a href="docs/spa.md">SPAs</a> ·
+  <a href="docs/migration/astro-to-zigapagos.md">Migrate from Astro</a>
+</p>
 
-## GitHub Actions
-If you plan to build your website with GitHub Actions, take a look at [kristoff-it/setup-zine](https://github.com/marketplace/actions/setup-zine), the official
-GitHub Action to get access to Zine in your runner.
+---
 
-We also have more complete guides at https://zine-ssg.io/docs/.
+## What is Zigapagos?
+
+Zigapagos brings [Astro](https://astro.build)-style **islands architecture** to a
+native static site generator. Pages are plain HTML rendered at build time by a
+fast Zig core; interactivity is added per-component:
+
+```tsx
+// components/Counter.island.tsx
+import { useState } from "@z/runtime";
+
+export default function Counter({ start = 0 }: { start?: number }) {
+  const [n, setN] = useState(start);
+  return <button onClick={() => setN(n + 1)}>clicked {n} times</button>;
+}
+```
+
+At build time each `.island.tsx` is **server-rendered** through a Bun sidecar and
+embedded into the page as real HTML. In the browser it **hydrates** on your
+terms — `client:load`, `client:idle`, `client:visible`, `client:media`, or
+`client:only` — sharing ONE Preact instance across every island via an import
+map. No island on the page? Zero JavaScript shipped.
+
+## Features
+
+- **TSX islands** — Preact-compatible components (`useState`, `useEffect`,
+  context, portals, …) via the first-party `@z/runtime`, SSR'd at build time
+  and partially hydrated.
+- **Native SPAs** — a single `.spa.tsx` (exported `spa` + `routes`) becomes a
+  client-routed app: prerendered route skeletons, two-phase hydration,
+  soft navigation, route guards, nested layouts. Host-agnostic routing
+  manifests (ZigBase / Nginx / Apache) generated for you.
+- **LLM-native Astro migration** — `zigapagos migrate <astro-dir>` detects
+  `client:*` component usage and emits ready-to-follow scaffolds with the
+  React → `@z/runtime` import swaps already applied. The docs are written as a
+  deterministic mapping spec so an AI agent can complete a migration unattended.
+- **Batteries-included dev server** — instant rebuilds with live reload over
+  SSE, an API reverse proxy (`--proxy`) for cookie-auth backends, and live
+  feature flags.
+- **A real templating stack, no JS required** — SuperHTML layouts and SuperMD
+  content with build-time correctness checks, inherited from Zine.
+- **Fast native core** — the site graph, content pipeline, and dev server are
+  Zig; the only JS toolchain is Bun, used surgically for TSX.
+
+## Quickstart
+
+```bash
+# toolchain (or install zig 0.16.0 + bun 1.2 yourself)
+mise install
+
+zig build          # build the zigapagos binary
+zig-out/bin/zigapagos init   # scaffold a site
+zig-out/bin/zigapagos        # dev server at http://localhost:1990
+```
+
+To add your first island, see [docs/islands.md](docs/islands.md). A complete
+worked example lives in [`examples/tsx-site/`](examples/tsx-site/) — islands,
+a SPA slice, SSR + real-browser hydration tests.
+
+## How it works
+
+```
+content/*.smd ──► Zig core (SuperMD/SuperHTML) ──► page HTML ─┐
+components/*.island.tsx ──► Bun sidecar (SSR) ────────────────┤──► static site
+                            └─► esbuild-style bundle ─────────┘    + import map
+                                (@z/runtime external)              + one shared runtime
+```
+
+One render seam: after a page renders, islands found in it are SSR'd and the
+resulting HTML + `data-z-props` are injected, along with a `modulepreload` hint,
+an import map, and the shared runtime script. Everything else is plain zine-style
+static generation.
+
+## Status
+
+Zigapagos is **v0.1.0** and pre-1.0: APIs may change between minor versions.
+Zig version: **0.16.0** (we track released Zig, not nightlies). The islands
+engine, SPA support, and Astro migration tooling are complete and covered by
+unit + real-browser e2e tests.
+
+## Acknowledgements
+
+Zigapagos is a permanent fork of [**Zine**](https://zine-ssg.io) by
+[Loris Cro](https://kristoff.it) — a fast, elegant, deliberately JavaScript-free
+SSG. The Zig core, SuperHTML, SuperMD, and Ziggy are his work and the reason
+this project could exist. Zigapagos diverges philosophically (we embrace a
+minimal TSX toolchain for interactivity; Zine's whole point is not to), which
+is why this is a fork rather than a contribution. The original README is
+preserved at [docs/upstream/ZINE-README.md](docs/upstream/ZINE-README.md);
+fork point: zine v0.11.2 (`496e42d`).
+
+## License
+
+MIT — see [LICENSE](LICENSE), which retains the upstream Zine copyright.

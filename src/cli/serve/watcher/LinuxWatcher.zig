@@ -28,6 +28,14 @@ const WatchEntry = struct {
     name: []const u8,
 };
 
+/// Flags for the watcher's inotify instance. `IN_CLOEXEC` is load-bearing: the
+/// `zigapagos dev` loop spawns a `zig build` per rebuild plus a long-lived
+/// zigbase, and without close-on-exec the inotify fd — and with it every watch
+/// descriptor the watcher owns — is inherited by all of them for the whole dev
+/// session. The `dev` fork is what made this matter; the legacy live server
+/// spawned nothing.
+const notify_init_flags: u32 = std.os.linux.IN.CLOEXEC;
+
 pub fn init(
     io: Io,
     gpa: std.mem.Allocator,
@@ -38,7 +46,7 @@ pub fn init(
         @errorName(err),
     });
 
-    const notify_fd = try inotify_init1(0);
+    const notify_fd = try inotify_init1(notify_init_flags);
     var watcher: LinuxWatcher = .{
         .io = io,
         .gpa = gpa,
@@ -297,16 +305,36 @@ pub fn listen(watcher: *LinuxWatcher) !void {
     const gpa = watcher.gpa;
     const Event = std.os.linux.inotify_event;
     const event_size = @sizeOf(Event);
+    // An inotify record is `event_size + roundup(name_len + 1, 16)`, and a
+    // name can be up to NAME_MAX (255) bytes. `read(2)` returns EINVAL if the
+    // buffer can't hold the next pending event, so it must fit at least one
+    // maximal record; we size it for several so a change burst drains in fewer
+    // syscalls.
+    const name_max = 255;
+    // Aligned to `Event` so the `@alignCast` below is sound: inotify lays each
+    // record out at an `Event`-aligned offset (the `len` field is padded up),
+    // so an aligned base keeps every record in the batch aligned.
+    var buffer: [(event_size + name_max + 1) * 8]u8 align(@alignOf(Event)) = undefined;
     while (true) {
-        var buffer: [event_size * 10]u8 = undefined;
-        const len = try std.posix.read(watcher.notify_fd, &buffer);
-        if (len < 0) @panic("notify fd read error");
+        const len = std.posix.read(watcher.notify_fd, &buffer) catch |err| switch (err) {
+            error.WouldBlock => continue,
+            else => return err,
+        };
+        if (len == 0) continue;
 
-        var event_data = buffer[0..len];
+        var event_data: []u8 = buffer[0..len];
         while (event_data.len > 0) {
             const event: *Event = @ptrCast(@alignCast(event_data[0..event_size]));
-            const parent = watcher.watch_fds.get(event.wd).?;
             event_data = event_data[event_size + event.len ..];
+
+            // Queue overflow arrives with wd == -1, which is never a valid
+            // watch descriptor. Signal a rebuild and skip the map lookup.
+            if (Mask.is(event.mask, .IN_Q_OVERFLOW)) {
+                watcher.debouncer.newEvent();
+                continue;
+            }
+
+            const parent = watcher.watch_fds.get(event.wd) orelse continue;
 
             // std.debug.print("flags: ", .{});
             // Mask.debugPrint(event.mask);
@@ -506,4 +534,20 @@ pub fn inotify_rm_watch(inotify_fd: i32, wd: i32) void {
         .INVAL => unreachable,
         else => unreachable,
     }
+}
+
+// --- unit tests (the name carries BOTH the "dev" and "serve" anchors so it
+// runs under `zig build test-dev` and `zig build test-serve`) ------------------
+
+test "dev/serve watcher: the inotify instance is close-on-exec" {
+    // The exact flags `init` passes to inotify_init1. Without IN_CLOEXEC the
+    // notify fd (and every watch descriptor under it) survives execve, so every
+    // `zig build` the dev loop spawns — and the long-lived zigbase — inherits
+    // the watcher's descriptors for the whole session.
+    const fd = try inotify_init1(notify_init_flags);
+    defer _ = std.c.close(fd);
+
+    const flags = std.c.fcntl(fd, std.posix.F.GETFD);
+    try std.testing.expect(flags >= 0); // GETFD cannot fail on a live fd
+    try std.testing.expect((flags & std.posix.FD_CLOEXEC) != 0);
 }

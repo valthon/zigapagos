@@ -1,0 +1,172 @@
+{
+  "openapi": "3.0.3",
+  "x-zigbase-contract-version": "2026-06-27.1",
+  "info": {
+    "title": "ZigBase API",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/flags/state": {
+      "get": {
+        "operationId": "getFlagsState",
+        "summary": "Get resolved feature flags and experiments",
+        "responses": {
+          "200": {
+            "description": "Resolved flags and experiments state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolvedState"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/contact": {
+      "post": {
+        "operationId": "submitContact",
+        "summary": "Submit a contact form",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContactRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Contact submission result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContactResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/club/login": {
+      "post": {
+        "operationId": "clubLogin",
+        "summary": "Authenticate a club member",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClubAuthRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Club session token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClubSession"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ResolvedState": {
+        "type": "object",
+        "required": ["flags", "experiments"],
+        "properties": {
+          "flags": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "boolean"
+            }
+          },
+          "experiments": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ContactRequest": {
+        "type": "object",
+        "required": ["name", "email", "message", "recaptchaToken"],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "recaptchaToken": {
+            "type": "string"
+          }
+        }
+      },
+      "ContactResponse": {
+        "type": "object",
+        "required": ["ok"],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ClubAuthRequest": {
+        "type": "object",
+        "required": ["email", "password", "recaptchaToken"],
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          },
+          "recaptchaToken": {
+            "type": "string"
+          }
+        }
+      },
+      "ClubSession": {
+        "type": "object",
+        "required": ["token", "expiresAt"],
+        "properties": {
+          "token": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string"
+          },
+          "member": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,7 @@
+node_modules/
+zig-out/
+.zig-cache/
+parity/golden/
+parity/report/
+# ZigBase dev-loop data dir (persistent local backend state; see `zig build dev`)
+.zigbase/

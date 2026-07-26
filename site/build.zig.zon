@@ -1,0 +1,10 @@
+.{
+    .name = .zigapagos_site,
+    .version = "0.0.0",
+    .fingerprint = 0xc866788c4f35b8f8,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .zigapagos = .{ .path = ".." },
+    },
+    .paths = .{"."},
+}

@@ -116,12 +116,16 @@ pub const Builtins = struct {
                         asset._meta.ref,
                     ).?;
 
-                    _ = ba.rc.fetchAdd(1, .acq_rel);
+                    // Bump rc only after confirming an install path exists: a
+                    // no-install asset must not be marked for install (which
+                    // would later unwrap a null install_path). The missing-path
+                    // case is a graceful page error, not an install.
                     const op = ba.install_path orelse return Value.errFmt(
                         gpa,
                         "unable to install build asset '{s}' as it does not specify an install path",
                         .{asset._meta.ref},
                     );
+                    _ = ba.rc.fetchAdd(1, .acq_rel);
                     w.print("{s}", .{op}) catch return error.OutOfMemory;
                 },
             }
@@ -179,7 +183,19 @@ pub const Builtins = struct {
                     };
                     return Int.init(@intCast(stat.size));
                 },
-                .build => @panic("TODO"),
+                .build => {
+                    const ba = ctx._meta.build.build_assets.getPtr(
+                        asset._meta.ref,
+                    ).?;
+                    const stat = ctx._meta.build.base_dir.statFile(
+                        ctx._meta.io,
+                        ba.input_path,
+                        .{},
+                    ) catch {
+                        return .{ .err = "i/o error while reading asset file" };
+                    };
+                    return Int.init(@intCast(stat.size));
+                },
             }
         }
     };
@@ -315,7 +331,19 @@ pub const Builtins = struct {
                         return .{ .err = "i/o error while reading asset file" };
                     };
                 },
-                .build => @panic("TODO"),
+                .build => blk: {
+                    const ba = ctx._meta.build.build_assets.getPtr(
+                        asset._meta.ref,
+                    ).?;
+                    break :blk ctx._meta.build.base_dir.readFileAlloc(
+                        ctx._meta.io,
+                        ba.input_path,
+                        gpa,
+                        .unlimited,
+                    ) catch {
+                        return .{ .err = "i/o error while reading asset file" };
+                    };
+                },
             };
 
             const sha384 = std.crypto.hash.sha2.Sha384;
@@ -393,7 +421,21 @@ pub const Builtins = struct {
                         return .{ .err = "i/o error while reading asset file" };
                     };
                 },
-                .build => @panic("TODO"),
+                .build => blk: {
+                    const ba = ctx._meta.build.build_assets.getPtr(
+                        asset._meta.ref,
+                    ).?;
+                    break :blk ctx._meta.build.base_dir.readFileAllocOptions(
+                        ctx._meta.io,
+                        ba.input_path,
+                        gpa,
+                        .unlimited,
+                        .@"1",
+                        0,
+                    ) catch {
+                        return .{ .err = "i/o error while reading asset file" };
+                    };
+                },
             };
 
             log.debug("parsing ziggy file: '{s}'", .{data});

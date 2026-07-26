@@ -1,0 +1,280 @@
+# Island authoring
+
+Islands are `.island.tsx` files authored against `@z/runtime` (a vendored
+Preact build). SSR happens at build time via a Bun "render sidecar"; client
+hydration uses an import-map so the page shares **one** Preact instance.
+
+## File conventions
+
+- Place islands under the project's `components/` directory (or any path; the
+  `--island-src-dir` flag controls where Zigapagos looks).
+- Name the file `<ComponentName>.island.tsx`.
+- Export a default function component.
+
+```tsx
+import { useState } from "@z/runtime";
+
+export interface Props { headline: string }
+
+export default function Hero({ headline }: Props) {
+  const [open, setOpen] = useState(false);
+  return (
+    <section>
+      <h1>{headline}</h1>
+      <button onClick={() => setOpen(!open)}>{open ? "−" : "+"}</button>
+    </section>
+  );
+}
+```
+
+## Using an island in a layout
+
+In a `.shtml` layout, use the `<island>` element. Props can be supplied as a
+Ziggy struct literal (`:props`) or individually (`prop-NAME`):
+
+```html
+<!-- bound to a page field -->
+<island src="components/Hero.island.tsx" client:load
+        prop-headline="$page.title"></island>
+
+<!-- static Ziggy struct -->
+<island src="components/Flagged.island.tsx" client:load
+        :props='{ .label = "hi" }'></island>
+
+<!-- composite island with named slots -->
+<island src="components/Panel.island.tsx" client:load
+        :props='{ .title = "Panel" }'>
+  <template slot="heading"><h2>Custom Heading</h2></template>
+  <p>default body</p>
+</island>
+```
+
+## Typed props contract (build-time)
+
+Every island that accepts props should export its props type as `Props`:
+
+```ts
+export interface Props { headline: string }
+// or:
+export type Props = { headline: string }
+```
+
+At build time, Zigapagos typechecks each rendered `<island>`'s **resolved** props
+(`:props` merged with `prop-NAME` overrides and `$page.*` values) against that
+`Props` type using `tsc`. A mismatch — wrong type, missing required field, or a
+misspelled prop (excess property) — fails the build:
+
+```
+error: props mismatch on /  <island src="components/Hero.island.tsx" id="z-island-0">
+  resolved props: {"headline":5}
+  Type 'number' is not assignable to type 'string'. (TS2322)
+```
+
+An island that takes no props simply omits `Props`. An island that accepts props
+but does not `export` a `Props` type is reported once at build time:
+
+```
+warn(island_props): island components/MyIsland.island.tsx has no exported Props type; props unchecked
+```
+
+and the check is skipped for that island (it is not a build error).
+
+### Flag: `--island-props-check=error|warn|off`
+
+| Value   | Behaviour |
+|---------|-----------|
+| `error` | Mismatches fail the build (default for `zig build`). |
+| `warn`  | Mismatches are logged but the build succeeds. |
+| `off`   | Check disabled entirely. |
+
+`build.zig`'s `website()` helper emits `--island-props-check=error` for all
+release builds automatically. `zigapagos serve` defaults to `off` so the dev loop
+stays lenient.
+
+## Module preloading
+
+Pages with islands emit `<link rel="modulepreload">` tags for the shared runtime
+and each island module, deduped and placed **after the import map**:
+
+```html
+<script type="importmap">…</script>
+<link rel="modulepreload" href="/zigapagos-runtime.js">
+<link rel="modulepreload" href="/islands/Hero.island.js">
+<link rel="modulepreload" href="/islands/Panel.island.js">
+```
+
+The import map must come first: per the import-maps spec, a map is only
+processed if it appears before any module loading starts, and a
+`<link rel="modulepreload">` starts one. A map that arrives after is silently
+disregarded by the browser — a bug that was cache-state flaky (a cold cache
+usually loses the race and the page still works; a warm cache wins it and
+`import … from "@z/runtime"` fails).
+
+The preload links still let the browser fetch island JS **in parallel with HTML
+parse** rather than discovering each module URL serially at hydration time.
+Islands using `client:only` are included. Hero appearing twice on the same page
+produces a single preload link — dedup is by module URL.
+
+**v2 follow-up (deferred):** batched-NDJSON SSR (one sidecar round-trip per page
+instead of N sequential calls) is on hold pending co-design with `sidecar-slots`'
+nested-slot weaving — the `BatchItem` struct must carry `slots_json` and the
+deferred-splice sentinel must round-trip through slot-weaving for nested islands.
+
+## Import guardrail
+
+Islands may only import from:
+
+- `@z/runtime` (and its subpaths, e.g. `@z/runtime/compat`)
+- `@your-org/shared-lite`
+- Relative paths (other local modules)
+- Web globals (no `node:*` / bare npm packages)
+
+Violations are caught by `runtime/scripts/lint-island-imports.ts`.
+
+## Dev hot-swap (HMR) and fast refresh
+
+Two dev-only layers keep island state alive across a rebuild; both are inert in
+production (release bundles contain neither the transform nor the dev snippet).
+
+**In-place hot-swap.** When only island bundles changed, the dev
+server's SSE channel sends `{"kind":"island","modules":[…]}` instead of a full
+reload. The injected client snippet hands it to
+`window.__zigapagos_hmr.applyIsland` (`runtime/src/hmr.ts`), which re-imports
+each changed module with a cache-bust query and re-renders the matching island
+root(s) in place — no navigation, so the SPA route, scroll, and sibling islands
+are untouched. `useRestorableState` values survive because the
+`zigapagos:beforereload` event fires (and stashes them to sessionStorage) before
+the swap; the fresh mount restores them.
+
+**Fast refresh.** A bundle built with the island driver's dev-only
+`--hot` flag (`runtime/sidecar/bundle-island.ts` → `hot-transform.ts`) routes
+the entry module's top-level function components through a runtime registry
+(`runtime/src/hot-registry.ts`), keyed by entry path + component name. On a
+hot-swap, if the edited component's build-time **hook signature** (its ordered
+sequence of provable hook calls) is unchanged, the re-imported module resolves
+to the **same** proxy function — Preact keeps the mounted component instance,
+so plain `useState`/`useReducer` state survives and the new implementation
+(markup, handlers, reducer logic) takes over on the very next render.
+
+**Deliberate fallbacks — correctness over cleverness.** Anything that can't be
+proven safe falls back to the in-place remount (where only restorable state
+survives), and ultimately to a full reload — never a corrupt swap:
+
+- the component's hook sequence changed between builds (new identity → remount);
+- a hook whose origin can't be proven: custom hooks imported from **other
+  files**, `X.useY()` property calls, namespace-imported hooks. Only hooks
+  imported from `@z/runtime`(`/…`) or declared in the **same file** (whose own
+  hook sequence is folded into the signature, recursively) are provable;
+- anonymous or expression default exports (`export default () => …`),
+  HOC-wrapped defaults, class components, async/generator functions;
+- components defined in non-entry files (the transform touches only the entry);
+- an untransformed module (no `--hot`), which registers nothing.
+
+**Dev-loop wiring.** `zigapagos dev` sets `ZIGAPAGOS_HOT_ISLANDS=1` in the
+rebuild command's environment for the whole session (skipped with
+`--no-live-reload`, which exists for release-fidelity testing); the consumer's
+`zig build` reads it at configure time (`build.zig`'s `addIslandAssets`) and
+passes `--hot` to the island bundle driver, so every dev island bundle routes
+through the registry from the first page load. When the dev loop's change
+classifier proves a rebuild was island-only (see the incremental re-SSR section
+below), it broadcasts the `{"kind":"island",…}` hot-swap message instead of a
+full reload — the swap preserves plain hook state end-to-end. Any other change
+(a content page, a layout, an unclassifiable edit) still full-reloads.
+
+Release bundles never contain the transform — `hot` is off by default and the
+environment variable never reaches a plain `zig build` / `zigapagos release`,
+so the release byte-parity gate is untouched. One known nit: a component
+wrapped in `memo()` may show stale UI until its next state change after a
+preserving swap.
+
+## Incremental bundling
+
+Each island and the shared runtime are bundled by `runtime/sidecar/bundle-island.ts`,
+a Bun build-time driver invoked via `build.zig`'s `addIslandAssets`. The driver emits a
+Make-style depfile alongside each bundle so Zig's `Run` cache knows exactly when to
+re-bundle.
+
+**What the depfile tracks** (the island's true transitive closure):
+
+- The island entry file itself
+- All relative imports and `@your-org/shared-lite` modules loaded transitively
+- The `tsconfig.json` (and its `extends` chain) found above the entry
+- `runtime/.version-stamp` — a short string written by `build.zig` and listed in
+  every bundle's depfile; bump the string to force-rebundle all islands and the
+  runtime in one stroke (use this when the `@z/runtime` external ABI or the Bun
+  version changes)
+
+`@z/runtime` is declared `--external` and is therefore never loaded by the bundler —
+it is not captured in the island depfile. It is tracked separately via the runtime
+bundle's own depfile plus the version stamp.
+
+**Why this matters — the correctness fix:** previously, each island was registered as
+a plain `addFileInput` pointing only at its entry file. Editing a transitive dep (a
+relative import or an `@your-org/shared-lite` module) left the island's declared cache
+inputs unchanged, so Zig considered it a cache hit and shipped the stale bundle.
+The depfile fixes this: the Zig `Run` cache now sees the full transitive closure and
+re-runs the driver whenever any file in it changes.
+
+**Dep-capture mechanism:** a `Bun.build` `onLoad` plugin is registered as a pure
+observer — it records every module path Bun loads and returns `undefined` so the
+file contents pass through unmodified. This works on Bun 1.2+. On Bun 1.3+ the
+`metafile.inputs` map is also populated; `bundleIsland` unions both sources so
+incrementality improves automatically on newer Bun versions without any code change.
+
+**First-build behaviour (cold cache):** on a fresh checkout the depfile does not yet
+exist, so Zig always runs the driver on build #1 and the depfile is written as part of
+that run. Incrementality kicks in from build #2 onward — this is standard
+compiler-depfile semantics (equivalent to `cc -MD`).
+
+**Verification:**
+
+- `examples/tsx-site/test/parity-bundle.sh` — asserts the driver's output is
+  byte-identical to a raw `bun build` invocation (for both the Hero island and the
+  shared runtime), guarding against the `onLoad` observer accidentally mutating bytes.
+- `examples/tsx-site/test/incremental.sh` — injects a transitive dep into Hero,
+  builds twice with the dep changed between builds, and asserts the bundle hash
+  changes (H1 ≠ H2); a third no-op build asserts the hash is stable (H2 = H3).
+
+## Dev-loop incremental re-SSR (`zigapagos dev`)
+
+Bundling being incremental (above) is only half of a fast island edit: the SSR'd
+HTML of every page that *mounts* the island is stale too. The dev loop
+re-renders just those pages instead of the whole site.
+
+**The manifest.** Every disk build run under `zigapagos dev` writes a dev-only
+island-usage manifest, `<data-dir>/islands-manifest.json` (default
+`.zigbase/islands-manifest.json`), mapping each mounted island's `src` to the
+pages that mount it. The path travels via the `ZIGAPAGOS_ISLAND_MANIFEST`
+environment variable, which only the dev loop sets — a plain `zig build` or
+`zigapagos release` never writes (or reads) it, so release output is unaffected.
+
+**The classifier.** When the watcher fires and the only changed files under the
+island/SPA `--watch-dir`s are known island sources, the dev loop resolves them
+through the manifest to the mounting pages and drives the same
+`ZIGAPAGOS_CHANGED_FILES` incremental path used for content edits:
+the island is rebundled (depfile-driven, see above), the fresh bundle is
+reinstalled, and ONLY the mounting pages are re-SSR'd + re-emitted.
+
+**Fail-closed fallbacks.** Anything the manifest can't localize falls back to a
+full rebuild — never wrong output, at worst the pre-incremental whole-site speed:
+
+- the manifest is missing, unreadable, malformed, or written by a different
+  zigapagos version,
+- a changed file isn't a manifest key: a shared helper module, a SPA source, or
+  an island added since the last build,
+- a changed island entry is *referenced by another watched source file* — the
+  manifest maps an entry to the pages mounting **it**, not to bundles that
+  import it, so if another island or SPA imported the edited entry the
+  incremental path would leave those pages' SSR'd HTML stale. The classifier
+  scans the watched source dirs for any textual reference to the changed
+  entry's module name (conservative: a hit in a comment or string also counts)
+  and rebuilds everything on a match,
+- any non-watch-dir shared input (layout, asset, i18n) changed too.
+
+**Limitations.** The manifest keys are island *entry* files — share code
+through a plain (non-`.island.tsx`) module rather than importing one island's
+entry from another island or from a SPA. Doing so is still *correct* (the
+reference scan above forces a full rebuild), it just forfeits the incremental
+fast path for that entry. A page that starts or stops mounting an island is
+corrected as soon as that page itself is re-rendered (its manifest entries are
+replaced on every build that renders it) or by the next full rebuild.

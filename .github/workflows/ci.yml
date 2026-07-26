@@ -16,7 +16,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # windows-latest removed: upstream's WindowsWatcher.zig/wuffs.zig don't
+        # compile on stable Zig 0.16.0 (os.windows lost OVERLAPPED/PAGE_READONLY);
+        # upstream fixed this on Zig 0.17-dev. Re-add with the Zig 0.17 port at
+        # the next upstream release-tag sync (see docs/ROADMAP.md fork policy).
+        os: [ubuntu-latest, macos-latest]
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -27,9 +31,200 @@ jobs:
         with:
           fetch-depth: 0  # Change if you need git info
 
+      - name: Branding gate
+        run: tests/branding.sh
+
+      - name: Confidentiality gate
+        run: tests/confidentiality.sh
+
+      # NO_SLOP.md 2.2a: wrapping std.testing.allocator (or a local alias bound
+      # to it) in an ArenaAllocator turns Zig's leak detector OFF for that test.
+      # The gate pins the existing sites via scripts/allocator-allowlist.txt —
+      # each with a written justification — and fails on a NEW one. Pure
+      # bash+awk over src/, so it needs no toolchain and runs before setup.
+      # Linux-only: it is OS-independent text analysis, and one run suffices.
+      - name: Allocator-contract gate (NO_SLOP.md 2.2a)
+        if: runner.os == 'Linux'
+        run: |
+          bash scripts/check-allocator-contracts.test.sh
+          bash scripts/check-allocator-contracts.sh
+
       - name: Setup Zig
         uses: mlugg/setup-zig@v2
 
+      # Runs immediately after the toolchain is available and before any build:
+      # `zig fmt --check` needs only the compiler, no dependency fetch, so a
+      # formatting slip fails in seconds instead of after the full e2e suite.
+      #
+      # The file list comes from `git ls-files`, not from a directory walk. Both
+      # `zig-pkg/` and `examples/tsx-site/zig-pkg/` are gitignored trees of
+      # MATERIALIZED third-party dependencies, as are `.zig-cache/` and
+      # `zig-out/` — so a path-based invocation (`zig fmt --check … examples/`)
+      # passes on a clean checkout and then starts failing on vendored source the
+      # moment anything runs a build that populates them. Tracked-files-only is
+      # both correct and self-maintaining: a new first-party directory is covered
+      # with no change here. (The generated `src/hacks/*.h.zig` translate-c dumps
+      # ARE tracked and are fmt-clean; they stay in scope deliberately.)
+      - name: Formatting gate (zig fmt)
+        run: git ls-files -z '*.zig' | xargs -0 -r zig fmt --check
+
+      # --- Zig package cache ---
+      # Keep third-party git hosts (codeberg.org, code.hexops.org, ...) off the
+      # critical path: cache the Zig global package cache and pre-fetch the
+      # dependency tree with retries before building.
+      #
+      # setup-zig exports ZIG_GLOBAL_CACHE_DIR=$GITHUB_WORKSPACE/.zig-cache via
+      # GITHUB_ENV, mixing packages with local build artifacts (and its own
+      # cache is cleared whenever it exceeds 2 GiB). We point the *global*
+      # (package) cache at a dedicated directory instead; step-level `env:`
+      # takes precedence over GITHUB_ENV, so it must be set on every step that
+      # runs zig.
+
+      - name: Get Zig version
+        id: zig-version
+        run: echo "version=$(zig version)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Zig package cache
+        id: zig-pkg-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/.zig-global-cache
+          key: zig-pkg-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-${{ hashFiles('**/build.zig.zon') }}
+          restore-keys: |
+            zig-pkg-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-
+
+      - name: Fetch dependencies (with retries)
+        env:
+          ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
+        run: |
+          for i in 1 2 3; do
+            if zig build --fetch=all; then
+              exit 0
+            fi
+            echo "::warning::zig build --fetch=all attempt $i failed; retrying in 20s..."
+            sleep 20
+          done
+          echo "::error::all dependency fetch attempts failed"
+          exit 1
+
+      # Save immediately after a successful fetch, before build/tests, so a
+      # later test failure still leaves the cache populated. Skipped on an
+      # exact primary-key hit (the cache is already up to date).
+      - name: Save Zig package cache
+        if: steps.zig-pkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/.zig-global-cache
+          key: ${{ steps.zig-pkg-cache.outputs.cache-primary-key }}
+
       - name: Build
-        run: zig build test 
-          
+        env:
+          ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
+        run: zig build test
+
+      # Single-threaded guard: the single-threaded-only code paths are comptime-pruned
+      # from the default build, so compile them explicitly. `check` compiles the
+      # exe AND every unit-test binary (test decls are only analyzed in a test
+      # compilation — an exe-only check would miss single-threaded rot in
+      # test-only code, e.g. a test calling std.Thread.spawn) without running
+      # anything, so no bun/network is needed; the dep objects are already warm
+      # from the build above.
+      - name: Check single-threaded build (exe + all test binaries)
+        env:
+          ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
+        run: zig build check -Dsingle-threaded
+
+      # --- Full test surface (issue AUD-019) ---
+      # The `zig build test` step above runs ONLY the three-root snapshot diff.
+      # The fork's differentiating surface — the island pass, SPA prerender, the
+      # dev/serve loop, the migration importer, and the TypeScript runtime — is
+      # exercised by the `test-*` steps, the Bun runtime suite, and the hermetic
+      # `tests/serve/*.sh` e2e. None of those ran in CI before, so a PR breaking
+      # any of them merged green. They need `bun` on PATH (the sidecar spawns it)
+      # and, for the shell e2e, the `mise` toolchain the scripts invoke via
+      # `mise exec` — installed here from the repo's canonical `mise.toml`
+      # (zig 0.16.0 + bun 1.2). The Zig package cache warmed above is reused by
+      # pointing ZIG_GLOBAL_CACHE_DIR at the same directory on every zig step.
+      - name: Setup toolchain for e2e (mise + bun)
+        uses: jdx/mise-action@v2
+        with:
+          cache: true
+
+      - name: Subsystem unit tests (islands, SPA, dev/serve, migrate, runtime sidecar)
+        env:
+          ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
+        run: |
+          zig build \
+            test-islands test-props test-migrate test-sidecar test-init \
+            test-release test-spa test-assets test-serve test-e2e test-dev
+
+      - name: Runtime TypeScript tests (Bun)
+        working-directory: runtime
+        run: |
+          bun install --frozen-lockfile
+          bun test
+
+      # --- Contract drift gate ---
+      # `api-check` regenerates the typed API client and fails if the committed
+      # contract/generated is stale. build.zig registers the step in BOTH
+      # codegen modes but CI never ran it, so contract/generated could drift
+      # from contract/zigbase.openapi.json unnoticed.
+      #
+      # Hermetic in the mode this repo is in: contract/codegen.config.json is
+      # absent, so codegenMode() falls back to `openapi` and the step is
+      # `bun runtime/scripts/apigen.ts` against the checked-in schema, then
+      # `git add` + `git diff --cached --exit-code` (the same pattern the
+      # snapshot tests use). No network, no live backend. In `zigbase` mode the
+      # step shells out to the backend's gen-client; with the backend absent
+      # apiclient.ts degrades to a presence/non-empty check on the committed
+      # client rather than failing, so this stays non-flaky either way.
+      # Needs bun (installed by the mise step above). Linux-only: the check is
+      # OS-independent and one run is enough.
+      - name: API contract drift (api-check)
+        if: runner.os == 'Linux'
+        env:
+          ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
+        run: zig build api-check
+
+      # Heavy hermetic e2e (full example builds + live server boots via the
+      # stub-zigbase.ts binary). Linux-only to keep macOS runner minutes down —
+      # the scripts drive OS-independent build/serve plumbing, so one OS suffices.
+      #
+      # Every tests/*/*.sh runs, not just tests/serve/*.sh. The old glob silently
+      # excluded tests/init/*.sh and tests/rendering/incremental.sh — they existed
+      # and no CI job ran them, so a PR breaking the Astro importer, the
+      # multilingual scaffold, or the incremental-render guarantee merged green.
+      # A discovered glob also means a new tests/<area>/ directory is covered the
+      # day it is added rather than whenever someone remembers to extend this list.
+      #
+      # tests/branding.sh and tests/confidentiality.sh are deliberately NOT here:
+      # they are cheap, OS-independent gates that run near the top of the job so a
+      # branding regression fails in seconds instead of after the full e2e suite.
+      - name: Shell e2e — serve/dev loop, init, rendering, islands, config (hermetic)
+        if: runner.os == 'Linux'
+        env:
+          ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
+        run: |
+          shopt -s nullglob
+          scripts=(tests/*/*.sh)
+          if [[ ${#scripts[@]} -eq 0 ]]; then
+            echo "::error::no tests/*/*.sh found — the glob or the layout changed"
+            exit 1
+          fi
+          echo "running ${#scripts[@]} shell e2e script(s)"
+          failed=()
+          for script in "${scripts[@]}"; do
+            echo "::group::$script"
+            if bash "$script"; then
+              echo "::endgroup::"
+            else
+              rc=$?
+              echo "::endgroup::"
+              echo "::error file=$script::$script failed (exit $rc)"
+              failed+=("$script")
+            fi
+          done
+          if [[ ${#failed[@]} -gt 0 ]]; then
+            echo "::error::${#failed[@]} script(s) failed: ${failed[*]}"
+            exit 1
+          fi

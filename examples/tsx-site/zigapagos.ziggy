@@ -1,0 +1,8 @@
+Site {
+    .title = "TSX Site (Bun SSR proof)",
+    .host_url = "https://example.com",
+    .content_dir_path = "content",
+    .layouts_dir_path = "layouts",
+    .assets_dir_path = "assets",
+    .deploy_target = "nginx",
+}

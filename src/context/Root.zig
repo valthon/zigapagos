@@ -7,7 +7,7 @@ const superhtml = @import("superhtml");
 const Ctx = superhtml.utils.Ctx;
 const scripty = @import("scripty");
 const ziggy = @import("ziggy");
-const ZineBuild = @import("../Build.zig");
+const ZigapagosBuild = @import("../Build.zig");
 const context = @import("../context.zig");
 const Value = context.Value;
 const Site = context.Site;
@@ -24,7 +24,7 @@ i18n: Map.ZiggyMap,
 
 _meta: struct {
     io: Io,
-    build: *const ZineBuild,
+    build: *const ZigapagosBuild,
     // Indexed by language code, empty when building a simple site
     // Get by key when you have a language code, get by idx when you
     // have a variant_id.

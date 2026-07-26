@@ -1,0 +1,49 @@
+# allocator-allowlist.txt — NO_SLOP.md §2.2a
+#
+# Every test site that wraps `std.testing.allocator` (or a local alias bound to
+# it, the spelling this repo uses most) in an `ArenaAllocator`. Wrapping turns
+# Zig's leak detector OFF for that test, so each file needs a reason.
+#
+# Format — TAB-separated, three columns:
+#
+#     <path>	<count>	<one-line justification>
+#
+# The gate (scripts/check-allocator-contracts.sh) fails when a file's count goes
+# UP or when a file that is not listed here has any site at all. It never fails
+# on a count going DOWN — deleting one of these is always an improvement; run
+# `scripts/check-allocator-contracts.sh --update` to record the new number.
+#
+# HOW TO ADD A ROW: state WHY the code under test cannot be exercised with the
+# raw testing allocator — i.e. why it is genuinely NO_SLOP contract 4
+# (arena-scoped: an interlinked graph the caller reclaims by dropping the
+# arena). "It was already written that way" and "adding defers is tedious" are
+# NOT justifications, and neither is "the test passes".
+#
+# The counts below are the whole inventory — sum them for the total rather than
+# quoting a number that rots. `--list` prints the live one.
+#
+# STATUS. Every remaining row has been audited against the three-part contract-4
+# bar and every one of them calls an API that takes `RenderArena`
+# (src/islands/render_arena.zig) — with ONE mechanical exception, noted on its
+# row: src/cli/migrate_detect.zig is its own test-module root, and Zig 0.16
+# forbids an import escaping a module's directory, so it cannot reach the type
+# without a build.zig change. There are no GRANDFATHERED rows left; do not add
+# one. `RenderArena.forTest(std.testing.allocator)` is how a test satisfies an
+# arena-scoped signature while KEEPING leak detection — reach for it first, and
+# only fall back to a row here when the code under test genuinely cannot run on
+# a GPA (a *Leaky parse graph with no `deinit`).
+#
+# A row is NOT the only way off this list, and swapping the arena for another
+# non-detecting allocator (a stack FixedBufferAllocator, say) is not a fix: it
+# hides the site from the scanner without restoring any detection. Either the
+# code under test becomes contract 1/2/3, or it keeps its row.
+#
+src/cli/dev.zig	3	JUSTIFIED contract 4: islands_manifest.parse takes a RenderArena — its parseFromSliceLeaky Json has no deinit. The code under test (islandPagesFromManifest) still takes the raw testing allocator, so it stays leak-checked.
+src/cli/migrate_detect.zig	3	JUSTIFIED contract 4: analyze() returns a PortReport whose four slices borrow strings from unfreed extractImports scratch. The one contract-4 site with no RenderArena in its signature: this file is the root of the test-migrate module, so Zig 0.16 forbids it importing src/islands/render_arena.zig (needs a build.zig module import).
+src/islands/manifest.zig	4	JUSTIFIED contract 4: parse()/assemble() take a RenderArena — parseFromSliceLeaky Json and the assembled map-of-maps have no deinit. render() is contract 1 and is called with the raw testing allocator inside these tests, so it IS leak-checked.
+src/islands/pass.zig	33	JUSTIFIED contract 4: every row is a process()/rewrite() test. Those take a RenderArena and reach props.resolveToJson, which leak-parses via ziggy (ziggy exposes parseLeaky ONLY — no deinit exists), so the graph cannot be freed by the testing allocator. The contract-1 helpers in this file (importMapFor/preloadLinks/…) are tested on the raw testing allocator.
+src/islands/props.zig	10	JUSTIFIED contract 4: resolveToJson() takes a RenderArena because ziggy.parseLeaky is the only dynamic-value parse ziggy has, so the value tree it walks has no deinit and a GPA run would report it as leaked.
+src/islands/props_check.zig	3	JUSTIFIED contract 4: 2 rows are generateProgram() (a Program of two allocations plus five live scratch containers, no deinit) and 1 is parseDiagnostics() (duped code/message per diag, no deinit); both take a RenderArena. generateTsconfig/formatDiagnostic are contract 1 and now run leak-checked.
+src/islands/render_arena.zig	1	JUSTIFIED: the arena IS the subject — this row is RenderArena.from's own test, which must build from a real std.heap.ArenaAllocator to test the production constructor. Nothing is masked: the sibling test uses RenderArena.forTest(std.testing.allocator) and asserts the allocation is freed.
+src/islands/sidecar.zig	8	JUSTIFIED contract 4: 6 rows are Sidecar.render() tests (its result is a SLICE INTO the arena-owned, leak-parsed NDJSON response line, not an allocation), and 2 leak-parse a describe payload in the test body itself. Both now say so by type (RenderArena).
+src/spa.zig	5	JUSTIFIED contract 4: 4 rows are planRoute() tests (a PlannedRoute is 4-5 interlinked strings with no deinit; it takes a RenderArena) and 1 leak-parses a describe payload in the test body. The former 30 dropped to 5 because renderShell/renderManifest/renderHeadLinks/renderFlagsSnapshot/escapeHtml/substituteParams/joinUrl/patternDir/diskJoin/deleteStaleSlicedRuntime/chooseFallback/claimStaticUrl are contract 1 and now run on the raw testing allocator.

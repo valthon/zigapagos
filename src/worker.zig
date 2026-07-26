@@ -26,6 +26,8 @@ const main = @import("main.zig");
 const gpa = main.gpa;
 const wuffs = @import("wuffs.zig");
 const Channel = @import("channel.zig").Channel;
+const islands = @import("islands/pass.zig");
+const RenderArena = @import("islands/render_arena.zig").RenderArena;
 
 const log = std.log.scoped(.worker);
 
@@ -37,7 +39,6 @@ var threads: []std.Thread = &.{};
 
 pub var started = false;
 pub threadlocal var cmark: supermd.Ast.CmarkParser = undefined;
-pub const extensions: [*]supermd.c.cmark_llist = undefined;
 
 pub const Job = union(enum) {
     template_parse: struct {
@@ -122,7 +123,7 @@ pub fn start(io: Io) void {
 
 pub fn stopWaitAndDeinit(io: Io) void {
     if (builtin.mode != .Debug) return;
-    if (builtin.single_threaded) addJob(.leave);
+    if (builtin.single_threaded) addJob(io, .leave);
 
     for (threads) |_| addJob(io, .leave);
     for (threads) |t| t.join();
@@ -130,10 +131,13 @@ pub fn stopWaitAndDeinit(io: Io) void {
 }
 
 var single_threaded_arena_state = std.heap.ArenaAllocator.init(gpa);
-const single_threaded_arena = single_threaded_arena_state.allocator();
+// The per-job arena, typed (NO_SLOP.md §2.2a): a render job's arena-scoped
+// callees (`islands.process`) take a `RenderArena`, and this is the boundary that
+// owns and resets it.
+const single_threaded_arena = RenderArena.from(&single_threaded_arena_state);
 pub fn addJob(io: Io, job: Job) void {
     if (builtin.single_threaded) {
-        const continue_ = runOneJob(single_threaded_arena, job);
+        const continue_ = runOneJob(io, single_threaded_arena, job);
         _ = single_threaded_arena_state.reset(.retain_capacity);
 
         if (builtin.mode == .Debug and !continue_) {
@@ -158,7 +162,7 @@ fn workerFn(
 ) void {
     cmark = _cmark;
     var arena_state = std.heap.ArenaAllocator.init(gpa);
-    const arena = arena_state.allocator();
+    const arena = RenderArena.from(&arena_state);
     while (runOneJob(io, arena, ch.get(io) catch return)) {
         _ = arena_state.reset(.retain_capacity);
         wg.finish();
@@ -167,7 +171,7 @@ fn workerFn(
 
 inline fn runOneJob(
     io: Io,
-    arena: Allocator,
+    arena: RenderArena,
     job: Job,
 ) bool {
     switch (job) {
@@ -178,14 +182,14 @@ inline fn runOneJob(
         .template_parse => |tp| tp.template.parse(
             io,
             gpa,
-            arena,
+            arena.a,
             tp.build,
             tp.pn,
         ),
         .scan => |s| s.variant.scanContentDir(
             io,
             gpa,
-            arena,
+            arena.a,
             s.base_dir,
             s.content_dir_path,
             s.variant_id,
@@ -218,7 +222,7 @@ inline fn runOneJob(
         ),
         .page_analyze => |pa| analyzePage(
             io,
-            arena,
+            arena.a,
             pa.progress,
             pa.build,
             pa.variant_id,
@@ -291,21 +295,13 @@ fn analyzeFrontmatter(page_arena: Allocator, p: *Page) error{OutOfMemory}!void {
     const errors = &p._analysis.frontmatter;
 
     for (p.aliases, 0..) |a, aidx| {
-        const is_ascii = for (a) |c| {
-            if (!std.ascii.isAscii(c)) break false;
-        } else true;
-
-        if (a.len == 0 or !is_ascii) try errors.append(page_arena, .{
+        if (!validOutputPath(a)) try errors.append(page_arena, .{
             .alias = @intCast(aidx),
         });
     }
 
     for (p.alternatives, 0..) |alt, aidx| {
-        const is_ascii = for (alt.output) |c| {
-            if (!std.ascii.isAscii(c)) break false;
-        } else true;
-
-        if (alt.output.len == 0 or !is_ascii) try errors.append(page_arena, .{
+        if (!validOutputPath(alt.output)) try errors.append(page_arena, .{
             .alternative = .{
                 .id = @intCast(aidx),
                 .kind = .path,
@@ -319,6 +315,26 @@ fn analyzeFrontmatter(page_arena: Allocator, p: *Page) error{OutOfMemory}!void {
             },
         });
     }
+}
+
+/// A page-output path (an `aliases` entry or an alternative's `output`) comes
+/// straight from user frontmatter and is later interned by the URL-collision
+/// pass, whose structural asserts require: non-empty, ASCII-only, no backslash,
+/// a file extension, and no `.` in any directory component. Validate all of
+/// that here so a malformed value becomes a frontmatter diagnostic instead of
+/// reaching (and, in ReleaseFast where asserts compile out, silently violating)
+/// those invariants. See AUD-002.
+pub fn validOutputPath(path: []const u8) bool {
+    if (path.len == 0) return false;
+    for (path) |c| if (!std.ascii.isAscii(c)) return false;
+    if (std.mem.indexOfScalar(u8, path, '\\') != null) return false;
+    if (std.fs.path.extension(path).len == 0) return false;
+    if (std.mem.indexOfScalar(
+        u8,
+        std.fs.path.dirnamePosix(path) orelse "",
+        '.',
+    ) != null) return false;
+    return true;
 }
 
 fn analyzeContent(
@@ -684,8 +700,17 @@ fn analyzeContent(
                         }
 
                         const other_page = if (p.locale) |loc| {
-                            _ = loc;
-                            @panic("TODO");
+                            // Locale-qualified page links (a second locale-code
+                            // argument to $link.page/sub/sibling/site) are not
+                            // resolved yet; report a clean link-resolution error
+                            // instead of aborting the build. See AUD-011.
+                            try errors.append(page_arena, .{
+                                .node = n,
+                                .kind = .{
+                                    .locale_link_unsupported = .{ .locale = loc },
+                                },
+                            });
+                            continue :outer;
                         } else variant.pages.items[hint.id];
 
                         p.resolved = .{
@@ -751,7 +776,7 @@ fn analyzeContent(
                                     .kind = .{
                                         .missing_asset = .{
                                             .ref = pa.ref,
-                                            .kind = .site,
+                                            .kind = .page,
                                         },
                                     },
                                 });
@@ -879,8 +904,10 @@ fn analyzeContent(
                             );
                         }
 
-                        _ = asset.rc.fetchAdd(1, .acq_rel);
-
+                        // Bump rc only after confirming an install path exists:
+                        // a no-install asset must not be marked for install
+                        // (installBuildAssets would otherwise unwrap a null
+                        // install_path). The missing-path case is a page error.
                         const output_path = asset.install_path orelse {
                             try errors.append(page_arena, .{
                                 .node = n,
@@ -893,6 +920,7 @@ fn analyzeContent(
                             continue :outer;
                         };
 
+                        _ = asset.rc.fetchAdd(1, .acq_rel);
                         ba.ref = output_path;
                     },
                 }
@@ -905,7 +933,10 @@ pub const RenderJobKind = union(enum) { main, alternative: u32 };
 const SuperVM = superhtml.VM(context.Value);
 fn renderPage(
     io: Io,
-    arena: Allocator,
+    /// NO_SLOP.md §2.2a contract 4: the per-job arena, reset after every job.
+    /// `islands.process` requires it by type; the plain contract-1 helpers here
+    /// reach it through `arena.a`.
+    arena: RenderArena,
     progress: std.Progress.Node,
     build: *Build,
     sites: *const std.StringArrayHashMapUnmanaged(context.Site),
@@ -938,7 +969,7 @@ fn renderPage(
         .main => page_path,
         .alternative => |idx| blk: {
             const alt_name = page.alternatives[idx].name;
-            break :blk try std.fmt.allocPrint(arena, "{s} (alternative '{s}')", .{
+            break :blk try std.fmt.allocPrint(arena.a, "{s} (alternative '{s}')", .{
                 page_path,
                 alt_name,
             });
@@ -981,11 +1012,16 @@ fn renderPage(
     assert(layout.layout);
 
     var out_aw: Writer.Allocating = .init(gpa);
+    // Uniform gpa-ownership (AUD-004): free the render scratch buffers on every
+    // exit path in BOTH modes. In .memory mode the surviving output is a
+    // standalone gpa dup stored into `page._render` below, so these buffers are
+    // always redundant by function end and previously leaked per rebuild.
+    defer out_aw.deinit();
     var err_aw: Writer.Allocating = .init(gpa);
-    defer if (build.mode == .disk) err_aw.deinit();
+    defer err_aw.deinit();
 
     var super_vm = SuperVM.init(
-        arena,
+        arena.a,
         &ctx,
         layout_path,
         build.cfg.getLayoutsDirPath(),
@@ -1004,9 +1040,12 @@ fn renderPage(
             std.debug.print("{s}\n", .{err_aw.written()});
             build.any_rendering_error.store(true, .release);
             if (build.mode == .memory) {
+                // Dupe into a standalone gpa allocation owned by the page: the
+                // err_aw buffer is freed by the defer above. See AUD-004.
+                const errs = gpa.dupe(u8, err_aw.written()) catch fatal.oom();
                 switch (kind) {
-                    .main => page._render.errors = err_aw.written(),
-                    .alternative => |aidx| page._render.alternatives[aidx].errors = err_aw.written(),
+                    .main => page._render.errors = errs,
+                    .alternative => |aidx| page._render.alternatives[aidx].errors = errs,
                 }
             }
             return;
@@ -1018,7 +1057,7 @@ fn renderPage(
         error.WantTemplate => {
             const template_subpath = super_vm.wantedTemplateName();
             const template_path = try root.join(
-                arena,
+                arena.a,
                 &.{
                     "templates",
                     template_subpath,
@@ -1033,7 +1072,7 @@ fn renderPage(
             super_vm.insertTemplate(
                 // full template path
                 try root.join(
-                    arena,
+                    arena.a,
                     &.{
                         build.cfg.getLayoutsDirPath(),
                         template_path,
@@ -1048,25 +1087,230 @@ fn renderPage(
         },
     };
 
+    // Run the island SSR pass over the rendered HTML.
+    // `result.html` is gpa-owned (same allocator as out_aw, so valid as long as
+    // gpa lives — i.e. forever in .memory mode). On error we fall back to the raw
+    // bytes (a slice into out_aw's buffer) and log the failure.
+    // Skip the pass entirely when no sidecar is configured (build.island_sidecar == null);
+    // that means islands aren't in use for this build, so raw HTML is correct.
+    var rendered_html_is_gpa_owned = false;
+    const rendered_html: []const u8 = blk: {
+        const raw = out_aw.written();
+        // Fast path: a page with no `<island` tag has nothing to rewrite and no
+        // runtime script to inject (`process` only injects when instances are
+        // present). Skip the whole-page alloc+memcpy `rewrite` would otherwise do
+        // (AUD-027). A false positive (e.g. the literal text "<island" in content,
+        // or `<islandish>`) just falls through to the full pass, which is a no-op
+        // rewrite — correct.
+        //
+        // This scan runs BEFORE the sidecar-null check on purpose. The reverse
+        // order silently shipped the literal `<island …></island>` element with no
+        // SSR, no runtime script and exit code 0 whenever the sidecar was
+        // unconfigured — and "unconfigured" includes the ordinary authoring
+        // mistake of adding an `<island>` to a layout without declaring it in
+        // build.zig's `.islands` (root.zig's spawn guard needs all three of
+        // bun_path/island_sidecar/island_src_dir, and quietly does nothing if any
+        // is null). A page that asks for an island and gets an inert tag is a
+        // build error, not a pass-through. Cost of the reordering: one memchr per
+        // page on sites that use no islands at all, which is noise next to
+        // rendering the page.
+        if (std.mem.indexOf(u8, raw, "<island") == null) break :blk raw;
+        // build is *Build (non-const), so |*s| yields a *Sidecar into the real field
+        // (not a copy). If renderPage's `build` ever becomes *const, this capture fails.
+        const sc: *@import("islands/sidecar.zig").Sidecar = if (build.island_sidecar) |*s| s else {
+            // Mirrors the render-error policy below: a disk build is a
+            // release/deploy, so fail rather than publish a page whose island
+            // never hydrates; dev serve keeps going so the author can see the
+            // page, with the cause logged at .err (the CLI's level).
+            log.err(
+                "island rendering error on {s}: the page uses <island> but no island sidecar is configured" ++
+                    " — declare the island in build.zig's `.islands` (needs bun, the sidecar script," ++
+                    " and the island source dir)",
+                .{page_path},
+            );
+            if (build.mode == .disk) build.any_rendering_error.store(true, .release);
+            break :blk raw;
+        };
+        // The page's URL path (leading slash; trailing slash; "" → "/"), passed to
+        // the island SSR pass so `z.host.pathname()` matches the client's
+        // window.location. Mirrors the canonical-URL formatting used for output dirs.
+        const island_pathname = switch (build.cfg.*) {
+            .Site => try std.fmt.allocPrint(arena.a, "/{f}", .{
+                page._scan.url.fmt(&variant.string_table, &variant.path_table, null, true),
+            }),
+            .Multilingual => try std.fmt.allocPrint(arena.a, "/{f}", .{
+                page._scan.url.fmt(&variant.string_table, &variant.path_table, variant.output_path_prefix, true),
+            }),
+        };
+        // Prefix emitted island asset URLs (runtime + island module scripts) with
+        // the site's `url_path_prefix` (e.g. "zigapagos" for a GitHub Pages
+        // project site served under `/zigapagos/`). Only single-site configs
+        // carry this field today; multilingual sites don't (yet) support it.
+        const url_prefix: []const u8 = switch (build.cfg.*) {
+            .Site => |s| s.url_path_prefix,
+            .Multilingual => "",
+        };
+        // Render-error policy: a disk build is a release/deploy —
+        // fail so broken output never ships (`process` returns the error, caught
+        // below → any_rendering_error). A memory build is dev serve — keep going
+        // with a visible per-island placeholder, so one broken island doesn't
+        // blank the whole page. Either way `islands.process` records each failing
+        // island's structured detail (src, route, JS message, source-mapped
+        // stack) into `render_errors`, which we log here with page context —
+        // instead of the message + stack being swallowed at the Zig↔Bun boundary.
+        const on_render_error: islands.OnRenderError =
+            switch (build.mode) {
+                .disk => .fail,
+                .memory => .placeholder,
+            };
+        var render_errors: std.ArrayListUnmanaged(islands.RenderErrorReport) = .empty;
+        // Reports are logged synchronously below; the list backing (gpa) is freed
+        // here — the string fields it points at are arena-owned (per-page arena).
+        defer render_errors.deinit(gpa);
+        const result = islands.process(gpa, arena, raw, island_pathname, sc, .{
+            .url_prefix = url_prefix,
+            .on_render_error = on_render_error,
+            .render_errors = &render_errors,
+        }) catch |err| {
+            // Release/deploy: surface the real cause, attributed to the page, and
+            // fail the build. `render_errors` holds the failing island's detail
+            // (the render that aborted the pass); fall back to the bare name only
+            // if the failure was something other than a render (e.g. malformed
+            // markup) that left no report.
+            if (render_errors.items.len == 0) {
+                log.err("island rendering error on {s}: {s}", .{ page_path, @errorName(err) });
+            } else for (render_errors.items) |re| {
+                log.err(
+                    "island SSR failed on {s}: {s} (route {s}): {s}\n{s}",
+                    .{ page_path, re.src, re.route, re.message, re.stack orelse "(no stack)" },
+                );
+            }
+            build.any_rendering_error.store(true, .release);
+            break :blk raw;
+        };
+        // Dev serve (placeholder policy): the page rendered with visible
+        // placeholders in place of the broken islands — warn (loudly, since the
+        // CLI runs at .err level) so the author sees the message + stack too,
+        // without failing the build.
+        for (render_errors.items) |re| {
+            log.err(
+                "island SSR failed on {s}: {s} (route {s}) — rendered a dev placeholder: {s}\n{s}",
+                .{ page_path, re.src, re.route, re.message, re.stack orelse "(no stack)" },
+            );
+        }
+        if (build.island_props_check_mode != .off) {
+            build.island_props_checks_mutex.lockUncancelable(io);
+            defer build.island_props_checks_mutex.unlock(io);
+            for (result.instances) |inst| {
+                const duped_src = gpa.dupe(u8, inst.src) catch {
+                    log.err("props-check collect OOM on {s}", .{page_path});
+                    build.any_rendering_error.store(true, .release);
+                    continue;
+                };
+                const duped_props = gpa.dupe(u8, inst.props_json) catch {
+                    gpa.free(duped_src);
+                    log.err("props-check collect OOM on {s}", .{page_path});
+                    build.any_rendering_error.store(true, .release);
+                    continue;
+                };
+                const duped_url = gpa.dupe(u8, island_pathname) catch {
+                    gpa.free(duped_src);
+                    gpa.free(duped_props);
+                    log.err("props-check collect OOM on {s}", .{page_path});
+                    build.any_rendering_error.store(true, .release);
+                    continue;
+                };
+                const duped_id = gpa.dupe(u8, inst.id) catch {
+                    gpa.free(duped_src);
+                    gpa.free(duped_props);
+                    gpa.free(duped_url);
+                    log.err("props-check collect OOM on {s}", .{page_path});
+                    build.any_rendering_error.store(true, .release);
+                    continue;
+                };
+                build.island_props_checks.append(gpa, .{
+                    .src = duped_src,
+                    .props_json = duped_props,
+                    .page_url = duped_url,
+                    .island_id = duped_id,
+                }) catch {
+                    gpa.free(duped_src);
+                    gpa.free(duped_props);
+                    gpa.free(duped_url);
+                    gpa.free(duped_id);
+                    log.err("props-check collect OOM on {s}", .{page_path});
+                    build.any_rendering_error.store(true, .release);
+                };
+            }
+        }
+        // Dev island-usage manifest: record which islands this
+        // page mounts so `zigapagos dev` can map an island-source edit to
+        // exactly the pages that need re-SSR. Gated on the dev loop having
+        // asked for a manifest (release builds collect nothing). Duplicate
+        // pairs from `.alternative` render jobs are deduped at assemble time.
+        if (build.island_manifest_path != null and result.instances.len > 0) {
+            // '/'-separated, content-dir-prefixed source path — the exact
+            // string the incremental changed-files set matches on (see
+            // root.zig's render loop).
+            var src_buf: [std.fs.max_path_bytes]u8 = undefined;
+            const page_src_path = std.fmt.bufPrint(&src_buf, "{f}", .{
+                page._scan.file.fmt(
+                    &variant.string_table,
+                    &variant.path_table,
+                    variant.content_dir_path,
+                    "/",
+                ),
+            }) catch unreachable;
+            build.island_page_usage_mutex.lockUncancelable(io);
+            defer build.island_page_usage_mutex.unlock(io);
+            for (result.instances) |inst| {
+                const duped_src = try gpa.dupe(u8, inst.src);
+                errdefer gpa.free(duped_src);
+                const duped_page = try gpa.dupe(u8, page_src_path);
+                errdefer gpa.free(duped_page);
+                try build.island_page_usage.append(gpa, .{
+                    .island_src = duped_src,
+                    .page_path = duped_page,
+                });
+            }
+        }
+        rendered_html_is_gpa_owned = true;
+        break :blk result.html;
+    };
+
     switch (build.mode) {
         .memory => switch (kind) {
+            // Store a standalone gpa-owned copy of the output (AUD-004). When the
+            // island pass produced a fresh gpa allocation we take it directly;
+            // otherwise `rendered_html` is a slice into `out_aw` (freed by the
+            // defer above), so it must be duped. Either way `page._render.out`
+            // ends up gpa-owned and is freed exactly once in `Page.deinit`.
             .main => {
-                page._render.out = out_aw.written();
+                page._render.out = if (rendered_html_is_gpa_owned)
+                    rendered_html
+                else
+                    gpa.dupe(u8, rendered_html) catch fatal.oom();
                 page._render.errors = "";
             },
             .alternative => |aidx| {
-                page._render.alternatives[aidx].out = out_aw.written();
+                page._render.alternatives[aidx].out = if (rendered_html_is_gpa_owned)
+                    rendered_html
+                else
+                    gpa.dupe(u8, rendered_html) catch fatal.oom();
                 page._render.alternatives[aidx].errors = "";
             },
         },
         .disk => |disk| {
-            defer out_aw.deinit();
+            // Free the gpa-owned island-pass output once we're done writing.
+            // (When the pass fell back to raw, rendered_html points into out_aw's
+            // buffer which deinit() above will free — no extra free needed.)
+            defer if (rendered_html_is_gpa_owned) gpa.free(rendered_html);
             const out_raw = switch (kind) {
                 .main => blk: {
                     // aliases
                     for (page.aliases) |a| {
                         const out_path = if (a[0] == '/') a[1..] else switch (build.cfg.*) {
-                            .Site => try std.fmt.allocPrint(arena, "{f}{s}", .{
+                            .Site => try std.fmt.allocPrint(arena.a, "{f}{s}", .{
                                 page._scan.url.fmt(
                                     &variant.string_table,
                                     &variant.path_table,
@@ -1075,7 +1319,7 @@ fn renderPage(
                                 ),
                                 a,
                             }),
-                            .Multilingual => try std.fmt.allocPrint(arena, "{f}{s}", .{
+                            .Multilingual => try std.fmt.allocPrint(arena.a, "{f}{s}", .{
                                 page._scan.url.fmt(
                                     &variant.string_table,
                                     &variant.path_table,
@@ -1100,7 +1344,7 @@ fn renderPage(
                         ) catch |err| fatal.file(out_path, err);
                         defer f.close(io);
                         var file_writer = f.writerStreaming(io, &.{});
-                        file_writer.interface.writeAll(out_aw.written()) catch |err| fatal.file(
+                        file_writer.interface.writeAll(rendered_html) catch |err| fatal.file(
                             out_path,
                             err,
                         );
@@ -1109,7 +1353,7 @@ fn renderPage(
                     // main
                     {
                         const out_dir_path = switch (build.cfg.*) {
-                            .Site => try std.fmt.allocPrint(arena, "{f}", .{
+                            .Site => try std.fmt.allocPrint(arena.a, "{f}", .{
                                 page._scan.url.fmt(
                                     &variant.string_table,
                                     &variant.path_table,
@@ -1117,7 +1361,7 @@ fn renderPage(
                                     true,
                                 ),
                             }),
-                            .Multilingual => try std.fmt.allocPrint(arena, "{f}", .{
+                            .Multilingual => try std.fmt.allocPrint(arena.a, "{f}", .{
                                 page._scan.url.fmt(
                                     &variant.string_table,
                                     &variant.path_table,
@@ -1146,7 +1390,7 @@ fn renderPage(
                 .alternative => |idx| blk: {
                     const raw_path = page.alternatives[idx].output;
                     const out_path = if (raw_path[0] == '/') raw_path[1..] else switch (build.cfg.*) {
-                        .Site => try std.fmt.allocPrint(arena, "{f}{s}", .{
+                        .Site => try std.fmt.allocPrint(arena.a, "{f}{s}", .{
                             page._scan.url.fmt(
                                 &variant.string_table,
                                 &variant.path_table,
@@ -1155,7 +1399,7 @@ fn renderPage(
                             ),
                             raw_path,
                         }),
-                        .Multilingual => try std.fmt.allocPrint(arena, "{f}{s}", .{
+                        .Multilingual => try std.fmt.allocPrint(arena.a, "{f}{s}", .{
                             page._scan.url.fmt(
                                 &variant.string_table,
                                 &variant.path_table,
@@ -1183,7 +1427,7 @@ fn renderPage(
             defer out_raw.close(io);
 
             var file_writer = out_raw.writer(io, &.{});
-            file_writer.interface.writeAll(out_aw.written()) catch |err| fatal.file(
+            file_writer.interface.writeAll(rendered_html) catch |err| fatal.file(
                 page_path,
                 err,
             );

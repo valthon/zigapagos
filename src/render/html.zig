@@ -327,6 +327,7 @@ pub fn html(
                                 w,
                             ) catch |err| switch (err) {
                                 error.OutOfMemory => return error.OutOfMemory,
+                                error.WriteFailed => return error.WriteFailed,
                                 // Already validated in analyzePage
                                 else => unreachable,
                             };
@@ -575,6 +576,7 @@ fn renderDirective(
                             w,
                         ) catch |err| switch (err) {
                             error.OutOfMemory => return error.OutOfMemory,
+                            error.WriteFailed => return error.WriteFailed,
                             // We assert success because the language code was
                             // validated during the page analysis phase.
                             else => unreachable,
@@ -652,7 +654,7 @@ fn printUrl(
                         true,
                     )});
                 }
-                try w.writeAll(a);
+                try w.writeAll(std.mem.trimStart(u8, a, "/"));
             } else {
                 try w.print("{f}", .{path.fmt(
                     &v.string_table,
@@ -808,10 +810,16 @@ fn tocRenderHeading(heading: supermd.Node, w: *Writer, link: bool) !void {
     while (it.next()) |ev| {
         const node = ev.node;
         switch (node.nodeType()) {
-            else => std.debug.panic(
-                "TODO: implement toc '{s}' inline rendering",
-                .{@tagName(node.nodeType())},
-            ),
+            // Any inline node not explicitly handled below (inline HTML,
+            // images, etc.) is rendered as its literal text so a heading with
+            // such a node produces a plain-text toc entry instead of aborting
+            // the whole build. See AUD-006.
+            else => switch (ev.dir) {
+                .enter => if (node.literal()) |lit| try w.print("{f}", .{
+                    HtmlSafe{ .bytes = lit },
+                }),
+                .exit => {},
+            },
             .HEADING => switch (ev.dir) {
                 .enter => {
                     const dir = node.getDirective() orelse continue;

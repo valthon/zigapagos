@@ -1,5 +1,5 @@
 ---
-.title = "First Post: What's A Zine?",
+.title = "First Post: Paper Trails",
 .date = @date("1990-01-01T00:00:00"),
 .author = "Sample Author",
 .layout = "post.shtml",
@@ -12,24 +12,24 @@ This post is defined in `content/blog/first-post/` and contains the following
 files:
 
 - `index.smd`
-- `fanzine.jpg`
+- `retro-cover.jpg`
 
 Another interesting thing about this post is that it uses the `layouts/post.shtml`
 template which adds at the bottom page navigation within the blog section.
 
-Enough about Zine, let's talk about zines.
+Enough about the file layout, let's talk about paper.
 
-## Fanzines
+## Pamphlets and photocopiers
 
-A zine (short for *fanzine*, from "fan" + "magazine") is a non-professional
-publication created by people that want to express themselves in paper form,
-usually in relation to a cultural phenomenon of some kind.
+A self-published, stapled-together pamphlet is a non-professional publication
+created by people that want to express themselves in paper form, usually in
+relation to a cultural phenomenon of some kind.
 
-[An example of zine from 1976.](<$image.asset("fanzine.jpg").alt("A photo of a black and white flyer. The main title reads 'A night of pure energy' and the rest of the page contains a mix of pictures of guitarists interleaved with other text snippets, some seemingly taken from a professional publication of some kind, and some handwritten to announce concert night dates, presumably for the musicians in the picture.")>)
+[An example of one such pamphlet from 1976.](<$image.asset("retro-cover.jpg").alt("A photo of a black and white flyer. The main title reads 'A night of pure energy' and the rest of the page contains a mix of pictures of guitarists interleaved with other text snippets, some seemingly taken from a professional publication of some kind, and some handwritten to announce concert night dates, presumably for the musicians in the picture.")>)
 
-## Zines in the digital era
+## Self-publishing in the digital era
 
-In the digital age, some of the cultural impetus behind zines got redirected to
+In the digital age, some of the cultural impetus behind these homemade pamphlets got redirected to
 personal blogs and similar digital, non-professional publications. The 90's and
 early 00's are famous for their whacky websites full of clip art, wordart text
 and "under construction" animated gifs.
@@ -65,7 +65,7 @@ Spend enough time in there and you will become a character from Severance.
 ## We're not in 1990 anymore
 
 Despite all the issues with social media, there is no point in thinking of the
-90's as a better time. It was not. And despite the winks at the past, Zine is
+90's as a better time. It was not. And despite the winks at the past, Zigapagos is
 not a tool for indulging in nostalgia.
 
 **The goal is to make art**: the act of inducing a change in others through
@@ -91,14 +91,14 @@ we've had plenty of social outlets that have allowed people to socialize through
 their homemade games, music, drawings, fanfics, etc; and chances are that we
 have yet many more of these outlets ahead of us to create.
 
-Zine gives you a small puzzle piece to help you inch closer toward a better
+Zigapagos gives you a small puzzle piece to help you inch closer toward a better
 future, partially by providing you with a new iteration over tried and true
 patterns (e.g. by facilitating content creation by separating content from
 layouting concerns as much as possible), and also by being a bit experimental
 with the concept of a devlog, something that you wouldn't normally expect to
 find on a static website.
 
-Lastly, Zine makes sure your content (both blog and devlog, but also any
+Lastly, Zigapagos makes sure your content (both blog and devlog, but also any
 other content format you might come up with yourself) is available via RSS
 syndication. RSS feeds are far from a winning technology in the fight against
 the ebb and *enshitty*flow of social media, but they are another small puzzle
@@ -107,4 +107,4 @@ enough other preconditions are met.
 
 With that in mind, **go make art with your words**.
 
--- Loris
+-- The Zigapagos maintainers

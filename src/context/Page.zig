@@ -42,8 +42,11 @@ pub const ziggy_options = struct {
 
 title: []const u8,
 description: []const u8 = "",
-author: []const u8,
-date: DateTime,
+// `author` and `date` are optional: marketing/landing pages often have neither.
+// Omitting them yields "" and the Unix epoch respectively. Override the schema in
+// `frontmatter.ziggy-schema` to make them required again — see the migration doc.
+author: []const u8 = "",
+date: DateTime = DateTime.epoch,
 layout: []const u8,
 draft: bool = false,
 tags: []const []const u8 = &.{},
@@ -108,15 +111,19 @@ _analysis: struct {
     page: std.ArrayList(PageAnalysisError) = .empty,
 } = .{},
 
-// Valid if analysis contains no errors and build mode == .memory
+// Valid if analysis contains no errors and build mode == .memory.
+// Defaults to a valid empty state so `deinit` can always run over it (pages
+// that were never rendered simply free empty slices). In .memory mode the
+// worker stores standalone gpa-owned copies of `out`/`errors` (and each
+// alternative's) here; `deinit` frees them. See AUD-004.
 _render: struct {
     out: []const u8 = "",
     errors: []const u8 = "",
     alternatives: []struct {
-        out: []const u8,
-        errors: []const u8,
-    },
-} = undefined,
+        out: []const u8 = "",
+        errors: []const u8 = "",
+    } = &.{},
+} = .{},
 
 pub const PageAnalysisError = struct {
     node: supermd.Node,
@@ -146,6 +153,9 @@ pub const PageAnalysisError = struct {
         unknown_ref: struct {
             ref: []const u8,
         },
+        locale_link_unsupported: struct {
+            locale: []const u8,
+        },
     },
 
     pub fn title(err: PageAnalysisError) []const u8 {
@@ -157,6 +167,7 @@ pub const PageAnalysisError = struct {
             .unknown_language => "unknown language code",
             .unknown_alternative => "unknown alternative",
             .unknown_ref => "unknown ref",
+            .locale_link_unsupported => "locale-qualified page links are not supported yet",
             .missing_asset => |ma| switch (ma.kind) {
                 .site => "missing site asset",
                 .page => "missing page asset",
@@ -189,10 +200,6 @@ pub const FrontmatterAnalysisError = union(enum) {
                 .layout => "invalid layout in alternatives",
             },
         };
-    }
-
-    pub fn noteFmt(err: @This(), p: *const Page) Formatter {
-        return .{ .err = err, .p = p };
     }
 
     pub fn location(
@@ -262,54 +269,21 @@ pub const FrontmatterAnalysisError = union(enum) {
         // programming error.
         unreachable;
     }
-
-    const ErrSelf = @This();
-    const Formatter = struct {
-        err: ErrSelf,
-        p: *const Page,
-
-        pub fn format(
-            f: Formatter,
-            comptime _: []const u8,
-            options: std.fmt.FormatOptions,
-            writer: *Writer,
-        ) !void {
-            _ = options;
-            switch (f.err) {
-                .layout => {
-                    try writer.print("'{s}' does not exist in the layouts directory path", .{
-                        f.p.layout,
-                    });
-                },
-                .alias => |idx| {
-                    try writer.print("'{s}' is an invalid output path", .{
-                        f.p.aliases[idx],
-                    });
-                },
-                .alternative => |aerr| {
-                    switch (aerr.kind) {
-                        .name => {
-                            try writer.print(
-                                "empty string is an invalid name (at index {})",
-                                .{aerr.id},
-                            );
-                        },
-                        .path => {
-                            const alt = f.p.alternatives[aerr.id];
-                            try writer.print(
-                                "alternative '{s}' has an invalid output path",
-                                .{alt.name},
-                            );
-                        },
-                    }
-                },
-            }
-        }
-    };
 };
 
 pub fn deinit(p: *const Page, gpa: Allocator) void {
     p._parse.arena.promote(gpa).deinit();
+
+    // Free the rendered output stored in .memory mode (AUD-004). Every slice is
+    // either a standalone gpa allocation or the empty default; `Allocator.free`
+    // is a no-op on zero-length slices, so unrendered pages cost nothing.
+    for (p._render.alternatives) |alt| {
+        gpa.free(alt.out);
+        gpa.free(alt.errors);
+    }
+    gpa.free(p._render.alternatives);
+    gpa.free(p._render.out);
+    gpa.free(p._render.errors);
 }
 
 pub fn parse(
@@ -526,7 +500,7 @@ pub const Alternative = struct {
                     ),
                 }) catch return error.OutOfMemory;
 
-                w.writeAll(alt.output) catch return error.OutOfMemory;
+                w.writeAll(std.mem.trimStart(u8, alt.output, "/")) catch return error.OutOfMemory;
 
                 return String.init(buf.written());
             }
@@ -1003,7 +977,7 @@ pub const Builtins = struct {
                     .page = l,
                 });
 
-                return context.Array.init(gpa, Value, pages.items) catch unreachable;
+                return context.Array.init(gpa, Value, pages.items) catch fatal.oom();
             }
 
             const index_html: StringTable.String = @enumFromInt(11);
@@ -1044,7 +1018,7 @@ pub const Builtins = struct {
                 try pages.append(gpa, .{ .page = other_page });
             }
 
-            return context.Array.init(gpa, Value, pages.items) catch unreachable;
+            return context.Array.init(gpa, Value, pages.items) catch fatal.oom();
         }
     };
 
@@ -1438,7 +1412,7 @@ pub const Builtins = struct {
             \\to specify a fragment id to deep-link to a specific
             \\element of the content page.
             \\
-            \\The id will be checked by Zine and an error will be  
+            \\The id will be checked by Zigapagos and an error will be
             \\reported if it does not exist.
             \\
             \\See the SuperMD reference documentation to learn how to give

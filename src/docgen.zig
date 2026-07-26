@@ -1,7 +1,6 @@
 const std = @import("std");
 const Io = std.Io;
 const Writer = std.Io.Writer;
-const zine = @import("zine");
 const context = @import("context.zig");
 const Value = context.Value;
 const Template = context.Template;

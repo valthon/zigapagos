@@ -4,6 +4,7 @@ const std = @import("std");
 const ziggy = @import("ziggy");
 const scripty = @import("scripty");
 const context = @import("../context.zig");
+const fatal = @import("../fatal.zig");
 const DateTime = @import("DateTime.zig");
 const Signature = @import("doctypes.zig").Signature;
 const Allocator = std.mem.Allocator;
@@ -20,6 +21,38 @@ pub const docs_description =
     \\in Page frontmatters or Ziggy / JSON data loaded from assets.
 ;
 pub const Builtins = struct {
+    pub const toJson = struct {
+        pub const signature: Signature = .{
+            .ret = .String,
+        };
+        pub const docs_description =
+            \\Serializes the map to a JSON string.
+            \\
+            \\Use it to pass structured data into a typed island prop:
+            \\`prop-NAME="$page.custom.get('cfg').toJson()"` (or with
+            \\`$site.data(...)`). The island's `Props` field is then parsed from
+            \\that JSON, so a map/struct field receives the whole shape — the
+            \\dynamic-attribute analogue of an inline `:props='{ ... }'` literal.
+        ;
+        pub const examples =
+            \\<island src="C.zig" prop-cfg="$page.custom.get('cfg').toJson()"></island>
+        ;
+        pub fn call(
+            map: Map,
+            gpa: Allocator,
+            _: *const context.Root,
+            args: []const Value,
+        ) context.CallError!Value {
+            if (args.len != 0) return .{ .err = "expected 0 arguments" };
+            var aw: std.Io.Writer.Allocating = .init(gpa);
+            context.writeValueJson(gpa, &aw.writer, .{ .map = map }) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => return .{ .err = "map contains a value that cannot be serialized to JSON" },
+            };
+            return context.String.init(aw.written());
+        }
+    };
+
     pub const getOr = struct {
         pub const signature: Signature = .{
             .params = &.{ .String, .String },
@@ -181,7 +214,7 @@ pub const Builtins = struct {
             if (args.len != 0) return bad_arg;
 
             const kvs = try keyValueArray(gpa, map, null);
-            return context.Array.init(gpa, Value, kvs) catch unreachable;
+            return context.Array.init(gpa, Value, kvs) catch fatal.oom();
         }
     };
 
@@ -212,7 +245,7 @@ pub const Builtins = struct {
             };
 
             const kvs = try keyValueArray(gpa, map, filter);
-            return context.Array.init(gpa, Value, kvs) catch unreachable;
+            return context.Array.init(gpa, Value, kvs) catch fatal.oom();
         }
     };
 };

@@ -1,0 +1,8 @@
+---
+.title = "Feed Link",
+.date = @date("1990-01-01T00:00:00"),
+.author = "Sample Author",
+.layout = "index.shtml",
+.draft = false,
+---
+See the [feed]($link.page('feed-src').alternative('feed')) for updates.

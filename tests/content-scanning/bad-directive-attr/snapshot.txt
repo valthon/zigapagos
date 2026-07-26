@@ -1,0 +1,43 @@
+*-----------------------------------------------*
+|  WARNING: THIS IS A DEBUG BUILD OF ZIGAPAGOS  |
+|-----------------------------------------------|
+| Debug builds enable expensive sanity checks   |
+| that reduce performance.                      |
+|                                               |
+| To create a release build, run:               |
+|                                               |
+|           zig build --release=fast            |
+|                                               |
+| If you're investigating a bug in Zigapagos,   |
+| then a debug build might turn confusing       |
+| behavior into a crash.                        |
+|                                               |
+| To disable all forms of concurrency, you can  |
+| add the following flag to your build command: |
+|                                               |
+|              -Dsingle-threaded                |
+|                                               |
+*-----------------------------------------------*
+
+layouts/index.shtml:5:8: error: unknown ':' directive attribute ':src'
+    SuperHTML's only ':' directives are :if, :loop, :else, :text, :html
+    (plus :props on <island>). A dynamic attribute uses the BARE name
+    with a Scripty value: write src="$expr", not :src="$expr"
+    (the ':' form evaluates the value but keeps the ':src' name, so the
+    real 'src' attribute is never set).
+
+----------------------------
+       -- VARIANT --
+----------------------------
+.id = 0,
+.content_dir_path = content
+
+  ------- SECTION -------
+.index = 1,
+.section_path = content/,
+.pages = [
+],
+
+
+
+ ----- EXIT CODE: 1 -----

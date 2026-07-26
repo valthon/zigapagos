@@ -1,0 +1,8 @@
+<!DOCTYPE html>
+<html>
+<head><title :text="$page.title"></title></head>
+<body>
+  <p id="map" :text="$page.custom.get('cfg').toJson()"></p>
+  <p id="arr" :text="$page.custom.get('faq').toJson()"></p>
+</body>
+</html>

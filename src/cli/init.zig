@@ -8,16 +8,21 @@ const Allocator = std.mem.Allocator;
 const log = std.log.scoped(.init);
 
 pub fn init(io: Io, gpa: Allocator, args: []const []const u8) bool {
-    _ = gpa;
+    for (args) |a| if (std.mem.eql(u8, a, "--from-astro")) {
+        return @import("init_from_astro.zig").run(io, gpa, args);
+    };
 
     const cmd: Command = .parse(args);
-    if (cmd.multilingual) @panic("TODO: multilingual init");
+    if (cmd.multilingual) fatal.usageError(
+        "error: `init --multilingual` is not implemented yet\n",
+        .{},
+    );
 
     const File = struct { path: []const u8, src: []const u8 };
     const files = [_]File{
         .{
-            .path = "zine.ziggy",
-            .src = @embedFile("init/zine.ziggy"),
+            .path = "zigapagos.ziggy",
+            .src = @embedFile("init/zigapagos.ziggy"),
         },
         .{
             .path = "content/index.smd",
@@ -36,8 +41,8 @@ pub fn init(io: Io, gpa: Allocator, args: []const []const u8) bool {
             .src = @embedFile("init/content/blog/first-post/index.smd"),
         },
         .{
-            .path = "content/blog/first-post/fanzine.jpg",
-            .src = @embedFile("init/content/blog/first-post/fanzine.jpg"),
+            .path = "content/blog/first-post/retro-cover.jpg",
+            .src = @embedFile("init/content/blog/first-post/retro-cover.jpg"),
         },
         .{
             .path = "content/blog/second-post.smd",
@@ -154,11 +159,11 @@ pub fn init(io: Io, gpa: Allocator, args: []const []const u8) bool {
 
     std.debug.print(
         \\
-        \\Run `zine` to run the Zine development server.
-        \\Run `zine release` to build your website in 'public/'.
-        \\Run `zine help` for more commands and options.
+        \\Run `zigapagos` to run the Zigapagos development server.
+        \\Run `zigapagos release` to build your website in 'public/'.
+        \\Run `zigapagos help` for more commands and options.
         \\
-        \\Read https://zine-ssg.io/docs/ to learn more about Zine.
+        \\Read https://github.com/valthon/zigapagos/tree/main/docs to learn more about Zigapagos.
         \\
     , .{});
 
@@ -175,11 +180,12 @@ const Command = struct {
             }
 
             if (std.mem.eql(u8, a, "-h") or std.mem.eql(u8, a, "--help")) {
-                fatal.msg(
-                    \\Usage: zine init [OPTIONS]
+                fatal.usage(
+                    \\Usage: zigapagos init [OPTIONS]
                     \\
                     \\Command specific options:
                     \\  --multilingual   Setup a sample multilingual website
+                    \\                   (not implemented yet)
                     \\
                     \\General Options:
                     \\  --help, -h       Print command specific usage

@@ -1,0 +1,8 @@
+---
+.title = "Home",
+.layout = "page.shtml",
+---
+# Static assets glob test
+
+This site references no assets via link(); the `img/**` glob + the exact
+`favicon.ico` are installed, while `css/site.css` (not matched) is NOT.

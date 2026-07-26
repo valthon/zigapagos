@@ -1,0 +1,9 @@
+---
+.title = "TSX Site Demo",
+.date = @date("2024-01-01T00:00:00"),
+.author = "Zigapagos",
+.layout = "index.shtml",
+.draft = false,
+---
+
+A consumer site that proves TSX islands SSR via the Bun sidecar at build time.

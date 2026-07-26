@@ -1,0 +1,30 @@
+---
+.title = "Zigapagos — Astro's islands, a native core, no Node",
+.date = @date("2024-01-01T00:00:00"),
+.author = "Zigapagos",
+.layout = "index.shtml",
+.draft = false,
+---
+
+## Why Zigapagos
+
+- **Zero JS by default** — pages without islands ship no JavaScript at all.
+- **TSX you already know** — Preact-compatible hooks via `@z/runtime`, one
+  shared runtime across all islands, `client:load|idle|visible|media|only`.
+- **Native SPAs too** — one `.spa.tsx` becomes a client-routed app with
+  prerendered skeletons, guards, and nested layouts.
+- **Made to migrate** — `zigapagos migrate` converts an Astro project's
+  islands automatically; the docs are a deterministic mapping spec an AI
+  agent can follow unattended.
+- **A single fast binary + Bun** — no Node, no Vite, no webpack, no lock-in.
+
+## Get started
+
+    mise install        # zig 0.16 + bun 1.2
+    zig build
+    zig-out/bin/zigapagos init
+    zig-out/bin/zigapagos   # dev server with live reload
+
+Read the docs: [islands](https://github.com/valthon/zigapagos/blob/main/docs/islands.md) ·
+[SPAs](https://github.com/valthon/zigapagos/blob/main/docs/spa.md) ·
+[migrating from Astro](https://github.com/valthon/zigapagos/blob/main/docs/migration/astro-to-zigapagos.md)

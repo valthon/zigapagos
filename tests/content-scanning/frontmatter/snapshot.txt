@@ -1,5 +1,5 @@
 *-----------------------------------------------*
-|    WARNING: THIS IS A DEBUG BUILD OF ZINE     |
+|  WARNING: THIS IS A DEBUG BUILD OF ZIGAPAGOS  |
 |-----------------------------------------------|
 | Debug builds enable expensive sanity checks   |
 | that reduce performance.                      |
@@ -8,9 +8,9 @@
 |                                               |
 |           zig build --release=fast            |
 |                                               |
-| If you're investigating a bug in Zine, then a |
-| debug build might turn confusing behavior     |
-| into a crash.                                 |
+| If you're investigating a bug in Zigapagos,   |
+| then a debug build might turn confusing       |
+| behavior into a crash.                        |
 |                                               |
 | To disable all forms of concurrency, you can  |
 | add the following flag to your build command: |
@@ -37,11 +37,15 @@ content/validation-errors.smd:9:4: error: invalid value in 'aliases'
 |    "bad path 💩",
 |    ^^^^^^^^^^^^^^^
 
-content/validation-errors.smd:16:13: error: invalid name in alternatives
+content/validation-errors.smd:10:4: error: invalid value in 'aliases'
+|    "feed",
+|    ^^^^^^
+
+content/validation-errors.smd:17:13: error: invalid name in alternatives
 |    .name = "",
 |            ^^
 
-content/validation-errors.smd:21:15: error: invalid path in alternatives
+content/validation-errors.smd:22:15: error: invalid path in alternatives
 |    .output = "",
 |              ^^
 

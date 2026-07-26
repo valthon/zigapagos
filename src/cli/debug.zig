@@ -166,7 +166,7 @@ pub const Command = struct {
         while (idx < args.len) : (idx += 1) {
             const arg = args[idx];
             if (eql(u8, arg, "-h") or eql(u8, arg, "--help")) {
-                fatal.msg(help_message, .{});
+                fatal.usage(help_message, .{});
             } else if (startsWith(u8, arg, "--build-asset=")) {
                 const name = arg["--build-asset=".len..];
 
@@ -223,7 +223,7 @@ pub const Command = struct {
 };
 
 const help_message =
-    \\Usage: zine debug [OPTIONS]
+    \\Usage: zigapagos debug [OPTIONS]
     \\
     \\Command specific options:
     \\  --ids        Include ids when printing info. Snapshot unsafe!

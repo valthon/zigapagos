@@ -1,7 +1,7 @@
 const Template = @This();
 
 const std = @import("std");
-const assert = std.debug.asert;
+const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const Writer = std.Io.Writer;
@@ -28,6 +28,44 @@ pub fn deinit(t: *const Template, gpa: Allocator) void {
     gpa.free(t.src);
     t.html_ast.deinit(gpa);
     if (t.html_ast.errors.len == 0) t.ast.deinit(gpa);
+}
+
+/// An attribute whose name starts with `:` but is not a recognized directive —
+/// the silent footgun where `:src="$expr"` (instead of the bare `src="$expr"`)
+/// builds without error yet emits a literal `:src` attribute, so the real `src`
+/// is never set and the asset silently breaks.
+pub const BadDirectiveAttr = struct {
+    /// The offending attribute name, e.g. ":src".
+    name: []const u8,
+    /// Byte offset of the attribute name in `Template.src` (for line/col).
+    offset: usize,
+};
+
+fn isKnownDirective(name: []const u8) bool {
+    // SuperHTML's `:` directives plus the Zigapagos `<island :props=...>` one.
+    const known = [_][]const u8{ ":if", ":loop", ":else", ":text", ":html", ":props" };
+    for (known) |k| if (std.mem.eql(u8, name, k)) return true;
+    return false;
+}
+
+/// Scan the template for `:`-prefixed attributes that are not recognized
+/// directives and append each to `out`. Only meaningful on a well-formed tree
+/// (`html_ast.errors.len == 0`); the caller guards on that.
+pub fn lintDirectiveAttrs(
+    t: *const Template,
+    gpa: Allocator,
+    out: *std.ArrayListUnmanaged(BadDirectiveAttr),
+) Allocator.Error!void {
+    for (t.html_ast.nodes) |node| {
+        if (!node.kind.isElement()) continue;
+        var it = node.startTagIterator(t.src, t.html_ast.language);
+        while (it.next(t.src)) |attr| {
+            const name = attr.name.slice(t.src);
+            if (name.len < 2 or name[0] != ':') continue;
+            if (isKnownDirective(name)) continue;
+            try out.append(gpa, .{ .name = name, .offset = attr.name.start });
+        }
+    }
 }
 
 pub fn parse(

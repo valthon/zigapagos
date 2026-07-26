@@ -37,6 +37,9 @@
 # Correct page, wrong alternative
 []($link.page('other').alternative('doesntexist')) // wrong
 
+# Missing page asset (unresolvable path component)
+[]($image.asset('sub/typo.png')) //wrong
+
 # Markdown syntax
 ![](/bad.jpg) //wrong
 ![](./bad.jpg) //wrong

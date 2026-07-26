@@ -1,0 +1,38 @@
+{
+  "name": "@z/runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./core": "./src/core.ts",
+    "./host": "./src/host.ts",
+    "./flags": "./src/flags.ts",
+    "./compat": "./src/compat/index.ts",
+    "./compat/client": "./src/compat/client.ts",
+    "./islands": "./src/islands.ts",
+    "./jsx-runtime": "./src/jsx-runtime.ts",
+    "./jsx-dev-runtime": "./src/jsx-runtime.ts",
+    "./ssr-env": "./src/ssr-env.ts",
+    "./testing": "./src/testing/index.ts",
+    "./testing/preload": "./src/testing/preload.ts",
+    "./testing/parity": "./src/testing/parity/index.ts",
+    "./slots": "./src/slots.ts",
+    "./router": "./src/router.ts"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "deps:check": "bun run scripts/check-deps.ts"
+  },
+  "dependencies": {
+    "preact": "^10.27.2",
+    "preact-render-to-string": "^6.6.2"
+  },
+  "devDependencies": {
+    "@happy-dom/global-registrator": "^20.0.0",
+    "@types/bun": "^1.3.14",
+    "happy-dom": "^20.0.0",
+    "typescript": "^5.9.2"
+  }
+}

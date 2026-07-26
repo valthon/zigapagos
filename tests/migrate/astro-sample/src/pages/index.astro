@@ -1,0 +1,19 @@
+---
+import Base from "../layouts/Base.astro";
+import Counter from "../components/Counter.jsx";
+import ContactForm from "../components/ContactForm.tsx";
+import Footer from "../components/Footer.astro";
+
+const site = { name: "Acme", year: 2026 };
+---
+
+<Base title="Home">
+  <h1>Welcome</h1>
+
+  <!-- Two real islands: each used with a client:* directive. -->
+  <Counter client:visible start={0} label="Hits" />
+  <ContactForm client:load endpoint="/api/contact" />
+
+  <!-- Static component, NO client:* — this is a partial, not an island. -->
+  <Footer site={site} />
+</Base>

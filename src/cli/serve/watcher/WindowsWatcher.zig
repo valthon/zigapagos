@@ -77,6 +77,9 @@ pub fn init(
     }
 
     watcher.read_buffer = try gpa.alloc(u8, ReadBufferEntrySize * comp_key);
+    // Zero the buffer so a first-completion overflow (bytes_transferred == 0,
+    // handled in `listen`) never exposes uninitialized bytes to the parser.
+    @memset(watcher.read_buffer, 0);
 
     // Here we need pointers to both the read_buffer and entry overlapped structs,
     // which we can only do after setting up everything else.
@@ -144,10 +147,16 @@ pub fn start(watcher: *WindowsWatcher) !void {
 }
 
 pub fn listen(watcher: *WindowsWatcher) !void {
-    var dont_care: struct {
+    var completion: struct {
         bytes_transferred: windows.DWORD = undefined,
         overlap: ?*windows.OVERLAPPED = undefined,
     } = .{};
+
+    // The name is UTF-16; `FileNameLength` is in bytes (code units * 2). Worst-
+    // case UTF-8 expansion is 3 bytes per BMP code unit, and a single record's
+    // name cannot exceed one `ReadBufferEntrySize` buffer, so a destination of
+    // `ReadBufferEntrySize * 3` bounds every decode (never a fixed MAX_PATH).
+    var path_buf: [ReadBufferEntrySize * 3]u8 = undefined;
 
     var key: CompletionKey = undefined;
     while (true) {
@@ -155,9 +164,9 @@ pub fn listen(watcher: *WindowsWatcher) !void {
         // have been updated.
         const wait_result = windows.GetQueuedCompletionStatus(
             watcher.iocp_port,
-            &dont_care.bytes_transferred,
+            &completion.bytes_transferred,
             &key,
-            &dont_care.overlap,
+            &completion.overlap,
             windows.INFINITE,
         );
         if (wait_result != .Normal) {
@@ -167,30 +176,47 @@ pub fn listen(watcher: *WindowsWatcher) !void {
 
         const entry = watcher.entries.getPtr(key) orelse @panic("Invalid CompletionKey");
 
-        var info_iter = windows.FileInformationIterator(FILE_NOTIFY_INFORMATION){
-            .buf = watcher.read_buffer[entry.buf_idx..][0..ReadBufferEntrySize],
-        };
-        var path_buf: [windows.MAX_PATH]u8 = undefined;
-        while (info_iter.next()) |info| {
-            const filename: []const u8 = blk: {
-                const n = try std.unicode.utf16LeToUtf8(
-                    &path_buf,
-                    @as([*]u16, @ptrCast(&info.FileName))[0 .. info.FileNameLength / 2],
-                );
-                break :blk path_buf[0..n];
-            };
-
-            const args = .{ entry.dir_path, filename };
-            switch (info.Action) {
-                windows.FILE_ACTION_ADDED => log.debug("added  {s}/{s}", args),
-                windows.FILE_ACTION_REMOVED => log.debug("removed  {s}/{s}", args),
-                windows.FILE_ACTION_MODIFIED => log.debug("modified  {s}/{s}", args),
-                windows.FILE_ACTION_RENAMED_OLD_NAME => log.debug("renamed_old_name {s}/{s}", args),
-                windows.FILE_ACTION_RENAMED_NEW_NAME => log.debug("renamed_new_name  {s}/{s}", args),
-                else => log.debug("Unknown Action {s}/{s}", args),
-            }
-
+        // A `bytes_transferred` of 0 is a buffer-overflow completion
+        // (STATUS_NOTIFY_ENUM_DIR): the change burst exceeded the buffer and its
+        // contents are stale/uninitialized. Do not parse it — like the Linux
+        // IN_Q_OVERFLOW path, signal a full rebuild and re-queue.
+        if (completion.bytes_transferred == 0) {
             watcher.debouncer.newEvent();
+        } else {
+            var info_iter = windows.FileInformationIterator(FILE_NOTIFY_INFORMATION){
+                .buf = watcher.read_buffer[entry.buf_idx..][0..completion.bytes_transferred],
+            };
+            while (info_iter.next()) |info| {
+                const name_units = @as([*]u16, @ptrCast(&info.FileName))[0 .. info.FileNameLength / 2];
+                // A change occurred regardless of whether the name decodes, so
+                // decoding is best-effort (for the debug log only) and never
+                // aborts the watcher thread or overruns `path_buf`.
+                const filename: []const u8 = decode: {
+                    // Compare via division so an implausibly large FileNameLength
+                    // cannot overflow the `* 3` on a 32-bit usize.
+                    if (name_units.len > path_buf.len / 3) {
+                        log.err("change event filename too long ({d} UTF-16 code units); skipping name decode", .{name_units.len});
+                        break :decode "<name too long>";
+                    }
+                    const n = std.unicode.utf16LeToUtf8(&path_buf, name_units) catch |err| {
+                        log.err("invalid UTF-16 in change event filename: {s}", .{@errorName(err)});
+                        break :decode "<invalid name>";
+                    };
+                    break :decode path_buf[0..n];
+                };
+
+                const args = .{ entry.dir_path, filename };
+                switch (info.Action) {
+                    windows.FILE_ACTION_ADDED => log.debug("added  {s}/{s}", args),
+                    windows.FILE_ACTION_REMOVED => log.debug("removed  {s}/{s}", args),
+                    windows.FILE_ACTION_MODIFIED => log.debug("modified  {s}/{s}", args),
+                    windows.FILE_ACTION_RENAMED_OLD_NAME => log.debug("renamed_old_name {s}/{s}", args),
+                    windows.FILE_ACTION_RENAMED_NEW_NAME => log.debug("renamed_new_name  {s}/{s}", args),
+                    else => log.debug("Unknown Action {s}/{s}", args),
+                }
+
+                watcher.debouncer.newEvent();
+            }
         }
 
         // Re-queue the directory entry

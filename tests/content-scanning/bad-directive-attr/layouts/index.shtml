@@ -1,0 +1,7 @@
+<!DOCTYPE html>
+<html>
+<head><title :text="$page.title"></title></head>
+<body>
+  <img :src="$page.title">
+</body>
+</html>

@@ -34,6 +34,12 @@ pub fn initNow(io: Io) DateTime {
     return .{ ._inst = date };
 }
 
+/// The Unix epoch (1970-01-01T00:00:00Z). Used as the default `date` for pages
+/// that omit it in their frontmatter — `date` is optional so non-dated pages
+/// (marketing/landing/contact) don't have to invent one. Comptime-constructable
+/// so it can serve as a struct field default.
+pub const epoch: DateTime = .{ ._inst = .{ .timestamp = 0, .timezone = &zeit.utc } };
+
 pub const docs_description =
     \\A datetime.
 ;
@@ -316,7 +322,7 @@ pub const Builtins = struct {
         pub const docs_description =
             \\Formats a datetime according to the specified format string.
             \\
-            \\Zine uses Go-style format strings, which are all variations based
+            \\Zigapagos uses Go-style format strings, which are all variations based
             \\on a "magic date":
             \\
             \\- `Mon Jan 2 15:04:05 MST 2006`

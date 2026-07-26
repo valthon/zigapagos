@@ -13,6 +13,9 @@ const fatal = @import("fatal.zig");
 const worker = @import("worker.zig");
 const context = @import("context.zig");
 const Build = @import("Build.zig");
+const islands = @import("islands/sidecar.zig");
+const RenderArena = @import("islands/render_arena.zig").RenderArena;
+const Template = @import("Template.zig");
 const Variant = @import("Variant.zig");
 const StringTable = @import("StringTable.zig");
 const String = StringTable.String;
@@ -38,6 +41,15 @@ pub const Site = struct {
     layouts_dir_path: []const u8,
     content_dir_path: []const u8,
     assets_dir_path: []const u8,
+    /// Directory holding site-wide global data files (Ziggy `.ziggy` files).
+    ///
+    /// Each `<name>.ziggy` file is parsed once at build time and exposed to
+    /// every layout as `$site.data('<name>')` (a Ziggy map). This is the
+    /// Zigapagos equivalent of Astro's "content database" singleton
+    /// (`getSite()` / a `main.json` read by every page): one source of truth,
+    /// many consumers. The directory is optional — if it doesn't exist, no
+    /// site data is loaded and `$site.data(...)` reports a missing-file error.
+    data_dir_path: []const u8 = "data",
     /// Subpaths in `assets_dir_path` that will be installed unconditionally.
     /// All other assets will be installed only if referenced by a content file
     /// or a layout by calling `$site.asset('foo').link()`.
@@ -49,8 +61,13 @@ pub const Site = struct {
     /// Examples of correct usage of this field:
     /// - `favicon.ico` and other similar assets auto-discovered by browsers
     /// - `CNAME` (used by GitHub Pages when you set a custom domain)
+    ///
+    /// An entry may also be a `**` glob to install a whole subtree without
+    /// enumerating every file (paths are relative to `assets_dir_path`):
+    /// - `"**"` installs the entire assets directory (Astro's "copy public/")
+    /// - `"img/**"` installs everything under `assets/img/`
     static_assets: []const []const u8 = &.{},
-    /// When enabled, Zine will automatically add 'width' and 'height'
+    /// When enabled, Zigapagos will automatically add 'width' and 'height'
     /// attributes to <img> elements for local assets.
     /// Be aware that setting 'width' and 'heigth' of an image will in some
     /// circumstances cause browsers to distort images.
@@ -62,6 +79,12 @@ pub const Site = struct {
     ///    height: auto;
     /// }
     image_size_attributes: bool = false,
+    /// Which host's routing conventions the release-time SPA prerender pass
+    /// (`src/spa.zig`) targets when writing `routing-manifest.json` files,
+    /// and which host-config emitter (`runtime/scripts/emit-host-config.ts`)
+    /// runs after the build. Must be one of "zigbase" (default, the
+    /// first-party host), "nginx", or "apache" — enforced by `Config.validate`.
+    deploy_target: []const u8 = "zigbase",
 };
 
 pub const MultilingualSite = struct {
@@ -79,7 +102,7 @@ pub const MultilingualSite = struct {
     /// Location where site and build assets will be installed. By default
     /// assets will be installed directly in the output location.
     ///
-    /// In mulitilingual websites Zine will create a single copy of site
+    /// In mulitilingual websites Zigapagos will create a single copy of site
     /// assets which will then be installed at this location. It will be your
     /// duty to then copy this directory elsewhere if needed in your deployment
     /// setup (e.g. when deploying different localized variants to different
@@ -97,14 +120,23 @@ pub const MultilingualSite = struct {
     /// Examples of correct usage of this field:
     /// - `favicon.ico` and other similar assets auto-discovered by browsers
     /// - `CNAME` (used by GitHub Pages when you set a custom domain)
+    ///
+    /// An entry may also be a `**` glob to install a whole subtree without
+    /// enumerating every file (paths are relative to `assets_dir_path`):
+    /// - `"**"` installs the entire assets directory (Astro's "copy public/")
+    /// - `"img/**"` installs everything under `assets/img/`
     static_assets: []const []const u8 = &.{},
+    /// Directory holding site-wide global data files (Ziggy `.ziggy` files),
+    /// exposed to every layout as `$site.data('<name>')`. See the equivalent
+    /// field on a single-locale `Site` for details. Optional.
+    data_dir_path: []const u8 = "data",
     /// A list of locales of this website.
     ///
     /// For each entry the following values must be unique:
     ///   - `code`
     ///   - `output_prefix_override` (if set) + `host_url_override`
     locales: []const Locale,
-    /// When enabled, Zine will automatically add 'width' and 'height'
+    /// When enabled, Zigapagos will automatically add 'width' and 'height'
     /// attributes to <img> elements for local assets.
     /// Be aware that setting 'width' and 'heigth' of an image will in some
     /// circumstances cause browsers to distort images.
@@ -152,7 +184,7 @@ pub const Config = union(enum) {
     Multilingual: MultilingualSite,
     Site: Site,
 
-    const config_file_basename = "zine.ziggy";
+    const config_file_basename = "zigapagos.ziggy";
 
     /// Returns the cfg and the the directory where the config file was
     /// found. The directory is then used by other code to place the output
@@ -185,15 +217,15 @@ pub const Config = union(enum) {
                 error.FileNotFound => {
                     base_dir_path = std.fs.path.dirname(base_dir_path) orelse {
                         std.debug.print(
-                            \\error: unable to find a 'zine.ziggy' config file in this directory or any of its parents
+                            \\error: unable to find a 'zigapagos.ziggy' config file in this directory or any of its parents
                             \\
-                            \\note: run `zine init` in an empty directory to bootstrap a Zine website
+                            \\note: run `zigapagos init` in an empty directory to bootstrap a Zigapagos website
                             \\
                             \\
                             \\
                         , .{});
 
-                        fatal.help();
+                        fatal.helpError();
                     };
                     continue;
                 },
@@ -206,7 +238,7 @@ pub const Config = union(enum) {
                 .copy_strings = .to_unescape,
             }) catch {
                 fatal.msg(
-                    \\Error while loading the Zine config file:
+                    \\Error while loading the Zigapagos config file:
                     \\
                     \\{f}
                     \\
@@ -224,7 +256,7 @@ pub const Config = union(enum) {
         switch (cfg.*) {
             .Site => |s| {
                 const u = std.Uri.parse(s.host_url) catch |err| {
-                    fatal.msg("error: host url '{s}' in zine.ziggy is invalid: {s}", .{
+                    fatal.msg("error: host url '{s}' in zigapagos.ziggy is invalid: {s}", .{
                         s.host_url, @errorName(err),
                     });
                 };
@@ -237,29 +269,37 @@ pub const Config = union(enum) {
                         },
                     }
                     fatal.msg(
-                        "error: 'host_url' in zine.ziggy must not contain a path (but contains '{f}'), set 'url_path_prefix' instead",
+                        "error: 'host_url' in zigapagos.ziggy must not contain a path (but contains '{f}'), set 'url_path_prefix' instead",
                         .{std.fmt.alt(u.path, .formatPath)},
                     );
                 }
 
                 if (u.query) |q| fatal.msg(
-                    "error: 'host_url' in zine.ziggy must not contain a query (but contains '{f}')",
+                    "error: 'host_url' in zigapagos.ziggy must not contain a query (but contains '{f}')",
                     .{std.fmt.alt(q, .formatQuery)},
                 );
 
                 if (u.fragment) |f| fatal.msg(
-                    "error: 'host_url' in zine.ziggy must not contain a fragment (but contains '{f}')",
+                    "error: 'host_url' in zigapagos.ziggy must not contain a fragment (but contains '{f}')",
                     .{std.fmt.alt(f, .formatFragment)},
                 );
 
+                // `data_dir_path` belongs here like every other config directory:
+                // Build.loadSiteData opens it with `base_dir.openDir(io, path, …)`,
+                // and on POSIX `openat` ignores the dirfd for an ABSOLUTE path — so
+                // without this, `data_dir_path = "/etc"` or "../../elsewhere/data"
+                // read .ziggy files from outside the project and exposed them to
+                // every layout via `$site.data(…)`, while the identical spelling in
+                // content_dir_path was a fatal config error.
                 const paths: []const []const u8 = &.{
                     s.content_dir_path,
                     s.assets_dir_path,
                     s.layouts_dir_path,
+                    s.data_dir_path,
                 };
 
                 for (paths) |p| if (validatePathMessage(p, .{})) |msg| fatal.msg(
-                    "error: path '{s}' in zine.ziggy: {s}\n",
+                    "error: path '{s}' in zigapagos.ziggy: {s}\n",
                     .{ p, msg },
                 );
 
@@ -267,13 +307,21 @@ pub const Config = union(enum) {
                     s.url_path_prefix,
                     .{ .empty = true },
                 )) |msg| fatal.msg(
-                    "error: url_path_prefix '{s}' in zine.ziggy: {s}\n",
+                    "error: url_path_prefix '{s}' in zigapagos.ziggy: {s}\n",
                     .{ s.url_path_prefix, msg },
+                );
+
+                const valid_deploy_targets: []const []const u8 = &.{ "zigbase", "nginx", "apache" };
+                for (valid_deploy_targets) |t| {
+                    if (std.mem.eql(u8, s.deploy_target, t)) break;
+                } else fatal.msg(
+                    "error: deploy_target '{s}' in zigapagos.ziggy is invalid, must be one of: zigbase, nginx, apache",
+                    .{s.deploy_target},
                 );
             },
             .Multilingual => |ml| {
                 const u = std.Uri.parse(ml.host_url) catch |err| {
-                    fatal.msg("error: host_url '{s}' in zine.ziggy is invalid: {s}", .{
+                    fatal.msg("error: host_url '{s}' in zigapagos.ziggy is invalid: {s}", .{
                         ml.host_url, @errorName(err),
                     });
                 };
@@ -286,18 +334,18 @@ pub const Config = union(enum) {
                         },
                     }
                     fatal.msg(
-                        "error: host_url in zine.ziggy must not contain a path (but contains '{f}'), set 'url_path_prefix' instead",
+                        "error: host_url in zigapagos.ziggy must not contain a path (but contains '{f}'), set 'url_path_prefix' instead",
                         .{std.fmt.alt(u.path, .formatPath)},
                     );
                 }
 
                 if (u.query) |q| fatal.msg(
-                    "error: host_url in zine.ziggy must not contain a query (but contains '{f}')",
+                    "error: host_url in zigapagos.ziggy must not contain a query (but contains '{f}')",
                     .{std.fmt.alt(q, .formatQuery)},
                 );
 
                 if (u.fragment) |f| fatal.msg(
-                    "error: host_url in zine.ziggy must not contain a fragment (but contains '{f}')",
+                    "error: host_url in zigapagos.ziggy must not contain a fragment (but contains '{f}')",
                     .{std.fmt.alt(f, .formatFragment)},
                 );
 
@@ -305,16 +353,19 @@ pub const Config = union(enum) {
                     ml.i18n_dir_path,
                     ml.assets_dir_path,
                     ml.layouts_dir_path,
+                    // See the single-site array above for why data_dir_path must be
+                    // validated with the rest.
+                    ml.data_dir_path,
                 };
 
                 for (paths) |p| if (validatePathMessage(p, .{})) |msg| fatal.msg(
-                    "error: path '{s}' in zine.ziggy: {s}\n",
+                    "error: path '{s}' in zigapagos.ziggy: {s}\n",
                     .{ p, msg },
                 );
 
                 for (ml.locales) |locale| {
                     if (locale.code.len == 0) fatal.msg(
-                        "error: empty locale code found in zine.ziggy",
+                        "error: empty locale code found in zigapagos.ziggy",
                         .{},
                     );
 
@@ -322,13 +373,13 @@ pub const Config = union(enum) {
                         locale.content_dir_path,
                         .{},
                     )) |msg| fatal.msg(
-                        "error: content_dir_path '{s}' in locale '{s}' in zine.ziggy: {s}\n",
+                        "error: content_dir_path '{s}' in locale '{s}' in zigapagos.ziggy: {s}\n",
                         .{ locale.content_dir_path, locale.code, msg },
                     );
 
                     if (locale.host_url_override) |url| {
                         const lu = std.Uri.parse(url) catch |err| {
-                            fatal.msg("error: host_url_override '{s}' in locale '{s}' in zine.ziggy is invalid: {s}", .{
+                            fatal.msg("error: host_url_override '{s}' in locale '{s}' in zigapagos.ziggy is invalid: {s}", .{
                                 url, locale.code, @errorName(err),
                             });
                         };
@@ -341,7 +392,7 @@ pub const Config = union(enum) {
                                 },
                             }
                             fatal.msg(
-                                "error: host_url_override in locale '{s}' in zine.ziggy must not contain a path (but contains '{f}'), set 'url_path_prefix' instead",
+                                "error: host_url_override in locale '{s}' in zigapagos.ziggy must not contain a path (but contains '{f}'), set 'url_path_prefix' instead",
                                 .{
                                     locale.code,
                                     std.fmt.alt(u.path, .formatPath),
@@ -350,7 +401,7 @@ pub const Config = union(enum) {
                         }
 
                         if (lu.query) |q| fatal.msg(
-                            "error: host_url_override in locale '{s}' in zine.ziggy must not contain a query (but contains '{f}')",
+                            "error: host_url_override in locale '{s}' in zigapagos.ziggy must not contain a query (but contains '{f}')",
                             .{
                                 locale.code,
                                 std.fmt.alt(q, .formatQuery),
@@ -358,7 +409,7 @@ pub const Config = union(enum) {
                         );
 
                         if (lu.fragment) |f| fatal.msg(
-                            "error: host_url_override in locale '{s}' in zine.ziggy must not contain a fragment (but contains '{f}')",
+                            "error: host_url_override in locale '{s}' in zigapagos.ziggy must not contain a fragment (but contains '{f}')",
                             .{
                                 locale.code,
                                 std.fmt.alt(f, .formatFragment),
@@ -368,7 +419,7 @@ pub const Config = union(enum) {
 
                     if (locale.output_prefix_override) |opo| {
                         if (validatePathMessage(opo, .{ .empty = true })) |msg| fatal.msg(
-                            "error: output_prefix_override '{s}' in locale '{s}' in zine.ziggy: {s}\n",
+                            "error: output_prefix_override '{s}' in locale '{s}' in zigapagos.ziggy: {s}\n",
                             .{ opo, locale.code, msg },
                         );
                     }
@@ -390,10 +441,28 @@ pub const Config = union(enum) {
         };
     }
 
+    pub fn getDataDirPath(c: *const Config) []const u8 {
+        return switch (c.*) {
+            .Site => |s| s.data_dir_path,
+            .Multilingual => |m| m.data_dir_path,
+        };
+    }
+
     pub fn getStaticAssets(c: *const Config) []const []const u8 {
         return switch (c.*) {
             .Site => |s| s.static_assets,
             .Multilingual => |m| m.static_assets,
+        };
+    }
+
+    /// The site's URL path prefix (empty when unset). Multilingual sites don't
+    /// support one, so they always return "". Threaded into the dev loop so a
+    /// hot-swap broadcast URL matches the prefixed `data-z-module` the SSR pass
+    /// emits (see `islands/pass.zig`'s `prefixed`).
+    pub fn getUrlPathPrefix(c: *const Config) []const u8 {
+        return switch (c.*) {
+            .Site => |s| s.url_path_prefix,
+            .Multilingual => "",
         };
     }
 
@@ -417,6 +486,16 @@ pub const Config = union(enum) {
             .Multilingual => |m| if (locale_id) |lid| m.locales[lid].host_url_override orelse m.host_url else m.host_url,
         };
     }
+
+    /// The host's routing conventions targeted by `src/spa.zig`'s prerender
+    /// pass. `Multilingual` sites don't (yet) support SPAs, so this always
+    /// resolves to the "zigbase" default for them.
+    pub fn deployTarget(self: *const Config) []const u8 {
+        return switch (self.*) {
+            .Site => |s| s.deploy_target,
+            .Multilingual => "zigbase",
+        };
+    }
 };
 
 // Mirrors closely the corresponding type in build.zig
@@ -427,11 +506,79 @@ pub const BuildAsset = struct {
     rc: std.atomic.Value(u32),
 };
 
+/// One `--spa=<src>|<base>` entry, as threaded from `build.zig`'s `Spa.src`/
+/// `Spa.base` through `zigapagos release`'s CLI args. `base` is the DECLARED base
+/// from the consumer's `build.zig` (used only for advisory purposes here);
+/// `src/spa.zig`'s prerender pass treats the module's exported `spa.base` as
+/// authoritative and asserts the two agree, failing loudly on mismatch. `base`
+/// is `""` when the `--spa=` value carried no `|` (defensive fallback — the
+/// agreement assert is skipped for that entry).
+pub const SpaSpec = struct {
+    src: []const u8,
+    base: []const u8,
+    /// Path to the driver's `spa-chunks.json` for this SPA (entry name + the
+    /// lazy-route→chunk map), threaded via `zigapagos release --spa-chunks=<src>
+    /// <path>`. Null when no chunk map was provided (e.g. a hand-written CLI
+    /// invocation) — the prerender then emits no per-route chunk/preload.
+    chunks_json: ?[]const u8 = null,
+    /// Path to the driver's per-SPA runtime SLICE manifest (`build-spa-runtime.ts`),
+    /// threaded via `zigapagos release --spa-slice=<src> <path>`. Either
+    /// `{"runtime":"/spa/<name>-runtime.js","members":[…]}` (this SPA gets a
+    /// sliced runtime bundle) or `{"fallback":true}` (uncertain host usage → the
+    /// SPA uses the shared /zigapagos-runtime.js). Null for a hand-written CLI
+    /// invocation with no slicing — the prerender then uses the shared runtime.
+    slice_json: ?[]const u8 = null,
+};
+
 pub const Options = struct {
     build_assets: *const std.StringArrayHashMapUnmanaged(BuildAsset),
     base_dir_path: []const u8,
     mode: Mode,
     drafts: bool,
+    bun_path: ?[]const u8 = null,
+    island_sidecar: ?[]const u8 = null,
+    island_src_dir: ?[]const u8 = null,
+    /// Bun script that minifies each `.css` site asset during the disk-mode
+    /// (release) install phase. When set (together with `bun_path`),
+    /// `.css` assets from `assets_dir_path` are piped through it instead of being
+    /// copied verbatim. Null — the default, and always the case for the in-memory
+    /// live server — keeps the historical byte-for-byte copy, so the dev loop
+    /// serves readable, un-mangled CSS (mirroring Vite: minify on build, not dev).
+    css_minify_driver: ?[]const u8 = null,
+    island_props_check: @import("islands/props_check.zig").Mode = .off,
+    /// SPAs declared in `build.zig`'s `Options.spas`, threaded through by
+    /// `zigapagos release --spa=<src>|<base>` (one per SPA). Consumed by
+    /// `src/spa.zig`'s release-time prerender pass.
+    spas: []const SpaSpec = &.{},
+    /// Which SPA's "/" shell backs the universal 404.html, named
+    /// by its `spaName(src)` basename and threaded through by `zigapagos
+    /// release --spa-not-found=<name>`. Null (the default) keeps the
+    /// historical behavior: the FIRST declared SPA. A name matching no
+    /// declared SPA is a fatal build error (checked in `src/spa.zig`).
+    spa_not_found: ?[]const u8 = null,
+    /// Incremental content re-render (the `zigapagos dev` inner
+    /// loop). When non-empty AND `mode == .disk`, each entry is a base-relative
+    /// source path of a content page that changed (e.g. `content/blog/foo.md`).
+    /// The render pass then re-renders + re-emits ONLY those pages, leaving the
+    /// rest of the previously-built output tree untouched, and skips the SPA
+    /// prerender + asset (re)install passes (nothing else changed). Empty (the
+    /// default — every release build, and the dev loop's full-rebuild fallback)
+    /// keeps the historical behavior: render + emit the whole site. Only the
+    /// disk (release) build consults this; the in-memory live server ignores it.
+    /// `zigapagos release` populates it from the `ZIGAPAGOS_CHANGED_FILES`
+    /// environment variable, which `zigapagos dev` sets when — and only when —
+    /// every file that changed is a content page (see `src/cli/dev.zig`).
+    changed_files: []const []const u8 = &.{},
+    /// Dev-only island-usage manifest (the `zigapagos dev` inner
+    /// loop). When set (and `mode == .disk`), the render pass collects which
+    /// islands each page mounts and writes the manifest
+    /// (`src/islands/manifest.zig`) to this absolute path after rendering, so
+    /// the dev loop can map an island-source edit to exactly the pages that
+    /// need re-SSR. Null (the default — every ordinary release build) means
+    /// nothing is collected or written: zero effect on release output.
+    /// `zigapagos release` populates it from the `ZIGAPAGOS_ISLAND_MANIFEST`
+    /// environment variable, which only `zigapagos dev` sets.
+    island_manifest_path: ?[]const u8 = null,
 
     pub const Mode = union(enum) {
         memory,
@@ -460,6 +607,27 @@ pub fn run(
         break :blk Build.load(io, gpa, cfg, options);
     };
     _ = arena_state.reset(.retain_capacity);
+
+    // Spawn the island sidecar once for the entire build, stored on *Build so
+    // Build.deinit kills it. If spawn fails, fatal.msg exits loudly.
+    //
+    // All three args must be present, and if any is missing this leaves
+    // `island_sidecar` null — which is NOT by itself an error, because a site
+    // that uses no islands configures none of them. What used to make that a
+    // silent failure was the render pass treating a null sidecar as
+    // "pass the HTML through": a page containing `<island>` then shipped the
+    // literal inert element with exit code 0. The diagnostic now lives where the
+    // two facts meet — worker.zig's renderPage, which knows both that the
+    // sidecar is null and that this page actually asked for an island.
+    if (options.bun_path) |bun| if (options.island_sidecar) |script| if (options.island_src_dir) |root_dir| {
+        build.island_sidecar = islands.Sidecar.spawn(io, bun, script, root_dir) catch |err| {
+            fatal.msg("error: failed to spawn island sidecar ({s} {s}): {s}\n", .{ bun, script, @errorName(err) });
+        };
+    };
+    build.island_props_check_mode = options.island_props_check;
+    // Dev-only: a non-null path turns on per-page island-usage
+    // collection in the render workers (see worker.zig's renderPage).
+    build.island_manifest_path = if (options.mode == .disk) options.island_manifest_path else null;
 
     var static_assets_errors = false;
     {
@@ -530,6 +698,43 @@ pub fn run(
         _ = arena_state.reset(.retain_capacity);
 
         for (build.cfg.getStaticAssets()) |path| {
+            // Glob form: a trailing `**` installs every asset under a prefix
+            // (paths are relative to `assets_dir_path`, matching the exact-match
+            // form). `**` = the whole assets tree (Astro's "copy public/"); `img/**`
+            // = everything under `assets/img/`. This saves enumerating each file.
+            if (std.mem.eql(u8, path, "**") or std.mem.endsWith(u8, path, "/**")) {
+                // Drop the trailing `**`, keeping the directory prefix (incl. its
+                // `/`): "img/**" -> "img/", "**" -> "" (matches all).
+                const prefix = path[0 .. path.len - 2];
+                var matched: usize = 0;
+                var glob_it = build.site_assets.iterator();
+                var name_buf: [std.fs.max_path_bytes]u8 = undefined;
+                while (glob_it.next()) |entry| {
+                    const asset_path = std.fmt.bufPrint(&name_buf, "{f}", .{
+                        entry.key_ptr.fmt(&build.st, &build.pt, null, "/"),
+                    }) catch continue;
+                    if (prefix.len == 0 or std.mem.startsWith(u8, asset_path, prefix)) {
+                        entry.value_ptr.raw = 1;
+                        matched += 1;
+                    }
+                }
+                if (matched == 0) {
+                    static_assets_errors = true;
+                    std.debug.print("error: static asset glob '{s}' matched no assets\n", .{path});
+                    if (build.mode == .memory) {
+                        try build.mode.memory.errors.append(gpa, .{
+                            .ref = "",
+                            .msg = try std.fmt.allocPrint(
+                                gpa,
+                                "error: static asset glob '{s}' matched no assets\n",
+                                .{path},
+                            ),
+                        });
+                    }
+                }
+                continue;
+            }
+
             if (PathName.get(&build.st, &build.pt, path)) |pn| {
                 if (build.site_assets.getPtr(pn)) |rc| {
                     rc.raw = 1;
@@ -692,7 +897,7 @@ pub fn run(
     // having its own waitgroup.
     for (build.variants) |*v| {
         for (v.sections.items[1..]) |*s| {
-            s.sortPages(v, v.pages.items);
+            s.sortPages(gpa, v, v.pages.items);
         }
     }
 
@@ -806,22 +1011,33 @@ pub fn run(
                 // This is in some ways frontmatter analysis work but it's done
                 // here because we have to scan all pages for errors anyway.
                 layout: {
+                    // Append frontmatter errors via the page's parse arena so
+                    // that ownership is uniform with the worker's
+                    // analyzeFrontmatter (which also appends to this list using
+                    // this same arena). Appending with a bare `gpa` here would
+                    // leak: Page.deinit only frees `_analysis.frontmatter`
+                    // implicitly via `_parse.arena.deinit()`, which cannot
+                    // reclaim allocations the arena never made.
+                    var page_arena_state = p._parse.arena.promote(gpa);
+                    defer p._parse.arena = page_arena_state.state;
+                    const page_arena = page_arena_state.allocator();
+
                     const layout_pn = PathName.get(&build.st, &build.pt, p.layout) orelse {
                         // We can use analysis because a page that has
                         // parse.status == ok will have initialized the field for
                         // us.
-                        try p._analysis.frontmatter.append(gpa, .layout);
+                        try p._analysis.frontmatter.append(page_arena, .layout);
                         break :layout;
                     };
 
                     const layout = build.templates.getPtr(layout_pn) orelse {
-                        try p._analysis.frontmatter.append(gpa, .layout);
+                        try p._analysis.frontmatter.append(page_arena, .layout);
                         break :layout;
                     };
 
                     if (!layout.layout) {
                         // TODO: create a dedicated error
-                        try p._analysis.frontmatter.append(gpa, .layout);
+                        try p._analysis.frontmatter.append(page_arena, .layout);
                         break :layout;
                     }
 
@@ -831,7 +1047,7 @@ pub fn run(
                             &build.pt,
                             alt.layout,
                         ) orelse {
-                            try p._analysis.frontmatter.append(gpa, .{
+                            try p._analysis.frontmatter.append(page_arena, .{
                                 .alternative = .{
                                     .id = @intCast(aidx),
                                     .kind = .layout,
@@ -844,7 +1060,7 @@ pub fn run(
                             // We can use analysis because a page that has
                             // parse.status == ok will have initialized the field for
                             // us.
-                            try p._analysis.frontmatter.append(gpa, .{
+                            try p._analysis.frontmatter.append(page_arena, .{
                                 .alternative = .{
                                     .id = @intCast(aidx),
                                     .kind = .layout,
@@ -855,7 +1071,7 @@ pub fn run(
 
                         if (!alt_layout.layout) {
                             // TODO: create a dedicated error
-                            try p._analysis.frontmatter.append(gpa, .{
+                            try p._analysis.frontmatter.append(page_arena, .{
                                 .alternative = .{
                                     .id = @intCast(aidx),
                                     .kind = .layout,
@@ -938,7 +1154,7 @@ pub fn run(
                     true,
                     true,
                     null,
-                ) catch unreachable;
+                ) catch fatal.oom();
 
                 for (fm_errors.items) |err| {
                     const loc = err.location(full_src, ast);
@@ -1097,6 +1313,7 @@ pub fn run(
         }
     }
 
+    var translation_key_errors = false;
     if (build.cfg.* == .Multilingual) {
         for (build.variants, 0..) |*v, vidx| {
             for (v.pages.items) |*p| {
@@ -1113,8 +1330,39 @@ pub fn run(
                         break :blk locales;
                     } else gop.value_ptr.*;
 
-                    if (locales[vidx] != null) {
-                        @panic("TODO: a traslation key collision was found, make a nice error for it");
+                    if (locales[vidx]) |prev| {
+                        // Two pages in the same locale share a translation_key —
+                        // an ordinary authoring mistake. Report both pages and
+                        // the key instead of aborting the build. See AUD-011.
+                        translation_key_errors = true;
+                        std.debug.print(
+                            \\error: duplicate translation_key '{s}' within one locale
+                            \\   between  {f}
+                            \\   and      {f}
+                            \\
+                            \\
+                        , .{
+                            tk,
+                            prev._scan.file.fmt(&v.string_table, &v.path_table, v.content_dir_path, ""),
+                            p._scan.file.fmt(&v.string_table, &v.path_table, v.content_dir_path, ""),
+                        });
+                        if (build.mode == .memory) {
+                            try build.mode.memory.errors.append(gpa, .{
+                                .ref = "",
+                                .msg = try std.fmt.allocPrint(gpa,
+                                    \\error: duplicate translation_key '{s}' within one locale
+                                    \\   between  {f}
+                                    \\   and      {f}
+                                    \\
+                                    \\
+                                , .{
+                                    tk,
+                                    prev._scan.file.fmt(&v.string_table, &v.path_table, v.content_dir_path, ""),
+                                    p._scan.file.fmt(&v.string_table, &v.path_table, v.content_dir_path, ""),
+                                }),
+                            });
+                        }
+                        continue;
                     }
 
                     locales[vidx] = p;
@@ -1130,7 +1378,7 @@ pub fn run(
     // to just detecting duplicate paths. This simplified version
     // of the problem can be solved with a hash map, while solving the
     // full version will require using a tree for the live server
-    // and perhaps some clever scan algorithm in the `zine release` case.
+    // and perhaps some clever scan algorithm in the `zigapagos release` case.
     // Alternatively, if this algo proves to be sufficiently more efficent
     // than the tree case, we could default to this method and then only
     // switch to the more expensive approach if necessary.
@@ -1188,6 +1436,13 @@ pub fn run(
 
                 // aliases
                 for (p.aliases) |a| {
+                    // A malformed alias (empty, non-ASCII, backslash, no
+                    // extension, or a dot in a directory component) is already
+                    // reported as a frontmatter error by analyzeFrontmatter and
+                    // must be skipped here: interning it would violate the
+                    // structural invariants the asserts below encode (and, on an
+                    // empty string, read a[0] out of bounds). See AUD-002.
+                    if (!worker.validOutputPath(a)) continue;
                     assert(std.mem.indexOfScalar(u8, a, '\\') == null);
                     assert(std.fs.path.extension(a).len > 0);
                     assert(std.mem.indexOfScalar(
@@ -1233,6 +1488,10 @@ pub fn run(
 
                 // alternatives
                 for (p.alternatives) |alt| {
+                    // See the alias note above: skip a malformed alternative
+                    // output (already a frontmatter error) rather than asserting
+                    // on user input. See AUD-002.
+                    if (!worker.validOutputPath(alt.output)) continue;
                     assert(std.mem.indexOfScalar(u8, alt.output, '\\') == null);
                     assert(std.fs.path.extension(alt.output).len > 0);
                     assert(std.mem.indexOfScalar(
@@ -1338,7 +1597,7 @@ pub fn run(
             defer std.debug.unlockStderr();
 
             var aw: Writer.Allocating = .init(gpa);
-            defer if (build.mode != .memory) aw.deinit();
+            defer aw.deinit();
 
             try template.html_ast.printErrors(
                 template.src,
@@ -1348,9 +1607,11 @@ pub fn run(
 
             std.debug.print("{s}", .{aw.written()});
             if (build.mode == .memory) {
+                // Store an exactly-sized owned copy so Build.deinit can free it
+                // (AUD-004); aw is emptied and freed by the defer.
                 try build.mode.memory.errors.append(gpa, .{
                     .ref = "",
-                    .msg = aw.written(),
+                    .msg = try aw.toOwnedSlice(),
                 });
             }
             continue;
@@ -1371,7 +1632,7 @@ pub fn run(
             });
 
             var aw: Writer.Allocating = .init(gpa);
-            defer if (build.mode != .memory) aw.deinit();
+            defer aw.deinit();
 
             template.ast.printErrors(
                 template.src,
@@ -1381,10 +1642,61 @@ pub fn run(
 
             std.debug.print("{s}", .{aw.written()});
             if (build.mode == .memory) {
+                // Owned copy so Build.deinit can free it (AUD-004).
                 try build.mode.memory.errors.append(gpa, .{
                     .ref = "",
-                    .msg = aw.written(),
+                    .msg = try aw.toOwnedSlice(),
                 });
+            }
+        }
+
+        // Lint for the `:attr="$expr"` footgun (unknown `:` directive attribute):
+        // SuperHTML evaluates the value but keeps the literal `:name`, so the real
+        // attribute is never set and the asset/href silently breaks. Only a clean
+        // html tree is scanned.
+        if (template.html_ast.errors.len == 0) {
+            var bads: std.ArrayListUnmanaged(Template.BadDirectiveAttr) = .empty;
+            defer bads.deinit(gpa);
+            try template.lintDirectiveAttrs(gpa, &bads);
+            if (bads.items.len > 0) {
+                template_errors = true;
+                const path = try std.fmt.allocPrint(arena, "{f}", .{
+                    tpn.fmt(&build.st, &build.pt, build.cfg.getLayoutsDirPath(), "/"),
+                });
+
+                var aw: Writer.Allocating = .init(gpa);
+                defer aw.deinit();
+
+                for (bads.items) |bad| {
+                    var line: usize = 1;
+                    var col: usize = 1;
+                    for (template.src[0..bad.offset]) |ch| {
+                        if (ch == '\n') {
+                            line += 1;
+                            col = 1;
+                        } else col += 1;
+                    }
+                    const bare = bad.name[1..];
+                    try aw.writer.print(
+                        \\{s}:{d}:{d}: error: unknown ':' directive attribute '{s}'
+                        \\    SuperHTML's only ':' directives are :if, :loop, :else, :text, :html
+                        \\    (plus :props on <island>). A dynamic attribute uses the BARE name
+                        \\    with a Scripty value: write {s}="$expr", not {s}="$expr"
+                        \\    (the ':' form evaluates the value but keeps the ':{s}' name, so the
+                        \\    real '{s}' attribute is never set).
+                        \\
+                        \\
+                    , .{ path, line, col, bad.name, bare, bad.name, bare, bare });
+                }
+
+                std.debug.print("{s}", .{aw.written()});
+                if (build.mode == .memory) {
+                    // Owned copy so Build.deinit can free it (AUD-004).
+                    try build.mode.memory.errors.append(gpa, .{
+                        .ref = "",
+                        .msg = try aw.toOwnedSlice(),
+                    });
+                }
             }
         }
 
@@ -1425,10 +1737,78 @@ pub fn run(
     }
 
     if (static_assets_errors or i18n_errors or collision_errors or
-        parse_errors or analysis_errors or template_errors)
+        parse_errors or analysis_errors or template_errors or
+        translation_key_errors)
     {
         build.any_prerendering_error = true;
         return build;
+    }
+
+    // Incremental content re-render. When `changed_files` names a
+    // set of changed content pages (a `zigapagos dev` inner-loop rebuild), we
+    // render + emit ONLY those pages into the existing (persistent) output tree
+    // and skip everything else. All pages are still scanned/parsed above — the
+    // URL/collision/link tables must be whole for a changed page that links to
+    // others to render correctly — but the expensive per-page render (SuperMD +
+    // island SSR + disk write) runs only for the affected pages. Empty (a full
+    // release build, or the dev loop's full-rebuild fallback) renders every page.
+    const incremental = build.mode == .disk and options.changed_files.len > 0;
+    var changed_set: std.StringHashMapUnmanaged(void) = .empty;
+    defer if (builtin.mode == .Debug) changed_set.deinit(gpa);
+    if (incremental) {
+        try changed_set.ensureUnusedCapacity(gpa, @intCast(options.changed_files.len));
+        for (options.changed_files) |cf| changed_set.putAssumeCapacity(cf, {});
+    }
+
+    // Release-time SPA prerender pass: route skeletons, dynamic-route shells,
+    // per-namespace routing manifests, and the site-wide 404.html. No-ops when no
+    // SPAs are declared.
+    //
+    // Runs BEFORE the page-render pass, and the ordering is the point. This pass
+    // is the one that executes the author's own code (the sidecar runs
+    // `.spa.tsx`'s `describe`/`staticPaths` to enumerate routes) and it is where
+    // the spec-level invariants are checked — overlapping bases, basename
+    // collisions, an unknown `--spa-not-found`, `..` in a route path, colliding
+    // `_shell.html` output paths, a declared SPA with no sidecar. Every one of
+    // those aborts BEFORE this pass writes its first file. Running it after the
+    // page pass meant the common SPA failure fataled with the whole output tree
+    // already rewritten: new page HTML beside the previous build's SPA shells,
+    // routing manifests and build assets, with nothing on disk marking the tree as
+    // half-updated — and `zigapagos dev` then reporting "still serving the
+    // previous build", which was false. Measured on the fixture in
+    // `tests/spa/prerender-order.sh`, a failed build rewrote all 16 pages before
+    // aborting; it now rewrites none.
+    //
+    // It does NOT make the tree atomic, and this comment should not be read as
+    // claiming that: a failure *partway through writing* shells still leaves
+    // partial output, and a page-render failure still fails after pages are
+    // emitted. What it buys is that the large majority of SPA failure modes —
+    // every validation error, a missing sidecar, and any throw during route
+    // enumeration — now abort with the output tree exactly as the previous build
+    // left it.
+    //
+    // Guarded on `.disk and !incremental` because this used to sit below the
+    // `mode == .memory` and `incremental` early returns: the live server never
+    // prerenders, and an incremental rebuild re-emits only changed pages while
+    // the previous full build's shells stay valid.
+    //
+    // One deliberate precedence change: the site-wide `404.html` this pass writes
+    // is now written before the page pass, so a content page explicitly aliased to
+    // `404.html` overwrites the SPA fallback rather than losing to it. That reads
+    // as the better precedence — an explicit alias is more specific intent than a
+    // fallback — and site assets named `404.html` already outranked the SPA one,
+    // since asset install has always run last.
+    //
+    // `prerenderAll`'s inferred error set is wider than `run`'s explicit
+    // `{OutOfMemory, WriteFailed}` (sidecar RPC failures, disk IO errors, ...),
+    // so — matching this file's convention for OS/sidecar calls elsewhere
+    // (see the sidecar-spawn call above, and worker.zig's write call sites) —
+    // failures are converted to a loud fatal exit rather than propagated.
+    if (build.mode == .disk and !incremental) {
+        @import("spa.zig").prerenderAll(io, gpa, &build, cfg) catch |err| switch (err) {
+            error.OutOfMemory => fatal.oom(),
+            else => fatal.msg("error: SPA prerender failed: {s}\n", .{@errorName(err)}),
+        };
     }
 
     var pages_to_render: usize = 0;
@@ -1436,6 +1816,7 @@ pub fn run(
     {
         const tracy_frame = tracy.namedFrame("page rendering");
         defer tracy_frame.end();
+        var path_buf: [std.fs.max_path_bytes]u8 = undefined;
         for (build.variants) |*v| {
             for (v.pages.items) |*p| {
                 if (!p._parse.active) continue;
@@ -1443,19 +1824,48 @@ pub fn run(
                 if (p._analysis.frontmatter.items.len > 0) continue;
                 if (p._analysis.page.items.len > 0) continue;
 
+                // Incremental: skip any page whose source file did not change.
+                // Its output from the previous full build is still on disk.
+                if (incremental) {
+                    // `catch continue` here meant "a path too long to format is an
+                    // unchanged page": the edit was accepted, the log claimed an
+                    // incremental rebuild, and the previous build's HTML stayed on
+                    // disk. Overflow is reachable — `path_buf` is max_path_bytes,
+                    // but the formatted value is content_dir_path ++ "/" ++ a
+                    // walk-relative path that is itself only bounded by
+                    // max_path_bytes. Fail loudly instead; worker.zig:1239 formats
+                    // this same string for the manifest, so the two must agree or a
+                    // manifest key and a changed-set key silently diverge.
+                    const src_path = std.fmt.bufPrint(&path_buf, "{f}", .{
+                        p._scan.file.fmt(&v.string_table, &v.path_table, v.content_dir_path, "/"),
+                    }) catch |err| fatal.msg(
+                        "error: content path too long to format for the incremental change set ({s}): {f}\n",
+                        .{
+                            @errorName(err),
+                            p._scan.file.fmt(&v.string_table, &v.path_table, v.content_dir_path, "/"),
+                        },
+                    );
+                    if (!changed_set.contains(src_path)) continue;
+                }
+
                 pages_to_render += 1;
 
-                if (builtin.single_threaded) std.debug.print("Rendering {}...\n", .{
-                    p._scan.file.fmt(&v.string_table, &v.path_table, v.content_dir_path),
+                if (builtin.single_threaded) std.debug.print("Rendering {f}...\n", .{
+                    p._scan.file.fmt(&v.string_table, &v.path_table, v.content_dir_path, "/"),
                 });
 
+                const alts = try gpa.alloc(
+                    @typeInfo(@TypeOf(p._render.alternatives)).pointer.child,
+                    p.alternatives.len,
+                );
+                // Initialize to the empty state so `Page.deinit` can free every
+                // element unconditionally even in .disk mode (where the worker
+                // writes straight to disk and never populates these). AUD-004.
+                for (alts) |*a| a.* = .{ .out = "", .errors = "" };
                 p._render = .{
-                    .out = undefined,
-                    .errors = undefined,
-                    .alternatives = try gpa.alloc(
-                        @typeInfo(@TypeOf(p._render.alternatives)).pointer.child,
-                        p.alternatives.len,
-                    ),
+                    .out = "",
+                    .errors = "",
+                    .alternatives = alts,
                 };
 
                 worker.addJob(io, .{
@@ -1487,8 +1897,54 @@ pub fn run(
         progress_page_render.end();
     }
 
+    // Build-time typed props contract: all pages rendered, so the collector
+    // holds every resolved (src, props) pair. Run the single tsc gate now.
+    if (build.island_props_check_mode != .off and build.island_props_checks.items.len > 0) {
+        if (options.bun_path) |bun| if (options.island_src_dir) |root_dir| {
+            const props_check = @import("islands/props_check.zig");
+            const res = props_check.run(io, gpa, build.island_props_checks.items, .{
+                .mode = build.island_props_check_mode,
+                .bun_path = bun,
+                .website_root = root_dir,
+            }) catch |err| blk: {
+                log.err("island props check failed to run: {s}", .{@errorName(err)});
+                break :blk props_check.RunResult{ .checked = 0, .skipped_no_props = 0, .mismatches = 1 };
+            };
+            if (res.mismatches > 0 and build.island_props_check_mode == .err) {
+                build.any_rendering_error.store(true, .release);
+            }
+        };
+    }
+
     if (build.mode == .memory) return build;
 
+    // Dev-only island-usage manifest, written after the render
+    // phase so it reflects exactly the mounts this build derived.
+    if (options.island_manifest_path) |mpath|
+        writeIslandManifest(io, gpa, &build, mpath, incremental, &changed_set);
+
+    // An incremental rebuild re-emits ONLY the changed pages
+    // (done above). The SPA prerender + site-asset install passes below
+    // regenerate the WHOLE tree, so skip them: an incremental rebuild is only
+    // entered when every changed file is a content page or a manifest-resolved
+    // island source (`zigapagos dev` classifies the change set), and the
+    // previous full build already staged everything else. Build assets are the
+    // exception: an island-source edit rebundles islands/<name>.js
+    // (an install_always asset) in the surrounding `zig build`, so they must
+    // still be (re)installed — `updateFile` is a cheap stat-compare no-op for
+    // unchanged files. Anything the dev loop can't prove is localizable falls
+    // back to a full rebuild (empty `changed_files`), which runs every pass
+    // as before.
+    if (incremental) {
+        installBuildAssets(io, &build);
+        return build;
+    }
+
+    // The SPA prerender pass ran BEFORE the page-render pass above (see the long
+    // comment at its call site for why). It still precedes this asset-install
+    // phase, which is the ordering constraint it actually has: the
+    // `spa/<name>.js` bundle is an `install_always` asset whose refcount
+    // `prerenderAll` bumps, and it must land alongside the prerendered shells.
     var progress_install_assets = progress.start("Install assets", 0);
     for (build.variants) |*v| {
         worker.addJob(io, .{
@@ -1508,7 +1964,12 @@ pub fn run(
                 if (ml.assets_prefix_path.len == 0) {
                     break :blk build.mode.disk.output_dir;
                 } else {
-                    break :blk build.mode.disk.output_dir.openDir(
+                    // The prefix subdir does not exist on a fresh output tree —
+                    // nothing else in the release path creates it — so create it
+                    // (matching how Build.load provisions every other dir) rather
+                    // than `openDir`'ing it, which would `FileNotFound`-abort the
+                    // whole release.
+                    break :blk build.mode.disk.output_dir.createDirPathOpen(
                         io,
                         ml.assets_prefix_path,
                         .{},
@@ -1539,37 +2000,250 @@ pub fn run(
             }) catch unreachable;
 
             if (entry.value_ptr.raw > 0) {
-                _ = build.site_assets_dir.updateFile(
-                    io,
-                    path,
-                    site_assets_install_dir,
-                    std.mem.trimStart(u8, path, "/"),
-                    .{},
-                ) catch |err| fatal.file(path, err);
+                const dest = std.mem.trimStart(u8, path, "/");
+                // Minify text assets (currently `.css`) through Bun
+                // during release staging, matching the island/SPA JS minify
+                // pass. Gated on `css_minify_driver` being threaded — only the
+                // disk-mode (release) build sets it, so the in-memory live
+                // server (dev loop) always takes the verbatim copy below.
+                if (shouldMinifyCss(path, options)) {
+                    installMinifiedCss(
+                        io,
+                        gpa,
+                        build.site_assets_dir,
+                        site_assets_install_dir,
+                        path,
+                        dest,
+                        options.bun_path.?,
+                        options.css_minify_driver.?,
+                    );
+                } else {
+                    _ = build.site_assets_dir.updateFile(
+                        io,
+                        path,
+                        site_assets_install_dir,
+                        dest,
+                        .{},
+                    ) catch |err| fatal.file(path, err);
+                }
             }
         }
     }
 
-    // install build assets
-    {
-        for (build.build_assets.values()) |ba| {
-            // Avoid installing if already rc'd
-            if (ba.rc.load(.acquire) > 0) {
-                _ = build.base_dir.updateFile(
-                    io,
-                    ba.input_path,
-                    build.mode.disk.output_dir,
-                    std.mem.trimStart(u8, ba.install_path.?, "/"),
-                    .{},
-                ) catch |err| fatal.file(ba.input_path, err);
-            }
-        }
-    }
+    installBuildAssets(io, &build);
 
     worker.wait(); // done installing assets
     progress_install_assets.end();
 
     return build;
+}
+
+/// Install every referenced (rc > 0) build asset into the output tree. Runs on
+/// BOTH the full and the incremental disk paths: an island-source
+/// incremental rebuild must reinstall the freshly rebundled
+/// `islands/<name>.js` (an `install_always` asset, rc'd from the start), and
+/// `updateFile` is a cheap stat-compare no-op for unchanged files.
+fn installBuildAssets(io: Io, build: *const Build) void {
+    for (build.build_assets.values()) |ba| {
+        // Avoid installing if already rc'd
+        if (ba.rc.load(.acquire) > 0) {
+            // A build asset with no install path is a legitimate config (read
+            // via `.bytes()`/`.size()`/… only). Referencing such an asset with
+            // `.link()` reports a graceful page error but should never reach
+            // here; skip defensively rather than unwrapping a null optional,
+            // mirroring the sibling install loops (spa.zig, serve.zig).
+            const install_rel = std.mem.trimStart(u8, ba.install_path orelse continue, "/");
+            _ = build.base_dir.updateFile(
+                io,
+                ba.input_path,
+                build.mode.disk.output_dir,
+                install_rel,
+                .{},
+            ) catch |err| fatal.file(ba.input_path, err);
+        }
+    }
+}
+
+/// Write (or refresh) the dev-only island-usage manifest at `path`
+/// from the usage pairs the render workers collected this build. Fail-closed
+/// everywhere: a partial render (any_rendering_error), an unreadable/stale old
+/// manifest on an incremental build, or a write failure all DELETE the
+/// manifest instead — a missing manifest just means the dev loop falls back to
+/// a full rebuild, never wrong output. Never fails the build.
+fn writeIslandManifest(
+    io: Io,
+    gpa: Allocator,
+    build: *const Build,
+    path: []const u8,
+    incremental: bool,
+    changed_set: *const std.StringHashMapUnmanaged(void),
+) void {
+    const manifest = @import("islands/manifest.zig");
+    if (build.any_rendering_error.load(.acquire)) {
+        // Partial render ⇒ the collected usage can't be trusted.
+        Io.Dir.cwd().deleteFile(io, path) catch {};
+        return;
+    }
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    // `manifest.parse`/`assemble` are contract 4 (NO_SLOP.md §2.2a): they build
+    // interlinked graphs with no `deinit`, reclaimed only when this pass's arena
+    // drops. `RenderArena` is what says so in their signatures.
+    const arena = RenderArena.from(&arena_state);
+
+    // On an incremental build only the changed pages re-derived their mounts;
+    // merge into the previous manifest (whose entries for those pages are
+    // replaced). Any read/parse failure ⇒ delete (fail closed).
+    var old_storage: manifest.Json = undefined;
+    var old_ptr: ?*const manifest.Json = null;
+    if (incremental) {
+        const text = Io.Dir.cwd().readFileAlloc(io, path, arena.a, .limited(16 * 1024 * 1024)) catch {
+            Io.Dir.cwd().deleteFile(io, path) catch {};
+            return;
+        };
+        old_storage = manifest.parse(arena, text) catch {
+            Io.Dir.cwd().deleteFile(io, path) catch {};
+            return;
+        };
+        old_ptr = &old_storage;
+    }
+
+    var assembled = manifest.assemble(
+        arena,
+        old_ptr,
+        changed_set,
+        build.island_page_usage.items,
+    ) catch fatal.oom();
+    // `render` is contract 1 — it frees its own scratch, so it takes the plain
+    // allocator (the arena's, here: the bytes are handed straight to the writer
+    // below and die with the pass).
+    const rendered = manifest.render(arena.a, &assembled) catch fatal.oom();
+
+    writeIslandManifestFile(io, path, rendered) catch |err| {
+        log.warn("failed to write the dev island manifest '{s}': {s}", .{
+            path, @errorName(err),
+        });
+        Io.Dir.cwd().deleteFile(io, path) catch {};
+    };
+}
+
+/// The io half of `writeIslandManifest` (pattern: `src/spa.zig`'s `writeFile`).
+/// The parent directory (the dev loop's persistent data dir) already exists.
+fn writeIslandManifestFile(io: Io, path: []const u8, contents: []const u8) !void {
+    var f = try Io.Dir.cwd().createFile(io, path, .{});
+    defer f.close(io);
+    var fw = f.writer(io, &.{});
+    try fw.interface.writeAll(contents);
+}
+
+/// Whether a site asset should be minified rather than copied
+/// verbatim on install. True only for `.css` (case-insensitive) when both a
+/// Bun path and the CSS minify driver were threaded — i.e. a release build.
+/// The in-memory live server never sets `css_minify_driver`, so its CSS is
+/// always copied verbatim (readable dev output).
+fn shouldMinifyCss(path: []const u8, options: Options) bool {
+    if (options.bun_path == null or options.css_minify_driver == null) return false;
+    return std.ascii.endsWithIgnoreCase(path, ".css");
+}
+
+/// Minify one `.css` site asset by shelling out to the Bun CSS driver
+/// (`runtime/sidecar/minify-css.ts`), reading `src_rel` from `src_dir` and
+/// writing the minified result to `dest_rel` under `install_dir`. Mirrors the
+/// island/SPA JS minify pass; on any failure it exits loudly (fatal) with the
+/// offending file named — matching the JS bundling path's fail-the-build
+/// behavior. Bun's own diagnostics reach the build log via inherited stderr.
+fn installMinifiedCss(
+    io: Io,
+    gpa: Allocator,
+    src_dir: Io.Dir,
+    install_dir: Io.Dir,
+    src_rel: []const u8,
+    dest_rel: []const u8,
+    bun_path: []const u8,
+    driver: []const u8,
+) void {
+    // Absolute source path (the CSS file exists, so realPathFile resolves it).
+    var src_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const src_n = src_dir.realPathFile(io, src_rel, &src_buf) catch |err|
+        fatal.file(src_rel, err);
+    const src_abs = src_buf[0..src_n];
+
+    // Absolute destination path: realpath the install dir (it exists) and join
+    // the relative dest under it. Bun.write creates any missing parent dirs.
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_n = install_dir.realPathFile(io, ".", &dir_buf) catch |err|
+        fatal.file(dest_rel, err);
+    const dest_abs = std.fs.path.join(gpa, &.{ dir_buf[0..dir_n], dest_rel }) catch
+        fatal.oom();
+    defer gpa.free(dest_abs);
+
+    var child = std.process.spawn(io, .{
+        .argv = &.{ bun_path, driver, src_abs, dest_abs },
+        .stderr = .inherit, // surface Bun's CSS diagnostics in the build log
+    }) catch |err| fatal.msg(
+        "error: failed to spawn CSS minifier ({s} {s}) for '{s}': {s}\n" ++
+            "note: ensure Bun is installed and on PATH (or pass --bun=PATH)\n",
+        .{ bun_path, driver, src_rel, @errorName(err) },
+    );
+
+    const term = child.wait(io) catch |err| fatal.msg(
+        "error: CSS minifier for '{s}' failed: {s}\n",
+        .{ src_rel, @errorName(err) },
+    );
+
+    switch (term) {
+        .exited => |code| if (code != 0) fatal.msg(
+            "error: CSS minification of '{s}' failed (bun exit {d}); " ++
+                "fix the stylesheet (see the error above) or remove it from the assets dir\n",
+            .{ src_rel, code },
+        ),
+        else => fatal.msg(
+            "error: CSS minifier for '{s}' terminated abnormally\n",
+            .{src_rel},
+        ),
+    }
+}
+
+test "assets: shouldMinifyCss gates on extension + release flags" {
+    const empty_assets: std.StringArrayHashMapUnmanaged(BuildAsset) = .empty;
+    const base: Options = .{
+        .build_assets = &empty_assets,
+        .base_dir_path = ".",
+        .mode = .memory,
+        .drafts = false,
+    };
+
+    // Release build (disk mode): both bun_path and css_minify_driver are
+    // threaded -> .css assets are minified, other assets copied verbatim.
+    {
+        var o = base;
+        o.bun_path = "bun";
+        o.css_minify_driver = "runtime/sidecar/minify-css.ts";
+        try std.testing.expect(shouldMinifyCss("style.css", o));
+        try std.testing.expect(shouldMinifyCss("css/theme.CSS", o)); // case-insensitive
+        // Non-CSS (incl. binary) assets are never minified — verbatim byte copy.
+        try std.testing.expect(!shouldMinifyCss("app.js", o));
+        try std.testing.expect(!shouldMinifyCss("logo.png", o));
+        try std.testing.expect(!shouldMinifyCss("data.csv", o));
+        try std.testing.expect(!shouldMinifyCss("noext", o));
+    }
+
+    // Dev loop: the in-memory live server never threads css_minify_driver, so
+    // CSS is copied verbatim (readable, un-mangled dev output).
+    {
+        var o = base;
+        o.bun_path = "bun";
+        // css_minify_driver stays null
+        try std.testing.expect(!shouldMinifyCss("style.css", o));
+    }
+
+    // Defensive: a driver with no bun path also falls back to verbatim.
+    {
+        var o = base;
+        o.css_minify_driver = "runtime/sidecar/minify-css.ts";
+        try std.testing.expect(!shouldMinifyCss("style.css", o));
+    }
 }
 
 fn printSuperMdErrors(

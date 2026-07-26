@@ -1,0 +1,9 @@
+{
+  "name": "tsx-site",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@z/runtime": "file:../../runtime",
+    "@demo/widget": "file:./vendor/demo-widget"
+  }
+}

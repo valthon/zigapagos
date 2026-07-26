@@ -1,0 +1,443 @@
+import { readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+
+export type Manifest = {
+  base: string;
+  deploy_target: "zigbase" | "nginx" | "apache";
+  static: string[];
+  dynamic: { pattern: string; shell: string }[];
+  fallback: string;
+  bundle: string;
+};
+
+/** A file to write into the SPA namespace directory (sibling of routing-manifest.json). */
+export type EmittedFile = { name: string; content: string };
+
+// ── Route-value validation + per-language encoding ──────────────────────────
+// Every route value below is interpolated into THREE different output languages:
+// an nginx `location`/`try_files`, an Apache `RewriteRule` REGEX plus its rewrite
+// target, and a generated ZIG STRING LITERAL. None of them are attacker-supplied
+// — they come from the site author's own `.spa.tsx`, which the sidecar already
+// executes at build time — but an honest author's legitimate route can still
+// emit config that means something other than what they wrote. So: validate the
+// charset ONCE, loudly, naming the offending value (mirroring what
+// `assertSafeStaticSegment` does for staticPaths in src/router.ts), then encode
+// per-emitter for what legitimately survives — the "." in "/docs/v1.0/:page" is
+// VALID input yet matches ANY character in an Apache regex, so validation alone
+// cannot fix Apache.
+
+/** A concrete URL path: "/" followed by URL-unreserved path characters. */
+const SAFE_PATH_RE = /^\/[A-Za-z0-9._~\-/]*$/;
+/** A route PATTERN: a safe path that may also carry ":param" and "*" segments. */
+const SAFE_PATTERN_RE = /^\/[A-Za-z0-9._~\-/:*]*$/;
+
+function assertSafeRouteValue(value: string, re: RegExp, what: string): void {
+  if (!re.test(value)) {
+    throw new Error(
+      `emit-host-config: ${what} ${JSON.stringify(value)} is not a safe URL path — it must start ` +
+        `with "/" and use only A-Za-z0-9 . _ ~ - /${re === SAFE_PATTERN_RE ? " : *" : ""}. ` +
+        `Route values are interpolated into generated nginx, Apache and Zig config.`,
+    );
+  }
+  if (value.split("/").includes("..")) {
+    throw new Error(
+      `emit-host-config: ${what} ${JSON.stringify(value)} contains a ".." segment, which escapes ` +
+        `the site directory when a host resolves the emitted rule.`,
+    );
+  }
+}
+
+/** Validate every route value a manifest feeds into generated host config.
+ *  Called by all three emitters, so no emitter can be reached unvalidated. */
+export function assertSafeManifest(m: Manifest): void {
+  assertSafeRouteValue(m.base, SAFE_PATH_RE, "manifest base");
+  assertSafeRouteValue(m.fallback, SAFE_PATH_RE, "manifest fallback");
+  for (const d of m.dynamic) {
+    assertSafeRouteValue(d.pattern, SAFE_PATTERN_RE, "dynamic route pattern");
+    assertSafeRouteValue(d.shell, SAFE_PATH_RE, "dynamic route shell");
+  }
+}
+
+/** Escape regex metacharacters. (The identical helper in lint-island-imports.ts
+ *  and react-alias.ts is module-private in both, so it cannot be imported here.) */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Quote a value as a single nginx token. nginx strips the quotes at parse time,
+ *  so the directive still sees the exact path — but the token can no longer end
+ *  early on whitespace or `;` the way a bare interpolation could. */
+function nginxQuote(s: string): string {
+  return `"${s.replace(/(["\\])/g, "\\$1")}"`;
+}
+
+/** Render `s` as a Zig double-quoted string literal (quotes included). Makes the
+ *  `.static_routes` emitter correct on its own terms rather than relying on the
+ *  caller having validated — a code generator that can only emit well-formed
+ *  output is the safer contract. */
+export function zigStringLiteral(s: string): string {
+  let out = '"';
+  for (const ch of s) {
+    const c = ch.codePointAt(0)!;
+    if (ch === "\\" || ch === '"') out += "\\" + ch;
+    else if (c >= 0x20 && c < 0x7f) out += ch;
+    else if (c <= 0xff) out += "\\x" + c.toString(16).padStart(2, "0");
+    else out += "\\u{" + c.toString(16) + "}";
+  }
+  return out + '"';
+}
+
+/** Dir portion of a "/app/club/:id" pattern → "/app/club/"; a root-level dynamic
+ *  route ("/:id") yields "/", never "//" (which matches no request path). */
+function patternDir(pattern: string): string {
+  const segs = pattern.split("/").filter(Boolean);
+  const keep: string[] = [];
+  for (const s of segs) { if (s.startsWith(":") || s === "*") break; keep.push(s); }
+  return keep.length === 0 ? "/" : "/" + keep.join("/") + "/";
+}
+
+export function emitNginx(m: Manifest): EmittedFile[] {
+  assertSafeManifest(m);
+  // A root-mounted SPA (base "/") must emit `location /`, NOT `location //`:
+  // "//" matches no request path, so every deep link would 404 instead of
+  // reaching the shell. Stripping the trailing slash before re-adding one also
+  // normalizes an author-written "/app/".
+  const baseDir = m.base.replace(/\/+$/, "") + "/";
+  const lines: string[] = [
+    `# Generated by emit-host-config.ts for SPA namespace ${m.base}`,
+    `location ${nginxQuote(baseDir)} {`,
+    `    try_files $uri $uri/ ${nginxQuote(m.fallback)};`,
+    `}`,
+  ];
+  for (const d of m.dynamic) {
+    const dir = patternDir(d.pattern);
+    lines.push(
+      `location ${nginxQuote(dir)} {`,
+      `    try_files $uri ${nginxQuote(d.shell)} ${nginxQuote(m.fallback)};`,
+      `}`,
+    );
+  }
+  return [{ name: "nginx.nginx.conf", content: lines.join("\n") + "\n" }];
+}
+
+/** Strip leading (and trailing) "/" — RewriteRule patterns in a per-directory
+ * `.htaccess` context are matched WITHOUT the leading slash; rewrite TARGETS
+ * (the second argument) keep their leading slash. */
+function noSlashes(s: string): string {
+  return s.replace(/^\/+/, "").replace(/\/+$/, "");
+}
+
+export function emitApache(m: Manifest): EmittedFile[] {
+  assertSafeManifest(m);
+  const baseNoLeadingSlash = noSlashes(m.base);
+  const lines: string[] = [
+    `# Generated by emit-host-config.ts for SPA namespace ${m.base} — install as <docroot>/.htaccess`,
+    `RewriteEngine On`,
+  ];
+  if (m.dynamic.length > 0) {
+    lines.push(`# Dynamic route patterns → their prerendered shell`);
+    for (const d of m.dynamic) {
+      const dirNoLeadingSlash = noSlashes(patternDir(d.pattern));
+      // The literal prefix is a PATH, not a regex: a legitimate "." (as in
+      // "/docs/v1.0/:page") would otherwise match ANY character and rewrite
+      // unrelated URLs like /docs/v1X0/… to this SPA shell. Only the ".*" we
+      // append is meant as a metacharacter.
+      const pattern = dirNoLeadingSlash ? `^${escapeRegExp(dirNoLeadingSlash)}/.*$` : `^.*$`;
+      lines.push(
+        `RewriteCond %{REQUEST_FILENAME} !-f`,
+        `RewriteCond %{REQUEST_FILENAME} !-d`,
+        `RewriteRule ${pattern} ${d.shell} [L]`,
+      );
+    }
+  }
+  lines.push(
+    `# Namespace fallback → the SPA shell`,
+    `RewriteCond %{REQUEST_FILENAME} !-f`,
+    `RewriteCond %{REQUEST_FILENAME} !-d`,
+    `RewriteRule ${baseNoLeadingSlash ? `^${escapeRegExp(baseNoLeadingSlash)}/.*$` : `^.*$`} ${m.fallback} [L]`,
+  );
+  return [{ name: "apache.htaccess", content: lines.join("\n") + "\n" }];
+}
+
+/** Our route patterns spell a trailing catch-all "*" (matches zero-or-more remaining
+ * segments); ZigBase spells that terminal case "**". ":param" is identical in both.
+ * (ZigBase's own "*" means one-or-more, so we must NOT emit a bare "*".) */
+function toZigbaseMatch(pattern: string): string {
+  const segs = pattern.split("/");
+  if (segs.length > 0 && segs[segs.length - 1] === "*") segs[segs.length - 1] = "**";
+  return segs.join("/");
+}
+
+/**
+ * ZigBase >= 0.10.0 native SPA fallback (zigbase#183). Two tiers:
+ *
+ *  - Tier 1 (the shipped `zigbase serve` binary, zero config): a presence-only,
+ *    empty `.spa` MARKER file placed in the namespace directory. ZigBase serves
+ *    `<base>/index.html` (200) for any GET/HEAD miss at or below that directory —
+ *    real files, `/api`, admin, and custom routes always win. This is all the
+ *    stock binary needs; no manifest is read.
+ *
+ *  - Tier 2 (a CUSTOM ZigBase build): comptime `.static_routes` for per-pattern
+ *    prerendered shells + exact rewrites. We can't install this (it's compiled
+ *    into the app), so we emit a ready-to-paste snippet as a reference — analogous
+ *    to the nginx/apache config files. It recovers the dedicated `_shell.html`
+ *    first-paint that the marker alone can't (the marker always serves index.html).
+ *
+ * NOTE: this replaces the pre-0.10.0 `zigbase.zigbase.json` manifest copy, which
+ * ZigBase never read — the `.spa` marker is the real contract.
+ */
+export function emitZigbase(m: Manifest): EmittedFile[] {
+  assertSafeManifest(m);
+  const files: EmittedFile[] = [
+    // Tier 1 — the marker ZigBase's static server reads. Presence-only, empty.
+    { name: ".spa", content: "" },
+  ];
+
+  // Tier 2 — an OPTIONAL comptime snippet recovering the per-pattern shells.
+  const routes: string[] = [];
+  for (const d of m.dynamic) {
+    routes.push(
+      `    .{ .match = ${zigStringLiteral(toZigbaseMatch(d.pattern))}, ` +
+        `.serve = ${zigStringLiteral(d.shell)} },`,
+    );
+  }
+  const baseNoTrailing = m.base.replace(/\/+$/, "");
+  routes.push(
+    `    .{ .match = ${zigStringLiteral(baseNoTrailing + "/**")}, ` +
+      `.serve = ${zigStringLiteral(m.fallback)} },`,
+  );
+
+  const exampleShell = m.dynamic[0]?.shell ?? `${baseNoTrailing}/<pattern>/_shell.html`;
+  const snippet =
+    `// ZigBase >= 0.10.0 comptime static_routes for SPA namespace "${m.base}".\n` +
+    `//\n` +
+    `// OPTIONAL — the shipped 'zigbase serve' binary needs NONE of this: the sibling\n` +
+    `// '.spa' marker already serves ${m.fallback} for every miss under ${m.base}\n` +
+    `// (deep links + hard refreshes). Use this only in a CUSTOM ZigBase build that wants\n` +
+    `// the dedicated per-route prerendered shell on first paint (e.g. ${exampleShell})\n` +
+    `// instead of the generic namespace shell.\n` +
+    `//\n` +
+    `// Paste into your App(.{ ... }) config. First match wins in declaration order;\n` +
+    `// ':id' matches one segment, '**' matches zero-or-more trailing segments.\n` +
+    `.static_routes = &.{\n` +
+    `${routes.join("\n")}\n` +
+    `},\n` +
+    `// Declaring .static_routes turns the .spa marker OFF by default;\n` +
+    `// set .enable_spa_marker = true to keep both (routes match first, marker is the residual fallback).\n`;
+  files.push({ name: "zigbase.static_routes.zig", content: snippet });
+
+  return files;
+}
+
+const EMITTERS: Record<string, (m: Manifest) => EmittedFile[]> = {
+  nginx: emitNginx, apache: emitApache, zigbase: emitZigbase,
+};
+
+// ── Strict-CSP support ──────────────────────────────────────────────────────
+// A `script-src` without `unsafe-inline` blocks our generated inline scripts
+// (the `<script type="importmap">` and the `<script type="module">…mountSpa…`
+// bootstrap). Their content is deterministic at build time, so we hash each and
+// publish a `'sha256-…'` allow-list the operator merges into their CSP header.
+
+export type CspTarget = "nginx" | "apache" | "zigbase";
+
+/** sha256 of the EXACT inline text → the CSP `'sha256-<base64>'` hash-source
+ * token, INCLUDING the wrapping single quotes the grammar requires (an unquoted
+ * `sha256-…` is parsed as a HOST source, e.g. `http://sha256-…`, and ignored —
+ * verified against real Chrome + Firefox). The browser hashes the literal UTF-8
+ * bytes between the start tag's `>` and `</script>`, so `content` must be passed
+ * byte-for-byte as served. */
+function inlineScriptHash(content: string): string {
+  return "'sha256-" + createHash("sha256").update(content, "utf8").digest("base64") + "'";
+}
+
+/** True for a `<script>` whose ATTRIBUTES mark it executable-or-importmap and
+ * NOT external: `type="importmap"`, or `type="module"`/no `type`, and no `src`.
+ * `type="application/json"` (our `data-z-props`/`data-z-slots` data blocks) and
+ * any `src=` script (covered by `script-src 'self'`) return false. */
+function isHashableInlineScript(attrs: string): boolean {
+  if (/\bsrc\s*=/i.test(attrs)) return false; // external → 'self', not inline
+  const t = attrs.match(/\btype\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/i);
+  const type = (t ? (t[1] ?? t[2] ?? t[3] ?? "") : "").trim().toLowerCase();
+  return type === "" || type === "importmap" || type === "module";
+}
+
+/**
+ * Scan HTML for inline scripts a strict CSP would block and return the SORTED,
+ * DEDUPED set of `'sha256-…'` hashes over their exact content.
+ *
+ * The regex mirrors the HTML tokenizer's "script data" state: once inside a
+ * `<script>` the content runs to the FIRST literal `</script>`. Our JSON data
+ * blocks escape any nested markup as `<\/script>` (backslash), so a nested
+ * script is captured as content, not matched as its own element — exactly as a
+ * browser sees it. (Attribute values here never contain `>`, so `[^>]*` for the
+ * start tag is faithful for our generated shells.)
+ */
+export function scanInlineScriptHashes(htmlStrings: string[]): string[] {
+  const hashes = new Set<string>();
+  const re = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
+  for (const html of htmlStrings) {
+    for (let m = re.exec(html); m !== null; m = re.exec(html)) {
+      if (isHashableInlineScript(m[1])) hashes.add(inlineScriptHash(m[2]));
+    }
+  }
+  return [...hashes].sort();
+}
+
+// ── External head origins ──────────────────────────────────────────────────
+// `spa.head` may reference external origins the build can plainly see (a
+// Google Fonts stylesheet + its `preconnect`); those entries render into every
+// shell as `<link>` tags. A CSP that omits them contradicts the HTML the same
+// build step emitted — deploy it verbatim and the browser blocks the fonts.
+//
+// Rule (simple + predictable, documented in docs/spa.md): every EXTERNAL
+// origin referenced by a `<link href="…">` in the built HTML is unioned into
+// BOTH `style-src` and `font-src`. This covers the pragmatic font pattern in
+// one stroke — the stylesheet origin (fonts.googleapis.com) and the font-file
+// origin its `preconnect` names (fonts.gstatic.com) both end up allowed in
+// both directives. `script-src` is never widened. Root-relative hrefs are
+// `'self'` and contribute nothing.
+
+/** The lowercased `scheme://host[:port]` origin of an absolute http(s) URL —
+ * or of a protocol-relative one (`//host/…`), whose scheme defaults to
+ * `https:` for the emitted origin (a strict-CSP deployment serves over https,
+ * so that's what the browser resolves the href to). Null for anything else
+ * (root-relative, data:, other schemes, …). */
+function externalOrigin(href: string): string | null {
+  const m = /^(https?:)?\/\/([^/?#]+)/i.exec(href);
+  return m ? `${m[1] ?? "https:"}//${m[2]}`.toLowerCase() : null;
+}
+
+/**
+ * Scan HTML for `<link>` tags with an absolute external `href` and return the
+ * SORTED, DEDUPED set of their origins. Attribute values in our generated
+ * shells are HTML-escaped (`&` → `&amp;`), which can only occur in the
+ * query/fragment — after the origin — so unescaping is unnecessary for the
+ * origin match, but hrefs are still unescaped for robustness.
+ */
+export function scanExternalLinkOrigins(htmlStrings: string[]): string[] {
+  const origins = new Set<string>();
+  const re = /<link\b[^>]*\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/gi;
+  for (const html of htmlStrings) {
+    for (let m = re.exec(html); m !== null; m = re.exec(html)) {
+      const href = (m[1] ?? m[2] ?? m[3] ?? "").replace(/&amp;/g, "&");
+      const o = externalOrigin(href);
+      if (o) origins.add(o);
+    }
+  }
+  return [...origins].sort();
+}
+
+/** The site-wide CSP header VALUE. `script-src` is strict — `'self'` plus the
+ * inline-script hashes, NO `unsafe-inline` (that's the XSS-critical directive
+ * and the whole point of hashing). `style-src` allows `'unsafe-inline'` because
+ * the framework emits inline `style="display:contents"` on island slot wrappers
+ * that can't be hashed for static hosting (attribute styles need `unsafe-hashes`);
+ * style injection is far lower risk than script injection, so this is the
+ * standard strict-script / lenient-style posture (verified: island pages then
+ * serve with zero violations).
+ *
+ * `linkOrigins` is the `scanExternalLinkOrigins` set: each origin
+ * is unioned into `style-src` AND a `font-src` (emitted only when the set is
+ * non-empty, keeping the no-external-heads value byte-identical to before —
+ * `font-src` then falls back to `default-src 'self'`). */
+export function cspHeaderValue(hashes: string[], linkOrigins: string[] = []): string {
+  const scriptSrc = ["'self'", ...hashes].join(" ");
+  const styleSrc = ["'self'", "'unsafe-inline'", ...linkOrigins].join(" ");
+  const fontSrc = linkOrigins.length === 0
+    ? ""
+    : `; font-src ${["'self'", ...linkOrigins].join(" ")}`;
+  return `default-src 'self'; script-src ${scriptSrc}; style-src ${styleSrc}${fontSrc}; object-src 'none'; base-uri 'self'`;
+}
+
+/** One host-specific CSP artifact (site-wide, host-agnostic value). */
+export function emitCsp(hashes: string[], target: CspTarget, linkOrigins: string[] = []): EmittedFile {
+  const value = cspHeaderValue(hashes, linkOrigins);
+  switch (target) {
+    case "nginx":
+      return {
+        name: "csp.nginx.conf",
+        content:
+          `# Generated by emit-host-config.ts — strict Content-Security-Policy for the\n` +
+          `# site's deterministic inline scripts (importmap + SPA bootstrap), allow-listed\n` +
+          `# by sha256 hash. Merge into the server{}/location{} that serves the site.\n` +
+          `add_header Content-Security-Policy "${value}" always;\n`,
+      };
+    case "apache":
+      return {
+        name: "csp.apache.conf",
+        content:
+          `# Generated by emit-host-config.ts — strict Content-Security-Policy for the\n` +
+          `# site's deterministic inline scripts (importmap + SPA bootstrap), allow-listed\n` +
+          `# by sha256 hash. Install in <docroot>/.htaccess or a <Directory> block\n` +
+          `# (requires mod_headers).\n` +
+          `Header set Content-Security-Policy "${value}"\n`,
+      };
+    case "zigbase":
+      return {
+        name: "csp.zigbase.txt",
+        content:
+          `# Generated by emit-host-config.ts — strict Content-Security-Policy for the\n` +
+          `# site's deterministic inline scripts (importmap + SPA bootstrap), allow-listed\n` +
+          `# by sha256 hash. Set this response header in your ZigBase App config\n` +
+          `# (e.g. a global .headers entry) so every served page carries it.\n` +
+          `Content-Security-Policy: ${value}\n`,
+      };
+  }
+}
+
+/** All three site-wide CSP artifacts for a scanned HTML set (operators pick the
+ * file for their host; the header value is identical across targets). */
+export function emitAllCsp(hashes: string[], linkOrigins: string[] = []): EmittedFile[] {
+  return (["nginx", "apache", "zigbase"] as CspTarget[]).map((t) => emitCsp(hashes, t, linkOrigins));
+}
+
+if (import.meta.main) {
+  const args = process.argv.slice(2);
+  let site = "";
+  let override = "";
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--site") site = args[++i] ?? "";
+    else if (args[i] === "--target") override = args[++i] ?? "";
+  }
+  if (!site) { console.error("Usage: emit-host-config.ts --site <outputDir> [--target zigbase|nginx|apache]"); process.exit(1); }
+
+  const glob = new Bun.Glob("**/routing-manifest.json");
+  let count = 0;
+  for (const rel of glob.scanSync({ cwd: site })) {
+    const path = `${site}/${rel}`;
+    const m: Manifest = JSON.parse(readFileSync(path, "utf8"));
+    const target = override || m.deploy_target || "zigbase";
+    const emit = EMITTERS[target];
+    if (!emit) { console.error(`unknown deploy_target: ${target}`); process.exit(1); }
+    // The namespace dir (manifest lives at <dir>/routing-manifest.json).
+    const dir = path.slice(0, path.length - "routing-manifest.json".length); // keeps trailing "/"
+    for (const f of emit(m)) {
+      const outPath = dir + f.name;
+      writeFileSync(outPath, f.content, "utf8");
+      console.log(`emit-host-config: wrote ${outPath} (${target})`);
+    }
+    count++;
+  }
+  if (count === 0) console.log(`emit-host-config: no routing-manifest.json under ${site}`);
+
+  // Site-wide CSP (independent of routing manifests): scan EVERY page under the
+  // site once, hash its inline importmap/bootstrap scripts, and write all three
+  // host CSP artifacts at the site root. Runs even for island-only sites (no
+  // manifest), so a strict-CSP deployment serves them with zero violations.
+  const htmlGlob = new Bun.Glob("**/*.html");
+  const htmls: string[] = [];
+  for (const rel of htmlGlob.scanSync({ cwd: site })) {
+    htmls.push(readFileSync(`${site}/${rel}`, "utf8"));
+  }
+  const hashes = scanInlineScriptHashes(htmls);
+  // External origins referenced by <link> tags (spa.head renders
+  // into every shell) must be allowed by the same CSP, or the emitted conf
+  // blocks resources the emitted HTML loads.
+  const linkOrigins = scanExternalLinkOrigins(htmls);
+  for (const f of emitAllCsp(hashes, linkOrigins)) {
+    const outPath = `${site}/${f.name}`;
+    writeFileSync(outPath, f.content, "utf8");
+    console.log(`emit-host-config: wrote ${outPath} (csp, ${hashes.length} inline-script hashes, ${linkOrigins.length} external link origins)`);
+  }
+}

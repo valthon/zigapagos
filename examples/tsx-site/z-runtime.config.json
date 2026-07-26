@@ -1,0 +1,5 @@
+{
+  "islandImports": {
+    "npmCompat": ["@demo/widget"]
+  }
+}

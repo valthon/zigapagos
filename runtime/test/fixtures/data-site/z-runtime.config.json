@@ -1,0 +1,6 @@
+{
+  "data": {
+    "services": "content/services/*.smd",
+    "hours": "content/hours.json"
+  }
+}

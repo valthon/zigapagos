@@ -59,6 +59,9 @@ pub fn Channel(comptime T: type) type {
 
             // signal on empty queue
             self.writeable.signal(io);
+            // NB: this return was missing (a compile error) until `zigapagos
+            // dev` became the first caller — generic instantiation is lazy.
+            return null;
         }
     };
 }

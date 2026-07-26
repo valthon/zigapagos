@@ -118,6 +118,7 @@ pub const Value = union(enum) {
             .null => return .{ .optional = null },
             .bool => |b| return .{ .bool = .{ .value = b } },
             .integer => |i| return .{ .int = .{ .value = i } },
+            .float => |f| return .{ .float = .{ .f = f } },
             .bytes => |s| return .{ .string = .{ .value = s } },
             .array => |a| return Array.init(gpa, ziggy.dynamic.Value, a),
             .tag => |t| {
@@ -128,7 +129,6 @@ pub const Value = union(enum) {
                 return Value.from(gpa, date);
             },
             .kv => |kv| return .{ .map = .{ .value = kv } },
-            inline else => |_, t| @panic("TODO: implement" ++ @tagName(t) ++ "support in dynamic data"),
         }
     }
 
@@ -188,4 +188,47 @@ pub const Value = union(enum) {
 pub fn stripTrailingSlash(path: []const u8) []const u8 {
     if (path[path.len - 1] == '/') return path[0 .. path.len - 1];
     return path;
+}
+
+pub const JsonWriteError = error{ OutOfMemory, UnsupportedJsonValue, WriteFailed };
+
+/// Serialize a Scripty `Value` to JSON, recursively. Supports the scalar and
+/// container shapes that travel from page/site data into island props —
+/// strings, ints, floats, bools, null, arrays, and maps. Other leaf kinds
+/// (dates, page/site handles, …) have no JSON representation and yield
+/// `error.UnsupportedJsonValue`. Backs the `.toJson()` builtin (Map/Array),
+/// which is how `prop-NAME="$expr.toJson()"` carries structured data into a
+/// typed island Prop (see `src/islands/render.zig` `coerce`).
+pub fn writeValueJson(gpa: Allocator, w: *std.Io.Writer, value: Value) JsonWriteError!void {
+    switch (value) {
+        .string => |s| try std.json.Stringify.value(s.value, .{}, w),
+        .int => |i| try w.print("{d}", .{i.value}),
+        .float => |f| try w.print("{d}", .{f.f}),
+        .bool => |b| try w.writeAll(if (b.value) "true" else "false"),
+        .optional => |o| if (o) |box| try writeValueJson(gpa, w, box.value) else try w.writeAll("null"),
+        .array => |a| {
+            try w.writeByte('[');
+            for (a._items, 0..) |it, idx| {
+                if (idx != 0) try w.writeByte(',');
+                try writeValueJson(gpa, w, it);
+            }
+            try w.writeByte(']');
+        },
+        .map => |m| {
+            try w.writeByte('{');
+            var it = m.value.fields.iterator();
+            var first = true;
+            while (it.next()) |entry| {
+                if (entry.value_ptr.* == .null) continue;
+                const child = Value.fromZiggy(gpa, entry.value_ptr.*) catch return error.OutOfMemory;
+                if (!first) try w.writeByte(',');
+                first = false;
+                try std.json.Stringify.value(entry.key_ptr.*, .{}, w);
+                try w.writeByte(':');
+                try writeValueJson(gpa, w, child);
+            }
+            try w.writeByte('}');
+        },
+        else => return error.UnsupportedJsonValue,
+    }
 }

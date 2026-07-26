@@ -1,5 +1,5 @@
 *-----------------------------------------------*
-|    WARNING: THIS IS A DEBUG BUILD OF ZINE     |
+|  WARNING: THIS IS A DEBUG BUILD OF ZIGAPAGOS  |
 |-----------------------------------------------|
 | Debug builds enable expensive sanity checks   |
 | that reduce performance.                      |
@@ -8,9 +8,9 @@
 |                                               |
 |           zig build --release=fast            |
 |                                               |
-| If you're investigating a bug in Zine, then a |
-| debug build might turn confusing behavior     |
-| into a crash.                                 |
+| If you're investigating a bug in Zigapagos,   |
+| then a debug build might turn confusing       |
+| behavior into a crash.                        |
 |                                               |
 | To disable all forms of concurrency, you can  |
 | add the following flag to your build command: |
@@ -95,15 +95,19 @@ content/index.smd:39:1: error: unknown alternative
 |    []($link.page('other').alternative('doesntexist')) // wrong
 |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-content/index.smd:42:1: error: missing site asset
+content/index.smd:42:1: error: missing page asset
+|    []($image.asset('sub/typo.png')) //wrong
+|    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+content/index.smd:45:1: error: missing site asset
 |    ![](/bad.jpg) //wrong
 |    ^^^^^^^^^^^^^
 
-content/index.smd:43:1: error: missing site asset
+content/index.smd:46:1: error: missing page asset
 |    ![](./bad.jpg) //wrong
 |    ^^^^^^^^^^^^^^
 
-content/index.smd:44:1: error: missing site asset
+content/index.smd:47:1: error: missing page asset
 |    ![](bad.jpg) // wrong
 |    ^^^^^^^^^^^^
 

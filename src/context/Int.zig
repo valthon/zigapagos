@@ -96,7 +96,7 @@ pub const Builtins = struct {
 
             switch (args[0]) {
                 .int => |add| return Int.init(int.value +| add.value),
-                .float => @panic("TODO: int plus with float argument"),
+                .float => return .{ .err = "float arguments are not supported yet" },
                 else => return argument_error,
             }
         }
@@ -124,7 +124,7 @@ pub const Builtins = struct {
 
             switch (args[0]) {
                 .int => |subtrahend| return Int.init(int.value -| subtrahend.value),
-                .float => @panic("TODO: int minus with float argument"),
+                .float => return .{ .err = "float arguments are not supported yet" },
                 else => return argument_error,
             }
         }
@@ -147,7 +147,7 @@ pub const Builtins = struct {
             _: *const context.Root,
             args: []const Value,
         ) context.CallError!Value {
-            const argument_error: Value = .{ .err = "'div' wants one (int|float) argument" };
+            const argument_error: Value = .{ .err = "'div' wants one int argument" };
             if (args.len != 1) return argument_error;
 
             switch (args[0]) {
@@ -158,7 +158,7 @@ pub const Builtins = struct {
 
                     return Int.init(res);
                 },
-                .float => @panic("TODO: div with float argument"),
+                .float => return .{ .err = "float arguments are not supported yet" },
                 else => return argument_error,
             }
         }

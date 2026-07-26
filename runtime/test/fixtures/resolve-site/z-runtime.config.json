@@ -1,0 +1,11 @@
+{
+  "islandImports": {
+    "npmCompat": [
+      "fake-react-lib"
+    ]
+  },
+  "resolve": {
+    "@acme/greeting": "./greeting.ts",
+    "@acme/legacy": "./legacy-fn.cjs"
+  }
+}

@@ -1,0 +1,8 @@
+{
+    .owner = {
+        .name = "Jane Runner",
+        .email = "jane@example.com",
+    },
+    .hours = "Mon-Fri 9-5",
+    .nav = ["Home", "Services", "Contact"],
+}

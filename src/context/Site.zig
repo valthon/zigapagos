@@ -197,6 +197,56 @@ pub const Builtins = struct {
         }
     };
 
+    pub const data = struct {
+        pub const signature: Signature = .{
+            .params = &.{.String},
+            .ret = .Map,
+        };
+        pub const docs_description =
+            \\Returns a site-wide global data file as a Ziggy map.
+            \\
+            \\The argument is the basename (without extension) of a `.ziggy`
+            \\file in the site's `data_dir_path` (default `data/`), parsed once
+            \\at build time. This is the Zigapagos equivalent of Astro's shared
+            \\"content database" singleton (e.g. a `main.json` read by every
+            \\page via `getSite()`): one source of truth, many consumers — read
+            \\the same data from any layout instead of duplicating it into each
+            \\page's frontmatter.
+            \\
+            \\Index into the returned map with `.get('field')`, chaining for
+            \\nested maps.
+        ;
+        pub const examples =
+            \\<span :text="$site.data('site').get('owner').get('name')"></span>
+        ;
+        pub fn call(
+            _: *const Site,
+            gpa: Allocator,
+            ctx: *const context.Root,
+            args: []const Value,
+        ) context.CallError!Value {
+            const bad_arg: Value = .{
+                .err = "expected 1 string argument",
+            };
+            if (args.len != 1) return bad_arg;
+
+            const ref = switch (args[0]) {
+                .string => |s| s.value,
+                else => return bad_arg,
+            };
+
+            if (ctx._meta.build.site_data.get(ref)) |map| {
+                return .{ .map = .{ .value = map } };
+            }
+
+            return Value.errFmt(
+                gpa,
+                "missing site data file '{s}.ziggy' in the data directory",
+                .{ref},
+            );
+        }
+    };
+
     pub const page = struct {
         pub const signature: Signature = .{
             .params = &.{.String},
@@ -206,11 +256,11 @@ pub const Builtins = struct {
             \\Finds a page by path.
             \\
             \\Paths are relative to the content directory and should exclude
-            \\the markdown suffix as Zine will automatically infer which file
-            \\naming convention is used by the target page. 
+            \\the markdown suffix as Zigapagos will automatically infer which file
+            \\naming convention is used by the target page.
             \\
             \\For example, the value 'foo/bar' will be automatically
-            \\matched by Zine with either:
+            \\matched by Zigapagos with either:
             \\ - content/foo/bar.smd
             \\ - content/foo/bar/index.smd
             \\

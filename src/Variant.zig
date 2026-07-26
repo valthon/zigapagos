@@ -131,43 +131,51 @@ pub const Section = struct {
 
     pub fn sortPages(
         s: *Section,
+        gpa: Allocator,
         v: *Variant,
         pages: []Page,
     ) void {
-        const Ctx = struct {
-            v: *Variant,
-            pages: []Page,
-            pub fn lessThan(ctx: @This(), lhs: u32, rhs: u32) bool {
-                if (ctx.pages[rhs].date.eql(ctx.pages[lhs].date)) {
-                    var bl: [std.fs.max_path_bytes]u8 = undefined;
-                    var br: [std.fs.max_path_bytes]u8 = undefined;
-                    return std.mem.order(
-                        u8,
-                        std.fmt.bufPrint(&bl, "{f}", .{
-                            ctx.pages[rhs]._scan.url.fmt(
-                                &ctx.v.string_table,
-                                &ctx.v.path_table,
-                                null,
-                                false,
-                            ),
-                        }) catch unreachable,
-                        std.fmt.bufPrint(&br, "{f}", .{
-                            ctx.pages[lhs]._scan.url.fmt(
-                                &ctx.v.string_table,
-                                &ctx.v.path_table,
-                                null,
-                                false,
-                            ),
-                        }) catch unreachable,
-                    ) == .lt;
-                }
+        // Precompute each page's output URL exactly once into a scratch arena
+        // (O(n) formats), then sort with a stable O(n log n) block sort. The
+        // previous implementation was an O(n²) insertion sort whose date-tie
+        // break formatted *both* pages' full URLs on every comparison — and the
+        // common undated case (Page.date defaults to the epoch) makes every
+        // comparison take that tie-break. See AUD-018.
+        const ids = s.pages.items;
 
-                return ctx.pages[rhs].date.lessThan(ctx.pages[lhs].date);
+        var arena_state: std.heap.ArenaAllocator = .init(gpa);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+
+        const Entry = struct { id: u32, url: []const u8 };
+        const entries = arena.alloc(Entry, ids.len) catch fatal.oom();
+        for (entries, ids) |*e, id| {
+            const url = std.fmt.allocPrint(arena, "{f}", .{
+                pages[id]._scan.url.fmt(
+                    &v.string_table,
+                    &v.path_table,
+                    null,
+                    false,
+                ),
+            }) catch fatal.oom();
+            e.* = .{ .id = id, .url = url };
+        }
+
+        const Ctx = struct {
+            pages: []Page,
+            pub fn lessThan(ctx: @This(), lhs: Entry, rhs: Entry) bool {
+                const lhs_date = ctx.pages[lhs.id].date;
+                const rhs_date = ctx.pages[rhs.id].date;
+                if (rhs_date.eql(lhs_date)) {
+                    return std.mem.order(u8, rhs.url, lhs.url) == .lt;
+                }
+                return rhs_date.lessThan(lhs_date);
             }
         };
 
-        const ctx: Ctx = .{ .pages = pages, .v = v };
-        std.sort.insertion(u32, s.pages.items, ctx, Ctx.lessThan);
+        std.sort.block(Entry, entries, Ctx{ .pages = pages }, Ctx.lessThan);
+
+        for (ids, entries) |*id, e| id.* = e.id;
     }
 };
 
@@ -277,7 +285,10 @@ pub fn scanContentDir(
                 .file, .sym_link => {
                     const str = try string_table.intern(gpa, entry.name);
                     if (str == index_html) {
-                        @panic("TODO: error reporting for index.html in content section");
+                        fatal.msg(
+                            "error: '{s}/index.html': raw index.html files are not allowed in the content dir (use index.smd)\n",
+                            .{dir_entry.path},
+                        );
                     }
                     if (std.mem.endsWith(u8, entry.name, ".smd")) {
                         if (str == index_smd) {
@@ -336,6 +347,14 @@ pub fn scanContentDir(
 
             const index_page = try pages.addOne(gpa);
             index_page._parse.active = false;
+            // Pages are carved from undefined ArrayList memory, so field
+            // defaults never run; initialize every field `Page.deinit` frees to
+            // its empty state so deinit can always run over an unparsed
+            // placeholder — `_render` (AUD-004) and `_parse.arena`, whose free is
+            // unconditional. A later `parse()` overwrites `_parse` wholesale, so
+            // the empty arena is harmless if this page is parsed.
+            index_page._parse.arena = .{};
+            index_page._render = .{};
             index_page._scan = .{
                 .file = .{
                     .path = content_sub_path,
@@ -367,6 +386,19 @@ pub fn scanContentDir(
 
             break :blk page_id;
         } else dir_entry.page_assets_owner;
+
+        // The content root must provide an index.smd: it establishes the
+        // root section (section 0 is the invalid sentinel). Without it, any
+        // content in the root — pages, assets, or nothing at all — would index
+        // the undefined section 0 below, panicking in Debug and corrupting an
+        // undefined ArrayList in release. Emit a clean diagnostic instead of
+        // reaching that state. See AUD-009.
+        if (dir_entry.path.len == 0 and !found_index_smd) {
+            fatal.msg(
+                "error: the content root requires a content/index.smd page\n",
+                .{},
+            );
+        }
 
         const section = &sections.items[current_section];
         const section_pages_old_len = section.pages.items.len;
@@ -410,6 +442,11 @@ pub fn scanContentDir(
 
             sp.* = @intCast(idx);
             p._parse.active = false;
+            // See the index_page note above: initialize the fields `Page.deinit`
+            // frees — `_render` (AUD-004) and `_parse.arena` — so deinit is safe
+            // over an unparsed placeholder.
+            p._parse.arena = .{};
+            p._render = .{};
             p._scan = .{
                 .file = .{
                     .path = content_sub_path,
@@ -449,10 +486,8 @@ pub fn scanContentDir(
 
         // assets
         {
-            if (dir_entry.path.len == 0 and !found_index_smd) {
-                @panic("TODO: top level assets require an index.smd page");
-            }
-
+            // A content root without an index.smd was already rejected above
+            // (AUD-009), so by here the root always has its index section.
             const lh: LocationHint = .{
                 .id = assets_owner_id,
                 .kind = .{ .page_asset = .init(0) },

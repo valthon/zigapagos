@@ -1,0 +1,8 @@
+{
+  "name": "zigapagos-site",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@z/runtime": "file:../runtime"
+  }
+}
