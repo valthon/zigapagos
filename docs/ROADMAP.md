@@ -89,11 +89,14 @@ a ZigBase backend — queued the migration backlog. Ordering for the migration p
    Both ✅ **shipped 2026-07-06** (`RouteDef.guard` + `Router fallback`; `children` + `<Outlet/>` with per-scope guard cascade; see `docs/spa.md`).
 3. **Unblock the typed contract:** `zigbase-native-codegen` (HIGH) — consume the
    backend's own `gen-client` output instead of a drifting hand-authored OpenAPI doc.
-4. **Strongly wanted alongside:** `per-route-code-splitting` and
-   `configurable-import-allowlist` — the latter is the incremental preact/compat
-   bridge that replaces the retired de-React codemod.
+4. **Shipped alongside:** `per-route-code-splitting` (`lazy()` + per-route
+   `modulepreload`, see `docs/spa.md`) and `configurable-import-allowlist` — the
+   latter is the incremental preact/compat bridge that replaces the retired
+   de-React codemod.
 5. **Any time:** browser error relay, same-origin fetch defaults, live flags,
-   router paper cuts, CSP-compatible emit, state-preserving reload.
+   router paper cuts, state-preserving reload. CSP-compatible emit is **shipped**:
+   any site with islands or SPAs gets per-inline-script sha256 hashes written to
+   `csp.{nginx.conf,apache.conf,zigbase.txt}` (`build/site.zig`, `docs/spa.md`).
 
 **Cross-cutting — ZigBase integration seams.** Route guards, browser error relay,
 same-origin fetch defaults, live flags, and native codegen each have a backend

@@ -1,5 +1,5 @@
 import { resolve, dirname, join, basename } from "node:path";
-import { existsSync, readFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, mkdirSync, realpathSync } from "node:fs";
 import { reactAliasBuildPlugin, resolveOverridePlugin } from "../scripts/react-alias.ts";
 import { loadConfig, effectiveResolveMap, type ZRuntimeConfig } from "../scripts/z-runtime-config.ts";
 import { siteDataPlugin } from "../scripts/site-data.ts";
@@ -40,6 +40,21 @@ export interface BundleArgs {
  *  Only the value is rewritten; the `//# debugId=` line (if any) is untouched. */
 export function retargetSourceMappingUrl(js: string, mapName: string): string {
   return js.replace(/(\/\/# sourceMappingURL=)\S*/, `$1${mapName}`);
+}
+
+/** `realpathSync`, falling back to the input when the path cannot be stat'ed.
+ *
+ *  Used for identity comparison of module paths. Bun reports symlink-resolved
+ *  paths to `onLoad`, while `resolve()` does not follow symlinks, so the two
+ *  disagree wherever a path component is a symlink — most visibly macOS's
+ *  `$TMPDIR` (`/var/folders/…` -> `/private/var/folders/…`). Comparing raw
+ *  `resolve()` output there silently fails to match. */
+function realpathOr(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
 }
 
 /** The site config for a bundle: explicit path or discovered upward from the entry. */
@@ -103,6 +118,15 @@ export async function bundleIsland(args: BundleArgs): Promise<string[]> {
     }
   }
   const entryAbs = resolve(args.entry);
+  // Symlink-resolved form of the entry, for identity comparison against the
+  // paths Bun reports to onLoad. `resolve()` normalises `.`/`..` but does NOT
+  // follow symlinks, and Bun hands back the realpath — so on macOS, where
+  // $TMPDIR is `/var/folders/…` symlinked to `/private/var/folders/…`, the two
+  // never compared equal and the hot transform silently skipped the entry.
+  // Symptom: a bundle with no `__zigapagos_hot_register` call and a passing
+  // build, i.e. fast refresh degrading to a full remount with no diagnostic.
+  // Falls back to the un-resolved path if the file cannot be stat'ed.
+  const entryReal = realpathOr(entryAbs);
   const res = await Bun.build({
     entrypoints: [args.entry],
     external: args.external,
@@ -143,7 +167,8 @@ export async function bundleIsland(args: BundleArgs): Promise<string[]> {
               setup(build) {
                 const fn = hotTransform!;
                 build.onLoad({ filter: /\.[tj]sx?$/ }, async (a) => {
-                  if (resolve(a.path) !== entryAbs) return undefined;
+                  // Compare realpaths, not `resolve()`d paths — see entryReal.
+                  if (realpathOr(resolve(a.path)) !== entryReal) return undefined;
                   const src = await Bun.file(a.path).text();
                   // moduleKey = the entry's absolute path: stable across
                   // rebuilds within a dev session, unique per island entry.

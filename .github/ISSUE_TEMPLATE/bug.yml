@@ -14,7 +14,7 @@ body:
     attributes:
       label: Zigapagos Version
       description: "The output of `zigapagos version`"
-      placeholder: "0.10.3"
+      placeholder: "v0.1.0"
     validations:
       required: true
   - type: textarea

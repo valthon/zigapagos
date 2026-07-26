@@ -1,0 +1,15 @@
+# Blank issues stay enabled on purpose: the two templates cover bugs and feature
+# requests, and a pre-1.0 project also wants documentation gaps, questions and
+# "is this supposed to work?" reports, none of which fit either form. Friction
+# there costs more than it saves.
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability privately
+    url: https://github.com/valthon/zigapagos/security/advisories/new
+    about: Never file an exploitable issue in public. Read SECURITY.md first — it also lists what is by design and therefore not a vulnerability.
+  - name: Documentation
+    url: https://github.com/valthon/zigapagos/tree/main/docs
+    about: The source-of-truth specs — islands.md, spa.md, observability.md, cross-tier-codegen.md, migration/. Check the relevant one before filing; it states what the behavior is supposed to be.
+  - name: Contributing guide
+    url: https://github.com/valthon/zigapagos/blob/main/CONTRIBUTING.md
+    about: Toolchain, the full test command (zig build test runs only the snapshot diff), the local gate list, and the code-quality bar.
