@@ -150,6 +150,24 @@ jobs:
         with:
           cache: true
 
+      # mise-action puts its SHIM directory on PATH, and a shim resolves the tool
+      # version from the CURRENT DIRECTORY's mise config. The hermetic e2e scripts
+      # spawn `bun` from temp directories OUTSIDE this repo — the stub `zigbase`
+      # is a shell script doing `exec bun stub-zigbase.ts`, and the island sidecar
+      # is spawned with a generated site as its cwd — where mise.toml does not
+      # apply. Without a global default the shim aborts with
+      # "No version is set for shim: bun", the stub server never answers, and the
+      # dev-loop scripts fail with "dev never became ready", which reads as a
+      # server bug rather than a toolchain one.
+      #
+      # Pinning the same versions globally makes the shims resolve from any cwd.
+      # Keep these in lockstep with mise.toml.
+      - name: Pin tool versions globally (shims must resolve outside the repo)
+        run: |
+          mise use -g zig@0.16.0 bun@1.2
+          echo "resolving from a directory with no mise config:"
+          ( cd "$(mktemp -d)" && bun --version && zig version )
+
       - name: Subsystem unit tests (islands, SPA, dev/serve, migrate, runtime sidecar)
         env:
           ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache

@@ -1,0 +1,54 @@
+name: Feature Request
+description: Propose a capability Zigapagos does not have yet
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A feature request is for something Zigapagos cannot do. If it *should*
+        already work and doesn't, file a bug report instead.
+        ## Remember to search before filing a new request
+        Please search the issue tracker first, and use a title that would have turned
+        this request up in the search results for your own query.
+        ## Scope
+        Zigapagos is a permanent fork with different goals from the upstream generator
+        it descends from: upstream is deliberately JavaScript-free, this project embraces
+        a minimal TSX toolchain. A request about the inherited templating/content core
+        (SuperHTML, SuperMD, Ziggy frontmatter) usually belongs upstream — see the
+        README's Acknowledgements and `docs/ROADMAP.md`.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to build that you currently can't? Describe the situation, not the solution — a concrete site, page or component that this blocks is worth more than a general principle.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What should Zigapagos do instead? If it needs new syntax, a CLI flag, a config field, or a `@z/runtime` export, sketch the exact spelling you'd want to write.
+    validations:
+      required: true
+  - type: textarea
+    id: workaround
+    attributes:
+      label: How you work around it today
+      description: What you do instead, and why that isn't good enough. "Nothing — I gave up" is a useful answer.
+    validations:
+      required: false
+  - type: textarea
+    id: prior_art
+    attributes:
+      label: Prior art
+      description: Does another tool (Astro, Eleventy, Hugo, Next, …) solve this, and how? Links to their docs help a lot, including where you think they got it wrong.
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: Zigapagos Version
+      description: "The output of `zigapagos version`, if you have it built — mainly so we know whether this already landed on main."
+      placeholder: "v0.11.2-dev.19+22ea4a0"
+    validations:
+      required: false

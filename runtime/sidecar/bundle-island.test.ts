@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { bundleIsland, bundleSpa, makeDepfile, findTsconfig, retargetSourceMappingUrl, findRouteChunk } from "./bundle-island.ts";
-import { mkdtempSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -216,6 +216,38 @@ test("findRouteChunk treats a '.' in the module name as a literal, not a regex w
 });
 
 // --- dev fast-refresh transform -------------------------------------------
+
+test("hot: the entry is recognised through a SYMLINKED path (macOS $TMPDIR)", async () => {
+  // Regression: the hot transform identified the entry with `resolve()`, which
+  // normalises but does NOT follow symlinks, while Bun reports the realpath to
+  // onLoad. Anywhere a path component is a symlink the two disagreed and the
+  // entry was silently skipped -- the build succeeded and fast refresh quietly
+  // degraded to a full remount. macOS hit it on every run because $TMPDIR is
+  // /var/folders/... symlinked to /private/var/folders/..., so this failed only
+  // on the macOS CI leg. Reproduced here on any platform by routing the entry
+  // through an explicit symlink.
+  const base = mkdtempSync(join(tmpdir(), "hot-symlink-"));
+  const real = join(base, "real");
+  mkdirSync(real);
+  const link = join(base, "link");
+  symlinkSync(real, link);
+
+  writeFileSync(join(real, "tsconfig.json"), JSON.stringify({ compilerOptions: { jsx: "react-jsx" } }));
+  writeFileSync(
+    join(real, "Counter.island.tsx"),
+    `import { useState } from "@z/runtime";\nexport default function Counter() {\n  const [n] = useState(0);\n  return <div>{n}</div>;\n}\n`,
+  );
+
+  const out = join(real, "out.js");
+  await bundleIsland({
+    // entry addressed THROUGH the symlink; Bun will report the realpath
+    entry: join(link, "Counter.island.tsx"), outfile: out, depfile: join(real, "out.d"),
+    external: ["@z/runtime"], minify: false, hot: true,
+  });
+  const js = readFileSync(out, "utf8");
+  expect(js).toContain("__zHotRegister");
+  expect(js).toContain('"Counter"');
+});
 
 test("hot: entry components are routed through the hot registry; @z/runtime stays external; depfile intact", async () => {
   const dir = mkdtempSync(join(tmpdir(), "hot-on-"));
