@@ -31,9 +31,22 @@ jobs:
       - name: Setup toolchain (zig + bun via mise)
         uses: jdx/mise-action@v2
 
+      # The site build bundles the shipped runtime by invoking
+      # runtime/sidecar/bundle-island.ts on runtime/src/browser-entry.ts. Bun
+      # resolves that entry's imports upward from runtime/src, so `preact`,
+      # `preact/compat` and `preact-render-to-string` must be present in
+      # runtime/node_modules. Installing only in site/ does not put them on that
+      # resolution path — site/node_modules holds `@z/runtime` as a link, not
+      # the runtime's own dependency tree — so every Pages run failed the
+      # zigapagos-runtime bundle step with nine `Could not resolve` errors.
+      # This mirrors the same install ordering ci.yml already does.
+      - name: Install runtime dependencies (site build bundles @z/runtime)
+        working-directory: runtime
+        run: bun install --frozen-lockfile
+
       - name: Build site
         run: |
-          bun install
+          bun install --frozen-lockfile
           zig build
         working-directory: site
 
