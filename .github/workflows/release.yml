@@ -1,20 +1,69 @@
 name: Release
 
+# Runs in two modes, and the difference is exactly one job.
+#
+#   push of a v* tag   build every target, then PUBLISH the GitHub release.
+#   pull_request /     build every target and stop. No release, no tag, no
+#   workflow_dispatch  write permission.
+#
+# The smoke mode exists because the publish path used to be reachable only by
+# pushing a tag: a typo in this file, a broken target, or a missing CHANGELOG
+# section was first executed for real during a release, on a tag that cannot be
+# un-pushed. The `paths` filter keeps that cost off unrelated PRs — only changes
+# to the release plumbing itself pay for it — and `workflow_dispatch` gives the
+# same dry run on demand from any branch once this is on main.
 on:
   push:
     tags:
       - 'v*'
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+      - 'build/release.zig'
+      - 'build.zig.zon'
+      - 'scripts/assert-version.sh'
+      - 'scripts/extract-release-notes.sh'
+  workflow_dispatch:
 
+# Read-only by default; only the publishing job elevates.
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: false
+  # A superseded smoke run is worth cancelling; a real release in flight is not.
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 jobs:
-  release:
-    runs-on: ubuntu-latest
+  build:
+    # One runner per target. This used to be a single ubuntu job cross-compiling
+    # the whole matrix, which is fine for Zig itself but has three costs: a
+    # macOS-only breakage cannot be distinguished from a Linux one in the log,
+    # the targets are serialised, and any target that needs a native host to
+    # build at all is unreachable by construction. Splitting them makes the
+    # runner a per-target property — which is the prerequisite for testing the
+    # hypothesis that aarch64-macos, whose `zig translate-c` SIGSEGV on
+    # wuffs-v0.4.c is what keeps it out of build/release.zig, does not crash when
+    # the build is native rather than a cross-compile. It is NOT re-added here:
+    # nothing has verified it, and see build/release.zig on why an unbuildable
+    # target is worse than an absent one.
+    #
+    # The target list itself lives in build/release.zig. A row here that names a
+    # triple that list does not have fails at configure time with the valid
+    # triples printed; a target added there without a row here would silently
+    # stop being published, so add both together.
+    strategy:
+      # Report every broken target in one run rather than whichever failed first.
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-linux-musl
+            runner: ubuntu-latest
+            archive: x86_64-linux-musl.tar.xz
+          - target: x86_64-macos
+            runner: macos-latest
+            archive: x86_64-macos.zip
+    runs-on: ${{ matrix.runner }}
     steps:
       # fetch-depth: 0 is load-bearing, not caution. build/config.zig derives the
       # version from `git describe --match '*.*.*' --tags`, and build/release.zig
@@ -26,35 +75,100 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup toolchain (zig + bun via mise)
-        uses: jdx/mise-action@v2
-
       # build/release.zig also refuses to build when the tag disagrees with the
-      # zon package version. That check is worth duplicating here only because it
-      # otherwise surfaces after the cross-compiles have already run; failing in
-      # two seconds with the two values side by side is a much better signal.
-      - name: Check tag matches build.zig.zon version
+      # zon package version, and scripts/extract-release-notes.sh is what turns
+      # CHANGELOG.md into the release body. Both are two seconds of bash, and
+      # both are checked here — before the toolchain install and the ReleaseFast
+      # build — so a version bump forgotten in build.zig.zon or a missing
+      # changelog section fails in ~10s instead of after every runner in the
+      # matrix has built a binary that will never be published.
+      - name: Check tag against build.zig.zon and CHANGELOG.md
+        if: github.event_name == 'push'
         run: |
-          tag="${GITHUB_REF_NAME#v}"
-          zon="$(sed -n 's/^[[:space:]]*\.version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' build.zig.zon)"
-          echo "tag=$tag zon=$zon"
-          if [ "$tag" != "$zon" ]; then
-            echo "::error::tag '$GITHUB_REF_NAME' does not match build.zig.zon version '$zon' — bump the zon version in the commit you tag"
+          scripts/assert-version.sh "$GITHUB_REF_NAME"
+          scripts/extract-release-notes.sh --check "$GITHUB_REF_NAME"
+
+      # A smoke run has no tag, so `zig build release` would fail its gate before
+      # compiling anything. Synthesise the tag build/release.zig demands in the
+      # ephemeral checkout: `-f` because the real v0.1.0 exists on the remote at
+      # an older commit and fetch-depth:0 brought it along. Nothing pushes it —
+      # this job has `contents: read` and never runs a git write against origin.
+      - name: Synthesise the zon-matching tag (smoke run only)
+        if: github.event_name != 'push'
+        run: |
+          git tag -f "v$(scripts/assert-version.sh --print)" HEAD
+          git describe --match '*.*.*' --tags
+
+      - name: Setup toolchain (zig + bun via mise)
+        uses: jdx/mise-action@v4
+
+      - name: Build ${{ matrix.target }}
+        run: zig build release -Drelease-target=${{ matrix.target }}
+
+      # `-Drelease-target` selects exactly one row of the matrix in
+      # build/release.zig, so exactly one archive must appear. Asserting the
+      # count — not just the name — catches a filter that silently matched
+      # nothing or, worse, everything: with `merge-multiple` downloads in the
+      # publish job, a duplicate archive from two runners would overwrite rather
+      # than conflict.
+      #
+      # Deliberately no `mapfile`/`find -printf` here: this step also runs on the
+      # macOS runner, where bash is 3.2 (no `mapfile`) and find is BSD (no
+      # `-printf`). A nullglob array is portable to both and, unlike a bare glob,
+      # yields an empty array rather than the literal pattern when nothing
+      # matches.
+      - name: Verify exactly one archive was produced
+        shell: bash
+        run: |
+          shopt -s nullglob
+          archives=(zig-out/releases/*.zip zig-out/releases/*.tar.xz)
+          printf 'archive: %s\n' "${archives[@]}"
+          if [ "${#archives[@]}" -ne 1 ] || [ "$(basename "${archives[0]}")" != "${{ matrix.archive }}" ]; then
+            echo "::error::expected exactly ${{ matrix.archive }}, got ${#archives[@]} archive(s)"
             exit 1
           fi
 
-      - name: Build release matrix
-        run: zig build release
+      - name: Upload ${{ matrix.archive }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.target }}
+          path: zig-out/releases/${{ matrix.archive }}
+          if-no-files-found: error
+          retention-days: 1
 
-      # Fail loudly rather than publishing an empty release: `zig build release`
-      # can succeed with nothing installed if the target matrix is ever emptied.
-      - name: Collect artifacts
-        working-directory: zig-out/releases
+  publish:
+    # Tag pushes only: a PR or dispatch run stops after `build`.
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # Re-asserted rather than inherited: `needs` guarantees the build jobs
+      # succeeded, not that this job checked out the same thing they did.
+      - name: Check tag against build.zig.zon
+        run: scripts/assert-version.sh "$GITHUB_REF_NAME"
+
+      - name: Download every target's archive
+        uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+
+      - name: Checksum the archives
+        working-directory: dist
         run: |
           mapfile -t archives < <(
             find . -maxdepth 1 -type f \( -name '*.zip' -o -name '*.tar.xz' \) \
               -printf '%P\n' | sort
           )
+          # Fail loudly rather than publishing an empty release.
           if [ "${#archives[@]}" -eq 0 ]; then
             echo "::error::no release archives were produced"
             exit 1
@@ -67,6 +181,14 @@ jobs:
           sha256sum "${archives[@]}" > SHA256SUMS
           cat SHA256SUMS
 
+      # The release body is the CHANGELOG section for this version, not
+      # `--generate-notes`' commit list. scripts/extract-release-notes.sh exits
+      # non-zero if the section is missing or empty; the build jobs already ran
+      # the same check with `--check`, so reaching a failure here means
+      # CHANGELOG.md changed under the tag.
+      - name: Extract release notes from CHANGELOG.md
+        run: scripts/extract-release-notes.sh "$GITHUB_REF_NAME" > RELEASE_NOTES.md
+
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -74,6 +196,6 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" \
-            --generate-notes \
+            --notes-file RELEASE_NOTES.md \
             --verify-tag \
-            zig-out/releases/*
+            dist/*

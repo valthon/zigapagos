@@ -12,11 +12,23 @@ const deps = @import("deps.zig");
 /// registers a failing step so the error surfaces when `release` is asked for
 /// rather than on every unrelated `zig build`.
 pub fn setup(b: *std.Build, version: config.Version) void {
+    // Declared here rather than in config.zig because it configures nothing but
+    // this step, and config.Config is threaded into the exe/test wiring where a
+    // release-only knob would be noise. It must be declared unconditionally —
+    // outside the `version == .tag` branch — or passing it on an untagged
+    // checkout would be rejected as an unknown option before the (more useful)
+    // "git tag missing" failure could be reported.
+    const only = b.option(
+        []const u8,
+        "release-target",
+        "Build only this target of the release matrix (zig triple, e.g. x86_64-macos); default: all",
+    );
+
     const release = b.step("release", "Create release builds of Zigapagos");
     if (version == .tag) {
         const zon = @import("../build.zig.zon");
         if (std.mem.eql(u8, zon.version, version.tag[1..])) {
-            addTargets(b, release, version.string());
+            addTargets(b, release, version.string(), only);
         } else {
             release.dependOn(&b.addFail(b.fmt(
                 "error: git tag does not match zon package version (zon: '{s}', git: '{s}')",
@@ -34,6 +46,9 @@ fn addTargets(
     b: *std.Build,
     release_step: *std.Build.Step,
     version: []const u8,
+    /// `-Drelease-target`: build a single triple instead of the whole matrix,
+    /// so the release workflow can give each target its own runner.
+    only: ?[]const u8,
 ) void {
     // The shipped matrix is deliberately the two targets that actually build on
     // released Zig 0.16.0. Building the historical eight-target matrix at
@@ -55,10 +70,35 @@ fn addTargets(
     //
     // Re-add a target here only together with its fix; a target that cannot be
     // built is worse than an absent one, because `release` is all-or-nothing.
+    //
+    // This list stays the single source of truth for WHAT is shipped. WHERE each
+    // one is built is the release workflow's matrix, which selects a row with
+    // `-Drelease-target=<triple>`; an unknown triple fails here rather than
+    // silently building nothing, so the two lists cannot drift apart unnoticed.
     const targets: []const std.Target.Query = &.{
         .{ .cpu_arch = .x86_64, .os_tag = .macos },
         .{ .cpu_arch = .x86_64, .os_tag = .linux, .abi = .musl },
     };
+
+    if (only) |triple| {
+        for (targets) |t| {
+            if (std.mem.eql(u8, triple, t.zigTriple(b.allocator) catch unreachable)) break;
+        } else {
+            var known: std.ArrayList(u8) = .empty;
+            for (targets, 0..) |t, i| {
+                if (i != 0) known.appendSlice(b.allocator, ", ") catch unreachable;
+                known.appendSlice(
+                    b.allocator,
+                    t.zigTriple(b.allocator) catch unreachable,
+                ) catch unreachable;
+            }
+            release_step.dependOn(&b.addFail(b.fmt(
+                "error: -Drelease-target='{s}' is not in the release matrix (have: {s})",
+                .{ triple, known.items },
+            )).step);
+            return;
+        }
+    }
 
     Io.Dir.cwd().createDirPath(b.graph.io, b.pathJoin(&.{
         b.install_prefix,
@@ -74,6 +114,10 @@ fn addTargets(
     // change here. The non-wuffs imports below mirror `addZigapagosExe`; keep
     // them in sync.
     for (targets) |t| {
+        if (only) |triple| {
+            if (!std.mem.eql(u8, triple, t.zigTriple(b.allocator) catch unreachable)) continue;
+        }
+
         const target = b.resolveTargetQuery(t);
         const optimize: std.builtin.OptimizeMode = .ReleaseFast;
 
