@@ -99,6 +99,12 @@ because it is a static pointer, there is nothing to reset after a release.
 
 ## At release
 
+**The assembler runs in the release PR, before the tag is pushed** — the version section has
+to be in `CHANGELOG.md` in the commit that gets tagged. The `v*` release workflow runs
+`scripts/extract-release-notes.sh --check "$GITHUB_REF_NAME"` in its preamble, so tagging
+first fails the release run in seconds rather than shipping a wrong release body; assembling
+after the tag would need a second tag.
+
 The release PR runs:
 
 ```sh

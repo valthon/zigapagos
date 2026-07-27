@@ -236,7 +236,9 @@ compare links at the foot of the file, and `git rm`s the fragments it consumed.
 Two things follow from that:
 
 - **Do not run the assembler in a feature PR.** Adding your fragment is the whole
-  job; the release PR runs it once.
+  job; the release PR runs it once — *before* the `v*` tag is pushed, since the
+  release workflow checks the tagged commit's `CHANGELOG.md` for that version's
+  section and fails the run in seconds if it is missing.
 - **The heading it emits is an interface, not a style choice.**
   `scripts/extract-release-notes.sh` finds a section by matching `## [<version>]`
   at the start of a line and slices through to the next `## `, and the `v*`
