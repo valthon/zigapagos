@@ -27,7 +27,7 @@ jobs:
       - name: No autocrlf
         run: git config --global core.autocrlf false
         
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0  # Change if you need git info
 
@@ -86,7 +86,7 @@ jobs:
 
       - name: Restore Zig package cache
         id: zig-pkg-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ${{ github.workspace }}/.zig-global-cache
           key: zig-pkg-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-${{ hashFiles('**/build.zig.zon') }}
@@ -112,7 +112,7 @@ jobs:
       # exact primary-key hit (the cache is already up to date).
       - name: Save Zig package cache
         if: steps.zig-pkg-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ${{ github.workspace }}/.zig-global-cache
           key: ${{ steps.zig-pkg-cache.outputs.cache-primary-key }}
@@ -146,7 +146,7 @@ jobs:
       # (zig 0.16.0 + bun 1.2). The Zig package cache warmed above is reused by
       # pointing ZIG_GLOBAL_CACHE_DIR at the same directory on every zig step.
       - name: Setup toolchain for e2e (mise + bun)
-        uses: jdx/mise-action@v2
+        uses: jdx/mise-action@v4
         with:
           cache: true
 

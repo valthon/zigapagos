@@ -27,7 +27,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup toolchain (zig + bun via mise)
-        uses: jdx/mise-action@v2
+        uses: jdx/mise-action@v4
 
       # build/release.zig also refuses to build when the tag disagrees with the
       # zon package version. That check is worth duplicating here only because it
