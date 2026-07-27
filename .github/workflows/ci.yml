@@ -23,11 +23,25 @@ jobs:
         os: [ubuntu-latest, macos-latest]
 
     runs-on: ${{ matrix.os }}
+    env:
+      # --- Zig package cache ---
+      # Keep third-party git hosts (codeberg.org, code.hexops.org, ...) off the
+      # critical path: cache the Zig global package cache and pre-fetch the
+      # dependency tree with retries before building.
+      #
+      # This is job-level now. It used to be repeated as step-level `env:` on
+      # every step that ran zig, because mlugg/setup-zig exported its own
+      # ZIG_GLOBAL_CACHE_DIR=$GITHUB_WORKSPACE/.zig-cache through GITHUB_ENV and
+      # only a step-level `env:` outranks GITHUB_ENV. With setup-zig gone (see
+      # the toolchain step below) nothing writes that variable, so one job-level
+      # declaration covers every step — and, unlike the old arrangement, also
+      # every process the e2e scripts spawn.
+      ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
     steps:
       - name: No autocrlf
         run: git config --global core.autocrlf false
-        
-      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0  # Change if you need git info
 
@@ -49,104 +63,18 @@ jobs:
           bash scripts/check-allocator-contracts.test.sh
           bash scripts/check-allocator-contracts.sh
 
-      - name: Setup Zig
-        uses: mlugg/setup-zig@v2
-
-      # Runs immediately after the toolchain is available and before any build:
-      # `zig fmt --check` needs only the compiler, no dependency fetch, so a
-      # formatting slip fails in seconds instead of after the full e2e suite.
-      #
-      # The file list comes from `git ls-files`, not from a directory walk. Both
-      # `zig-pkg/` and `examples/tsx-site/zig-pkg/` are gitignored trees of
-      # MATERIALIZED third-party dependencies, as are `.zig-cache/` and
-      # `zig-out/` — so a path-based invocation (`zig fmt --check … examples/`)
-      # passes on a clean checkout and then starts failing on vendored source the
-      # moment anything runs a build that populates them. Tracked-files-only is
-      # both correct and self-maintaining: a new first-party directory is covered
-      # with no change here. (The generated `src/hacks/*.h.zig` translate-c dumps
-      # ARE tracked and are fmt-clean; they stay in scope deliberately.)
-      - name: Formatting gate (zig fmt)
-        run: git ls-files -z '*.zig' | xargs -0 -r zig fmt --check
-
-      # --- Zig package cache ---
-      # Keep third-party git hosts (codeberg.org, code.hexops.org, ...) off the
-      # critical path: cache the Zig global package cache and pre-fetch the
-      # dependency tree with retries before building.
-      #
-      # setup-zig exports ZIG_GLOBAL_CACHE_DIR=$GITHUB_WORKSPACE/.zig-cache via
-      # GITHUB_ENV, mixing packages with local build artifacts (and its own
-      # cache is cleared whenever it exceeds 2 GiB). We point the *global*
-      # (package) cache at a dedicated directory instead; step-level `env:`
-      # takes precedence over GITHUB_ENV, so it must be set on every step that
-      # runs zig.
-
-      - name: Get Zig version
-        id: zig-version
-        run: echo "version=$(zig version)" >> "$GITHUB_OUTPUT"
-
-      - name: Restore Zig package cache
-        id: zig-pkg-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: ${{ github.workspace }}/.zig-global-cache
-          key: zig-pkg-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-${{ hashFiles('**/build.zig.zon') }}
-          restore-keys: |
-            zig-pkg-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-
-
-      - name: Fetch dependencies (with retries)
-        env:
-          ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
-        run: |
-          for i in 1 2 3; do
-            if zig build --fetch=all; then
-              exit 0
-            fi
-            echo "::warning::zig build --fetch=all attempt $i failed; retrying in 20s..."
-            sleep 20
-          done
-          echo "::error::all dependency fetch attempts failed"
-          exit 1
-
-      # Save immediately after a successful fetch, before build/tests, so a
-      # later test failure still leaves the cache populated. Skipped on an
-      # exact primary-key hit (the cache is already up to date).
-      - name: Save Zig package cache
-        if: steps.zig-pkg-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: ${{ github.workspace }}/.zig-global-cache
-          key: ${{ steps.zig-pkg-cache.outputs.cache-primary-key }}
-
-      - name: Build
-        env:
-          ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
-        run: zig build test
-
-      # Single-threaded guard: the single-threaded-only code paths are comptime-pruned
-      # from the default build, so compile them explicitly. `check` compiles the
-      # exe AND every unit-test binary (test decls are only analyzed in a test
-      # compilation — an exe-only check would miss single-threaded rot in
-      # test-only code, e.g. a test calling std.Thread.spawn) without running
-      # anything, so no bun/network is needed; the dep objects are already warm
-      # from the build above.
-      - name: Check single-threaded build (exe + all test binaries)
-        env:
-          ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
-        run: zig build check -Dsingle-threaded
-
-      # --- Full test surface (issue AUD-019) ---
-      # The `zig build test` step above runs ONLY the three-root snapshot diff.
-      # The fork's differentiating surface — the island pass, SPA prerender, the
-      # dev/serve loop, the migration importer, and the TypeScript runtime — is
-      # exercised by the `test-*` steps, the Bun runtime suite, and the hermetic
-      # `tests/serve/*.sh` e2e. None of those ran in CI before, so a PR breaking
-      # any of them merged green. They need `bun` on PATH (the sidecar spawns it)
-      # and, for the shell e2e, the `mise` toolchain the scripts invoke via
-      # `mise exec` — installed here from the repo's canonical `mise.toml`
-      # (zig 0.16.0 + bun 1.2). The Zig package cache warmed above is reused by
-      # pointing ZIG_GLOBAL_CACHE_DIR at the same directory on every zig step.
-      - name: Setup toolchain for e2e (mise + bun)
-        uses: jdx/mise-action@v2
+      # ONE toolchain action for the whole job. This was mlugg/setup-zig for the
+      # Zig half plus jdx/mise-action for the bun half — two installs of the same
+      # compiler, and setup-zig is still a Node 20 action (there is no v3;
+      # upstream moved the project to Codeberg), so it was one of the four
+      # actions GitHub is force-running on Node 24 with a deprecation annotation.
+      # mise.toml is already the repo's single source of truth for both tools
+      # (zig 0.16.0 + bun 1.2) and the hermetic e2e scripts already shell out
+      # through `mise exec`, so dropping setup-zig removes a duplicate install
+      # AND the deprecation, and makes the compiler the gates run under the exact
+      # one the scripts build with.
+      - name: Setup toolchain (mise — zig 0.16.0 + bun 1.2)
+        uses: jdx/mise-action@v4
         with:
           cache: true
 
@@ -168,6 +96,57 @@ jobs:
           echo "resolving from a directory with no mise config:"
           ( cd "$(mktemp -d)" && bun --version && zig version )
 
+      # Runs immediately after the toolchain is available and before any build:
+      # `zig fmt --check` needs only the compiler, no dependency fetch, so a
+      # formatting slip fails in seconds instead of after the full e2e suite.
+      #
+      # The file list comes from `git ls-files`, not from a directory walk. Both
+      # `zig-pkg/` and `examples/tsx-site/zig-pkg/` are gitignored trees of
+      # MATERIALIZED third-party dependencies, as are `.zig-cache/` and
+      # `zig-out/` — so a path-based invocation (`zig fmt --check … examples/`)
+      # passes on a clean checkout and then starts failing on vendored source the
+      # moment anything runs a build that populates them. Tracked-files-only is
+      # both correct and self-maintaining: a new first-party directory is covered
+      # with no change here. (The generated `src/hacks/*.h.zig` translate-c dumps
+      # ARE tracked and are fmt-clean; they stay in scope deliberately.)
+      - name: Formatting gate (zig fmt)
+        run: git ls-files -z '*.zig' | xargs -0 -r zig fmt --check
+
+      - name: Get Zig version
+        id: zig-version
+        run: echo "version=$(zig version)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Zig package cache
+        id: zig-pkg-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ github.workspace }}/.zig-global-cache
+          key: zig-pkg-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-${{ hashFiles('**/build.zig.zon') }}
+          restore-keys: |
+            zig-pkg-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-
+
+      - name: Fetch dependencies (with retries)
+        run: |
+          for i in 1 2 3; do
+            if zig build --fetch=all; then
+              exit 0
+            fi
+            echo "::warning::zig build --fetch=all attempt $i failed; retrying in 20s..."
+            sleep 20
+          done
+          echo "::error::all dependency fetch attempts failed"
+          exit 1
+
+      # Save immediately after a successful fetch, before build/tests, so a
+      # later test failure still leaves the cache populated. Skipped on an
+      # exact primary-key hit (the cache is already up to date).
+      - name: Save Zig package cache
+        if: steps.zig-pkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ github.workspace }}/.zig-global-cache
+          key: ${{ steps.zig-pkg-cache.outputs.cache-primary-key }}
+
       # MUST precede the Zig test steps, not just the TypeScript one. Several Zig
       # tests spawn the Bun island sidecar, which imports preact-render-to-string
       # from runtime/src — without node_modules those tests fail on a missing
@@ -180,9 +159,27 @@ jobs:
         working-directory: runtime
         run: bun install --frozen-lockfile
 
+      - name: Build
+        run: zig build test
+
+      # Single-threaded guard: the single-threaded-only code paths are comptime-pruned
+      # from the default build, so compile them explicitly. `check` compiles the
+      # exe AND every unit-test binary (test decls are only analyzed in a test
+      # compilation — an exe-only check would miss single-threaded rot in
+      # test-only code, e.g. a test calling std.Thread.spawn) without running
+      # anything, so no bun/network is needed; the dep objects are already warm
+      # from the build above.
+      - name: Check single-threaded build (exe + all test binaries)
+        run: zig build check -Dsingle-threaded
+
+      # --- Full test surface (issue AUD-019) ---
+      # The `zig build test` step above runs ONLY the three-root snapshot diff.
+      # The fork's differentiating surface — the island pass, SPA prerender, the
+      # dev/serve loop, the migration importer, and the TypeScript runtime — is
+      # exercised by the `test-*` steps, the Bun runtime suite, and the hermetic
+      # `tests/*/*.sh` e2e. None of those ran in CI before, so a PR breaking
+      # any of them merged green.
       - name: Subsystem unit tests (islands, SPA, dev/serve, migrate, runtime sidecar)
-        env:
-          ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
         run: |
           zig build \
             test-islands test-props test-migrate test-sidecar test-init \
@@ -212,8 +209,6 @@ jobs:
       # OS-independent and one run is enough.
       - name: API contract drift (api-check)
         if: runner.os == 'Linux'
-        env:
-          ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
         run: zig build api-check
 
       # Heavy hermetic e2e (full example builds + live server boots via the
@@ -232,8 +227,6 @@ jobs:
       # branding regression fails in seconds instead of after the full e2e suite.
       - name: Shell e2e — serve/dev loop, init, rendering, islands, config (hermetic)
         if: runner.os == 'Linux'
-        env:
-          ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
         run: |
           shopt -s nullglob
           scripts=(tests/*/*.sh)
