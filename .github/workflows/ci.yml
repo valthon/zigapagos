@@ -422,10 +422,25 @@ jobs:
       # runs `zig build` inside examples/tsx-site, i.e. a full CONSUMER build of
       # zigapagos-as-a-dependency. e2e-dev-loop is the only job that already pays
       # for one — the step above drives examples/tsx-site's own `zig build dev`
-      # — so here they land on a warm .zig-cache and cost ~1 minute between them.
-      # In e2e-rest (`tests/*/*.sh`, which builds the REPO, not the example) the
-      # same eleven would first buy a cold ~265s consumer build and make that job
-      # the run's critical path, past e2e-astro-importer.
+      # — so here they land on a warm .zig-cache. In e2e-rest (`tests/*/*.sh`,
+      # which builds the REPO, not the example) the same eleven would first buy
+      # a cold ~265s consumer build and make THAT job the run's critical path.
+      #
+      # Measured on run 30313041568, the first run to include this step: 49s for
+      # all eleven, against 468s for the dev.sh step above them. Per script —
+      # ssr 4.2, parity 4.5, parity-bundle 3.2, incremental 9.3, props_check 6.2,
+      # doctor 1.6, spa 4.3, spa_flags 3.2, spa_guards 3.4, spa_nested 3.8,
+      # serve 5.3. Note serve.sh: tests/meta/unrun-scripts.txt clocked it at
+      # 76.1s, but that was a COLD measurement — behind dev.sh it is ~5s, which
+      # is the entire argument for this placement in one number.
+      #
+      # The cost is real but small, and the margin is thinner than it looks. On
+      # the five green runs before this one e2e-dev-loop was 342-528s against
+      # e2e-astro-importer's 558-716s; run 30313041568 came in at 536s against an
+      # unusually fast 532s importer, i.e. this job took the critical path by 4
+      # SECONDS. So the honest claim is: ~49s added, normally well inside the
+      # importer's shadow, occasionally a few seconds past it. Every alternative
+      # placement is worse, because each one buys another cold consumer build.
       #
       # WHY A LITERAL LIST rather than a glob + exclusion, which is what e2e-rest
       # does. There, self-maintenance is the whole point: a new tests/<area>/
@@ -454,9 +469,11 @@ jobs:
       # without vouching for it — and if that filter is ever removed, this
       # comment makes the gate go red immediately rather than quietly.
       #
-      # Ordered cheapest-first among equals, with two real constraints:
-      # parity.sh invokes ssr.sh internally, and serve.sh is both the slowest
-      # (~76s) and the only one that binds a fixed port (1990), so it goes last.
+      # Two ordering constraints, neither of them aesthetic: parity.sh invokes
+      # ssr.sh internally, so ssr.sh runs first and a shared failure is
+      # attributed to the cheaper script; and serve.sh is the only one that binds
+      # a fixed port (1990, because build.zig does not thread --port through), so
+      # it goes last where nothing follows it to collide.
       - name: examples/tsx-site e2e — SSR, parity, props, SPA prerender (non-browser)
         run: |
           scripts=(

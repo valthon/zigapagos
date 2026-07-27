@@ -13,7 +13,10 @@
   that already pays for one — its `tests/serve/dev.sh` step drives that project's own
   `zig build dev`. A shim would have put them in `e2e-rest`, which builds the repo and not the
   example, buying a cold ~265s consumer build and making that job the run's critical path.
-  Measured against the warm tree the job already has, the eleven cost 29s between them.
+  Measured against the warm tree the job already has, the eleven cost **49s** in CI (29s
+  locally) against the 468s the `dev.sh` step above them takes. `serve.sh` alone was
+  inventoried at 76.1s; behind `dev.sh` it is ~5s, which is the placement argument in one
+  number.
 
   The list is literal, not a glob, for the opposite reason `e2e-rest` uses a glob: a new sibling
   in that directory should NOT be adopted onto the PR path automatically — it might be the next
