@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
-  emitNginx, emitApache, emitZigbase, assertSafeManifest, zigStringLiteral,
+  emitNginx, emitApache, emitZigbase, assertSafeManifest, zigStringLiteral, escapePcre,
   scanInlineScriptHashes, scanExternalLinkOrigins, cspHeaderValue, emitCsp, emitAllCsp,
   type Manifest,
 } from "./emit-host-config.ts";
@@ -83,6 +83,120 @@ test("apache escapes a literal '.' in a route dir — 'v1.0' must not match 'v1X
 test("apache escapes a literal '.' in the namespace base too", () => {
   const [file] = emitApache({ ...m, base: "/v1.0", fallback: "/v1.0/index.html", dynamic: [] });
   expect(file.content).toContain(`RewriteRule ^v1\\.0/.*$ /v1.0/index.html [L]`);
+});
+
+// ── escapePcre: which characters are escaped, and which deliberately are not ──
+// The emitter's output is PCRE (mod_rewrite compiles with PCRE2), NOT an
+// ECMAScript RegExp, which is why this is `escapePcre` and not `RegExp.escape`.
+// The negative half below is the load-bearing half: it is what keeps a deployed
+// .htaccess readable, and it is what a future "just use RegExp.escape" would
+// break. See the doc comment on escapePcre for the full argument.
+
+test("escapePcre escapes every PCRE metacharacter, with a backslash", () => {
+  for (const c of [".", "*", "+", "?", "^", "$", "{", "}", "(", ")", "|", "[", "]", "\\"]) {
+    expect(escapePcre(c)).toBe("\\" + c);
+  }
+  expect(escapePcre(".*+?^${}()|[]\\")).toBe("\\.\\*\\+\\?\\^\\$\\{\\}\\(\\)\\|\\[\\]\\\\");
+});
+
+test("escapePcre leaves the rest of the validated charset LITERAL", () => {
+  // assertSafeManifest admits exactly A-Za-z0-9 . _ ~ - / (plus : and * in a
+  // pattern). Of those, "." is the ONLY one that means anything in PCRE outside
+  // a character class — "-" is a range metacharacter solely inside [...], and
+  // "/" is a delimiter only in a regex LITERAL, which a config file has none of.
+  expect(escapePcre("app/club")).toBe("app/club");
+  expect(escapePcre("a-b_c~d/e")).toBe("a-b_c~d/e");
+  expect(escapePcre("docs/v1.2")).toBe("docs/v1\\.2");
+  expect(escapePcre("")).toBe("");
+  // The divergence from RegExp.escape, stated as an assertion rather than a
+  // comment so it cannot quietly stop being true: no hex-escaping, and in
+  // particular no unconditional hex-escape of the LEADING character.
+  expect(escapePcre("app")).not.toContain("\\x");
+  expect(RegExp.escape("app")).toBe("\\x61pp");
+});
+
+// ── The validation net: is the emitted config actually correct PCRE? ─────────
+// Nothing else in this repo checks that a generated nginx/Apache file parses or
+// means what it should — the other coverage greps for literal strings, which
+// cannot catch a pattern that is valid but matches the wrong thing. So: run the
+// patterns we actually emit through a real Perl-compatible regex engine.
+//
+// `perl` is the engine PCRE is *compatible with*, and is present on both CI
+// runner images (ubuntu-latest and macos-latest ship it in the base image). It
+// is used instead of `grep -P` because BSD grep on macOS has no -P at all.
+// If it is missing this test FAILS rather than skips — a silently-skipped
+// validation net is not a net.
+
+function perlMatches(pattern: string, subject: string): boolean {
+  const r = Bun.spawnSync([
+    "perl", "-e", 'exit(($ARGV[1] =~ /$ARGV[0]/) ? 0 : 1)', "--", pattern, subject,
+  ]);
+  // 0 = matched, 1 = did not match. Anything else (2+, or a signal) means perl
+  // itself rejected the pattern — a malformed regex, which is exactly the class
+  // of bug this test exists to catch, so surface it rather than reading it as
+  // "no match".
+  if (r.exitCode !== 0 && r.exitCode !== 1) {
+    throw new Error(
+      `perl failed on /${pattern}/ (exit ${r.exitCode}): ${r.stderr.toString().trim()}`,
+    );
+  }
+  return r.exitCode === 0;
+}
+
+/** Every `RewriteRule <pattern> …` pattern in an emitted .htaccess. */
+function rewritePatterns(htaccess: string): string[] {
+  return [...htaccess.matchAll(/^RewriteRule (\S+) /gm)].map((x) => x[1]);
+}
+
+test("perl is reachable — the PCRE validation below is real, not silently skipped", () => {
+  expect(perlMatches("^abc$", "abc")).toBe(true);
+  expect(perlMatches("^abc$", "abd")).toBe(false);
+});
+
+test("emitted RewriteRule patterns are valid PCRE that match the right URLs", () => {
+  const dotted: Manifest = {
+    ...m,
+    base: "/v1.0",
+    fallback: "/v1.0/index.html",
+    dynamic: [{ pattern: "/v1.0/docs/a-b~c/:page", shell: "/v1.0/docs/a-b~c/_shell.html" }],
+  };
+  const [file] = emitApache(dotted);
+  const pats = rewritePatterns(file.content);
+  expect(pats).toEqual(["^v1\\.0/docs/a-b~c/.*$", "^v1\\.0/.*$"]);
+
+  // mod_rewrite matches the request path WITHOUT its leading slash.
+  // The dynamic-dir rule: matches its own subtree...
+  expect(perlMatches(pats[0], "v1.0/docs/a-b~c/intro")).toBe(true);
+  // ...and NOT a URL where an unescaped "." would have matched any character.
+  expect(perlMatches(pats[0], "v1X0/docs/a-b~c/intro")).toBe(false);
+  // "-" and "~" are literal, so they match themselves and nothing else.
+  expect(perlMatches(pats[0], "v1.0/docs/aXb~c/intro")).toBe(false);
+  expect(perlMatches(pats[0], "v1.0/docs/a-bXc/intro")).toBe(false);
+  // The namespace fallback rule.
+  expect(perlMatches(pats[1], "v1.0/anything/deep")).toBe(true);
+  expect(perlMatches(pats[1], "v1X0/anything/deep")).toBe(false);
+  // It must not swallow a SIBLING namespace that merely shares a prefix.
+  expect(perlMatches(pats[1], "v1.0-beta/page")).toBe(false);
+});
+
+test("RegExp.escape output would ALSO be accepted by PCRE — so this is a readability call, not a correctness one", () => {
+  // Stated as a test so the justification in escapePcre's doc comment is
+  // verified rather than asserted. The interesting case is hex-digit adjacency:
+  // RegExp.escape("v1.0") is "\x761\.0" — if any engine read more than two hex
+  // digits after \x, "\x761" would be U+0761 instead of "v" followed by "1".
+  expect(RegExp.escape("v1.0")).toBe("\\x761\\.0");
+  expect(perlMatches("^" + RegExp.escape("v1.0") + "/.*$", "v1.0/page")).toBe(true);
+  expect(perlMatches("^" + RegExp.escape("v1.0") + "/.*$", "v1X0/page")).toBe(false);
+  expect(perlMatches("^" + RegExp.escape("a-b~c") + "$", "a-b~c")).toBe(true);
+  // Both spellings are correct PCRE; they differ only in what an operator reads.
+  // That is the whole basis for choosing escapePcre — see its doc comment.
+});
+
+test("unescaped interpolation really would be wrong — the bug escapePcre prevents", () => {
+  // The control for the tests above: without escaping, the "." in a legitimate
+  // route like /docs/v1.0 is a PCRE wildcard and the rule captures /docs/v1X0.
+  expect(perlMatches("^docs/v1.0/.*$", "docs/v1X0/page")).toBe(true);
+  expect(perlMatches("^docs/v1\\.0/.*$", "docs/v1X0/page")).toBe(false);
 });
 
 test("nginx special-cases a root-mounted SPA — `location /`, never `location //`", () => {

@@ -1,6 +1,5 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { escapeRegExp } from "./escape-regexp.ts";
 
 export type Manifest = {
   base: string;
@@ -57,6 +56,54 @@ export function assertSafeManifest(m: Manifest): void {
     assertSafeRouteValue(d.pattern, SAFE_PATTERN_RE, "dynamic route pattern");
     assertSafeRouteValue(d.shell, SAFE_PATH_RE, "dynamic route shell");
   }
+}
+
+/**
+ * Escape PCRE metacharacters so a literal path segment can be spliced into an
+ * Apache `RewriteRule` pattern and match only itself.
+ *
+ * **This is a PCRE escaper, not a JavaScript one, and the distinction is the
+ * reason it exists rather than `RegExp.escape`.** The only consumer is
+ * `emitApache` below; mod_rewrite compiles its patterns with PCRE2, a different
+ * regex dialect from ECMAScript. `RegExp.escape` is specified to produce a
+ * string safe in any *ECMAScript* `RegExp` position — its guarantee simply does
+ * not extend to PCRE, so any PCRE-correctness it happens to have is an
+ * observation about today's PCRE2, not a contract. (Empirically it *is* accepted:
+ * `emit-host-config.test.ts` checks both spellings against a real Perl-compatible
+ * engine, including the `\x76`-followed-by-`1` hex-digit adjacency in
+ * `RegExp.escape("v1.0")`. That is why this is a readability call, not a
+ * correctness one — see below.)
+ *
+ * The second reason is product quality: the file this lands in is a deployed
+ * `.htaccess` that operators read and edit. `RegExp.escape` hex-escapes the
+ * leading character unconditionally plus its whole punctuator set, so the same
+ * rule reads
+ *
+ *     RewriteRule ^\x61pp/.*$ /app/index.html [L]      # RegExp.escape
+ *     RewriteRule ^app/.*$    /app/index.html [L]      # escapePcre
+ *
+ * The first does not just look worse, it is misleading — the operator cannot see
+ * which URL path the rule matches, and this file is their interface to the SPA's
+ * routing. There is no offsetting benefit, because for the charset
+ * `assertSafeManifest` actually admits (`A-Za-z0-9 . _ ~ - /`) the ONLY character
+ * needing an escape in PCRE is `.`; `-` is a range metacharacter solely inside
+ * `[...]`, and `/` is a delimiter only in a regex *literal*, which a config file
+ * has none of.
+ *
+ * Escapes the full PCRE metacharacter set anyway — `. * + ? ^ $ { } ( ) | [ ] \`
+ * — rather than just the `.` the validator lets through, on the same principle
+ * `zigStringLiteral` below is written to: a code generator that can only emit
+ * well-formed output is the safer contract, and it must not silently depend on a
+ * validator that a future caller might bypass.
+ *
+ * What it deliberately does NOT cover: Apache's *config-file tokenizer*.
+ * Whitespace and quotes would split or unbalance the directive before PCRE ever
+ * sees the pattern, and no regex escaping can fix that — `assertSafeManifest`
+ * (called first thing in `emitApache`) is the guard for those, and it rejects
+ * every character outside the charset above.
+ */
+export function escapePcre(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /** Quote a value as a single nginx token. nginx strips the quotes at parse time,
@@ -137,7 +184,7 @@ export function emitApache(m: Manifest): EmittedFile[] {
       // "/docs/v1.0/:page") would otherwise match ANY character and rewrite
       // unrelated URLs like /docs/v1X0/… to this SPA shell. Only the ".*" we
       // append is meant as a metacharacter.
-      const pattern = dirNoLeadingSlash ? `^${escapeRegExp(dirNoLeadingSlash)}/.*$` : `^.*$`;
+      const pattern = dirNoLeadingSlash ? `^${escapePcre(dirNoLeadingSlash)}/.*$` : `^.*$`;
       lines.push(
         `RewriteCond %{REQUEST_FILENAME} !-f`,
         `RewriteCond %{REQUEST_FILENAME} !-d`,
@@ -149,7 +196,7 @@ export function emitApache(m: Manifest): EmittedFile[] {
     `# Namespace fallback → the SPA shell`,
     `RewriteCond %{REQUEST_FILENAME} !-f`,
     `RewriteCond %{REQUEST_FILENAME} !-d`,
-    `RewriteRule ${baseNoLeadingSlash ? `^${escapeRegExp(baseNoLeadingSlash)}/.*$` : `^.*$`} ${m.fallback} [L]`,
+    `RewriteRule ${baseNoLeadingSlash ? `^${escapePcre(baseNoLeadingSlash)}/.*$` : `^.*$`} ${m.fallback} [L]`,
   );
   return [{ name: "apache.htaccess", content: lines.join("\n") + "\n" }];
 }

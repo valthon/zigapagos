@@ -3,7 +3,6 @@ import { existsSync, readFileSync, mkdirSync, realpathSync } from "node:fs";
 import { reactAliasBuildPlugin, resolveOverridePlugin } from "../scripts/react-alias.ts";
 import { loadConfig, effectiveResolveMap, type ZRuntimeConfig } from "../scripts/z-runtime-config.ts";
 import { siteDataPlugin } from "../scripts/site-data.ts";
-import { escapeRegExp } from "../scripts/escape-regexp.ts";
 import { registerSsrModuleOverrides } from "./ssr-resolve.ts";
 
 export interface BundleArgs {
@@ -270,7 +269,11 @@ function pathSegs(p: string): string[] {
  */
 export function findRouteChunk(specifier: string, chunks: string[]): string | undefined {
   const base = basename(specifier).replace(/\.[tj]sx?$/, "");
-  const hashed = new RegExp("^" + escapeRegExp(base) + "-[A-Za-z0-9]+\\.js$");
+  // `RegExp.escape`: a module basename legitimately contains "." (and the
+  // occasional "+"), which must match literally — see the "v1.0" test. This
+  // pattern is internal to chunk lookup and never surfaces in output, so the
+  // stdlib escaper is the right call here.
+  const hashed = new RegExp("^" + RegExp.escape(base) + "-[A-Za-z0-9]+\\.js$");
   const matches = chunks.filter((c) => c === base + ".js" || hashed.test(c));
   if (matches.length > 1) {
     console.error(

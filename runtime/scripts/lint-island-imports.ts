@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { EMPTY_CONFIG, loadConfig, type ZRuntimeConfig } from "./z-runtime-config.ts";
-import { escapeRegExp } from "./escape-regexp.ts";
 
 // Base allowlist: islands may always import the runtime and relative paths.
 // (Web-platform features like fetch/document are runtime GLOBALS, not import
@@ -19,10 +18,16 @@ const DYNAMIC_RE = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
 
 /** Build the allow-regex list for a config: base + firstParty + npmCompat (pkg + subpaths)
  *  + `resolve` override keys (EXACT specifier only — resolution is exact-match)
- *  + `@z/site-data` iff the config declares a `data` map. */
+ *  + `@z/site-data` iff the config declares a `data` map.
+ *
+ *  Specifiers routinely carry regex metacharacters (`@scope/pkg-name.js`, `+`),
+ *  so they are `RegExp.escape`d — the stdlib function specified for exactly this
+ *  position. Nobody reads these patterns, so its `\x`-heavy spelling costs
+ *  nothing here; contrast `escapePcre` in emit-host-config.ts, which targets a
+ *  different dialect and a file humans edit. */
 export function buildAllow(config: ZRuntimeConfig): RegExp[] {
-  const specToRe = (s: string) => new RegExp("^" + escapeRegExp(s) + "(\\/.*)?$");
-  const exactRe = (s: string) => new RegExp("^" + escapeRegExp(s) + "$");
+  const specToRe = (s: string) => new RegExp("^" + RegExp.escape(s) + "(\\/.*)?$");
+  const exactRe = (s: string) => new RegExp("^" + RegExp.escape(s) + "$");
   return [
     ...BASE_ALLOW,
     ...config.islandImports.firstParty.map(specToRe),

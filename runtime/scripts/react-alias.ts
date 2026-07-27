@@ -22,7 +22,6 @@
 // test); the client keys below map to the shared runtime via the import-map.
 import type { BunPlugin } from "bun";
 import { resolveConfigTarget } from "./z-runtime-config.ts";
-import { escapeRegExp } from "./escape-regexp.ts";
 
 /** The bare specifiers an npm React component may import, and their compat target. */
 export const REACT_ALIAS: Readonly<Record<string, string>> = {
@@ -96,7 +95,11 @@ export function resolveOverridePlugin(map: Record<string, string>, baseDir: stri
     setup(build) {
       if (entries.length === 0) return;
       const bySpec = new Map(entries);
-      const filter = new RegExp(`^(${entries.map(([s]) => escapeRegExp(s)).join("|")})$`);
+      // `RegExp.escape`: the alias keys are user-supplied specifiers that may
+      // carry metacharacters, and this pattern is consumed only by Bun's
+      // onResolve filter — never read by a human, so the stdlib escaper's
+      // `\x`-heavy spelling is free here.
+      const filter = new RegExp(`^(${entries.map(([s]) => RegExp.escape(s)).join("|")})$`);
       build.onResolve({ filter }, (args) => {
         const target = bySpec.get(args.path);
         if (target === undefined) return undefined;
