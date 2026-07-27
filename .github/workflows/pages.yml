@@ -28,8 +28,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      # v4 is the Node 24 runtime bump (v2/v3 are Node 20, which GitHub has
+      # deprecated and is already force-running on Node 24 with an annotation).
+      # No input changes: `cache` still defaults to true, and the v3 additions
+      # (`env`, `export_path`) are no-ops for a mise.toml that declares only
+      # [tools].
       - name: Setup toolchain (zig + bun via mise)
-        uses: jdx/mise-action@v2
+        uses: jdx/mise-action@v4
 
       # The site build bundles the shipped runtime by invoking
       # runtime/sidecar/bundle-island.ts on runtime/src/browser-entry.ts. Bun
