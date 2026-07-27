@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { escapeRegExp } from "./escape-regexp.ts";
 
 export type Manifest = {
   base: string;
@@ -56,12 +57,6 @@ export function assertSafeManifest(m: Manifest): void {
     assertSafeRouteValue(d.pattern, SAFE_PATTERN_RE, "dynamic route pattern");
     assertSafeRouteValue(d.shell, SAFE_PATH_RE, "dynamic route shell");
   }
-}
-
-/** Escape regex metacharacters. (The identical helper in lint-island-imports.ts
- *  and react-alias.ts is module-private in both, so it cannot be imported here.) */
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /** Quote a value as a single nginx token. nginx strips the quotes at parse time,

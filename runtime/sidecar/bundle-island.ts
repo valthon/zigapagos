@@ -3,6 +3,7 @@ import { existsSync, readFileSync, mkdirSync, realpathSync } from "node:fs";
 import { reactAliasBuildPlugin, resolveOverridePlugin } from "../scripts/react-alias.ts";
 import { loadConfig, effectiveResolveMap, type ZRuntimeConfig } from "../scripts/z-runtime-config.ts";
 import { siteDataPlugin } from "../scripts/site-data.ts";
+import { escapeRegExp } from "../scripts/escape-regexp.ts";
 import { registerSsrModuleOverrides } from "./ssr-resolve.ts";
 
 export interface BundleArgs {
@@ -251,12 +252,6 @@ export interface SpaBundleArgs {
 /** Split segments of a route path, dropping leading/trailing/empty slashes. */
 function pathSegs(p: string): string[] {
   return p.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
-}
-
-/** Escape regex metacharacters. (The identical helper in lint-island-imports.ts
- *  and react-alias.ts is module-private in both, so it cannot be imported here.) */
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /**

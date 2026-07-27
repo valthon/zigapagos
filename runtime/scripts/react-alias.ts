@@ -22,6 +22,7 @@
 // test); the client keys below map to the shared runtime via the import-map.
 import type { BunPlugin } from "bun";
 import { resolveConfigTarget } from "./z-runtime-config.ts";
+import { escapeRegExp } from "./escape-regexp.ts";
 
 /** The bare specifiers an npm React component may import, and their compat target. */
 export const REACT_ALIAS: Readonly<Record<string, string>> = {
@@ -67,10 +68,6 @@ export const IMPORT_MAP_SPECIFIERS: ReadonlySet<string> = new Set([
   "@z/runtime/compat/client",
   ...Object.keys(REACT_ALIAS),
 ]);
-
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 
 const SHIM_NS = "z-resolve-shim";
 

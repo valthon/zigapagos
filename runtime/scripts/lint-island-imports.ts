@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { EMPTY_CONFIG, loadConfig, type ZRuntimeConfig } from "./z-runtime-config.ts";
+import { escapeRegExp } from "./escape-regexp.ts";
 
 // Base allowlist: islands may always import the runtime and relative paths.
 // (Web-platform features like fetch/document are runtime GLOBALS, not import
@@ -15,10 +16,6 @@ const BASE_ALLOW = [/^@z\/runtime(\/.*)?$/, /^\.\.?\//];
 // whitespace after `import` (the static regex requires one).
 const IMPORT_RE = /(?:import|export)\s+(?:[^'"]*?\sfrom\s+)?["']([^"']+)["']/g;
 const DYNAMIC_RE = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
-
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 
 /** Build the allow-regex list for a config: base + firstParty + npmCompat (pkg + subpaths)
  *  + `resolve` override keys (EXACT specifier only — resolution is exact-match)
