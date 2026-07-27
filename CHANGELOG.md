@@ -23,9 +23,14 @@ Two things to know before reading it:
 
 ## [Unreleased]
 
-Nothing yet.
+Pending changes are **not listed here** — they live one file each in
+[`changelog.d/`](changelog.d/), and `scripts/assemble-changelog.sh` folds them
+into a new version section at release time. That is the whole point: two pull
+requests each adding their own fragment merge cleanly, whereas two pull requests
+each appending a bullet to this block collide on the same lines. To see what is
+queued for the next release, read `changelog.d/`.
 
-## [0.1.0] — 2026-07-26
+## [0.1.0] - 2026-07-26
 
 First public release. Fork point: upstream `496e42d` (`v0.11.2-17-g496e42d`).
 
