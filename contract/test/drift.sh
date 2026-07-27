@@ -57,13 +57,31 @@ dirty_paths() {
   git status --porcelain -- "${MUTATES[@]}" | grep -v '^??' || true
 }
 
+# Tracked files under tests/ that were ALREADY deleted before this script ran. The
+# restore below must not resurrect them: that is somebody's deliberate `rm`, not our
+# side effect, and silently undoing it is the same class of over-broad restore that
+# MUTATES was narrowed to avoid. Captured once, before anything can mutate the tree.
+PRE_DELETED_TESTS=$(git ls-files --deleted -- tests/ 2>/dev/null || true)
+
 restore_tree() {
   # `git checkout HEAD -- <path>` updates BOTH the index and the working tree, so it
   # also undoes the `git add contract/generated` that api-check performs internally.
   git checkout HEAD -- "${MUTATES[@]}" 2>/dev/null || true
+
   # zig's build cache can delete tests/ snapshot fixtures as a side effect; put back
-  # anything that vanished.
-  git ls-files --deleted -z -- tests/ 2>/dev/null | xargs -0 -I{} git restore -- {} 2>/dev/null || true
+  # anything that vanished DURING this run, and only that. (Paths containing a newline
+  # would defeat the set membership test, but git quotes those, so they cannot appear
+  # here as a bare match either way.)
+  local now_deleted f
+  now_deleted=$(git ls-files --deleted -- tests/ 2>/dev/null || true)
+  [ -n "$now_deleted" ] || return 0
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    case $'\n'"$PRE_DELETED_TESTS"$'\n' in
+      *$'\n'"$f"$'\n'*) continue ;; # already gone before we started — leave it alone
+    esac
+    git restore -- "$f" 2>/dev/null || true
+  done <<<"$now_deleted"
 }
 
 on_exit() {
@@ -163,7 +181,11 @@ api_check_drift_ok() {
     echo "  reject: api-check exited 0" >&2
     return 1
   fi
-  # `git diff contract/generated` is the diff step's setName() in build/codegen.zig.
+  # `git diff contract/generated` is the diff step's setName() in build/codegen.zig, and
+  # zig's build summary renders a failed step as "<name> failure" — so the literal below
+  # is the step name PLUS zig's suffix, not a typo'd step name:
+  #     api-check transitive failure
+  #     +- git diff contract/generated failure
   # Requiring THAT step to be the failing one rules out a failure in apigen or in build
   # configuration masquerading as a caught drift.
   if ! printf '%s\n' "$out" | grep -qF 'git diff contract/generated failure'; then
