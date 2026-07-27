@@ -278,16 +278,16 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
-      # Point the LOCAL (build-artifact) cache at one directory for the whole
-      # job. Zig's local cache is per-project by default (`<project>/.zig-cache`),
-      # so the repo build and the two generated consumer projects under $TMPDIR
-      # each recompile the same third-party objects from zero. The cache is
-      # content-addressed, so pointing them at one directory lets the second and
-      # third build reuse whatever the first already produced. Safe here because
-      # nothing reads `.zig-cache` by path: the one place that does
-      # (src/cli/serve.zig's `.zig-cache/zigapagos-serve-{islands,spa}`) uses a
-      # hard-coded relative path this variable does not affect.
-      ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}/.zig-local-cache
+      # Deliberately NOT sharing ZIG_LOCAL_CACHE_DIR across the projects this
+      # job builds. It looks like it should help — zig's local cache is
+      # per-project, so the repo build and the two generated consumer projects
+      # each compile the same third-party objects from zero, and the cache is
+      # content-addressed — but it was tried and measured on run 30260063269 and
+      # the two consumer builds moved 263.5s -> 262.3s and 273.2s -> 268.5s,
+      # i.e. nothing. The reuse does not happen because each consumer build is a
+      # distinct root module and zig keys a compilation on its whole input set,
+      # not per source file. Left out rather than left in as a plausible-looking
+      # no-op; if this is revisited, the number to beat is ~265s per build.
     steps:
       - uses: actions/checkout@v7
         with:
@@ -352,9 +352,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
-      # Shared for the same reason as in e2e-astro-importer: this job builds the
-      # repo and then examples/tsx-site, two projects with the same dependencies.
-      ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}/.zig-local-cache
+      # No shared ZIG_LOCAL_CACHE_DIR — see e2e-astro-importer for the
+      # measurement that says it buys nothing.
     steps:
       - uses: actions/checkout@v7
         with:
@@ -415,9 +414,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
-      # Ten scripts, several of which build a generated site of their own; the
-      # shared local cache keeps them from each recompiling the same objects.
-      ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}/.zig-local-cache
+      # No shared ZIG_LOCAL_CACHE_DIR — see e2e-astro-importer for the
+      # measurement that says it buys nothing.
       # Scripts that have a DEDICATED job above. Kept as an exclusion list
       # rather than an inclusion list so the glob below stays self-maintaining:
       # forget to list a newly added script and it still runs here. The only way
