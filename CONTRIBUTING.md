@@ -114,6 +114,7 @@ bash tests/branding.sh                            # no stray upstream-name refer
 bash tests/confidentiality.sh                     # no references to the author's private project
 bash scripts/check-allocator-contracts.test.sh    # the gate's own self-tests
 bash scripts/check-allocator-contracts.sh         # allocator-contract gate, NO_SLOP.md §2.2a
+bash scripts/assemble-changelog.test.sh           # changelog assembler self-tests
 
 # 2. formatting — gated with no exceptions
 git ls-files -z '*.zig' | xargs -0 -r zig fmt --check
@@ -127,7 +128,7 @@ zig build api-check                               # if contract/ or apigen.ts ch
 
 # 4. TypeScript + shell e2e
 (cd runtime && bun install --frozen-lockfile && bun test)
-for s in tests/*/*.sh; do bash "$s" || echo "FAIL $s"; done   # 12 scripts, hermetic
+for s in tests/*/*.sh; do bash "$s" || echo "FAIL $s"; done   # 13 scripts, hermetic
 ```
 
 Notes on the ones with sharp edges:
@@ -201,6 +202,55 @@ Write the test, run it against the *unfixed* code, watch it fail, then apply the
 fix. A regression test that was never observed red pins nothing, and saying so in
 the PR body ("reverting the one-line change in `pass.zig` fails this test with
 …") is the evidence that it does.
+
+## Changelog: add a fragment, never edit `CHANGELOG.md`
+
+If your change is worth recording, add **one small file** to
+[`changelog.d/`](changelog.d/) rather than editing `CHANGELOG.md`:
+
+```markdown
+<!-- changelog.d/spa-guard-cascade.md -->
+### Fixed
+
+- A route guard on a nested scope no longer runs twice on a soft navigation.
+```
+
+The filename is `changelog.d/<slug>.md`, kebab-case, usually the branch name, and
+unique enough not to collide with another open PR. The body is one or more
+`### <Section>` headings with bullets under them; one fragment may populate
+several sections, and the recognized names (`Added`, `Changed`, `Deprecated`,
+`Removed`, `Fixed`, `Security`, `Known limitations`, `Internal`) with guidance on
+choosing between them are in [`changelog.d/README.md`](changelog.d/README.md).
+
+**Why the indirection.** Fragments exist so parallel PRs never conflict on
+`CHANGELOG.md`. Two branches each adding their own file merge cleanly; two
+branches each appending a bullet to a shared `## [Unreleased]` block collide on
+the same lines, and one of them gets rebased by hand for no engineering reason.
+This project routinely has several branches open at once, so that cost is real
+and recurring. That is also why `## [Unreleased]` in `CHANGELOG.md` is a
+*pointer* at `changelog.d/` and not somewhere to write.
+
+At release, `scripts/assemble-changelog.sh` aggregates every fragment's bullets
+per section into one `## [<version>] - <date>` block, inserts it, fixes the
+compare links at the foot of the file, and `git rm`s the fragments it consumed.
+Two things follow from that:
+
+- **Do not run the assembler in a feature PR.** Adding your fragment is the whole
+  job; the release PR runs it once — *before* the `v*` tag is pushed, since the
+  release workflow checks the tagged commit's `CHANGELOG.md` for that version's
+  section and fails the run in seconds if it is missing.
+- **The heading it emits is an interface, not a style choice.**
+  `scripts/extract-release-notes.sh` finds a section by matching `## [<version>]`
+  at the start of a line and slices through to the next `## `, and the `v*`
+  release workflow uses the result as the GitHub release body. Malformed, it
+  fails nothing and silently ships empty or run-on release notes — which is why
+  `scripts/assemble-changelog.test.sh` pins the exact format (and why that
+  self-test also runs in CI, via `tests/changelog/assemble.sh`).
+
+Not every change needs a fragment. The decision rule: would someone *building a
+site* with Zigapagos notice? Then a user-facing section. Only a contributor
+notices (build/CI, test infra, a refactor)? Then `### Internal`. Nobody needs it
+recorded? Then no fragment — git history is enough.
 
 ## Commits and pull requests
 
