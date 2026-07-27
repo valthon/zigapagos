@@ -49,14 +49,22 @@ jobs:
       # Fail loudly rather than publishing an empty release: `zig build release`
       # can succeed with nothing installed if the target matrix is ever emptied.
       - name: Collect artifacts
+        working-directory: zig-out/releases
         run: |
-          ls -l zig-out/releases
-          count=$(find zig-out/releases -type f \( -name '*.zip' -o -name '*.tar.xz' \) | wc -l)
-          if [ "$count" -eq 0 ]; then
+          mapfile -t archives < <(
+            find . -maxdepth 1 -type f \( -name '*.zip' -o -name '*.tar.xz' \) \
+              -printf '%P\n' | sort
+          )
+          if [ "${#archives[@]}" -eq 0 ]; then
             echo "::error::no release archives were produced"
             exit 1
           fi
-          cd zig-out/releases && sha256sum *.zip *.tar.xz > SHA256SUMS 2>/dev/null || sha256sum * > SHA256SUMS
+          printf 'archive: %s\n' "${archives[@]}"
+          # Checksum an explicit list, never a glob. An unmatched glob is passed
+          # through literally, and `> SHA256SUMS` creates the file *before*
+          # sha256sum runs — so a glob fallback would hash SHA256SUMS itself and
+          # publish a digest for a file that did not exist when the run started.
+          sha256sum "${archives[@]}" > SHA256SUMS
           cat SHA256SUMS
 
       - name: Publish GitHub release
