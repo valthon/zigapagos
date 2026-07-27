@@ -71,17 +71,34 @@ updates:
       # repositories, a different threat model. Security updates ignore cooldown entirely.
       default-days: 7
     groups:
-      # Split production from development rather than lumping the package into one PR, because
-      # the two halves have very different blast radii here. preact and preact-render-to-string
-      # are SHIPPED to the browser via the import map — CLAUDE.md's "bugs here reach every
-      # visitor's browser" — and a bump wants the parity harness and a hydration check.
-      # typescript, happy-dom and @types/bun only move the props-check gate and the test suite.
-      # In one combined PR the risky half hides behind the routine half.
-      runtime-production:
-        dependency-type: "production"
+      # Split by blast radius rather than lumping the package into one PR. preact and
+      # preact-render-to-string are SHIPPED to the browser via the import map — CLAUDE.md's
+      # "bugs here reach every visitor's browser" — and a bump wants the parity harness and a
+      # hydration check. typescript, happy-dom and @types/bun only move the props-check gate
+      # and the test suite. In one combined PR the risky half hides behind the routine half.
+      #
+      # Split by NAME, not by `dependency-type: production|development`, which is the obvious
+      # way to write this and is wrong here: that key is gated to bundler, composer, mix,
+      # maven, npm and pip, and `bun` is not on the list. It fails open rather than loudly —
+      # the group would match nothing and, per the docs, "any outdated dependencies that do not
+      # match a rule are updated in individual pull requests", i.e. it would silently produce
+      # exactly the per-dependency PR spam the grouping exists to prevent. Note the JSON schema
+      # accepts it, so schema validation does not catch this; only the prose does.
+      #
+      # Tooling is the enumerated side on purpose, so that anything NOT listed falls through to
+      # the shipped group below. A dependency added later then defaults to "treat as shipped,
+      # check the parity harness" — the safe direction to be wrong in.
+      runtime-tooling:
+        patterns:
+          - "typescript"
+          - "happy-dom"
+          - "@happy-dom/*"
+          - "@types/*"
+      runtime-shipped:
         patterns:
           - "*"
-      runtime-development:
-        dependency-type: "development"
-        patterns:
-          - "*"
+        exclude-patterns:
+          - "typescript"
+          - "happy-dom"
+          - "@happy-dom/*"
+          - "@types/*"
