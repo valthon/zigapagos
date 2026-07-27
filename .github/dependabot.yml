@@ -1,0 +1,104 @@
+# Dependabot version updates.
+#
+# Verified against the current GitHub docs on 2026-07-27 — re-check these before editing, because
+# the schema has grown recently and a stale memory of it produces keys that silently do nothing:
+#   options reference     https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference
+#   supported ecosystems  https://docs.github.com/en/code-security/reference/supply-chain-security/supported-ecosystems-and-repositories
+#   bun support (GA)      https://github.blog/changelog/2025-02-13-dependabot-version-updates-now-support-the-bun-package-manager-ga/
+#   default cooldown      https://github.blog/changelog/2026-07-14-dependabot-version-updates-introduce-default-package-cooldown/
+# `version: 2` is still the only accepted value; `groups`, `directories` and `cooldown` are all
+# newer than it, so "the version says 2" is not evidence that a given key is old enough to exist.
+#
+# COVERED
+#   - GitHub Actions used by every workflow in .github/workflows/.
+#   - runtime/ — the only first-party package with registry dependencies.
+#
+# DELIBERATELY NOT COVERED. Both are findings, not oversights:
+#
+#   - Zig, i.e. build.zig.zon and the dependencies it materializes. Dependabot has no Zig
+#     ecosystem — Zig does not appear in the supported-ecosystems table at all, so there is no
+#     identifier to write here and nothing to configure. The three .zon files (root,
+#     site/, examples/tsx-site/) stay a manual job, done at the upstream release-tag syncs
+#     described in CLAUDE.md. The zig-pkg/ trees they populate are gitignored vendored source,
+#     which Dependabot could not see even if the ecosystem existed. Do not invent a `zig`
+#     package-ecosystem value to close this gap; the config will simply be rejected.
+#
+#   - site/ and examples/tsx-site/. Both do have a package.json and a bun.lock, so they look
+#     like they belong below, but every dependency either declares is a `file:` link —
+#     `@z/runtime` into runtime/, `@demo/widget` into a vendored directory. There is no
+#     registry version to bump, so an entry for them would schedule a scan that can never open
+#     a PR. Their lockfiles do pin preact, typescript and friends, but only as transitives
+#     hoisted through the file: link and resolved from runtime/package.json's ranges — which
+#     the runtime/ entry below already owns. Add an entry here only if one of them grows a
+#     real registry dependency.
+
+version: 2
+
+updates:
+  # `directory: "/"` is this ecosystem's documented value and means "scan .github/workflows/",
+  # not "scan the repository root" — so workflows added later are picked up without touching
+  # this file. Dependabot only tracks steps written in GitHub repository syntax
+  # (`owner/repo@ref`); a `uses:` pointing at a local path or a container image is invisible to
+  # it, which is worth remembering before concluding an action is up to date.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      # One PR per week for all action bumps instead of one PR per action. Every `uses:` here
+      # is pinned to a major tag (actions/checkout@v4, jdx/mise-action@v2, mlugg/setup-zig@v2),
+      # so Dependabot fires only on a major release — precisely the bumps that can break the
+      # toolchain contract in mise.toml, and precisely the ones worth reading in a single diff
+      # rather than three separate PRs that each turn CI red on their own.
+      actions:
+        patterns:
+          - "*"
+
+  # runtime/ is the shipped @z/runtime package. Its bun.lock is the text format Dependabot
+  # requires — it does not read the legacy binary bun.lockb — and mise.toml pins bun 1.2, above
+  # the documented >=1.1.39 floor for this ecosystem. Note the docs also record that bun has
+  # version updates but NOT security updates yet, so a Dependabot security alert on a package
+  # here will not auto-open a fix PR; the weekly version bump is the only automation.
+  - package-ecosystem: "bun"
+    directory: "/runtime"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      # Deliberately longer than the 3-day platform default that took effect 2026-07-14. These
+      # resolve to npm-registry tarballs, and a compromised or yanked release is usually caught
+      # within the first week; waiting costs nothing on a weekly schedule. The actions entry
+      # above is left on the default on purpose — those resolve to git refs in GitHub-hosted
+      # repositories, a different threat model. Security updates ignore cooldown entirely.
+      default-days: 7
+    groups:
+      # Split by blast radius rather than lumping the package into one PR. preact and
+      # preact-render-to-string are SHIPPED to the browser via the import map — CLAUDE.md's
+      # "bugs here reach every visitor's browser" — and a bump wants the parity harness and a
+      # hydration check. typescript, happy-dom and @types/bun only move the props-check gate
+      # and the test suite. In one combined PR the risky half hides behind the routine half.
+      #
+      # Split by NAME, not by `dependency-type: production|development`, which is the obvious
+      # way to write this and is wrong here: that key is gated to bundler, composer, mix,
+      # maven, npm and pip, and `bun` is not on the list. It fails open rather than loudly —
+      # the group would match nothing and, per the docs, "any outdated dependencies that do not
+      # match a rule are updated in individual pull requests", i.e. it would silently produce
+      # exactly the per-dependency PR spam the grouping exists to prevent. Note the JSON schema
+      # accepts it, so schema validation does not catch this; only the prose does.
+      #
+      # Tooling is the enumerated side on purpose, so that anything NOT listed falls through to
+      # the shipped group below. A dependency added later then defaults to "treat as shipped,
+      # check the parity harness" — the safe direction to be wrong in.
+      runtime-tooling:
+        patterns:
+          - "typescript"
+          - "happy-dom"
+          - "@happy-dom/*"
+          - "@types/*"
+      runtime-shipped:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "typescript"
+          - "happy-dom"
+          - "@happy-dom/*"
+          - "@types/*"
