@@ -70,6 +70,49 @@ updates:
       # above is left on the default on purpose — those resolve to git refs in GitHub-hosted
       # repositories, a different threat model. Security updates ignore cooldown entirely.
       default-days: 7
+    ignore:
+      # TypeScript is held BELOW 7.0. This is a version ceiling with a specific expiry, not a
+      # freeze — see the unblock condition at the end.
+      #
+      # TypeScript 7.0 (released 2026-07-08, `latest` since) is the Go rewrite, and the npm
+      # package no longer ships the JavaScript compiler API. This is observable in the package
+      # itself, not just the release notes: `typescript@7.0.2`'s `exports["."]` is
+      # `./lib/version.cjs`, whose entire contents are the version string, so
+      # `import ts from "typescript"` yields `{version, versionMajorMinor}` and nothing else.
+      # `ts.createSourceFile`, `ts.ScriptTarget` and `ts.ScriptKind` are all `undefined`.
+      #   announcement  https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/
+      #     — "TypeScript 7.0 does not ship with an API. We expect TypeScript 7.1 to ship with
+      #        a new (and different) API".
+      #
+      # Two first-party modules parse TypeScript with that API and break outright:
+      #   runtime/scripts/slice-host.ts   — the per-SPA host slicer, whose output is bundled
+      #                                     into the shipped /spa/<name>-runtime.js
+      #   runtime/sidecar/hot-transform.ts — the dev fast-refresh transform
+      # Measured on typescript@7.0.2 in runtime/: `bun test` goes from 617 pass / 0 fail to
+      # 566 pass / 51 fail, every failure a TypeError on `ts.ScriptTarget.Latest` or
+      # `ts.ScriptKind.TSX`. That is what Dependabot PR #10 proposed and why it was rejected.
+      #
+      # Note the CLI is NOT the problem, so do not "fix" this by touching the tsc gate:
+      # src/islands/props_check.zig shells out to `bun x tsc -p <cfg> --pretty false` and
+      # parses `<path>(L,C): error TSxxxx: <msg>`. TypeScript 7.0.2 emits that format
+      # byte-identically to 5.9.3 (verified by running both against the same fixture). Its
+      # process exit code on a type error changes 2 → 1, which the gate already tolerates
+      # because it only tests `tsc_exit != 0`. The blocker is narrowly the JS API.
+      #
+      # WHY `versions: [">=7.0.0"]` AND NOT `update-types: ["version-update:semver-major"]`:
+      # blocking all majors would also withhold TypeScript 6.x (6.0.3 is current), and 6.x is
+      # the LAST line that still ships the JS compiler API — i.e. it is the one major upgrade
+      # here we positively want to be told about, and the natural staging step before any
+      # 7.x work. Silencing majors wholesale would mean never learning it exists.
+      #
+      # UNBLOCK CONDITION — delete this entry when EITHER holds:
+      #   1. TypeScript 7.1 ships the replacement API and the two modules above are ported; or
+      #   2. those two modules are re-platformed off the compiler API entirely. Note that
+      #      7.0's `typescript/unstable/ast` subpath is NOT a drop-in: it exports ScriptKind,
+      #      ScriptTarget, SyntaxKind and createScanner but has no `createSourceFile`, so
+      #      there is still no whole-file parse entry point.
+      - dependency-name: "typescript"
+        versions: [">=7.0.0"]
     groups:
       # Split by blast radius rather than lumping the package into one PR. preact and
       # preact-render-to-string are SHIPPED to the browser via the import map — CLAUDE.md's

@@ -26,6 +26,13 @@
 // flag — release bundles never contain it (byte-parity gate).
 // ---------------------------------------------------------------------------
 
+// PINS TYPESCRIPT BELOW 7.0 — see the same note in scripts/slice-host.ts. TS 7.0
+// dropped the JavaScript compiler API, so `ts.ScriptKind` / `ts.createSourceFile`
+// and the `ts.is*` predicates below are all `undefined` there. Note this module is
+// imported dynamically by bundle-island.ts behind a try/catch, so under a broken
+// `typescript` the failure mode is a silent loss of fast refresh in dev rather
+// than a build error — which is exactly why the ceiling is pinned in
+// .github/dependabot.yml rather than left to be noticed.
 import ts from "typescript";
 
 /** Callee names that look like hooks (rules-of-hooks naming convention). */
