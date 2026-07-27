@@ -34,10 +34,20 @@
 #     like they belong below, but every dependency either declares is a `file:` link —
 #     `@z/runtime` into runtime/, `@demo/widget` into a vendored directory. There is no
 #     registry version to bump, so an entry for them would schedule a scan that can never open
-#     a PR. Their lockfiles do pin preact, typescript and friends, but only as transitives
-#     hoisted through the file: link and resolved from runtime/package.json's ranges — which
-#     the runtime/ entry below already owns. Add an entry here only if one of them grows a
-#     real registry dependency.
+#     a PR. Add an entry here only if one of them grows a real registry dependency.
+#
+#     BUT their lockfiles are NOT self-maintaining, and an earlier revision of this comment was
+#     wrong to imply they were ("resolved from runtime/package.json's ranges"). Each embeds its
+#     OWN copy of @z/runtime's resolved dependency set, including a concrete `typescript`
+#     version, and bun does not re-read runtime/package.json for a linked package on a plain
+#     `bun install`. Measured during the 5.9 → 6.0 bump: after runtime/ moved to ^6.0.3 both
+#     trees still installed typescript 5.9.3, and `bun install --frozen-lockfile` still exited
+#     0 — so nothing failed loudly. That is the dangerous part: pages.yml builds site/, and
+#     src/islands/props_check.zig resolves `tsc` from the WEBSITE root, so the props-check gate
+#     would have kept running a different compiler from the one runtime/ was tested against.
+#     Regenerating requires removing the lockfile (`rm bun.lock && bun install`); a plain
+#     reinstall is not enough. So whenever a runtime/ devDependency that these trees resolve
+#     through the link changes, refresh both lockfiles in the SAME commit.
 
 version: 2
 
@@ -94,55 +104,67 @@ updates:
       # repositories, a different threat model. Security updates ignore cooldown entirely.
       default-days: 7
     ignore:
-      # TypeScript is held BELOW 7.0. This is a version ceiling with a specific expiry, not a
-      # freeze — see the unblock condition at the end.
+      # TypeScript is ON 6.x and capped BELOW 7.0. The cap has a specific expiry, not a freeze —
+      # see the unblock condition at the end.
       #
-      # TypeScript 7.0 (released 2026-07-08, `latest` since) is the Go rewrite, and the npm
-      # package no longer ships the JavaScript compiler API. This is observable in the package
-      # itself, not just the release notes: `typescript@7.0.2`'s `exports["."]` is
+      # 6.0 is the FINAL JavaScript-based TypeScript line. 7.0 is the Go rewrite, and its npm
+      # package no longer ships the JavaScript compiler API at all. That is observable in the
+      # package, not just the release notes: `typescript@7.0.2`'s `exports["."]` is
       # `./lib/version.cjs`, whose entire contents are the version string, so
-      # `import ts from "typescript"` yields `{version, versionMajorMinor}` and nothing else.
-      # `ts.createSourceFile`, `ts.ScriptTarget` and `ts.ScriptKind` are all `undefined`.
-      #   announcement  https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/
+      # `import ts from "typescript"` yields `{version, versionMajorMinor}` and nothing else,
+      # and `ts.createSourceFile` / `ts.ScriptTarget` / `ts.ScriptKind` are all `undefined`.
+      #   7.0 announcement  https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/
       #     — "TypeScript 7.0 does not ship with an API. We expect TypeScript 7.1 to ship with
       #        a new (and different) API".
+      #   6.0 announcement  https://devblogs.microsoft.com/typescript/announcing-typescript-6-0/
       #
-      # Two first-party modules parse TypeScript with that API and break outright:
-      #   runtime/scripts/slice-host.ts   — the per-SPA host slicer, whose output is bundled
-      #                                     into the shipped /spa/<name>-runtime.js
+      # Two first-party modules parse TypeScript with that API, so 7.x breaks them outright:
+      #   runtime/scripts/slice-host.ts    — the per-SPA host slicer, whose output is bundled
+      #                                      into the shipped /spa/<name>-runtime.js
       #   runtime/sidecar/hot-transform.ts — the dev fast-refresh transform
       # Measured on typescript@7.0.2 in runtime/: `bun test` goes from 617 pass / 0 fail to
       # 566 pass / 51 fail, every failure a TypeError on `ts.ScriptTarget.Latest` or
       # `ts.ScriptKind.TSX`. That is what Dependabot PR #10 proposed and why it was rejected.
+      # On 6.0.3 the same suite is 617 pass / 0 fail — the API is fully present, which is
+      # precisely why 6.x is where this repo sits rather than back on 5.9.
       #
-      # Note the CLI is NOT the problem, so do not "fix" this by touching the tsc gate:
-      # src/islands/props_check.zig shells out to `bun x tsc -p <cfg> --pretty false` and
-      # parses `<path>(L,C): error TSxxxx: <msg>`. TypeScript 7.0.2 emits that format
-      # byte-identically to 5.9.3 (verified by running both against the same fixture). Its
-      # process exit code on a type error changes 2 → 1, which the gate already tolerates
-      # because it only tests `tsc_exit != 0`. The blocker is narrowly the JS API.
+      # The CLI is NOT the blocker, so do not "fix" a future 7.x attempt by touching the tsc
+      # gate: src/islands/props_check.zig shells out to `bun x tsc -p <cfg> --pretty false` and
+      # parses `<path>(L,C): error TSxxxx: <msg>`. All three of 5.9.3, 6.0.3 and 7.0.2 emit that
+      # line byte-identically (verified against one fixture). 5.9.3 and 6.0.3 also share the
+      # exit code 2 on a type error; 7.0.2 alone returns 1, which the gate already tolerates
+      # because it tests `tsc_exit != 0` rather than a literal. The blocker is only the JS API.
       #
       # WHY `versions: [">=7.0.0"]` AND NOT `update-types: ["version-update:semver-major"]`:
-      # blocking all majors would also withhold TypeScript 6.x (6.0.3 is current), and 6.x is
-      # the LAST line that still ships the JS compiler API — i.e. it is the one major upgrade
-      # here we positively want to be told about, and the natural staging step before any
-      # 7.x work. Silencing majors wholesale would mean never learning it exists. A 6.x bump
-      # still reaches us, now isolated in the runtime-majors group below.
+      # this rule is what MADE the 6.x upgrade reachable. Blocking every major would have
+      # withheld 6.x too, and 6.x is the last line carrying the compiler API — the one major
+      # here we positively wanted. The rule still admits 6.1, 6.2 and any 6.x patch, which now
+      # arrive isolated in the runtime-majors group below. runtime/package.json's `^6.0.3`
+      # encodes the same `<7.0.0` bound independently, so the manifest and this rule agree.
       #
       # UNBLOCK CONDITION — delete this entry when EITHER holds:
-      #   1. TypeScript 7.1 ships the replacement API and the two modules above are ported; or
-      #   2. those two modules are re-platformed off the compiler API entirely. Note that
-      #      7.0's `typescript/unstable/ast` subpath is NOT a drop-in: it exports ScriptKind,
-      #      ScriptTarget, SyntaxKind and createScanner but has no `createSourceFile`, so
-      #      there is still no whole-file parse entry point.
+      #   1. a 7.x ships a usable programmatic API (7.1 at the earliest, per the announcement
+      #      above; only `7.1.0-dev.*` nightlies exist so far) and the two modules are ported; or
+      #   2. those two modules are re-platformed off the compiler API entirely. Note 7.0's
+      #      `typescript/unstable/ast` subpath is NOT a drop-in: it exports ScriptKind,
+      #      ScriptTarget, SyntaxKind and createScanner but has no `createSourceFile`, so there
+      #      is still no whole-file parse entry point.
+      # Staying on 6.x is what makes that future move cheap: 6.0 carries, as deprecations, every
+      # option 7.0 removes outright, so the config surface is already 7.0-clean (see the
+      # changelog fragment for the audit).
       - dependency-name: "typescript"
         versions: [">=7.0.0"]
     groups:
       # Split by blast radius rather than lumping the package into one PR. preact and
       # preact-render-to-string are SHIPPED to the browser via the import map — CLAUDE.md's
       # "bugs here reach every visitor's browser" — and a bump wants the parity harness and a
-      # hydration check. typescript, happy-dom and @types/bun only move the props-check gate
-      # and the test suite. In one combined PR the risky half hides behind the routine half.
+      # hydration check. In one combined PR the risky half hides behind the routine half.
+      #
+      # "Tooling" here means build-time, NOT low-stakes. typescript in particular reaches
+      # further than the props-check gate and the test suite: slice-host.ts decides which host
+      # members land in the shipped /spa/<name>-runtime.js, and hot-transform.ts rewrites dev
+      # bundles. A TypeScript regression that under-includes a host member is a crash in a
+      # shipped bundle, not a red test.
       #
       # Split by NAME, not by `dependency-type: production|development`, which is the obvious
       # way to write this and is wrong here: that key is gated to bundler, composer, mix,

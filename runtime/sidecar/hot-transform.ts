@@ -26,10 +26,11 @@
 // flag — release bundles never contain it (byte-parity gate).
 // ---------------------------------------------------------------------------
 
-// PINS TYPESCRIPT BELOW 7.0 — see the same note in scripts/slice-host.ts. TS 7.0
-// dropped the JavaScript compiler API, so `ts.ScriptKind` / `ts.createSourceFile`
-// and the `ts.is*` predicates below are all `undefined` there. The ceiling is
-// enforced in .github/dependabot.yml, which carries the evidence.
+// CAPS TYPESCRIPT BELOW 7.0 — see the same note in scripts/slice-host.ts. 6.x is
+// the final JavaScript-based line and carries the full compiler API; 7.0 dropped
+// it, so `ts.ScriptKind` / `ts.createSourceFile` and the `ts.is*` predicates below
+// are all `undefined` there. The cap is enforced in .github/dependabot.yml, which
+// carries the evidence.
 //
 // bundle-island.ts imports this module dynamically behind a try/catch, but do NOT
 // read that as cover for a missing API. The catch guards RESOLUTION — `typescript`
