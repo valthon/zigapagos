@@ -26,6 +26,20 @@
 // flag — release bundles never contain it (byte-parity gate).
 // ---------------------------------------------------------------------------
 
+// CAPS TYPESCRIPT BELOW 7.0 — see the same note in scripts/slice-host.ts. 6.x is
+// the final JavaScript-based line and carries the full compiler API; 7.0 dropped
+// it, so `ts.ScriptKind` / `ts.createSourceFile` and the `ts.is*` predicates below
+// are all `undefined` there. The cap is enforced in .github/dependabot.yml, which
+// carries the evidence.
+//
+// bundle-island.ts imports this module dynamically behind a try/catch, but do NOT
+// read that as cover for a missing API. The catch guards RESOLUTION — `typescript`
+// absent from node_modules, the case its message names — and under TS 7 the
+// package resolves perfectly well; only its API is gone. So the import SUCCEEDS,
+// `hotTransform` is installed, and the TypeError instead lands where the transform
+// is called, inside a `Bun.build` onLoad plugin, which fails the build. Measured
+// on 7.0.2 that surfaces as a `bundle 500` from the sidecar, not the graceful
+// degradation to a full remount that the fallback path is designed for.
 import ts from "typescript";
 
 /** Callee names that look like hooks (rules-of-hooks naming convention). */

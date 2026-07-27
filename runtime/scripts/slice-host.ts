@@ -17,6 +17,15 @@
 //   - a namespace import (`import * as z from "@z/runtime"`) whose `z.host` is used.
 // Over-include, NEVER under-include: a runtime missing a member the SPA calls at
 // runtime is a crash, so every uncertain construct widens to the full runtime.
+//
+// CAPS TYPESCRIPT BELOW 7.0. This import is one of the two reasons the runtime's
+// `typescript` devDependency is capped at `^6.0.3` (the other is
+// sidecar/hot-transform.ts). 6.x is the final JavaScript-based line and carries
+// the full compiler API; 7.0 is the Go rewrite and dropped it, so there
+// `import ts from "typescript"` resolves to lib/version.cjs and yields only
+// `{version, versionMajorMinor}`, making every `ts.*` call below a TypeError.
+// The cap is enforced in .github/dependabot.yml, which carries the evidence and
+// the unblock condition.
 import ts from "typescript";
 
 /** All 18 host members, in the source order of the `host` literal in host.ts. */
