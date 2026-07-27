@@ -7,12 +7,12 @@
 # parent's parent, which is what makes that isolation work.
 #
 # Case 12 is the load-bearing one. The emitted `## [x.y.z] - YYYY-MM-DD` heading is an
-# interface with scripts/extract-release-notes.sh (a different file, different PR), which
-# locates a section by matching `## [<version>]` at the start of a line and prints through
-# to the next `## [`. That awk program is mirrored here verbatim rather than invoked,
-# deliberately: this gate must pin the contract even in a checkout where the extractor does
-# not exist, and a heading drift produces empty or run-on GitHub release notes rather than
-# any error.
+# interface with scripts/extract-release-notes.sh (a different file, owned by a different
+# branch), which locates a section by matching `## [<version>]` at the start of a line and
+# prints through to the next `## `. Drift there produces empty or run-on GitHub release
+# notes rather than any error, so it needs pinning. Case 12 invokes the real extractor when
+# the checkout has one and falls back to a minimal locator when it does not; either way it
+# asserts only the properties both guarantee — see the comment there.
 
 set -euo pipefail
 
@@ -264,18 +264,35 @@ expect_exit 0 "missing [Unreleased] link definition does not fail the release" "
 check "section still inserted" hasre "$t/c11/CHANGELOG.md" '^## \[0\.2\.0\] - 2026-08-01$'
 
 # --- case 12: the emitted section is parseable by extract-release-notes.sh ---
-# The awk below is scripts/extract-release-notes.sh's program, mirrored verbatim. See the
-# header comment for why it is duplicated rather than invoked.
-extract() { # extract <changelog> <version>
-    awk -v ver="$2" '
-      /^## \[/ {
-        if (found) exit
-        if (index($0, "## [" ver "]") == 1) { found=1 }
-      }
-      found { print }
-      END { if (!found) { print "error: version " ver " not found" > "/dev/stderr"; exit 1 } }
-    ' "$1"
-}
+# Prefer the REAL extractor. A mirrored copy would pin whatever the mirror does rather than
+# what ships, which is worse than no test — the shipped script deliberately differs from the
+# obvious implementation (it strips the `## [x.y.z]` heading, since `gh release create
+# --title` already renders the version, and it terminates on the reference-link block as
+# well as on the next `## `). The fallback below therefore asserts only what BOTH agree on:
+# the section is located by `## [<version>]` at the start of a line and ends at the next
+# `## `. Nothing here asserts whether the heading line or the link block are included —
+# that is the extractor's business, not the assembler's.
+if [ -x "$repo_root/scripts/extract-release-notes.sh" ] || [ -f "$repo_root/scripts/extract-release-notes.sh" ]; then
+    extractor_kind="the real scripts/extract-release-notes.sh"
+    extract() { # extract <changelog> <version>
+        # It resolves CHANGELOG.md relative to its own directory, so run a copy in place.
+        cp "$repo_root/scripts/extract-release-notes.sh" "$(dirname "$1")/scripts/"
+        bash "$(dirname "$1")/scripts/extract-release-notes.sh" "$2"
+    }
+else
+    extractor_kind="a minimal locator (extract-release-notes.sh not in this checkout)"
+    extract() { # extract <changelog> <version>
+        awk -v ver="$2" '
+          /^## / {
+            if (found) exit
+            if (index($0, "## [" ver "]") == 1) { found=1 }
+          }
+          found { print }
+          END { if (!found) { print "error: version " ver " not found" > "/dev/stderr"; exit 1 } }
+        ' "$1"
+    }
+fi
+echo "     (release-notes compatibility checked against $extractor_kind)"
 
 make_repo "$t/c12"
 # Drive it against a COPY of the repo's real CHANGELOG.md, so the contract is proven against
@@ -298,19 +315,23 @@ EOF
 expect_exit 0 "assembles into a copy of the real CHANGELOG.md" "$t/c12" 0.2.0 2026-08-05
 notes="$t/c12/notes.txt"
 if extract "$t/c12/CHANGELOG.md" 0.2.0 > "$notes" 2> /dev/null; then
-    pass "extract-release-notes awk finds the assembled section"
+    pass "the extractor locates the assembled section by its heading"
 else
-    fail "extract-release-notes awk finds the assembled section"
+    fail "the extractor locates the assembled section by its heading"
 fi
-check "extracted notes start with the exact heading" \
-    test "$(head -1 "$notes")" = '## [0.2.0] - 2026-08-05'
-check "extracted notes carry every section" has "$notes" '- extractable internal bullet'
-check "extracted notes stop before the next release" hasnt "$notes" '## [0.1.0]'
+check "extracted notes are non-empty" test -s "$notes"
+check "extracted notes carry the first section's bullets" has "$notes" '- extractable added bullet'
+check "extracted notes carry the last section's bullets" has "$notes" '- extractable internal bullet'
+check "extracted notes stop before the next release's heading" hasnt "$notes" '## [0.1.0]'
+check "extracted notes carry none of the next release's bullets" \
+    hasnt "$notes" 'First public release. Fork point'
 check "extracted notes do not leak the preamble" hasnt "$notes" 'Two things to know'
 check "the real preamble survived assembly" \
     has "$t/c12/CHANGELOG.md" 'This file starts at the first public release, deliberately.'
 check "the inherited-tags warning survived assembly" \
     has "$t/c12/CHANGELOG.md" 'are not Zigapagos'
+# The pre-existing section must stay extractable after an insert above it — the assembler
+# must not have disturbed its heading or the boundary below it.
 if extract "$t/c12/CHANGELOG.md" 0.1.0 > "$t/c12/old.txt" 2> /dev/null; then
     pass "the pre-existing 0.1.0 section is still extractable after assembly"
 else
@@ -320,11 +341,8 @@ check "0.1.0 extraction does not reach up into the 0.2.0 section" \
     hasnt "$t/c12/old.txt" '## [0.2.0]'
 check "0.1.0 extraction carries none of 0.2.0's bullets" \
     hasnt "$t/c12/old.txt" '- extractable added bullet'
-# Note, not a defect of this script: the extractor stops at the next `## [`, so the *oldest*
-# section always trails the reference-link block at the foot of the file (which now includes
-# a `[0.2.0]:` line). Only the last section is affected, and only cosmetically.
-check "oldest section trails the link block (documented extractor behaviour)" \
-    has "$t/c12/old.txt" '[0.2.0]: https://'
+check "0.1.0 extraction still carries its own content" \
+    has "$t/c12/old.txt" 'First public release. Fork point'
 
 if [ "$failures" -ne 0 ]; then
     echo "$failures self-test case(s) failed" >&2

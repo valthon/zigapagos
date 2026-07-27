@@ -239,9 +239,9 @@ Two things follow from that:
   job; the release PR runs it once.
 - **The heading it emits is an interface, not a style choice.**
   `scripts/extract-release-notes.sh` finds a section by matching `## [<version>]`
-  at the start of a line and prints through to the next `## [`, and the `v*`
-  release workflow uses that as the GitHub release body. Malformed, it fails
-  nothing and silently ships empty or run-on release notes — which is why
+  at the start of a line and slices through to the next `## `, and the `v*`
+  release workflow uses the result as the GitHub release body. Malformed, it
+  fails nothing and silently ships empty or run-on release notes — which is why
   `scripts/assemble-changelog.test.sh` pins the exact format (and why that
   self-test also runs in CI, via `tests/changelog/assemble.sh`).
 

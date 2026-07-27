@@ -13,9 +13,9 @@
 # reference-style links at the foot of the file, and deletes the consumed fragments.
 #
 # The heading format is an INTERFACE, not decoration: scripts/extract-release-notes.sh
-# locates a section by matching `## [<version>]` at the start of a line and prints through
-# to the next `## [`, and the v* release workflow uses that as the GitHub release body. A
-# malformed heading fails nothing and silently yields empty or run-on release notes, which
+# locates a section by matching `## [<version>]` at the start of a line and slices through
+# to the next `## `, and the v* release workflow uses the result as the GitHub release body.
+# A malformed heading fails nothing and silently yields empty or run-on release notes, which
 # is why the version/date are validated here rather than trusted.
 #
 # There is no site mirror to update: site/ has no generated changelog page (checked), so
@@ -91,7 +91,7 @@ fi
 }
 
 # A second `## [<version>]` heading would shadow the first for extract-release-notes.sh
-# (it stops at the next `## [`), so re-running the assembler for a shipped version is a
+# (it stops at the next `## `), so re-running the assembler for a shipped version is a
 # hard error rather than a silent duplicate.
 while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in

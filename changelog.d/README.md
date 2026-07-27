@@ -119,9 +119,13 @@ it would remove, and writes nothing. The script:
 5. `git rm`s the consumed fragments.
 
 The heading format is **load-bearing, not cosmetic**: `scripts/extract-release-notes.sh`
-finds a section by matching `## [<version>]` at the start of a line and stops at the next
-`## [`, and the `v*` release workflow uses what it prints as the GitHub release body. A
+finds a section by matching `## [<version>]` at the start of a line and slices through to
+the next `## `, and the `v*` release workflow uses the result as the GitHub release body. A
 malformed heading does not fail the build — it silently produces empty or over-long release
 notes. Read the assembled section before merging the release PR.
+
+(What exactly that extractor puts in the body — whether the heading line itself survives,
+where it stops trimming — is its business, not the assembler's. What is fixed between them
+is the heading: `## [x.y.z] - YYYY-MM-DD`, bare semver, ASCII hyphen, single spaces.)
 
 Do not run the assembler in a feature PR. Add your fragment; that is the whole job.
