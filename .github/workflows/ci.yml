@@ -347,8 +347,13 @@ jobs:
   # 6m08s of the old 16m06s e2e step, nearly all of it examples/tsx-site's
   # `zig build dev` — a cold consumer build driving the public zigapagos.dev()
   # API. Same reasoning as the importer job: one long serial script, one runner.
+  #
+  # That cold consumer build is now this job's second reason to exist: the
+  # eleven non-browser examples/tsx-site/test scripts each need one, and this is
+  # the only job that has already paid for it. See the second step for the
+  # measurement and for why they are named rather than globbed.
   e2e-dev-loop:
-    name: Shell e2e — dev loop
+    name: Shell e2e — dev loop + tsx-site e2e
     runs-on: ubuntu-latest
     env:
       ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
@@ -405,6 +410,99 @@ jobs:
             exit 1
           fi
           bash "$script"
+
+      # The eleven non-browser scripts under examples/tsx-site/test/. Until now
+      # NOTHING ran them — no workflow, no mise task, no hook — and that is not a
+      # theoretical gap: spa.sh's nginx assertions had matched nothing since
+      # nginxQuote() landed, and nobody could notice, because noticing requires
+      # running the file. tests/meta/script-coverage.sh now makes that state
+      # declared rather than accidental; this step pays off the cheap half of it.
+      #
+      # WHY THIS JOB, measured rather than assumed. Every one of these scripts
+      # runs `zig build` inside examples/tsx-site, i.e. a full CONSUMER build of
+      # zigapagos-as-a-dependency. e2e-dev-loop is the only job that already pays
+      # for one — the step above drives examples/tsx-site's own `zig build dev`
+      # — so here they land on a warm .zig-cache and cost ~1 minute between them.
+      # In e2e-rest (`tests/*/*.sh`, which builds the REPO, not the example) the
+      # same eleven would first buy a cold ~265s consumer build and make that job
+      # the run's critical path, past e2e-astro-importer.
+      #
+      # WHY A LITERAL LIST rather than a glob + exclusion, which is what e2e-rest
+      # does. There, self-maintenance is the whole point: a new tests/<area>/
+      # script must run without editing this file. Here the opposite is wanted.
+      # A glob would silently adopt whatever appears in that directory, including
+      # the next script that needs a browser or four minutes, straight onto the
+      # PR path. Naming them is also what makes the coverage gate work at all:
+      # its rule (b) is "a workflow names it", so a new sibling here is neither
+      # CI-run nor inventoried and the gate fails until someone chooses one.
+      #
+      # NOT LISTED, deliberately: examples/tsx-site/test/hydrate.sh and
+      # examples/tsx-site/test/spa_slice.sh. Both drive real Chromium through
+      # python3 + playwright, which no workflow installs (~150MB), and they are
+      # ~125s each; spa_slice.sh additionally `rm -rf`s .zig-cache and zig-out,
+      # which would throw away the warm build this step exists to reuse and
+      # force everything after it to rebuild cold. They stay in
+      # tests/meta/unrun-scripts.txt with that reason.
+      #
+      # Those two paths are spelled in full ON PURPOSE, and it is the reason
+      # script-coverage.sh's rule (b) had to become comment-aware. A reader of
+      # this file should be able to see exactly which scripts are excluded — but
+      # the gate's "a workflow names it" test is a plain `git grep`, so a bare
+      # mention here USED to count as running them, which would have made the
+      # gate report the pair as "run by CI but also inventoried" and fail. Now
+      # the gate skips comment lines, so this prose documents the exclusion
+      # without vouching for it — and if that filter is ever removed, this
+      # comment makes the gate go red immediately rather than quietly.
+      #
+      # Ordered cheapest-first among equals, with two real constraints:
+      # parity.sh invokes ssr.sh internally, and serve.sh is both the slowest
+      # (~76s) and the only one that binds a fixed port (1990), so it goes last.
+      - name: examples/tsx-site e2e — SSR, parity, props, SPA prerender (non-browser)
+        run: |
+          scripts=(
+            examples/tsx-site/test/ssr.sh
+            examples/tsx-site/test/parity.sh
+            examples/tsx-site/test/parity-bundle.sh
+            examples/tsx-site/test/incremental.sh
+            examples/tsx-site/test/props_check.sh
+            examples/tsx-site/test/doctor.sh
+            examples/tsx-site/test/spa.sh
+            examples/tsx-site/test/spa_flags.sh
+            examples/tsx-site/test/spa_guards.sh
+            examples/tsx-site/test/spa_nested.sh
+            examples/tsx-site/test/serve.sh
+          )
+          # A renamed or deleted script must fail loudly here, not vanish from
+          # the suite. script-coverage.sh catches it too (the rename shows up as
+          # a script nothing runs), but only on the next run of that gate —
+          # this makes the job that lost coverage be the job that says so.
+          missing=()
+          for script in "${scripts[@]}"; do
+            [[ -f "$script" ]] || missing+=("$script")
+          done
+          if [[ ${#missing[@]} -gt 0 ]]; then
+            echo "::error::listed but absent: ${missing[*]} — update this list and tests/meta/unrun-scripts.txt together"
+            exit 1
+          fi
+
+          # Collected, not fail-fast. These scripts are running in CI for the
+          # first time; one rotted assertion should not hide the other ten.
+          failed=()
+          for script in "${scripts[@]}"; do
+            echo "::group::$script"
+            if bash "$script"; then
+              echo "::endgroup::"
+            else
+              rc=$?
+              echo "::endgroup::"
+              echo "::error file=$script::$script failed (exit $rc)"
+              failed+=("$script")
+            fi
+          done
+          if [[ ${#failed[@]} -gt 0 ]]; then
+            echo "::error::${#failed[@]} script(s) failed: ${failed[*]}"
+            exit 1
+          fi
 
   # The other ten scripts: ~49s of the old 16m06s between them. Discovered by
   # glob and filtered by exclusion, so a script added under tests/<area>/

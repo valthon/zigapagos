@@ -10,51 +10,35 @@
 # cost to run the script in CI, so the trade-off can be re-checked rather than
 # re-litigated from scratch.
 #
-# MEASURED 2026-07-27, all 14 below verified PASSING by hand on Linux (zig 0.16.0,
-# bun 1.2.23). Wall-clock is with a WARM examples/tsx-site build; the cold consumer
-# build that has to precede them is ~265s on a CI runner (ci.yml's own measurement for
-# an equivalent build). The 13 example scripts total ~369s warm, of which two Playwright
-# scripts are 244s. So the honest cost of adding all of them to the PR path is a fresh
-# ~5-minute consumer build plus ~6 minutes of scripts plus a browser install — see the
-# placement note at the bottom.
+# WAS 14 ROWS, NOW 3. The eleven non-browser examples/tsx-site/test scripts that used
+# to be listed here are now run by ci.yml's e2e-dev-loop job — the placement this file
+# recommended, carried out. They are gone from this file because a row for a CI-run
+# script is the stale-doc defect the gate exists to catch, and script-coverage.sh fails
+# on one. What is left is the two that need a browser and the one that wants a
+# different workflow.
 
-site/test/build.sh                     Dogfood site build + prefix/branding assertions. 120s cold, 1.8s warm. pages.yml already builds site/ on every push to main, so a BUILD break is caught; what is unrun is only this script's five output assertions. Cheapest of the lot to adopt.
-
-examples/tsx-site/test/doctor.sh       26.4s. `zigapagos doctor` diagnostics over the dogfood project.
-examples/tsx-site/test/incremental.sh  4.8s. Injects a transitive dep into Hero and asserts the island rebuilds; documented in docs/islands.md:234.
-examples/tsx-site/test/parity-bundle.sh 1.9s. Asserts the build driver's bundle is byte-identical to a raw `bun build`; documented in docs/islands.md:231.
-examples/tsx-site/test/parity.sh       2.2s. SSR/CSR golden parity over the dogfood pages.
-examples/tsx-site/test/props_check.sh  3.5s. Asserts a clean site builds green under props-check=error.
-examples/tsx-site/test/spa.sh          2.4s. SPA prerender + routing manifest + nginx/zigbase host config + code splitting. THIS is the script whose nginx assertions had rotted; fixed in this PR.
-examples/tsx-site/test/spa_flags.sh    1.9s. Baked flag defaults are snapshotted into shells and SSR'd; clientInit stays client-only.
-examples/tsx-site/test/spa_guards.sh   1.9s. A guarded route prerenders a neutral fallback shell carrying no gated content.
-examples/tsx-site/test/spa_nested.sh   1.9s. Nested layout routes prerender layout+child per leaf, fail-closed when guarded.
-examples/tsx-site/test/ssr.sh          2.0s. Island SSR through the Bun sidecar. NOTE: this file is the SOURCE OF TRUTH for output shipped to users — src/cli/init_from_astro.zig:844 writes a de-repo'd copy into every generated consumer project, and only the emitted string is unit-tested (init_from_astro.zig:1104). Drift here ships to consumers.
-examples/tsx-site/test/serve.sh        76.1s. Boots a real server against the built tree. The slowest non-browser script.
+site/test/build.sh                     Dogfood site build + five output assertions (prefix correctness, island SSR, no stray upstream branding). 120.3s cold / 1.8s warm, and NOT free in any ci.yml job: site/ is a third consumer project with its own .zig-cache, so e2e-dev-loop's warm examples/tsx-site tree buys it nothing and it would cost the full 120s on a job whose headroom is ~50s in a bad run. Where it IS nearly free is pages.yml, which already runs `bun install --frozen-lockfile && zig build` in site/ before uploading — the assertions are five greps over that finished tree, ~2s. The catch, and the reason this is a row rather than a commit: pages.yml runs on push to main only, so it gates the DEPLOY, not the PR, and a PR cannot prove the step works before merging it. Recommended next step, with that caveat stated.
 
 # --- Needs a browser CI has never installed -----------------------------------------
 # Both drive real Chromium via python3 + playwright. No workflow installs either, and
 # `git grep playwright -- .github/ tests/` is empty. Adopting these means a
 # `playwright install chromium` step (~150MB) on top of the runtime cost below.
-examples/tsx-site/test/hydrate.sh      124.6s, Playwright. Island hydration + interactivity + nested-slot adopt-hydration + npm-compat on ONE Preact. Same source-of-truth caveat as ssr.sh: init_from_astro.zig:845 ships a de-repo'd copy to generated projects.
-examples/tsx-site/test/spa_slice.sh    119.6s, Playwright, and it `rm -rf .zig-cache zig-out` first — so it forces a FULL cold rebuild and destroys the warm cache for anything sequenced after it. Per-deployable runtime slicing: separation, size, fallback, one-Preact hydration.
+#
+# WHERE THEY SHOULD EVENTUALLY RUN: not the PR path. A separate workflow on
+# `schedule:` (nightly) plus `workflow_dispatch:`, with its own checkout, mise setup,
+# `playwright install --with-deps chromium`, and the examples/tsx-site build — roughly
+# 265s cold build + ~150MB browser install + ~245s of scripts, call it 9-10 minutes.
+# Nightly is the right cadence because what they catch is a real-browser regression in
+# hydration or runtime slicing, which arrives with a runtime/src change, not with an
+# arbitrary PR — and because a browser job on every PR is the kind of cost that gets
+# switched off six weeks later. workflow_dispatch is there so anyone touching
+# runtime/src can run it on demand instead of waiting for the night.
+examples/tsx-site/test/hydrate.sh      124.6s, Playwright. Island hydration + interactivity + nested-slot adopt-hydration + npm-compat on ONE Preact. SOURCE-OF-TRUTH caveat: src/cli/init_from_astro.zig:845 writes a de-repo'd copy of this file into every generated consumer project, and only the emitted string is unit-tested — drift here ships to consumers.
+examples/tsx-site/test/spa_slice.sh    119.6s, Playwright, and it `rm -rf .zig-cache zig-out` first — so it forces a FULL cold rebuild and destroys the warm cache for anything sequenced after it. That is a second, independent reason it cannot join e2e-dev-loop's list: that step exists to reuse a warm consumer build, and this script deletes it. Per-deployable runtime slicing: separation, size, fallback, one-Preact hydration.
 
-# --- Recommended placement, if this debt is paid --------------------------------------
-# Not `e2e-rest`. That job does NOT build the examples/tsx-site CONSUMER project (it
-# builds the repo root), so adding these there buys a fresh ~265s cold build and would
-# make e2e-rest the new critical path, past e2e-astro-importer's 11m33s.
-#
-# `e2e-dev-loop` already pays exactly that consumer build (it runs examples/tsx-site's
-# own `zig build dev`, 5m42s) and is NOT the critical path. The eleven non-browser
-# scripts above total ~48s warm, so appending them there is ~+1 minute on a job with
-# ~6 minutes of headroom. That needs a ci.yml edit and belongs in a focused CI change,
-# not in the PR that found the rot.
-#
-# The two Playwright scripts want a separate scheduled/workflow_dispatch job: they are
-# ~4 minutes plus a browser install, and their failure mode (a real browser regression)
-# does not need to gate every PR.
-#
+# --- Related gap, deliberately not covered by this file --------------------------------
 # The eight *_playwright.py helpers under examples/tsx-site/test/ that no .sh invokes at
 # all (spa, spa_csp, spa_guards, spa_nested, spa_nested_guarded, spa_reload, spa_scroll,
-# spa_split) are a related but distinct gap: they are documented as manually run, and
-# they are NOT in this file because it inventories .sh test scripts. Worth its own pass.
+# spa_split) are a distinct problem: they are documented as manually run, and they are
+# NOT in this file because it inventories .sh test scripts. They belong in the same
+# scheduled browser workflow the two rows above want. Worth its own pass.
