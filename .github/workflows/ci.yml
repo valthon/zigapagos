@@ -11,39 +11,41 @@ concurrency:
 permissions:
   # Sets permission policy for `GITHUB_TOKEN`
   contents: read
+
+# The suite used to be ONE `tests` job per OS that ran every gate in sequence.
+# Measured on the last green main run (30256953045, ubuntu): 20m19s wall, of
+# which the single "Shell e2e" step was 16m06s — and inside that step two
+# scripts accounted for 15m of the 16m (tests/init/from-astro.sh 9m08s,
+# tests/serve/dev.sh 6m08s, because each one builds a whole CONSUMER project
+# from scratch). Everything else in the job finished in ~4m10s but could not
+# report until the e2e step had drained.
+#
+# So the job is split along that measured seam, not an aesthetic one: the two
+# multi-minute e2e scripts each get their own runner, the remaining ten share a
+# third, and the build/unit surface stops waiting behind them. Nothing is gained
+# by splitting further — the critical path is now from-astro.sh's two consumer
+# builds, which are serial inside that one script.
+#
+# Every gate the monolith ran still runs, exactly once per run; each job below
+# notes which steps it inherited.
 jobs:
-  tests:
-    strategy:
-      fail-fast: false
-      matrix:
-        # windows-latest removed: upstream's WindowsWatcher.zig/wuffs.zig don't
-        # compile on stable Zig 0.16.0 (os.windows lost OVERLAPPED/PAGE_READONLY);
-        # upstream fixed this on Zig 0.17-dev. Re-add with the Zig 0.17 port at
-        # the next upstream release-tag sync (see docs/ROADMAP.md fork policy).
-        os: [ubuntu-latest, macos-latest]
-
-    runs-on: ${{ matrix.os }}
-    env:
-      # --- Zig package cache ---
-      # Keep third-party git hosts (codeberg.org, code.hexops.org, ...) off the
-      # critical path: cache the Zig global package cache and pre-fetch the
-      # dependency tree with retries before building.
-      #
-      # This is job-level now. It used to be repeated as step-level `env:` on
-      # every step that ran zig, because mlugg/setup-zig exported its own
-      # ZIG_GLOBAL_CACHE_DIR=$GITHUB_WORKSPACE/.zig-cache through GITHUB_ENV and
-      # only a step-level `env:` outranks GITHUB_ENV. With setup-zig gone (see
-      # the toolchain step below) nothing writes that variable, so one job-level
-      # declaration covers every step — and, unlike the old arrangement, also
-      # every process the e2e scripts spawn.
-      ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
+  # Pure text analysis over the tracked tree: three `git grep`/awk gates that
+  # need no compiler, no dependency fetch and no build. Splitting them out means
+  # a branding slip or a new leak-detector-disabling test is red ~20s into the
+  # run instead of after a 20-minute job.
+  #
+  # Linux-only by the same argument the allocator gate already carried in the
+  # monolith: these read the checked-out bytes and nothing else, so a second run
+  # on macOS could not reach a different verdict. (branding.sh and
+  # confidentiality.sh previously ran on both OSes for no reason other than
+  # living in a matrixed job.)
+  gates:
+    name: Text gates
+    runs-on: ubuntu-latest
     steps:
-      - name: No autocrlf
-        run: git config --global core.autocrlf false
-
+      # Both of the first two gates are `git grep` over the working tree, so
+      # they need a git repo but no history: a shallow checkout is enough.
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0  # Change if you need git info
 
       - name: Branding gate
         run: tests/branding.sh
@@ -55,24 +57,58 @@ jobs:
       # to it) in an ArenaAllocator turns Zig's leak detector OFF for that test.
       # The gate pins the existing sites via scripts/allocator-allowlist.txt —
       # each with a written justification — and fails on a NEW one. Pure
-      # bash+awk over src/, so it needs no toolchain and runs before setup.
-      # Linux-only: it is OS-independent text analysis, and one run suffices.
+      # bash+awk over src/, so it needs no toolchain.
       - name: Allocator-contract gate (NO_SLOP.md 2.2a)
-        if: runner.os == 'Linux'
         run: |
           bash scripts/check-allocator-contracts.test.sh
           bash scripts/check-allocator-contracts.sh
 
-      # ONE toolchain action for the whole job. This was mlugg/setup-zig for the
-      # Zig half plus jdx/mise-action for the bun half — two installs of the same
-      # compiler, and setup-zig is still a Node 20 action (there is no v3;
-      # upstream moved the project to Codeberg), so it was one of the four
-      # actions GitHub is force-running on Node 24 with a deprecation annotation.
+  # The compiler-facing surface: formatting, the snapshot diff, the
+  # single-threaded compile guard, all eleven Zig unit-test steps, the Bun
+  # suite, and the API contract-drift gate. This is the only matrixed job —
+  # everything below it is Linux-only, exactly as it was in the monolith.
+  build-test:
+    name: Build + unit tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # windows-latest removed: upstream's WindowsWatcher.zig/wuffs.zig don't
+        # compile on stable Zig 0.16.0 (os.windows lost OVERLAPPED/PAGE_READONLY);
+        # upstream fixed this on Zig 0.17-dev. Re-add with the Zig 0.17 port at
+        # the next upstream release-tag sync (see docs/ROADMAP.md fork policy).
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      # --- Zig package cache ---
+      # Keep third-party git hosts (codeberg.org, code.hexops.org, ...) off the
+      # critical path: cache the Zig global package cache and pre-fetch the
+      # dependency tree with retries before building. Job-level, so every step —
+      # and every process a step spawns — sees the same directory. (It had to be
+      # repeated as step-level `env:` while mlugg/setup-zig was in the job,
+      # because setup-zig exported its own value through GITHUB_ENV; nothing
+      # does that now.)
+      ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
+    steps:
+      # Kept only on the matrixed job: it exists for the windows-latest entry
+      # the matrix comment above is holding a seat for, and is a no-op on
+      # ubuntu/macOS where core.autocrlf is already false.
+      - name: No autocrlf
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # Change if you need git info
+
+      # ONE toolchain action for the whole job. This used to be mlugg/setup-zig
+      # for the Zig half plus jdx/mise-action for the bun half — two installs of
+      # the same compiler, and setup-zig is still a Node 20 action (there is no
+      # v3; upstream has moved to Codeberg), so it was one of the four actions
+      # GitHub was force-running on Node 24 with a deprecation annotation.
       # mise.toml is already the repo's single source of truth for both tools
-      # (zig 0.16.0 + bun 1.2) and the hermetic e2e scripts already shell out
-      # through `mise exec`, so dropping setup-zig removes a duplicate install
-      # AND the deprecation, and makes the compiler the gates run under the exact
-      # one the scripts build with.
+      # (zig 0.16.0 + bun 1.2) and the e2e scripts already shell out through
+      # `mise exec`, so dropping setup-zig removes a duplicate install AND the
+      # deprecation, and guarantees the compiler CI gates with is the exact one
+      # the scripts build with.
       - name: Setup toolchain (mise — zig 0.16.0 + bun 1.2)
         uses: jdx/mise-action@v4
         with:
@@ -98,7 +134,7 @@ jobs:
 
       # Runs immediately after the toolchain is available and before any build:
       # `zig fmt --check` needs only the compiler, no dependency fetch, so a
-      # formatting slip fails in seconds instead of after the full e2e suite.
+      # formatting slip fails in seconds instead of after the full suite.
       #
       # The file list comes from `git ls-files`, not from a directory walk. Both
       # `zig-pkg/` and `examples/tsx-site/zig-pkg/` are gitignored trees of
@@ -140,6 +176,11 @@ jobs:
       # Save immediately after a successful fetch, before build/tests, so a
       # later test failure still leaves the cache populated. Skipped on an
       # exact primary-key hit (the cache is already up to date).
+      #
+      # This is the ONLY job that writes the package cache — the e2e jobs below
+      # restore it read-only. They run concurrently with this one, so a second
+      # writer on the same key would just lose the reservation race and log a
+      # warning for no benefit.
       - name: Save Zig package cache
         if: steps.zig-pkg-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
@@ -147,19 +188,20 @@ jobs:
           path: ${{ github.workspace }}/.zig-global-cache
           key: ${{ steps.zig-pkg-cache.outputs.cache-primary-key }}
 
-      # MUST precede the Zig test steps, not just the TypeScript one. Several Zig
-      # tests spawn the Bun island sidecar, which imports preact-render-to-string
-      # from runtime/src — without node_modules those tests fail on a missing
-      # package. They used to pass only because `bun` was unresolvable, so
-      # `Sidecar.spawn` returned FileNotFound and the tests took their
-      # `error.SkipZigTest` path: the sidecar was never actually exercised in CI.
-      # Fixing the shim resolution above un-skipped them and exposed this
-      # ordering bug.
+      # MUST precede the Zig test steps. Several Zig tests spawn the Bun island
+      # sidecar, which imports preact-render-to-string from runtime/src —
+      # without node_modules those tests fail on a missing package. They used to
+      # pass only because `bun` was unresolvable, so `Sidecar.spawn` returned
+      # FileNotFound and the tests took their `error.SkipZigTest` path: the
+      # sidecar was never actually exercised in CI. Fixing the shim resolution
+      # above un-skipped them and exposed this ordering bug.
       - name: Install runtime dependencies (Zig sidecar tests spawn bun)
         working-directory: runtime
         run: bun install --frozen-lockfile
 
-      - name: Build
+      # `zig build test` runs ONLY the three-root snapshot diff — see CLAUDE.md.
+      # The unit tests are the eleven `test-*` steps further down.
+      - name: Snapshot tests (zig build test)
         run: zig build test
 
       # Single-threaded guard: the single-threaded-only code paths are comptime-pruned
@@ -173,12 +215,11 @@ jobs:
         run: zig build check -Dsingle-threaded
 
       # --- Full test surface (issue AUD-019) ---
-      # The `zig build test` step above runs ONLY the three-root snapshot diff.
       # The fork's differentiating surface — the island pass, SPA prerender, the
       # dev/serve loop, the migration importer, and the TypeScript runtime — is
-      # exercised by the `test-*` steps, the Bun runtime suite, and the hermetic
-      # `tests/*/*.sh` e2e. None of those ran in CI before, so a PR breaking
-      # any of them merged green.
+      # exercised by these `test-*` steps, by the Bun suite below, and by the
+      # hermetic tests/*/*.sh e2e (their own jobs now). None of it ran in CI
+      # before AUD-019, so a PR breaking any of it merged green.
       - name: Subsystem unit tests (islands, SPA, dev/serve, migrate, runtime sidecar)
         run: |
           zig build \
@@ -205,35 +246,258 @@ jobs:
       # step shells out to the backend's gen-client; with the backend absent
       # apiclient.ts degrades to a presence/non-empty check on the committed
       # client rather than failing, so this stays non-flaky either way.
-      # Needs bun (installed by the mise step above). Linux-only: the check is
-      # OS-independent and one run is enough.
+      # Linux-only: the check is OS-independent and one run is enough. It stays
+      # inside this job rather than getting its own because it is sub-second
+      # once the dependency tree is fetched — a dedicated runner would cost more
+      # in setup than the check itself.
       - name: API contract drift (api-check)
         if: runner.os == 'Linux'
         run: zig build api-check
 
-      # Heavy hermetic e2e (full example builds + live server boots via the
-      # stub-zigbase.ts binary). Linux-only to keep macOS runner minutes down —
-      # the scripts drive OS-independent build/serve plumbing, so one OS suffices.
-      #
-      # Every tests/*/*.sh runs, not just tests/serve/*.sh. The old glob silently
-      # excluded tests/init/*.sh and tests/rendering/incremental.sh — they existed
-      # and no CI job ran them, so a PR breaking the Astro importer, the
-      # multilingual scaffold, or the incremental-render guarantee merged green.
-      # A discovered glob also means a new tests/<area>/ directory is covered the
-      # day it is added rather than whenever someone remembers to extend this list.
-      #
-      # tests/branding.sh and tests/confidentiality.sh are deliberately NOT here:
-      # they are cheap, OS-independent gates that run near the top of the job so a
-      # branding regression fails in seconds instead of after the full e2e suite.
-      - name: Shell e2e — serve/dev loop, init, rendering, islands, config (hermetic)
-        if: runner.os == 'Linux'
+  # --- Shell e2e, sharded ------------------------------------------------------
+  # The three jobs below partition `tests/*/*.sh` — the same glob the monolith
+  # used, so a new tests/<area>/ directory is still covered the day it is added.
+  # The partition is by EXCLUSION (see e2e-rest): the two dedicated jobs name
+  # their one script, the third runs everything else, so a newly added script
+  # lands in a job automatically instead of being silently skipped.
+  #
+  # tests/branding.sh and tests/confidentiality.sh are deliberately outside this
+  # glob — they are the `gates` job above.
+  #
+  # All three are Linux-only, as the monolith's e2e step was: the scripts drive
+  # OS-independent build/serve plumbing, so one OS suffices and macOS runner
+  # minutes stay down.
+
+  # 9m08s of the old 16m06s e2e step. The script generates a consumer project
+  # from the Astro sample and runs `zig build` in it TWICE (islands and
+  # no-islands variants), each a from-scratch compile of zigapagos as a
+  # dependency — ~4.5 minutes apiece, and serial inside the script. This is the
+  # run's critical path; it gets a runner to itself.
+  e2e-astro-importer:
+    name: Shell e2e — Astro importer
+    runs-on: ubuntu-latest
+    env:
+      ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
+      # Point the LOCAL (build-artifact) cache at one directory for the whole
+      # job. Zig's local cache is per-project by default (`<project>/.zig-cache`),
+      # so the repo build and the two generated consumer projects under $TMPDIR
+      # each recompile the same third-party objects from zero. The cache is
+      # content-addressed, so pointing them at one directory lets the second and
+      # third build reuse whatever the first already produced. Safe here because
+      # nothing reads `.zig-cache` by path: the one place that does
+      # (src/cli/serve.zig's `.zig-cache/zigapagos-serve-{islands,spa}`) uses a
+      # hard-coded relative path this variable does not affect.
+      ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}/.zig-local-cache
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup toolchain (mise — zig 0.16.0 + bun 1.2)
+        uses: jdx/mise-action@v4
+        with:
+          cache: true
+
+      # See build-test for why the global pin is required: the scripts spawn
+      # bun and zig from directories outside this repo, where mise.toml does
+      # not apply and a bare shim would abort with "No version is set".
+      - name: Pin tool versions globally (shims must resolve outside the repo)
+        run: |
+          mise use -g zig@0.16.0 bun@1.2
+          ( cd "$(mktemp -d)" && bun --version && zig version )
+
+      - name: Get Zig version
+        id: zig-version
+        run: echo "version=$(zig version)" >> "$GITHUB_OUTPUT"
+
+      # Restore-only: build-test owns the write side of this key.
+      - name: Restore Zig package cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ github.workspace }}/.zig-global-cache
+          key: zig-pkg-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-${{ hashFiles('**/build.zig.zon') }}
+          restore-keys: |
+            zig-pkg-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-
+
+      - name: Fetch dependencies (with retries)
+        run: |
+          for i in 1 2 3; do
+            if zig build --fetch=all; then
+              exit 0
+            fi
+            echo "::warning::zig build --fetch=all attempt $i failed; retrying in 20s..."
+            sleep 20
+          done
+          echo "::error::all dependency fetch attempts failed"
+          exit 1
+
+      - name: Install runtime dependencies (the sidecar the e2e spawns needs them)
+        working-directory: runtime
+        run: bun install --frozen-lockfile
+
+      - name: tests/init/from-astro.sh
+        run: |
+          script=tests/init/from-astro.sh
+          if [[ ! -f "$script" ]]; then
+            echo "::error::$script is gone — this job and e2e-rest's exclusion list must move together, or the script stops running entirely"
+            exit 1
+          fi
+          bash "$script"
+
+  # 6m08s of the old 16m06s e2e step, nearly all of it examples/tsx-site's
+  # `zig build dev` — a cold consumer build driving the public zigapagos.dev()
+  # API. Same reasoning as the importer job: one long serial script, one runner.
+  e2e-dev-loop:
+    name: Shell e2e — dev loop
+    runs-on: ubuntu-latest
+    env:
+      ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
+      # Shared for the same reason as in e2e-astro-importer: this job builds the
+      # repo and then examples/tsx-site, two projects with the same dependencies.
+      ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}/.zig-local-cache
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup toolchain (mise — zig 0.16.0 + bun 1.2)
+        uses: jdx/mise-action@v4
+        with:
+          cache: true
+
+      - name: Pin tool versions globally (shims must resolve outside the repo)
+        run: |
+          mise use -g zig@0.16.0 bun@1.2
+          ( cd "$(mktemp -d)" && bun --version && zig version )
+
+      - name: Get Zig version
+        id: zig-version
+        run: echo "version=$(zig version)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Zig package cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ github.workspace }}/.zig-global-cache
+          key: zig-pkg-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-${{ hashFiles('**/build.zig.zon') }}
+          restore-keys: |
+            zig-pkg-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-
+
+      - name: Fetch dependencies (with retries)
+        run: |
+          for i in 1 2 3; do
+            if zig build --fetch=all; then
+              exit 0
+            fi
+            echo "::warning::zig build --fetch=all attempt $i failed; retrying in 20s..."
+            sleep 20
+          done
+          echo "::error::all dependency fetch attempts failed"
+          exit 1
+
+      - name: Install runtime dependencies (the sidecar the e2e spawns needs them)
+        working-directory: runtime
+        run: bun install --frozen-lockfile
+
+      - name: tests/serve/dev.sh
+        run: |
+          script=tests/serve/dev.sh
+          if [[ ! -f "$script" ]]; then
+            echo "::error::$script is gone — this job and e2e-rest's exclusion list must move together, or the script stops running entirely"
+            exit 1
+          fi
+          bash "$script"
+
+  # The other ten scripts: ~49s of the old 16m06s between them. Discovered by
+  # glob and filtered by exclusion, so a script added under tests/<area>/
+  # tomorrow runs here with no edit to this file.
+  e2e-rest:
+    name: Shell e2e — everything else
+    runs-on: ubuntu-latest
+    env:
+      ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
+      # Ten scripts, several of which build a generated site of their own; the
+      # shared local cache keeps them from each recompiling the same objects.
+      ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}/.zig-local-cache
+      # Scripts that have a DEDICATED job above. Kept as an exclusion list
+      # rather than an inclusion list so the glob below stays self-maintaining:
+      # forget to list a newly added script and it still runs here. The only way
+      # to lose coverage is to delete or rename one of these two, which the
+      # existence check in the step below catches.
+      SHARDED_OUT: tests/init/from-astro.sh tests/serve/dev.sh
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup toolchain (mise — zig 0.16.0 + bun 1.2)
+        uses: jdx/mise-action@v4
+        with:
+          cache: true
+
+      - name: Pin tool versions globally (shims must resolve outside the repo)
+        run: |
+          mise use -g zig@0.16.0 bun@1.2
+          ( cd "$(mktemp -d)" && bun --version && zig version )
+
+      - name: Get Zig version
+        id: zig-version
+        run: echo "version=$(zig version)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Zig package cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ github.workspace }}/.zig-global-cache
+          key: zig-pkg-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-${{ hashFiles('**/build.zig.zon') }}
+          restore-keys: |
+            zig-pkg-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-
+
+      - name: Fetch dependencies (with retries)
+        run: |
+          for i in 1 2 3; do
+            if zig build --fetch=all; then
+              exit 0
+            fi
+            echo "::warning::zig build --fetch=all attempt $i failed; retrying in 20s..."
+            sleep 20
+          done
+          echo "::error::all dependency fetch attempts failed"
+          exit 1
+
+      - name: Install runtime dependencies (the sidecar the e2e spawns needs them)
+        working-directory: runtime
+        run: bun install --frozen-lockfile
+
+      - name: Shell e2e — config, init, islands, rendering, serve, spa (hermetic)
         run: |
           shopt -s nullglob
-          scripts=(tests/*/*.sh)
-          if [[ ${#scripts[@]} -eq 0 ]]; then
+          discovered=(tests/*/*.sh)
+          if [[ ${#discovered[@]} -eq 0 ]]; then
             echo "::error::no tests/*/*.sh found — the glob or the layout changed"
             exit 1
           fi
+
+          # A renamed or deleted dedicated script must not silently vanish from
+          # the suite. Its own job would fail — but only while it is still named
+          # there — so assert the two lists agree from this side as well.
+          for sharded in $SHARDED_OUT; do
+            if [[ ! -f "$sharded" ]]; then
+              echo "::error::$sharded is listed as sharded-out but does not exist — update this list and its dedicated job together"
+              exit 1
+            fi
+          done
+
+          scripts=()
+          for script in "${discovered[@]}"; do
+            case " $SHARDED_OUT " in
+              *" $script "*) continue ;;
+            esac
+            scripts+=("$script")
+          done
+          if [[ ${#scripts[@]} -eq 0 ]]; then
+            echo "::error::every discovered script was excluded — the shard split is wrong"
+            exit 1
+          fi
+
           echo "running ${#scripts[@]} shell e2e script(s)"
           failed=()
           for script in "${scripts[@]}"; do
