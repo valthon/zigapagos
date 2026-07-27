@@ -43,16 +43,38 @@ mapfile -t CANDIDATES < <(
 # A script counts as CI-run when any of these holds:
 #   (a) it matches ci.yml's `tests/*/*.sh` discovery glob;
 #   (b) a workflow names it literally (tests/branding.sh, scripts/check-allocator-*.sh);
-#   (c) a script UNDER tests/ names it — those are themselves CI-run by (a) or (b), so
-#       this is what covers the shim pattern (tests/contract/drift.sh runs
+#   (c) a SHELL SCRIPT under tests/ names it — those are themselves CI-run by (a) or (b),
+#       so this is what covers the shim pattern (tests/contract/drift.sh runs
 #       contract/test/drift.sh; tests/changelog/assemble.sh runs the changelog self-test).
+#
+# Rule (c) is scoped to `*.sh` on purpose, and that is load-bearing rather than tidy.
+# The inventory file lives under tests/ and consists of exactly these paths, so a bare
+# `-- tests/` pathspec makes every listed script look CI-run BY BEING LISTED — the gate
+# then passes vacuously, which is the precise failure mode it was written to stop. It did
+# not show up while the inventory was untracked (git grep only searches tracked files)
+# and appeared the instant it was committed. Keep the pathspec restricted to scripts.
 is_ci_run() {
   local path="$1"
   case "$path" in
     tests/*/*) case "${path#tests/*/}" in */*) ;; *) return 0 ;; esac ;;
   esac
   git grep -qF -- "$path" -- '.github/workflows/' && return 0
-  git grep -qF -- "$path" -- 'tests/' && return 0
+  # Comment-aware: a script that MENTIONS another in prose does not run it. Several
+  # scripts under tests/ cite siblings in their headers, and this very file names the two
+  # rotted scripts in its own — without this filter that header would vouch for them.
+  #
+  # Captured into variables rather than piped into `grep -q`. Under `set -o pipefail`,
+  # `git grep … | grep -q …` is a RACE: grep -q exits at its first match, SIGPIPEs
+  # git grep, and pipefail then reports 141 for the whole pipeline. It happens to
+  # succeed when the output is small enough to be written before grep leaves, which is
+  # why it passed by hand and failed in the loop. Command substitution drains the
+  # output, so there is no early reader and nothing to race.
+  local hits noncomment
+  hits=$(git grep -hF -- "$path" -- 'tests/*.sh' 'tests/**/*.sh' 2>/dev/null || true)
+  if [ -n "$hits" ]; then
+    noncomment=$(printf '%s\n' "$hits" | grep -v '^[[:space:]]*#' || true)
+    [ -n "$noncomment" ] && return 0
+  fi
   return 1
 }
 
