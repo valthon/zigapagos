@@ -26,7 +26,7 @@
     "deps:check": "bun run scripts/check-deps.ts"
   },
   "dependencies": {
-    "preact": "^10.27.2",
+    "preact": "^10.29.7",
     "preact-render-to-string": "^6.6.2"
   },
   "devDependencies": {
