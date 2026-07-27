@@ -1,0 +1,373 @@
+# Smoke test for the LIVE published GitHub release archives.
+#
+# Why this exists
+# ---------------
+# ci.yml builds and tests from LOCAL source: it proves the tree at a given
+# commit compiles and behaves. It cannot prove that the thing we *shipped* is
+# usable, because it never touches a published artifact. The publish path has
+# its own failure modes, none of which any local test can see:
+#
+#   - `zig build release` archives a cross-compiled binary, so a broken target
+#     ships an archive whose `zigapagos` is for the wrong architecture and will
+#     not exec at all on the machine the filename promised.
+#   - the archive step (build/release.zig) shells out to `tar`/`zip`; a truncated
+#     upload, a lost exec bit, or an archive missing the binary entirely all
+#     produce a release that looks complete in the GitHub UI.
+#   - SHA256SUMS is generated separately from the uploads, so it can disagree
+#     with what actually landed on the release — and everybody who verifies a
+#     download would then be verifying against a lie.
+#   - the release binary is built with `-Doptimize=ReleaseFast` and a
+#     `version` baked in from the git tag. Neither is exercised by the debug
+#     builds CI runs, so "compiles in CI" does not imply "runs when published".
+#
+# So this workflow downloads the published assets exactly as a user would,
+# verifies each one against the published SHA256SUMS, extracts it, and then
+# makes the binary do real work: `zigapagos version` (must report the release
+# tag it was cut from), then `zigapagos init` + `zigapagos release` to scaffold
+# and build a whole site. That last part is the point — process startup only
+# proves the loader is happy, whereas a full build exercises the embedded init
+# templates, the SuperMD/SHTML render passes, treesitter highlighting and the
+# wuffs image path, all from the shipped binary. It needs no network and no
+# bun, because the init scaffold contains no islands and no SPA.
+#
+# Why schedule-only (no push / pull_request)
+# ------------------------------------------
+# It tests *published artifacts*, which have no relationship to the commit under
+# test. On a PR branch the newest release is by definition older than HEAD, so
+# gating PRs on it would either block merges on stale artifacts or go red on a
+# transient GitHub API hiccup — and a check that is red for reasons the author
+# cannot fix is a check everyone learns to ignore. It runs daily and can be
+# dispatched manually (optionally against a specific tag) from the Actions tab.
+#
+# Note GitHub disables `schedule` triggers on a repository with no commit
+# activity for 60 days; if this stops running on a quiet repo, re-enable it from
+# the Actions tab rather than assuming it passed.
+name: "Smoke: published release"
+
+on:
+  schedule:
+    # Daily at 05:43 UTC. Off-the-hour deliberately: cron entries on the hour
+    # queue behind the whole platform's hourly stampede.
+    - cron: "43 5 * * *"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to smoke (default: the newest published release)"
+        required: false
+        type: string
+
+# A manual dispatch should not race the nightly run, but neither should it kill
+# it — a cancelled scheduled run reads as a failure nobody investigates.
+concurrency:
+  group: smoke-published-${{ github.ref }}
+  cancel-in-progress: false
+
+# Read-only: this workflow downloads release assets and nothing else. It never
+# needs to write a release, a comment, or a commit.
+permissions:
+  contents: read
+
+jobs:
+  # Resolving the tag is its own job so that "no release exists yet" is a
+  # *skip*, not a failure. The repo publishes its first release at v0.1.1; until
+  # then (and after any future point where the newest release is deleted) the
+  # matrix below is skipped and the run is green with a notice. A workflow that
+  # is red every morning for a reason nobody can act on trains everyone to stop
+  # reading it, which would defeat the entire purpose of having it.
+  #
+  # Everything else here still fails loudly: a resolvable tag whose assets are
+  # missing, mis-checksummed, non-executable or broken is a hard failure.
+  resolve:
+    name: "Resolve latest release"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      found: ${{ steps.pick.outputs.found }}
+      tag: ${{ steps.pick.outputs.tag }}
+    steps:
+      - name: Pick the release to smoke
+        id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Empty on a scheduled run; a tag on a manual dispatch that names one.
+          REQUESTED_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "$REQUESTED_TAG" ]; then
+            echo "Manual dispatch requested tag '$REQUESTED_TAG'."
+            printf 'found=true\ntag=%s\n' "$REQUESTED_TAG" >> "$GITHUB_OUTPUT"
+            echo "Smoking **$REQUESTED_TAG** (manually requested)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # Newest non-draft release. The REST list is already ordered newest
+          # first, and drafts are excluded because their assets are not public.
+          # Prereleases are deliberately KEPT: a prerelease is a real published
+          # artifact that real people download, so it is exactly what we want to
+          # smoke. (`releases/latest` would silently skip them, and would 404
+          # both for "no releases" and for "only prereleases" — two very
+          # different situations this workflow must not conflate.)
+          tag=""
+          for attempt in 1 2 3; do
+            if tag="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+                        --jq 'map(select(.draft | not)) | first | .tag_name')"; then
+              break
+            fi
+            echo "GitHub API attempt ${attempt} failed."
+            tag="__api_failed__"
+            sleep $((attempt * 5))
+          done
+
+          # A failing API is a genuine problem worth a red run: it is not the
+          # same thing as "there is no release", and quietly skipping would hide
+          # a broken token or a GitHub outage.
+          if [ "$tag" = "__api_failed__" ]; then
+            echo "::error::could not list releases for ${GITHUB_REPOSITORY} after 3 attempts"
+            exit 1
+          fi
+
+          if [ -z "$tag" ] || [ "$tag" = "null" ]; then
+            printf 'found=false\ntag=\n' >> "$GITHUB_OUTPUT"
+            echo "::notice::${GITHUB_REPOSITORY} has no published (non-draft) release yet — nothing to smoke."
+            echo "No published release yet — smoke matrix skipped." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo "Newest published release: $tag"
+          printf 'found=true\ntag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+          echo "Smoking **$tag** (newest published release)." >> "$GITHUB_STEP_SUMMARY"
+
+  smoke:
+    name: "Smoke: ${{ matrix.label }}"
+    needs: resolve
+    if: needs.resolve.outputs.found == 'true'
+    runs-on: ${{ matrix.runner }}
+    # 20 rather than 15: the functional check runs a real site build, and a cold
+    # macOS runner spends a while just getting to the first step.
+    timeout-minutes: 20
+    strategy:
+      # Report every platform's result even when one is broken — knowing that
+      # linux is fine and macOS is not is most of the diagnosis.
+      fail-fast: false
+      matrix:
+        include:
+          # One row per archive published by build/release.zig's target matrix.
+          # Match on the ARCHIVE NAME, which is `<zig triple>.<ext>` and stable;
+          # do not infer it from how release.yml happens to build them.
+          #
+          # A row whose archive is absent from a release fails loudly. That is
+          # intended: dropping a published platform is a user-visible change and
+          # should require deleting the row here, not silently going quiet.
+          - label: x86_64-linux
+            runner: ubuntu-latest
+            archive: x86_64-linux-musl.tar.xz
+          - label: x86_64-macos
+            # We publish x86_64-macos ONLY — build/release.zig has no aarch64
+            # target, because `zig translate-c` SIGSEGVs on wuffs-v0.4.c under
+            # released Zig 0.16.0 — so the runner has to be an Intel image.
+            # macos-latest/macos-15/macos-26 are all arm64 and would exec the
+            # binary under Rosetta (or not at all), testing something other than
+            # what we ship. macos-15-intel is a GA x64 image; the old macos-13
+            # Intel image was fully retired on 2025-12-04. macos-15-intel is the
+            # LAST Intel macOS image GitHub will offer and retires around
+            # Aug 2027 (actions/runner-images#13045) — by then either the
+            # aarch64 target is unblocked by the Zig 0.17 port (docs/ROADMAP.md)
+            # and this row becomes arm64, or macOS coverage here ends with it.
+            runner: macos-15-intel
+            archive: x86_64-macos.zip
+    env:
+      TAG: ${{ needs.resolve.outputs.tag }}
+      ARCHIVE: ${{ matrix.archive }}
+    steps:
+      - name: Download the published archive and SHA256SUMS
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/dl"
+
+          # `gh release download` (not curl of browser_download_url) because it
+          # authenticates: this repository is private, so an unauthenticated
+          # asset fetch would 404 and look exactly like a missing asset.
+          ok=0
+          for attempt in 1 2 3; do
+            if gh release download "$TAG" \
+                 --repo "$GITHUB_REPOSITORY" \
+                 --dir "${RUNNER_TEMP}/dl" \
+                 --clobber \
+                 --pattern "$ARCHIVE" \
+                 --pattern "SHA256SUMS"; then
+              ok=1
+              break
+            fi
+            echo "download attempt ${attempt} failed."
+            sleep $((attempt * 5))
+          done
+          if [ "$ok" -ne 1 ]; then
+            echo "::error::could not download '${ARCHIVE}' and 'SHA256SUMS' from release ${TAG}."
+            echo "Either the release is missing one of those assets (a broken publish —"
+            echo "check that 'zig build release' produced ${ARCHIVE} and that the"
+            echo "'Collect artifacts' step of release.yml uploaded it), or the download"
+            echo "failed transiently three times."
+            exit 1
+          fi
+
+          ls -l "${RUNNER_TEMP}/dl"
+
+      - name: Verify the archive against the published SHA256SUMS
+        run: |
+          set -euo pipefail
+          cd "${RUNNER_TEMP}/dl"
+
+          # SHA256SUMS is `sha256sum` output over bare basenames (release.yml
+          # runs it from inside zig-out/releases), so field 2 is the archive name.
+          expected="$(awk -v f="$ARCHIVE" '$2 == f || $2 == "*" f { print $1; exit }' SHA256SUMS)"
+          if [ -z "$expected" ]; then
+            echo "::error::SHA256SUMS from release ${TAG} has no entry for '${ARCHIVE}'."
+            echo "The release published the archive but not a digest for it, so nobody"
+            echo "downloading it can verify what they got."
+            echo "----- SHA256SUMS -----"
+            cat SHA256SUMS
+            exit 1
+          fi
+
+          # Computed unpiped: `cmd | awk` would report awk's exit status, so a
+          # failing hash tool would silently yield an empty digest.
+          # macOS has no sha256sum; shasum is the portable spelling there.
+          if command -v sha256sum >/dev/null 2>&1; then
+            sums_out="$(sha256sum "$ARCHIVE")"
+          else
+            sums_out="$(shasum -a 256 "$ARCHIVE")"
+          fi
+          actual="${sums_out%% *}"
+
+          echo "expected: $expected"
+          echo "actual:   $actual"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::checksum MISMATCH for '${ARCHIVE}' in release ${TAG}."
+            echo "The uploaded archive does not match the digest published beside it."
+            echo "Either the upload was truncated/corrupted, or SHA256SUMS was generated"
+            echo "from different bytes than the ones that landed on the release."
+            exit 1
+          fi
+          echo "PASS: ${ARCHIVE} matches its published SHA256SUMS entry."
+
+      - name: Extract and check the binary is actually executable
+        run: |
+          set -euo pipefail
+          bindir="${RUNNER_TEMP}/extracted"
+          rm -rf "$bindir"
+          mkdir -p "$bindir"
+
+          case "$ARCHIVE" in
+            *.tar.xz) tar -xJf "${RUNNER_TEMP}/dl/${ARCHIVE}" -C "$bindir" ;;
+            *.zip)    unzip -q "${RUNNER_TEMP}/dl/${ARCHIVE}" -d "$bindir" ;;
+            *)        echo "::error::no extractor wired up for '${ARCHIVE}'"; exit 1 ;;
+          esac
+
+          echo "----- archive contents -----"
+          ls -lR "$bindir"
+
+          bin="${bindir}/zigapagos"
+          if [ ! -f "$bin" ]; then
+            echo "::error::'${ARCHIVE}' from release ${TAG} does not contain a 'zigapagos' binary at its root."
+            exit 1
+          fi
+          # Deliberately assert rather than chmod: `zip`/`tar` dropping the exec
+          # bit is precisely one of the publish defects this workflow exists to
+          # catch, and repairing it here would hide it from every user who
+          # cannot.
+          if [ ! -x "$bin" ]; then
+            echo "::error::'zigapagos' in ${ARCHIVE} is not executable — the archive lost its exec bit."
+            exit 1
+          fi
+
+          # Diagnostic only. Executing the binary in the next step is the real
+          # architecture check: a wrong-arch binary simply will not run.
+          file "$bin" || true
+
+      - name: "zigapagos version reports the release tag"
+        run: |
+          set -uo pipefail
+          bin="${RUNNER_TEMP}/extracted/zigapagos"
+
+          # `version` prints via std.debug.print, i.e. to STDERR, so 2>&1 is
+          # load-bearing rather than defensive.
+          out="$("$bin" version 2>&1)" && status=0 || status=$?
+          echo "----- output (exit ${status}) -----"
+          printf '%s\n' "$out"
+
+          if [ "$status" -ne 0 ]; then
+            echo "::error::'zigapagos version' from ${ARCHIVE} exited ${status} on ${{ matrix.label }}."
+            exit 1
+          fi
+
+          # build/config.zig bakes `git describe --match '*.*.*' --tags` into the
+          # binary, and build/release.zig refuses to build unless that is an
+          # exact tag matching build.zig.zon's version. So the shipped binary
+          # must report the tag it was cut from. A mismatch means the release
+          # assets were built from something other than the tag they are
+          # attached to — a stale or mis-tagged upload.
+          if ! printf '%s' "$out" | grep -qF "$TAG"; then
+            echo "::error::'zigapagos version' did not report '${TAG}'."
+            echo "The archive attached to release ${TAG} contains a binary built from a"
+            echo "different revision. Check that release.yml checked out the tag with"
+            echo "fetch-depth: 0 (a shallow checkout has no tags and versions as -dev)."
+            exit 1
+          fi
+          echo "PASS: shipped binary reports ${TAG}."
+
+      - name: "zigapagos init + release builds a whole site"
+        run: |
+          set -euo pipefail
+          bin="${RUNNER_TEMP}/extracted/zigapagos"
+          site="${RUNNER_TEMP}/site"
+          rm -rf "$site"
+          mkdir -p "$site"
+          cd "$site"
+
+          # Both of these are hermetic: the init scaffold has no islands and no
+          # SPA, so nothing reaches for the bun sidecar or the network.
+          if ! "$bin" init; then
+            echo "::error::'zigapagos init' failed on ${{ matrix.label }} — the shipped binary cannot scaffold a site."
+            exit 1
+          fi
+          if [ ! -f zigapagos.ziggy ]; then
+            echo "::error::'zigapagos init' reported success but wrote no zigapagos.ziggy."
+            exit 1
+          fi
+
+          if ! "$bin" release; then
+            echo "::error::'zigapagos release' failed on ${{ matrix.label }} — the shipped binary cannot build a site."
+            exit 1
+          fi
+
+          echo "----- public/ -----"
+          ls -R public
+
+          # Two assertions rather than "the command exited 0", because a build
+          # that renders nothing also exits 0. index.html pins the SuperMD +
+          # SHTML render path (the title comes from zigapagos.ziggy, through the
+          # layout); blog/index.xml pins the alternative-output path.
+          if [ ! -s public/index.html ]; then
+            echo "::error::'zigapagos release' produced no public/index.html."
+            exit 1
+          fi
+          if ! grep -qF "Welcome to Zigapagos!" public/index.html; then
+            echo "::error::public/index.html does not contain the scaffold's site title — the render pass produced a page, but not the right one."
+            head -40 public/index.html
+            exit 1
+          fi
+          if [ ! -s public/blog/index.xml ]; then
+            echo "::error::'zigapagos release' produced no public/blog/index.xml (the RSS alternative)."
+            exit 1
+          fi
+          echo "PASS: shipped binary scaffolded and built a full site."
+
+      - name: Record result in the run summary
+        if: always()
+        run: |
+          printf -- '- %s (%s): **%s**\n' \
+            "$ARCHIVE" "${{ matrix.label }}" "${{ job.status }}" \
+            >> "$GITHUB_STEP_SUMMARY"
