@@ -9,6 +9,13 @@
 # `version: 2` is still the only accepted value; `groups`, `directories` and `cooldown` are all
 # newer than it, so "the version says 2" is not evidence that a given key is old enough to exist.
 #
+# TWO SPELLINGS OF "update-types", AND THEY ARE NOT INTERCHANGEABLE. This is the same class of
+# trap as the `dependency-type` note further down, so check which one you are writing:
+#   - `groups.<name>.update-types`  takes BARE  `major` / `minor` / `patch`
+#   - `ignore[].update-types`       takes       `version-update:semver-major` (and -minor/-patch)
+# Both are documented in the options reference above. Writing an `ignore`-style value inside a
+# group (or vice versa) does not fail validation loudly; it just matches nothing.
+#
 # COVERED
 #   - GitHub Actions used by every workflow in .github/workflows/.
 #   - runtime/ — the only first-party package with registry dependencies.
@@ -50,6 +57,22 @@ updates:
       # so Dependabot fires only on a major release — precisely the bumps that can break the
       # toolchain contract in mise.toml, and precisely the ones worth reading in a single diff
       # rather than three separate PRs that each turn CI red on their own.
+      #
+      # DELIBERATELY NOT given the major/non-major split the bun entry below grew. The split
+      # exists so a major cannot ride along hidden inside a PR of routine updates — but in this
+      # ecosystem there ARE no routine updates for it to hide behind. Because every `uses:` is
+      # pinned to a bare major tag, a major release is the ONLY thing Dependabot can ever
+      # propose here; patch and minor releases move the tag in place and are invisible to it.
+      # So the hazard does not exist, and applying the split anyway would be actively harmful:
+      # a `update-types: ["minor", "patch"]` group would match nothing, and per the docs
+      # unmatched updates "are updated in individual pull requests" — reintroducing exactly the
+      # per-action PR spam this group was created to stop.
+      #
+      # Blanket-ignoring majors here would be worse still. The two most recent action bumps in
+      # this repo were both majors — actions/checkout v4 → v7 and jdx/mise-action v2 → v4 — and
+      # both were wanted: together they cleared a Node-20 runtime deprecation that would
+      # otherwise have started failing workflows. An ignore rule would have silently withheld
+      # them. Majors are the signal in this ecosystem, not the noise.
       actions:
         patterns:
           - "*"
@@ -103,7 +126,8 @@ updates:
       # blocking all majors would also withhold TypeScript 6.x (6.0.3 is current), and 6.x is
       # the LAST line that still ships the JS compiler API — i.e. it is the one major upgrade
       # here we positively want to be told about, and the natural staging step before any
-      # 7.x work. Silencing majors wholesale would mean never learning it exists.
+      # 7.x work. Silencing majors wholesale would mean never learning it exists. A 6.x bump
+      # still reaches us, now isolated in the runtime-majors group below.
       #
       # UNBLOCK CONDITION — delete this entry when EITHER holds:
       #   1. TypeScript 7.1 ships the replacement API and the two modules above are ported; or
@@ -131,12 +155,29 @@ updates:
       # Tooling is the enumerated side on purpose, so that anything NOT listed falls through to
       # the shipped group below. A dependency added later then defaults to "treat as shipped,
       # check the parity harness" — the safe direction to be wrong in.
+      #
+      # SECOND AXIS: both groups below are restricted to minor+patch, and every major is routed
+      # into `runtime-majors`. Dependabot PR #10 is the motivation — it bundled a routine
+      # happy-dom 20.10.6 → 20.11.0 together with typescript 5.9.3 → 7.0.2, a rewrite of the
+      # compiler in another language that took out 51 tests. One PR, one CI result, and the
+      # innocent half could not be merged without the half that broke the build. Isolating
+      # majors makes a broken one cost only itself.
+      #
+      # `update-types` here takes the BARE spelling (`major`/`minor`/`patch`) — see the header.
+      # Majors are deliberately NOT split by blast radius the way minor+patch are: the
+      # tooling/shipped split exists so routine noise cannot camouflage a risky bump, and a
+      # majors-only PR contains no routine noise to camouflage anything. Every entry in it is
+      # read on its own merits regardless, so a fourth group would add config surface and no
+      # signal.
       runtime-tooling:
         patterns:
           - "typescript"
           - "happy-dom"
           - "@happy-dom/*"
           - "@types/*"
+        update-types:
+          - "minor"
+          - "patch"
       runtime-shipped:
         patterns:
           - "*"
@@ -145,3 +186,11 @@ updates:
           - "happy-dom"
           - "@happy-dom/*"
           - "@types/*"
+        update-types:
+          - "minor"
+          - "patch"
+      runtime-majors:
+        patterns:
+          - "*"
+        update-types:
+          - "major"
