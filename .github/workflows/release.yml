@@ -1,0 +1,79 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 is load-bearing, not caution. build/config.zig derives the
+      # version from `git describe --match '*.*.*' --tags`, and build/release.zig
+      # registers a *failing* `release` step unless that returns an exact tag. A
+      # shallow checkout has no tags, so `release` would fail with
+      # "git tag missing, cannot make release builds" on every run.
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup toolchain (zig + bun via mise)
+        uses: jdx/mise-action@v2
+
+      # build/release.zig also refuses to build when the tag disagrees with the
+      # zon package version. That check is worth duplicating here only because it
+      # otherwise surfaces after the cross-compiles have already run; failing in
+      # two seconds with the two values side by side is a much better signal.
+      - name: Check tag matches build.zig.zon version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          zon="$(sed -n 's/^[[:space:]]*\.version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' build.zig.zon)"
+          echo "tag=$tag zon=$zon"
+          if [ "$tag" != "$zon" ]; then
+            echo "::error::tag '$GITHUB_REF_NAME' does not match build.zig.zon version '$zon' — bump the zon version in the commit you tag"
+            exit 1
+          fi
+
+      - name: Build release matrix
+        run: zig build release
+
+      # Fail loudly rather than publishing an empty release: `zig build release`
+      # can succeed with nothing installed if the target matrix is ever emptied.
+      - name: Collect artifacts
+        working-directory: zig-out/releases
+        run: |
+          mapfile -t archives < <(
+            find . -maxdepth 1 -type f \( -name '*.zip' -o -name '*.tar.xz' \) \
+              -printf '%P\n' | sort
+          )
+          if [ "${#archives[@]}" -eq 0 ]; then
+            echo "::error::no release archives were produced"
+            exit 1
+          fi
+          printf 'archive: %s\n' "${archives[@]}"
+          # Checksum an explicit list, never a glob. An unmatched glob is passed
+          # through literally, and `> SHA256SUMS` creates the file *before*
+          # sha256sum runs — so a glob fallback would hash SHA256SUMS itself and
+          # publish a digest for a file that did not exist when the run started.
+          sha256sum "${archives[@]}" > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            --verify-tag \
+            zig-out/releases/*
