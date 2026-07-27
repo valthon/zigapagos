@@ -10,23 +10,23 @@
 # cost to run the script in CI, so the trade-off can be re-checked rather than
 # re-litigated from scratch.
 #
-# WAS 14 ROWS, NOW 3. The eleven non-browser examples/tsx-site/test scripts that used
-# to be listed here are now run by ci.yml's e2e-dev-loop job — the placement this file
-# recommended, carried out. They are gone from this file because a row for a CI-run
-# script is the stale-doc defect the gate exists to catch, and script-coverage.sh fails
-# on one. What is left is the two that need a browser and the one that wants a
-# different workflow.
-
-site/test/build.sh                     Dogfood site build + five output assertions (prefix correctness, island SSR, no stray upstream branding). 120.3s cold / 1.8s warm, and NOT free in any ci.yml job: site/ is a third consumer project with its own .zig-cache, so e2e-dev-loop's warm examples/tsx-site tree buys it nothing and it would cost the full 120s on a job whose headroom is ~50s in a bad run. Where it IS nearly free is pages.yml, which already runs `bun install --frozen-lockfile && zig build` in site/ before uploading — the assertions are five greps over that finished tree, ~2s. The catch, and the reason this is a row rather than a commit: pages.yml runs on push to main only, so it gates the DEPLOY, not the PR, and a PR cannot prove the step works before merging it. Recommended next step, with that caveat stated.
+# WAS 14 ROWS, THEN 3, NOW 2. The eleven non-browser examples/tsx-site/test scripts are
+# run by ci.yml's e2e-dev-loop job; site/test/build.sh is now run by pages.yml, between
+# the site build and the artifact upload, which is the placement its row here argued
+# for. Both are gone from this file because a row for a CI-run script is the stale-doc
+# defect the gate exists to catch, and script-coverage.sh fails on one. What is left is
+# the two that need a browser.
 
 # --- Needs a browser CI has never installed -----------------------------------------
 # Both drive real Chromium via python3 + playwright. No workflow installs either, and
 # `git grep playwright -- .github/ tests/` is empty. Adopting these means a
-# `playwright install chromium` step (~150MB) on top of the runtime cost below.
+# `playwright install` step (~150MB) on top of the runtime cost below — and note the
+# helpers launch with `channel="chrome"`, so it has to install Google Chrome, not
+# Playwright's bundled chromium.
 #
 # WHERE THEY SHOULD EVENTUALLY RUN: not the PR path. A separate workflow on
 # `schedule:` (nightly) plus `workflow_dispatch:`, with its own checkout, mise setup,
-# `playwright install --with-deps chromium`, and the examples/tsx-site build — roughly
+# `playwright install --with-deps chrome`, and the examples/tsx-site build — roughly
 # 265s cold build + ~150MB browser install + ~245s of scripts, call it 9-10 minutes.
 # Nightly is the right cadence because what they catch is a real-browser regression in
 # hydration or runtime slicing, which arrives with a runtime/src change, not with an
