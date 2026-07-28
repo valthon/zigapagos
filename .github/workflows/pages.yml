@@ -1,19 +1,33 @@
 name: Deploy site to Pages
 
+# Chained off CI rather than racing it on the same push.
+#
+# Two things follow from that, and both are the point:
+#
+#   1. A deploy can only come from a commit whose CI passed. On the old `push:`
+#      trigger this workflow ran concurrently with ci.yml, so a commit that
+#      broke the test suite still published the site — the deploy gates below
+#      caught site breakage, but nothing else.
+#
+#   2. ci.yml's build-binary job has, by then, uploaded a `zigapagos` binary for
+#      this exact commit. The site build downloads it instead of compiling the
+#      generator: 653 compile steps become zero, 23s becomes 2s.
+#
+# The `paths:` filter is gone with the push trigger. Every green main build now
+# deploys, which is the right trade when the build is seconds — filtering would
+# mean reasoning about which paths can affect rendered output, and `src/**` and
+# `runtime/**` were already in that list because almost anything can.
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [main]
-    paths:
-      - 'site/**'
-      - 'src/**'
-      - 'runtime/**'
-      - 'build.zig'
-      - 'build.zig.zon'
-      - '.github/workflows/pages.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
+  # Downloading an artifact produced by the triggering ci.yml run.
+  actions: read
   pages: write
   id-token: write
 
@@ -23,10 +37,26 @@ concurrency:
 
 jobs:
   build:
+    # `workflow_run` fires on completion regardless of outcome, so the success
+    # check is what makes this a gate rather than a notification. A manual
+    # dispatch has no workflow_run context and is allowed through deliberately.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    env:
+      # Same location ci.yml's build-binary job writes. Job-level so the site's
+      # `zig build` — and the consumer build it triggers for the zigapagos
+      # dependency — both read it.
+      ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
     steps:
+      # A workflow_run job checks out the DEFAULT BRANCH unless told otherwise,
+      # which on a busy main would deploy a different commit than the one CI
+      # green-lit. Pin it to the triggering run's head.
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
 
       # v4 is the Node 24 runtime bump (v2/v3 are Node 20, which GitHub has
       # deprecated and is already force-running on Node 24 with an annotation).
@@ -45,6 +75,82 @@ jobs:
       # the runtime's own dependency tree — so every Pages run failed the
       # zigapagos-runtime bundle step with nine `Could not resolve` errors.
       # This mirrors the same install ordering ci.yml already does.
+      # The generator CI just built for THIS commit.
+      #
+      # site/ depends on the zigapagos package by path, so `zig build` otherwise
+      # compiles the generator and its whole dependency tree before rendering a
+      # page — 653 compile steps, 632 of them tree-sitter grammar objects, for
+      # build work of 0.69s. With the binary in hand: zero compile steps.
+      # Measured cold on this site, 23s becomes 2s, byte-identical output.
+      #
+      # `run-id` is what makes this cross-workflow: the artifact belongs to the
+      # ci.yml run that triggered this one, not to this run. Needs `actions:
+      # read`, granted above.
+      #
+      # Skipped on a manual dispatch, which has no triggering run to pull from —
+      # that path falls through to a source build, exactly as before.
+      - name: Download the zigapagos CI built for this commit
+        if: github.event_name != 'workflow_dispatch'
+        uses: actions/download-artifact@v4
+        with:
+          name: zigapagos-${{ runner.os }}
+          path: ${{ github.workspace }}/prebuilt
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      # Verified before use rather than trusted. A binary that will not report
+      # its own version is not one to render the published site with, and
+      # falling back to a source build is strictly better than failing the
+      # deploy — the previous good deployment stays live either way, but a
+      # fallback keeps this one shipping.
+      - name: Use it, or fall back to building from source
+        if: github.event_name != 'workflow_dispatch'
+        run: |
+          set -euo pipefail
+          bin="$GITHUB_WORKSPACE/prebuilt/zigapagos"
+          if [ -f "$bin" ]; then
+            chmod +x "$bin"
+            if "$bin" version > /dev/null 2>&1; then
+              echo "ZIGAPAGOS_BIN=$bin" >> "$GITHUB_ENV"
+              echo "using the binary from CI run ${{ github.event.workflow_run.id }}: $("$bin" version)"
+            else
+              echo "::warning::downloaded zigapagos will not run; building from source instead"
+            fi
+          else
+            echo "::warning::no zigapagos artifact in the triggering run; building from source instead"
+          fi
+
+      # Fallback path only. With ZIGAPAGOS_BIN set nothing compiles, so
+      # restoring a cache of compiled objects would be pure latency.
+      - name: Get Zig version
+        if: env.ZIGAPAGOS_BIN == ''
+        id: zig-version
+        run: echo "version=$(zig version)" >> "$GITHUB_OUTPUT"
+
+      # Restore-only, and deliberately not gated on a hit.
+      #
+      # site/ depends on the zigapagos package by path, so `zig build` here
+      # compiles the generator and its whole dependency tree before rendering a
+      # single page: 653 compile steps, 632 of them tree-sitter grammar objects
+      # across 82 languages. With no cache at all this workflow spent 6m11s of a
+      # 6m34s job inside that one step, to produce a site whose own build work is
+      # 0.69s. ci.yml's build-binary job now writes exactly these objects.
+      #
+      # This workflow cannot `needs:` a job in ci.yml — both trigger on push to
+      # main and run concurrently — so it takes whatever that key chain offers.
+      # A miss costs nothing beyond today's behaviour; a prefix hit (the common
+      # case, since most pushes do not touch build/ or src/) reuses the whole
+      # tree because Zig's cache is content-addressed.
+      - name: Restore Zig cache (compiled objects, then packages)
+        if: env.ZIGAPAGOS_BIN == ''
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ github.workspace }}/.zig-global-cache
+          key: zig-build-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-${{ hashFiles('build.zig', 'build.zig.zon', 'build/**', 'src/**') }}
+          restore-keys: |
+            zig-build-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-
+            zig-pkg-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-
+
       - name: Install runtime dependencies (site build bundles @z/runtime)
         working-directory: runtime
         run: bun install --frozen-lockfile
@@ -81,9 +187,16 @@ jobs:
       # KNOWN GAP, stated rather than glossed: this workflow triggers on push
       # to main and manual dispatch only, so these assertions do not gate a PR.
       # A change that breaks one of them merges green and is caught at deploy
-      # time. That is the accepted cost of the ~2s placement over a ~120s one
-      # on the PR path; if the trade ever needs revisiting, the number to beat
-      # is that 120s cold consumer build.
+      # time.
+      #
+      # The trade this note used to record — ~2s here against a ~120s cold
+      # consumer build on the PR path — no longer holds. ci.yml's build-binary
+      # job writes a cache carrying compiled objects, and every Zig job now
+      # restores it, so a site build on the PR path would start warm rather than
+      # compiling 632 tree-sitter grammar objects from scratch. Whether the
+      # remaining cost is worth a PR-path job is now a question to answer with a
+      # measurement rather than an assumption; the number to beat is whatever a
+      # warm consumer build actually costs, not the 120s cold one.
       - name: Assert the built site before uploading it (site/test/build.sh)
         run: bash site/test/build.sh
 
