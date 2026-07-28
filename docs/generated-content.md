@@ -5,10 +5,11 @@
 ## What this is
 
 Publishing pages that are generated from a canonical source living elsewhere in the
-repo — not authored directly as site content. This site's own docs pages are built this
-way: `docs/*.md`, `docs/migration/*.md` and the root `CHANGELOG.md` are the canonical
-files, and a build step mirrors each into a SuperMD page under `site/content/docs/`. This
-page is one of those mirrors.
+repo — not authored directly as site content. Most of this site's docs pages are built
+this way: `docs/*.md`, `docs/migration/*.md` and the root `CHANGELOG.md` are the canonical
+files, and a build step mirrors each into a SuperMD page under `site/content/docs/`,
+alongside the hand-authored on-ramp pages that have no canonical source elsewhere. This
+page is one of the mirrors.
 
 Zigapagos has no built-in `content_generators` config hook. Invoking a script during the
 build is the cheap part — a `zig build` pre-step or a `postinstall` script solves that in a
@@ -39,8 +40,9 @@ is "Native SPAs").
 [`site/scripts/md-to-smd.ts`](../site/scripts/md-to-smd.ts) — same input must yield
 byte-identical output, because the freshness gate below runs the generator twice and diffs
 the two outputs to prove nothing is hand-edited or non-deterministic. A generator that
-embeds a timestamp of "now" or iterates a `Map` whose key order isn't guaranteed would fail
-that check by construction.
+stamps the output with "now", or that discovers its inputs by walking a directory and takes
+them in whatever order the filesystem returned, fails that check by construction — which is
+the other reason the inputs come from an explicit registry rather than a glob.
 
 ### Per-file `.gitignore` entries
 
