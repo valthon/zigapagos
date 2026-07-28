@@ -68,10 +68,6 @@ export const IMPORT_MAP_SPECIFIERS: ReadonlySet<string> = new Set([
   ...Object.keys(REACT_ALIAS),
 ]);
 
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 const SHIM_NS = "z-resolve-shim";
 
 /**
@@ -99,7 +95,11 @@ export function resolveOverridePlugin(map: Record<string, string>, baseDir: stri
     setup(build) {
       if (entries.length === 0) return;
       const bySpec = new Map(entries);
-      const filter = new RegExp(`^(${entries.map(([s]) => escapeRegExp(s)).join("|")})$`);
+      // `RegExp.escape`: the alias keys are user-supplied specifiers that may
+      // carry metacharacters, and this pattern is consumed only by Bun's
+      // onResolve filter — never read by a human, so the stdlib escaper's
+      // `\x`-heavy spelling is free here.
+      const filter = new RegExp(`^(${entries.map(([s]) => RegExp.escape(s)).join("|")})$`);
       build.onResolve({ filter }, (args) => {
         const target = bySpec.get(args.path);
         if (target === undefined) return undefined;

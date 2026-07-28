@@ -253,12 +253,6 @@ function pathSegs(p: string): string[] {
   return p.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
 }
 
-/** Escape regex metacharacters. (The identical helper in lint-island-imports.ts
- *  and react-alias.ts is module-private in both, so it cannot be imported here.) */
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 /**
  * The chunk backing a lazy route's `import("<specifier>")`, or `undefined` when
  * there is no UNAMBIGUOUS answer.
@@ -275,7 +269,11 @@ function escapeRegExp(s: string): string {
  */
 export function findRouteChunk(specifier: string, chunks: string[]): string | undefined {
   const base = basename(specifier).replace(/\.[tj]sx?$/, "");
-  const hashed = new RegExp("^" + escapeRegExp(base) + "-[A-Za-z0-9]+\\.js$");
+  // `RegExp.escape`: a module basename legitimately contains "." (and the
+  // occasional "+"), which must match literally — see the "v1.0" test. This
+  // pattern is internal to chunk lookup and never surfaces in output, so the
+  // stdlib escaper is the right call here.
+  const hashed = new RegExp("^" + RegExp.escape(base) + "-[A-Za-z0-9]+\\.js$");
   const matches = chunks.filter((c) => c === base + ".js" || hashed.test(c));
   if (matches.length > 1) {
     console.error(
