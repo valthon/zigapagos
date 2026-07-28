@@ -1,0 +1,11 @@
+---
+.title = "Home",
+.date = @date("2020-07-06T00:00:00"),
+.author = "Sample Author",
+.layout = "index.shtml",
+.draft = false,
+---
+This fixture pins `Asset.absLink()` (issue #25): `$site.asset('og.png')` is
+referenced ONLY through `.absLink()` in the layout's `og:image` meta tag, so
+if `absLink()` failed to bump the same install refcount as `.link()`, the
+asset would be silently pruned from the output tree.

@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>Abs Link Test</title>
+    <meta property="og:image" content="https://example.com/prefix/og.png">
+    <link rel="canonical" href="https://example.com/prefix/page-og.png">
+    <link rel="icon" href="/prefix/logo.png">
+  </head>
+  <body>
+    <h1>Home</h1>
+    <div><p>This fixture pins <code>Asset.absLink()</code> (issue #25): <code>$site.asset(&apos;og.png&apos;)</code> is referenced ONLY through <code>.absLink()</code> in the layout’s <code>og:image</code> meta tag, so if <code>absLink()</code> failed to bump the same install refcount as <code>.link()</code>, the asset would be silently pruned from the output tree.</p></div>
+  </body>
+</html>

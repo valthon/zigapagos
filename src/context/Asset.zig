@@ -49,6 +49,85 @@ pub fn init(ref: []const u8, path: []const u8, kind: context.AssetKindUnion) Val
 
 pub const docs_description = "Represents an asset.";
 pub const Dot = true;
+
+/// Shared body of `link()` and `absLink()`. This is the ONLY place that
+/// bumps an asset's install refcount (`page_asset`/`site_assets`/
+/// `build_assets` counters) — a forked copy of this logic drifting between
+/// the two builtins is exactly the silent-asset-pruning trap issue #25
+/// documents: a builtin whose refcount bump falls out of sync with the
+/// other would let an asset referenced only through it be pruned from the
+/// output tree while still looking like a normal reference at the call
+/// site. `force_host_url` selects which of the two builtins this call is:
+/// `false` for `link()` (root-relative unless already off-page), `true`
+/// for `absLink()` (always absolute — required for URLs consumed outside
+/// the page itself, e.g. `og:image`, canonical links, feeds).
+///
+/// Allocator contract: self-freeing (NO_SLOP §2.2a contract 1). All
+/// scratch state lives in `buf`, a `Writer.Allocating` freed via
+/// `errdefer` on every error path; only the final `Value.from` allocation
+/// escapes to the caller. Correct under any allocator.
+fn linkImpl(
+    asset: Asset,
+    gpa: Allocator,
+    ctx: *const context.Root,
+    force_host_url: bool,
+) context.CallError!Value {
+    var buf: Writer.Allocating = .init(gpa);
+    errdefer buf.deinit();
+
+    const w = &buf.writer;
+    switch (asset._meta.kind) {
+        .page => |variant_id| {
+            ctx.printLinkPrefix(
+                w,
+                variant_id,
+                force_host_url,
+            ) catch return error.OutOfMemory;
+            const v = ctx._meta.build.variants[variant_id];
+            const hint = v.urls.getPtr(asset._meta.url).?;
+            assert(hint.kind == .page_asset);
+            _ = hint.kind.page_asset.fetchAdd(1, .acq_rel);
+
+            const st = &v.string_table;
+            const pt = &v.path_table;
+            w.print("{f}", .{
+                asset._meta.url.fmt(st, pt, null, "/"),
+            }) catch return error.OutOfMemory;
+        },
+        .site => {
+            html.printAssetUrlPrefix(ctx, ctx.page, w, force_host_url) catch return error.OutOfMemory;
+            const rc = ctx._meta.build.site_assets.getPtr(asset._meta.url).?;
+            _ = rc.fetchAdd(1, .acq_rel);
+
+            const st = &ctx._meta.build.st;
+            const pt = &ctx._meta.build.pt;
+            w.print("{f}", .{
+                asset._meta.url.fmt(st, pt, null, "/"),
+            }) catch return error.OutOfMemory;
+        },
+        .build => {
+            html.printAssetUrlPrefix(ctx, ctx.page, w, force_host_url) catch return error.OutOfMemory;
+            const ba = ctx._meta.build.build_assets.getPtr(
+                asset._meta.ref,
+            ).?;
+
+            // Bump rc only after confirming an install path exists: a
+            // no-install asset must not be marked for install (which
+            // would later unwrap a null install_path). The missing-path
+            // case is a graceful page error, not an install.
+            const op = ba.install_path orelse return Value.errFmt(
+                gpa,
+                "unable to install build asset '{s}' as it does not specify an install path",
+                .{asset._meta.ref},
+            );
+            _ = ba.rc.fetchAdd(1, .acq_rel);
+            w.print("{s}", .{op}) catch return error.OutOfMemory;
+        },
+    }
+
+    return Value.from(gpa, buf.written());
+}
+
 pub const Builtins = struct {
     pub const link = struct {
         pub const signature: Signature = .{ .ret = .String };
@@ -63,6 +142,10 @@ pub const Builtins = struct {
             \\
             \\Build assets will be installed under the path defined in
             \\your `build.zig`.
+            \\
+            \\The result is root-relative. Use `absLink()` instead for a
+            \\URL that is consumed outside the page and therefore has to
+            \\be absolute: social metadata, canonical links, feeds.
         ;
         pub const examples =
             \\<img src="$site.asset('logo.jpg').link()">
@@ -77,60 +160,33 @@ pub const Builtins = struct {
             const bad_arg: Value = .{ .err = "expected 0 arguments" };
             if (args.len != 0) return bad_arg;
 
-            var buf: Writer.Allocating = .init(gpa);
-            errdefer buf.deinit();
+            return linkImpl(asset, gpa, ctx, false);
+        }
+    };
+    pub const absLink = struct {
+        pub const signature: Signature = .{ .ret = .String };
+        pub const docs_description =
+            \\Like `link()`, but always returns an absolute URL
+            \\(host_url + url_path_prefix + asset path). Calling it
+            \\installs the asset, exactly like `link()`.
+            \\
+            \\Required for URLs consumed outside the page: `og:*` and
+            \\`twitter:*` meta tags, canonical links, feeds. Scrapers do
+            \\not resolve root-relative URLs.
+        ;
+        pub const examples =
+            \\<meta property="og:image" content="$site.asset('og.png').absLink()">
+        ;
+        pub fn call(
+            asset: Asset,
+            gpa: Allocator,
+            ctx: *const context.Root,
+            args: []const Value,
+        ) context.CallError!Value {
+            const bad_arg: Value = .{ .err = "expected 0 arguments" };
+            if (args.len != 0) return bad_arg;
 
-            const w = &buf.writer;
-            switch (asset._meta.kind) {
-                .page => |variant_id| {
-                    ctx.printLinkPrefix(
-                        w,
-                        variant_id,
-                        false,
-                    ) catch return error.OutOfMemory;
-                    const v = ctx._meta.build.variants[variant_id];
-                    const hint = v.urls.getPtr(asset._meta.url).?;
-                    assert(hint.kind == .page_asset);
-                    _ = hint.kind.page_asset.fetchAdd(1, .acq_rel);
-
-                    const st = &v.string_table;
-                    const pt = &v.path_table;
-                    w.print("{f}", .{
-                        asset._meta.url.fmt(st, pt, null, "/"),
-                    }) catch return error.OutOfMemory;
-                },
-                .site => {
-                    html.printAssetUrlPrefix(ctx, ctx.page, w) catch return error.OutOfMemory;
-                    const rc = ctx._meta.build.site_assets.getPtr(asset._meta.url).?;
-                    _ = rc.fetchAdd(1, .acq_rel);
-
-                    const st = &ctx._meta.build.st;
-                    const pt = &ctx._meta.build.pt;
-                    w.print("{f}", .{
-                        asset._meta.url.fmt(st, pt, null, "/"),
-                    }) catch return error.OutOfMemory;
-                },
-                .build => {
-                    html.printAssetUrlPrefix(ctx, ctx.page, w) catch return error.OutOfMemory;
-                    const ba = ctx._meta.build.build_assets.getPtr(
-                        asset._meta.ref,
-                    ).?;
-
-                    // Bump rc only after confirming an install path exists: a
-                    // no-install asset must not be marked for install (which
-                    // would later unwrap a null install_path). The missing-path
-                    // case is a graceful page error, not an install.
-                    const op = ba.install_path orelse return Value.errFmt(
-                        gpa,
-                        "unable to install build asset '{s}' as it does not specify an install path",
-                        .{asset._meta.ref},
-                    );
-                    _ = ba.rc.fetchAdd(1, .acq_rel);
-                    w.print("{s}", .{op}) catch return error.OutOfMemory;
-                },
-            }
-
-            return Value.from(gpa, buf.written());
+            return linkImpl(asset, gpa, ctx, true);
         }
     };
     pub const size = struct {

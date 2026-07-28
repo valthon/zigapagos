@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title :text="$site.title"></title>
+    <meta property="og:image" content="$site.asset('og.png').absLink()">
+    <link rel="canonical" href="$page.asset('page-og.png').absLink()">
+    <link rel="icon" href="$site.asset('logo.png').link()">
+  </head>
+  <body>
+    <h1 :text="$page.title"></h1>
+    <div :html="$page.content()"></div>
+  </body>
+</html>

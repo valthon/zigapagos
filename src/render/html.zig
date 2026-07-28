@@ -685,7 +685,7 @@ fn printUrl(
             )});
         },
         .site_asset => |sa| {
-            try printAssetUrlPrefix(ctx, page, w);
+            try printAssetUrlPrefix(ctx, page, w, false);
 
             const pn: PathName = .{
                 .path = @enumFromInt(sa.resolved.path),
@@ -700,7 +700,7 @@ fn printUrl(
             )});
         },
         .build_asset => |ba| {
-            try printAssetUrlPrefix(ctx, page, w);
+            try printAssetUrlPrefix(ctx, page, w, false);
             try w.print("{s}", .{ba.ref});
         },
     }
@@ -710,10 +710,17 @@ pub fn printAssetUrlPrefix(
     ctx: *const context.Root,
     page: *const context.Page,
     w: *Writer,
+    /// When set to true the full host url will always be printed,
+    /// regardless of whether `page` is the page currently being
+    /// rendered. Used by `Asset.absLink()` (issue #25): an asset
+    /// referenced from its own page still needs an absolute URL for
+    /// contexts consumed outside the page itself (og:image, canonical
+    /// links, feeds).
+    force_host_url: bool,
 ) !void {
     switch (ctx.site._meta.kind) {
         .simple => |url_prefix_path| {
-            if (ctx.page != page) {
+            if (force_host_url or ctx.page != page) {
                 try w.print("{f}/", .{
                     root.fmtJoin('/', &.{
                         ctx.site.host_url,
@@ -728,7 +735,7 @@ pub fn printAssetUrlPrefix(
         },
         .multi => |locale| {
             const assets_prefix_path = ctx._meta.build.cfg.Multilingual.assets_prefix_path;
-            if (ctx.page != page or locale.host_url_override != null) {
+            if (force_host_url or ctx.page != page or locale.host_url_override != null) {
                 try w.print("{f}", .{
                     root.fmtJoin('/', &.{
                         ctx.site.host_url,
