@@ -1,0 +1,30 @@
+<extend template="base.shtml">
+<head id="head">
+  <link type="text/css" rel="stylesheet" href="$site.asset('docs.css').link()">
+</head>
+<main id="main">
+  <div class="wrap prose">
+    <h1 :text="$page.title"></h1>
+    <div :html="$page.content()"></div>
+    <div class="grid-3 docs-cards">
+      <a class="card" href="$site.page('docs/overview').link()">
+        <h3>Overview</h3><p>What Zigapagos is and how a build runs.</p>
+      </a>
+      <a class="card" href="$site.page('docs/quick-start').link()">
+        <h3>Quick start</h3><p>A site building in about five minutes.</p>
+      </a>
+      <a class="card" href="$site.page('docs/tutorial').link()">
+        <h3>Tutorial</h3><p>Build a real site, with islands in it.</p>
+      </a>
+      <a class="card" href="$site.page('docs/islands').link()">
+        <h3>Islands</h3><p>Directives, typed props, slots, output.</p>
+      </a>
+      <a class="card" href="$site.page('docs/spa').link()">
+        <h3>Native SPAs</h3><p>One .spa.tsx to a client-routed app.</p>
+      </a>
+      <a class="card" href="$site.page('docs/migrate-from-astro').link()">
+        <h3>From Astro</h3><p>The deterministic mapping, and the migrate command.</p>
+      </a>
+    </div>
+  </div>
+</main>

@@ -52,6 +52,7 @@ jobs:
       - name: Build site
         run: |
           bun install --frozen-lockfile
+          bun run scripts/gen-docs-mirror.ts
           zig build
         working-directory: site
 
@@ -85,6 +86,41 @@ jobs:
       # is that 120s cold consumer build.
       - name: Assert the built site before uploading it (site/test/build.sh)
         run: bash site/test/build.sh
+
+      # Also a deploy gate, same placement logic as build.sh above: before the
+      # upload, so a failure here keeps the previous deployment live instead
+      # of shipping a broken one.
+      #
+      # This script's two reasons for existing — "no mirror is ever tracked
+      # in git" and "the generator is deterministic" — never ran anywhere
+      # else. build.sh above only exercises the generator's HAPPY path (it
+      # calls it once, to produce the mirrors zig build needs); it does not
+      # check for a hand-edited/committed mirror or a second run producing a
+      # diff. ci.yml's `tests/*/*.sh` glob does not reach site/test/, so
+      # without this step those properties were asserted by a script nothing
+      # ever ran.
+      - name: Assert the docs mirror is fresh, deterministic, and untracked (site/test/docs-mirror.sh)
+        run: bash test/docs-mirror.sh
+        working-directory: site
+
+      # Also a deploy gate, same placement logic as the two above: before the
+      # upload, so a failure keeps the previous deployment live instead of
+      # shipping a broken one. Catches the one class of bug the build itself
+      # can't: a hand-written href that resolves in local preview (no prefix)
+      # and 404s on Pages (prefixed) — see site/test/links.sh's own header.
+      - name: Assert internal links resolve in the built tree (site/test/links.sh)
+        run: bash test/links.sh
+        working-directory: site
+
+      # Pins the "zero JS by default" claim the landing page's copy makes:
+      # no docs page may ship a module script, and the landing page's own
+      # bundles (plus the inline theme script every page carries) stay under
+      # the ceilings site/test/js-budget.sh states. Without this, the claim
+      # goes quietly false the first time a bundle grows or an island lands
+      # in the docs shell — nothing else in this pipeline would notice.
+      - name: Assert the JavaScript budget (site/test/js-budget.sh)
+        run: bash test/js-budget.sh
+        working-directory: site
 
       - name: Configure Pages
         uses: actions/configure-pages@v6

@@ -1,3 +1,5 @@
+> This documentation is also published, web-native, at <https://valthon.github.io/zigapagos/docs/migrate-from-astro/> — the site is the canonical reading experience.
+
 # Astro → Zigapagos migration reference
 
 A **deterministic mapping** from Astro constructs to their Zigapagos equivalents,

@@ -1,0 +1,96 @@
+---
+.title = "Quick start",
+.description = "Install the toolchain, generate a site, and see it rebuild as you edit.",
+.date = @date("2026-07-27T00:00:00"),
+.author = "Zigapagos",
+.layout = "docs.shtml",
+.draft = false,
+.custom = { .slug = "quick-start" },
+---
+
+## Install the toolchain
+
+Zigapagos needs Zig 0.16 and Bun 1.2. The repository pins both with
+[mise](https://mise.jdx.dev/), so the shortest path is:
+
+```sh
+git clone https://github.com/valthon/zigapagos
+cd zigapagos
+mise install
+```
+
+If `zig` resolves to a different version, the build fails at *configure* time
+with a wall of dependency errors mentioning `std.Io.Dir` and `Child.StdIo`. They
+look like defects in the code and are pure version skew. Check `zig version`
+before believing them.
+
+## Build the binary
+
+```sh
+zig build
+```
+
+That produces `zig-out/bin/zigapagos`.
+
+## Generate a site
+
+```sh
+mkdir my-site && cd my-site
+../zig-out/bin/zigapagos init
+```
+
+`init` writes a complete sample site: a homepage, an about page, a blog section,
+a devlog, the layouts that render them, and the assets they reference. It is
+worth reading before deleting — the sample copy demonstrates SuperMD syntax you
+will otherwise have to look up.
+
+## Run the development server
+
+```sh
+../zig-out/bin/zigapagos
+```
+
+The site rebuilds when you edit content, layouts, or assets, and the page in
+your browser refreshes itself.
+
+## Add an island
+
+Create `components/Hello.island.tsx`:
+
+```tsx
+import { useState } from "@z/runtime";
+
+export interface Props { name: string }
+
+export default function Hello({ name }: Props) {
+  const [waves, setWaves] = useState(0);
+  return (
+    <button onClick={() => setWaves(waves + 1)}>
+      Hello {name} — waved {waves} times
+    </button>
+  );
+}
+```
+
+Declare it in `build.zig`:
+
+```zig
+const islands: []const zigapagos.Island = &.{
+    .{ .root = b.path("components/Hello.island.tsx"), .src = "components/Hello.island.tsx" },
+};
+```
+
+And use it in a layout — **not** in a `.smd` file, which rejects raw HTML:
+
+```html
+<island src="components/Hello.island.tsx" client:visible prop-name="world"></island>
+```
+
+Rebuild. The button is server-rendered into the HTML, and hydrates when it
+scrolls into view.
+
+## Next
+
+The [tutorial]($link.page("docs/tutorial")) builds something real.
+[Islands]($link.page("docs/islands")) is the full reference for directives,
+props, and slots.

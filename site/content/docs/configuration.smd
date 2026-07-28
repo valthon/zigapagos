@@ -1,0 +1,95 @@
+---
+.title = "Configuration",
+.description = "zigapagos.ziggy, the website() build options, and what each one changes.",
+.date = @date("2026-07-27T00:00:00"),
+.author = "Zigapagos",
+.layout = "docs.shtml",
+.draft = false,
+.custom = { .slug = "configuration" },
+---
+
+A Zigapagos project is configured in two places: `zigapagos.ziggy` describes the
+site, and `build.zig` declares the islands and SPAs the build must compile.
+
+## zigapagos.ziggy
+
+```ziggy
+Site {
+    .title = "My Site",
+    .host_url = "https://example.com",
+    .url_path_prefix = "",
+    .content_dir_path = "content",
+    .layouts_dir_path = "layouts",
+    .assets_dir_path = "assets",
+    .deploy_target = "zigbase",
+}
+```
+
+`.title` is available in every layout as `$site.title`.
+
+`.host_url` is the origin used to build absolute URLs — canonical links, feeds,
+and social metadata.
+
+`.url_path_prefix` is the subpath the site is served from. On GitHub project
+pages this is the repository name. **Set it and then never hand-write an
+internal URL**: `$site.page('docs/overview').link()` and
+`$site.asset('style.css').link()` apply the prefix, and a literal `/docs/` does
+not, so a hardcoded link works locally and 404s in production.
+
+`.content_dir_path`, `.layouts_dir_path` and `.assets_dir_path` are relative to
+the project root.
+
+`.deploy_target` selects which host configuration the build emits — `zigbase`,
+`nginx`, or `apache`. See [native SPAs]($link.page("docs/spa")) for what each
+one generates.
+
+## build.zig
+
+```zig
+const std = @import("std");
+const zigapagos = @import("zigapagos");
+
+pub fn build(b: *std.Build) void {
+    const islands: []const zigapagos.Island = &.{
+        .{ .root = b.path("components/Counter.island.tsx"),
+           .src = "components/Counter.island.tsx" },
+    };
+
+    const spas: []const zigapagos.Spa = &.{
+        .{ .root = b.path("app/app.spa.tsx"),
+           .src = "app/app.spa.tsx",
+           .base = "/app" },
+    };
+
+    const site = zigapagos.website(b, .{
+        .islands = islands,
+        .spas = spas,
+        .not_found = "app",
+        .output_path = "site",
+        .force = true,
+    });
+    b.getInstallStep().dependOn(&site.step);
+}
+```
+
+`.root` is a build-graph path; `.src` is the same file as a string relative to
+the project root, and is what an `<island src="…">` attribute must match.
+
+`.base` on an SPA **must** equal the `base` exported from the `.spa.tsx` module.
+The build validates the match and fails loudly if they diverge, because a
+mismatch produces an application whose router and whose prerendered shells
+disagree about where they live.
+
+`.not_found` names which SPA owns the site-wide `404.html`, by file basename
+without the `.spa.tsx` suffix. Set it explicitly when there is more than one SPA;
+otherwise declaration order decides, which is not a property you want a
+deployment to depend on.
+
+`.force = true` allows the build to overwrite an existing output tree.
+
+## A note on failure and partial output
+
+Build failures write the output tree in place, so a failure partway through
+leaves a partially updated site. The pass order limits the damage — SPA
+validation runs before any page is written — but it is not atomicity. Build to a
+staging directory if you are deploying by syncing the output tree.

@@ -1,3 +1,5 @@
+> This documentation is also published, web-native, at <https://valthon.github.io/zigapagos/docs/react-spa-bridge/> — the site is the canonical reading experience.
+
 # Incremental React → `@z/runtime` bridge (preact/compat)
 
 Port a React SPA (or islands) to zigapagos **import-by-import** instead of a big-bang rewrite.

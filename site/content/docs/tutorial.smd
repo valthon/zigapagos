@@ -1,0 +1,168 @@
+---
+.title = "Tutorial",
+.description = "Build a small documentation site with a section, a shared layout, and two islands.",
+.date = @date("2026-07-27T00:00:00"),
+.author = "Zigapagos",
+.layout = "docs.shtml",
+.draft = false,
+.custom = { .slug = "tutorial" },
+---
+
+This builds a small documentation site: a homepage, a guides section that lists
+its own pages, a shared layout, and two islands — one that needs JavaScript
+immediately and one that does not. It assumes you have finished the
+[quick start]($link.page("docs/quick-start")).
+
+## 1. The shared layout
+
+Every page wants the same document shell, so put it in a template that others
+extend. Create `layouts/templates/base.shtml`:
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+  <head id="head">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title :text="$page.title"></title>
+    <link type="text/css" rel="stylesheet" href="$site.asset('style.css').link()">
+    <super>
+  </head>
+  <body id="body">
+    <nav>
+      <a href="$site.page('').link()">Home</a>
+      <a href="$site.page('guides').link()">Guides</a>
+    </nav>
+    <super>
+  </body>
+</html>
+```
+
+The two `<super>` elements are the extension points. A layout that extends this
+supplies a `<head id="head">` and a `<body id="body">` whose contents are
+spliced in.
+
+## 2. A page layout
+
+Create `layouts/page.shtml`:
+
+```html
+<extend template="base.shtml">
+<head id="head"></head>
+<body id="body">
+  <article>
+    <h1 :text="$page.title"></h1>
+    <div :html="$page.content()"></div>
+  </article>
+</body>
+```
+
+`:text` sets an element's text content and escapes it. `:html` inserts already-
+rendered HTML, which is what `$page.content()` returns.
+
+## 3. A section that lists itself
+
+A directory becomes a section when it has an `index.smd`. Create
+`content/guides/index.smd`:
+
+```
+---
+.title = "Guides",
+.date = @date("2026-07-27T00:00:00"),
+.author = "You",
+.layout = "guides.shtml",
+.draft = false,
+---
+
+Everything we have written down.
+```
+
+Then `layouts/guides.shtml`, which loops over the section's pages:
+
+```html
+<extend template="base.shtml">
+<head id="head"></head>
+<body id="body">
+  <h1 :text="$page.title"></h1>
+  <div :html="$page.content()"></div>
+  <ul>
+    <li :loop="$page.subpages()">
+      <a href="$loop.it.link()" :text="$loop.it.title"></a>
+    </li>
+  </ul>
+</body>
+```
+
+Add `content/guides/deploying.smd` with `.layout = "page.shtml"` and any body
+text, rebuild, and it appears in the list. Nothing registers it — being in the
+directory is the registration.
+
+## 4. An island that must be interactive immediately
+
+Some components are broken without JavaScript. A search box is the usual
+example: it renders, but typing does nothing until it hydrates, so it should
+hydrate as early as possible. Create `components/Filter.island.tsx`:
+
+```tsx
+import { useState } from "@z/runtime";
+
+export interface Props { items: string[] }
+
+export default function Filter({ items }: Props) {
+  const [q, setQ] = useState("");
+  const shown = items.filter((i) => i.toLowerCase().includes(q.toLowerCase()));
+  return (
+    <div>
+      <input
+        value={q}
+        placeholder="Filter…"
+        onInput={(e) => setQ((e.target as HTMLInputElement).value)}
+      />
+      <ul>{shown.map((i) => <li>{i}</li>)}</ul>
+    </div>
+  );
+}
+```
+
+Use it with `client:load` — hydrate as soon as the page's JavaScript runs:
+
+```html
+<island src="components/Filter.island.tsx" client:load
+        :props='{ .items = ["deploying", "islands", "assets"] }'></island>
+```
+
+## 5. An island that can wait
+
+A component below the fold does not need to hydrate before it is visible. Use
+`client:visible`, and the browser only fetches and runs its code when the
+component scrolls into view:
+
+```html
+<island src="components/Feedback.island.tsx" client:visible></island>
+```
+
+The choice between directives is the whole performance story. `client:load` for
+things that are broken until interactive; `client:idle` for things that can wait
+for a quiet moment; `client:visible` for anything below the fold;
+`client:media` for components that only matter at a breakpoint; `client:only` for
+components that cannot be server-rendered at all.
+
+## 6. Typed props
+
+Every island should export its props type:
+
+```tsx
+export interface Props { items: string[] }
+```
+
+At build time each rendered `<island>`'s resolved props — `:props` merged with
+any `prop-NAME` overrides — are typechecked against that type. A misspelled prop
+or a number where a string belongs fails the build with the page and the
+component named, rather than rendering `undefined` in production.
+
+## Where to go next
+
+[Islands]($link.page("docs/islands")) is the complete reference. If you want
+client-side routing rather than separate pages,
+[native SPAs]($link.page("docs/spa")) covers building a whole application from
+one `.spa.tsx`.

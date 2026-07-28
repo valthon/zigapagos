@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Zigapagos">
+  <title>Zigapagos</title>
+  <!-- An archipelago: three dormant islands and one hydrated. The lit island
+       is the component that shipped JavaScript; the others are static HTML.
+       Fills swap for prefers-color-scheme: dark (values match tokens.css's
+       dark muted/accent) so the mark stays legible on the dark nav too. -->
+  <style>
+    .dormant { fill: #5b6169; }
+    .lit { fill: #0f7a6e; }
+    .glow { stroke: #0f7a6e; }
+    @media (prefers-color-scheme: dark) {
+      .dormant { fill: #9aa3ab; }
+      .lit { fill: #3fd0bd; }
+      .glow { stroke: #3fd0bd; }
+    }
+  </style>
+  <circle class="dormant" cx="8"  cy="10" r="3"/>
+  <circle class="dormant" cx="23" cy="8"  r="2.2"/>
+  <circle class="dormant" cx="11" cy="24" r="2.2"/>
+  <circle class="lit" cx="23" cy="22" r="5"/>
+  <circle class="glow" cx="23" cy="22" r="8" fill="none" stroke-opacity="0.28" stroke-width="1.2"/>
+</svg>

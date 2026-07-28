@@ -1,4 +1,5 @@
-# Real-browser e2e: the two examples/tsx-site scripts that drive Chromium.
+# Real-browser e2e: the examples/tsx-site scripts and the marketing site's own
+# smokes, all driving Chromium.
 #
 # What runs here
 # --------------
@@ -9,14 +10,24 @@
 #                                         separation, size, shared-runtime
 #                                         fallback, and one-Preact hydration of
 #                                         each sliced SPA
+#   site/test/hydrate_playwright.py       the landing page's islands actually
+#                                         hydrate, and client:visible does NOT
+#                                         hydrate before it's scrolled into view
+#   site/test/spa_playwright.py           the embedded demo SPA soft-navigates
+#                                         (URL changes, document does NOT
+#                                         reload) and its guard redirects
 #
-# Both build examples/tsx-site and then hand zig-out/site to a python3 +
-# Playwright helper that loads it in a real browser. Everything else in this
-# repository asserts over emitted BYTES — greps of HTML, bundle contents, import
-# maps. That catches an emitter regression but it cannot catch the class of bug
-# these two exist for: markup that is correct on disk and still fails to hydrate,
-# a second Preact copy sneaking in through a bundle, a sliced runtime that loads
-# and then throws. Only a browser can see those.
+# The first two build examples/tsx-site; the last two build site/ (the
+# dogfooded marketing/docs site — see the site-browser job below). All four
+# hand their build output to a python3 + Playwright helper that loads it in a
+# real browser. Everything else in this repository asserts over emitted
+# BYTES — greps of HTML, bundle contents, import maps. That catches an
+# emitter regression but it cannot catch the class of bug these exist for:
+# markup that is correct on disk and still fails to hydrate, a second Preact
+# copy sneaking in through a bundle, a sliced runtime that loads and then
+# throws, or — site/'s specific failure mode — a "soft nav" that is
+# secretly a full page load because content-only assertions can't tell the
+# difference. Only a browser can see those.
 #
 # Why scheduled, and NOT a PR gate
 # --------------------------------
@@ -246,3 +257,121 @@ jobs:
           printf -- '- `%s` (%s): **%s**\n' \
             "$SCRIPT" "${{ matrix.label }}" "${{ job.status }}" \
             >> "$GITHUB_STEP_SUMMARY"
+
+  site-browser:
+    name: "Browser e2e — marketing site (hydration + SPA soft-nav)"
+    runs-on: ubuntu-latest
+    # A separate job rather than a third matrix row: site/ is its own
+    # consumer project with its own .zig-cache and zig-out (see
+    # site/build.zig's `.output_path = "site"`), so there is no `rm -rf`
+    # hazard to structurally avoid the way the comment above explains for
+    # the matrix — the two builds share nothing on disk. Kept separate
+    # anyway so a flake in one doesn't obscure the other's signal, and so
+    # this job's timeout can be sized to its own (much smaller) build.
+    timeout-minutes: 20
+
+    env:
+      # Restore-only, same reasoning and same key scheme as the matrix job
+      # above: keep third-party git-host fetches (this cache is keyed on
+      # build.zig.zon, which site/ pulls in transitively via its path
+      # dependency on the root package) off the critical path of a
+      # scheduled run.
+      ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup toolchain (mise — zig 0.16.0 + bun 1.2)
+        uses: jdx/mise-action@v4
+        with:
+          cache: true
+
+      - name: Pin tool versions globally (shims must resolve outside the repo)
+        run: |
+          mise use -g zig@0.16.0 bun@1.2
+          ( cd "$(mktemp -d)" && bun --version && zig version )
+
+      - name: Get Zig version
+        id: zig-version
+        run: echo "version=$(zig version)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Zig package cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ github.workspace }}/.zig-global-cache
+          key: zig-pkg-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-${{ hashFiles('**/build.zig.zon') }}
+          restore-keys: |
+            zig-pkg-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-
+
+      # Same ordering hazard pages.yml documents: bundling @z/runtime needs
+      # preact/preact-compat/preact-render-to-string resolvable from
+      # runtime/node_modules, which a `site`-only install doesn't provide.
+      - name: Install runtime dependencies (site build bundles @z/runtime)
+        working-directory: runtime
+        run: bun install --frozen-lockfile
+
+      - name: Build the marketing site
+        working-directory: site
+        run: |
+          bun install --frozen-lockfile
+          bun run scripts/gen-docs-mirror.ts
+          zig build
+
+      # Same install as the matrix job above, and the same reason: only a
+      # `chrome`-channel launch works after this step (see "THE BROWSER"
+      # comment below the matrix), and the venv is required because Ubuntu's
+      # system python3 is PEP 668 externally-managed.
+      - name: Install Playwright + Google Chrome
+        run: |
+          set -euo pipefail
+          python3 -m venv "${RUNNER_TEMP}/pw"
+          "${RUNNER_TEMP}/pw/bin/python" -m pip install --upgrade pip
+          "${RUNNER_TEMP}/pw/bin/python" -m pip install playwright
+          echo "${RUNNER_TEMP}/pw/bin" >> "$GITHUB_PATH"
+          "${RUNNER_TEMP}/pw/bin/python" -m playwright install --with-deps chrome
+
+      - name: Verify the browser launches the way the helpers launch it
+        run: |
+          set -euo pipefail
+          mise exec -- python3 - <<'PY'
+          import sys
+          from playwright.sync_api import sync_playwright
+          print("interpreter:", sys.executable)
+          with sync_playwright() as p:
+              b = p.chromium.launch(channel="chrome")
+              print("PASS: launched", b.version)
+              b.close()
+          PY
+
+      - name: Serve the built site and run the browser smokes
+        working-directory: site
+        run: |
+          set -euo pipefail
+          # zig build's install path is "site" (site/build.zig's
+          # .output_path), not "zigapagos" — the URL prefix
+          # zigapagos.ziggy's url_path_prefix declares — so a plain static
+          # file server needs the build output reachable AT that path for
+          # every /zigapagos/... reference in the HTML (scripts, styles, the
+          # SPA's own prerendered shells) to resolve the way Pages serves
+          # them. zigapagos's own dev server strips the prefix in code (see
+          # src/cli/serve.zig), but that's the live in-memory mode, not this
+          # disk build — a symlink is the simplest way to preview the disk
+          # output under the same path Pages puts it at.
+          ln -s site zig-out/zigapagos
+          bunx serve -l 8080 zig-out &
+          SERVER_PID=$!
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8080/zigapagos/ >/dev/null && break
+            sleep 1
+          done
+          mise exec -- python3 test/hydrate_playwright.py http://localhost:8080/zigapagos
+          mise exec -- python3 test/spa_playwright.py http://localhost:8080/zigapagos
+          kill "$SERVER_PID"
+
+      - name: Record result in the run summary
+        if: always()
+        run: |
+          printf -- '- `site/test/{hydrate,spa}_playwright.py`: **%s**\n' \
+            "${{ job.status }}" >> "$GITHUB_STEP_SUMMARY"

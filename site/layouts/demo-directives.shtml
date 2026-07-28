@@ -1,0 +1,59 @@
+<extend template="base.shtml">
+<head id="head">
+  <link type="text/css" rel="stylesheet" href="$site.asset('docs.css').link()">
+</head>
+<main id="main">
+  <div class="wrap prose">
+    <h1>Hydration directives</h1>
+    <p class="lede">
+      Five identical components, five different directives. Each says whether it
+      has hydrated and when. Reload the page and watch the order they light up
+      in; the timestamps are real.
+    </p>
+  </div>
+
+  <section class="section wrap">
+    <p class="eyebrow">Immediately</p>
+    <div class="dd-row">
+      <island src="components/DirectiveDemo.island.tsx" client:load :props='{
+        .directive = "client:load",
+        .note = "Hydrates as soon as the page script runs. Use it for components that are broken until interactive — a search box, a login form." }'></island>
+      <island src="components/DirectiveDemo.island.tsx" client:idle :props='{
+        .directive = "client:idle",
+        .note = "Waits for the browser to be idle. Same result, later, for anything that is nice to have rather than needed at once." }'></island>
+    </div>
+  </section>
+
+  <section class="section wrap">
+    <p class="eyebrow">Conditionally</p>
+    <p class="section-note">
+      This one is deliberately below the fold. It is still grey. Scroll to it and
+      it hydrates — that is the whole behaviour, and it is why below-the-fold
+      components should almost always use it.
+    </p>
+    <div class="dd-spacer">keep scrolling</div>
+    <div class="dd-row">
+      <island src="components/DirectiveDemo.island.tsx" client:visible :props='{
+        .directive = "client:visible",
+        .note = "Hydrates when the component scrolls into view. Nothing is fetched or executed for it before that." }'></island>
+      <island src="components/DirectiveDemo.island.tsx" client:media="(min-width: 60rem)" :props='{
+        .directive = "client:media",
+        .note = "Hydrates only when the media query matches. Narrow your window below 60rem and reload — it stays grey, and its code is never fetched." }'></island>
+    </div>
+  </section>
+
+  <section class="section wrap">
+    <p class="eyebrow">Never on the server</p>
+    <div class="dd-row">
+      <island src="components/DirectiveDemo.island.tsx" client:only :props='{
+        .directive = "client:only",
+        .note = "Skipped entirely at build time and rendered only in the browser. For components that touch window or document during render and cannot be server-rendered at all." }'></island>
+    </div>
+    <p class="section-note">
+      Note what this costs: a client:only component contributes nothing to the
+      HTML, so there is a blank space until it renders, and search engines see
+      nothing there. Prefer any of the other four when the component can be
+      server-rendered.
+    </p>
+  </section>
+</main>

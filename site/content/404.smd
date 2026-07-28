@@ -1,0 +1,14 @@
+---
+.title = "Page not found",
+.description = "That page does not exist. Try the documentation index or the homepage.",
+.date = @date("2026-07-27T00:00:00"),
+.author = "Zigapagos",
+.layout = "page.shtml",
+.draft = false,
+.aliases = ["/404.html"],
+---
+
+That page does not exist — it may have moved, or the link may be wrong.
+
+Try the [documentation]($link.page("docs")) index, or go back to the
+[homepage]($link.site()).

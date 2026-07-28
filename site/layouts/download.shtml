@@ -1,0 +1,51 @@
+<extend template="base.shtml">
+<head id="head"></head>
+<main id="main">
+  <div class="wrap prose">
+    <h1>Download</h1>
+    <p class="lede">
+      Zigapagos builds to a single binary. It needs Zig 0.16 and Bun 1.2 at build
+      time; the binary it produces needs Bun only when your project has islands
+      or SPAs to render.
+    </p>
+
+    <h2>Build from source</h2>
+    <pre><code>git clone https://github.com/valthon/zigapagos
+cd zigapagos
+mise install     # pins zig 0.16 + bun 1.2
+zig build        # → zig-out/bin/zigapagos</code></pre>
+    <p>
+      If <code>zig</code> resolves to another version the build fails at configure
+      time with dependency errors that look like defects and are version skew.
+      Check <code>zig version</code> first.
+    </p>
+
+    <h2>Releases</h2>
+    <p>
+      Tagged builds — a statically-linked x86_64 Linux binary (musl), an x86_64
+      macOS binary, and a checksum file — are published on
+      <a href="https://github.com/valthon/zigapagos/releases">the releases page</a>.
+      <code>0.1.0</code> is the first Zigapagos version number; the repository's
+      history before the fork belongs to the project it forks and isn't carried
+      into this repo as its own version tags, only as a single marker at the fork
+      point.
+    </p>
+
+    <h2>Platforms</h2>
+    <p>
+      Linux and macOS are built and tested in CI. Windows is currently
+      unsupported — two inherited source files do not compile on stable Zig
+      0.16, and support returns with the Zig 0.17 port. See the
+      <a href="$site.page('docs/roadmap').link()">roadmap</a>.
+    </p>
+
+    <h2>Start a project</h2>
+    <pre><code>mkdir my-site &amp;&amp; cd my-site
+zigapagos init   # writes a complete sample site
+zigapagos        # dev server with live reload</code></pre>
+    <p>
+      The <a href="$site.page('docs/quick-start').link()">quick start</a> walks
+      through it.
+    </p>
+  </div>
+</main>
