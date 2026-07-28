@@ -706,16 +706,15 @@ guard: zbGuard<Customer>({ collection: "customers", redirect: "/login" })
 ## Nested & Layout Routes
 
 Flat route arrays force every view to re-wrap the app chrome. A **layout route** declares
-`children` and renders shared chrome once with an `<Outlet/>` where the matched child renders:
+`children`, and its `component` is called with the matched child route **as its `children`
+prop** — render it (`{children}`) to place shared chrome around it:
 
 ```tsx
-import { Outlet } from "@z/runtime";
-
-function DashLayout() {
+function DashLayout({ children }) {
   return (
     <div data-dash-chrome>
       <nav>{/* persistent sidebar/tabs */}</nav>
-      <Outlet />        {/* the matched child renders here */}
+      {children}        {/* the matched child renders here */}
     </div>
   );
 }
@@ -731,6 +730,33 @@ export const routes = [
   },
 ];
 ```
+
+`<Outlet/>` is the **identical explicit form** — `children` literally *is* an `<Outlet/>`
+element, so there is no second mechanism that could drift between the two spellings:
+
+```tsx
+import { Outlet } from "@z/runtime";
+
+function DashLayout() {
+  return (
+    <div data-dash-chrome>
+      <nav>{/* persistent sidebar/tabs */}</nav>
+      <Outlet />        {/* the matched child renders here */}
+    </div>
+  );
+}
+```
+
+**Render exactly one of the two.** Rendering both `{children}` and an explicit `<Outlet/>`
+mounts the matched child **twice** — duplicate DOM, duplicate effects/fetches — and the router
+does not suppress the second instance: which one "won" would depend on render order, and
+silently picking one would make the client diverge from what SSR (which has no such ordering
+concept) produced. Rendering **neither** means the matched child route never renders at all —
+the silent trap this diagnostic exists for: the layout compiles, SSRs, and paints a
+plausible-looking but empty container, with its child route's component never invoked. Both
+cases are caught with a `console.warn` (once per layout route path) in the browser; both checks
+run in mount effects, so neither ever fires under SSR / at build time — a bad layout still
+builds cleanly and only warns once it's actually rendered in a browser.
 
 `/dash/overview` and `/dash/settings` each render `DashLayout` wrapping their child at the
 `<Outlet/>`. Matching is first-match-wins at **every** level; `:param` captures accumulate down

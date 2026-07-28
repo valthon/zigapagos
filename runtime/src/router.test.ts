@@ -677,6 +677,140 @@ describe("Router nested/layout routes", () => {
   });
 });
 
+// --- Layout routes receive `children` as an <Outlet/> (issue #22) ---------
+// `<Outlet/>` and `{children}` are the SAME channel: renderChainNode always
+// calls a rung's component as `h(comp, { children: h(Outlet, {}) })`, so a
+// layout written `<div>{children}</div>` (never mentioning Outlet at all)
+// must work identically to one that renders `<Outlet/>` explicitly — and
+// using both, or neither, must be caught (dev-only) rather than silently
+// producing a duplicated or permanently-empty outlet.
+function spyConsoleWarn(): { warnings: string[]; restore: () => void } {
+  const warnings: string[] = [];
+  const orig = console.warn;
+  console.warn = ((...args: unknown[]) => { warnings.push(String(args[0])); }) as typeof console.warn;
+  return { warnings, restore: () => { console.warn = orig; } };
+}
+
+let childrenLayoutMountCount = 0;
+const ChildrenLayout = (props: { children?: any }) => {
+  useEffect(() => { childrenLayoutMountCount++; }, []);
+  return h("div", { "data-view": "children-layout" },
+    h("header", { "data-layout-chrome": "" }, "CHROME"),
+    props.children); // the implicit-Outlet channel — no <Outlet/> in sight
+};
+const childrenLayoutRoutes: RouteDef[] = [
+  { path: "/", component: C },
+  {
+    path: "/dash-children", component: ChildrenLayout, children: [
+      { path: "/overview", component: Overview, skeleton: OverviewSkeleton },
+      { path: "/settings", component: Settings },
+    ],
+  },
+];
+const ChildrenLayoutApp = () =>
+  h(Router, { base: "/app", routes: childrenLayoutRoutes, notFound: () => h("div", { "data-view": "nf" }, "nf") });
+
+describe("Router layout children channel (issue #22)", () => {
+  test("a {children} layout SSRs chrome + the leaf skeleton together", () => {
+    const html = ssrIsland(ChildrenLayoutApp, {}, { pathname: "/app/dash-children/overview" });
+    expect(html).toContain("data-layout-chrome");
+    expect(html).toContain('data-view="overview-skeleton"');
+    expect(html).not.toContain('data-view="overview"');
+  });
+
+  test("a {children} layout client-renders the child and survives sibling soft-nav without remounting", async () => {
+    childrenLayoutMountCount = 0;
+    setLocationPathname("/app/dash-children/overview");
+    const r = renderIsland(ChildrenLayoutApp, {}, { mode: "render", pathname: "/app/dash-children/overview" });
+    await flush();
+    expect(r.html()).toContain("data-layout-chrome");
+    expect(r.html()).toContain('data-view="overview"');
+    expect(childrenLayoutMountCount).toBe(1);
+
+    navigate("/dash-children/settings");
+    await flush();
+    expect(window.location.pathname).toBe("/app/dash-children/settings");
+    expect(r.html()).toContain('data-view="settings"');
+    expect(r.html()).not.toContain('data-view="overview"');
+    expect(r.html()).toContain("data-layout-chrome");
+    expect(childrenLayoutMountCount).toBe(1); // same layout instance across sibling nav
+
+    r.unmount();
+    setLocationPathname("/app/");
+  });
+
+  test("two-phase hydrate of a {children} layout: SSR skeleton hydrates cleanly, then the leaf flips", async () => {
+    childrenLayoutMountCount = 0;
+    setLocationPathname("/app/dash-children/overview");
+    const r = renderIsland(ChildrenLayoutApp, {}, { mode: "hydrate", pathname: "/app/dash-children/overview" });
+    expect(r.html()).toContain("data-layout-chrome");
+    expect(r.html()).toContain('data-view="overview-skeleton"');
+    expect(r.html()).not.toContain('data-view="overview"');
+
+    await flush();
+
+    expect(r.html()).toContain('data-view="overview"');
+    expect(r.html()).not.toContain('data-view="overview-skeleton"');
+    expect(r.html()).toContain("data-layout-chrome");
+    expect(childrenLayoutMountCount).toBe(1);
+
+    r.unmount();
+    setLocationPathname("/app/");
+  });
+
+  test("both {children} and <Outlet/> ⇒ the matched child renders TWICE and the double-render warning fires once", async () => {
+    const BothChannelsLayout = (props: { children?: any }) =>
+      h("div", { "data-view": "both-layout" },
+        h("header", { "data-layout-chrome": "" }, "CHROME"),
+        props.children, // channel 1
+        h(Outlet, {})); // channel 2 — same channel, rendered twice
+    const routes: RouteDef[] = [
+      { path: "/", component: C },
+      { path: "/dash-both", component: BothChannelsLayout, children: [{ path: "/overview", component: Overview }] },
+    ];
+    const BothApp = () => h(Router, { base: "/app", routes });
+    const { warnings, restore } = spyConsoleWarn();
+    setLocationPathname("/app/dash-both/overview");
+    const r = renderIsland(BothApp, {}, { mode: "render", pathname: "/app/dash-both/overview" });
+    await flush();
+    try {
+      expect(r.getAll('[data-view="overview"]').length).toBe(2); // duplicated
+      const doubleWarnings = warnings.filter((w) => w.includes("renders both {children} and <Outlet/>"));
+      expect(doubleWarnings.length).toBe(1);
+      expect(doubleWarnings[0]).toContain('"/dash-both"');
+    } finally {
+      restore();
+      r.unmount();
+      setLocationPathname("/app/");
+    }
+  });
+
+  test("neither {children} nor <Outlet/> ⇒ the matched child never renders and the no-outlet warning fires", async () => {
+    const NoOutletLayout = () =>
+      h("div", { "data-view": "no-outlet-layout" },
+        h("header", { "data-layout-chrome": "" }, "CHROME")); // renders neither channel
+    const routes: RouteDef[] = [
+      { path: "/", component: C },
+      { path: "/dash-neither", component: NoOutletLayout, children: [{ path: "/overview", component: Overview }] },
+    ];
+    const NeitherApp = () => h(Router, { base: "/app", routes });
+    const { warnings, restore } = spyConsoleWarn();
+    setLocationPathname("/app/dash-neither/overview");
+    const r = renderIsland(NeitherApp, {}, { mode: "render", pathname: "/app/dash-neither/overview" });
+    await flush();
+    try {
+      expect(r.query('[data-view="overview"]')).toBeNull(); // the matched child never rendered
+      const noOutletWarnings = warnings.filter((w) => w.includes("rendered neither {children} nor an <Outlet/>"));
+      expect(noOutletWarnings.length).toBe(1);
+      expect(noOutletWarnings[0]).toContain('"/dash-neither"');
+    } finally {
+      restore();
+      r.unmount();
+      setLocationPathname("/app/");
+    }
+  });
+});
+
 describe("Router nested guard cascade", () => {
   const DashChild = () => h("div", { "data-view": "dash-overview", "data-gated": "dash" }, "GATED DASH");
   let dashGuard: () => Promise<GuardResult> = async () => true;
