@@ -163,3 +163,30 @@ pub const Options = struct {
         scopes: []const []const u8 = &.{},
     } = .{},
 };
+
+/// `ZIGAPAGOS_BIN` — use an already-built `zigapagos` instead of compiling one.
+///
+/// A consumer's `zig build` otherwise compiles the generator and its whole
+/// dependency tree before rendering a page: 653 compile steps, 632 of them
+/// tree-sitter grammar objects across 82 languages, against build work of well
+/// under a second for a typical site. In an ephemeral environment that repeats
+/// per job — which is exactly the case `Options.zigapagos = .path` was added
+/// for, per its own doc comment.
+///
+/// Reading it from the environment rather than requiring a `build.zig` edit is
+/// what makes it usable: CI sets one variable and every consumer in the
+/// workspace honours it, including fixtures whose `build.zig` is itself under
+/// test and should not be rewritten to suit the harness.
+///
+/// An explicit `opts.zigapagos = .path` always wins — the env var only
+/// overrides the `.source` default, so a project that has deliberately pinned
+/// its source build keeps it.
+pub fn resolveZigapagos(project: *std.Build, opts: Options) @TypeOf(opts.zigapagos) {
+    return switch (opts.zigapagos) {
+        .path => opts.zigapagos,
+        .source => if (project.graph.environ_map.get("ZIGAPAGOS_BIN")) |bin|
+            .{ .path = project.dupe(bin) }
+        else
+            .source,
+    };
+}

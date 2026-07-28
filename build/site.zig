@@ -27,33 +27,37 @@ pub fn website(comptime Zigapagos: type, project: *std.Build, opts: Options) *st
     // is a config error either way).
     validate.validateNotFound(opts.spas, opts.not_found);
 
-    const run_zigapagos = if (opts.islands.len > 0 or opts.spas.len > 0) blk: {
-        // Islands and SPAs both need build-time SSR (islands for hydration
-        // markers, SPAs for their prerendered skeleton), which means compiling
-        // a registry of the site's components into `zigapagos`. That registry can't
-        // be injected into a prebuilt `zigapagos`, so both require building from source.
-        switch (opts.zigapagos) {
-            .source => {},
-            .path => std.debug.panic(
-                "Zigapagos islands/SPAs require `zigapagos = .source` (the default) so the " ++
-                    "registry can be compiled in; `zigapagos = .path` serves a " ++
-                    "prebuilt binary that can't SSR your components.",
-                .{},
-            ),
-        }
+    // Islands and SPAs need build-time SSR — islands for their hydration markers,
+    // SPAs for their prerendered skeletons — but that SSR runs in the Bun sidecar,
+    // which this step is handed as `--island-sidecar=` below. Nothing about a
+    // site's components is compiled into `zigapagos`: every input is a CLI
+    // argument or a bundled asset, and the comptime registry that once had to be
+    // linked in retired with the Zig-island path.
+    //
+    // So a prebuilt binary serves an island site exactly as well as a from-source
+    // one, and `zigapagos = .path` is honoured here rather than rejected. It used
+    // to panic — the justification outlived the mechanism, and the cost was real:
+    // a consumer with a single island had to compile the generator and its whole
+    // dependency tree (653 compile steps, 632 of them tree-sitter grammars) to
+    // produce a site whose own build work is under a second.
+    if (opts.islands.len > 0 or opts.spas.len > 0) {
         validate.validateIslands(opts.islands);
         validate.validateSpas(opts.spas);
-        // TSX islands/SPAs are SSR'd by the Bun sidecar at build time — no comptime
-        // registry, no wasm. Build zigapagos from source with the empty registry.
-        const zigapagos_exe = exe.addZigapagosExe(zb, .{
-            .target = zb.graph.host,
-            .optimize = opts.debug.optimize,
-            .version_string = "website",
-            .scopes = opts.debug.scopes,
-        });
-        break :blk project.addRunArtifact(zigapagos_exe);
-    } else switch (opts.zigapagos) {
-        .source => project.addRunArtifact(zigapagos_dep.artifact("zigapagos")),
+    }
+
+    const run_zigapagos = switch (api.resolveZigapagos(project, opts)) {
+        .source => if (opts.islands.len > 0 or opts.spas.len > 0)
+            // A dedicated exe rather than `zigapagos_dep.artifact(...)` only so the
+            // build carries `version_string = "website"`; optimize and scopes already
+            // reach the dependency through `dependencyFromBuildZig` above.
+            project.addRunArtifact(exe.addZigapagosExe(zb, .{
+                .target = zb.graph.host,
+                .optimize = opts.debug.optimize,
+                .version_string = "website",
+                .scopes = opts.debug.scopes,
+            }))
+        else
+            project.addRunArtifact(zigapagos_dep.artifact("zigapagos")),
         .path => |path| project.addSystemCommand(&.{path orelse "zigapagos"}),
     };
     run_zigapagos.setCwd(website_root);
@@ -148,7 +152,7 @@ pub fn serve(comptime Zigapagos: type, project: *std.Build, opts: Options) *std.
         .scope = opts.debug.scopes,
     });
 
-    const run_zigapagos = switch (opts.zigapagos) {
+    const run_zigapagos = switch (api.resolveZigapagos(project, opts)) {
         .source => project.addRunArtifact(zigapagos_dep.artifact("zigapagos")),
         .path => |path| project.addSystemCommand(&.{path orelse "zigapagos"}),
     };
@@ -165,15 +169,11 @@ pub fn serve(comptime Zigapagos: type, project: *std.Build, opts: Options) *std.
     // ONCE whenever either is declared (deduped — see serve.zig's startup cache,
     // which builds the shared runtime for an SPA-only site too).
     if (opts.islands.len > 0 or opts.spas.len > 0) {
-        switch (opts.zigapagos) {
-            .source => {},
-            .path => std.debug.panic(
-                "Zigapagos islands/SPAs require `zigapagos = .source` (the default) so the " ++
-                    "island registry can be compiled in and the sidecar can SSR your " ++
-                    "components; `zigapagos = .path` serves a prebuilt binary that can't.",
-                .{},
-            ),
-        }
+        // No `.path` rejection here either, for the reason given in `website()`:
+        // the sidecar does the SSR and reaches the binary as a flag. This one was
+        // the plainer contradiction of the two — the runner above is already
+        // obtained through `switch (opts.zigapagos)`, so the code built a
+        // prebuilt-binary run step and then refused to let it run.
         run_zigapagos.addArg("--bun=bun");
         run_zigapagos.addPrefixedFileArg("--island-sidecar=", zigapagos_dep.builder.path("runtime/sidecar/render.ts"));
         run_zigapagos.addArg("--island-src-dir=.");
