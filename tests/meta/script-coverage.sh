@@ -40,9 +40,41 @@ mapfile -t CANDIDATES < <(
 )
 [ "${#CANDIDATES[@]}" -gt 0 ] || { echo "FAIL: found no test scripts at all — the globs or the layout changed" >&2; exit 1; }
 
+# True when $1 appears on a NON-COMMENT line of some file matching the pathspecs in
+# $2… . Two details in here are load-bearing rather than tidy:
+#
+# COMMENT-AWARE. A file that MENTIONS a script in prose does not run it. Several
+# scripts under tests/ cite siblings in their headers, this very file names the two
+# rotted scripts in its own, and ci.yml's e2e-dev-loop step names
+# examples/tsx-site/test/{hydrate,spa_slice}.sh in a comment explaining why they are
+# NOT in its list. Without the filter each of those would vouch for a script nothing
+# executes.
+#
+# That last one also PINS the filter, which is why the paths there are spelled in
+# full: those two scripts are inventoried as knowingly unrun, so the moment this
+# function stops skipping comments they are read as both CI-run and inventoried and
+# rule 1 below fails the gate by name. The regression is loud and immediate rather
+# than latent — verified by reverting the filter and watching it go red.
+#
+# CAPTURED INTO VARIABLES, not piped into `grep -q`. Under `set -o pipefail`,
+# `git grep … | grep -q …` is a RACE: grep -q exits at its first match, SIGPIPEs
+# git grep, and pipefail then reports 141 for the whole pipeline. It happens to
+# succeed when the output is small enough to be written before grep leaves, which is
+# why it passed by hand and failed in the loop. Command substitution drains the
+# output, so there is no early reader and nothing to race.
+named_outside_comments() {
+  local path="$1"; shift
+  local hits noncomment
+  hits=$(git grep -hF -- "$path" -- "$@" 2>/dev/null || true)
+  [ -n "$hits" ] || return 1
+  noncomment=$(printf '%s\n' "$hits" | grep -v '^[[:space:]]*#' || true)
+  [ -n "$noncomment" ]
+}
+
 # A script counts as CI-run when any of these holds:
 #   (a) it matches ci.yml's `tests/*/*.sh` discovery glob;
-#   (b) a workflow names it literally (tests/branding.sh, scripts/check-allocator-*.sh);
+#   (b) a workflow RUNS it by name (tests/branding.sh, scripts/check-allocator-*.sh,
+#       and the eleven examples/tsx-site/test/*.sh listed in e2e-dev-loop);
 #   (c) a SHELL SCRIPT under tests/ names it — those are themselves CI-run by (a) or (b),
 #       so this is what covers the shim pattern (tests/contract/drift.sh runs
 #       contract/test/drift.sh; tests/changelog/assemble.sh runs the changelog self-test).
@@ -58,23 +90,8 @@ is_ci_run() {
   case "$path" in
     tests/*/*) case "${path#tests/*/}" in */*) ;; *) return 0 ;; esac ;;
   esac
-  git grep -qF -- "$path" -- '.github/workflows/' && return 0
-  # Comment-aware: a script that MENTIONS another in prose does not run it. Several
-  # scripts under tests/ cite siblings in their headers, and this very file names the two
-  # rotted scripts in its own — without this filter that header would vouch for them.
-  #
-  # Captured into variables rather than piped into `grep -q`. Under `set -o pipefail`,
-  # `git grep … | grep -q …` is a RACE: grep -q exits at its first match, SIGPIPEs
-  # git grep, and pipefail then reports 141 for the whole pipeline. It happens to
-  # succeed when the output is small enough to be written before grep leaves, which is
-  # why it passed by hand and failed in the loop. Command substitution drains the
-  # output, so there is no early reader and nothing to race.
-  local hits noncomment
-  hits=$(git grep -hF -- "$path" -- 'tests/*.sh' 'tests/**/*.sh' 2>/dev/null || true)
-  if [ -n "$hits" ]; then
-    noncomment=$(printf '%s\n' "$hits" | grep -v '^[[:space:]]*#' || true)
-    [ -n "$noncomment" ] && return 0
-  fi
+  named_outside_comments "$path" '.github/workflows/' && return 0
+  named_outside_comments "$path" 'tests/*.sh' 'tests/**/*.sh' && return 0
   return 1
 }
 
