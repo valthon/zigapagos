@@ -11,7 +11,7 @@ documentation pages (nine generated from canonical markdown), three interactive
 demos, a native SPA, and a deploy to GitHub project pages under a
 `url_path_prefix`.
 
-Items are `DX-n` so they can be filed individually.
+Items are `DX-n` and are filed as issues #20–#44; each heading links its number.
 
 ## The headline
 
@@ -52,7 +52,7 @@ Worth recording, because it shapes what is worth changing:
 A green build that produced incorrect HTML. These are the highest-value fixes
 in this document.
 
-### DX-1 · `:if` on a real element is not conditional, and `:else` does nothing
+### DX-1 · [#20] `:if` on a real element is not conditional, and `:else` does nothing
 
 **What happens.** For a plain element, `superhtml/src/template.zig` writes the
 open tag *and every attribute* before `skip_body` is consulted — so
@@ -75,7 +75,7 @@ nothing is worse than one that does not exist.
 
 ---
 
-### DX-2 · `.aliases` entries are section-relative unless they start with `/`
+### DX-2 · [#21] `.aliases` entries are section-relative unless they start with `/`
 
 **What happens.** `src/worker.zig` treats an alias as root-absolute only when it
 begins with `/`. `"404.html"` resolves to `<page-url>/404.html`.
@@ -96,7 +96,7 @@ currently stated anywhere.
 
 ---
 
-### DX-3 · Layout-route components receive no `children`
+### DX-3 · [#22] Layout-route components receive no `children`
 
 **What happens.** The router renders a layout rung as `h(comp, {})`
 (`runtime/src/router.ts`). `<Outlet/>` is the only channel by which a layout
@@ -120,7 +120,7 @@ leaving the reader to infer it is mandatory.
 
 ---
 
-### DX-4 · `<Link>` outside a Router silently degrades to a plain anchor
+### DX-4 · [#23] `<Link>` outside a Router silently degrades to a plain anchor
 
 **What happens.** With no router context, `<Link>` renders its `href` verbatim
 and does not intercept clicks.
@@ -138,7 +138,7 @@ intentional.
 
 ---
 
-### DX-5 · SPA shells load no stylesheet unless `spa.head` is used
+### DX-5 · [#24] SPA shells load no stylesheet unless `spa.head` is used
 
 **What happens.** A SPA shell's `<head>` is fixed: import map, modulepreloads,
 boot script. Site stylesheets are not inherited.
@@ -154,7 +154,7 @@ declared SPA has no `spa.head` stylesheet entry. Or scaffold one in `init`.
 
 ---
 
-### DX-6 · `$site.asset(...).link()` cannot produce an absolute URL
+### DX-6 · [#25] `$site.asset(...).link()` cannot produce an absolute URL
 
 **What happens.** `printAssetUrlPrefix` (`src/render/html.zig`) emits `host_url`
 only when `ctx.page != page`, and `Asset.link()`'s `.site` branch always passes
@@ -180,7 +180,7 @@ URL. It is never correct.
 
 ---
 
-### DX-7 · `url_path_prefix` is not threaded into `Router.base`
+### DX-7 · [#26] `url_path_prefix` is not threaded into `Router.base`
 
 **What happens.** The runtime exports no path prefix. The AUDF-005 work prefixes
 shell *asset* URLs but never the Router's base. The build's SSR pass simulates
@@ -204,7 +204,7 @@ This is the one item where a consumer cannot route around the gap.
 
 ## P1 — Loud failures that cost disproportionate time
 
-### DX-8 · `$site.page()` hard-fails on a page that does not exist yet
+### DX-8 · [#27] `$site.page()` hard-fails on a page that does not exist yet
 
 **What it cost.** More than any other single item. Incremental authoring is
 impossible: adding a navigation link before its target exists breaks the build,
@@ -219,7 +219,7 @@ what "under construction" means.
 
 ---
 
-### DX-9 · The subpage-vs-relative link trap has a misleading error
+### DX-9 · [#28] The subpage-vs-relative link trap has a misleading error
 
 **What happens.** In SuperMD a leading `.` in a link target means "subpage of
 this section", not "relative path". A page that is not a section fails with
@@ -236,7 +236,7 @@ that names the fix would have saved most of that time.
 
 ---
 
-### DX-10 · No heading auto-slugification
+### DX-10 · [#29] No heading auto-slugification
 
 **What happens.** SuperMD does not generate heading ids. Existing markdown
 written for GitHub — which does — arrives with anchors pointing at nothing.
@@ -253,7 +253,7 @@ existing documentation.
 
 ---
 
-### DX-11 · Raw HTML is forbidden in `.smd` with no escape hatch for islands
+### DX-11 · [#30] Raw HTML is forbidden in `.smd` with no escape hatch for islands
 
 **What happens.** SuperMD rejects `HTML_BLOCK` and `HTML_INLINE` nodes
 outright, so `<island>` cannot appear in content — only in `.shtml` layouts.
@@ -275,7 +275,7 @@ documentation cannot silently degrade.
 
 ---
 
-### DX-12 · Unknown code-fence languages are fatal and undiscoverable
+### DX-12 · [#31] Unknown code-fence languages are fatal and undiscoverable
 
 **What it cost.** `jsonc` and `nginx` failed the build. There is no list of
 registered languages anywhere, and no warning path in `src/highlight.zig` — so
@@ -288,7 +288,7 @@ build over.
 
 ---
 
-### DX-13 · `$link.page("")` is rejected and `$link.site()` is undiscoverable
+### DX-13 · [#32] `$link.page("")` is rejected and `$link.site()` is undiscoverable
 
 **What it cost.** A blocked task and a round-trip. `$site.page('')` works in
 `.shtml` (the shipped `base.shtml` uses it), so the prose form looks like it
@@ -299,7 +299,7 @@ should. `$link.site()` exists and is exactly right, but is found only by reading
 
 ---
 
-### DX-14 · A dynamic route without a `skeleton` fatals without explaining why
+### DX-14 · [#33] A dynamic route without a `skeleton` fatals without explaining why
 
 **What happens.** The describe pass rejects it. The reason — SSR substitutes
 `"_"` for the parameter, so a component rendering the real value would break
@@ -309,7 +309,7 @@ hydration — is sound but not in the message.
 
 ---
 
-### DX-15 · Generated content has no first-class concept
+### DX-15 · [#34] Generated content has no first-class concept
 
 **What it cost.** Publishing the repository's canonical documentation required
 hand-building a generator, a registry file, per-file `.gitignore` entries, and a
@@ -325,41 +325,41 @@ generator as a template.
 
 ## P2 — Documentation gaps
 
-### DX-16 · Three of the five `client:` directives are undocumented
+### DX-16 · [#35] Three of the five `client:` directives are undocumented
 
 `docs/islands.md` mentions `client:load` three times and `client:only` once.
 `client:idle`, `client:visible` and `client:media` appear **zero** times, though
 `src/islands/pass.zig` knows all five. The parser was a more reliable reference
 than the documentation, which is the wrong way round.
 
-### DX-17 · No SuperHTML directive reference, and no list of what does not exist
+### DX-17 · [#36] No SuperHTML directive reference, and no list of what does not exist
 
 There is no single page listing `:text`, `:html`, `:loop`, `:if`, `<ctx>`,
 `<super>`, `<extend>` and their semantics — and, critically, no statement that
 `:attr` does not exist and `:else` does nothing. We attempted `:attr` twice from
 different tasks because nothing says it is not a thing.
 
-### DX-18 · No Scripty builtin reference
+### DX-18 · [#37] No Scripty builtin reference
 
 `String.eql`, `String.addPath`, `$link.site()`, `$heading.id()`,
 `$link.page().ref()` were each discovered by grepping the vendored source. A
 generated reference of builtins per type would have removed several hours of
 source-reading across this project.
 
-### DX-19 · `docs/spa.md` has no on-ramp
+### DX-19 · [#38] `docs/spa.md` has no on-ramp
 
 1,600 lines with no quickstart. The working example at
 `examples/tsx-site/app/app.spa.tsx` was consistently more useful than the
 specification, and reviewers were told to prefer it when the two disagreed. A
 30-line "smallest SPA that works" at the top would change that.
 
-### DX-20 · No "common build errors" page
+### DX-20 · [#39] No "common build errors" page
 
 A table mapping error message → cause → fix would have short-circuited DX-9,
 DX-12, DX-13 and DX-14. These are the messages a new consumer meets in their
 first hour.
 
-### DX-21 · `zigapagos migrate` is described more expansively than it behaves
+### DX-21 · [#40] `zigapagos migrate` is described more expansively than it behaves
 
 The tool scans a project and writes a `MIGRATION.md` worklist; `--scaffold`
 rewrites island import lines into a separate directory. It converts nothing. We
@@ -373,7 +373,7 @@ guide's framing so the mistake is harder to make.
 
 ## P3 — Tooling
 
-### DX-22 · A `doctor` subcommand
+### DX-22 · [#41] A `doctor` subcommand
 
 There is no `zigapagos doctor`. Most of the P0 traps are statically detectable
 against a built tree: `:if`/`:else` on a real element, a `<Link>` outside a
@@ -382,7 +382,7 @@ a root-relative `og:*` URL, an alias colliding with a site-wide artifact. One
 command that reported those would have caught six of this project's seven worst
 defects.
 
-### DX-23 · Build output does not surface what it emitted
+### DX-23 · [#42] Build output does not surface what it emitted
 
 We repeatedly resorted to `find zig-out/site` to learn what a build produced —
 and wrote a landing-page section describing a deploy tree that no build actually
@@ -390,14 +390,14 @@ emits, because we described the options rather than the output. A `--summary`
 flag listing emitted artifacts by category would make that class of error much
 harder.
 
-### DX-24 · `zigapagos version` and release-tag claims drifted from reality
+### DX-24 · [#43] `zigapagos version` and release-tag claims drifted from reality
 
 The changelog asserted that inherited release tags existed in this repository
 and that `git describe` produced strings derived from them. Neither was true;
 both were being published on the documentation site. Worth a test that asserts
 the documented version-string shape matches what the binary actually prints.
 
-### DX-25 · No documented regeneration path for derived binary assets
+### DX-25 · [#44] No documented regeneration path for derived binary assets
 
 The social card PNG is rendered from a committed SVG by a tool that is
 deliberately not a repository dependency. Edit the SVG and the PNG silently goes
@@ -408,11 +408,11 @@ target, a build step — there should be one.
 
 ## If only three things get done
 
-1. **DX-22 (`doctor`)** — it converts six silent failures into one command.
-2. **DX-11 (islands in content)** — it removes the largest structural friction
+1. **DX-22 (`doctor`, #41)** — it converts six silent failures into one command.
+2. **DX-11 (islands in content, #30)** — it removes the largest structural friction
    in authoring, and would let documentation pages carry live examples.
-3. **DX-8 (`$site.page()` on missing targets)** — it removes the single largest
+3. **DX-8 (`$site.page()` on missing targets, #27)** — it removes the single largest
    source of busywork when building a site incrementally.
 
-DX-7 is the only item a consumer cannot work around, so it belongs on the
+DX-7 (#26) is the only item a consumer cannot work around, so it belongs on the
 roadmap regardless of this list's ordering.
