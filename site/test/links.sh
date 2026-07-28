@@ -13,22 +13,14 @@ test -d "$OUT" || { echo "FAIL: no build output — run zig build first"; exit 1
 
 FAILED=0
 while IFS= read -r html; do
-  # A page emitted BY the embedded demo SPA (under demos/app/) is prerendered
-  # from routes whose <Link> hrefs are resolved against the SPA's own,
-  # unprefixed `base` — url_path_prefix isn't threaded into Router.base (see
-  # site/test/build.sh's Task 9 comment and the demo page's own disclosure).
-  # So a nav href like /demos/app/guides is correct AS WRITTEN, not a bug this
-  # gate should chase: it is base-relative by design, and the click handler
-  # resolves the real, prefixed destination at runtime (spa_playwright.py
-  # proves that landing). Requiring the prefix here would pin a permanently
-  # failing assertion against a known, disclosed product gap. Pages OUTSIDE
-  # the SPA (the demos index, the landing page's SPA section) link INTO it
-  # with an ordinary, non-Router href, so those still need the prefix and are
-  # not exempted below.
-  case "$html" in
-    "$OUT"/demos/app/*) in_spa=1 ;;
-    *) in_spa=0 ;;
-  esac
+  # No SPA exemption any more. Pages emitted BY the embedded demo SPA (under
+  # demos/app/) used to be exempted from the prefix rule, because their <Link>
+  # hrefs were resolved against the SPA's own unprefixed `base` and the prefix
+  # only reappeared inside the click handler. Issue #26 composes
+  # url_path_prefix into the Router's base, so a prerendered SPA nav href is
+  # now the same fully-prefixed, file-backed address as any other internal
+  # link — and holding it to the same rule is the point: an unprefixed one is
+  # a 404 for a visitor without JavaScript.
   while IFS= read -r href; do
     # Skip external, anchors, mailto, and the SPA's client-side routes (the
     # router owns those; only its prerendered shells exist as files).
@@ -37,15 +29,6 @@ while IFS= read -r html; do
     esac
     case "$href" in
       "$PREFIX"/*) rel="${href#"$PREFIX"/}" ;;
-      /demos/app*)
-        if [ "$in_spa" -eq 1 ]; then
-          rel="${href#/}"
-        else
-          echo "FAIL: [$html] unprefixed absolute link: $href"
-          FAILED=1
-          continue
-        fi
-        ;;
       /*) echo "FAIL: [$html] unprefixed absolute link: $href"; FAILED=1; continue ;;
       *) continue ;;  # relative links resolve against the emitted directory
     esac

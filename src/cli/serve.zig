@@ -360,11 +360,17 @@ pub fn serve(io: Io, gpa: Allocator, args: []const []const u8) error{OutOfMemory
             .{@errorName(err)},
         );
 
-        // Prerender each SPA's shells and capture its routing table.
+        // Prerender each SPA's shells and capture its routing table. Same
+        // `url_path_prefix` derivation `prerenderAll` uses (issue #26) — a
+        // prefixed dev session must agree with release byte-for-byte.
+        const spa_url_path_prefix = switch (cfg) {
+            .Site => |s| s.url_path_prefix,
+            .Multilingual => "",
+        };
         if (build.island_sidecar) |*sc| {
             var list: std.ArrayList(spa_mod.ServeSpa) = .empty;
             for (cmd.spas) |sp| {
-                const entry = spa_mod.describeAndRenderServe(io, spa_arena, sc, sp.src, cache_dir) catch |err| fatal.msg(
+                const entry = spa_mod.describeAndRenderServe(io, spa_arena, sc, sp.src, cache_dir, spa_url_path_prefix) catch |err| fatal.msg(
                     "error: spa prerender for '{s}' failed: {s}",
                     .{ sp.src, @errorName(err) },
                 );
@@ -2748,6 +2754,7 @@ test "serve resolveSpaShell picks static, then dynamic, then fallback" {
         .head = null,
         .flags = null,
         .bundle_url = "/spa/App.js",
+        .url_prefix = "",
         .shells = &shells,
         .fallback_rel = "app/index.html",
     }};
@@ -2777,6 +2784,7 @@ test "serve resolveSpaShell root-mounted SPA owns every path" {
         .head = null,
         .flags = null,
         .bundle_url = "/spa/App.js",
+        .url_prefix = "",
         .shells = &shells,
         .fallback_rel = "index.html",
     }};
@@ -2811,6 +2819,7 @@ test "serve root-mounted SPA: real files must be searched before the shell tiers
         .head = null,
         .flags = null,
         .bundle_url = "/spa/App.js",
+        .url_prefix = "",
         .shells = &shells,
         .fallback_rel = "index.html",
     }};

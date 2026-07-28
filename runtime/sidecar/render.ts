@@ -1,5 +1,5 @@
 import { h, renderToString } from "../src/core.ts";
-import { setSsrPathname } from "../src/ssr-env.ts";
+import { setSsrPathname, setUrlPathPrefix } from "../src/ssr-env.ts";
 import { buildSlots } from "../src/slots.ts";
 import { store } from "../src/host.ts";
 import { registerSsrModuleOverrides } from "./ssr-resolve.ts";
@@ -60,7 +60,7 @@ function seedSsrFlags(spaExport: unknown): void {
 }
 
 async function handle(line: string): Promise<string> {
-  let req: { id: number; src: string; props: unknown; pathname?: string; slots?: Record<string, string>; describe?: boolean };
+  let req: { id: number; src: string; props: unknown; pathname?: string; prefix?: string; slots?: Record<string, string>; describe?: boolean };
   try {
     req = JSON.parse(line);
   } catch {
@@ -74,6 +74,12 @@ async function handle(line: string): Promise<string> {
       const routes = await describeRoutes(mod.routes ?? []);
       return JSON.stringify({ id: req.id, spa, routes });
     }
+    // The site's `url_path_prefix`, sent by `src/spa.zig`'s SPA prerender only
+    // when non-empty (island renders never carry one). Written on EVERY render
+    // request, so the `?? ""` IS the reset — one persistent sidecar process
+    // must not bleed a prefixed SPA's value into the next module's render, the
+    // same hazard `seedSsrFlags` clears for `spa.flags` above.
+    setUrlPathPrefix(req.prefix ?? "");
     setSsrPathname(req.pathname ?? "/");
     const mod = await load(req.src);
     seedSsrFlags(mod.spa); // SSR sees the module's baked flag defaults

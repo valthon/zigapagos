@@ -685,7 +685,7 @@ import {
   h, createContext, useContext, useState, useEffect, useRef, hydrate,
   useSyncExternalStore, useMemo, useCallback,
 } from "./core.ts";
-import { isServer, currentPathname, currentSearch } from "./ssr-env.ts";
+import { isServer, currentPathname, currentSearch, getUrlPathPrefix, setUrlPathPrefix } from "./ssr-env.ts";
 import { host } from "./host.ts";
 import { onUnauthorizedResponse } from "./session.ts";
 import { seedFlagsFromShell } from "./flags.ts";
@@ -1266,7 +1266,25 @@ export function Router(
     guard?: (loc: GuardLocation) => Promise<GuardResult<any>>;
   },
 ): VNode<any> {
-  const base = props.base ?? "";
+  // THE single composition point for the site's `url_path_prefix`. The
+  // router's effective base is `url_path_prefix + spa.base`, composed here and
+  // never by the author: everything downstream flows from this one variable —
+  // `routerBase` for the module-level `navigate()`, `matchChain`/`stripBase`,
+  // `ctx.base` for `<Link>`, the redirect URL-sync, and guard `scopeKey`.
+  //
+  // It has to be a BUILD-TIME constant threaded in, not something detected at
+  // runtime: Preact's `hydrate()` does not diff element attributes on its first
+  // pass, so an `<a href>` that the SSR pass and the first client render
+  // disagree about is left wrong in the DOM permanently (the same constraint
+  // the dynamic-layout caveat in docs/spa.md documents). Detecting the prefix
+  // client-side — import map, `document.baseURI`, a `<base>` tag — could never
+  // fix the prerendered markup either. So the prefix reaches the SSR pass over
+  // the sidecar protocol and the browser over the shell's `data-z-prefix`, and
+  // both compute the identical string here.
+  //
+  // With no prefix (`getUrlPathPrefix() === ""`) this is `props.base ?? ""`
+  // exactly as before — byte-for-byte unchanged for a root-mounted site.
+  const base = getUrlPathPrefix() + (props.base ?? "");
   // Register the base for the module-level `navigate()`: guard
   // redirects, `useNavigate()`, and direct `navigate()` calls all resolve
   // base-relative targets through it. One Router per document.
@@ -1726,6 +1744,17 @@ export function mountSpa(
   mod?: SpaModuleHooks,
 ): void {
   if (typeof document === "undefined") return;
+  const root = document.querySelector(selector);
+  // The site's `url_path_prefix`, baked into the shell by `src/spa.zig`. Read
+  // FIRST — before `clientInit` (which may `navigate()`) and before the first
+  // render — because `Router` composes it into its base and the first client
+  // render must reproduce the SSR'd hrefs exactly (hydrate() does not repair
+  // attributes). The attribute rides on the hydration ROOT precisely because
+  // hydration renders INTO that element, so its own attributes are never
+  // diffed; and putting it there leaves the inline boot script byte-unchanged,
+  // so a strict-CSP `script-src` hash does not churn. Absent (unprefixed site)
+  // → "", which makes the composition a no-op.
+  setUrlPathPrefix(root?.getAttribute("data-z-prefix") ?? "");
   seedFlagsFromShell();
   if (typeof mod?.clientInit === "function") {
     try {
@@ -1734,6 +1763,5 @@ export function mountSpa(
       host.reportError(err);
     }
   }
-  const root = document.querySelector(selector);
   if (root) hydrate(h(App, {}), root as any);
 }

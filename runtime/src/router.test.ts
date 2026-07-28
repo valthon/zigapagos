@@ -216,7 +216,7 @@ import { h, type ComponentType } from "./core.ts";
 import { useEffect } from "./core.ts";
 import { ssrIsland, renderIsland, click, flush } from "@z/runtime/testing";
 import { setLocationPathname } from "@z/runtime/testing/parity";
-import { setSsrPathname } from "@z/runtime/ssr-env";
+import { setSsrPathname, setUrlPathPrefix, getUrlPathPrefix } from "@z/runtime/ssr-env";
 
 const Home = () =>
   h("div", { "data-view": "home" },
@@ -2156,3 +2156,94 @@ describe("Link outside a Router (#23)", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Issue #26 — the site's url_path_prefix composes into the Router's base.
+//
+// The build SSRs at the PREFIXED pathname and the shell carries the prefix on
+// its hydration root, so both environments compute the same effective base and
+// the prerendered <a href> is the real, deployable URL. Preact's hydrate() does
+// not diff attributes, so anything less leaves the wrong href stuck in the DOM.
+// ---------------------------------------------------------------------------
+
+describe("url_path_prefix composition (#26)", () => {
+  test("setUrlPathPrefix normalizes every spelling of the config value", () => {
+    setUrlPathPrefix("myrepo");
+    expect(getUrlPathPrefix()).toBe("/myrepo");
+    setUrlPathPrefix("/myrepo/");
+    expect(getUrlPathPrefix()).toBe("/myrepo");
+    setUrlPathPrefix("/myrepo");
+    expect(getUrlPathPrefix()).toBe("/myrepo");
+    setUrlPathPrefix("");
+    expect(getUrlPathPrefix()).toBe("");
+  });
+
+  test("SSR: the prefix reaches <Link> hrefs and the route still matches", () => {
+    setUrlPathPrefix("/myrepo");
+    try {
+      const html = ssrIsland(App, {}, { pathname: "/myrepo/app/" });
+      // Matched at the FULL pathname the browser will actually have...
+      expect(html).toContain('data-view="home"');
+      // ...and the anchor is the real deployable URL, not "/app/booking".
+      expect(html).toContain('href="/myrepo/app/booking"');
+      expect(html).not.toContain('href="/app/booking"');
+    } finally {
+      setUrlPathPrefix("");
+    }
+  });
+
+  test("SSR with no prefix is unchanged", () => {
+    setUrlPathPrefix("");
+    const html = ssrIsland(App, {}, { pathname: "/app/" });
+    expect(html).toContain('href="/app/booking"');
+    expect(html).not.toContain("/myrepo");
+  });
+
+  test("client: a soft-nav pushes the PREFIXED url, so a hard refresh still resolves", async () => {
+    setUrlPathPrefix("/myrepo");
+    setLocationPathname("/myrepo/app/");
+    try {
+      const r = renderIsland(App, {}, { mode: "render", pathname: "/myrepo/app/" });
+      await flush();
+      expect(r.html()).toContain('data-view="home"');
+      expect((r.get('[data-testid="go"]') as HTMLAnchorElement).getAttribute("href"))
+        .toBe("/myrepo/app/booking");
+      await click(r.get('[data-testid="go"]'));
+      await flush();
+      expect(window.location.pathname).toBe("/myrepo/app/booking");
+      expect(r.html()).toContain('data-view="booking"');
+      r.unmount();
+    } finally {
+      setUrlPathPrefix("");
+      setLocationPathname("/app/");
+    }
+  });
+
+  test("mountSpa reads the prefix off the shell's hydration root", () => {
+    setUrlPathPrefix("");
+    const root = document.createElement("div");
+    root.id = "z-spa-root-prefix-probe";
+    root.setAttribute("data-z-prefix", "/myrepo");
+    document.body.appendChild(root);
+    try {
+      mountSpa(() => h("div", null, "x"), "#z-spa-root-prefix-probe");
+      expect(getUrlPathPrefix()).toBe("/myrepo");
+    } finally {
+      root.remove();
+      setUrlPathPrefix("");
+    }
+  });
+
+  test("mountSpa on a shell with no data-z-prefix clears a stale prefix", () => {
+    setUrlPathPrefix("/stale");
+    const root = document.createElement("div");
+    root.id = "z-spa-root-noprefix-probe";
+    document.body.appendChild(root);
+    try {
+      mountSpa(() => h("div", null, "x"), "#z-spa-root-noprefix-probe");
+      expect(getUrlPathPrefix()).toBe("");
+    } finally {
+      root.remove();
+      setUrlPathPrefix("");
+    }
+  });
+});

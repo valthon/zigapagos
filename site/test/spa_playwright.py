@@ -32,15 +32,16 @@ def main() -> int:
         # Mark the document. A real navigation discards it; a soft one does not.
         page.evaluate("() => { window.__zp_marker = 'alive'; }")
 
-        # The nav's <a href> is a KNOWN, disclosed product gap: @z/runtime's
-        # Router doesn't thread url_path_prefix into Link's href, so the
-        # rendered attribute is base-relative ("/demos/app/guides"), not
-        # prefixed ("/zigapagos/demos/app/guides") — see demo/app.spa.tsx's
-        # "KNOWN LIMITATION" comment and site/test/build.sh's matching
-        # assertion. Do NOT match on the full prefixed href here; matching on
-        # the suffix is what actually exists in the DOM, and it's the click
-        # handler (not the attribute) that resolves the real destination.
-        page.click('a[href$="/demos/app/guides"]')
+        # Match the FULL prefixed href, not a suffix. This used to be a
+        # deliberate suffix match, because the Router had no notion of
+        # url_path_prefix and the rendered attribute was base-relative
+        # ("/demos/app/guides") while only the click handler knew the real
+        # destination. Issue #26 composes the prefix into the Router's base, so
+        # the attribute in the live DOM is the deployed address — and asserting
+        # it exactly is what proves the SSR'd markup and the hydrated DOM agree
+        # (Preact's hydrate() never repairs an attribute, so a mismatch here
+        # would be permanent and invisible to a suffix match).
+        page.click('a[href="/zigapagos/demos/app/guides"]')
         page.wait_for_function(
             "() => location.pathname.endsWith('/demos/app/guides')", timeout=3000
         )

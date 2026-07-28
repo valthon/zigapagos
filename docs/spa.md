@@ -315,7 +315,10 @@ Each shell is a complete HTML document that:
 - Includes the import map (mapping `@z/runtime` to the shared runtime bundle)
 - Includes the `data-z-flags` JSON data block when the SPA declares [`spa.flags`](#feature-flag-defaults-spaflags)
 - Includes `<link rel="modulepreload">` hints for the runtime and SPA bundle
-- Includes the mount root `<div id="z-spa-root">` (where the React tree hydrates)
+- Includes the mount root `<div id="z-spa-root">` (where the React tree hydrates) — carrying a
+  `data-z-prefix` attribute when the site has a `url_path_prefix`, so `mountSpa` can compose the
+  router's base identically to what the build's SSR pass used (see [Sites served under a path
+  prefix](#sites-served-under-a-path-prefix)); absent on an unprefixed site
 - Includes the `mountSpa` boot code to start the hydration
 
 ### 5. Emits artifacts
@@ -386,6 +389,50 @@ Resolution rules (`resolveHref(to, base)`, exported for reuse/tests):
 Resolution is **always applied** — an already-base-prefixed path is *not*
 deduped: `<Link href="/app/booking">` under base `/app` targets
 `/app/app/booking`, because `/app/booking` might be a legitimate in-app path.
+
+#### Sites served under a path prefix
+
+The router's **effective base is `url_path_prefix + spa.base`** — composed
+inside `<Router>`, never by the author. Nothing at a call site changes: you
+still write `base={spa.base}` and still author every `href`/`to`/`redirect`
+base-relative exactly as above.
+
+`url_path_prefix` (the site's `zigapagos.ziggy` setting, e.g. a GitHub Pages
+project site's `/myrepo`) can't be detected at runtime and folded in
+client-side: Preact's `hydrate()` does not diff element **attributes** on its
+first pass, so an `<a href>` the SSR pass and the first client render
+disagree about is left wrong in the DOM permanently. The prefix therefore has
+to reach the build's SSR pass itself, not just the browser.
+
+It gets there over two build-controlled channels that cannot disagree with
+each other:
+
+- The build SSRs each route at the **prefixed** pathname and sends the
+  prefix to the render sidecar as a `"prefix"` field on the NDJSON render
+  request (alongside `"pathname"`).
+- The shell carries the same prefix to the browser as a `data-z-prefix`
+  attribute on the `#z-spa-root` hydration root, which `mountSpa` reads
+  before the first render. The attribute rides on the hydration root
+  specifically: hydration renders *into* that element, so its own attributes
+  are never diffed away, and putting it there leaves the inline boot script
+  byte-unchanged, so a strict-CSP `script-src` hash (see [Content Security
+  Policy](#content-security-policy-strict-csp)) does not churn.
+
+What changes observably on a prefixed deploy: prerendered `<a href>` values
+are the real deployable URLs and work **without JavaScript**; a soft
+navigation now pushes the prefixed URL, so a subsequent hard refresh
+resolves instead of 404ing; and `useLocation().pathname` under SSR now
+agrees with what the browser reports. **A site with no `url_path_prefix` is
+unaffected, byte for byte** — the composition is a no-op.
+
+Two limitations, stated as deliberate scope, not oversights:
+
+- `<base>/routing-manifest.json` and the nginx/apache/zigbase [host-config
+  emitters](#deploy-targets) stay **unprefixed**. A path-prefixed deploy
+  today means GitHub Pages, which consumes none of them.
+- Island-page SSR pathnames (`host.pathname()`) are still unprefixed on a
+  prefixed site — the same underlying gap, tracked separately from the SPA
+  router fix documented here.
 
 > **Migration (prerelease breaking change).** Previously `navigate(to)`
 > pushed `to` **verbatim** and `<Link href>` needed the full base-prefixed
