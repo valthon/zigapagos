@@ -64,6 +64,10 @@ test("describe fails loudly when a dynamic route lacks a skeleton, naming the ro
   expect(res.routes).toBeUndefined();
   expect(res.error).toContain('"/club/:id"');
   expect(res.error).toContain("skeleton");
+  // The message must name the CONCRETE pathname the build will actually SSR
+  // for this route (params substituted with "_"), not just the pattern —
+  // that's the datum an author needs to reproduce the mismatch (issue #33).
+  expect(res.error).toContain('"/club/_"');
 });
 
 // --- staticPaths (getStaticPaths parity) ----------------------------------

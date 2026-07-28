@@ -590,6 +590,19 @@ function assertValidRedirects(routes: RouteDef[], prefix = ""): void {
 }
 
 /**
+ * The BASE-RELATIVE pathname the build's SSR pass uses for a dynamic route's
+ * full path: every `:param`/`*` segment substituted with `"_"`, independent of
+ * any real params (mirrors `substituteParams` in `src/spa.zig`, which prepends
+ * the SPA's `base` — unknown here, hence "base-relative"). Used only to NAME
+ * the pathname in the no-skeleton diagnostic below, so an author sees the URL
+ * the build will actually SSR instead of re-deriving it from the substitution
+ * rule in their head.
+ */
+function ssrPathnameFor(full: string): string {
+  return "/" + splitSegs(full).map((seg) => (seg === "*" || seg.startsWith(":")) ? "_" : seg).join("/");
+}
+
+/**
  * The async superset of `flattenLeafPaths` the sidecar's `describe` calls:
  * flattens the route tree AND resolves each dynamic leaf's `staticPaths`
  * hook into concrete in-app paths. `staticPaths` on a static route is a
@@ -641,10 +654,11 @@ export async function describeRoutes(routes: RouteDef[]): Promise<LeafRouteMeta[
     // chain (whose own leaf is held to this rule instead).
     if (dynamic && route.skeleton == null && route.redirect === undefined) {
       throw new Error(
-        `dynamic route ${JSON.stringify(full)} declares no skeleton — its SSR (params ` +
-          `substituted with "_") differs from the first client render, which breaks hydration. ` +
-          `Give the route a param-independent \`skeleton\` component, or set \`skeleton: false\` ` +
-          `to assert the component is hydration-stable without one.`,
+        `dynamic route ${JSON.stringify(full)} declares no skeleton — the build SSRs its shell at ` +
+          `the base-relative path ${JSON.stringify(ssrPathnameFor(full))} (every :param and * ` +
+          `segment substituted with "_"), so its SSR output differs from the first client render, ` +
+          `which breaks hydration. Give the route a param-independent \`skeleton\` component, or ` +
+          `set \`skeleton: false\` to assert the component is hydration-stable without one.`,
       );
     }
     const meta: LeafRouteMeta = { path: full, dynamic, hasSkeleton: !!route.skeleton };
