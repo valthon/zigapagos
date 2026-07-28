@@ -10,35 +10,45 @@
 # cost to run the script in CI, so the trade-off can be re-checked rather than
 # re-litigated from scratch.
 #
-# WAS 14 ROWS, THEN 3, NOW 2. The eleven non-browser examples/tsx-site/test scripts are
-# run by ci.yml's e2e-dev-loop job; site/test/build.sh is now run by pages.yml, between
-# the site build and the artifact upload, which is the placement its row here argued
-# for. Both are gone from this file because a row for a CI-run script is the stale-doc
-# defect the gate exists to catch, and script-coverage.sh fails on one. What is left is
-# the two that need a browser.
-
-# --- Needs a browser CI has never installed -----------------------------------------
-# Both drive real Chromium via python3 + playwright. No workflow installs either, and
-# `git grep playwright -- .github/ tests/` is empty. Adopting these means a
-# `playwright install` step (~150MB) on top of the runtime cost below — and note the
-# helpers launch with `channel="chrome"`, so it has to install Google Chrome, not
-# Playwright's bundled chromium.
+# ---------------------------------------------------------------------------------
+# THE INVENTORY IS EMPTY. WAS 14 ROWS, THEN 3, NOW 0 — every test script in this
+# repository is run by CI. The file stays because the GATE is the point, not the list:
+# script-coverage.sh reads it on every run, and an empty inventory is the state it
+# exists to defend, not a reason to delete it. Where the fourteen went:
 #
-# WHERE THEY SHOULD EVENTUALLY RUN: not the PR path. A separate workflow on
-# `schedule:` (nightly) plus `workflow_dispatch:`, with its own checkout, mise setup,
-# `playwright install --with-deps chrome`, and the examples/tsx-site build — roughly
-# 265s cold build + ~150MB browser install + ~245s of scripts, call it 9-10 minutes.
-# Nightly is the right cadence because what they catch is a real-browser regression in
-# hydration or runtime slicing, which arrives with a runtime/src change, not with an
-# arbitrary PR — and because a browser job on every PR is the kind of cost that gets
-# switched off six weeks later. workflow_dispatch is there so anyone touching
-# runtime/src can run it on demand instead of waiting for the night.
-examples/tsx-site/test/hydrate.sh      124.6s, Playwright. Island hydration + interactivity + nested-slot adopt-hydration + npm-compat on ONE Preact. SOURCE-OF-TRUTH caveat: src/cli/init_from_astro.zig:845 writes a de-repo'd copy of this file into every generated consumer project, and only the emitted string is unit-tested — drift here ships to consumers.
-examples/tsx-site/test/spa_slice.sh    119.6s, Playwright, and it `rm -rf .zig-cache zig-out` first — so it forces a FULL cold rebuild and destroys the warm cache for anything sequenced after it. That is a second, independent reason it cannot join e2e-dev-loop's list: that step exists to reuse a warm consumer build, and this script deletes it. Per-deployable runtime slicing: separation, size, fallback, one-Preact hydration.
-
-# --- Related gap, deliberately not covered by this file --------------------------------
-# The eight *_playwright.py helpers under examples/tsx-site/test/ that no .sh invokes at
-# all (spa, spa_csp, spa_guards, spa_nested, spa_nested_guarded, spa_reload, spa_scroll,
-# spa_split) are a distinct problem: they are documented as manually run, and they are
-# NOT in this file because it inventories .sh test scripts. They belong in the same
-# scheduled browser workflow the two rows above want. Worth its own pass.
+#   11  the non-browser examples/tsx-site/test scripts -> ci.yml's e2e-dev-loop job,
+#       on a consumer build that job already pays for (~49s for all eleven).
+#    1  site/test/build.sh -> pages.yml, between `Build site` and `Upload artifact`,
+#       so a failed assertion fails the build job and nothing is deployed. Nearly free
+#       there (five greps over a tree that workflow already built; measured 1.7s warm)
+#       and ~120s anywhere else, because site/ is a third consumer project with its own
+#       .zig-cache that no ci.yml job warms.
+#    2  examples/tsx-site/test/{hydrate,spa_slice}.sh -> browser-e2e.yml, a nightly
+#       `schedule:` + `workflow_dispatch:` workflow that installs Google Chrome and runs
+#       each script on its own matrix runner (own runner because spa_slice.sh opens by
+#       `rm -rf`ing .zig-cache/zig-out, so the two cannot share a build). Scheduled
+#       rather than PR-gating because ~125s each on top of a ~265s cold consumer build
+#       is not a per-PR cost, and because what they catch — a real-browser hydration or
+#       runtime-slicing regression — arrives with a runtime/src change or a preact bump,
+#       unattended.
+#
+# TWO RESIDUAL GAPS, recorded here because nothing else in the tree would say them:
+#
+#  1. pages.yml triggers on push to main and manual dispatch only. site/test/build.sh
+#     therefore gates the DEPLOY, not the PR: a change that breaks one of its five
+#     assertions merges green and is caught when the site is next deployed. That is the
+#     accepted cost of the ~2s placement over a ~120s one on the PR path, and it is a
+#     real reduction either way — before this the assertions ran nowhere at all.
+#
+#  2. Eight *_playwright.py helpers under examples/tsx-site/test/ are still invoked by
+#     nothing at all (spa, spa_csp, spa_guards, spa_nested, spa_nested_guarded,
+#     spa_reload, spa_scroll, spa_split). Wiring the two .sh scripts above changed
+#     nothing for them: hydrate.sh and spa_slice.sh each invoke their OWN helper and no
+#     others, so browser-e2e.yml covers exactly 2 of the 10. They are not rows in this
+#     file because it inventories .sh test scripts, and they are documented as manually
+#     run. They belong in browser-e2e.yml as further matrix rows, but each needs a .sh
+#     driver written first — that is its own pass, not a line here.
+#
+# ADDING A ROW IS A REGRESSION. If a new script cannot be run in CI, say here what it
+# would cost and what would have to change for that to stop being true.
+# ---------------------------------------------------------------------------------

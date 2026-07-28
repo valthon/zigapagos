@@ -1,0 +1,248 @@
+# Real-browser e2e: the two examples/tsx-site scripts that drive Chromium.
+#
+# What runs here
+# --------------
+#   examples/tsx-site/test/hydrate.sh     island hydration + interactivity +
+#                                         nested-slot adopt-hydration + npm-compat,
+#                                         all on ONE Preact instance
+#   examples/tsx-site/test/spa_slice.sh   per-deployable runtime slicing:
+#                                         separation, size, shared-runtime
+#                                         fallback, and one-Preact hydration of
+#                                         each sliced SPA
+#
+# Both build examples/tsx-site and then hand zig-out/site to a python3 +
+# Playwright helper that loads it in a real browser. Everything else in this
+# repository asserts over emitted BYTES — greps of HTML, bundle contents, import
+# maps. That catches an emitter regression but it cannot catch the class of bug
+# these two exist for: markup that is correct on disk and still fails to hydrate,
+# a second Preact copy sneaking in through a bundle, a sliced runtime that loads
+# and then throws. Only a browser can see those.
+#
+# Why scheduled, and NOT a PR gate
+# --------------------------------
+# Three reasons, in order of weight:
+#
+#  1. COST. Each script is ~125s of assertions on top of a ~265s cold consumer
+#     build (examples/tsx-site compiles zigapagos as a path dependency), plus a
+#     ~150MB browser install this repository has never had in CI. Putting that on
+#     every pull request roughly doubles the run for a signal almost no PR moves.
+#     A browser job on the PR path is also the kind of cost that gets switched
+#     off six weeks later, and a deleted check catches nothing at all.
+#
+#  2. WHAT THEY CATCH ARRIVES UNATTENDED. A real-browser hydration or
+#     runtime-slicing regression comes from a change under runtime/src or from a
+#     dependency bump (this repo takes preact updates via dependabot), not from
+#     an arbitrary PR. Nightly finds it within a day of landing, which is the
+#     resolution that actually matters for a regression nobody is watching for.
+#
+#  3. FLAKE BLAST RADIUS. Browser automation is the flakiest thing in any suite.
+#     Red here is a notification; red on the PR path is everyone's merge blocked
+#     on a timing artifact, and the fastest way to teach a team to ignore a check.
+#
+# `workflow_dispatch` is the escape hatch: anyone touching runtime/src can run
+# this on their branch on demand instead of waiting for the night. That is the
+# intended workflow for a runtime change, not an afterthought.
+#
+# Note GitHub disables `schedule` triggers on a repository with no commit
+# activity for 60 days; if this stops running on a quiet repo, re-enable it from
+# the Actions tab rather than assuming it passed.
+name: "Browser e2e (nightly)"
+
+on:
+  schedule:
+    # Daily at 04:27 UTC. Off-the-hour deliberately: cron entries on the hour
+    # queue behind the whole platform's hourly stampede. Also an hour clear of
+    # smoke-published.yml's 05:43 so the two nightlies do not contend.
+    - cron: "27 4 * * *"
+  workflow_dispatch:
+
+# A manual dispatch should not race the nightly run, but neither should it kill
+# it — a cancelled scheduled run reads as a failure nobody investigates. Same
+# reasoning as smoke-published.yml, and deliberately unlike ci.yml, which DOES
+# cancel in progress because a superseded PR run is genuinely worthless.
+concurrency:
+  group: browser-e2e-${{ github.ref }}
+  cancel-in-progress: false
+
+# Read-only: this workflow checks out, builds and runs a browser against local
+# output. It writes no release, comment, commit or deployment.
+permissions:
+  contents: read
+
+jobs:
+  browser:
+    name: "Browser e2e — ${{ matrix.label }}"
+    runs-on: ubuntu-latest
+    # ~265s cold consumer build + ~150MB browser install + ~125s of assertions,
+    # call it 8 minutes; 25 leaves room for a slow runner and a cold package
+    # cache without letting a hung browser burn an hour.
+    timeout-minutes: 25
+    strategy:
+      # Report both scripts' results even when one is broken. Knowing that
+      # hydration is fine and only runtime slicing is red — or the reverse — is
+      # most of the diagnosis, and these two share no code path.
+      fail-fast: false
+      matrix:
+        include:
+          - label: island hydration
+            script: examples/tsx-site/test/hydrate.sh
+          - label: runtime slicing
+            script: examples/tsx-site/test/spa_slice.sh
+
+    # ONE SCRIPT PER RUNNER, and this is the load-bearing detail of the whole
+    # file rather than a stylistic choice.
+    #
+    # spa_slice.sh opens with `rm -rf .zig-cache zig-out` inside
+    # examples/tsx-site — on purpose, because it asserts on the SIZES and
+    # CONTENTS of freshly sliced runtime bundles and a stale bundle would let it
+    # pass against code that no longer exists. The consequence is that it
+    # destroys the warm consumer build anything sequenced before it just paid
+    # for, and forces anything sequenced after it to rebuild from cold.
+    #
+    # That is also exactly why the pair could not simply join ci.yml's
+    # e2e-dev-loop step, whose entire premise is reusing one warm consumer build.
+    #
+    # A matrix makes the hazard structurally impossible instead of merely
+    # avoided: each leg is its own runner with its own workspace, so there is
+    # nothing for the `rm -rf` to destroy and no ordering to get wrong. It costs
+    # nothing to do it this way — the two scripts CANNOT share a build (the
+    # deletion is the point of one of them), so a shared runner would buy no
+    # reuse and only serialize ~8 minutes into ~13.
+    #
+    # If a third browser script is ever added, give it its own matrix row. Do not
+    # sequence it in a step beside spa_slice.sh.
+    env:
+      # --- Zig package cache ---
+      # Restore-only, sharing ci.yml's key: build-test owns the write side there
+      # and a second writer would just lose the reservation race. Keeping the
+      # third-party git hosts (codeberg.org, code.hexops.org, ...) off the
+      # critical path matters more here than anywhere, because a scheduled run
+      # that fails on a dependency fetch at 04:27 is a red morning nobody can
+      # reproduce.
+      ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
+      SCRIPT: ${{ matrix.script }}
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Not depth-1: build/config.zig bakes `git describe --tags` into the
+          # binary, and both scripts additionally use `git ls-files --deleted` +
+          # `git restore` to undo the root build.zig's configure-time deletion of
+          # the committed tests/**/snapshot baselines. Same setting every e2e job
+          # in ci.yml uses.
+          fetch-depth: 0
+
+      - name: Setup toolchain (mise — zig 0.16.0 + bun 1.2)
+        uses: jdx/mise-action@v4
+        with:
+          cache: true
+
+      # See ci.yml's build-test job for the full reasoning: mise-action puts a
+      # SHIM directory on PATH and a shim resolves its version from the CURRENT
+      # DIRECTORY's mise config. Both scripts shell out through `mise exec` from
+      # examples/tsx-site, and the island sidecar is spawned with a generated
+      # site as its cwd, where mise.toml does not apply. Without a global default
+      # the shim aborts with "No version is set for shim: bun".
+      # Keep these in lockstep with mise.toml.
+      - name: Pin tool versions globally (shims must resolve outside the repo)
+        run: |
+          mise use -g zig@0.16.0 bun@1.2
+          ( cd "$(mktemp -d)" && bun --version && zig version )
+
+      - name: Get Zig version
+        id: zig-version
+        run: echo "version=$(zig version)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Zig package cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ github.workspace }}/.zig-global-cache
+          key: zig-pkg-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-${{ hashFiles('**/build.zig.zon') }}
+          restore-keys: |
+            zig-pkg-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-
+
+      - name: Fetch dependencies (with retries)
+        run: |
+          for i in 1 2 3; do
+            if zig build --fetch=all; then
+              exit 0
+            fi
+            echo "::warning::zig build --fetch=all attempt $i failed; retrying in 20s..."
+            sleep 20
+          done
+          echo "::error::all dependency fetch attempts failed"
+          exit 1
+
+      - name: Install runtime dependencies (the sidecar the e2e spawns needs them)
+        working-directory: runtime
+        run: bun install --frozen-lockfile
+
+      # THE BROWSER. Read the helpers before changing this command: all ten
+      # *_playwright.py files under examples/tsx-site/test/ launch with
+      #
+      #     p.chromium.launch(channel="chrome")
+      #
+      # A CHANNEL, not the bundled build. `playwright install chromium` — the
+      # obvious command, and the one this workflow was first sketched with —
+      # downloads Playwright's own Chromium revision and satisfies none of them:
+      # the run dies at launch with "Chromium distribution 'chrome' is not found
+      # at /opt/google/chrome/chrome", after having already paid for the whole
+      # consumer build. `chrome` installs Google Chrome stable itself, which is
+      # what the channel resolves to. `--with-deps` pulls the shared libraries a
+      # headless browser needs on a bare runner image (it shells out to apt, so
+      # it needs the passwordless sudo GitHub-hosted runners have).
+      #
+      # The venv is not ceremony either. The scripts invoke `mise exec --
+      # python3`, and mise.toml declares only zig and bun, so that resolves to
+      # whatever python3 is first on PATH. Ubuntu's system python3 is
+      # PEP 668 externally-managed and refuses `pip install` outright. A venv
+      # exported through GITHUB_PATH is prepended ahead of mise's shim directory,
+      # so the later steps' `python3` IS this interpreter, with playwright
+      # importable — no --break-system-packages, and no dependence on which
+      # python the runner image happens to ship.
+      - name: Install Playwright + Google Chrome
+        run: |
+          set -euo pipefail
+          python3 -m venv "${RUNNER_TEMP}/pw"
+          "${RUNNER_TEMP}/pw/bin/python" -m pip install --upgrade pip
+          "${RUNNER_TEMP}/pw/bin/python" -m pip install playwright
+          echo "${RUNNER_TEMP}/pw/bin" >> "$GITHUB_PATH"
+          "${RUNNER_TEMP}/pw/bin/python" -m playwright install --with-deps chrome
+
+      # Fails in seconds on a broken browser install instead of after the ~265s
+      # consumer build the next step pays for. It launches through the exact path
+      # the helpers do — `mise exec -- python3` for the interpreter resolution,
+      # `channel="chrome"` for the browser — so a green check here means the two
+      # things this workflow adds over ci.yml are both actually present.
+      - name: Verify the browser launches the way the helpers launch it
+        run: |
+          set -euo pipefail
+          mise exec -- python3 - <<'PY'
+          import sys
+          from playwright.sync_api import sync_playwright
+          print("interpreter:", sys.executable)
+          with sync_playwright() as p:
+              b = p.chromium.launch(channel="chrome")
+              print("PASS: launched", b.version)
+              b.close()
+          PY
+
+      - name: Run ${{ matrix.script }}
+        run: |
+          set -euo pipefail
+          # A renamed or deleted script must fail loudly here rather than vanish
+          # from the suite. tests/meta/script-coverage.sh catches it too — the
+          # rename shows up as a script nothing runs — but only on the next run
+          # of that gate, and this workflow runs nightly, so say it here as well.
+          if [ ! -f "$SCRIPT" ]; then
+            echo "::error::$SCRIPT is gone — this matrix and tests/meta/unrun-scripts.txt must move together, or the script stops running entirely"
+            exit 1
+          fi
+          bash "$SCRIPT"
+
+      - name: Record result in the run summary
+        if: always()
+        run: |
+          printf -- '- `%s` (%s): **%s**\n' \
+            "$SCRIPT" "${{ matrix.label }}" "${{ job.status }}" \
+            >> "$GITHUB_STEP_SUMMARY"
