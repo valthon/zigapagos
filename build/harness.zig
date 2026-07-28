@@ -88,7 +88,7 @@ pub fn e2e(
     // The plain zigapagos binary suffices: `zigapagos e2e` only orchestrates
     // (no SSR), so unlike website()/serve() no from-source island registry is
     // needed even for island/SPA sites.
-    const run_zigapagos = switch (opts.zigapagos) {
+    const run_zigapagos = switch (api.resolveZigapagos(project, opts)) {
         .source => project.addRunArtifact(zigapagos_dep.artifact("zigapagos")),
         .path => |path| project.addSystemCommand(&.{path orelse "zigapagos"}),
     };
@@ -215,7 +215,7 @@ pub fn dev(
     // (watch + spawn the rebuild command + boot zigbase); the rebuild command
     // is the project's own `zig build`, which compiles the from-source
     // island/SPA registry itself when needed.
-    const run_zigapagos = switch (opts.zigapagos) {
+    const run_zigapagos = switch (api.resolveZigapagos(project, opts)) {
         .source => project.addRunArtifact(zigapagos_dep.artifact("zigapagos")),
         .path => |path| project.addSystemCommand(&.{path orelse "zigapagos"}),
     };

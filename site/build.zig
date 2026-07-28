@@ -14,6 +14,14 @@ pub fn build(b: *std.Build) void {
     };
 
     const site = zigapagos.website(b, .{
+        // Debug rather than the .ReleaseFast default. This is a build-time tool
+        // that runs for well under a second on this site; ReleaseFast costs 58s
+        // to link and 96s for a cold build, against 29s for Debug — measured
+        // with `zig build --summary all`. Debug also turns on the safety checks
+        // (bounds, overflow, UB), which is what you want from the binary your
+        // tests exercise. Published release artifacts are unaffected: release.zig
+        // hardcodes .ReleaseFast for `zig build release`.
+        .debug = .{ .optimize = .Debug },
         .islands = islands,
         .spas = spas,
         .not_found = "app",
@@ -24,6 +32,14 @@ pub fn build(b: *std.Build) void {
 
     const serve_step = b.step("serve", "Start the Zigapagos development server");
     const serve_run = zigapagos.serve(b, .{
+        // Debug rather than the .ReleaseFast default. This is a build-time tool
+        // that runs for well under a second on this site; ReleaseFast costs 58s
+        // to link and 96s for a cold build, against 29s for Debug — measured
+        // with `zig build --summary all`. Debug also turns on the safety checks
+        // (bounds, overflow, UB), which is what you want from the binary your
+        // tests exercise. Published release artifacts are unaffected: release.zig
+        // hardcodes .ReleaseFast for `zig build release`.
+        .debug = .{ .optimize = .Debug },
         .islands = islands,
         .spas = spas,
     });

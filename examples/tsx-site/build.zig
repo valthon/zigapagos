@@ -29,6 +29,14 @@ pub fn build(b: *std.Build) void {
     };
 
     const site = zigapagos.website(b, .{
+        // Debug rather than the .ReleaseFast default. This is a build-time tool
+        // that runs for well under a second on this site; ReleaseFast costs 58s
+        // to link and 96s for a cold build, against 29s for Debug — measured
+        // with `zig build --summary all`. Debug also turns on the safety checks
+        // (bounds, overflow, UB), which is what you want from the binary your
+        // tests exercise. Published release artifacts are unaffected: release.zig
+        // hardcodes .ReleaseFast for `zig build release`.
+        .debug = .{ .optimize = .Debug },
         .islands = islands,
         .spas = spas,
         // Explicit 404 owner: the universal 404.html reuses the
@@ -48,6 +56,14 @@ pub fn build(b: *std.Build) void {
     // refresh the browser after a rebuild.
     const dev_step = b.step("dev", "Serve the site with ZigBase, rebuilding on change");
     const dev_run = zigapagos.dev(b, .{
+        // Debug rather than the .ReleaseFast default. This is a build-time tool
+        // that runs for well under a second on this site; ReleaseFast costs 58s
+        // to link and 96s for a cold build, against 29s for Debug — measured
+        // with `zig build --summary all`. Debug also turns on the safety checks
+        // (bounds, overflow, UB), which is what you want from the binary your
+        // tests exercise. Published release artifacts are unaffected: release.zig
+        // hardcodes .ReleaseFast for `zig build release`.
+        .debug = .{ .optimize = .Debug },
         .islands = islands,
         .spas = spas,
         .output_path = "site",
@@ -58,6 +74,14 @@ pub fn build(b: *std.Build) void {
     // DEPRECATED (use `zig build dev`): the bundled live server.
     const serve_step = b.step("serve", "Start the Zigapagos live server (DEPRECATED: use 'zig build dev')");
     const serve_run = zigapagos.serve(b, .{
+        // Debug rather than the .ReleaseFast default. This is a build-time tool
+        // that runs for well under a second on this site; ReleaseFast costs 58s
+        // to link and 96s for a cold build, against 29s for Debug — measured
+        // with `zig build --summary all`. Debug also turns on the safety checks
+        // (bounds, overflow, UB), which is what you want from the binary your
+        // tests exercise. Published release artifacts are unaffected: release.zig
+        // hardcodes .ReleaseFast for `zig build release`.
+        .debug = .{ .optimize = .Debug },
         .islands = islands,
         .spas = spas,
     });

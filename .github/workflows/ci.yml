@@ -4,6 +4,12 @@ on:
   push:
     branches:
       - main
+  # Guarantees the macOS leg a cadence even in a week with no pushes to main —
+  # see the matrix note below for why it no longer runs per-PR. Off-the-hour and
+  # clear of browser-e2e.yml (04:27) and smoke-published.yml (05:43).
+  schedule:
+    - cron: "11 3 * * *"
+  workflow_dispatch:
 concurrency:
   # Cancels pending runs when a PR gets updated.
   group: ${{ github.head_ref || github.run_id }}-${{ github.actor }}
@@ -67,7 +73,139 @@ jobs:
   # single-threaded compile guard, all eleven Zig unit-test steps, the Bun
   # suite, and the API contract-drift gate. This is the only matrixed job —
   # everything below it is Linux-only, exactly as it was in the monolith.
+  # Compile the generator ONCE per platform, and write the cache every other
+  # job reads.
+  #
+  # Before this job existed, all four Zig jobs compiled the same tree
+  # independently. The cache they shared was saved immediately after
+  # `zig build --fetch=all`, so it held downloaded packages and nothing
+  # compiled — measured on this repo's own site with `--summary all`, that is
+  # 653 compile steps, 632 of them tree-sitter grammar objects across 82
+  # languages, plus a ~58s ReleaseFast link, repeated per job. For comparison
+  # the site's own build work (Bun bundles + host config) is 0.69s.
+  #
+  # Everything downstream `needs:` this job purely for the cache it leaves
+  # behind. Zig's cache is content-addressed, so a consumer does not need the
+  # exact key: a fallback hit on the `zig-build-<os>-<ver>-` prefix still reuses
+  # every object whose inputs are unchanged, which for a typical src/ edit is
+  # the whole dependency tree.
+  build-binary:
+    name: Build zigapagos (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS everywhere EXCEPT pull requests.
+        #
+        # It was the critical path by a wide margin — measured on run
+        # 30394314594, 333s against ubuntu's 145s, with every compile-heavy step
+        # 2-3x slower (snapshot tests 152s vs 80s, single-threaded check 86s vs
+        # 30s) and the Bun-sidecar suites 7x (50s vs 7s, a spawn cost macOS pays
+        # per fork/exec). Its run-to-run variance is also much wider: 227s, 327s,
+        # 333s across three runs where ubuntu sat at 190s, 185s, 145s.
+        #
+        # What it catches is platform-specific compile breakage, which is rare
+        # per-PR and still gated before anything ships: every push to main runs
+        # it, as does the nightly and a manual dispatch. The trade is that such a
+        # break is caught at merge rather than on the PR — deliberate, because
+        # halving every PR's feedback loop is worth more than catching a rare
+        # class one step earlier.
+        os: >-
+          ${{ github.event_name == 'pull_request'
+              && fromJSON('["ubuntu-latest"]')
+              || fromJSON('["ubuntu-latest", "macos-latest"]') }}
+    runs-on: ${{ matrix.os }}
+    env:
+      ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
+    steps:
+      - name: No autocrlf
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@v7
+
+      - name: Setup toolchain (mise — zig 0.16.0 + bun 1.2)
+        uses: jdx/mise-action@v4
+        with:
+          cache: true
+
+      - name: Pin tool versions globally (shims must resolve outside the repo)
+        run: mise use -g zig@0.16.0 bun@1.2
+
+      - name: Get Zig version
+        id: zig-version
+        run: echo "version=$(zig version)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Zig cache (compiled objects, then packages)
+        id: zig-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ github.workspace }}/.zig-global-cache
+          key: zig-build-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-${{ hashFiles('build.zig', 'build.zig.zon', 'build/**', 'src/**') }}
+          restore-keys: |
+            zig-build-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-
+            zig-pkg-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-
+
+      - name: Fetch dependencies (with retries)
+        run: |
+          for i in 1 2 3; do
+            if zig build --fetch=all; then
+              exit 0
+            fi
+            echo "::warning::zig build --fetch=all attempt $i failed; retrying in 20s..."
+            sleep 20
+          done
+          echo "::error::all dependency fetch attempts failed"
+          exit 1
+
+      # Saved after the FETCH and before the build, deliberately: a compile
+      # failure below still leaves downstream jobs a populated package cache
+      # rather than sending every one of them to the network. This preserves the
+      # property build-test's old save had. `continue-on-error` because losing
+      # the reservation race is not a build failure.
+      - name: Save Zig package cache
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ github.workspace }}/.zig-global-cache
+          key: zig-pkg-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-${{ hashFiles('**/build.zig.zon') }}
+
+      # Debug, matching what every downstream job actually compiles.
+      #
+      # This built ReleaseFast at first, justified as "what website() defaults
+      # consumers to". That justification died in the same PR: the consumer
+      # builds are now pinned to Debug, and `zig build test` / `check` /
+      # `test-*` always used Zig's Debug default. A different optimize mode is a
+      # different cache entry, so the warmed objects matched nothing downstream
+      # and this job was pure added latency — measured at +6 minutes of critical
+      # path with no downstream saving.
+      #
+      # If a ReleaseFast artifact is ever needed in CI, it belongs in a separate
+      # job that nothing blocks on; `zig build release` (build/release.zig) is
+      # already ReleaseFast for published binaries regardless.
+      - name: Build zigapagos
+        run: zig build
+
+      - name: Save Zig cache (now carrying compiled objects)
+        if: steps.zig-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ github.workspace }}/.zig-global-cache
+          key: ${{ steps.zig-cache.outputs.cache-primary-key }}
+
+      # THE reusable unit. Downstream jobs consume this binary, not the object
+      # cache: with it in place they never invoke the compiler at all, whereas a
+      # warm object cache only makes `zig build` cheap. Measured on this repo's
+      # site, cold: 23s for a source build, 2s with this binary and zero compile
+      # steps.
+      - name: Upload zigapagos binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: zigapagos-${{ runner.os }}
+          path: zig-out/bin/zigapagos
+          retention-days: 1
+          if-no-files-found: error
+
   build-test:
+    needs: build-binary
     name: Build + unit tests (${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -76,7 +214,10 @@ jobs:
         # compile on stable Zig 0.16.0 (os.windows lost OVERLAPPED/PAGE_READONLY);
         # upstream fixed this on Zig 0.17-dev. Re-add with the Zig 0.17 port at
         # the next upstream release-tag sync (see docs/ROADMAP.md fork policy).
-        os: [ubuntu-latest, macos-latest]
+        os: >-
+          ${{ github.event_name == 'pull_request'
+              && fromJSON('["ubuntu-latest"]')
+              || fromJSON('["ubuntu-latest", "macos-latest"]') }}
     runs-on: ${{ matrix.os }}
     env:
       # --- Zig package cache ---
@@ -152,14 +293,36 @@ jobs:
         id: zig-version
         run: echo "version=$(zig version)" >> "$GITHUB_OUTPUT"
 
-      - name: Restore Zig package cache
-        id: zig-pkg-cache
+      - name: Restore Zig cache (compiled objects, then packages)
+        id: zig-cache
         uses: actions/cache/restore@v6
         with:
           path: ${{ github.workspace }}/.zig-global-cache
-          key: zig-pkg-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-${{ hashFiles('**/build.zig.zon') }}
+          key: zig-build-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-${{ hashFiles('build.zig', 'build.zig.zon', 'build/**', 'src/**') }}
           restore-keys: |
+            zig-build-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-
             zig-pkg-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-
+
+      # Two mechanisms, one binary.
+      #
+      # `zig-out/bin/zigapagos` is where the shell scripts look — ten of them
+      # guard their build with `if [[ ! -x "$ZIGAPAGOS" ]]`, so a binary sitting
+      # there means they never call the compiler.
+      #
+      # `ZIGAPAGOS_BIN` covers the consumer builds those scripts drive
+      # (examples/tsx-site, and site/ over in pages.yml), which would otherwise
+      # compile the generator and its whole dependency tree per invocation.
+      # build/site.zig reads it and switches to `zigapagos = .path`.
+      - name: Download zigapagos binary
+        uses: actions/download-artifact@v4
+        with:
+          name: zigapagos-${{ runner.os }}
+          path: zig-out/bin
+
+      - name: Use the prebuilt zigapagos
+        run: |
+          chmod +x zig-out/bin/zigapagos
+          echo "ZIGAPAGOS_BIN=$GITHUB_WORKSPACE/zig-out/bin/zigapagos" >> "$GITHUB_ENV"
 
       - name: Fetch dependencies (with retries)
         run: |
@@ -172,21 +335,6 @@ jobs:
           done
           echo "::error::all dependency fetch attempts failed"
           exit 1
-
-      # Save immediately after a successful fetch, before build/tests, so a
-      # later test failure still leaves the cache populated. Skipped on an
-      # exact primary-key hit (the cache is already up to date).
-      #
-      # This is the ONLY job that writes the package cache — the e2e jobs below
-      # restore it read-only. They run concurrently with this one, so a second
-      # writer on the same key would just lose the reservation race and log a
-      # warning for no benefit.
-      - name: Save Zig package cache
-        if: steps.zig-pkg-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
-        with:
-          path: ${{ github.workspace }}/.zig-global-cache
-          key: ${{ steps.zig-pkg-cache.outputs.cache-primary-key }}
 
       # MUST precede the Zig test steps. Several Zig tests spawn the Bun island
       # sidecar, which imports preact-render-to-string from runtime/src —
@@ -274,6 +422,7 @@ jobs:
   # dependency — ~4.5 minutes apiece, and serial inside the script. This is the
   # run's critical path; it gets a runner to itself.
   e2e-astro-importer:
+    needs: build-binary
     name: Shell e2e — Astro importer
     runs-on: ubuntu-latest
     env:
@@ -310,14 +459,36 @@ jobs:
         id: zig-version
         run: echo "version=$(zig version)" >> "$GITHUB_OUTPUT"
 
-      # Restore-only: build-test owns the write side of this key.
-      - name: Restore Zig package cache
+      # Restore-only: build-binary owns both write sides of this key chain.
+      - name: Restore Zig cache (compiled objects, then packages)
         uses: actions/cache/restore@v6
         with:
           path: ${{ github.workspace }}/.zig-global-cache
-          key: zig-pkg-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-${{ hashFiles('**/build.zig.zon') }}
+          key: zig-build-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-${{ hashFiles('build.zig', 'build.zig.zon', 'build/**', 'src/**') }}
           restore-keys: |
+            zig-build-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-
             zig-pkg-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-
+
+      # Two mechanisms, one binary.
+      #
+      # `zig-out/bin/zigapagos` is where the shell scripts look — ten of them
+      # guard their build with `if [[ ! -x "$ZIGAPAGOS" ]]`, so a binary sitting
+      # there means they never call the compiler.
+      #
+      # `ZIGAPAGOS_BIN` covers the consumer builds those scripts drive
+      # (examples/tsx-site, and site/ over in pages.yml), which would otherwise
+      # compile the generator and its whole dependency tree per invocation.
+      # build/site.zig reads it and switches to `zigapagos = .path`.
+      - name: Download zigapagos binary
+        uses: actions/download-artifact@v4
+        with:
+          name: zigapagos-${{ runner.os }}
+          path: zig-out/bin
+
+      - name: Use the prebuilt zigapagos
+        run: |
+          chmod +x zig-out/bin/zigapagos
+          echo "ZIGAPAGOS_BIN=$GITHUB_WORKSPACE/zig-out/bin/zigapagos" >> "$GITHUB_ENV"
 
       - name: Fetch dependencies (with retries)
         run: |
@@ -353,6 +524,7 @@ jobs:
   # the only job that has already paid for it. See the second step for the
   # measurement and for why they are named rather than globbed.
   e2e-dev-loop:
+    needs: build-binary
     name: Shell e2e — dev loop + tsx-site e2e
     runs-on: ubuntu-latest
     env:
@@ -378,13 +550,36 @@ jobs:
         id: zig-version
         run: echo "version=$(zig version)" >> "$GITHUB_OUTPUT"
 
-      - name: Restore Zig package cache
+      # Restore-only: build-binary owns both write sides of this key chain.
+      - name: Restore Zig cache (compiled objects, then packages)
         uses: actions/cache/restore@v6
         with:
           path: ${{ github.workspace }}/.zig-global-cache
-          key: zig-pkg-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-${{ hashFiles('**/build.zig.zon') }}
+          key: zig-build-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-${{ hashFiles('build.zig', 'build.zig.zon', 'build/**', 'src/**') }}
           restore-keys: |
+            zig-build-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-
             zig-pkg-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-
+
+      # Two mechanisms, one binary.
+      #
+      # `zig-out/bin/zigapagos` is where the shell scripts look — ten of them
+      # guard their build with `if [[ ! -x "$ZIGAPAGOS" ]]`, so a binary sitting
+      # there means they never call the compiler.
+      #
+      # `ZIGAPAGOS_BIN` covers the consumer builds those scripts drive
+      # (examples/tsx-site, and site/ over in pages.yml), which would otherwise
+      # compile the generator and its whole dependency tree per invocation.
+      # build/site.zig reads it and switches to `zigapagos = .path`.
+      - name: Download zigapagos binary
+        uses: actions/download-artifact@v4
+        with:
+          name: zigapagos-${{ runner.os }}
+          path: zig-out/bin
+
+      - name: Use the prebuilt zigapagos
+        run: |
+          chmod +x zig-out/bin/zigapagos
+          echo "ZIGAPAGOS_BIN=$GITHUB_WORKSPACE/zig-out/bin/zigapagos" >> "$GITHUB_ENV"
 
       - name: Fetch dependencies (with retries)
         run: |
@@ -527,6 +722,7 @@ jobs:
   # glob and filtered by exclusion, so a script added under tests/<area>/
   # tomorrow runs here with no edit to this file.
   e2e-rest:
+    needs: build-binary
     name: Shell e2e — everything else
     runs-on: ubuntu-latest
     env:
@@ -558,13 +754,36 @@ jobs:
         id: zig-version
         run: echo "version=$(zig version)" >> "$GITHUB_OUTPUT"
 
-      - name: Restore Zig package cache
+      # Restore-only: build-binary owns both write sides of this key chain.
+      - name: Restore Zig cache (compiled objects, then packages)
         uses: actions/cache/restore@v6
         with:
           path: ${{ github.workspace }}/.zig-global-cache
-          key: zig-pkg-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-${{ hashFiles('**/build.zig.zon') }}
+          key: zig-build-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-${{ hashFiles('build.zig', 'build.zig.zon', 'build/**', 'src/**') }}
           restore-keys: |
+            zig-build-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-
             zig-pkg-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-
+
+      # Two mechanisms, one binary.
+      #
+      # `zig-out/bin/zigapagos` is where the shell scripts look — ten of them
+      # guard their build with `if [[ ! -x "$ZIGAPAGOS" ]]`, so a binary sitting
+      # there means they never call the compiler.
+      #
+      # `ZIGAPAGOS_BIN` covers the consumer builds those scripts drive
+      # (examples/tsx-site, and site/ over in pages.yml), which would otherwise
+      # compile the generator and its whole dependency tree per invocation.
+      # build/site.zig reads it and switches to `zigapagos = .path`.
+      - name: Download zigapagos binary
+        uses: actions/download-artifact@v4
+        with:
+          name: zigapagos-${{ runner.os }}
+          path: zig-out/bin
+
+      - name: Use the prebuilt zigapagos
+        run: |
+          chmod +x zig-out/bin/zigapagos
+          echo "ZIGAPAGOS_BIN=$GITHUB_WORKSPACE/zig-out/bin/zigapagos" >> "$GITHUB_ENV"
 
       - name: Fetch dependencies (with retries)
         run: |
