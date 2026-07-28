@@ -1,0 +1,64 @@
+---
+.title = "Overview",
+.description = "What Zigapagos is, how a build runs, and when to reach for it.",
+.date = @date("2026-07-27T00:00:00"),
+.author = "Zigapagos",
+.layout = "docs.shtml",
+.draft = false,
+.custom = { .slug = "overview" },
+---
+
+Zigapagos is a static site generator. It renders content and templates with a
+single native binary, and adds interactivity one component at a time using TSX
+islands that are server-rendered at build time and hydrated in the browser only
+where you ask for it.
+
+## The three inputs
+
+A Zigapagos project has three kinds of source file, and each is handled by a
+different part of the pipeline.
+
+**Content** lives in `content/` as SuperMD (`.smd`) — Markdown with Ziggy
+frontmatter and a few extensions. A file's frontmatter names the layout that
+renders it. A directory becomes a *section* when it contains an `index.smd`.
+
+**Layouts** live in `layouts/` as SuperHTML (`.shtml`). These are HTML templates
+with attribute-driven directives rather than a template language embedded in
+strings, which means an editor can check them as HTML. Layouts compose with
+`<extend template="base.shtml">` and `<super>`.
+
+**Components** live wherever you like as `.island.tsx`, and are declared in
+`build.zig`. They are ordinary TSX using the hooks exported by `@z/runtime`.
+
+## How a build runs
+
+The pass order is fixed and worth knowing, because it decides what a failure
+costs you:
+
+1. Config validation, content scan, parse, analyze.
+2. **SPA prerender** — this runs early on purpose. It is the pass that executes
+   your own code (the sidecar calls each `.spa.tsx`'s `describe` and
+   `staticPaths`) and it carries the spec validation. Running it before any page
+   is written means a bad SPA declaration aborts before the output tree has been
+   touched.
+3. Page render and emit.
+4. The props-check gate — every rendered island's resolved props are typechecked
+   against its exported `Props` type.
+5. Asset installs, last, because earlier passes bump refcounts the install phase
+   reads.
+
+## What it is not
+
+Zigapagos does not run your components on a server at request time. There is no
+server. It does not ship a virtual DOM to pages that have no islands. And it
+does not have a plugin ecosystem — the toolchain is the binary plus Bun, which is
+the point, but it does mean a capability that does not exist is not one npm
+install away.
+
+## Where to go next
+
+The [quick start]($link.page("docs/quick-start")) has a site building in about
+five minutes. The [tutorial]($link.page("docs/tutorial")) builds a real one. If
+you are coming from Astro, read
+[migrating from Astro]($link.page("docs/migrate-from-astro")) first — much of
+the conversion is mechanical and `zigapagos migrate` does it for you.

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <rect width="1200" height="630" fill="#0d1013"/>
+  <circle cx="980" cy="150" r="26"  fill="#252c32"/>
+  <circle cx="1080" cy="250" r="18" fill="#252c32"/>
+  <circle cx="940"  cy="300" r="16" fill="#252c32"/>
+  <circle cx="1050" cy="420" r="44" fill="#3fd0bd"/>
+  <circle cx="1050" cy="420" r="70" fill="none" stroke="#3fd0bd" stroke-opacity="0.25" stroke-width="3"/>
+  <text x="90" y="250" font-family="system-ui, sans-serif" font-size="86" font-weight="700" fill="#e6e9ea" letter-spacing="-3">Zigapagos</text>
+  <text x="90" y="330" font-family="system-ui, sans-serif" font-size="38" fill="#9aa3ab">Astro's islands. A native core. No Node.</text>
+  <text x="90" y="420" font-family="ui-monospace, monospace" font-size="26" fill="#3fd0bd">zero JS by default · TSX islands · native SPAs</text>
+</svg>

@@ -326,10 +326,26 @@ check "extracted notes stop before the next release's heading" hasnt "$notes" '#
 check "extracted notes carry none of the next release's bullets" \
     hasnt "$notes" 'First public release. Fork point'
 check "extracted notes do not leak the preamble" hasnt "$notes" 'Two things to know'
-check "the real preamble survived assembly" \
-    has "$t/c12/CHANGELOG.md" 'This file starts at the first public release, deliberately.'
-check "the inherited-tags warning survived assembly" \
-    has "$t/c12/CHANGELOG.md" 'are not Zigapagos'
+# The preamble — everything above the first `## [` heading — must survive assembly
+# byte-for-byte, whether the assembler inserts its section above or below the
+# `## [Unreleased]` heading.
+#
+# Asserted structurally rather than by grepping for sentences. Two earlier checks here
+# pinned the literal strings 'This file starts at the first public release, deliberately.'
+# and 'are not Zigapagos'. The second one broke when that bullet was rewritten — the
+# changelog had claimed this repository carries inherited `v0.7.0`…`v0.11.2` tags, which
+# it does not (`git ls-remote --tags` returns one fork-point tag plus the real releases),
+# so correcting a false statement about the project's own history read as a regression.
+# A comparison of the whole preamble is both stricter than those two greps and immune to
+# the changelog's prose changing for good reasons.
+preamble() { awk '/^## \[/ { exit } { print }' "$1"; }
+preamble "$repo_root/CHANGELOG.md" > "$t/c12/preamble.before"
+preamble "$t/c12/CHANGELOG.md" > "$t/c12/preamble.after"
+# Guard against the comparison passing vacuously on two empty files.
+check "the real changelog has a preamble to preserve" \
+    test -s "$t/c12/preamble.before"
+check "the real preamble survived assembly byte-for-byte" \
+    cmp -s "$t/c12/preamble.before" "$t/c12/preamble.after"
 # The pre-existing section must stay extractable after an insert above it — the assembler
 # must not have disturbed its heading or the boundary below it.
 if extract "$t/c12/CHANGELOG.md" 0.1.0 > "$t/c12/old.txt" 2> /dev/null; then

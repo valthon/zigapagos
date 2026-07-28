@@ -1,0 +1,8 @@
+---
+.title = "Compare",
+.description = "How Zigapagos differs from Astro, Next.js static export, Eleventy, Hugo, and the generator it forks.",
+.date = @date("2026-07-27T00:00:00"),
+.author = "Zigapagos",
+.layout = "compare.shtml",
+.draft = false,
+---

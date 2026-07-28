@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head id="head">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title :text="$page.title"></title>
+    <meta name="description" content="$page.description">
+    <script>
+      // Pre-paint theme resolution. Inline and synchronous on purpose: a
+      // deferred script would paint the OS theme first and then correct
+      // itself, which reads as a flash. About 450 bytes as served on its
+      // own (the toggle handler below adds the rest of the ~1 KB the
+      // landing page's zero-JS section quotes for both scripts combined),
+      // and deliberately NOT an island — docs pages must keep a genuinely
+      // zero-byte JS budget.
+      try {
+        var t = localStorage.getItem('zp-theme');
+        if (t) document.documentElement.setAttribute('data-theme', t);
+      } catch (e) {}
+    </script>
+    <link type="text/css" rel="stylesheet" href="$site.asset('tokens.css').link()">
+    <link type="text/css" rel="stylesheet" href="$site.asset('style.css').link()">
+    <link type="text/css" rel="stylesheet" href="$site.asset('highlight.css').link()">
+    <link rel="icon" type="image/svg+xml" href="$site.asset('logo.svg').link()">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="$page.title">
+    <meta property="og:description" content="$page.description">
+    <!-- og:image is a PNG, not og.svg: the Open Graph protocol doesn't list
+         SVG as a supported image type, and Twitter/X, Facebook and LinkedIn's
+         scrapers all skip it, rendering a card with no image. og.svg stays as
+         the hand-authored source (see site/assets/og.svg) and is still
+         installed for direct linking; og.png is the rendered copy this tag
+         actually points at. Wrapped in $site.host_url.addPath(...): OG
+         requires an absolute URL and several scrapers (Facebook, LinkedIn,
+         Slack) don't resolve a root-relative one, so the bare .link() output
+         (e.g. "/zigapagos/og.png") isn't enough on its own. The nested
+         .link() call is still what bumps og.png's install refcount. -->
+    <meta property="og:image" content="$site.host_url.addPath($site.asset('og.png').link())">
+    <meta name="twitter:card" content="summary_large_image">
+    <super>
+  </head>
+  <body id="body">
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header id="site-nav" class="nav">
+      <div class="nav-inner">
+        <a class="nav-brand" href="$site.page('').link()">
+          <img class="nav-mark" src="$site.asset('logo.svg').link()" alt="" width="20" height="20">
+          <span :text="$site.title"></span>
+        </a>
+        <nav class="nav-links" aria-label="Primary">
+          <a href="$site.page('docs').link()">Docs</a>
+          <a href="$site.page('demos').link()">Demos</a>
+          <a href="$site.page('compare').link()">Compare</a>
+          <a href="$site.page('download').link()">Download</a>
+          <a href="https://github.com/valthon/zigapagos">GitHub</a>
+        </nav>
+        <button id="theme-toggle" class="theme-toggle" type="button"
+                aria-label="Toggle colour theme">◐</button>
+      </div>
+    </header>
+    <main id="main">
+      <super>
+    </main>
+    <footer class="site-footer">
+      <div class="footer-inner">
+        <p>
+          Zigapagos is a static site generator with a native core and TSX islands.
+          MIT licensed.
+        </p>
+        <p>
+          <a href="https://github.com/valthon/zigapagos">Source</a> ·
+          <a href="$site.page('docs/overview').link()">Docs</a> ·
+          A permanent fork of
+          <a href="https://github.com/valthon/zigapagos#acknowledgements">Loris Cro's SSG</a>.
+        </p>
+        <p class="footer-meta">
+          This site is built with Zigapagos. Every interactive component on it is
+          a real island.
+        </p>
+      </div>
+    </footer>
+    <script>
+      // Toggle handler. Writes the explicit choice that beats the OS
+      // preference in tokens.css, in both directions.
+      document.getElementById('theme-toggle').addEventListener('click', function () {
+        var cur = document.documentElement.getAttribute('data-theme');
+        var next = cur === 'dark' ? 'light'
+          : cur === 'light' ? 'dark'
+          : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'light' : 'dark');
+        document.documentElement.setAttribute('data-theme', next);
+        try { localStorage.setItem('zp-theme', next); } catch (e) {}
+      });
+    </script>
+  </body>
+</html>

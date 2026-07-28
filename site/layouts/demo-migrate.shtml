@@ -1,0 +1,71 @@
+<extend template="base.shtml">
+<head id="head"></head>
+<main id="main">
+  <div class="wrap prose">
+    <h1>Astro → Zigapagos</h1>
+    <p class="lede">
+      Most of an Astro project converts mechanically. <code>zigapagos
+      migrate</code> scans your project and writes a worklist mapping every
+      file to its target, with a first pass at each island's imports
+      available via <code>--scaffold</code>. These are the mappings that
+      worklist follows — the cases it cannot decide for you are listed, not
+      guessed.
+    </p>
+    <pre><code>zigapagos migrate ./my-astro-site -o MIGRATION.md</code></pre>
+  </div>
+
+  <section class="section wrap">
+    <p class="eyebrow">The mapping</p>
+    <island src="components/MigrateDiff.island.tsx" client:visible :props='{
+      .cases = [
+        { .title = "A component",
+          .note = "React and Preact components become .island.tsx with the same hooks. The import source changes; the component body usually does not.",
+          .before = "// src/components/Counter.jsx\nimport { useState } from \"react\";\n\nexport default function Counter({ start }) {\n  const [n, setN] = useState(start);\n  return <button onClick={() => setN(n + 1)}>{n}</button>;\n}\n",
+          .after = "// components/Counter.island.tsx\nimport { useState } from \"@z/runtime\";\n\nexport interface Props { start: number }\n\nexport default function Counter({ start }: Props) {\n  const [n, setN] = useState(start);\n  return <button onClick={() => setN(n + 1)}>{n}</button>;\n}\n" },
+        { .title = "Using it",
+          .note = "Astro directives map one to one onto client: attributes. Props become prop-NAME attributes, or a :props struct when they are structured.",
+          .before = "---\nimport Counter from \"../components/Counter.jsx\";\n---\n<Counter client:visible start={0} />\n",
+          .after = "<island src=\"components/Counter.island.tsx\"\n        client:visible\n        prop-start=\"0\"></island>\n" },
+        { .title = "Frontmatter",
+          .note = "Astro frontmatter is YAML; Zigapagos frontmatter is Ziggy. Known fields map by name and everything else moves under .custom, read as $page.custom.get(...) in the layout.",
+          .before = "---\ntitle: Hello\ndescription: A page\nhero:\n  eyebrow: Hi\n  title: We build things\n---\n",
+          .after = "---\n.title = \"Hello\",\n.description = \"A page\",\n.date = @date(\"2026-01-01T00:00:00\"),\n.author = \"You\",\n.layout = \"page.shtml\",\n.draft = false,\n.custom = { .hero = { .eyebrow = \"Hi\", .title = \"We build things\" } },\n---\n" },
+        { .title = "A layout",
+          .note = "Astro layouts with slots become SuperHTML templates with <super> extension points. Expressions move out of braces and into attribute directives.",
+          .before = "---\nconst { title } = Astro.props;\n---\n<html>\n  <head><title>{title}</title></head>\n  <body><slot /></body>\n</html>\n",
+          .after = "<!DOCTYPE html>\n<html>\n  <head id=\"head\">\n    <title :text=\"$page.title\"></title>\n    <super>\n  </head>\n  <body id=\"body\"><super></body>\n</html>\n" }
+      ] }'></island>
+  </section>
+
+  <section class="section wrap">
+    <p class="eyebrow">What it will not do</p>
+    <h2>The parts that need a decision get reported, not guessed</h2>
+    <div class="grid-2">
+      <div class="card">
+        <h3>Integrations</h3>
+        <p>
+          An Astro integration has no equivalent to convert into — Zigapagos
+          has no plugin system. <code>zigapagos migrate</code> flags
+          <code>astro.config.*</code> for manual review rather than
+          enumerating each integration inside it; deciding whether one is
+          replaceable, unnecessary, or already covered is on you.
+        </p>
+      </div>
+      <div class="card">
+        <h3>Server-rendered routes</h3>
+        <p>
+          Zigapagos has no request-time rendering. An SSR endpoint becomes either
+          a build-time computation or a call to a real backend, and which one is
+          a design decision.
+        </p>
+      </div>
+    </div>
+    <p class="section-note">
+      The full mapping is specified in
+      <a href="$site.page('docs/migrate-from-astro').link()">migrating from Astro</a>,
+      written precisely enough that an agent can complete a port unattended, with
+      per-pattern conversions in
+      <a href="$site.page('docs/migration-recipes').link()">recipes</a>.
+    </p>
+  </section>
+</main>

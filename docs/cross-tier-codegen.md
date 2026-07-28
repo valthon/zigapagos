@@ -1,3 +1,5 @@
+> This documentation is also published, web-native, at <https://valthon.github.io/zigapagos/docs/cross-tier-codegen/> — the site is the canonical reading experience.
+
 # Cross-tier type codegen (ZigBase → TS)
 
 Zigapagos generates typed TypeScript API clients so islands and the SPA can't

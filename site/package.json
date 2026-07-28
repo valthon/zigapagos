@@ -2,6 +2,9 @@
   "name": "zigapagos-site",
   "private": true,
   "type": "module",
+  "scripts": {
+    "gen:docs": "bun run scripts/gen-docs-mirror.ts"
+  },
   "dependencies": {
     "@z/runtime": "file:../runtime"
   }

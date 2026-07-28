@@ -1,3 +1,5 @@
+> This documentation is also published, web-native, at <https://valthon.github.io/zigapagos/docs/migration-recipes/> — the site is the canonical reading experience.
+
 # TSX island authoring guide
 
 Islands in Zigapagos are **TypeScript TSX components** — authored with React/Preact

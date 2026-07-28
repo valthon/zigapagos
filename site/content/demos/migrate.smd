@@ -1,0 +1,8 @@
+---
+.title = "Astro → Zigapagos",
+.description = "The mapping `zigapagos migrate` reports, shown side by side for the patterns an Astro project actually contains.",
+.date = @date("2026-07-27T00:00:00"),
+.author = "Zigapagos",
+.layout = "demo-migrate.shtml",
+.draft = false,
+---

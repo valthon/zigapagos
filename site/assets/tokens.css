@@ -1,0 +1,83 @@
+/* Design tokens for the Zigapagos site.
+ *
+ * Dark is applied two ways, and the order matters:
+ *   1. :root[data-theme='dark'] — an explicit choice from the toggle, which
+ *      must beat the OS preference in BOTH directions.
+ *   2. @media (prefers-color-scheme: dark) guarded by :root:not([data-theme])
+ *      — the OS default, which only applies while no explicit choice exists.
+ *
+ * Palette is "volcanic basalt + ocean teal": the accent is the interactive
+ * colour, the secondary is reserved for migration/comparison accents so the
+ * two never compete for the same meaning.
+ */
+:root {
+  --color-bg: #fdfdfc;
+  --color-surface: #f4f5f2;
+  --color-border: #e2e4df;
+  --color-text: #16181a;
+  --color-muted: #5b6169;
+  --color-accent: #0f7a6e;
+  --color-accent-hover: #0b5f56;
+  --color-secondary: #d1663a;
+
+  /* No webfont is downloaded — a site arguing for a small payload should not
+     open with a font request. Display character comes from weight/tracking. */
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial,
+    sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji';
+  --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo,
+    monospace;
+
+  --text-xs: 0.8rem;
+  --text-sm: 0.9rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.563rem;
+  --text-3xl: 1.953rem;
+  --text-4xl: 2.441rem;
+  --text-hero: clamp(2.4rem, 5.5vw, 3.8rem);
+
+  --leading-tight: 1.18;
+  --leading-normal: 1.65;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
+  --space-9: 6rem;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 999px;
+
+  --container-max: 1120px;
+}
+
+:root[data-theme='dark'] {
+  --color-bg: #0d1013;
+  --color-surface: #151a1e;
+  --color-border: #252c32;
+  --color-text: #e6e9ea;
+  --color-muted: #9aa3ab;
+  --color-accent: #3fd0bd;
+  --color-accent-hover: #6fe0d1;
+  --color-secondary: #e8865a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --color-bg: #0d1013;
+    --color-surface: #151a1e;
+    --color-border: #252c32;
+    --color-text: #e6e9ea;
+    --color-muted: #9aa3ab;
+    --color-accent: #3fd0bd;
+    --color-accent-hover: #6fe0d1;
+    --color-secondary: #e8865a;
+  }
+}

@@ -1,0 +1,138 @@
+<extend template="base.shtml">
+<head id="head">
+  <link type="text/css" rel="stylesheet" href="$site.asset('docs.css').link()">
+</head>
+<main id="main">
+  <div class="docs-shell">
+    <div class="docs-sidebar">
+      <nav aria-label="Documentation">
+        <p class="docs-group">Getting started</p>
+        <ul>
+          <li>
+            <ctx :if="$page.custom.get('slug').eql('overview')">
+              <a aria-current="page" href="$site.page('docs/overview').link()">Overview</a>
+            </ctx>
+            <ctx :if="$page.custom.get('slug').eql('overview').not()">
+              <a href="$site.page('docs/overview').link()">Overview</a>
+            </ctx>
+          </li>
+          <li>
+            <ctx :if="$page.custom.get('slug').eql('quick-start')">
+              <a aria-current="page" href="$site.page('docs/quick-start').link()">Quick start</a>
+            </ctx>
+            <ctx :if="$page.custom.get('slug').eql('quick-start').not()">
+              <a href="$site.page('docs/quick-start').link()">Quick start</a>
+            </ctx>
+          </li>
+          <li>
+            <ctx :if="$page.custom.get('slug').eql('tutorial')">
+              <a aria-current="page" href="$site.page('docs/tutorial').link()">Tutorial</a>
+            </ctx>
+            <ctx :if="$page.custom.get('slug').eql('tutorial').not()">
+              <a href="$site.page('docs/tutorial').link()">Tutorial</a>
+            </ctx>
+          </li>
+          <li>
+            <ctx :if="$page.custom.get('slug').eql('configuration')">
+              <a aria-current="page" href="$site.page('docs/configuration').link()">Configuration</a>
+            </ctx>
+            <ctx :if="$page.custom.get('slug').eql('configuration').not()">
+              <a href="$site.page('docs/configuration').link()">Configuration</a>
+            </ctx>
+          </li>
+        </ul>
+        <p class="docs-group">Guides</p>
+        <ul>
+          <li>
+            <ctx :if="$page.custom.get('slug').eql('islands')">
+              <a aria-current="page" href="$site.page('docs/islands').link()">Islands</a>
+            </ctx>
+            <ctx :if="$page.custom.get('slug').eql('islands').not()">
+              <a href="$site.page('docs/islands').link()">Islands</a>
+            </ctx>
+          </li>
+          <li>
+            <ctx :if="$page.custom.get('slug').eql('spa')">
+              <a aria-current="page" href="$site.page('docs/spa').link()">Native SPAs</a>
+            </ctx>
+            <ctx :if="$page.custom.get('slug').eql('spa').not()">
+              <a href="$site.page('docs/spa').link()">Native SPAs</a>
+            </ctx>
+          </li>
+          <li>
+            <ctx :if="$page.custom.get('slug').eql('cross-tier-codegen')">
+              <a aria-current="page" href="$site.page('docs/cross-tier-codegen').link()">Cross-tier codegen</a>
+            </ctx>
+            <ctx :if="$page.custom.get('slug').eql('cross-tier-codegen').not()">
+              <a href="$site.page('docs/cross-tier-codegen').link()">Cross-tier codegen</a>
+            </ctx>
+          </li>
+        </ul>
+        <p class="docs-group">Migrating</p>
+        <ul>
+          <li>
+            <ctx :if="$page.custom.get('slug').eql('migrate-from-astro')">
+              <a aria-current="page" href="$site.page('docs/migrate-from-astro').link()">From Astro</a>
+            </ctx>
+            <ctx :if="$page.custom.get('slug').eql('migrate-from-astro').not()">
+              <a href="$site.page('docs/migrate-from-astro').link()">From Astro</a>
+            </ctx>
+          </li>
+          <li>
+            <ctx :if="$page.custom.get('slug').eql('migration-recipes')">
+              <a aria-current="page" href="$site.page('docs/migration-recipes').link()">Recipes</a>
+            </ctx>
+            <ctx :if="$page.custom.get('slug').eql('migration-recipes').not()">
+              <a href="$site.page('docs/migration-recipes').link()">Recipes</a>
+            </ctx>
+          </li>
+          <li>
+            <ctx :if="$page.custom.get('slug').eql('react-spa-bridge')">
+              <a aria-current="page" href="$site.page('docs/react-spa-bridge').link()">React SPA bridge</a>
+            </ctx>
+            <ctx :if="$page.custom.get('slug').eql('react-spa-bridge').not()">
+              <a href="$site.page('docs/react-spa-bridge').link()">React SPA bridge</a>
+            </ctx>
+          </li>
+        </ul>
+        <p class="docs-group">Reference</p>
+        <ul>
+          <li>
+            <ctx :if="$page.custom.get('slug').eql('observability')">
+              <a aria-current="page" href="$site.page('docs/observability').link()">Observability</a>
+            </ctx>
+            <ctx :if="$page.custom.get('slug').eql('observability').not()">
+              <a href="$site.page('docs/observability').link()">Observability</a>
+            </ctx>
+          </li>
+          <li>
+            <ctx :if="$page.custom.get('slug').eql('roadmap')">
+              <a aria-current="page" href="$site.page('docs/roadmap').link()">Roadmap</a>
+            </ctx>
+            <ctx :if="$page.custom.get('slug').eql('roadmap').not()">
+              <a href="$site.page('docs/roadmap').link()">Roadmap</a>
+            </ctx>
+          </li>
+          <li>
+            <ctx :if="$page.custom.get('slug').eql('changelog')">
+              <a aria-current="page" href="$site.page('docs/changelog').link()">Changelog</a>
+            </ctx>
+            <ctx :if="$page.custom.get('slug').eql('changelog').not()">
+              <a href="$site.page('docs/changelog').link()">Changelog</a>
+            </ctx>
+          </li>
+        </ul>
+      </nav>
+    </div>
+
+    <article class="docs-body prose">
+      <h1 :text="$page.title"></h1>
+      <div :html="$page.content()"></div>
+    </article>
+
+    <aside class="docs-toc" aria-label="On this page">
+      <p class="docs-group">On this page</p>
+      <div :html="$page.toc()"></div>
+    </aside>
+  </div>
+</main>

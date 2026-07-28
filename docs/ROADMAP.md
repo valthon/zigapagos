@@ -1,3 +1,5 @@
+> This documentation is also published, web-native, at <https://valthon.github.io/zigapagos/docs/roadmap/> — the site is the canonical reading experience.
+
 # Zigapagos roadmap
 
 North star: **excellent DX + LLM-native unattended migration from Astro.** Every

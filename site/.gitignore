@@ -4,3 +4,15 @@ zig-out/
 .zigapagos-cache/
 # ZigBase dev-loop data dir (persistent local backend state; see `zigapagos dev`)
 .zigbase/
+
+# Generated from canonical docs by scripts/gen-docs-mirror.ts — never commit.
+# Edit the canonical file (docs/*.md, docs/migration/*.md, CHANGELOG.md).
+content/docs/islands.smd
+content/docs/spa.smd
+content/docs/cross-tier-codegen.smd
+content/docs/observability.smd
+content/docs/migrate-from-astro.smd
+content/docs/migration-recipes.smd
+content/docs/react-spa-bridge.smd
+content/docs/roadmap.smd
+content/docs/changelog.smd

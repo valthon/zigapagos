@@ -1,0 +1,143 @@
+<extend template="base.shtml">
+<head id="head"></head>
+<main id="main">
+  <div class="wrap prose">
+    <h1>How Zigapagos compares</h1>
+    <p class="lede">
+      Every tool here is good at something. This page is about which trade it
+      makes, not which one wins.
+    </p>
+  </div>
+
+  <section class="section wrap">
+    <p class="eyebrow">At a glance</p>
+    <div class="table-scroll">
+      <table class="cmp">
+        <thead>
+          <tr>
+            <th>Property</th><th>Zigapagos</th><th>Astro</th>
+            <th>Next (static export)</th><th>Eleventy</th><th>Hugo</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>Islands / partial hydration</td><td>Yes</td><td>Yes</td><td>No — whole-page hydration</td><td>No</td><td>No</td></tr>
+          <tr><td>JS on a page with no components</td><td>None</td><td>None</td><td>Framework runtime</td><td>None</td><td>None</td></tr>
+          <tr><td>Node required</td><td>No</td><td>Yes</td><td>Yes</td><td>Yes</td><td>No</td></tr>
+          <tr><td>Bundler to configure</td><td>No</td><td>Vite</td><td>Turbopack/webpack</td><td>Bring your own</td><td>No</td></tr>
+          <tr><td>Component language</td><td>TSX</td><td>TSX/JSX/Vue/Svelte</td><td>TSX/JSX</td><td>Templates only</td><td>Templates only</td></tr>
+          <tr><td>Build-time props typechecking</td><td>Yes</td><td>Opt-in (<code>astro check</code>)</td><td>Yes (<code>next build</code>)</td><td>n/a</td><td>n/a</td></tr>
+          <tr><td>Client-routed SPA from the same project</td><td>Yes</td><td>Via a framework router</td><td>Yes</td><td>No</td><td>No</td></tr>
+          <tr><td>Plugin ecosystem</td><td>No</td><td>Large</td><td>Large</td><td>Large</td><td>Moderate</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="section-note">
+      "Build-time props typechecking" is about whether passing the wrong props to a
+      component is caught before deploy. Zigapagos checks every island's resolved
+      props against its component's exported <code>Props</code> type as part of the
+      normal build. Astro can do the equivalent, but as a separate command
+      (<code>astro check</code>) most projects wire into CI rather than a step
+      <code>astro build</code> runs on its own. Next.js's production build runs a
+      project-wide <code>tsc</code> pass and fails on type errors by default, which
+      catches a bad prop the same way.
+    </p>
+  </section>
+
+  <section class="section wrap">
+    <p class="eyebrow">In detail</p>
+    <div class="grid-2">
+      <div class="card">
+        <h3>vs Astro</h3>
+        <p>
+          The closest comparison, and the one Zigapagos is designed against. Same
+          islands model, same directives, similar authoring. The differences are
+          the toolchain and the type story: no Node, no Vite, no bundler
+          configuration, and island props are typechecked against the component's
+          exported <code>Props</code> as part of every build, not as a separate
+          opt-in step. What Astro has and this does not is an ecosystem —
+          integrations, adapters, multiple UI frameworks, and years of answered
+          questions.
+        </p>
+      </div>
+      <div class="card">
+        <h3>vs Next.js static export</h3>
+        <p>
+          Next exports static HTML, but the model underneath is a React
+          application: the framework runtime ships whether or not a given page
+          needs interactivity. Zigapagos inverts that default — a page with no
+          islands ships no JavaScript. If your site is mostly application and
+          incidentally content, Next is the better fit; if it is mostly content
+          with pockets of interactivity, this is.
+        </p>
+      </div>
+      <div class="card">
+        <h3>vs Eleventy</h3>
+        <p>
+          Eleventy is excellent at turning content into HTML and takes no position
+          on client-side components — which is freedom if you want it and work if
+          you do not. Zigapagos has an opinion: components are TSX, hydration is a
+          directive, and the bundling is handled. Eleventy also runs anywhere Node
+          runs and has a far larger plugin ecosystem.
+        </p>
+      </div>
+      <div class="card">
+        <h3>vs Hugo</h3>
+        <p>
+          Hugo is a single fast binary with no runtime dependency, and for a pure
+          content site it is hard to beat — a larger theme ecosystem, a longer
+          track record, and builds that are very fast at scale. It has no islands
+          model. Zigapagos keeps the single-binary property for the content half
+          and adds real components for the interactive half.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section wrap">
+    <p class="eyebrow">Lineage</p>
+    <h2>And the generator this forks</h2>
+    <p class="section-note">
+      Zigapagos is a permanent fork of Loris Cro's SSG, which contributed SuperMD,
+      SuperHTML, Ziggy and the rendering core — all of it still here and still
+      excellent at what it does. The fork exists to add islands, native SPAs and
+      the Astro migration path. If you want the content pipeline without the
+      component layer, the upstream project is smaller and closer to the source.
+    </p>
+  </section>
+
+  <section id="when-not-to" class="section wrap">
+    <p class="eyebrow">Honesty</p>
+    <h2>When not to use Zigapagos</h2>
+    <div class="grid-2">
+      <div class="card">
+        <h3>You need server-side rendering at request time</h3>
+        <p>
+          There is no server. Anything personalised per request has to happen in
+          the browser or in a backend you run separately.
+        </p>
+      </div>
+      <div class="card">
+        <h3>You depend on a specific plugin ecosystem</h3>
+        <p>
+          There is no plugin system. A capability that does not exist is not one
+          install away — it is a patch to the generator.
+        </p>
+      </div>
+      <div class="card">
+        <h3>Your team wants Vue, Svelte, or Solid</h3>
+        <p>
+          Islands are TSX on a Preact-compatible runtime. One component model,
+          deliberately, and it is not the one you are using.
+        </p>
+      </div>
+      <div class="card">
+        <h3>You need it stable today</h3>
+        <p>
+          This is pre-1.0 and a minor version may break an API. Windows builds
+          are currently unsupported pending the Zig 0.17 port. If a broken build
+          on a Tuesday is unacceptable, wait.
+        </p>
+      </div>
+    </div>
+  </section>
+</main>

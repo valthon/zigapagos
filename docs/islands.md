@@ -1,3 +1,5 @@
+> This documentation is also published, web-native, at <https://valthon.github.io/zigapagos/docs/islands/> — the site is the canonical reading experience.
+
 # Island authoring
 
 Islands are `.island.tsx` files authored against `@z/runtime` (a vendored

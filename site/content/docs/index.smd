@@ -1,0 +1,14 @@
+---
+.title = "Documentation",
+.description = "Everything Zigapagos does: islands, native SPAs, migration from Astro, configuration, and reference.",
+.date = @date("2026-07-27T00:00:00"),
+.author = "Zigapagos",
+.layout = "docs-index.shtml",
+.draft = false,
+.custom = { .slug = "index" },
+---
+
+Start with the [overview]($link.page("docs/overview")) for what Zigapagos is and how a
+build runs. If you would rather have something on screen first, the
+[quick start]($link.page("docs/quick-start")) gets a site building in about five minutes,
+and the [tutorial]($link.page("docs/tutorial")) builds a real one with islands in it.

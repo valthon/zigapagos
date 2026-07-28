@@ -1,0 +1,65 @@
+[
+  {
+    "canonical": "docs/islands.md",
+    "mirror": "islands.smd",
+    "slug": "islands",
+    "title": "Islands",
+    "description": "TSX islands: authoring, the client: directives, typed props, slots, and what gets emitted."
+  },
+  {
+    "canonical": "docs/spa.md",
+    "mirror": "spa.smd",
+    "slug": "spa",
+    "title": "Native SPAs",
+    "description": "Build a client-routed application from a single .spa.tsx: prerendered skeletons, guards, nested layouts, and deploy manifests."
+  },
+  {
+    "canonical": "docs/cross-tier-codegen.md",
+    "mirror": "cross-tier-codegen.smd",
+    "slug": "cross-tier-codegen",
+    "title": "Cross-tier codegen",
+    "description": "Generating a typed client from a shared schema so the Zig and TypeScript tiers cannot drift."
+  },
+  {
+    "canonical": "docs/observability.md",
+    "mirror": "observability.smd",
+    "slug": "observability",
+    "title": "Observability",
+    "description": "Build diagnostics, timing, and what to look at when a build is slow or a page is wrong."
+  },
+  {
+    "canonical": "docs/migration/astro-to-zigapagos.md",
+    "mirror": "migrate-from-astro.smd",
+    "slug": "migrate-from-astro",
+    "title": "Migrating from Astro",
+    "description": "A deterministic mapping from Astro projects to Zigapagos, and what `zigapagos migrate` reports for you."
+  },
+  {
+    "canonical": "docs/migration/recipes.md",
+    "mirror": "migration-recipes.smd",
+    "slug": "migration-recipes",
+    "title": "Migration recipes",
+    "description": "Concrete conversions for the patterns an Astro codebase actually contains."
+  },
+  {
+    "canonical": "docs/migration/react-spa-bridge.md",
+    "mirror": "react-spa-bridge.smd",
+    "slug": "react-spa-bridge",
+    "title": "React SPA bridge",
+    "description": "Running existing React SPA code on the shared runtime while you port it."
+  },
+  {
+    "canonical": "docs/ROADMAP.md",
+    "mirror": "roadmap.smd",
+    "slug": "roadmap",
+    "title": "Roadmap",
+    "description": "What is planned, what is deferred, and the upstream sync policy."
+  },
+  {
+    "canonical": "CHANGELOG.md",
+    "mirror": "changelog.smd",
+    "slug": "changelog",
+    "title": "Changelog",
+    "description": "Notable changes to Zigapagos, starting at the first public release."
+  }
+]

@@ -1,3 +1,5 @@
+> This documentation is also published, web-native, at <https://valthon.github.io/zigapagos/docs/spa/> — the site is the canonical reading experience.
+
 # Native SPA Support
 
 Zigapagos supports authoring and building first-class Single Page Applications (SPAs) using the same TypeScript + Bun + `@z/runtime` toolchain as islands. This document covers SPA authoring, the build rendering model, the runtime router API, and deployment configuration.

@@ -6,4 +6,10 @@ Site {
     .layouts_dir_path = "layouts",
     .assets_dir_path = "assets",
     .deploy_target = "zigbase",
+    // og.svg is the hand-authored source for the rasterised og:image
+    // (og.png, referenced from base.shtml's og:image tag) and isn't linked
+    // from any page itself, so the reference-counted asset installer would
+    // otherwise prune it. List it explicitly so the source stays published
+    // for direct linking.
+    .static_assets = ["og.svg"],
 }

@@ -1,0 +1,40 @@
+/* Treesitter highlight classes, emitted statically at build time.
+   Colours are tuned per theme against --color-surface, not copied from a
+   terminal scheme, so contrast holds in light mode too. */
+:root {
+  --hl-keyword: #a626a4;
+  --hl-string: #50781f;
+  --hl-comment: #8a9099;
+  --hl-number: #b26100;
+  --hl-function: #2f6fb5;
+  --hl-type: #0f7a6e;
+  --hl-punct: #5b6169;
+}
+:root[data-theme='dark'] {
+  --hl-keyword: #d18ce0;
+  --hl-string: #9ecb6a;
+  --hl-comment: #6b757f;
+  --hl-number: #e0a56a;
+  --hl-function: #7cb7f0;
+  --hl-type: #3fd0bd;
+  --hl-punct: #9aa3ab;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --hl-keyword: #d18ce0;
+    --hl-string: #9ecb6a;
+    --hl-comment: #6b757f;
+    --hl-number: #e0a56a;
+    --hl-function: #7cb7f0;
+    --hl-type: #3fd0bd;
+    --hl-punct: #9aa3ab;
+  }
+}
+
+pre code .keyword, pre code .conditional, pre code .repeat, pre code .include { color: var(--hl-keyword); }
+pre code .string, pre code .character { color: var(--hl-string); }
+pre code .comment { color: var(--hl-comment); font-style: italic; }
+pre code .number, pre code .boolean, pre code .float { color: var(--hl-number); }
+pre code .function, pre code .method { color: var(--hl-function); }
+pre code .type, pre code .constant, pre code .attribute { color: var(--hl-type); }
+pre code .punctuation, pre code .operator, pre code .delimiter { color: var(--hl-punct); }

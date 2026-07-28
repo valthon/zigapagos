@@ -1,0 +1,24 @@
+<extend template="base.shtml">
+<head id="head"></head>
+<main id="main">
+  <div class="wrap prose">
+    <h1 :text="$page.title"></h1>
+    <div :html="$page.content()"></div>
+    <div class="grid-3 docs-cards">
+      <a class="card" href="$site.page('demos/directives').link()">
+        <h3>Hydration directives</h3>
+        <p>Watch client:load, idle, visible, media and only wake up at different moments.</p>
+      </a>
+      <a class="card" href="$site.page('demos/migrate').link()">
+        <h3>Astro → Zigapagos</h3>
+        <p>The mapping the migrate command reports, shown side by side.</p>
+      </a>
+      <!-- Hand-written, not $site.page(): a prerendered SPA shell (Task 9) is
+           not a content page, so there is no $site.page() target to address. -->
+      <a class="card" href="/zigapagos/demos/app/">
+        <h3>A native SPA</h3>
+        <p>Client-side routing, a nested layout and a guard — from one .spa.tsx.</p>
+      </a>
+    </div>
+  </div>
+</main>

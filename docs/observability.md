@@ -1,3 +1,5 @@
+> This documentation is also published, web-native, at <https://valthon.github.io/zigapagos/docs/observability/> — the site is the canonical reading experience.
+
 # Client Observability
 
 Zigapagos ships a first-class client-instrumentation seam for structured,

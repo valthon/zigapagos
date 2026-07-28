@@ -14,12 +14,14 @@ Two things to know before reading it:
   per-version history would be invention, so this file does not do it. The
   subsystem specs in `docs/` are the source of truth for *what the code does*;
   this file records *when it changed*, starting now.
-- **The `v0.7.0` … `v0.11.2` tags in this repository are not Zigapagos
-  releases.** They are inherited upstream tags from before the fork. `0.1.0` is
-  the first Zigapagos version number and is what `build.zig.zon` declares. Note
-  that `zigapagos version` prints a `git describe` string derived from those
-  inherited tags (`v0.11.2-dev.19+22ea4a0`), so the trailing commit hash — not
-  the leading `v0.11.2` — is what identifies a build.
+- **This repository does not carry the forked project's release tags.** A
+  single fork-point tag marks where the history diverges, and `0.1.0` — what
+  `build.zig.zon` declares — is the first Zigapagos version number.
+  `zigapagos version` prints a `git describe --tags` string built
+  against the tags that actually exist here, so on a commit past a release it
+  looks like `v0.1.1-<n>-g<sha>`: the last released version, how many commits
+  past it, and the short hash — never a string derived from an inherited tag,
+  because there are none to describe against.
 
 ## [Unreleased]
 
@@ -307,7 +309,9 @@ what is new from what the port changed and removed.
   hashes are byte-exact) is the host's job. `style-src` still needs
   `unsafe-inline` for the framework's inline `style` attributes.
 - `host_url_override` on a locale is not supported by the live server.
-- **No published binary releases.** Build from source at a commit you choose.
+- **Binary releases are published from `v0.1.1` onward** (`SHA256SUMS`, an
+  `x86_64-linux-musl.tar.xz`, an `x86_64-macos.zip`) via GitHub Releases.
+  Earlier commits still need a source build.
 - Pre-1.0: APIs may change between minor versions.
 
 [Unreleased]: https://github.com/valthon/zigapagos/compare/v0.1.1...HEAD

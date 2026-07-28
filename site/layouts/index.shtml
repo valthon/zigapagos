@@ -1,45 +1,273 @@
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title :text="$page.title"></title>
-    <meta name="description"
-      content="Zigapagos: a static site generator with a fast Zig binary core and Astro-style TSX islands. No Node, no Vite, no lock-in.">
-    <link type="text/css" rel="stylesheet" href="$site.asset('style.css').link()">
-  </head>
-  <body>
-    <main class="wrap">
-      <header class="hero">
-        <p class="kicker">zigapagos</p>
-        <h1>Astro's islands. A native core. No Node.</h1>
-        <p class="lede">
-          Zigapagos is a static site generator that renders pages with a fast
-          Zig binary and adds interactivity per-component with TSX islands
-          &mdash; server-rendered at build time, hydrated in the browser only
-          where you ask.
-        </p>
+<extend template="base.shtml">
+<head id="head"></head>
+<main id="main">
 
-        <div class="demo">
-          <island src="components/Counter.island.tsx" client:visible></island>
-          <p class="demo-caption">
-            <strong>This button is a live island on this very page.</strong>
-            View source: the rest of the page is plain HTML, and this is the
-            only component that shipped JS.
-          </p>
-        </div>
-      </header>
+  <section id="s-hero" class="hero wrap">
+    <p class="kicker">zigapagos</p>
+    <h1>Astro's islands. A native core. No Node.</h1>
+    <p class="lede">
+      Zigapagos renders your pages with a single fast binary and adds
+      interactivity one component at a time &mdash; TSX islands, server-rendered
+      at build time, hydrated in the browser only where you ask for it.
+    </p>
+    <p class="cta-row">
+      <a class="btn btn-primary" href="$site.page('docs/quick-start').link()">Get started</a>
+      <a class="btn btn-ghost" href="$site.page('demos').link()">See it running</a>
+    </p>
+    <div class="demo">
+      <island src="components/Counter.island.tsx" client:visible></island>
+      <p class="demo-caption">
+        <strong>That button is a real island on this page.</strong>
+        It was server-rendered into the HTML you received, then hydrated when it
+        scrolled into view. View source &mdash; there is no framework runtime
+        wrapping the rest of the page.
+      </p>
+    </div>
+  </section>
 
-      <div class="content" :html="$page.content()"></div>
+  <section id="s-zerojs" class="section wrap">
+    <p class="eyebrow">Zero JS by default</p>
+    <h2>A page with no islands ships no framework JavaScript.</h2>
+    <div class="grid-3">
+      <div class="stat">
+        <strong>0 KB</strong>
+        <span>of framework runtime on a page with no islands &mdash; every docs page on this site</span>
+      </div>
+      <div class="stat">
+        <strong>1</strong>
+        <span>shared runtime, however many islands a page has</span>
+      </div>
+      <div class="stat">
+        <strong>0</strong>
+        <span>Node, Vite, webpack or bundler config in your project</span>
+      </div>
+    </div>
+    <p class="section-note">
+      Two honest exceptions, both of which devtools will show you. This page is
+      a demo, so it ships the shared runtime plus the islands you can click. And
+      every page &mdash; including the docs &mdash; carries about 1 KB of inline script
+      for the theme toggle (closer to 550 bytes over the wire once gzipped), which is
+      exactly why the toggle is inline script and
+      not an island: making it a component would have put a framework runtime on
+      every page of a generator whose pitch is that most pages need none. Open
+      the network tab on <a href="$site.page('docs/overview').link()">any docs
+      page</a> and that is all you will find.
+    </p>
+  </section>
 
-      <footer class="site-footer">
+  <section id="s-islands" class="section wrap">
+    <p class="eyebrow">Islands in 30 seconds</p>
+    <h2>Write a component. Say when it should wake up.</h2>
+    <div class="grid-2">
+      <island src="components/CodeTabs.island.tsx" client:visible :props='{
+        .tabs = [
+          { .label = "Counter.island.tsx", .code = "import { useState } from \"@z/runtime\";\n\nexport interface Props { start?: number }\n\nexport default function Counter({ start = 0 }: Props) {\n  const [n, setN] = useState(start);\n  return <button onClick={() => setN(n + 1)}>Clicked {n} times</button>;\n}\n" },
+          { .label = "index.shtml", .code = "<island src=\"components/Counter.island.tsx\"\n        client:visible\n        prop-start=\"0\"></island>\n" },
+          { .label = "what ships", .code = "<!-- import map, once per page -->\n<script type=\"importmap\">{\"imports\":{\"@z/runtime\":\"/zigapagos/zigapagos-runtime.js\", …}}</script>\n\n<!-- server-rendered into the HTML -->\n<div data-z-island id=\"z-island-0\" data-z-src=\"components/Counter.island.tsx\"\n     data-z-client=\"visible\" data-z-module=\"/zigapagos/islands/Counter.island.js\">\n  <button>Clicked 0 times</button>\n</div>\n<script type=\"application/json\" data-z-props=\"z-island-0\">{\"start\":0}</script>\n\n<!-- plus one shared runtime, once per page -->\n<script type=\"module\" src=\"/zigapagos/zigapagos-runtime.js\"></script>\n" }
+        ] }'></island>
+      <div>
         <p>
-          Zigapagos is a fork of
-          <a href="https://github.com/valthon/zigapagos#acknowledgements">Loris Cro's SSG</a>,
-          extended with islands architecture. MIT licensed.
-          <a href="https://github.com/valthon/zigapagos">Source on GitHub</a>.
+          An island is a TSX component with a <code>client:</code> directive.
+          Zigapagos renders it to HTML at build time so the page is complete
+          without JavaScript, then ships just that component's code plus one
+          shared runtime.
         </p>
-      </footer>
-    </main>
-  </body>
-</html>
+        <p>
+          Props are typechecked at build time against the component's exported
+          <code>Props</code> type. A misspelled prop fails the build rather than
+          rendering <code>undefined</code> in production.
+        </p>
+        <p><a href="$site.page('docs/islands').link()">Islands reference →</a></p>
+      </div>
+    </div>
+  </section>
+
+  <section id="s-directives" class="section wrap">
+    <p class="eyebrow">One attribute picks the moment</p>
+    <h2>Say when an island should wake up. Nothing wakes up by default.</h2>
+    <div class="grid-3">
+      <div class="card">
+        <h3><code>client:load</code></h3>
+        <p>Hydrates immediately, as soon as the runtime script runs.</p>
+      </div>
+      <div class="card">
+        <h3><code>client:idle</code></h3>
+        <p>Waits for <code>requestIdleCallback</code>, so it never competes with the page's first paint.</p>
+      </div>
+      <div class="card">
+        <h3><code>client:visible</code></h3>
+        <p>Hydrates when an <code>IntersectionObserver</code> reports the island entered the viewport.</p>
+      </div>
+      <div class="card">
+        <h3><code>client:media</code></h3>
+        <p>Hydrates only while a <code>matchMedia</code> query matches &mdash; a sidebar that is never interactive on mobile ships no JS there.</p>
+      </div>
+      <div class="card">
+        <h3><code>client:only</code></h3>
+        <p>Hydrates immediately, like <code>load</code>, but is never server-rendered &mdash; the placeholder starts empty and the component exists only in the browser.</p>
+      </div>
+      <div class="card">
+        <h3>no directive</h3>
+        <p>Server-rendered HTML, no JavaScript, no runtime cost. The default for every island until you add one.</p>
+      </div>
+    </div>
+    <p class="section-note">
+      <a href="$site.page('demos/directives').link()">See all five directives hydrate on one page →</a>
+    </p>
+  </section>
+
+  <section id="s-spa" class="section wrap">
+    <p class="eyebrow">Native SPAs</p>
+    <h2>When a site should be an application, it is still one file</h2>
+    <div class="grid-2">
+      <div>
+        <p>
+          Export a route table from a <code>.spa.tsx</code> and Zigapagos
+          prerenders a real HTML shell for every static route, then hands over to
+          a client-side router. Nested layouts, route guards, code-split routes
+          and declarative redirects are part of the route table, not a library
+          you add.
+        </p>
+        <p>
+          The shells are static files, so a guarded route still deploys to a CDN —
+          the guard runs in the browser after the shell is served.
+        </p>
+        <p>
+          <a class="btn btn-primary" href="/zigapagos/demos/app/">Open the demo app</a>
+        </p>
+      </div>
+      <div>
+        <pre class="pipeline"><code>export const spa = { base: "/app" };
+
+export const routes = [
+  { path: "/", component: Home },
+  { path: "/guides", component: Layout, children: [
+      { path: "/:slug", component: Guide },
+  ]},
+  { path: "/account", component: Account,
+    guard: requireSession },
+];</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section id="s-astro" class="section wrap">
+    <p class="eyebrow">Coming from Astro</p>
+    <h2>A worklist, not a conversion</h2>
+    <div class="grid-2">
+      <div>
+        <p>
+          <code>zigapagos migrate &lt;astro-dir&gt;</code> scans an Astro project
+          and writes <code>MIGRATION.md</code>: every source file mapped to its
+          Zigapagos target, every component that needs a <code>client:</code>
+          directive flagged as a real island, and the standard procedure for
+          each. It does not rewrite your site &mdash; it tells you exactly what to
+          rewrite.
+        </p>
+        <p>
+          The opt-in <code>--scaffold &lt;dir&gt;</code> pass goes one step
+          further for islands specifically: it ports each component's imports
+          from React to <code>@z/runtime</code> and carries over its
+          <code>Props</code> type verbatim, so you are editing a real
+          starting point instead of an empty file. It never overwrites a file
+          you already migrated by hand.
+        </p>
+        <p><a href="$site.page('demos/migrate').link()">Try the migrate demo →</a></p>
+      </div>
+      <div>
+        <p><a href="$site.page('docs/migrate-from-astro').link()">The full Astro → Zigapagos mapping →</a></p>
+      </div>
+    </div>
+  </section>
+
+  <section id="s-pipeline" class="section wrap">
+    <p class="eyebrow">One binary and Bun</p>
+    <h2>The whole build, and nothing you have to configure</h2>
+    <div class="grid-2">
+      <div>
+        <pre class="pipeline"><code>content/*.smd    ──►  native core  ──┐
+                    (SuperMD/SuperHTML)  │
+                                         ├──►  static site
+components/*.island.tsx ──►  Bun SSR  ───┤     + import map
+                        └──►  bundle  ───┘     + one runtime</code></pre>
+      </div>
+      <div>
+        <p>
+          Content and templates are rendered by a native binary. Islands are
+          server-rendered and bundled by Bun. That is the entire toolchain: no
+          Node install, no bundler configuration, no plugin ecosystem to keep
+          current.
+        </p>
+        <p>
+          <a href="$site.page('docs/overview').link()">How the build works →</a>
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section id="s-deploy" class="section wrap">
+    <p class="eyebrow">Deploy anywhere static</p>
+    <h2>The output is static files and config files, not a running process</h2>
+    <div class="grid-2">
+      <div>
+        <p>
+          Bun runs only at build time &mdash; no Bun process in production, no
+          Node runtime to keep patched. What lands on disk is HTML and JS,
+          plus route config for exactly one server: whichever
+          <code>deploy_target</code> the site declares
+          (<code>zigbase</code>, <code>nginx</code>, or <code>apache</code>),
+          written inside each SPA's own output directory.
+        </p>
+        <ul>
+          <li><strong>ZigBase</strong> (this site's target, and the default) &mdash; a <code>.spa</code> marker file the stock <code>zigbase serve</code> binary already understands, plus an optional comptime <code>zigbase.static_routes.zig</code> snippet for dedicated per-route shells.</li>
+          <li><strong>nginx</strong> &mdash; a ready-to-include <code>nginx.nginx.conf</code> location block, written in place of the ZigBase files above.</li>
+          <li><strong>Apache</strong> &mdash; an <code>apache.htaccess</code> file, same rule.</li>
+        </ul>
+        <p>
+          Independent of that choice, every build also writes all three
+          <code>csp.nginx.conf</code>, <code>csp.apache.conf</code> and
+          <code>csp.zigbase.txt</code> at the output root &mdash; the strict
+          Content-Security-Policy header value for every inline script the
+          build actually emitted, hashed, with no <code>unsafe-inline</code>,
+          for whichever host ends up serving the site.
+        </p>
+      </div>
+      <div>
+        <pre class="pipeline"><code>zig-out/site/            &lt;- this site's real tree
+├── csp.nginx.conf       (written for every target)
+├── csp.apache.conf
+├── csp.zigbase.txt
+└── demos/app/            deploy_target = "zigbase"
+    ├── .spa
+    └── zigbase.static_routes.zig
+
+# deploy_target = "nginx" writes demos/app/nginx.nginx.conf instead;
+# "apache" writes demos/app/apache.htaccess instead.</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section id="s-why" class="section wrap">
+    <p class="eyebrow">Who this is for</p>
+    <h2>For a team that wants one binary, not a toolchain</h2>
+    <div class="grid-2">
+      <div>
+        <p>
+          Zigapagos is for a site that is mostly static content with a few
+          real interactive components, built and shipped by someone who does
+          not want to own a Node install, a bundler config and a plugin
+          ecosystem to make that possible. One binary renders the content,
+          Bun server-renders and bundles the islands, and the two together
+          are the entire build.
+        </p>
+        <p>
+          It is not for every project. <a href="$site.page('compare').link()">Compare</a>
+          lays out where Astro, Eleventy, Hugo and the generator this forks
+          from still fit better &mdash; including an honest section on when not
+          to reach for this one.
+        </p>
+      </div>
+    </div>
+  </section>
+
+</main>
