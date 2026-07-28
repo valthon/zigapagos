@@ -416,3 +416,95 @@ target, a build step — there should be one.
 
 DX-7 (#26) is the only item a consumer cannot work around, so it belongs on the
 roadmap regardless of this list's ordering.
+
+---
+
+# Part II — second wave
+
+Sixteen further findings (#45–#60), filed after the first twenty-five. These are
+less about individual traps and more about the shape of the product: the
+authoring loop, what CI actually protects, payload, and diagnosability.
+
+## Agent and authoring loop
+
+The stated goal that an agent can complete a migration unattended is worth
+taking literally, and these three are what stand between it and that.
+
+- **[#45] DX-26 · A fast `validate` path.** Every verification is a full ~2-minute
+  build including island bundling and SSR. The repo's own convention — prove a
+  gate fails, then passes — costs two of them. A parse-and-resolve pass with no
+  bundling would turn the loop from minutes to seconds, and most of this
+  project's failures were detectable in exactly that pass.
+- **[#46] DX-27 · Machine-readable diagnostics.** Errors are prose on stderr with
+  no codes. An agent parsing `this page has no subpages (page is not a section)`
+  is guessing; one switching on a stable code is not.
+- **[#47] DX-28 · No `explain <route>`.** We answered "what did this emit, which
+  layout rendered it" with `find` and `grep` throughout — and that habit
+  produced a defect, a landing section describing a deploy tree no build emits.
+
+## CI and release safety
+
+- **[#48] DX-29 · The marketing site has no PR-time gate.** All four site gates run
+  only in `pages.yml` on push to `main`; `ci.yml` covers `examples/tsx-site`
+  only. A PR that breaks the site is caught after it merges.
+- **[#49] DX-30 · The site's browser smokes are nightly-only.** The only checks
+  proving islands hydrate and SPA navigation is genuinely soft — the exact
+  defects this project shipped — can sit broken on `main` for a day.
+- **[#50] DX-31 · CI pulls an unpinned npm package at runtime** (`bunx serve`), in a
+  repository that otherwise pins its toolchain and vendors its dependencies.
+- **[#51] DX-32 · No preview deploy.** Every visual judgement here was made by
+  reading emitted HTML. That works for assertions and not for "does this read
+  well".
+
+## Payload and caching
+
+- **[#52] DX-33 · No island runtime slicing.** A page with one 433-byte Counter
+  ships 58,885 bytes, 99.3% of it runtime. Slicing already exists for SPAs
+  (`spa/app-runtime.js`, 50,263 B) — islands do not get it. "Zero JS by default"
+  is exactly true until a page has one island.
+- **[#53] DX-34 · No asset fingerprinting.** Stable asset paths mean a deploy can
+  serve stale CSS against fresh HTML, which is what prevents long-lived cache
+  headers on output that is otherwise perfectly cacheable.
+
+## Diagnosability
+
+- **[#54] DX-35 · Asset pruning is invisible.** A hand-authored SVG vanished with no
+  message when its last reference went away. The behaviour is right; the silence
+  is not — and it creates a second-order trap where a `.link()` call must stay
+  nested inside another expression purely to hold a refcount.
+- **[#55] DX-36 · A directory without `index.smd` yields no subpages, not an error.**
+  A missing section presents as "my list is empty" with nothing naming the cause.
+
+## Authoring ergonomics
+
+- **[#56] DX-37 · The recommended first command is one the binary calls deprecated.**
+  `zigapagos` with no subcommand is what `init` tells a new user to run, and
+  `main.zig` calls it "the deprecated live server". `dev` needs a ZigBase binary,
+  so it is not a drop-in.
+- **[#57] DX-38 · `init` scaffolds optional frontmatter as required.** `author`,
+  `date` and `draft` all have defaults; every template writes them anyway, so
+  every consumer copies fields that do nothing. This site's 404 page has an
+  author and a publication date.
+- **[#58] DX-39 · `client:only` has no placeholder API.** No fallback content for the
+  interval before hydration, so the directive demo had to describe the downside
+  in prose rather than show a graceful version.
+- **[#59] DX-40 · No documented way to test rendered output.** We hand-rolled ~30
+  grep assertions and got several wrong in instructive ways — one was green
+  before its code existed, one false-positived on prose, one asserted an
+  attribute the feature can never emit. Every consumer will repeat this.
+
+## Fork hygiene
+
+- **[#60] DX-41 · The branding gate cannot express a legitimate literal mention.**
+  The fork-point tag is *named* with the upstream word, so documentation that
+  needs to name that tag cannot pass the gate. We hit this correcting a false
+  changelog claim and had to reword around it.
+
+## The through-line
+
+Both waves point the same direction. The product is strong at *doing* the thing
+and weak at *telling you what it did* — six of seven top-priority items in the
+first wave were silent wrong output, and four of the second wave's themes
+(validate, explain, pruning, sections) are the same complaint in different
+clothes. A `doctor` command (#41), a `validate` pass (#45), and structured
+diagnostics (#46) would between them address most of this list's root cause.
