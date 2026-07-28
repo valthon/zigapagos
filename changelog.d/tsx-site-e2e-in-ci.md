@@ -31,12 +31,6 @@
   had. The two Playwright paths are spelled in full in that comment on purpose: they pin the
   filter, because removing it turns the gate red by name.
 
-- The three scripts still inventoried carry a recommendation rather than only a cost.
-  `site/test/build.sh` is not free in any `ci.yml` job (`site/` is a third consumer project with
-  its own cache: 120.3s cold, and `e2e-dev-loop`'s warm `examples/tsx-site` tree buys it
-  nothing), but it is nearly free in `pages.yml`, which already runs `bun install && zig build`
-  in `site/` before uploading — the five assertions are greps over that finished tree, ~2s. The
-  two Playwright scripts want a nightly `schedule:` plus `workflow_dispatch:` workflow with a
-  `playwright install --with-deps chromium` step, not the PR path: what they catch arrives with
-  a `runtime/src` change, and a browser job on every PR is the kind of cost that gets switched
-  off later.
+  (`site/test/build.sh` and the two Playwright scripts were the three still inventoried at this
+  point; all three were wired up before this release shipped — see the entry below for where
+  each ended up and why.)
