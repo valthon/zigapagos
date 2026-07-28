@@ -9,6 +9,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Pure-transform unit tests for the module the generator is built on. Run
+# first and unconditionally: a failure here means the generator itself is
+# producing wrong output, and every check below this line would otherwise be
+# diagnosing symptoms of that.
+bun test test/md-to-smd.test.ts
+
 bun run scripts/gen-docs-mirror.ts
 
 MISSING=0
