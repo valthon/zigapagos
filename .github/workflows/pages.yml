@@ -55,6 +55,37 @@ jobs:
           zig build
         working-directory: site
 
+      # A DEPLOY GATE, and deliberately placed between the build and the upload.
+      #
+      # site/test/build.sh asserts five properties of the finished tree: that
+      # index.html exists at all, that the runtime URL carries the /zigapagos/
+      # Pages path prefix (a prefix regression makes every script 404 on the
+      # live site while the build still exits 0), that the Counter island's
+      # client bundle was emitted, that the island was actually SSR'd
+      # (data-z-props present), and that no upstream branding leaked into the
+      # output.
+      #
+      # It ran nowhere before this. It is not free anywhere else — site/ is a
+      # third consumer project with its own .zig-cache, so no ci.yml job has a
+      # warm one and adopting it there costs a full ~120s cold build. Here the
+      # build above has already happened and the script's own `bun install` +
+      # `zig build` are warm no-ops, so the five greps cost ~2s.
+      #
+      # Running BEFORE `Upload artifact` is the whole point: a failure here
+      # fails the build job, the artifact is never uploaded, and `deploy`
+      # (which `needs: build`) never runs — so the previous good deployment
+      # stays live. Moved below the upload it would still go red, but it would
+      # go red about a site that had already shipped.
+      #
+      # KNOWN GAP, stated rather than glossed: this workflow triggers on push
+      # to main and manual dispatch only, so these assertions do not gate a PR.
+      # A change that breaks one of them merges green and is caught at deploy
+      # time. That is the accepted cost of the ~2s placement over a ~120s one
+      # on the PR path; if the trade ever needs revisiting, the number to beat
+      # is that 120s cold consumer build.
+      - name: Assert the built site before uploading it (site/test/build.sh)
+        run: bash site/test/build.sh
+
       - name: Configure Pages
         uses: actions/configure-pages@v6
 

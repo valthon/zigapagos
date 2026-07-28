@@ -453,21 +453,23 @@ jobs:
       #
       # NOT LISTED, deliberately: examples/tsx-site/test/hydrate.sh and
       # examples/tsx-site/test/spa_slice.sh. Both drive real Chromium through
-      # python3 + playwright, which no workflow installs (~150MB), and they are
-      # ~125s each; spa_slice.sh additionally `rm -rf`s .zig-cache and zig-out,
-      # which would throw away the warm build this step exists to reuse and
-      # force everything after it to rebuild cold. They stay in
-      # tests/meta/unrun-scripts.txt with that reason.
+      # python3 + playwright (~150MB of browser) and are ~125s each;
+      # spa_slice.sh additionally `rm -rf`s .zig-cache and zig-out, which would
+      # throw away the warm build this step exists to reuse and force everything
+      # after it to rebuild cold. They are NOT unrun — they moved to
+      # .github/workflows/browser-e2e.yml, a nightly schedule + workflow_dispatch
+      # job with one matrix runner each. Adding them here instead would put a
+      # browser install and ~250s on the PR path for a signal almost no PR moves.
       #
-      # Those two paths are spelled in full ON PURPOSE, and it is the reason
-      # script-coverage.sh's rule (b) had to become comment-aware. A reader of
-      # this file should be able to see exactly which scripts are excluded — but
-      # the gate's "a workflow names it" test is a plain `git grep`, so a bare
-      # mention here USED to count as running them, which would have made the
-      # gate report the pair as "run by CI but also inventoried" and fail. Now
-      # the gate skips comment lines, so this prose documents the exclusion
-      # without vouching for it — and if that filter is ever removed, this
-      # comment makes the gate go red immediately rather than quietly.
+      # Those two paths are spelled in full ON PURPOSE: a reader of this file
+      # should be able to see exactly which scripts this step excludes and where
+      # they went. The mention is inert as far as the coverage gate is concerned,
+      # because script-coverage.sh's rule (b) skips comment lines — a property
+      # now pinned by tests/meta/script-coverage.test.sh case 5 rather than by
+      # this comment. It used to be pinned here, by accident: while these two
+      # were inventoried as unrun, dropping the comment filter made the gate see
+      # them as both CI-run and listed and fail by name. That accident ended when
+      # the inventory went empty, which is exactly why the pin became a test.
       #
       # Two ordering constraints, neither of them aesthetic: parity.sh invokes
       # ssr.sh internally, so ssr.sh runs first and a shared failure is
