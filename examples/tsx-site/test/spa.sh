@@ -53,9 +53,26 @@ grep -q '"/app/club/1/"'                        "$OUT/app/routing-manifest.json"
 grep -q '"/app/club/2/"'                        "$OUT/app/routing-manifest.json" || { echo "FAIL: manifest missing static club/2"; exit 1; }
 grep -q '"fallback":"/app/index.html"'          "$OUT/app/routing-manifest.json" || { echo "FAIL: manifest fallback"; exit 1; }
 
-# nginx config
-grep -q 'try_files $uri $uri/ /app/index.html;' "$OUT/app/nginx.nginx.conf" || { echo "FAIL: nginx try_files"; exit 1; }
-grep -q 'location /app/club/ {'                  "$OUT/app/nginx.nginx.conf" || { echo "FAIL: nginx dynamic loc"; exit 1; }
+# nginx config.
+#
+# MIND THE QUOTES. emit-host-config.ts runs every interpolated route value through
+# nginxQuote(), so the `location` argument and each `try_files` argument are quoted
+# single tokens — nginx strips the quotes at parse time, so the directive still sees
+# the exact path, but the token can no longer end early on whitespace or a `;`. These
+# assertions matched the UNQUOTED spelling and so had matched nothing since nginxQuote
+# landed; the script is outside CI's `tests/*/*.sh` glob, so nothing ever noticed.
+# Keep them byte-identical to runtime/scripts/emit-host-config.test.ts's expectations
+# — that unit test is where the emitter is really pinned, and it does run in CI. What
+# these two add is the e2e half the unit test cannot cover: that the emitted bytes
+# actually reach $OUT/app/nginx.nginx.conf in a real build.
+#
+# grep -F, not -q alone: `$uri` and `.` are live in a regex, so a BRE would keep
+# matching some near-misses these are meant to reject.
+grep -qF 'try_files $uri $uri/ "/app/index.html";' "$OUT/app/nginx.nginx.conf" || { echo "FAIL: nginx try_files"; exit 1; }
+grep -qF 'location "/app/club/" {'                 "$OUT/app/nginx.nginx.conf" || { echo "FAIL: nginx dynamic loc"; exit 1; }
+# The dynamic location's try_files order is load-bearing: real file, then the route's
+# own shell, then the namespace fallback.
+grep -qF 'try_files $uri "/app/club/_shell.html" "/app/index.html";' "$OUT/app/nginx.nginx.conf" || { echo "FAIL: nginx dynamic try_files"; exit 1; }
 
 # ZigBase (>= 0.10.0) target: the presence-only `.spa` marker + optional comptime snippet.
 # The example builds with deploy_target=nginx, so re-run the emitter with --target zigbase
