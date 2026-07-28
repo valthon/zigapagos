@@ -1084,6 +1084,8 @@ those built before this existed.
 
 A fallback for any unmatchedRoutes outside explicit base paths. This is the 404-owner SPA's shell — the SPA named by `build.zig`'s `not_found` option, or the first declared SPA by default (see [Choosing the 404 owner](#choosing-the-404-owner-not_found)); it ensures deep-link requests to SPAs don't 404 at the hosting layer. (Multi-SPA `404.html` covers only the owner's namespace; per-namespace catch-all is the real mechanism.)
 
+Overriding this fallback from a content page requires the alias to be root-absolute (`"/404.html"`); a bare `"404.html"` lands inside the page's own output directory instead and now warns at build time.
+
 ### Content Security Policy (strict CSP)
 
 A hardened deployment runs CSP without `unsafe-inline`, which would block the generated inline

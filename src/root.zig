@@ -1498,6 +1498,46 @@ pub fn run(
                         a,
                     );
 
+                    // A content page once aliased `"404.html"` meaning to
+                    // override a SPA's site-wide fallback. Resolution
+                    // behaviour is inherited upstream semantics and unchanged
+                    // here on purpose: the alias joined to the page's own
+                    // output directory instead, landed at `404/404.html`,
+                    // and the demo app kept owning the real site root — the
+                    // build passed silently. This warns on that exact
+                    // shape without touching resolution.
+                    //
+                    // Two exclusions, both anti-false-positive:
+                    //  - `prefix.len == 0` (page at the site root): a
+                    //    relative and a root-absolute alias resolve
+                    //    identically there, so warning would be a pure
+                    //    false positive.
+                    //  - `index.html` is deliberately NOT in the artifact
+                    //    list: a relative `old-name/index.html` is the
+                    //    legitimate directory-style alias idiom, and a bare
+                    //    relative `index.html` resolves onto the page's own
+                    //    main output and already dies in the collision
+                    //    machinery above. Warning on it buys nothing.
+                    if (prefix.len > 0) {
+                        const basename = std.fs.path.basenamePosix(a);
+                        const is_site_wide_artifact =
+                            std.mem.eql(u8, basename, "404.html") or
+                            std.mem.eql(u8, basename, "robots.txt") or
+                            std.mem.eql(u8, basename, "sitemap.xml");
+                        if (is_site_wide_artifact) {
+                            std.debug.print(
+                                \\{f}: warning: alias '{s}' is relative to the page's output directory and resolves to '{f}'
+                                \\    note: aliases are joined to the page's URL unless they start with '/'; write '/{s}' to target the site root
+                                \\
+                            , .{
+                                p._scan.file.fmt(&v.string_table, &v.path_table, v.content_dir_path, ""),
+                                a,
+                                url.fmt(&v.string_table, &v.path_table, null, ""),
+                                basename,
+                            });
+                        }
+                    }
+
                     const loc: Variant.LocationHint = .{
                         .kind = .page_alias,
                         .id = @intCast(pidx),
