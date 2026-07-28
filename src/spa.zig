@@ -347,6 +347,38 @@ pub fn prerenderAll(io: std.Io, gpa: std.mem.Allocator, build: *Build, cfg: *con
                     .{ src, href, rel_path, rel_path },
                 );
             }
+        } else {
+            // issue #24: a SPA shell's <head> is fixed (import map,
+            // modulepreloads, boot script) — site stylesheets are NOT
+            // inherited, and `spa.head` is the documented, build-checked way
+            // to add one. `head: []` (this branch requires `head == null`, so
+            // an explicit empty slice never lands here) is the self-documenting
+            // opt-out for a SPA that legitimately styles itself another way
+            // (inline styles / CSS-in-JS — NOT CSS-in-bundle: `bundle-island.ts`
+            // writes only the entry chunk, so a `.css` import's output is
+            // dropped). Only worth the noise when the site actually HAS a
+            // stylesheet for this SPA to be missing.
+            var css_paths: std.ArrayList([]const u8) = .empty;
+            var asset_it = build.site_assets.iterator();
+            var asset_name_buf: [std.fs.max_path_bytes]u8 = undefined;
+            while (asset_it.next()) |asset_entry| {
+                const asset_path = std.fmt.bufPrint(&asset_name_buf, "{f}", .{
+                    asset_entry.key_ptr.fmt(&build.st, &build.pt, null, "/"),
+                }) catch continue;
+                if (std.mem.endsWith(u8, asset_path, ".css")) {
+                    try css_paths.append(arena.a, try arena.a.dupe(u8, asset_path));
+                }
+            }
+            if (spaHeadWarningAsset(desc.spa.head, css_paths.items)) |example| {
+                std.debug.print(
+                    "warning: spa '{s}' declares no spa.head, but the site has stylesheet assets " ++
+                        "(e.g. '/{s}') — SPA shells have a fixed <head> and do not inherit site " ++
+                        "styles, so this SPA's routes will render unstyled. Add a stylesheet to " ++
+                        "`export const spa` (head: [{{ rel: \"stylesheet\", href: \"/site.css\" }}]), " ++
+                        "or set head: [] to declare the SPA intentionally loads no head links.\n",
+                    .{ src, example },
+                );
+            }
         }
 
         var static_urls: std.ArrayList([]const u8) = .empty;
@@ -957,6 +989,44 @@ fn findBuildAssetByInstallPath(
         if (std.mem.eql(u8, std.mem.trimStart(u8, install, "/"), rel_path)) return ba;
     }
     return null;
+}
+
+/// Decide whether `prerenderAll` should print the "no spa.head but the site
+/// has stylesheets" warning (issue #24) for one SPA, and, if so, which asset
+/// path to cite as the actionable `e.g.` example.
+///
+/// Gated on BOTH: `head` is absent entirely (`null`) — `head: []` (the
+/// documented opt-out for a SPA that styles itself another way) and any
+/// non-empty `head` (even preconnect-only: the author clearly knows the hook)
+/// stay silent; AND `asset_paths` (already-formatted site-asset path strings —
+/// see the call site's `PathName.fmt`, matching `src/root.zig`'s convention)
+/// contains at least one path ending in ".css" — a CSS-less site has nothing
+/// for this SPA to be missing.
+///
+/// The cited example is the LEXICOGRAPHICALLY SMALLEST ".css" path in
+/// `asset_paths`. `build.site_assets` is a hash map, so as-found iteration
+/// order is arbitrary; naming the "first found" file would make the warning
+/// text vary between two otherwise-identical builds, which this repo does not
+/// accept from build output (see the snapshot tests). Lexicographic order is a
+/// total order over the same input regardless of hash-map iteration, so the
+/// pick is deterministic.
+///
+/// Takes a plain slice rather than `*const Build` on purpose: a helper that
+/// needs a whole `Build` to construct is a helper that can't be unit-tested
+/// without one. This one takes only the two pieces of a `Build` it actually
+/// reads, so the gating matrix (head null/[]/non-empty × css present/absent)
+/// and the lexicographic pick are both directly testable.
+///
+/// NO_SLOP.md §2.2a contract 3 (caller-buffer): reads `asset_paths`,
+/// allocates nothing; the returned slice aliases one of its entries.
+fn spaHeadWarningAsset(head: ?[]const std.json.ArrayHashMap([]const u8), asset_paths: []const []const u8) ?[]const u8 {
+    if (head != null) return null; // explicit `head: []` opt-out, or a real head
+    var best: ?[]const u8 = null;
+    for (asset_paths) |p| {
+        if (!std.mem.endsWith(u8, p, ".css")) continue;
+        if (best == null or std.mem.lessThan(u8, p, best.?)) best = p;
+    }
+    return best;
 }
 
 /// Minimal HTML-escaping for developer-authored text inserted into element
@@ -1960,6 +2030,49 @@ test "spa headHrefAssetPath strips a matching url_path_prefix at a segment bound
     // The bare prefix dir names no asset.
     try std.testing.expect(headHrefAssetPath("/zigapagos", "zigapagos") == null);
     try std.testing.expect(headHrefAssetPath("/zigapagos/", "zigapagos") == null);
+}
+
+// --- Issue #24: warn when a SPA declares no spa.head on a site with
+// stylesheets — the gating matrix (head null/[]/non-empty × css present/
+// absent) and the deterministic (lexicographically smallest) asset pick. ---
+
+test "spaHeadWarningAsset stays silent when head is present (empty or not), regardless of css assets" {
+    const css = [_][]const u8{"site.css"};
+
+    // head: [] — the documented opt-out — is silent even with css assets.
+    const empty_head = [_]std.json.ArrayHashMap([]const u8){};
+    try std.testing.expect(spaHeadWarningAsset(&empty_head, &css) == null);
+
+    // A real (non-empty) head is silent too, even preconnect-only (no
+    // stylesheet entry) — the author has clearly used the hook.
+    var e: std.json.ArrayHashMap([]const u8) = .{};
+    defer e.map.deinit(std.testing.allocator);
+    try e.map.put(std.testing.allocator, "rel", "preconnect");
+    const head = [_]std.json.ArrayHashMap([]const u8){e};
+    try std.testing.expect(spaHeadWarningAsset(&head, &css) == null);
+}
+
+test "spaHeadWarningAsset stays silent when head is absent but the site has no css assets" {
+    const no_css = [_][]const u8{ "logo.png", "site.js" };
+    try std.testing.expect(spaHeadWarningAsset(null, &no_css) == null);
+    try std.testing.expect(spaHeadWarningAsset(null, &.{}) == null);
+}
+
+test "spaHeadWarningAsset fires when head is absent and the site has a css asset, naming it" {
+    const css = [_][]const u8{"site.css"};
+    try std.testing.expectEqualStrings("site.css", spaHeadWarningAsset(null, &css).?);
+}
+
+test "spaHeadWarningAsset picks the lexicographically smallest .css path, deterministically" {
+    // Deliberately NOT already sorted, and mixed with non-css assets — the
+    // pick must be stable regardless of input order (as a hash map iteration
+    // would produce) and must skip non-.css entries.
+    const assets = [_][]const u8{ "zzz.css", "logo.png", "css/a.css", "app.css" };
+    try std.testing.expectEqualStrings("app.css", spaHeadWarningAsset(null, &assets).?);
+
+    // A different presentation order of the same set picks the same file.
+    const assets_reordered = [_][]const u8{ "app.css", "css/a.css", "zzz.css", "logo.png" };
+    try std.testing.expectEqualStrings("app.css", spaHeadWarningAsset(null, &assets_reordered).?);
 }
 
 test "spa findBuildAssetByInstallPath matches install paths leading-slash-insensitively" {

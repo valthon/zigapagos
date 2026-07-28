@@ -98,6 +98,27 @@ for how their origins are folded into the emitted policy. The check runs in
 release builds (`zigapagos release`); the dev server serves assets straight
 from the assets dir.
 
+**No `spa.head` at all, on a site with stylesheets, is a build-time warning.**
+SPA shells have a fixed `<head>` and do not inherit site styles, so a SPA
+that declares no `head` while the site has at least one `.css` asset will
+render its routes unstyled — the exact failure this project hit dogfooding
+its own marketing site. The build prints:
+
+```
+warning: spa '<src>' declares no spa.head, but the site has stylesheet assets (e.g. '/<path>') — SPA shells have a fixed <head> and do not inherit site styles, so this SPA's routes will render unstyled. Add a stylesheet to `export const spa` (head: [{ rel: "stylesheet", href: "/site.css" }]), or set head: [] to declare the SPA intentionally loads no head links.
+```
+
+naming the SPA and one qualifying stylesheet (picked deterministically — the
+lexicographically smallest matching asset path, not build-iteration-order
+dependent). `head: []` — an **explicitly empty array**, distinct from an
+absent `head` — declares "this SPA intentionally loads no head links"
+(inline styles, CSS-in-JS) and silences the warning permanently; any
+non-empty `head` (even preconnect-only) is silent too, since declaring the
+hook at all means you've made a deliberate choice. It is a warning, not a
+build error, and — like the head-asset staging check above — runs in
+**release builds only** (`zigapagos release`); the dev server does not
+evaluate it.
+
 ### Feature-flag defaults (`spa.flags`)
 
 `useFlag` reads the page-global flag state resolved by `initFlags` (a fetch of
