@@ -1100,12 +1100,22 @@ fn renderPage(
     var rendered_html_is_gpa_owned = false;
     const rendered_html: []const u8 = blk: {
         const raw = out_aw.written();
-        // Fast path: a page with no `<island` tag has nothing to rewrite and no
-        // runtime script to inject (`process` only injects when instances are
-        // present). Skip the whole-page alloc+memcpy `rewrite` would otherwise do
-        // (AUD-027). A false positive (e.g. the literal text "<island" in content,
-        // or `<islandish>`) just falls through to the full pass, which is a no-op
-        // rewrite — correct.
+        // Fast path: a page with no `<island` AND no `<z-island` tag has nothing
+        // to rewrite and no runtime script to inject (`process` only injects when
+        // instances are present). Skip the whole-page alloc+memcpy `rewrite`
+        // would otherwise do (AUD-027). A false positive (e.g. the literal text
+        // "<island" in content, or `<islandish>`) just falls through to the full
+        // pass, which is a no-op rewrite — correct.
+        //
+        // `<z-island>` is the content-authoring alias recognized inside a `.smd`
+        // page's `=html` fence (see docs/islands.md "Islands in content") — the
+        // SAME islands.process pass handles it, so it must trip this fast-path
+        // scan too. Checking only "<island" here used to let a page whose only
+        // island was spelled `<z-island>` skip this whole block — including the
+        // "no island sidecar is configured" build error five lines down — and
+        // ship the literal `<z-island>` element inert with exit code 0: the same
+        // AUD-027-adjacent failure class the comment below already guards
+        // against for the `<island>` spelling, just reached via the other name.
         //
         // This scan runs BEFORE the sidecar-null check on purpose. The reverse
         // order silently shipped the literal `<island …></island>` element with no
@@ -1118,7 +1128,7 @@ fn renderPage(
         // build error, not a pass-through. Cost of the reordering: one memchr per
         // page on sites that use no islands at all, which is noise next to
         // rendering the page.
-        if (std.mem.indexOf(u8, raw, "<island") == null) break :blk raw;
+        if (std.mem.indexOf(u8, raw, "<island") == null and std.mem.indexOf(u8, raw, "<z-island") == null) break :blk raw;
         // build is *Build (non-const), so |*s| yields a *Sidecar into the real field
         // (not a copy). If renderPage's `build` ever becomes *const, this capture fails.
         const sc: *@import("islands/sidecar.zig").Sidecar = if (build.island_sidecar) |*s| s else {

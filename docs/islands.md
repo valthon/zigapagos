@@ -51,6 +51,79 @@ Ziggy struct literal (`:props`) or individually (`prop-NAME`):
 </island>
 ```
 
+## Islands in content (`.smd`)
+
+An island can also appear directly in a content page's Markdown, not just in a
+layout — using SuperMD's existing raw-HTML escape hatch: a fenced code block
+whose fence info is `=html`. SuperMD runs that fence's body through
+superhtml's HTML validator and maps any error back to the `.smd` line, so
+malformed markup in the fence still fails the build; the fence body that
+passes validation is emitted into the page verbatim, and the islands pass
+(which runs on the fully rendered page, after content is spliced into its
+layout) rewrites any island it finds there exactly as it would in a layout —
+SSR, the `data-z-props` script, the import map, the shared runtime script, the
+`tsc` props gate, and the dev island-usage manifest all apply unchanged.
+
+````markdown
+Some prose.
+
+```=html
+<z-island src="components/Counter.island.tsx" client:load
+          :props='{ .start = 5 }'></z-island>
+```
+
+More prose.
+````
+
+produces (elided):
+
+```html
+<div><p>Some prose.</p>
+<div data-z-island id="z-island-0" data-z-src="components/Counter.island.tsx"
+     data-z-client="load" data-z-module="/islands/Counter.island.js">CONTENT-ISLAND-SSR-5</div>
+<script type="application/json" data-z-props="z-island-0">{"start":5}</script>
+<p>More prose.</p></div>
+```
+
+### Why the hyphen is mandatory: `<z-island>`, not `<island>`
+
+Use `<z-island>` in content, not `<island>`. superhtml's `.html`-mode
+validator — the mode used for the `=html` fence, as opposed to `.superhtml`
+mode used for layouts — rejects any unhyphenated, unrecognized element name
+per the HTML custom-element spec, failing the build with
+`[invalid_html_tag_name]`. `.superhtml` mode is deliberately lax about unknown
+elements, which is the only reason `<island>` has ever worked in a layout.
+`<z-island>` is a hyphenated alias the islands pass recognizes identically to
+`<island>` — same attributes, same slot handling, same everything — and it is
+the one already-valid spelling superhtml's `.html` mode accepts with zero
+changes to SuperMD or superhtml themselves. If a future supermd/superhtml sync
+ever relaxes or renames that validation, `tests/islands/content-island.sh`
+pins the current diagnostic and will fail loudly rather than silently pass.
+
+### No self-closing
+
+superhtml's `.html` mode rejects a self-closing custom element
+(`[html_elements_cant_self_close]`), so inside an `=html` fence a `<z-island>`
+must always be a paired tag — `<z-island …></z-island>` — even with no slot
+content. (Self-closing `<island … />` still works in a `.superhtml` layout;
+this restriction is specific to the content fence's `.html` validation mode.)
+
+### Props: static only — no `$page.*`
+
+`:props` Ziggy struct literals and literal `prop-NAME="value"` attributes work
+exactly as they do in a layout, and the resolved props are typechecked by the
+`tsc` gate (`--island-props-check`) the same way. What does **not** work is a
+`prop-NAME="$page.*"` Scripty expression: Scripty is evaluated by SuperHTML at
+*layout* render time, and an `=html` fence's body is emitted verbatim rather
+than run through SuperHTML's template evaluator, so a `$page.*` value in
+content is never evaluated — it reaches the island as the literal string
+`"$page.title"`, not the page's actual title. This is a documented limitation,
+not a bug: a page-bound prop (one that has to read `$page`, `$site`, or any
+other Scripty value) belongs in a layout, not content. Everything else about
+authoring an island — static Ziggy props, dynamic `prop-NAME` literals, and
+slots (`<template slot="…">` children inside the fence, exactly as in a
+layout) — works the same in content as it does in a layout.
+
 ## Typed props contract (build-time)
 
 Every island that accepts props should export its props type as `Props`:
