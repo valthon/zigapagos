@@ -73,7 +73,7 @@ merely produces a wrong-looking page.
    the registry entry instead; the canonical file's own frontmatter, if it has one, is not
    even read.
 
-2. **Relative `.md` links become link directives, or an absolute URL.** SuperMD does not do
+2. **Relative link targets become link directives, or an absolute URL.** SuperMD does not do
    filesystem-relative link resolution the way GitHub does. Its own link grammar reads a
    leading `.` as "subpage of the current section" — and these doc pages are not sections
    in that sense — so a target written the way GitHub expects:

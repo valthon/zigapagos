@@ -42,8 +42,15 @@ done < <(REGISTRY="$REGISTRY" bun -e 'for (const e of require("./" + process.env
 [ "$MISSING" -eq 0 ] || exit 1
 
 # Ziggy frontmatter, not YAML: the first line must be `---` and the second
-# must be a Ziggy field assignment.
+# must be a Ziggy field assignment. BOTH are checked. Asserting only the
+# second would let a mirror that lost its opening delimiter through — the
+# `.title` line alone is equally consistent with a file that has no
+# frontmatter block at all — and the failure would then surface much later,
+# out of SuperMD's parser, pointing at the page rather than at the generator
+# that wrote it.
 while IFS= read -r mirror; do
+  head -1 "$MIRROR_DIR/$mirror" | grep -qE '^---[[:space:]]*$' \
+    || { echo "FAIL: $mirror does not open with a --- frontmatter delimiter"; exit 1; }
   head -2 "$MIRROR_DIR/$mirror" | tail -1 | grep -qE '^\s*\.title = ' \
     || { echo "FAIL: $mirror has no Ziggy .title in frontmatter"; exit 1; }
 done < <(REGISTRY="$REGISTRY" bun -e 'for (const e of require("./" + process.env.REGISTRY)) console.log(e.mirror)')

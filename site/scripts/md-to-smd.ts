@@ -6,8 +6,10 @@
 // (site/scripts/gen-docs-mirror.ts).
 //
 //   1. Frontmatter must be Ziggy, not YAML (see `frontmatter`/`ziggyRaw`).
-//   2. Relative `.md` links become `$link.page(...)`/`.ref(...)` or an
-//      absolute URL (see `TransformOptions.published`/`githubBlobBase`).
+//   2. Relative link targets become `$link.page(...)`/`.ref(...)` when they
+//      resolve to a published page and an absolute URL when they do not —
+//      decided by resolved path, never by file extension (see
+//      `TransformOptions.published`/`githubBlobBase`).
 //   3. Every heading gets an explicit `$heading.id(...)` via a leading empty
 //      link (see `slugifyHeading`).
 //   4. Fence languages can be remapped, mirror-only (see `fenceLangRemap`).
@@ -99,12 +101,14 @@ export function slugifyHeading(raw: string): string {
 }
 
 /**
- * Rewrite a single non-fenced line's link TARGETS, never link text. A
- * published `.md` target becomes a `$link.page(...)` Scripty directive
- * (optionally `.ref(...)` for a `#anchor`); any other repo path becomes an
- * absolute URL under `githubBlobBase` (or `githubTreeBase` for a
- * trailing-slash directory target), with `onOffsiteLink` invoked so an
- * unpublished-but-linked doc can be surfaced rather than quietly degrading.
+ * Rewrite a single non-fenced line's link TARGETS, never link text. Every
+ * relative target is resolved against `canonicalPath`'s directory and looked
+ * up in `published`: a hit becomes a `$link.page(...)` Scripty directive
+ * (optionally `.ref(...)` for a `#anchor`), and anything else — whatever its
+ * file extension, since nothing here inspects one — becomes an absolute URL
+ * under `githubBlobBase` (or `githubTreeBase` for a trailing-slash directory
+ * target), with `onOffsiteLink` invoked so an unpublished-but-linked target
+ * can be surfaced rather than quietly degrading.
  * A bare `#anchor` (same-page) target is left untouched — SuperMD's own
  * `[text](#anchor)` shorthand already handles it, once the target heading
  * carries a matching id.
