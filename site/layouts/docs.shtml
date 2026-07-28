@@ -67,6 +67,14 @@
               <a href="$site.page('docs/cross-tier-codegen').link()">Cross-tier codegen</a>
             </ctx>
           </li>
+          <li>
+            <ctx :if="$page.custom.get('slug').eql('generated-content')">
+              <a aria-current="page" href="$site.page('docs/generated-content').link()">Generated content</a>
+            </ctx>
+            <ctx :if="$page.custom.get('slug').eql('generated-content').not()">
+              <a href="$site.page('docs/generated-content').link()">Generated content</a>
+            </ctx>
+          </li>
         </ul>
         <p class="docs-group">Migrating</p>
         <ul>
