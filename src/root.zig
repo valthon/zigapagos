@@ -85,6 +85,16 @@ pub const Site = struct {
     /// runs after the build. Must be one of "zigbase" (default, the
     /// first-party host), "nginx", or "apache" — enforced by `Config.validate`.
     deploy_target: []const u8 = "zigbase",
+    /// When enabled, every heading that doesn't already carry an explicit
+    /// `$heading.id(...)`/`$section.id(...)` gets a GitHub-compatible slug
+    /// id injected automatically (`src/heading_slugs.zig`), so a same-page
+    /// `#anchor` or cross-page `/page#anchor` link written against a doc's
+    /// existing GitHub rendering keeps working without every heading
+    /// needing a hand-written id. An explicit `$heading.id(...)`/
+    /// `$section.id(...)` always wins and is never overwritten. Opt-in and
+    /// off by default: existing sites that rely on "an unmatched anchor is a
+    /// build error" keep that behaviour unless they turn this on.
+    auto_heading_ids: bool = false,
 };
 
 pub const MultilingualSite = struct {
@@ -148,6 +158,16 @@ pub const MultilingualSite = struct {
     ///    height: auto;
     /// }
     image_size_attributes: bool = false,
+    /// When enabled, every heading that doesn't already carry an explicit
+    /// `$heading.id(...)`/`$section.id(...)` gets a GitHub-compatible slug
+    /// id injected automatically (`src/heading_slugs.zig`), so a same-page
+    /// `#anchor` or cross-page `/page#anchor` link written against a doc's
+    /// existing GitHub rendering keeps working without every heading
+    /// needing a hand-written id. An explicit `$heading.id(...)`/
+    /// `$section.id(...)` always wins and is never overwritten. Opt-in and
+    /// off by default: existing sites that rely on "an unmatched anchor is a
+    /// build error" keep that behaviour unless they turn this on.
+    auto_heading_ids: bool = false,
 };
 
 /// A localized variant of a multilingual website
@@ -470,6 +490,13 @@ pub const Config = union(enum) {
         return switch (c.*) {
             .Site => |s| s.image_size_attributes,
             .Multilingual => |m| m.image_size_attributes,
+        };
+    }
+
+    pub fn getAutoHeadingIds(c: *const Config) bool {
+        return switch (c.*) {
+            .Site => |s| s.auto_heading_ids,
+            .Multilingual => |m| m.auto_heading_ids,
         };
     }
 
@@ -802,6 +829,7 @@ pub fn run(
                         .section = s,
                         .page = &v.pages.items[s.index],
                         .drafts = options.drafts,
+                        .auto_heading_ids = build.cfg.getAutoHeadingIds(),
                     },
                 });
             }
@@ -852,6 +880,7 @@ pub fn run(
                             .drafts = options.drafts,
                             .variant = v,
                             .page = p,
+                            .auto_heading_ids = build.cfg.getAutoHeadingIds(),
                         },
                     });
                 }

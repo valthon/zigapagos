@@ -59,12 +59,14 @@ pub const Job = union(enum) {
         section: *Variant.Section,
         page: *Page,
         drafts: bool,
+        auto_heading_ids: bool,
     },
     page_parse: struct {
         progress: std.Progress.Node,
         drafts: bool,
         variant: *const Variant,
         page: *Page,
+        auto_heading_ids: bool,
     },
     page_analyze: struct {
         progress: std.Progress.Node,
@@ -202,6 +204,7 @@ inline fn runOneJob(
             ap.variant,
             ap.page,
             ap.drafts,
+            ap.auto_heading_ids,
         ),
         .page_parse => |pp| pp.page.parse(
             io,
@@ -210,6 +213,7 @@ inline fn runOneJob(
             pp.progress,
             pp.variant,
             pp.drafts,
+            pp.auto_heading_ids,
         ),
         .page_render => |pr| renderPage(
             io,

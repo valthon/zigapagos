@@ -12,6 +12,7 @@
 
 const std = @import("std");
 const config = @import("config.zig");
+const deps = @import("deps.zig");
 
 /// A suite compiled as its own root module (std-only, or std + ziggy).
 const Standalone = struct {
@@ -22,6 +23,10 @@ const Standalone = struct {
     /// only make sense natively, so cross-compiling them would be pointless.
     host_target: bool = false,
     ziggy: bool = false,
+    /// Wires the full `supermd` module (already carrying its own scripty/
+    /// superhtml/ziggy imports and libcmark-gfm linkage, see `build/deps.zig`)
+    /// into this suite's root module.
+    supermd: bool = false,
     /// Run the test binary from the repo root (it reads repo-relative fixtures
     /// or spawns repo-relative scripts).
     repo_root_cwd: bool = false,
@@ -56,6 +61,15 @@ const standalone: []const Standalone = &.{
         .root_source_file = "src/islands/sidecar.zig",
         .host_target = true,
         .repo_root_cwd = true,
+    },
+    // GitHub-compatible heading-id slugifier + injection pass unit tests
+    // (issue #29). Needs `supermd` for the `Ast`/`Node`/`Directive` types the
+    // injection pass (`apply`) operates on.
+    .{
+        .step_name = "test-slugs",
+        .description = "Run heading-id slugifier unit tests",
+        .root_source_file = "src/heading_slugs.zig",
+        .supermd = true,
     },
 };
 
@@ -174,15 +188,20 @@ pub fn setup(
     // `check` (which compiles all of these) catches single-threaded rot in
     // test-only code, not just in the exe.
     for (standalone) |suite| {
+        const target = if (suite.host_target) b.graph.host else cfg.target;
         const tests = b.addTest(.{
             .root_module = b.createModule(.{
                 .root_source_file = b.path(suite.root_source_file),
-                .target = if (suite.host_target) b.graph.host else cfg.target,
+                .target = target,
                 .optimize = cfg.optimize,
                 .single_threaded = cfg.single_threaded,
             }),
         });
         if (suite.ziggy) tests.root_module.addImport("ziggy", ziggy);
+        if (suite.supermd) {
+            const up = deps.upstream(b, target, cfg.optimize, cfg.enable_tracy);
+            tests.root_module.addImport("supermd", up.supermd);
+        }
         check.dependOn(&tests.step);
         const run_tests = b.addRunArtifact(tests);
         if (suite.repo_root_cwd) run_tests.setCwd(b.path("."));

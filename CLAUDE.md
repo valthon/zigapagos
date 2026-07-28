@@ -46,11 +46,12 @@ bash tests/serve/spa.sh                     # one shell e2e script
 ```
 
 **`zig build test` does NOT run the unit tests.** It builds the three-root snapshot fixtures and
-diffs them. The Zig unit tests live in twelve separate steps, and CI runs them explicitly:
+diffs them. The Zig unit tests live in thirteen separate steps, and CI runs them explicitly:
 
 ```sh
 zig build test-islands test-props test-migrate test-sidecar test-init \
-  test-release test-spa test-assets test-serve test-e2e test-dev test-doctor
+  test-release test-spa test-assets test-serve test-e2e test-dev \
+  test-doctor test-slugs
 ```
 
 **Running a single test.** Each `test-*` step is already a *filtered slice* of one test binary.

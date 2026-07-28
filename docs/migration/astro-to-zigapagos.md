@@ -130,6 +130,37 @@ const pubDate = new Date("2024-01-01");      .author = "Jane",
   custom fields under `.custom = { … }` → read as `$page.custom` in the layout.
 - Page body: Astro JSX/Markdown → SuperMD Markdown (`.smd`).
 
+### Heading anchors: `auto_heading_ids`
+
+SuperMD only gives a heading an `id` when the author writes an explicit
+`$heading.id(...)`/`$section.id(...)` directive — unlike GitHub (and most
+Markdown renderers Astro content was likely written against), it does **not**
+auto-slugify heading text. Content ported verbatim from a GitHub-rendered doc
+often relies on GitHub's implicit heading anchors for same-page navigation
+(`[Contents](#installation)`), and without a matching id those links fail the
+build with `unknown ref` — every heading would otherwise need a hand-written
+id before the port compiles.
+
+Set `auto_heading_ids = true` on `Site` (or `MultilingualSite`) in
+`zigapagos.ziggy` to inject a GitHub-compatible slug id into every heading
+that doesn't already have one (see `src/heading_slugs.zig`). It's opt-in and
+off by default — existing sites that rely on "an unmatched anchor is a build
+error" keep that behaviour unless they turn it on. An explicit
+`$heading.id(...)`/`$section.id(...)` always wins and is never overwritten,
+and GitHub's own duplicate-heading dedupe (`foo`, `foo-1`, `foo-2`, ...) and
+double-hyphen-around-punctuation behaviour are matched, so anchors computed
+from a doc's existing GitHub rendering keep working unchanged.
+
+**Known limitation:** a same-page reference through the `$link.ref('slug')`
+Scripty directive still fails with `unknown ref`, because SuperMD's own
+`invalid_ref` check runs *inside* `Ast.init`, before ids can be injected.
+Plain Markdown links do work, because they take a different, later-validated
+path: `[t](#slug)` (same page) and `[t](/other-page#slug)` (cross page) are
+both fine. Only the Scripty form is affected, and its workaround is
+`$link.unsafeRef('slug')` — which emits the same anchor but, as the name
+says, skips the id-existence check, so a typo in the slug becomes a dead
+link instead of a build error.
+
 ## 5. Layouts & templating: `.astro` → `.shtml` (SuperHTML)
 
 | Astro (JSX-ish) | Zigapagos (SuperHTML + Scripty) |
