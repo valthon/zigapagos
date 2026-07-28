@@ -841,6 +841,14 @@ cases are caught with a `console.warn` (once per layout route path) in the brows
 run in mount effects, so neither ever fires under SSR / at build time — a bad layout still
 builds cleanly and only warns once it's actually rendered in a browser.
 
+> **Known false positive.** The "rendered neither" check is deferred past its commit's whole
+> effect flush, so a correct layout never trips it on ordering. But a layout that deliberately
+> gates its outlet behind state flipped *after* mount (`{ready && children}` for a tab, an
+> auth-ready flag) genuinely renders neither channel on that first pass, so it warns — and
+> because the warning is once-per-path, it is never retracted when the outlet does appear. It is
+> console noise, not a behaviour change: the child renders normally once the gate opens. Render
+> the outlet unconditionally and gate *inside* the child if you would rather not see it.
+
 `/dash/overview` and `/dash/settings` each render `DashLayout` wrapping their child at the
 `<Outlet/>`. Matching is first-match-wins at **every** level; `:param` captures accumulate down
 the chain (nearest-wins on a name collision); a leaf only matches when it consumes every

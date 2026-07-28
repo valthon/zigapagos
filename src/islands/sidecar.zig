@@ -84,8 +84,18 @@ pub const Sidecar = struct {
     ///
     /// NO_SLOP.md §2.2a contract 1: every write lands straight in the
     /// `Allocating` writer's own buffer; `toOwnedSlice` hands that buffer to
-    /// the caller and resets the writer to empty, so there is nothing left to
-    /// free on this side.
+    /// the caller and resets the writer to empty, so on the SUCCESS path there
+    /// is nothing left to free on this side. The `errdefer` is what makes that
+    /// true on the ERROR path too — including the one that is easy to miss:
+    /// `toOwnedSlice` itself can fail (its shrink-to-fit both remaps and
+    /// allocates), so even the statement that performs the ownership transfer
+    /// can return with the fully-written buffer still owned by the writer. An
+    /// OOM growing the buffer mid-assembly does the same. Today's only
+    /// production caller passes the prerender arena, which reclaims either
+    /// wholesale — but contract 1 promises correctness under ANY allocator,
+    /// and a doc comment that promises what its error path does not deliver is
+    /// precisely what §2.2a exists to stop. Pinned by the FailingAllocator
+    /// test below, which leaks without this line.
     fn buildRenderRequest(
         alloc: std.mem.Allocator,
         id: u64,
@@ -96,6 +106,7 @@ pub const Sidecar = struct {
         url_prefix: []const u8,
     ) ![]const u8 {
         var req_aw: std.Io.Writer.Allocating = .init(alloc);
+        errdefer req_aw.deinit();
         const rw = &req_aw.writer;
         try rw.print("{{\"id\":{d},\"src\":", .{id});
         try std.json.Stringify.value(abs_src, .{}, rw);
@@ -336,6 +347,63 @@ pub const SpaDescribe = struct {
     spa: SpaMeta,
     routes: []const RouteMeta,
 };
+
+test "buildRenderRequest leaks nothing when an allocation fails part-way through assembly" {
+    // The happy-path test below proves the WIRE FORMAT; it cannot prove the
+    // ownership contract, because on success `toOwnedSlice` transfers the
+    // buffer and there is nothing left to leak. That gap is exactly how the
+    // missing `errdefer` survived review: the only production caller passes
+    // the prerender arena, which reclaims a partially-grown buffer wholesale,
+    // so no allocator in the tree could observe the leak.
+    //
+    // `checkAllAllocationFailures` re-runs the function once per allocation
+    // site with that site forced to fail, and reports a leak if any run
+    // returns without freeing. It therefore exercises every intermediate
+    // `try` — the buffer growth inside `print`/`writeAll`/`Stringify` — under
+    // a leak-detecting allocator, which is the harsher execution NO_SLOP.md
+    // §2.2a asks contract-1 code to survive.
+    // Failing the first plain ALLOCATION proves nothing: while the buffer is
+    // empty `Writer.Allocating.ensureTotalCapacityPrecise` skips `remap`, so
+    // the initial allocation is the only `alloc` here — and failing it leaks
+    // nothing, because there is no buffer yet. That is why
+    // `std.testing.checkAllAllocationFailures`, which varies only the alloc
+    // index, passes with AND without the `errdefer`. (Verified, not assumed:
+    // it was the first thing tried here, and it was green either way.)
+    //
+    // The case that leaks is the shrink-to-fit inside `toOwnedSlice` — the
+    // statement that hands ownership to the caller, and the last one on the
+    // happy path. For this payload the buffer never has to grow, so that is
+    // also the first resize the function performs.
+    //
+    // It takes BOTH knobs to induce, because `toOwnedSlice` tries `rawRemap`
+    // and, when that returns null, FALLS BACK to `rawAlloc` + copy. Failing
+    // only the remap leaves the fallback to succeed and the call returns
+    // normally (verified: it did). With both failing, `toOwnedSlice` returns
+    // `error.OutOfMemory` while the fully-written buffer is still owned by
+    // `req_aw`, one line from being dropped.
+    var fa: std.testing.FailingAllocator = .init(std.testing.allocator, .{
+        .resize_fail_index = 0, // the remap `toOwnedSlice` tries first
+        .fail_index = 1, // ...and the rawAlloc it falls back to
+    });
+    // The longest shape: slots present AND a non-empty prefix, so the maximum
+    // number of fallible writes is on the path.
+    try std.testing.expectError(error.OutOfMemory, Sidecar.buildRenderRequest(
+        fa.allocator(),
+        1,
+        "/abs/Panel.island.tsx",
+        "{\"a\":1}",
+        "{\"default\":\"<p>x</p>\"}",
+        "/myrepo/faq",
+        "/myrepo",
+    ));
+    // Without this the test would pass vacuously if the growth pattern ever
+    // changed such that the injected failure was never reached.
+    try std.testing.expect(fa.has_induced_failure);
+    // The leak assertion itself is `std.testing.allocator`'s: it backs `fa`,
+    // and the test runner fails this test at teardown if the partially-grown
+    // buffer was never freed. Remove the `errdefer` and this test reports
+    // exactly that.
+}
 
 test "buildRenderRequest emits \"prefix\" only when url_prefix is non-empty" {
     // Pins the wire format issue #26 adds — no live Bun process needed, since

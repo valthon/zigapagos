@@ -111,7 +111,17 @@ grep -q 'declares no spa.head' "$WORK/1.log" \
   || { sed -n '1,30p' "$WORK/1.log"; fail "leg 1: no spa.head + a site .css asset produced no warning"; }
 grep -qE '\.css' "$WORK/1.log" \
   || { sed -n '1,30p' "$WORK/1.log"; fail "leg 1: the warning does not name a .css file"; }
-echo "leg 1 OK: no spa.head + a css asset warns and names a .css file (exit 0)"
+# The SUGGESTED SNIPPET must name the detected file too, not a hardcoded
+# example. This fixture's stylesheet is `style.css` precisely so the two are
+# distinguishable: the warning used to point at '/style.css' and then hand the
+# author `href: "/site.css"` to paste, which is a broken suggestion on every
+# site whose stylesheet isn't literally called site.css (and would fail the
+# head-asset staging check the moment they pasted it).
+grep -qF 'href: "/style.css"' "$WORK/1.log" \
+  || { sed -n '1,30p' "$WORK/1.log"; fail "leg 1: the suggested spa.head snippet does not name the detected stylesheet"; }
+grep -qF '/site.css' "$WORK/1.log" \
+  && { sed -n '1,30p' "$WORK/1.log"; fail "leg 1: the suggestion still hardcodes /site.css instead of the detected file"; }
+echo "leg 1 OK: warns, names a .css file, and its suggestion is copy-pasteable (exit 0)"
 
 # --- (2) head: [] (documented opt-out), site HAS css -> silent --------------
 SITE2="$WORK/2"; OUT2="$WORK/out2"

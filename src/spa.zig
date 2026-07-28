@@ -394,9 +394,9 @@ pub fn prerenderAll(io: std.Io, gpa: std.mem.Allocator, build: *Build, cfg: *con
                     "warning: spa '{s}' declares no spa.head, but the site has stylesheet assets " ++
                         "(e.g. '/{s}') — SPA shells have a fixed <head> and do not inherit site " ++
                         "styles, so this SPA's routes will render unstyled. Add a stylesheet to " ++
-                        "`export const spa` (head: [{{ rel: \"stylesheet\", href: \"/site.css\" }}]), " ++
+                        "`export const spa` (head: [{{ rel: \"stylesheet\", href: \"/{s}\" }}]), " ++
                         "or set head: [] to declare the SPA intentionally loads no head links.\n",
-                    .{ src, example },
+                    .{ src, example, example },
                 );
             }
         }
