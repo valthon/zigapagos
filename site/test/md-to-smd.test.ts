@@ -48,9 +48,11 @@ test("slugifyHeading: does not collapse other multi-space runs either", () => {
 
 test("heading id: leading empty link, never wraps the heading's own text", () => {
   const out = transformBody("## [Unreleased]\n", opts());
-  const openBracket = "[";
-  const doubled = openBracket + openBracket;
-  expect(out).not.toContain(doubled);
+  // The literal is safe here: site/test/docs-mirror.sh's doubled-bracket
+  // regression grep runs over the generated *.smd mirrors, never over test
+  // sources, so writing it plainly costs nothing and reads better than
+  // assembling it.
+  expect(out).not.toContain("[[");
   expect(out).toBe('## []($heading.id("unreleased")) [Unreleased]\n');
 });
 
