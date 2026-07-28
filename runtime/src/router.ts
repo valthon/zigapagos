@@ -1549,14 +1549,63 @@ export function Router(
   return h(Ctx.Provider, { value: ctx }, view);
 }
 
+// Client-tier warn-once keys for `<Link>` rendered with no router context.
+const warnedNoRouterLink = new Set<string>();
+
+/**
+ * A `<Link>` was rendered with no enclosing `<Router>`. Loud on the server,
+ * survivable on the client — deliberately asymmetric:
+ *
+ * - **SSR (the build's prerender pass) throws.** The prerendered shell is the
+ *   artifact that actually ships the dead href, and it is produced by
+ *   `renderToString` in `runtime/sidecar/render.ts`. A throw there propagates
+ *   through the sidecar's catch as `{error, stack}`, `src/islands/sidecar.zig`
+ *   turns it into a structured `RenderError`, and `src/spa.zig` fatals with the
+ *   JS message and a source-mapped stack attributed to the `.spa.tsx` and
+ *   route. There is no dev/release distinction to make: a shell with dead nav
+ *   is defective in both, and the SPA prerender deliberately runs before the
+ *   page pass, so the fatal is minimally destructive. Warning instead was tried
+ *   by this codebase's own history and failed — the marketing site shipped a
+ *   demo whose every nav link was dead, through a green build.
+ * - **The client warns once per href and renders the anchor anyway.** Throwing
+ *   during hydration would unmount the whole subtree, which is strictly worse
+ *   than one link that does a full page load. This tier is defense in depth
+ *   (shells built by an older zigapagos, client-only render paths); it matches
+ *   the existing `warnedRedirects`/`warnedNoFallback` precedent — a module-level
+ *   Set and an unconditional `console.warn`, since no dev-vs-release runtime
+ *   split exists here and inventing one for a single warning is not worth it.
+ */
+function noRouterLink(href: string): void {
+  if (isServer()) {
+    throw new Error(
+      `zigapagos: <Link href="${href}"> rendered outside a <Router>. Without router context the ` +
+        "href cannot resolve against the SPA base and the anchor never soft-navigates — the " +
+        "prerendered shell would ship a dead link. Put app chrome in a layout route inside the " +
+        "Router, or use a plain <a> for a non-router anchor.",
+    );
+  }
+  if (warnedNoRouterLink.has(href)) return;
+  warnedNoRouterLink.add(href);
+  console.warn(
+    `zigapagos: <Link href="${href}"> rendered outside a <Router> — it degrades to a plain ` +
+      "anchor (unresolved href, no soft navigation). Move it inside the Router or use <a>.",
+  );
+}
+
 /**
  * An in-SPA anchor. A root-relative `href` is ROUTER-INTERNAL: it resolves
  * against the Router's `base` (`<Link href="/booking">` under base
  * `/app` renders `<a href="/app/booking">`) and clicks soft-navigate. An
  * absolute/protocol-relative URL renders a plain anchor with the href
  * untouched — the escape hatch for cross-SPA/external targets (as is any
- * plain `<a>`). Outside a Router (no context) the base is unknown, so the
- * href renders verbatim with no click interception.
+ * plain `<a>`).
+ *
+ * **Outside a Router there is no context, so nothing can be resolved.** That is
+ * never intentional — `Link` is router-internal, and `<a>` is the escape hatch
+ * — so it is a hard error on the SERVER (the build's SSR pass, where the
+ * defective shell is actually produced) and a warn-once on the CLIENT (throwing
+ * during hydration would kill the whole subtree, which is worse than one
+ * degraded link). See the two branches below.
  *
  * A caller-supplied `onClick` is CHAINED, never substituted: it runs first
  * (the close-the-nav-drawer pattern — `<Link href="/x" onClick={() => setOpen(false)}>`)
@@ -1568,6 +1617,7 @@ export function Link(
 ): VNode<any> {
   const { href, children, onClick: callerOnClick, ...rest } = props;
   const ctx = useContext(Ctx);
+  if (!ctx) noRouterLink(href);
   const internal = !!ctx && href.startsWith("/") && !isExternalHref(href);
   const resolved = internal ? resolveHref(href, ctx!.base) : href;
   const onClick = (e: any) => {

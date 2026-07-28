@@ -2123,3 +2123,36 @@ describe("Router session-expiry (guard re-run on 401)", () => {
     __setUnauthorizedReRunCooldownForTest();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Issue #23 — <Link> outside a <Router> is a build error, not a dead anchor.
+// ---------------------------------------------------------------------------
+
+describe("Link outside a Router (#23)", () => {
+  test("SSR throws, naming the href and the escape hatch", () => {
+    // The prerendered shell is the artifact that would ship the dead href, so
+    // the build's SSR pass is where this has to fail.
+    expect(() => ssrIsland(() => h(Link, { href: "/guides" }, "guides"), {}))
+      .toThrow(/outside a <Router>/);
+  });
+
+  test("the client still renders the anchor, but warns exactly once per href", async () => {
+    // Throwing during hydration would unmount the whole subtree — worse than
+    // one link that does a full page load. Warn, render, carry on.
+    const Bare = () => h("div", null, h(Link, { href: "/warn-once-href", "data-testid": "bare" }, "x"));
+    const { warnings, restore } = spyConsoleWarn();
+    const r = renderIsland(Bare, {}, { mode: "render", pathname: "/app/" });
+    try {
+      await flush();
+      await r.rerender({} as any); // a second render of the same href must not re-warn
+      expect(r.get('[data-testid="bare"]').getAttribute("href")).toBe("/warn-once-href");
+      const outside = warnings.filter((w) => w.includes("rendered outside a <Router>"));
+      expect(outside.length).toBe(1);
+      expect(outside[0]).toContain("/warn-once-href");
+    } finally {
+      restore();
+      r.unmount();
+    }
+  });
+});
+

@@ -395,8 +395,23 @@ Renders the matched route's component, or `notFound` if no match.
 `href` is **base-relative** (see [Navigation is base-relative](#navigation-is-base-relative)):
 the rendered anchor carries the resolved `href` (`/app/booking`), and a click
 soft-navigates (hijacked, no reload). An absolute/protocol-relative URL
-renders a plain anchor (full-page navigation); outside a `Router` context the
-href renders verbatim with no interception.
+renders a plain anchor (full-page navigation).
+
+**Outside a `<Router>` is a build error.** With no router context the `href`
+cannot resolve against the SPA base and the click is never intercepted, so
+the prerendered shell would ship a dead link — on a path-prefixed host, a
+hard 404. The build's SSR pass therefore throws, and the build fails naming
+the `.spa.tsx` and the offending `href`. On the **client**, the same
+situation only warns once per `href` and degrades to a plain anchor rather
+than throwing — throwing during hydration would unmount the whole subtree,
+which is worse than one link that does a full page load.
+
+**Consequence worth stating explicitly:** `<Link>` is router-internal, so a
+`<Link>` inside an `.island.tsx` on an ordinary content page is now a build
+error too (an island SSRs through the same path). Use a plain `<a>` there.
+The same applies to a view unit-tested in isolation with `renderForTest`
+(see [Unit-testing a view](#unit-testing-a-view-renderfortest)) — wrap it in
+a `<Router>`, or use a plain `<a>`.
 
 ### Hooks
 
@@ -1182,7 +1197,10 @@ browser-free coverage of a **single view's render logic** — what it renders fo
 given set of props, guard data, and flags — reach for `renderForTest` from
 `@z/runtime/testing`. It is a thin, in-process wrapper over the exact
 `renderToString` path the Bun SSR sidecar runs at build time (`isServer() ===
-true`), with each input injected through the same seam the runtime uses:
+true`), with each input injected through the same seam the runtime uses. It
+renders with **no `<Router>` context**, so a view under test that renders a
+`<Link>` directly needs its own `<Router>` wrapper (or a plain `<a>`) — see
+the [`<Link>` outside a Router](#components) note above.
 
 ```ts
 import { test, expect } from "bun:test";
