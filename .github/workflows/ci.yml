@@ -4,6 +4,12 @@ on:
   push:
     branches:
       - main
+  # Guarantees the macOS leg a cadence even in a week with no pushes to main —
+  # see the matrix note below for why it no longer runs per-PR. Off-the-hour and
+  # clear of browser-e2e.yml (04:27) and smoke-published.yml (05:43).
+  schedule:
+    - cron: "11 3 * * *"
+  workflow_dispatch:
 concurrency:
   # Cancels pending runs when a PR gets updated.
   group: ${{ github.head_ref || github.run_id }}-${{ github.actor }}
@@ -88,7 +94,25 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # macOS everywhere EXCEPT pull requests.
+        #
+        # It was the critical path by a wide margin — measured on run
+        # 30394314594, 333s against ubuntu's 145s, with every compile-heavy step
+        # 2-3x slower (snapshot tests 152s vs 80s, single-threaded check 86s vs
+        # 30s) and the Bun-sidecar suites 7x (50s vs 7s, a spawn cost macOS pays
+        # per fork/exec). Its run-to-run variance is also much wider: 227s, 327s,
+        # 333s across three runs where ubuntu sat at 190s, 185s, 145s.
+        #
+        # What it catches is platform-specific compile breakage, which is rare
+        # per-PR and still gated before anything ships: every push to main runs
+        # it, as does the nightly and a manual dispatch. The trade is that such a
+        # break is caught at merge rather than on the PR — deliberate, because
+        # halving every PR's feedback loop is worth more than catching a rare
+        # class one step earlier.
+        os: >-
+          ${{ github.event_name == 'pull_request'
+              && fromJSON('["ubuntu-latest"]')
+              || fromJSON('["ubuntu-latest", "macos-latest"]') }}
     runs-on: ${{ matrix.os }}
     env:
       ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
@@ -190,7 +214,10 @@ jobs:
         # compile on stable Zig 0.16.0 (os.windows lost OVERLAPPED/PAGE_READONLY);
         # upstream fixed this on Zig 0.17-dev. Re-add with the Zig 0.17 port at
         # the next upstream release-tag sync (see docs/ROADMAP.md fork policy).
-        os: [ubuntu-latest, macos-latest]
+        os: >-
+          ${{ github.event_name == 'pull_request'
+              && fromJSON('["ubuntu-latest"]')
+              || fromJSON('["ubuntu-latest", "macos-latest"]') }}
     runs-on: ${{ matrix.os }}
     env:
       # --- Zig package cache ---
