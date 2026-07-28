@@ -147,6 +147,14 @@ const exe_module: []const ExeModule = &.{
         .description = "Run zigapagos-dev CLI parse + helper unit tests",
         .filters = &.{"dev"},
     },
+    // `zigapagos doctor` CLI parse + check-helper unit tests (built-output-tree
+    // audit). The "doctor" filter matches main.zig's anchor and every
+    // `test "doctor: …"` block in doctor.zig.
+    .{
+        .step_name = "test-doctor",
+        .description = "Run zigapagos-doctor CLI parse + check-helper unit tests",
+        .filters = &.{"doctor"},
+    },
 };
 
 /// Registers every `test-*` step and hangs the test binaries off `check`.
