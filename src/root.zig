@@ -2454,6 +2454,27 @@ fn printSuperMdErrors(
             highlight,
         });
 
+        // issue #32: SuperMD's `pathValidationError` rejects an empty path with
+        // the bare message "path is empty". That fires on `$link.page('')`, which
+        // looks like it should work because `$site.page('')` does (base.shtml's
+        // nav uses it for the home link) -- but the right builtin for "link to
+        // the site's home page" is `$link.site()`, which supermd's own `page`
+        // builtin DESCRIPTION already names, just never in the error itself.
+        // supermd is an external dependency pinned in build.zig.zon (fork policy:
+        // upstream syncs at release tags only), so this hint can't be added at
+        // the source -- this printing path is the legitimate in-repo enrichment
+        // point instead. Matching the exact upstream string is deliberate and
+        // degrades gracefully: if a release-tag sync rewords "path is empty" the
+        // hint just stops firing, and tests/rendering/empty-page-path-hint.sh
+        // (which asserts on it) goes red at sync time rather than silently
+        // drifting. The `.page(` substring check on the source line is what
+        // keeps this off `$image.asset('')` and friends, where "link to the site
+        // homepage" would be actively wrong -- `sub('')`/`sibling('')` are
+        // deliberately NOT hinted for the same reason (see issue #32 scope cut).
+        const empty_page_path_hint = err.kind == .scripty and
+            std.mem.eql(u8, msg, "path is empty") and
+            std.mem.indexOf(u8, line_trim, ".page(") != null;
+
         switch (err.kind) {
             .duplicate_id => |dup| {
                 std.debug.print(
@@ -2462,27 +2483,55 @@ fn printSuperMdErrors(
                     \\
                 , .{fm_lines + dup.original.range().start.row});
             },
-            else => std.debug.print("\n", .{}),
+            else => if (empty_page_path_hint) {
+                std.debug.print(
+                    \\|   note: to link to the site homepage, use $link.site()
+                    \\
+                    \\
+                , .{});
+            } else {
+                std.debug.print("\n", .{});
+            },
         }
 
         if (build.mode == .memory) {
+            // Unlike the `.duplicate_id` note above (a pre-existing gap this
+            // change isn't retrofitting), the empty-page-path hint is added to
+            // BOTH output paths, so the live server's error overlay carries it too.
+            //
+            // `note_segment` is one of two comptime string literals -- the hint
+            // text is fixed (unlike NoteLine's dynamic PageAnalysisError notes
+            // above), so a plain conditional is enough to collapse this to ONE
+            // allocPrint instead of branching into two near-identical ones. It
+            // carries its own trailing "\n" so the format string's final blank
+            // line reproduces the same "note line + blank separator" shape either
+            // way (see the analogous NoteLine reasoning above).
+            const note_segment: []const u8 = if (empty_page_path_hint)
+                "|   note: to link to the site homepage, use $link.site()\n"
+            else
+                "";
+            // Contract 1 (self-freeing, NO_SLOP §2.2a): `memory_msg` is the only
+            // allocation and it escapes as-is into build.mode.memory.errors, which
+            // owns it from here on.
+            const memory_msg = try std.fmt.allocPrint(gpa,
+                \\{f}:{}:{}: [{s}] {s}
+                \\|    {s}
+                \\|    {s}
+                \\{s}
+                \\
+            , .{
+                file.fmt(&v.string_table, &v.path_table, v.content_dir_path, ""),
+                fm_lines + range.start.row,
+                range.start.col,
+                tag_name,
+                msg,
+                line_trim,
+                highlight,
+                note_segment,
+            });
             try build.mode.memory.errors.append(gpa, .{
                 .ref = "",
-                .msg = try std.fmt.allocPrint(gpa,
-                    \\{f}:{}:{}: [{s}] {s}
-                    \\|    {s}
-                    \\|    {s}
-                    \\
-                    \\
-                , .{
-                    file.fmt(&v.string_table, &v.path_table, v.content_dir_path, ""),
-                    fm_lines + range.start.row,
-                    range.start.col,
-                    tag_name,
-                    msg,
-                    line_trim,
-                    highlight,
-                }),
+                .msg = memory_msg,
             });
         }
     }
