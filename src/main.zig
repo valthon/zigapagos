@@ -227,3 +227,13 @@ test "doctor" {
 test "languages" {
     _ = @import("languages.zig");
 }
+
+// Pull Template.zig into the test compilation unit for `zig build test-init`.
+// Template.zig is reached only through root.zig's top-level import, and — same
+// as languages.zig above — that one hop past main.zig is not enough for Zig
+// 0.16 to eagerly analyze its `test` blocks: without this anchor the
+// `lintInertDirectives` tests compile clean and simply never run. `test-init`
+// runs with an EMPTY filter, so this anchor's own name need not match anything.
+test "templates" {
+    _ = @import("Template.zig");
+}

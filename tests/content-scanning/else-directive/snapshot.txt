@@ -19,12 +19,23 @@
 |                                               |
 *-----------------------------------------------*
 
-layouts/index.shtml:5:8: error: unknown ':' directive attribute ':src'
-    SuperHTML's only ':' directives are :if, :loop, :text, :html
-    (plus :props on <island>). A dynamic attribute uses the BARE name
-    with a Scripty value: write src="$expr", not :src="$expr"
-    (the ':' form evaluates the value but keeps the ':src' name, so the
-    real 'src' attribute is never set).
+layouts/index.shtml:6:8: error: ':else' is parsed but never evaluated
+    SuperHTML validates ':else' at parse time and then has no case for
+    it at render time: the evaluator reads the attribute's value, which
+    a bare ':else' does not have, and panics on the null unwrap. No
+    template using ':else' has ever rendered.
+    Write the negated condition on a second <ctx> instead:
+        <ctx :if="$cond">...</ctx>
+        <ctx :if="$cond.not()">...</ctx>
+
+layouts/index.shtml:7:8: error: ':else' is parsed but never evaluated
+    SuperHTML validates ':else' at parse time and then has no case for
+    it at render time: the evaluator reads the attribute's value, which
+    a bare ':else' does not have, and panics on the null unwrap. No
+    template using ':else' has ever rendered.
+    Write the negated condition on a second <ctx> instead:
+        <ctx :if="$cond">...</ctx>
+        <ctx :if="$cond.not()">...</ctx>
 
 ----------------------------
        -- VARIANT --

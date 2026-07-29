@@ -1780,30 +1780,113 @@ pub fn run(
                 defer aw.deinit();
 
                 for (bads.items) |bad| {
-                    var line: usize = 1;
-                    var col: usize = 1;
-                    for (template.src[0..bad.offset]) |ch| {
-                        if (ch == '\n') {
-                            line += 1;
-                            col = 1;
-                        } else col += 1;
-                    }
+                    const lc = Template.lineCol(template.src, bad.offset);
                     const bare = bad.name[1..];
                     try aw.writer.print(
                         \\{s}:{d}:{d}: error: unknown ':' directive attribute '{s}'
-                        \\    SuperHTML's only ':' directives are :if, :loop, :else, :text, :html
+                        \\    SuperHTML's only ':' directives are :if, :loop, :text, :html
                         \\    (plus :props on <island>). A dynamic attribute uses the BARE name
                         \\    with a Scripty value: write {s}="$expr", not {s}="$expr"
                         \\    (the ':' form evaluates the value but keeps the ':{s}' name, so the
                         \\    real '{s}' attribute is never set).
                         \\
                         \\
-                    , .{ path, line, col, bad.name, bare, bad.name, bare, bare });
+                    , .{ path, lc.line, lc.col, bad.name, bare, bad.name, bare, bare });
                 }
 
                 std.debug.print("{s}", .{aw.written()});
                 if (build.mode == .memory) {
                     // Owned copy so Build.deinit can free it (AUD-004).
+                    try build.mode.memory.errors.append(gpa, .{
+                        .ref = "",
+                        .msg = try aw.toOwnedSlice(),
+                    });
+                }
+            }
+        }
+
+        // Lint for `:` directives SuperHTML parses and then cannot honour: a
+        // bare `:else` (validated at parse time, then never read, so the
+        // evaluator null-unwraps its absent value and panics the renderer) and
+        // `:if`/`:loop` on an element with no end tag (skip_body rewinds
+        // `print_cursor` to `close.start`, which is 0 there, so the whole raw
+        // template source is spliced into the page with exit code 0). Both
+        // reach the renderer today; turning them into located template errors
+        // here means the build aborts at the `template_errors` gate below,
+        // BEFORE the output tree is touched. Only a clean html tree is scanned
+        // -- on a broken one `close.start == 0` also means "unclosed element",
+        // which SuperHTML already reports as `missing end tag`.
+        if (template.html_ast.errors.len == 0) {
+            var inert: std.ArrayListUnmanaged(Template.InertDirective) = .empty;
+            defer inert.deinit(gpa);
+            try template.lintInertDirectives(gpa, &inert);
+            if (inert.items.len > 0) {
+                template_errors = true;
+                const path = try std.fmt.allocPrint(arena, "{f}", .{
+                    tpn.fmt(&build.st, &build.pt, build.cfg.getLayoutsDirPath(), "/"),
+                });
+
+                var aw: Writer.Allocating = .init(gpa);
+                defer aw.deinit();
+
+                for (inert.items) |bad| {
+                    const lc = Template.lineCol(template.src, bad.offset);
+                    switch (bad.kind) {
+                        .else_directive => try aw.writer.print(
+                            \\{s}:{d}:{d}: error: ':else' is parsed but never evaluated
+                            \\    SuperHTML validates ':else' at parse time and then has no case for
+                            \\    it at render time: the evaluator reads the attribute's value, which
+                            \\    a bare ':else' does not have, and panics on the null unwrap. No
+                            \\    template using ':else' has ever rendered.
+                            \\    Write the negated condition on a second <ctx> instead:
+                            \\        <ctx :if="$cond">...</ctx>
+                            \\        <ctx :if="$cond.not()">...</ctx>
+                            \\
+                            \\
+                        , .{ path, lc.line, lc.col }),
+                        .branching_without_end_tag => {
+                            const is_loop = std.mem.eql(u8, bad.name, ":loop");
+                            try aw.writer.print(
+                                \\{s}:{d}:{d}: error: '{s}' on <{s}> can never work
+                                \\    <{s}> is {s}: it has no end tag, and SuperHTML restarts a
+                                \\    conditional or a loop by rewinding to the element's end tag.
+                                \\    With none it rewinds to the start of the file and re-emits the
+                                \\    whole template source into the page (exit code 0), or slices
+                                \\    backwards and panics.
+                                \\    '{s}' also only affects an element's BODY -- the tag and all of
+                                \\    its attributes are emitted either way.
+                                \\    {s}
+                                \\        <ctx {s}="{s}"><{s} ...></ctx>
+                                \\
+                                \\
+                            , .{
+                                path,
+                                lc.line,
+                                lc.col,
+                                bad.name,
+                                bad.tag,
+                                bad.tag,
+                                if (bad.void_element) "a void element" else "self-closing",
+                                bad.name,
+                                if (is_loop)
+                                    "To repeat the element, wrap it:"
+                                else
+                                    "To make the element itself conditional, wrap it:",
+                                bad.name,
+                                if (is_loop) "$items" else "$cond",
+                                bad.tag,
+                            });
+                        },
+                    }
+                }
+
+                std.debug.print("{s}", .{aw.written()});
+                if (build.mode == .memory) {
+                    // Owned copy so Build.deinit can free it (AUD-004). These
+                    // are error severity, so they DO belong in the live
+                    // server's error list -- that list makes every URL answer
+                    // with a build-error page, which is right for a template
+                    // that cannot render and wrong for a mere warning.
                     try build.mode.memory.errors.append(gpa, .{
                         .ref = "",
                         .msg = try aw.toOwnedSlice(),
