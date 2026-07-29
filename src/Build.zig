@@ -48,6 +48,22 @@ layouts_dir: Io.Dir,
 templates: Templates = .{},
 site_assets_dir: Io.Dir,
 site_assets: Assets = .empty,
+/// How many times each site asset was CONSUMED AT BUILD TIME without being
+/// installed — `$site.asset('x').bytes()`/`.size()`/`.sriHash()`/`.ziggy()`
+/// (`src/context/Asset.zig`). Keyed identically to `site_assets`: every key is
+/// inserted alongside its `site_assets` entry in `scanSiteAssets`, so the two
+/// key sets cannot diverge and a worker only ever bumps a counter that already
+/// exists (which is what makes the concurrent `fetchAdd` safe — no insertion
+/// ever happens after the scan).
+///
+/// It deliberately does NOT feed the install decision: an asset read into the
+/// page at build time is fully inlined and must stay out of the output tree.
+/// Its only consumer is `root.zig`'s `reportPrunedSiteAssets` (issue #54),
+/// which would otherwise warn that a legitimately-inlined `data.ziggy` "was
+/// not installed because nothing references them" and suggest two remedies
+/// that are both wrong — the `static_assets` one would publish a private data
+/// file.
+site_asset_reads: Assets = .empty,
 i18n_dir: Io.Dir,
 // Translation key map. Each entry is a slice with the same length as the
 // number of variants.
@@ -468,6 +484,12 @@ pub fn scanSiteAssets(
                     };
 
                     try b.site_assets.putNoClobber(gpa, pn, .init(0));
+                    // Same key, same statement: the build-time READ counter is
+                    // only ever `fetchAdd`-ed from the render workers, never
+                    // inserted into, so its key set has to be complete when
+                    // the scan ends. Keeping the two puts adjacent is what
+                    // guarantees that.
+                    try b.site_asset_reads.putNoClobber(gpa, pn, .init(0));
                 },
                 .directory => {
                     const path_bytes = try std.fs.path.join(arena, &.{

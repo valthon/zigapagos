@@ -517,6 +517,16 @@ taking literally, and these three are what stand between it and that.
   message when its last reference went away. The behaviour is right; the silence
   is not — and it creates a second-order trap where a `.link()` call must stay
   nested inside another expression purely to hold a refcount.
+
+  **Resolved.** A full build now ends by naming what it dropped
+  (`reportPrunedSiteAssets` in `src/root.zig`): a sorted, capped list with the
+  true total and both fixes spelled out. A warning, not an error — staging a
+  file ahead of the page that will use it is legitimate. Skipped on incremental
+  rebuilds (which only re-derive the changed pages' refcounts and would report
+  the rest of the site as pruned), for `.keep`/`.gitkeep`, and where
+  `assets_dir_path` doubles as a content dir. `tests/rendering/static-assets-glob`
+  now pins one real instance in its snapshot; proof:
+  `tests/assets/pruned-report.sh`.
 - **[#55] DX-36 · A directory without `index.smd` yields no subpages, not an error.**
   A missing section presents as "my list is empty" with nothing naming the cause.
   **Resolved:** the scan now warns, naming the directory, the URL that is not

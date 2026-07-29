@@ -921,7 +921,6 @@ pub fn run(
         }
 
         worker.wait(); // variants done scanning their content + i18n ziggy file
-
     }
 
     // Activate sections by parsing their index.smd page
@@ -2649,7 +2648,303 @@ pub fn run(
     worker.wait(); // done installing assets
     progress_install_assets.end();
 
+    // Issue #54: every site asset whose refcount is still zero was just
+    // silently dropped from the output. Say so. This runs only on the FULL
+    // disk path — the `incremental` early return above is what keeps it
+    // honest, since an incremental rebuild only re-derives the refcounts of
+    // the pages that changed and would report every asset the rest of the
+    // site links as pruned.
+    reportPrunedSiteAssets(gpa, &build);
+
     return build;
+}
+
+/// Does `assets_dir_path` name a directory that is ALSO a content dir?
+///
+/// Nothing forbids it, and several of this repo's own fixtures do it
+/// (`.assets_dir_path = "content"`). In that configuration `scanSiteAssets`
+/// picks up every `.smd` page source as a site asset, none of which anything
+/// ever `.link()`s — so the pruned-asset report (issue #54) would name the
+/// site's entire content tree and be worthless. It is switched off there
+/// rather than filtered by extension, because the problem is not `.smd`
+/// specifically: once the two directories coincide, "an asset nothing
+/// references" stops distinguishing an orphaned image from an ordinary page.
+///
+/// The real projects in this tree (`site/`, `examples/tsx-site/`, and the
+/// `zigapagos init` template) all give assets their own directory, which is
+/// also the fix for a site that wants the report back.
+///
+/// NO_SLOP.md §2.2a contract 3 (caller-buffer): allocates nothing.
+fn assetsDirIsContentDir(cfg: *const Config) bool {
+    const assets = normalizeDirPath(cfg.getAssetsDirPath());
+    switch (cfg.*) {
+        .Site => |s| return std.mem.eql(u8, assets, normalizeDirPath(s.content_dir_path)),
+        .Multilingual => |m| {
+            // Any locale is enough: one overlapping content dir already fills
+            // the report with that locale's pages.
+            for (m.locales) |l| {
+                if (std.mem.eql(u8, assets, normalizeDirPath(l.content_dir_path))) return true;
+            }
+            return false;
+        },
+    }
+}
+
+/// Strip the spellings of a config dir path that denote the same directory, so
+/// `assetsDirIsContentDir` compares directories rather than strings.
+///
+/// `"./content"`, `"content/"` and `"content"` are one directory as far as
+/// every other consumer of these fields is concerned (they are all handed to
+/// `Io.Dir.openDir`), and an exact `mem.eql` between two of those spellings
+/// answered "different" — which quietly turned the pruned-asset report back ON
+/// for the very configuration it is meant to suppress, naming the site's whole
+/// content tree. Deliberately conservative: leading `./` and trailing `/` only,
+/// no `..` resolution and no symlink following, because this decides whether to
+/// print a warning and must never touch the filesystem.
+///
+/// NO_SLOP.md §2.2a contract 3 (caller-buffer): allocates nothing; the result
+/// is a slice of the input.
+fn normalizeDirPath(path: []const u8) []const u8 {
+    var p = path;
+    while (std.mem.startsWith(u8, p, "./")) p = p[2..];
+    while (p.len > 1 and p[p.len - 1] == '/') p = p[0 .. p.len - 1];
+    return p;
+}
+
+/// Is `name` a version-control placeholder for an otherwise-empty directory
+/// rather than a real asset?
+///
+/// `.keep`/`.gitkeep` exist because git cannot track an empty directory, so
+/// any project that ships a scaffolded-but-still-empty `assets/` has one. They
+/// are never meant to be referenced and never meant to be installed, so
+/// reporting them as "pruned" (issue #54) is pure noise — and a warning that
+/// fires on every fresh site is a warning people stop reading, which is the
+/// failure mode this report exists to avoid. Four of this repo's own snapshot
+/// fixtures tripped it before this exclusion existed.
+///
+/// Deliberately an exact-name match on the two conventional spellings, not a
+/// blanket "skip dotfiles": `assets/.well-known/…` and `assets/.htaccess` are
+/// real deployable files, and `Build.scanSiteAssets` already documents that
+/// hidden files in `assets/` are scanned on purpose.
+///
+/// NO_SLOP.md §2.2a contract 3 (caller-buffer): allocates nothing.
+fn isDirectoryPlaceholder(name: []const u8) bool {
+    return std.mem.eql(u8, name, ".keep") or std.mem.eql(u8, name, ".gitkeep");
+}
+
+test "assets: the pruned-asset report is off when assets_dir_path is a content dir" {
+    // The real-project shape: assets have their own directory, so the report
+    // is meaningful and stays on.
+    const separate: Config = .{ .Site = .{
+        .title = "t",
+        .host_url = "https://example.com",
+        .layouts_dir_path = "layouts",
+        .content_dir_path = "content",
+        .assets_dir_path = "assets",
+    } };
+    try std.testing.expect(!assetsDirIsContentDir(&separate));
+
+    // The fixture shape (`tests/rendering/simple` and friends): every `.smd`
+    // page source is also scanned as a site asset, so the report is off.
+    const aliased: Config = .{ .Site = .{
+        .title = "t",
+        .host_url = "https://example.com",
+        .layouts_dir_path = "layouts",
+        .content_dir_path = "content",
+        .assets_dir_path = "content",
+    } };
+    try std.testing.expect(assetsDirIsContentDir(&aliased));
+
+    // Multilingual: ONE overlapping locale is enough to turn it off, because
+    // that locale's whole content tree would land in the report.
+    const locales = [_]Locale{
+        .{ .code = "en-US", .name = "English", .content_dir_path = "content/en-US", .site_title = "t" },
+        .{ .code = "it-IT", .name = "Italian", .content_dir_path = "content/it-IT", .site_title = "t" },
+    };
+    const ml_separate: Config = .{ .Multilingual = .{
+        .host_url = "https://example.com",
+        .i18n_dir_path = "i18n",
+        .layouts_dir_path = "layouts",
+        .assets_dir_path = "assets",
+        .locales = &locales,
+    } };
+    try std.testing.expect(!assetsDirIsContentDir(&ml_separate));
+
+    const ml_aliased: Config = .{ .Multilingual = .{
+        .host_url = "https://example.com",
+        .i18n_dir_path = "i18n",
+        .layouts_dir_path = "layouts",
+        .assets_dir_path = "content/it-IT",
+        .locales = &locales,
+    } };
+    try std.testing.expect(assetsDirIsContentDir(&ml_aliased));
+
+    // The same directory spelled two ways. `openDir` cannot tell these apart,
+    // so neither may this: an exact string compare answered "different" and
+    // switched the report back on for the exact shape it exists to suppress.
+    const spelled: Config = .{ .Site = .{
+        .title = "t",
+        .host_url = "https://example.com",
+        .layouts_dir_path = "layouts",
+        .content_dir_path = "content",
+        .assets_dir_path = "./content/",
+    } };
+    try std.testing.expect(assetsDirIsContentDir(&spelled));
+
+    // …and normalization must not collapse genuinely different directories.
+    const nested: Config = .{ .Site = .{
+        .title = "t",
+        .host_url = "https://example.com",
+        .layouts_dir_path = "layouts",
+        .content_dir_path = "content",
+        .assets_dir_path = "./content-assets",
+    } };
+    try std.testing.expect(!assetsDirIsContentDir(&nested));
+}
+
+test "assets: normalizeDirPath strips only redundant ./ and trailing /" {
+    try std.testing.expectEqualStrings("content", normalizeDirPath("content"));
+    try std.testing.expectEqualStrings("content", normalizeDirPath("./content"));
+    try std.testing.expectEqualStrings("content", normalizeDirPath("content/"));
+    try std.testing.expectEqualStrings("content", normalizeDirPath("././content//"));
+    try std.testing.expectEqualStrings("content/en-US", normalizeDirPath("./content/en-US/"));
+
+    // Not path resolution: `..` and interior `.` segments are left alone
+    // rather than half-resolved into something that looks authoritative.
+    try std.testing.expectEqualStrings("../content", normalizeDirPath("../content"));
+    try std.testing.expectEqualStrings("a/./b", normalizeDirPath("a/./b"));
+
+    // Degenerate inputs must not produce an empty string that would compare
+    // equal to another degenerate input.
+    try std.testing.expectEqualStrings("/", normalizeDirPath("/"));
+    try std.testing.expectEqualStrings("", normalizeDirPath(""));
+}
+
+test "assets: the pruned-asset report skips VCS directory placeholders" {
+    // The two conventional spellings — these must never be reported.
+    try std.testing.expect(isDirectoryPlaceholder(".keep"));
+    try std.testing.expect(isDirectoryPlaceholder(".gitkeep"));
+
+    // Everything else is a real asset, INCLUDING other dotfiles: an
+    // unreferenced `.htaccess` sitting in `assets/` is exactly the kind of
+    // thing the author wants told about (it needs a `static_assets` entry).
+    try std.testing.expect(!isDirectoryPlaceholder(".htaccess"));
+    try std.testing.expect(!isDirectoryPlaceholder("keep"));
+    try std.testing.expect(!isDirectoryPlaceholder(".keep.css"));
+    try std.testing.expect(!isDirectoryPlaceholder("style.css"));
+}
+
+/// How many pruned assets `reportPrunedSiteAssets` names before it stops.
+/// A site can legitimately have a large `assets/` tree of which only a handful
+/// is linked; naming all of it would bury the build log and make the warning
+/// something people learn to ignore, which is the failure mode issue #54 is
+/// already about. The total is always reported, so nothing is hidden.
+const pruned_assets_listed = 10;
+
+/// Issue #54: report the site assets that were NOT installed because nothing
+/// referenced them.
+///
+/// The pruning itself is correct and stays — an SSG that copied every byte of
+/// `assets/` into the output whether or not the site uses it would be a worse
+/// tool. What cost a real debugging session was that it happened in complete
+/// silence: a hand-authored SVG vanished from the build when a change removed
+/// its last `.link()`, and finding out why meant reading the refcount logic in
+/// this file.
+///
+/// A warning rather than an error, because "an asset in the tree that nothing
+/// links yet" is a legitimate state (a file staged ahead of the page that will
+/// use it). The message names both fixes because which one is right depends on
+/// intent: `.link()` it from a template if the site should reference it, or
+/// list it in `static_assets` if something outside the build fetches it.
+///
+/// Deterministic output: `site_assets` is a hash map, so as-found order varies
+/// between two otherwise-identical builds. The listed paths are sorted, the
+/// same reason `spa.zig`'s `spaHeadWarningAsset` picks the lexicographically
+/// smallest match rather than the first one found.
+///
+/// Four things suppress it, all for the same reason — a warning that fires on
+/// correct code is a warning people stop reading:
+///   * a failed render pass (`any_rendering_error`), whose refcounts are
+///     incomplete by construction;
+///   * `assets_dir_path` doubling as a content dir, where every page source is
+///     also a site asset;
+///   * `.keep`/`.gitkeep` placeholders;
+///   * assets consumed by a build-time read builtin (`Build.site_asset_reads`).
+/// The incremental fast path is excluded too, but by the early return in
+/// `run()` rather than here.
+///
+/// Allocator contract: self-freeing (NO_SLOP §2.2a contract 1). Everything it
+/// allocates is freed before it returns; nothing escapes.
+fn reportPrunedSiteAssets(gpa: Allocator, build: *const Build) void {
+    // A build whose render pass produced errors has NOT derived a trustworthy
+    // set of refcounts: `worker.zig` marks a failed page and moves on, so
+    // every asset whose only `.link()` lived on a page that died looks
+    // unreferenced here. `run()` does not stop at a render error — it carries
+    // on through the install pass to this call, and only `cli/release.zig`
+    // checks `any_rendering_error` after `run()` returns — so the gate has to
+    // be here. Same fail-closed reasoning as `writeIslandManifest` below.
+    if (build.any_rendering_error.load(.acquire)) return;
+
+    if (assetsDirIsContentDir(build.cfg)) return;
+
+    var pruned: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer {
+        for (pruned.items) |s| gpa.free(s);
+        pruned.deinit(gpa);
+    }
+
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var it = build.site_assets.iterator();
+    while (it.next()) |entry| {
+        if (entry.value_ptr.raw > 0) continue;
+        // Read but not installed is a CORRECT outcome, not a pruning: an
+        // asset consumed through `.bytes()`/`.size()`/`.sriHash()`/`.ziggy()`
+        // is inlined into the page at build time and has no business in the
+        // output tree. Reporting it would tell the author to `.link()` it or
+        // add it to `static_assets` — the latter publishing what may well be
+        // a private data file. See `Build.site_asset_reads`.
+        if (build.site_asset_reads.getPtr(entry.key_ptr.*)) |reads| {
+            if (reads.raw > 0) continue;
+        }
+        if (isDirectoryPlaceholder(entry.key_ptr.name.slice(&build.st))) continue;
+        const path = std.fmt.bufPrint(&buf, "{f}", .{
+            entry.key_ptr.fmt(&build.st, &build.pt, null, "/"),
+        }) catch continue;
+        // A failed dup only costs this one line of the report, so drop the
+        // entry rather than aborting a build that has otherwise succeeded.
+        const owned = gpa.dupe(u8, path) catch continue;
+        pruned.append(gpa, owned) catch {
+            gpa.free(owned);
+            continue;
+        };
+    }
+
+    if (pruned.items.len == 0) return;
+
+    std.mem.sort([]const u8, pruned.items, {}, struct {
+        fn lessThan(_: void, a: []const u8, b: []const u8) bool {
+            return std.mem.lessThan(u8, a, b);
+        }
+    }.lessThan);
+
+    const shown = @min(pruned.items.len, pruned_assets_listed);
+    std.debug.print(
+        "warning: {d} asset(s) under '{s}' were not installed because nothing " ++
+            "references them. Link one from a template or a content file " ++
+            "($site.asset('...').link()), or list it in `static_assets` in " ++
+            "zigapagos.ziggy if something outside the build fetches it at a " ++
+            "fixed path:\n",
+        .{ pruned.items.len, build.cfg.getAssetsDirPath() },
+    );
+    for (pruned.items[0..shown]) |path| {
+        std.debug.print("  - {s}\n", .{path});
+    }
+    if (pruned.items.len > shown) {
+        std.debug.print(
+            "  ... and {d} more\n",
+            .{pruned.items.len - shown},
+        );
+    }
 }
 
 /// Install every referenced (rc > 0) build asset into the output tree. Runs on
