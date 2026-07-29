@@ -388,9 +388,13 @@ fn checkAbsUrlMeta(ctx: *Ctx, doc: Doc) CheckError!void {
                     ctx,
                     check_abs_url_meta,
                     doc.path,
+                    // The example is deliberately NOT wrapped in a
+                    // parenthetical: it ends the line, so its own closing
+                    // paren is the last character and a reader selecting to
+                    // end-of-line copies something that parses.
                     "{s} is root-relative ('{s}'); Open Graph and Twitter card metadata " ++
-                        "require an absolute URL — build one from $site.host_url (e.g. " ++
-                        "$site.host_url.addPath($site.asset('og.png').link()))",
+                        "require an absolute URL — build one from $site.host_url, e.g. " ++
+                        "$site.host_url.addPath($site.asset('og.png').link())",
                     .{ k, v },
                 );
             },
@@ -471,9 +475,17 @@ fn checkOneLink(
     if (std.mem.indexOfAny(u8, stripped, "#?")) |i| stripped = stripped[0..i];
 
     var decode_buf: [std.fs.max_path_bytes]u8 = undefined;
-    // A malformed escape means doctor cannot know what file the author
-    // meant — skip the link rather than guess.
-    const decoded = percentDecode(&decode_buf, stripped) orelse return;
+    // A link doctor cannot decode is REPORTED, not skipped. Dropping it in
+    // silence would be the one hole in this command's otherwise fail-closed
+    // posture (an unreadable file and an un-walkable tree both force a
+    // non-zero exit), and it would do so for the links most likely to be
+    // broken. The causes get different messages because they are different
+    // author-facing facts: a malformed escape is a broken URL, an over-long
+    // one is doctor's own limit.
+    const decoded = percentDecode(&decode_buf, stripped) catch |err| {
+        try reportUnresolvable(ctx, doc, attr_name, original, err);
+        return;
+    };
 
     // `decoded` still starts with '/' (isRootRelative guarantees the first
     // byte; stripping #/? and percent-decoding never touch it).
@@ -489,60 +501,47 @@ fn checkOneLink(
         }
     }
 
+    // Normalisation failure is reported HERE, above the prefix split, so the
+    // same link gets the same cause on both paths: reported only inside the
+    // `matched` branch, a `/../x` under a NON-matching --url-prefix fell
+    // through to the generic "resolves to no file" and lost the escape.
     var norm_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const norm = normalizeLexical(&norm_buf, remainder);
+    const norm = normalizeLexical(&norm_buf, remainder) catch |err| {
+        try reportUnresolvable(ctx, doc, attr_name, original, err);
+        return;
+    };
 
-    if (matched) {
-        const n = norm orelse {
+    if (resolves(ctx, norm)) {
+        // Resolving is "clean" only when the link is also reachable at that
+        // URL. Under --url-prefix a link that skipped the prefix 404s in
+        // production (the host serves the tree at /<prefix>/, not at /) no
+        // matter what physically sits in the tree, so it is still a finding —
+        // just one that can name the fix. Prefixing the URL and then
+        // stripping that same prefix again cancels out, so "does the prefixed
+        // form resolve" IS the `resolves(norm)` already computed above; no
+        // second normalisation pass is needed.
+        if (matched) return;
+        var suggest_buf: [std.fs.max_path_bytes]u8 = undefined;
+        const suggested = if (norm.len == 0)
+            std.fmt.bufPrint(&suggest_buf, "/{s}", .{ctx.url_prefix})
+        else
+            std.fmt.bufPrint(&suggest_buf, "/{s}/{s}", .{ ctx.url_prefix, norm });
+        if (suggested) |s| {
             try report(
                 ctx,
                 check_dangling_internal_link,
                 doc.path,
-                "{s} '{s}' escapes the site root",
-                .{ attr_name, original },
+                "{s} '{s}' resolves to no file in the tree (did you mean '{s}'?)",
+                .{ attr_name, original, s },
             );
             return;
-        };
-        if (resolves(ctx, n)) return;
-        try report(
-            ctx,
-            check_dangling_internal_link,
-            doc.path,
-            "{s} '{s}' resolves to no file in the tree",
-            .{ attr_name, original },
-        );
-        return;
-    }
-
-    // `--url-prefix` is set and this link does not start with it: it 404s in
-    // production (the host serves the tree at /<prefix>/, not at /) no
-    // matter what physically lives in the output tree — a finding
-    // unconditionally. If the AUTHOR-INTENDED prefixed form would have
-    // resolved, say so: that's the shipped symptom this flag exists to
-    // catch (href="/guides" instead of "/zigapagos/guides" hard-404ing
-    // under a project-pages prefix). Prefixing the URL and then stripping
-    // that same prefix again cancels out, so "does the prefixed form
-    // resolve" reduces to "does `norm` of the un-prefixed remainder
-    // resolve" — no second normalisation pass needed.
-    if (norm) |n| {
-        if (resolves(ctx, n)) {
-            var suggest_buf: [std.fs.max_path_bytes]u8 = undefined;
-            const suggested = if (n.len == 0)
-                std.fmt.bufPrint(&suggest_buf, "/{s}", .{ctx.url_prefix}) catch null
-            else
-                std.fmt.bufPrint(&suggest_buf, "/{s}/{s}", .{ ctx.url_prefix, n }) catch null;
-            if (suggested) |s| {
-                try report(
-                    ctx,
-                    check_dangling_internal_link,
-                    doc.path,
-                    "{s} '{s}' resolves to no file in the tree (did you mean '{s}'?)",
-                    .{ attr_name, original, s },
-                );
-                return;
-            }
+        } else |_| {
+            // The suggestion did not fit the buffer; the finding itself still
+            // stands, so fall through to the plain message rather than
+            // dropping it.
         }
     }
+
     try report(
         ctx,
         check_dangling_internal_link,
@@ -550,6 +549,44 @@ fn checkOneLink(
         "{s} '{s}' resolves to no file in the tree",
         .{ attr_name, original },
     );
+}
+
+/// One message per reason a link's path could not be turned into something
+/// resolvable. Split out so both call sites above report the same cause the
+/// same way — the defect this replaces was one caller hard-coding "escapes
+/// the site root" for every `null`, including an over-long path that escapes
+/// nothing.
+fn reportUnresolvable(
+    ctx: *Ctx,
+    doc: Doc,
+    attr_name: []const u8,
+    original: []const u8,
+    err: LinkPathError,
+) CheckError!void {
+    const check = check_dangling_internal_link;
+    switch (err) {
+        error.EscapesRoot => try report(
+            ctx,
+            check,
+            doc.path,
+            "{s} '{s}' escapes the site root",
+            .{ attr_name, original },
+        ),
+        error.MalformedEscape => try report(
+            ctx,
+            check,
+            doc.path,
+            "{s} '{s}' has a malformed percent-escape, so doctor cannot resolve it",
+            .{ attr_name, original },
+        ),
+        error.TooLong => try report(
+            ctx,
+            check,
+            doc.path,
+            "{s} '{s}' is too long for doctor to resolve (limits: {d} path segments, {d} bytes)",
+            .{ attr_name, original, max_path_segments, std.fs.max_path_bytes },
+        ),
+    }
 }
 
 /// If `path` (which always starts with '/') is exactly "/" + `prefix` or
@@ -596,25 +633,37 @@ fn isRegularFile(ctx: *Ctx, path: []const u8) bool {
     return st.kind == .file;
 }
 
+/// Why a link's path could not be resolved. One flat set across both helpers
+/// below, so `reportUnresolvable` can switch it exhaustively and the compiler
+/// fails the build if a helper ever grows a cause with no message.
+const LinkPathError = PercentDecodeError || NormalizeError;
+
+const PercentDecodeError = error{
+    /// A `%` not followed by two hex digits. The author's intended target is
+    /// unknowable, and the URL is broken as written.
+    MalformedEscape,
+    /// The decoded form does not fit `buf` (`std.fs.max_path_bytes`).
+    TooLong,
+};
+
 /// Percent-decodes `s` into `buf` — NO_SLOP.md §2.2a contract 3
-/// (caller-buffer): allocates nothing. Returns null when the decoded form
-/// would not fit in `buf`, or an escape is malformed (`%` not followed by
-/// two hex digits) — a malformed escape means the target is unknowable, so
-/// the caller skips the link rather than guessing.
-fn percentDecode(buf: []u8, s: []const u8) ?[]const u8 {
+/// (caller-buffer): allocates nothing. The two failures are DISTINCT errors
+/// rather than one `null`, because the caller reports them to an author who
+/// can act on one (fix the escape) and not the other (doctor's own cap).
+fn percentDecode(buf: []u8, s: []const u8) PercentDecodeError![]const u8 {
     var out: usize = 0;
     var i: usize = 0;
     while (i < s.len) {
         if (s[i] == '%') {
-            if (i + 2 >= s.len) return null;
-            const hi = std.fmt.charToDigit(s[i + 1], 16) catch return null;
-            const lo = std.fmt.charToDigit(s[i + 2], 16) catch return null;
-            if (out >= buf.len) return null;
+            if (i + 2 >= s.len) return error.MalformedEscape;
+            const hi = std.fmt.charToDigit(s[i + 1], 16) catch return error.MalformedEscape;
+            const lo = std.fmt.charToDigit(s[i + 2], 16) catch return error.MalformedEscape;
+            if (out >= buf.len) return error.TooLong;
             buf[out] = hi * 16 + lo;
             out += 1;
             i += 3;
         } else {
-            if (out >= buf.len) return null;
+            if (out >= buf.len) return error.TooLong;
             buf[out] = s[i];
             out += 1;
             i += 1;
@@ -622,6 +671,20 @@ fn percentDecode(buf: []u8, s: []const u8) ?[]const u8 {
     }
     return buf[0..out];
 }
+
+/// How many path segments `normalizeLexical` will track. Named because the
+/// diagnostic quotes it: telling an author their link is "too long" without
+/// the limit gives them nothing to compare against.
+const max_path_segments = 256;
+
+const NormalizeError = error{
+    /// A ".." that would climb above the tree root. The author's bug.
+    EscapesRoot,
+    /// More than `max_path_segments` segments, or more bytes than the
+    /// caller's buffer holds. Doctor's own cap, not a statement about the
+    /// link — which is exactly why it must not be reported as an escape.
+    TooLong,
+};
 
 /// Lexically normalises a tree-relative, slash-separated path with no
 /// leading slash: resolves "." and ".." segments and collapses empty
@@ -631,17 +694,20 @@ fn percentDecode(buf: []u8, s: []const u8) ?[]const u8 {
 /// spelling normalising to the same string is exactly what's wanted, not a
 /// loss of information.
 ///
-/// Returns null when a ".." would climb above the tree root. NO_SLOP.md
-/// §2.2a contract 3 (caller-buffer): writes into `buf`, allocates nothing.
-/// Callers must not `statFile` a path that failed to normalise — an
+/// NO_SLOP.md §2.2a contract 3 (caller-buffer): writes into `buf`, allocates
+/// nothing. Callers must not `statFile` a path that failed to normalise — an
 /// escaping path must never reach the filesystem.
-fn normalizeLexical(buf: []u8, path: []const u8) ?[]const u8 {
+///
+/// The failures are distinct errors, not one `null`: `error.EscapesRoot` is
+/// the author's bug, `error.TooLong` is doctor's own cap, and a caller that
+/// cannot tell them apart necessarily misreports one of them.
+fn normalizeLexical(buf: []u8, path: []const u8) NormalizeError![]const u8 {
     // One rollback point (the `out` offset right before a segment plus its
     // preceding separator) per path depth, so ".." can restore `out`
-    // exactly rather than re-deriving it. 256 covers every realistic site
-    // path; a deeper one is treated as unresolvable rather than truncated
-    // silently.
-    var bounds: [256]usize = undefined;
+    // exactly rather than re-deriving it. `max_path_segments` covers every
+    // realistic site path; a deeper one is reported as unresolvable rather
+    // than truncated silently.
+    var bounds: [max_path_segments]usize = undefined;
     var depth: usize = 0;
     var out: usize = 0;
 
@@ -649,21 +715,21 @@ fn normalizeLexical(buf: []u8, path: []const u8) ?[]const u8 {
     while (it.next()) |seg| {
         if (std.mem.eql(u8, seg, ".")) continue;
         if (std.mem.eql(u8, seg, "..")) {
-            if (depth == 0) return null;
+            if (depth == 0) return error.EscapesRoot;
             depth -= 1;
             out = bounds[depth];
             continue;
         }
-        if (depth >= bounds.len) return null;
+        if (depth >= bounds.len) return error.TooLong;
         bounds[depth] = out;
         depth += 1;
 
         if (out > 0) {
-            if (out >= buf.len) return null;
+            if (out >= buf.len) return error.TooLong;
             buf[out] = '/';
             out += 1;
         }
-        if (out + seg.len > buf.len) return null;
+        if (out + seg.len > buf.len) return error.TooLong;
         @memcpy(buf[out .. out + seg.len], seg);
         out += seg.len;
     }
@@ -716,12 +782,16 @@ test "doctor: hasRelToken tokenises rel= case-insensitively" {
 }
 
 test "doctor: percentDecode plain passthrough, %-escapes, and failure modes" {
+    // Each failure is a DISTINCT error, not a shared null: the caller turns
+    // them into different diagnostics, so collapsing them here would let a
+    // misattribution back in through the helper.
     var buf: [64]u8 = undefined;
-    try std.testing.expectEqualStrings("/a/b", percentDecode(&buf, "/a/b").?);
-    try std.testing.expectEqualStrings("/a b", percentDecode(&buf, "/a%20b").?);
-    try std.testing.expect(percentDecode(&buf, "/a%zzb") == null);
+    try std.testing.expectEqualStrings("/a/b", try percentDecode(&buf, "/a/b"));
+    try std.testing.expectEqualStrings("/a b", try percentDecode(&buf, "/a%20b"));
+    try std.testing.expectError(error.MalformedEscape, percentDecode(&buf, "/a%zzb"));
+    try std.testing.expectError(error.MalformedEscape, percentDecode(&buf, "/a%2"));
     var tiny: [2]u8 = undefined;
-    try std.testing.expect(percentDecode(&tiny, "/abc") == null);
+    try std.testing.expectError(error.TooLong, percentDecode(&tiny, "/abc"));
 }
 
 test "doctor: stripUrlPrefix matches whole path segments only" {
@@ -738,7 +808,33 @@ test "doctor: stripUrlPrefix matches whole path segments only" {
 
 test "doctor: normalizeLexical resolves '.'/'..' and detects an escape" {
     var buf: [256]u8 = undefined;
-    try std.testing.expectEqualStrings("b", normalizeLexical(&buf, "a/../b").?);
-    try std.testing.expectEqualStrings("a/b", normalizeLexical(&buf, "a/./b").?);
-    try std.testing.expect(normalizeLexical(&buf, "../x") == null);
+    try std.testing.expectEqualStrings("b", try normalizeLexical(&buf, "a/../b"));
+    try std.testing.expectEqualStrings("a/b", try normalizeLexical(&buf, "a/./b"));
+    try std.testing.expectError(error.EscapesRoot, normalizeLexical(&buf, "../x"));
+}
+
+test "doctor: normalizeLexical distinguishes 'too long' from 'escapes root'" {
+    // The defect this pins: both used to be one `null`, and the caller
+    // reported every null as "escapes the site root" — so an over-long path,
+    // which escapes nothing, got a diagnostic asserting it did.
+    var buf: [256]u8 = undefined;
+
+    // Over the BYTE cap: one segment longer than `buf`.
+    const long_seg = "a" ** 300;
+    try std.testing.expectError(error.TooLong, normalizeLexical(&buf, long_seg));
+
+    // Over the SEGMENT cap, while staying inside the byte cap: 300 one-byte
+    // segments is 599 bytes of input but 300 > max_path_segments.
+    var deep: [1024]u8 = undefined;
+    var w: usize = 0;
+    for (0..max_path_segments + 44) |i| {
+        if (i > 0) {
+            deep[w] = '/';
+            w += 1;
+        }
+        deep[w] = 'a';
+        w += 1;
+    }
+    var big: [1024]u8 = undefined;
+    try std.testing.expectError(error.TooLong, normalizeLexical(&big, deep[0..w]));
 }

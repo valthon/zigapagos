@@ -86,9 +86,15 @@ echo "PASS (1): root+trailing-slash, bare directory, extensionless page, direct"
      "file, and every non-root-relative scheme all resolve cleanly"
 
 # --- (2) a dangling link + a directory with no index.html -----------------
+# The last two pin that a link doctor CANNOT resolve is reported with its own
+# cause rather than being silently dropped or misattributed. Both used to
+# collapse into one `null` internally: the escaping path was the only one with
+# a message, and every other unresolvable path borrowed it.
 page "$TREE/index.html" '
 <a href="/nope">dangling</a>
 <a href="/emptydir">directory with no index.html</a>
+<a href="/../outside">climbs above the site root</a>
+<a href="/a%zzb">malformed percent-escape</a>
 '
 run_doctor dirty
 [[ "$(cat "$WORK/dirty.rc")" -eq 0 ]] || {
@@ -103,7 +109,20 @@ grep -q "warn dangling-internal-link:.*href '/emptydir' resolves to no file in t
   echo "--- doctor output ---"; sed -n '1,30p' "$WORK/dirty.log"
   fail "a directory with no index.html must warn -- a directory is not a regular file"
 }
-echo "PASS (2): a dangling link and a directory-without-index both warn, and doctor still exits 0"
+grep -q "warn dangling-internal-link:.*href '/../outside' escapes the site root" "$WORK/dirty.log" || {
+  echo "--- doctor output ---"; sed -n '1,30p' "$WORK/dirty.log"
+  fail "a link climbing above the site root must say so, not borrow the generic 'no file' message"
+}
+grep -q "warn dangling-internal-link:.*href '/a%zzb' has a malformed percent-escape" "$WORK/dirty.log" || {
+  echo "--- doctor output ---"; sed -n '1,30p' "$WORK/dirty.log"
+  fail "a malformed percent-escape must be REPORTED with its own cause -- it used to be skipped in silence"
+}
+# ...and neither may be misreported as the other's cause.
+if grep -q "href '/a%zzb' escapes the site root" "$WORK/dirty.log"; then
+  echo "--- doctor output ---"; sed -n '1,30p' "$WORK/dirty.log"
+  fail "the malformed-escape link was reported as an escape -- the causes are collapsed again"
+fi
+echo "PASS (2): dangling links, a directory-without-index, an escaping path and a malformed escape each warn with their OWN cause, and doctor still exits 0"
 
 run_doctor dirty-strict --strict
 [[ "$(cat "$WORK/dirty-strict.rc")" -eq 1 ]] || {
