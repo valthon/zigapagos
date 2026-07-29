@@ -79,6 +79,11 @@ island_props_checks_mutex: std.Io.Mutex = .init,
 /// `island_manifest_path` is set (the dev loop's `ZIGAPAGOS_ISLAND_MANIFEST`);
 /// release builds pay nothing. gpa-owned dups; freed in deinit.
 island_manifest_path: ?[]const u8 = null,
+/// The per-site islands runtime slice, resolved ONCE from
+/// `zigapagos release --islands-slice=<path>`. A null `url` (the default) means
+/// there is no slice: every island page then loads the shared runtime,
+/// byte-identically to before. gpa-owned; freed in `deinit`.
+islands_slice: @import("islands/slice.zig").Manifest = .{},
 island_page_usage: std.ArrayListUnmanaged(@import("islands/manifest.zig").Use) = .empty,
 island_page_usage_mutex: std.Io.Mutex = .init,
 /// `--allow-missing-pages`, verbatim from `root.Options.allow_missing_pages`.
@@ -184,6 +189,7 @@ pub fn deinit(b: *const Build, io: Io, gpa: Allocator) void {
     // mutate (kills the child process). Blast radius is one line here vs. changing
     // the receiver + all callers in serve/release/debug.
     if (b.island_sidecar) |*sc| @constCast(sc).deinit();
+    b.islands_slice.deinit(gpa);
 
     for (b.island_props_checks.items) |c| {
         gpa.free(c.src);

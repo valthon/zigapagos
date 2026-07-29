@@ -95,6 +95,7 @@ pub fn addIslandAssets(
     run_zigapagos: *std.Build.Step.Run,
     islands: []const Island,
     website_root: std.Build.LazyPath,
+    output_path: []const u8,
     source_maps: bool,
 ) void {
     // A version stamp listed in every bundle's depfile so a deliberate runtime/bun
@@ -118,6 +119,10 @@ pub fn addIslandAssets(
     else
         false;
 
+    // Every island's BUILT bundle, in declaration order — the input the runtime
+    // slicer analyses (see `addIslandsRuntimeSlice`).
+    var bundle_paths: std.ArrayListUnmanaged(std.Build.LazyPath) = .empty;
+
     // Each island: driver with @z/runtime external (one shared Preact via the
     // import map), cwd = the website root so the consumer tsconfig's
     // jsxImportSource drives the JSX transform. One file per island.
@@ -133,6 +138,7 @@ pub fn addIslandAssets(
         if (hot) bun_isl.addArg("--hot");
         bun_isl.addPrefixedFileArg("--entry=", isl.root);
         const isl_js = bun_isl.addPrefixedOutputFileArg("--outfile=", project.fmt("{s}.js", .{name}));
+        bundle_paths.append(project.allocator, isl_js) catch @panic("OOM");
         _ = bun_isl.addPrefixedDepFileOutputArg("--depfile=", project.fmt("{s}.d", .{name}));
         bun_isl.addPrefixedFileArg("--runtime-stamp=", stamp);
         bun_isl.addArgs(&.{ "--external=@z/runtime", "--external=@z/runtime/jsx-runtime" });
@@ -148,6 +154,81 @@ pub fn addIslandAssets(
             run_zigapagos.addArg(project.fmt("--install-always=islands/{s}.js.map", .{name}));
         }
     }
+
+    addIslandsRuntimeSlice(project, zb, run_zigapagos, bundle_paths.items, website_root, output_path, source_maps);
+}
+
+/// Build the per-SITE SLICED islands runtime: a separate driver reads every
+/// island's BUILT bundle, unions the named `@z/runtime` imports across the ones
+/// it can prove safe, and bundles a runtime containing only islands.ts's
+/// hydration auto-init, the JSX-transform names and that union — or, when no
+/// island is provably safe, emits a `{"fallback":true}` manifest and NO bundle
+/// (every island page then keeps the shared /zigapagos-runtime.js: worst case is
+/// the pre-slicing behaviour). The manifest is threaded to `zigapagos release
+/// --islands-slice`, which points each page's import map at the slice iff EVERY
+/// island on that page is covered.
+///
+/// The bundles are passed with `addPrefixedFileArg`, which is also what declares
+/// the build-graph dependency on each island's Run step — the slicer must not
+/// read a bundle before it is written.
+///
+/// GATED OFF under ZIGAPAGOS_HOT_ISLANDS (`zigapagos dev --live-reload`):
+/// `browser-entry.ts` calls `installHmr()` at module scope to publish
+/// `window.__zigapagos_hmr`, which `src/cli/reload.zig`'s dev snippet calls; a
+/// slice entry does not, so a sliced dev build would silently lose island
+/// hot-swap. Payload size is irrelevant on localhost, so the dev loop keeps the
+/// shared runtime. Read at CONFIGURE time, exactly like `addIslandAssets`'s own
+/// `hot` (the zig build cache hashes argv, not the environment).
+fn addIslandsRuntimeSlice(
+    project: *std.Build,
+    zb: *std.Build,
+    run_zigapagos: *std.Build.Step.Run,
+    bundle_paths: []const std.Build.LazyPath,
+    website_root: std.Build.LazyPath,
+    output_path: []const u8,
+    source_maps: bool,
+) void {
+    const hot = if (project.graph.environ_map.get("ZIGAPAGOS_HOT_ISLANDS")) |v|
+        v.len > 0 and !std.mem.eql(u8, v, "0")
+    else
+        false;
+    if (hot) return;
+
+    const stamp = project.addWriteFiles().add(".islands-rt-version-stamp", "@z/runtime 0.0.0\n");
+    const rt_bun = project.addSystemCommand(&.{"bun"});
+    rt_bun.setCwd(website_root);
+    rt_bun.setEnvironmentVariable("NODE_ENV", "production");
+    rt_bun.addFileArg(zb.path("runtime/scripts/build-islands-runtime.ts"));
+    for (bundle_paths) |lp| rt_bun.addPrefixedFileArg("--bundle=", lp);
+    rt_bun.addPrefixedFileArg("--islands-module=", zb.path("runtime/src/islands.ts"));
+    rt_bun.addPrefixedFileArg("--index-module=", zb.path("runtime/src/index.ts"));
+    rt_bun.addPrefixedFileArg("--jsx-module=", zb.path("runtime/src/jsx-runtime.ts"));
+    const rt_outdir = rt_bun.addPrefixedOutputDirectoryArg("--outdir=", "islands-rt");
+    const slice_json = rt_bun.addPrefixedOutputFileArg("--manifest=", "islands-slice.json");
+    _ = rt_bun.addPrefixedDepFileOutputArg("--depfile=", "islands-rt.d");
+    rt_bun.addPrefixedFileArg("--runtime-stamp=", stamp);
+    rt_bun.addArg("--minify");
+    // Source map: a linked map for the slice, written into rt_outdir (installed
+    // wholesale below) -> /islands/_runtime.js.map.
+    if (source_maps) rt_bun.addArg("--sourcemap");
+
+    // On the FALLBACK decision the driver writes nothing into `outdir`, so this
+    // installs an empty directory — which copies nothing. That is the shipped
+    // SPA-slicer's exact shape (build-spa-runtime.ts mkdirSync-then-return), so
+    // it is known to work; no conditional is needed or possible (the decision is
+    // a build-time fact, not a configure-time one).
+    const rt_install = project.addInstallDirectory(.{
+        .source_dir = rt_outdir,
+        .install_dir = .prefix,
+        .install_subdir = project.fmt("{s}/islands", .{output_path}),
+    });
+    rt_install.step.dependOn(&run_zigapagos.step);
+    project.getInstallStep().dependOn(&rt_install.step);
+
+    // Single `=` token, so this is addPrefixedFileArg — NOT addArg + addFileArg,
+    // which is the shape `--spa-slice=<src> <path>` needs. This also wires the
+    // build-graph dependency on the manifest.
+    run_zigapagos.addPrefixedFileArg("--islands-slice=", slice_json);
 }
 
 /// Bundle each SPA entry via the bundle-island.ts driver in CODE-SPLITTING mode

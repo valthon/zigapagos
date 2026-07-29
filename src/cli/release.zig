@@ -59,6 +59,7 @@ pub fn release(
         .island_src_dir = cmd.island_src_dir,
         .css_minify_driver = cmd.css_minify_driver,
         .island_props_check = cmd.island_props_check,
+        .islands_slice_json = cmd.islands_slice,
         .spas = cmd.spas,
         .spa_not_found = cmd.spa_not_found,
         .changed_files = changed_files,
@@ -146,6 +147,13 @@ pub const Command = struct {
     /// verbatim byte-copy. Requires `--bun` to be set as well.
     css_minify_driver: ?[]const u8 = null,
     island_props_check: @import("../islands/props_check.zig").Mode = .off,
+    /// `--islands-slice=PATH`: the per-SITE islands runtime slice manifest
+    /// (`runtime/scripts/build-islands-runtime.ts`). Null (the default, and every
+    /// hand-written invocation) means no slice was built, so every island page
+    /// loads the shared `/zigapagos-runtime.js` exactly as before. Unlike
+    /// `--spa-slice` there is no per-deployable key, so this is a single `=`
+    /// token with no second argv word.
+    islands_slice: ?[]const u8 = null,
     spas: []const root.SpaSpec,
     /// `--spa-not-found=<name>`: the SPA whose "/" shell backs the
     /// universal 404.html, named by its `spaName(src)` basename. Null (the
@@ -173,6 +181,7 @@ pub const Command = struct {
         var island_src_dir: ?[]const u8 = null;
         var css_minify_driver: ?[]const u8 = null;
         var island_props_check: @import("../islands/props_check.zig").Mode = .off;
+        var islands_slice: ?[]const u8 = null;
         var spas: std.ArrayListUnmanaged(root.SpaSpec) = .empty;
         var spa_not_found: ?[]const u8 = null;
         var allow_missing_pages = false;
@@ -214,6 +223,8 @@ pub const Command = struct {
                 island_src_dir = arg["--island-src-dir=".len..];
             } else if (startsWith(u8, arg, "--css-minify-driver=")) {
                 css_minify_driver = arg["--css-minify-driver=".len..];
+            } else if (startsWith(u8, arg, "--islands-slice=")) {
+                islands_slice = arg["--islands-slice=".len..];
             } else if (startsWith(u8, arg, "--island-props-check=")) {
                 const v = arg["--island-props-check=".len..];
                 island_props_check = @import("../islands/props_check.zig").parseMode(v) orelse {
@@ -321,6 +332,7 @@ pub const Command = struct {
             .island_src_dir = island_src_dir,
             .css_minify_driver = css_minify_driver,
             .island_props_check = island_props_check,
+            .islands_slice = islands_slice,
             .spas = try spas.toOwnedSlice(gpa),
             .spa_not_found = spa_not_found,
             .allow_missing_pages = allow_missing_pages,
@@ -340,6 +352,9 @@ const help_message =
     \\  --css-minify-driver=PATH  Bun script that minifies .css site assets on
     \\                        install (needs --bun; omit to copy CSS verbatim)
     \\  --island-props-check=MODE  off | warn | error — typecheck island props (default off)
+    \\  --islands-slice=PATH  The per-site islands runtime slice manifest; a page
+    \\                        whose every island the slice covers loads it instead
+    \\                        of the full shared runtime (omit: shared runtime)
     \\  --spa=SRC|BASE        Register a native SPA entry (repeatable); BASE
     \\                        is the declared base, checked against the
     \\                        module's exported spa.base at prerender time
@@ -432,6 +447,24 @@ test "parse recognizes --css-minify-driver (and defaults it to null)" {
     var cmd_default = try Command.parse(gpa, &.{});
     defer cmd_default.deinit(gpa);
     try std.testing.expect(cmd_default.css_minify_driver == null);
+}
+
+test "parse recognizes --islands-slice" {
+    const gpa = std.testing.allocator;
+    var cmd = try Command.parse(gpa, &.{"--islands-slice=/cache/islands-slice.json"});
+    defer cmd.deinit(gpa);
+    // Single `=` token: unlike --spa-slice there is no per-deployable key, so
+    // the path must NOT be read from a following argv word.
+    try std.testing.expectEqualStrings("/cache/islands-slice.json", cmd.islands_slice.?);
+}
+
+test "parse leaves islands_slice null when --islands-slice is absent" {
+    // Null is the no-slicing decision: every island page loads the shared
+    // runtime, byte-identically to before the slicer existed.
+    const gpa = std.testing.allocator;
+    var cmd = try Command.parse(gpa, &.{"--force"});
+    defer cmd.deinit(gpa);
+    try std.testing.expect(cmd.islands_slice == null);
 }
 
 test "parse recognizes --island-props-check" {
