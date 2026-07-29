@@ -64,6 +64,151 @@ test("zigbase static_routes translates a trailing catch-all '*' to ZigBase's '**
   expect(snippet.content).not.toContain(`.match = "/app/admin/*"`);
 });
 
+// ── url_path_prefix: a site mounted under a host-chosen sub-path ────────────
+// The manifest's route VALUES stay tree-relative (they describe a position
+// inside the built output tree, which has no prefix directory in it); each
+// emitter applies url_path_prefix according to ITS OWN semantics instead. See
+// the Manifest.url_path_prefix doc comment and emitZigbase's doc comment for
+// the full argument — these tests pin the concrete behavior it implies.
+
+const mPrefixed: Manifest = { ...m, url_path_prefix: "/myrepo" };
+
+test("nginx prefixes location selectors and try_files targets, not $uri", () => {
+  const [file] = emitNginx(mPrefixed);
+  expect(file.content).toContain(`location "/myrepo/app/" {`);
+  expect(file.content).toContain(`try_files $uri $uri/ "/myrepo/app/index.html";`);
+  expect(file.content).toContain(`location "/myrepo/app/club/" {`);
+  expect(file.content).toContain(`try_files $uri "/myrepo/app/club/_shell.html" "/myrepo/app/index.html";`);
+});
+
+test("nginx never doubles the slash for a root-mounted SPA under a prefix", () => {
+  // base "/" normally collapses to a single "/"; under a prefix that must
+  // stay "/myrepo/", never "/myrepo//" (matches no request path) and never
+  // the bare "//" the no-prefix guard exists to avoid.
+  const root: Manifest = {
+    ...m, base: "/", fallback: "/index.html", url_path_prefix: "/myrepo",
+    dynamic: [{ pattern: "/:id", shell: "/_shell.html" }],
+  };
+  const [file] = emitNginx(root);
+  expect(file.content).toContain(`location "/myrepo/" {`);
+  expect(file.content).not.toContain(`/myrepo//`);
+  expect(file.content).not.toContain(`location "//"`);
+  expect(file.content).toContain(`try_files $uri "/myrepo/_shell.html" "/myrepo/index.html";`);
+});
+
+test("apache: RewriteBase carries the prefix; patterns stay unprefixed; targets become RewriteBase-relative", () => {
+  const [file] = emitApache(mPrefixed);
+  expect(file.content).toContain(`RewriteBase /myrepo/`);
+  // RewriteRule PATTERNS must NOT be prefixed: Apache already strips the
+  // containing directory's (now-prefixed) URL-path before a per-directory
+  // .htaccess ever sees the request path — prefixing here would double-count it.
+  expect(file.content).toContain(`RewriteRule ^app/club/.*$ app/club/_shell.html [L]`);
+  expect(file.content).toContain(`RewriteRule ^app/.*$ app/index.html [L]`);
+  expect(file.content).not.toContain(`^myrepo`);
+  // Targets are relative-to-RewriteBase (no leading slash): an absolute
+  // leading-slash target would bypass RewriteBase entirely and resolve from
+  // the server root, missing the prefix.
+  expect(file.content).not.toContain(` /app/club/_shell.html [L]`);
+  expect(file.content).not.toContain(` /app/index.html [L]`);
+});
+
+test("apache header comment names the prefix and where the file mounts", () => {
+  const [file] = emitApache(mPrefixed);
+  expect(file.content).toContain(`mounted at URL prefix /myrepo`);
+});
+
+test("zigbase prefixes .match but leaves .serve tree-relative — the deliberate asymmetry", () => {
+  const snippet = emitZigbase(mPrefixed).find((f) => f.name === "zigbase.static_routes.zig")!;
+  expect(snippet.content).toContain(
+    `.{ .match = "/myrepo/app/club/:id", .serve = "/app/club/_shell.html" },`,
+  );
+  expect(snippet.content).toContain(
+    `.{ .match = "/myrepo/app/**", .serve = "/app/index.html" },`,
+  );
+  // ZigBase resolves .serve against the served root directory holding this
+  // build's (unprefixed) output tree — prefixing it would point at a path
+  // that does not exist.
+  expect(snippet.content).not.toContain(`.serve = "/myrepo`);
+});
+
+test("zigbase snippet explains the prefix asymmetry, but only when a prefix is present", () => {
+  const unprefixed = emitZigbase(m).find((f) => f.name === "zigbase.static_routes.zig")!;
+  const prefixed = emitZigbase(mPrefixed).find((f) => f.name === "zigbase.static_routes.zig")!;
+  expect(unprefixed.content).not.toContain("Mounted at URL prefix");
+  expect(prefixed.content).toContain(`Mounted at URL prefix "/myrepo"`);
+});
+
+// The property that makes this change safe for every EXISTING site: both
+// unprefixed spellings (the field absent, and "") must emit output
+// byte-for-byte equal to today's, for all three emitters.
+
+test("empty url_path_prefix emits byte-identical nginx output to an absent prefix", () => {
+  const [file] = emitNginx({ ...m, url_path_prefix: "" });
+  expect(file.content).toContain(`location "/app/" {`);
+  expect(file.content).toContain(`try_files $uri $uri/ "/app/index.html";`);
+  expect(file.content).toContain(`location "/app/club/" {`);
+  expect(file.content).toContain(`try_files $uri "/app/club/_shell.html" "/app/index.html";`);
+  expect(file.content).toBe(emitNginx(m)[0].content);
+});
+
+test("empty url_path_prefix emits byte-identical apache output to an absent prefix", () => {
+  const [file] = emitApache({ ...m, url_path_prefix: "" });
+  expect(file.content).not.toContain("RewriteBase");
+  expect(file.content).toBe(emitApache(m)[0].content);
+});
+
+test("empty url_path_prefix emits byte-identical zigbase output to an absent prefix", () => {
+  const withEmpty = emitZigbase({ ...m, url_path_prefix: "" }).find((f) => f.name === "zigbase.static_routes.zig")!;
+  const withoutField = emitZigbase(m).find((f) => f.name === "zigbase.static_routes.zig")!;
+  expect(withEmpty.content).toBe(withoutField.content);
+});
+
+test("assertSafeManifest rejects a malicious url_path_prefix, naming it", () => {
+  expect(() => assertSafeManifest({ ...m, url_path_prefix: "/../etc" }))
+    .toThrow(/manifest url_path_prefix .*".." segment/);
+  expect(() => assertSafeManifest({ ...m, url_path_prefix: '/app"; evil' }))
+    .toThrow(/manifest url_path_prefix .*is not a safe URL path/);
+  // "" and absent are both valid (unprefixed) spellings — must not throw.
+  expect(() => assertSafeManifest({ ...m, url_path_prefix: "" })).not.toThrow();
+  expect(() => assertSafeManifest(m)).not.toThrow();
+});
+
+test("assertSafeManifest rejects a TRAILING-SLASH url_path_prefix", () => {
+  // SAFE_PATH_RE alone accepts "/myrepo/" and "/", and both concatenate onto
+  // leading-"/" route values into a doubled slash — `location "/myrepo//app/"`,
+  // `.match = "//app/**"` — which matches no request path, so every deep link
+  // 404s instead of the build failing. src/spa.zig normalizes and so cannot
+  // produce these; the validator's whole job is to guard a manifest this build
+  // did not write.
+  expect(() => assertSafeManifest({ ...m, url_path_prefix: "/myrepo/" }))
+    .toThrow(/must not end with "\/"/);
+  expect(() => assertSafeManifest({ ...m, url_path_prefix: "/" }))
+    .toThrow(/must not end with "\/"/);
+  // The normalized form is still accepted.
+  expect(() => assertSafeManifest({ ...m, url_path_prefix: "/myrepo" })).not.toThrow();
+});
+
+test("the nginx config states the mount the prefixed selectors assume", () => {
+  // The selectors and try_files targets are REQUEST paths carrying the prefix,
+  // but the files they name live in a tree with no prefix directory — so they
+  // are only correct when the server maps <prefix>/… onto the built tree.
+  // Nothing in the directives reveals that, and getting it wrong 404s every
+  // deep link, so the header has to say it (as Apache's already did).
+  const [file] = emitNginx(mPrefixed);
+  expect(file.content).toContain("mounted at URL prefix /myrepo");
+  expect(file.content).toMatch(/serve the built tree from <docroot>\/myrepo\//);
+  // An unprefixed site has no such assumption to state.
+  const [bare] = emitNginx(m);
+  expect(bare.content).not.toContain("mounted at URL prefix");
+});
+
+test("every emitter validates url_path_prefix before interpolating", () => {
+  const bad: Manifest = { ...m, url_path_prefix: '/myrepo"; evil' };
+  expect(() => emitNginx(bad)).toThrow();
+  expect(() => emitApache(bad)).toThrow();
+  expect(() => emitZigbase(bad)).toThrow();
+});
+
 // ── Route values are validated + per-language encoded ───────────────────────
 // These are CORRECTNESS defects, not an attack surface: every value comes from
 // the site author's own .spa.tsx. But an honest author's legitimate route must

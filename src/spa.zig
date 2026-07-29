@@ -34,16 +34,24 @@ const log = std.log.scoped(.islands);
 /// prerender is release-only, so a failure fatals upstream — but now with the
 /// real cause in the build log, not a bare `error.SidecarRenderFailed` name.
 /// Contract 4 (`RenderArena`, NO_SLOP.md §2.2a): a pass-through of
-/// `Sidecar.render`, whose result is a slice into the arena-owned, leak-parsed
-/// response line rather than an allocation the caller could free.
+/// `Sidecar.renderPrefixed`, whose result is a slice into the arena-owned,
+/// leak-parsed response line rather than an allocation the caller could free.
+///
+/// `pathname` must already carry the site's `url_path_prefix` (every caller
+/// builds it via `pass.prefixed`) — this is what the sidecar's SSR pass
+/// simulates as `location.pathname`. `url_prefix` is the SEPARATE normalized
+/// prefix ("" or "/myrepo") threaded to `Sidecar.renderPrefixed`'s `"prefix"`
+/// wire field, which composes the client Router's `base` (issue #26). The two
+/// must agree — see `prerenderAll`'s `norm_prefix` doc comment.
 fn renderSkeleton(
     sc: *sidecar.Sidecar,
     arena: RenderArena,
     src: []const u8,
     pathname: []const u8,
+    url_prefix: []const u8,
 ) ![]const u8 {
     var rerr: sidecar.RenderError = .{};
-    return sc.render(arena, src, "{}", "", pathname, &rerr) catch |err| {
+    return sc.renderPrefixed(arena, src, "{}", "", pathname, url_prefix, &rerr) catch |err| {
         log.err(
             "SPA skeleton SSR failed: {s} (route {s}): {s}\n{s}",
             .{ src, pathname, rerr.message, rerr.stack orelse "(no stack)" },
@@ -217,6 +225,18 @@ pub fn prerenderAll(io: std.Io, gpa: std.mem.Allocator, build: *Build, cfg: *con
         // allocator; they simply have no reason to free here.
         const arena = RenderArena.from(&arena_state);
 
+        // Router-base prefix (issue #26): the normalized form of
+        // `url_path_prefix` ("" or "/myrepo") that TWO channels must agree on
+        // byte-for-byte — the SSR pass, which prefixes each route's
+        // `ssr_pathname` below before it reaches the sidecar (so the simulated
+        // `location.pathname` matches what a real browser sees under the
+        // prefix), and the client Router, which reads the same value back out
+        // of `renderShell`'s `data-z-prefix` attribute. `pass.prefixed(.., "")`
+        // is the same normalization `bundle_url`/`runtime_url` above already
+        // apply to a URL; called on "" it yields exactly the composed base
+        // value ("" unprefixed, else a leading-slash, no-trailing-slash form).
+        const norm_prefix = try pass.prefixed(arena.a, url_path_prefix, "");
+
         const desc = try sc.describe(arena, src);
         // Declarative redirects: every `redirect` target must
         // match a route in THIS SPA's table — a miss fails the build here,
@@ -347,6 +367,38 @@ pub fn prerenderAll(io: std.Io, gpa: std.mem.Allocator, build: *Build, cfg: *con
                     .{ src, href, rel_path, rel_path },
                 );
             }
+        } else {
+            // issue #24: a SPA shell's <head> is fixed (import map,
+            // modulepreloads, boot script) — site stylesheets are NOT
+            // inherited, and `spa.head` is the documented, build-checked way
+            // to add one. `head: []` (this branch requires `head == null`, so
+            // an explicit empty slice never lands here) is the self-documenting
+            // opt-out for a SPA that legitimately styles itself another way
+            // (inline styles / CSS-in-JS — NOT CSS-in-bundle: `bundle-island.ts`
+            // writes only the entry chunk, so a `.css` import's output is
+            // dropped). Only worth the noise when the site actually HAS a
+            // stylesheet for this SPA to be missing.
+            var css_paths: std.ArrayList([]const u8) = .empty;
+            var asset_it = build.site_assets.iterator();
+            var asset_name_buf: [std.fs.max_path_bytes]u8 = undefined;
+            while (asset_it.next()) |asset_entry| {
+                const asset_path = std.fmt.bufPrint(&asset_name_buf, "{f}", .{
+                    asset_entry.key_ptr.fmt(&build.st, &build.pt, null, "/"),
+                }) catch continue;
+                if (std.mem.endsWith(u8, asset_path, ".css")) {
+                    try css_paths.append(arena.a, try arena.a.dupe(u8, asset_path));
+                }
+            }
+            if (spaHeadWarningAsset(desc.spa.head, css_paths.items)) |example| {
+                std.debug.print(
+                    "warning: spa '{s}' declares no spa.head, but the site has stylesheet assets " ++
+                        "(e.g. '/{s}') — SPA shells have a fixed <head> and do not inherit site " ++
+                        "styles, so this SPA's routes will render unstyled. Add a stylesheet to " ++
+                        "`export const spa` (head: [{{ rel: \"stylesheet\", href: \"/{s}\" }}]), " ++
+                        "or set head: [] to declare the SPA intentionally loads no head links.\n",
+                    .{ src, example, example },
+                );
+            }
         }
 
         var static_urls: std.ArrayList([]const u8) = .empty;
@@ -382,8 +434,12 @@ pub fn prerenderAll(io: std.Io, gpa: std.mem.Allocator, build: *Build, cfg: *con
             if (planned.static_url) |u| try claimStaticUrlOrFatal(arena.a, &static_seen, src, u, rt.path);
             try claimOutPathOrFatal(arena.a, &out_path_seen, src, planned.out_path, rt.path);
             // SSR the skeleton via the shared sidecar (props = {}, no slots).
-            const skeleton = try renderSkeleton(sc, arena, src, planned.ssr_pathname);
-            const html = try renderShell(arena.a, title, noindex, bundle_url, runtime_url, chunk_url, desc.spa.head, desc.spa.flags, skeleton);
+            // The pathname handed to the sidecar carries the prefix (matching a
+            // real browser's location.pathname); norm_prefix is the separate
+            // value the client Router composes its base from (issue #26).
+            const prefixed_pathname = try pass.prefixed(arena.a, url_path_prefix, planned.ssr_pathname);
+            const skeleton = try renderSkeleton(sc, arena, src, prefixed_pathname, norm_prefix);
+            const html = try renderShell(arena.a, title, noindex, bundle_url, runtime_url, chunk_url, norm_prefix, desc.spa.head, desc.spa.flags, skeleton);
             try writeFile(io, out_dir, planned.out_path, html);
             if (planned.static_url) |u| {
                 try static_urls.append(arena.a, u);
@@ -413,8 +469,9 @@ pub fn prerenderAll(io: std.Io, gpa: std.mem.Allocator, build: *Build, cfg: *con
                     try claimStaticUrlOrFatal(arena.a, &static_seen, src, u, rt.path);
                     try claimOutPathOrFatal(arena.a, &out_path_seen, src, planned_c.out_path, rt.path);
                     if (std.mem.eql(u8, planned_c.out_path, root_index_path)) has_root_index = true;
-                    const skeleton_c = try renderSkeleton(sc, arena, src, planned_c.ssr_pathname);
-                    const html_c = try renderShell(arena.a, title, noindex, bundle_url, runtime_url, chunk_url, desc.spa.head, desc.spa.flags, skeleton_c);
+                    const prefixed_pathname_c = try pass.prefixed(arena.a, url_path_prefix, planned_c.ssr_pathname);
+                    const skeleton_c = try renderSkeleton(sc, arena, src, prefixed_pathname_c, norm_prefix);
+                    const html_c = try renderShell(arena.a, title, noindex, bundle_url, runtime_url, chunk_url, norm_prefix, desc.spa.head, desc.spa.flags, skeleton_c);
                     try writeFile(io, out_dir, planned_c.out_path, html_c);
                     try static_urls.append(arena.a, u);
                     // A lazy pattern route's chunk backs its concrete pages too.
@@ -435,7 +492,7 @@ pub fn prerenderAll(io: std.Io, gpa: std.mem.Allocator, build: *Build, cfg: *con
             .{ src, base },
         );
 
-        const manifest = try renderManifest(arena.a, url_base, static_urls.items, dynamics.items, chunk_entries.items, fallback, bundle_url, deploy_target);
+        const manifest = try renderManifest(arena.a, url_base, static_urls.items, dynamics.items, chunk_entries.items, fallback, bundle_url, deploy_target, norm_prefix);
         const manifest_path = try diskJoin(arena.a, disk_prefix, "routing-manifest.json");
         try writeFile(io, out_dir, manifest_path, manifest);
     }
@@ -567,7 +624,10 @@ fn chooseFallback(
 /// One prerendered route of a dev-served SPA: enough to dispatch a request to
 /// its shell file AND to re-render that shell on a source change.
 pub const ServeShell = struct {
-    /// SSR pathname handed to the sidecar (dynamic params replaced with "_").
+    /// SSR pathname handed to the sidecar (dynamic params replaced with "_"),
+    /// already carrying the site's `url_path_prefix` (issue #26) — so
+    /// `rerenderServe` needs no further prefixing to reproduce the exact
+    /// request `describeAndRenderServe` sent.
     ssr_pathname: []const u8,
     /// Shell file path, relative to the SPA serve cache dir (e.g.
     /// "app/index.html", "app/club/_shell.html"). No leading slash.
@@ -593,6 +653,12 @@ pub const ServeSpa = struct {
     /// Build-time flag defaults, snapshotted into every shell.
     flags: ?std.json.ArrayHashMap(bool),
     bundle_url: []const u8,
+    /// Normalized Router-base prefix ("" or "/myrepo", issue #26) — the same
+    /// value `describeAndRenderServe` baked into every shell's `data-z-prefix`
+    /// and sent to the sidecar as `"prefix"`. Stored so `rerenderServe` can
+    /// reproduce both without re-deriving it from config (dev serve has no
+    /// `Build`/`Config` in scope at re-render time — only this table).
+    url_prefix: []const u8,
     shells: []const ServeShell,
     /// Shell to serve for any in-namespace path that matches no static/dynamic
     /// route (the "/" route's shell). Null when the SPA declares no "/" route.
@@ -618,6 +684,7 @@ pub fn describeAndRenderServe(
     sc: *sidecar.Sidecar,
     src: []const u8,
     out_dir: std.Io.Dir,
+    url_path_prefix: []const u8,
 ) !ServeSpa {
     const desc = try sc.describe(arena, src);
     // Same declarative-redirect validation as release: dev serve
@@ -630,7 +697,18 @@ pub fn describeAndRenderServe(
     validateRoutePathsOrFatal(src, base, desc.routes);
     const title = desc.spa.title orelse "App";
     const noindex = desc.spa.noindex orelse true;
-    const bundle_url = try std.fmt.allocPrint(arena.a, "/spa/{s}.js", .{spaName(src)});
+    // Router-base prefix (issue #26) — see `prerenderAll`'s `norm_prefix` doc
+    // comment for the full rationale; dev serve needs the identical
+    // normalization so a prefixed dev session agrees with release
+    // byte-for-byte.
+    const norm_prefix = try pass.prefixed(arena.a, url_path_prefix, "");
+    const bundle_url = try pass.prefixed(arena.a, url_path_prefix, try std.fmt.allocPrint(arena.a, "/spa/{s}.js", .{spaName(src)}));
+    // AUDF-005's sibling defect in dev serve: the request handler hard-rejects
+    // any request outside the site's `url_path_prefix`
+    // (`sendOutsideOfPathPrefix`), so an unprefixed runtime URL baked into the
+    // shell 404s against the handler's own guard. Release already prefixes
+    // its runtime URL; dev serve did not.
+    const runtime_url = try pass.prefixed(arena.a, url_path_prefix, pass.shared_runtime_url);
 
     var shells: std.ArrayList(ServeShell) = .empty;
     var fallback_rel: ?[]const u8 = null;
@@ -646,14 +724,18 @@ pub fn describeAndRenderServe(
         const planned = try planRoute(arena, base, rt);
         if (planned.static_url) |u| try claimStaticUrlOrFatal(arena.a, &static_seen, src, u, rt.path);
         try claimOutPathOrFatal(arena.a, &out_path_seen, src, planned.out_path, rt.path);
-        // SSR the skeleton (props = {}, no slots) exactly like release.
-        const skeleton = try renderSkeleton(sc, arena, src, planned.ssr_pathname);
+        // SSR the skeleton (props = {}, no slots) exactly like release. The
+        // pathname sent to the sidecar carries the prefix (issue #26); the
+        // unprefixed form is never sent, matching what a real browser would
+        // request under the prefix.
+        const prefixed_pathname = try pass.prefixed(arena.a, url_path_prefix, planned.ssr_pathname);
+        const skeleton = try renderSkeleton(sc, arena, src, prefixed_pathname, norm_prefix);
         // chunk_url = null: dev skips the lazy-chunk modulepreload (a pure
         // fetch optimization; the entry still dynamic-imports the chunk).
-        const html = try renderShell(arena.a, title, noindex, bundle_url, pass.shared_runtime_url, null, desc.spa.head, desc.spa.flags, skeleton);
+        const html = try renderShell(arena.a, title, noindex, bundle_url, runtime_url, null, norm_prefix, desc.spa.head, desc.spa.flags, skeleton);
         try writeFile(io, out_dir, planned.out_path, html);
         try shells.append(arena.a, .{
-            .ssr_pathname = planned.ssr_pathname,
+            .ssr_pathname = prefixed_pathname,
             .out_path = planned.out_path,
             .static_url = planned.static_url,
             .dynamic_pattern = if (planned.dynamic) |d| d.pattern else null,
@@ -679,11 +761,12 @@ pub fn describeAndRenderServe(
                 const u = planned_c.static_url.?;
                 try claimStaticUrlOrFatal(arena.a, &static_seen, src, u, rt.path);
                 try claimOutPathOrFatal(arena.a, &out_path_seen, src, planned_c.out_path, rt.path);
-                const skeleton_c = try renderSkeleton(sc, arena, src, planned_c.ssr_pathname);
-                const html_c = try renderShell(arena.a, title, noindex, bundle_url, pass.shared_runtime_url, null, desc.spa.head, desc.spa.flags, skeleton_c);
+                const prefixed_pathname_c = try pass.prefixed(arena.a, url_path_prefix, planned_c.ssr_pathname);
+                const skeleton_c = try renderSkeleton(sc, arena, src, prefixed_pathname_c, norm_prefix);
+                const html_c = try renderShell(arena.a, title, noindex, bundle_url, runtime_url, null, norm_prefix, desc.spa.head, desc.spa.flags, skeleton_c);
                 try writeFile(io, out_dir, planned_c.out_path, html_c);
                 try shells.append(arena.a, .{
-                    .ssr_pathname = planned_c.ssr_pathname,
+                    .ssr_pathname = prefixed_pathname_c,
                     .out_path = planned_c.out_path,
                     .static_url = u,
                     .dynamic_pattern = null,
@@ -699,6 +782,7 @@ pub fn describeAndRenderServe(
         .head = desc.spa.head,
         .flags = desc.spa.flags,
         .bundle_url = bundle_url,
+        .url_prefix = norm_prefix,
         .shells = try shells.toOwnedSlice(arena.a),
         .fallback_rel = fallback_rel,
     };
@@ -716,9 +800,16 @@ pub fn rerenderServe(
     spa: *const ServeSpa,
     out_dir: std.Io.Dir,
 ) !void {
+    // `spa.url_prefix` is already normalized (`describeAndRenderServe` did
+    // that once); reapplying `pass.prefixed` to it is idempotent (it just
+    // trims the same leading/trailing "/" again), so the runtime URL stays
+    // prefixed exactly like the original render (issue #26 / AUDF-005 parity).
+    const runtime_url = try pass.prefixed(arena.a, spa.url_prefix, pass.shared_runtime_url);
     for (spa.shells) |sh| {
-        const skeleton = try renderSkeleton(sc, arena, spa.src, sh.ssr_pathname);
-        const html = try renderShell(arena.a, spa.title, spa.noindex, spa.bundle_url, pass.shared_runtime_url, null, spa.head, spa.flags, skeleton);
+        // `sh.ssr_pathname` is already prefixed (stored that way by
+        // `describeAndRenderServe`), so no re-prefixing is needed here.
+        const skeleton = try renderSkeleton(sc, arena, spa.src, sh.ssr_pathname, spa.url_prefix);
+        const html = try renderShell(arena.a, spa.title, spa.noindex, spa.bundle_url, runtime_url, null, spa.url_prefix, spa.head, spa.flags, skeleton);
         try writeFile(io, out_dir, sh.out_path, html);
     }
 }
@@ -810,7 +901,7 @@ fn renderFlagsSnapshot(alloc: std.mem.Allocator, flags: ?std.json.ArrayHashMap(b
 /// callers pass is a convenience, not a requirement. (`""` fragments are
 /// zero-length, which `Allocator.free` short-circuits, so the optional ones need
 /// no branch.) `robots` is a static literal and is never freed.
-fn renderShell(alloc: std.mem.Allocator, title: []const u8, noindex: bool, bundle_url: []const u8, runtime_url: []const u8, chunk_url: ?[]const u8, head: ?[]const std.json.ArrayHashMap([]const u8), flags: ?std.json.ArrayHashMap(bool), skeleton: []const u8) ![]u8 {
+fn renderShell(alloc: std.mem.Allocator, title: []const u8, noindex: bool, bundle_url: []const u8, runtime_url: []const u8, chunk_url: ?[]const u8, url_prefix: []const u8, head: ?[]const std.json.ArrayHashMap([]const u8), flags: ?std.json.ArrayHashMap(bool), skeleton: []const u8) ![]u8 {
     const robots = if (noindex) "<meta name=\"robots\" content=\"noindex\">" else "";
     const escaped_title = try escapeHtml(alloc, title);
     defer alloc.free(escaped_title);
@@ -822,6 +913,22 @@ fn renderShell(alloc: std.mem.Allocator, title: []const u8, noindex: bool, bundl
     else
         "";
     defer alloc.free(chunk_preload);
+    // Router base prefix (issue #26): `url_prefix` is the same normalized
+    // value ("" or "/myrepo") baked into `bundle_url`/`runtime_url` above and
+    // sent to the sidecar as the SSR pass's `"prefix"` field — carried here so
+    // `@z/runtime`'s `mountSpa` (see runtime/src/router.ts) composes the SAME
+    // Router `base` a real browser would see under the prefix. Preact's
+    // `hydrate()` does not diff element attributes, so a wrong `<a href>`
+    // baked at SSR time sticks in the DOM forever — the client and the SSR
+    // pass must agree byte-for-byte, and this attribute is how they do.
+    // "" (the common case) emits nothing: an unprefixed shell must stay
+    // byte-identical to one built before this field existed.
+    const prefix_attr = if (url_prefix.len != 0) blk: {
+        const escaped_prefix = try escapeHtml(alloc, url_prefix);
+        defer alloc.free(escaped_prefix);
+        break :blk try std.fmt.allocPrint(alloc, " data-z-prefix=\"{s}\"", .{escaped_prefix});
+    } else "";
+    defer alloc.free(prefix_attr);
     // The runtime tags (preload/import-map/script) point at `runtime_url` — the
     // shared /zigapagos-runtime.js by default, or this SPA's per-deployable sliced
     // runtime. For the shared URL these reproduce pass's constants exactly.
@@ -856,7 +963,7 @@ fn renderShell(alloc: std.mem.Allocator, title: []const u8, noindex: bool, bundl
         "{[chunk_preload]s}" ++ // per-route lazy chunk preload (may be empty)
         "{[rt_script]s}" ++
         "<script type=\"module\">import*as m from\"{[bundle]s}\";import{{mountSpa}}from\"@z/runtime\";mountSpa(m.default,\"#z-spa-root\",m);</script>" ++
-        "</head><body><div id=\"z-spa-root\" data-z-spa>{[skeleton]s}</div></body></html>", .{
+        "</head><body><div id=\"z-spa-root\" data-z-spa{[prefix_attr]s}>{[skeleton]s}</div></body></html>", .{
         .title = escaped_title,
         .robots = robots,
         .rt_preload = rt_preload,
@@ -866,6 +973,7 @@ fn renderShell(alloc: std.mem.Allocator, title: []const u8, noindex: bool, bundl
         .head_links = head_links,
         .flags_snapshot = flags_snapshot,
         .rt_script = rt_script,
+        .prefix_attr = prefix_attr,
         .skeleton = skeleton,
     });
 }
@@ -959,6 +1067,44 @@ fn findBuildAssetByInstallPath(
     return null;
 }
 
+/// Decide whether `prerenderAll` should print the "no spa.head but the site
+/// has stylesheets" warning (issue #24) for one SPA, and, if so, which asset
+/// path to cite as the actionable `e.g.` example.
+///
+/// Gated on BOTH: `head` is absent entirely (`null`) — `head: []` (the
+/// documented opt-out for a SPA that styles itself another way) and any
+/// non-empty `head` (even preconnect-only: the author clearly knows the hook)
+/// stay silent; AND `asset_paths` (already-formatted site-asset path strings —
+/// see the call site's `PathName.fmt`, matching `src/root.zig`'s convention)
+/// contains at least one path ending in ".css" — a CSS-less site has nothing
+/// for this SPA to be missing.
+///
+/// The cited example is the LEXICOGRAPHICALLY SMALLEST ".css" path in
+/// `asset_paths`. `build.site_assets` is a hash map, so as-found iteration
+/// order is arbitrary; naming the "first found" file would make the warning
+/// text vary between two otherwise-identical builds, which this repo does not
+/// accept from build output (see the snapshot tests). Lexicographic order is a
+/// total order over the same input regardless of hash-map iteration, so the
+/// pick is deterministic.
+///
+/// Takes a plain slice rather than `*const Build` on purpose: a helper that
+/// needs a whole `Build` to construct is a helper that can't be unit-tested
+/// without one. This one takes only the two pieces of a `Build` it actually
+/// reads, so the gating matrix (head null/[]/non-empty × css present/absent)
+/// and the lexicographic pick are both directly testable.
+///
+/// NO_SLOP.md §2.2a contract 3 (caller-buffer): reads `asset_paths`,
+/// allocates nothing; the returned slice aliases one of its entries.
+fn spaHeadWarningAsset(head: ?[]const std.json.ArrayHashMap([]const u8), asset_paths: []const []const u8) ?[]const u8 {
+    if (head != null) return null; // explicit `head: []` opt-out, or a real head
+    var best: ?[]const u8 = null;
+    for (asset_paths) |p| {
+        if (!std.mem.endsWith(u8, p, ".css")) continue;
+        if (best == null or std.mem.lessThan(u8, p, best.?)) best = p;
+    }
+    return best;
+}
+
 /// Minimal HTML-escaping for developer-authored text inserted into element
 /// content (here: `<title>`). Not a security boundary (values come from
 /// `.spa.tsx` source, not untrusted input) — just robustness so a `title`
@@ -993,6 +1139,12 @@ fn renderManifest(
     fallback: []const u8,
     bundle: []const u8,
     deploy_target: []const u8,
+    // The site's normalized `url_path_prefix` ("" or "/myrepo"): where a host
+    // MOUNTS this tree, delivered as its own field rather than folded into the
+    // route values above. Emitted only when non-empty, so an unprefixed site's
+    // manifest stays byte-identical. See the key-order comment below for why
+    // the split exists.
+    url_path_prefix: []const u8,
 ) ![]u8 {
     var aw: std.Io.Writer.Allocating = .init(alloc);
     errdefer aw.deinit();
@@ -1005,6 +1157,38 @@ fn renderManifest(
     try std.json.Stringify.value(base, .{}, w);
     try w.writeAll(",\"deploy_target\":");
     try std.json.Stringify.value(deploy_target, .{}, w);
+    // `url_path_prefix` — present ONLY when non-empty, which is what keeps an
+    // unprefixed site's manifest byte-identical to one built before this field
+    // existed.
+    //
+    // Why it is a separate field instead of being baked into the route values:
+    // every route value here (`base`, `static`, `dynamic.pattern`,
+    // `dynamic.shell`, `fallback`, and the `chunks` KEYS) is a position inside
+    // the built output TREE, and the tree has no prefix directory — the prefix
+    // says where a host mounts that tree. The three emitters then need
+    // different things from it, so a pre-baked prefix would have to be stripped
+    // back off by two of them:
+    //   - nginx wants it on `location` and on the `try_files` internal-redirect
+    //     targets (request paths);
+    //   - Apache must NOT have it on its patterns (a per-directory `.htaccess`
+    //     matches with that prefix already stripped) and takes it as
+    //     `RewriteBase` instead;
+    //   - ZigBase wants it on `.match` but NOT on `.serve`, which
+    //     `static_files.zig`'s `validateRouteTargetsDir` resolves as
+    //     `root ++ "/" ++ trimStart(serve, "/")` — a prefixed `.serve` names a
+    //     file that does not exist.
+    // `runtime/scripts/emit-host-config.ts` is the manifest's only consumer, so
+    // this stays an internal build contract rather than a published shape.
+    //
+    // NOT the same convention as `bundle` (and the `chunks` VALUES) below,
+    // which are already-prefixed URLs because they are baked verbatim into
+    // shell `<script>`/`modulepreload` tags by `renderShell`. Two conventions in
+    // one document is a wart; it is called out here rather than left to be
+    // rediscovered.
+    if (url_path_prefix.len != 0) {
+        try w.writeAll(",\"url_path_prefix\":");
+        try std.json.Stringify.value(url_path_prefix, .{}, w);
+    }
     try w.writeAll(",\"static\":[");
     for (statics, 0..) |u, i| {
         if (i != 0) try w.writeAll(",");
@@ -1624,7 +1808,7 @@ test "renderManifest normalizes a root base to \"/\" and produces valid, escaped
 
     const statics = [_][]const u8{"/"};
     const dynamics = [_]DynamicEntry{.{ .pattern = "/club/:id", .shell = "/club/_shell.html" }};
-    const manifest = try renderManifest(gpa, "/", &statics, &dynamics, &.{}, "/index.html", "/spa/App.js", "zigbase");
+    const manifest = try renderManifest(gpa, "/", &statics, &dynamics, &.{}, "/index.html", "/spa/App.js", "zigbase", "");
     defer gpa.free(manifest);
 
     try std.testing.expect(std.mem.indexOf(u8, manifest, "\"base\":\"/\"") != null);
@@ -1645,12 +1829,47 @@ test "renderManifest normalizes a root base to \"/\" and produces valid, escaped
     try std.testing.expectEqualStrings("/index.html", parsed.value.fallback);
 }
 
+test "renderManifest carries url_path_prefix as its own field, and omits it entirely when empty" {
+    // The prefix reaches the host-config emitters as a SEPARATE field rather
+    // than baked into the route values, because the three emitters need
+    // different things from it (nginx wants it on `location`, Apache must not
+    // have it on a per-directory pattern, ZigBase wants it on `.match` but not
+    // on `.serve`). See `renderManifest`'s own comment for the full reasoning.
+    const gpa = std.testing.allocator;
+
+    const statics = [_][]const u8{"/app/"};
+    const dynamics = [_]DynamicEntry{.{ .pattern = "/app/club/:id", .shell = "/app/club/_shell.html" }};
+
+    const prefixed_manifest = try renderManifest(gpa, "/app", &statics, &dynamics, &.{}, "/app/index.html", "/myrepo/spa/App.js", "nginx", "/myrepo");
+    defer gpa.free(prefixed_manifest);
+    try std.testing.expect(std.mem.indexOf(u8, prefixed_manifest, "\"url_path_prefix\":\"/myrepo\"") != null);
+    // The route values stay TREE-RELATIVE — they name positions inside the
+    // built output tree, which has no prefix directory. Asserting the prefix
+    // field alone would pass just as well if they had ALSO been prefixed, which
+    // is the bug this design exists to avoid.
+    try std.testing.expect(std.mem.indexOf(u8, prefixed_manifest, "\"base\":\"/app\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, prefixed_manifest, "\"fallback\":\"/app/index.html\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, prefixed_manifest, "\"pattern\":\"/app/club/:id\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, prefixed_manifest, "\"shell\":\"/app/club/_shell.html\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, prefixed_manifest, "\"/myrepo/app") == null);
+    // `bundle` is the deliberate exception: it is baked verbatim into shell
+    // script tags, so it arrives already prefixed.
+    try std.testing.expect(std.mem.indexOf(u8, prefixed_manifest, "\"bundle\":\"/myrepo/spa/App.js\"") != null);
+
+    // Empty prefix: the key is absent ENTIRELY, not emitted as "". This is what
+    // keeps an unprefixed site's manifest byte-identical to one built before
+    // the field existed.
+    const bare = try renderManifest(gpa, "/app", &statics, &dynamics, &.{}, "/app/index.html", "/spa/App.js", "nginx", "");
+    defer gpa.free(bare);
+    try std.testing.expect(std.mem.indexOf(u8, bare, "url_path_prefix") == null);
+}
+
 test "renderManifest escapes a quote inside a string value" {
     const gpa = std.testing.allocator;
 
     // Not a realistic base, but proves a raw '"' can't break the JSON.
     const statics = [_][]const u8{"/weird\"quote/"};
-    const manifest = try renderManifest(gpa, "/app", &statics, &.{}, &.{}, "/app/index.html", "/spa/App.js", "zigbase");
+    const manifest = try renderManifest(gpa, "/app", &statics, &.{}, &.{}, "/app/index.html", "/spa/App.js", "zigbase", "");
     defer gpa.free(manifest);
 
     // The raw JSON must contain an escaped quote, not a bare one that would
@@ -1669,7 +1888,7 @@ test "renderShell HTML-escapes the title and reuses the shared runtime constants
     // with leak detection ON (NO_SLOP.md §2.2a).
     const gpa = std.testing.allocator;
 
-    const html = try renderShell(gpa, "A & B <script> \"x\"", true, "/spa/App.js", pass.shared_runtime_url, null, null, null, "<div>skeleton</div>");
+    const html = try renderShell(gpa, "A & B <script> \"x\"", true, "/spa/App.js", pass.shared_runtime_url, null, "", null, null, "<div>skeleton</div>");
     defer gpa.free(html);
     try std.testing.expect(std.mem.indexOf(u8, html, "<title>A &amp; B &lt;script&gt; &quot;x&quot;</title>") != null);
     // The raw, unescaped title text must not appear anywhere in the shell.
@@ -1684,13 +1903,13 @@ test "renderShell HTML-escapes the title and reuses the shared runtime constants
 test "renderShell emits a modulepreload for a lazy route's chunk (and none without one)" {
     const gpa = std.testing.allocator;
 
-    const with = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, "/spa/Heavy-abc123.js", null, null, "<div>sk</div>");
+    const with = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, "/spa/Heavy-abc123.js", "", null, null, "<div>sk</div>");
     defer gpa.free(with);
     try std.testing.expect(std.mem.indexOf(u8, with, "<link rel=\"modulepreload\" href=\"/spa/Heavy-abc123.js\">") != null);
     // the entry bundle is still preloaded too
     try std.testing.expect(std.mem.indexOf(u8, with, "<link rel=\"modulepreload\" href=\"/spa/app.js\">") != null);
 
-    const without = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, null, null, "<div>sk</div>");
+    const without = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, "", null, null, "<div>sk</div>");
     defer gpa.free(without);
     try std.testing.expect(std.mem.indexOf(u8, without, "Heavy-") == null);
     // the chunk preload adds exactly one modulepreload over the no-chunk shell
@@ -1720,7 +1939,7 @@ test "renderShell under a url_path_prefix bakes prefixed runtime/bundle/chunk UR
     try std.testing.expectEqualStrings("/myrepo/zigapagos-runtime.js", runtime_url);
     try std.testing.expectEqualStrings("/myrepo/spa/Heavy-abc123.js", chunk_url);
 
-    const html = try renderShell(gpa, "App", true, bundle_url, runtime_url, chunk_url, null, null, "<div>sk</div>");
+    const html = try renderShell(gpa, "App", true, bundle_url, runtime_url, chunk_url, "", null, null, "<div>sk</div>");
     defer gpa.free(html);
     // Entry bundle, lazy chunk, and the module bootstrap all reference the
     // prefixed URLs.
@@ -1738,17 +1957,60 @@ test "renderShell under a url_path_prefix bakes prefixed runtime/bundle/chunk UR
     defer gpa.free(bare_bundle);
     const bare_runtime = try pass.prefixed(gpa, "", pass.shared_runtime_url);
     defer gpa.free(bare_runtime);
-    const bare = try renderShell(gpa, "App", true, bare_bundle, bare_runtime, null, null, null, "<div>sk</div>");
+    const bare = try renderShell(gpa, "App", true, bare_bundle, bare_runtime, null, "", null, null, "<div>sk</div>");
     defer gpa.free(bare);
-    const golden = try renderShell(gpa, "App", true, "/spa/App.js", pass.shared_runtime_url, null, null, null, "<div>sk</div>");
+    const golden = try renderShell(gpa, "App", true, "/spa/App.js", pass.shared_runtime_url, null, "", null, null, "<div>sk</div>");
     defer gpa.free(golden);
     try std.testing.expectEqualStrings(golden, bare);
+}
+
+// Issue #26: the client Router's `base` and the SSR pass's simulated
+// `location.pathname` must agree byte-for-byte, or a prerendered `<a href>`
+// is wrong and — because Preact's `hydrate()` never diffs element attributes
+// — stays wrong forever. `data-z-prefix` on `#z-spa-root` is how `renderShell`
+// hands the client the same normalized prefix the SSR pass composed its
+// pathname with.
+test "renderShell under a url_path_prefix emits data-z-prefix on #z-spa-root, and omits it entirely when unprefixed" {
+    const gpa = std.testing.allocator;
+
+    const prefix = "myrepo"; // pass.prefixed normalizes this to "/myrepo"
+    const bundle_url = try pass.prefixed(gpa, prefix, "/spa/App.js");
+    defer gpa.free(bundle_url);
+    const runtime_url = try pass.prefixed(gpa, prefix, pass.shared_runtime_url);
+    defer gpa.free(runtime_url);
+
+    const html = try renderShell(gpa, "App", true, bundle_url, runtime_url, null, "/myrepo", null, null, "<div>sk</div>");
+    defer gpa.free(html);
+    try std.testing.expect(std.mem.indexOf(u8, html, "<div id=\"z-spa-root\" data-z-spa data-z-prefix=\"/myrepo\">") != null);
+    // Still carries the prefixed asset URLs (AUDF-005) alongside the new
+    // attribute — the two prefixing mechanisms compose, they don't collide.
+    try std.testing.expect(std.mem.indexOf(u8, html, "/myrepo/spa/App.js") != null);
+
+    // Empty prefix (the common case): no attribute at all, not
+    // `data-z-prefix=""` — an unprefixed shell must stay byte-identical to
+    // one built before this field existed.
+    const bare = try renderShell(gpa, "App", true, "/spa/App.js", pass.shared_runtime_url, null, "", null, null, "<div>sk</div>");
+    defer gpa.free(bare);
+    try std.testing.expect(std.mem.indexOf(u8, bare, "data-z-prefix") == null);
+    try std.testing.expect(std.mem.indexOf(u8, bare, "<div id=\"z-spa-root\" data-z-spa>") != null);
+}
+
+test "renderShell HTML-escapes the url_prefix attribute value" {
+    const gpa = std.testing.allocator;
+
+    // Not a realistic `url_path_prefix` (that's validated elsewhere), but
+    // `renderShell` must not trust it blind — an unescaped `"` would break
+    // out of the attribute.
+    const html = try renderShell(gpa, "App", true, "/spa/App.js", pass.shared_runtime_url, null, "/a\"b", null, null, "<div>sk</div>");
+    defer gpa.free(html);
+    try std.testing.expect(std.mem.indexOf(u8, html, "data-z-prefix=\"/a&quot;b\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, html, "data-z-prefix=\"/a\"b\"") == null);
 }
 
 test "renderShell emits the import map before any modulepreload or module script" {
     const gpa = std.testing.allocator;
 
-    const html = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, "/spa/Heavy-abc123.js", null, null, "<div>sk</div>");
+    const html = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, "/spa/Heavy-abc123.js", "", null, null, "<div>sk</div>");
     defer gpa.free(html);
     // Per the import-maps spec, a map is only processed if it appears before
     // any module loading starts, and a <link rel="modulepreload"> (or a
@@ -1766,7 +2028,7 @@ test "renderShell emits the import map before any modulepreload or module script
 test "renderShell with no head matches the golden minimal shell byte-for-byte" {
     const gpa = std.testing.allocator;
 
-    const html = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, null, null, "<div>sk</div>");
+    const html = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, "", null, null, "<div>sk</div>");
     defer gpa.free(html);
     // The golden minimal shell — proves absent `head`/`flags` add not one
     // byte, and pins the bootstrap: a namespace import of the SPA bundle
@@ -1784,7 +2046,7 @@ test "renderShell with no head matches the golden minimal shell byte-for-byte" {
     try std.testing.expectEqualStrings(expected, html);
 
     // An empty head slice must be indistinguishable from an absent one.
-    const html_empty_slice = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, &.{}, null, "<div>sk</div>");
+    const html_empty_slice = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, "", &.{}, null, "<div>sk</div>");
     defer gpa.free(html_empty_slice);
     try std.testing.expectEqualStrings(html, html_empty_slice);
 }
@@ -1836,7 +2098,7 @@ test "renderShell embeds the flags snapshot and stays byte-identical without one
     defer flags.map.deinit(gpa);
     try flags.map.put(gpa, "bookAsGuest", true);
 
-    const with = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, null, flags, "<div>sk</div>");
+    const with = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, "", null, flags, "<div>sk</div>");
     defer gpa.free(with);
     const block = "<script type=\"application/json\" data-z-flags>{\"flags\":{\"bookAsGuest\":true},\"experiments\":{}}</script>";
     const at = std.mem.indexOf(u8, with, block).?;
@@ -1846,10 +2108,10 @@ test "renderShell embeds the flags snapshot and stays byte-identical without one
     try std.testing.expect(std.mem.indexOf(u8, with, "importmap").? < at);
 
     // No flags and empty flags are both byte-identical to each other.
-    const without = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, null, null, "<div>sk</div>");
+    const without = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, "", null, null, "<div>sk</div>");
     defer gpa.free(without);
     const empty: std.json.ArrayHashMap(bool) = .{};
-    const with_empty = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, null, empty, "<div>sk</div>");
+    const with_empty = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, "", null, empty, "<div>sk</div>");
     defer gpa.free(with_empty);
     try std.testing.expectEqualStrings(without, with_empty);
     try std.testing.expect(std.mem.indexOf(u8, without, "data-z-flags") == null);
@@ -1868,7 +2130,7 @@ test "renderShell renders head entries as ordered <link> tags between the import
     try e2.map.put(gpa, "href", "https://fonts.example.com");
     const head = [_]std.json.ArrayHashMap([]const u8){ e1, e2 };
 
-    const html = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, &head, null, "<div>sk</div>");
+    const html = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, "", &head, null, "<div>sk</div>");
     defer gpa.free(html);
 
     const link1 = std.mem.indexOf(u8, html, "<link rel=\"stylesheet\" href=\"/styles.css\">").?;
@@ -1890,7 +2152,7 @@ test "renderShell HTML-escapes head attribute values" {
     try e.map.put(gpa, "href", "/a&b\".css");
     const head = [_]std.json.ArrayHashMap([]const u8){e};
 
-    const html = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, &head, null, "<div>sk</div>");
+    const html = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, "", &head, null, "<div>sk</div>");
     defer gpa.free(html);
     try std.testing.expect(std.mem.indexOf(u8, html, "href=\"/a&amp;b&quot;.css\"") != null);
     // the raw, unescaped value must not appear anywhere in the shell.
@@ -1962,6 +2224,49 @@ test "spa headHrefAssetPath strips a matching url_path_prefix at a segment bound
     try std.testing.expect(headHrefAssetPath("/zigapagos/", "zigapagos") == null);
 }
 
+// --- Issue #24: warn when a SPA declares no spa.head on a site with
+// stylesheets — the gating matrix (head null/[]/non-empty × css present/
+// absent) and the deterministic (lexicographically smallest) asset pick. ---
+
+test "spaHeadWarningAsset stays silent when head is present (empty or not), regardless of css assets" {
+    const css = [_][]const u8{"site.css"};
+
+    // head: [] — the documented opt-out — is silent even with css assets.
+    const empty_head = [_]std.json.ArrayHashMap([]const u8){};
+    try std.testing.expect(spaHeadWarningAsset(&empty_head, &css) == null);
+
+    // A real (non-empty) head is silent too, even preconnect-only (no
+    // stylesheet entry) — the author has clearly used the hook.
+    var e: std.json.ArrayHashMap([]const u8) = .{};
+    defer e.map.deinit(std.testing.allocator);
+    try e.map.put(std.testing.allocator, "rel", "preconnect");
+    const head = [_]std.json.ArrayHashMap([]const u8){e};
+    try std.testing.expect(spaHeadWarningAsset(&head, &css) == null);
+}
+
+test "spaHeadWarningAsset stays silent when head is absent but the site has no css assets" {
+    const no_css = [_][]const u8{ "logo.png", "site.js" };
+    try std.testing.expect(spaHeadWarningAsset(null, &no_css) == null);
+    try std.testing.expect(spaHeadWarningAsset(null, &.{}) == null);
+}
+
+test "spaHeadWarningAsset fires when head is absent and the site has a css asset, naming it" {
+    const css = [_][]const u8{"site.css"};
+    try std.testing.expectEqualStrings("site.css", spaHeadWarningAsset(null, &css).?);
+}
+
+test "spaHeadWarningAsset picks the lexicographically smallest .css path, deterministically" {
+    // Deliberately NOT already sorted, and mixed with non-css assets — the
+    // pick must be stable regardless of input order (as a hash map iteration
+    // would produce) and must skip non-.css entries.
+    const assets = [_][]const u8{ "zzz.css", "logo.png", "css/a.css", "app.css" };
+    try std.testing.expectEqualStrings("app.css", spaHeadWarningAsset(null, &assets).?);
+
+    // A different presentation order of the same set picks the same file.
+    const assets_reordered = [_][]const u8{ "app.css", "css/a.css", "zzz.css", "logo.png" };
+    try std.testing.expectEqualStrings("app.css", spaHeadWarningAsset(null, &assets_reordered).?);
+}
+
 test "spa findBuildAssetByInstallPath matches install paths leading-slash-insensitively" {
     const gpa = std.testing.allocator;
 
@@ -1994,7 +2299,7 @@ test "renderManifest emits a per-route chunks map" {
 
     const statics = [_][]const u8{ "/app/", "/app/heavy/" };
     const chunks = [_]ChunkEntry{.{ .url = "/app/heavy/", .chunk = "/spa/Heavy-abc123.js" }};
-    const manifest = try renderManifest(gpa, "/app", &statics, &.{}, &chunks, "/app/index.html", "/spa/app.js", "zigbase");
+    const manifest = try renderManifest(gpa, "/app", &statics, &.{}, &chunks, "/app/index.html", "/spa/app.js", "zigbase", "");
     defer gpa.free(manifest);
 
     const Parsed = struct {

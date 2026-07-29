@@ -114,36 +114,64 @@ grep -q '/zigapagos/spa/app.js' "$OUT/demos/app/index.html" \
 # fallback again.
 grep -q 'That page does not exist' "$OUT/404.html" || { echo "FAIL: 404.html is not the site's own page"; exit 1; }
 grep -q 'class="spa"' "$OUT/404.html" && { echo "FAIL: 404.html is the SPA shell, not the site 404 page"; exit 1; }
-# A layout route only renders its child through <Outlet/> (no `children` prop
-# reaches it — see runtime/src/router.ts's renderChainNode). A file-exists
-# check alone is satisfied by an empty outlet, so assert GuidesIndex's actual
-# server-rendered text made it into the layout's shell. NOT the dynamic
-# `guides/:slug` leaf: that route has an explicit `skeleton`, and the build
-# ALWAYS SSRs a dynamic route's skeleton, never its real per-param content
-# (docs/spa.md "3. Renders skeletons") — even on the per-staticPaths concrete
-# shell — so "islands"-specific text is never expected in that file.
-grep -q 'Pick a guide: <a href="/demos/app/guides/islands">islands</a>' "$OUT/demos/app/guides/index.html" \
+# A layout route's matched child reaches it through <Outlet/> (or, identically,
+# a `children` prop — see runtime/src/router.ts's renderChainNode). A
+# file-exists check alone is satisfied by an empty outlet, so assert
+# GuidesIndex's actual server-rendered text made it into the layout's shell.
+# NOT the dynamic `guides/:slug` leaf: that route has an explicit `skeleton`,
+# and the build ALWAYS SSRs a dynamic route's skeleton, never its real
+# per-param content (docs/spa.md "3. Renders skeletons") — even on the
+# per-staticPaths concrete shell — so "islands"-specific text is never expected
+# in that file.
+grep -q 'Pick a guide: <a href="/zigapagos/demos/app/guides/islands">islands</a>' "$OUT/demos/app/guides/index.html" \
   || { echo "FAIL: SPA nested layout (guides) rendered an empty outlet, not GuidesIndex"; exit 1; }
-# The nav lives inside the routed tree (a layout rung), so its <Link>s must
-# resolve base-relative — a Link rendered outside any Router context emits
-# its href verbatim (unprefixed AND unresolved, e.g. literal "/guides", and
-# not soft-nav-intercepted).
+# The nav lives inside the routed tree (a layout rung), so its <Link>s resolve
+# against the Router's effective base — which is now `url_path_prefix +
+# spa.base` (issue #26), composed inside <Router>.
 #
-# Deliberately NOT asserting the site's full url_path_prefix ("/zigapagos")
-# here — that would be a permanently-failing assertion, not a stronger one.
-# @z/runtime exports no url_path_prefix (nothing in runtime/src/ for a
-# .spa.tsx to read it from), and the build's SSR pass simulates every route
-# at a pathname built from the SPA's raw, unprefixed `spa.base`
-# (src/spa.zig's `ssr_pathname` — its own unit test pins
-# `expectEqualStrings("/app/club/1", ...)` for base "/app", no prefix). A
-# static shell's markup comes ONLY from that SSR pass, so it can never
-# contain the prefixed href without the build lying to itself about what
-# path it's rendering. See `routerBase` in demo/app.spa.tsx and
-# task-9-report.md's "Product gap found by dogfooding" section for the full
-# trace — this is a real Zigapagos limitation the site is dogfooding into
-# visibility, not a shortcut in this test.
-grep -q 'href="/demos/app/guides"' "$OUT/demos/app/index.html" \
-  || { echo "FAIL: SPA nav link not base-resolved"; exit 1; }
+# This assertion used to be deliberately weakened to the UNPREFIXED
+# "/demos/app/guides", with a comment explaining that the prefixed form was a
+# permanently-failing assertion: @z/runtime exposed no url_path_prefix and the
+# build SSR'd every route at an unprefixed pathname, so a static shell could
+# never contain the deployed address. That is exactly the gap #26 closed, and
+# this is the strongest real-deploy pin in the site: the shells are served from
+# https://valthon.github.io/zigapagos/, so an unprefixed nav href is a hard 404
+# for any visitor without JavaScript.
+grep -q 'href="/zigapagos/demos/app/guides"' "$OUT/demos/app/index.html" \
+  || { echo "FAIL: SPA nav link not resolved against url_path_prefix + spa.base"; exit 1; }
+# ...and the mechanism that lets the CLIENT agree with that markup: the prefix
+# is baked onto the hydration root, which mountSpa reads before the first
+# render. Without it the first client render would recompute an unprefixed
+# href, and Preact's hydrate() never repairs an attribute.
+grep -q 'id="z-spa-root" data-z-spa data-z-prefix="/zigapagos"' "$OUT/demos/app/index.html" \
+  || { echo "FAIL: SPA shell carries no data-z-prefix for the client router"; exit 1; }
+
+# The host-config emitters under a url_path_prefix. This site is the only place
+# the whole chain runs for real (emit-host-config is a build.zig step, not part
+# of `zigapagos release`), and it is genuinely prefixed, so these are the
+# strongest assertions available for that half of the feature.
+#
+# The manifest carries the prefix as its OWN field and leaves route values
+# TREE-RELATIVE — the output tree has no /zigapagos directory, so a prefixed
+# `fallback` would name a file that does not exist.
+MAN="$OUT/demos/app/routing-manifest.json"
+grep -q '"url_path_prefix":"/zigapagos"' "$MAN" \
+  || { echo "FAIL: routing manifest carries no url_path_prefix"; exit 1; }
+grep -q '"fallback":"/demos/app/index.html"' "$MAN" \
+  || { echo "FAIL: manifest fallback is not tree-relative"; exit 1; }
+grep -q '"/zigapagos/demos/app' "$MAN" \
+  && { echo "FAIL: a manifest route value carries the prefix (must stay tree-relative)"; exit 1; }
+# ZigBase: `.match` is a REQUEST path (prefixed); `.serve` is resolved against
+# the served root directory (tree-relative). Asserting both halves is the point
+# — a blanket prefix would satisfy the first and break the second silently.
+ZBR="$OUT/demos/app/zigbase.static_routes.zig"
+test -f "$ZBR" || { echo "FAIL: zigbase.static_routes.zig missing"; exit 1; }
+grep -q '\.match = "/zigapagos/demos/app/\*\*"' "$ZBR" \
+  || { echo "FAIL: zigbase .match pattern is not prefixed"; exit 1; }
+grep -q '\.serve = "/demos/app/index.html"' "$ZBR" \
+  || { echo "FAIL: zigbase .serve target is not tree-relative"; exit 1; }
+grep -q '\.serve = "/zigapagos' "$ZBR" \
+  && { echo "FAIL: a zigbase .serve target carries the prefix — it would name a file that does not exist"; exit 1; }
 
 # Task 10: compare and download exist, and compare names its alternatives.
 test -f "$OUT/compare/index.html" || { echo "FAIL: compare page missing"; exit 1; }

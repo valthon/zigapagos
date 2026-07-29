@@ -4,9 +4,30 @@ import { createHash } from "node:crypto";
 export type Manifest = {
   base: string;
   deploy_target: "zigbase" | "nginx" | "apache";
+  /** The URL path a host mounts this site's output tree under, e.g. "/myrepo"
+   *  — one leading slash, no trailing slash. `""`-or-absent for an unprefixed
+   *  (root-mounted) site, in which case every emitter's output is
+   *  byte-identical to before this field existed.
+   *
+   *  Every OTHER route value in this manifest (`base`, `static[]`,
+   *  `dynamic[].pattern`, `dynamic[].shell`, `fallback`) stays TREE-RELATIVE:
+   *  it describes a position inside the built output tree, which contains no
+   *  prefix directory regardless of where a host mounts it. This field is
+   *  applied by each emitter according to ITS OWN semantics — some contexts
+   *  match the real (prefixed) request path, others resolve relative to the
+   *  (unprefixed) output tree — see `emitZigbase`'s doc comment for the
+   *  sharpest example of that split. */
+  url_path_prefix?: string;
   static: string[];
   dynamic: { pattern: string; shell: string }[];
   fallback: string;
+  /** The SPA's entry bundle URL — and, unlike every route value above, it is
+   *  **already prefixed** by the time it reaches here (as are the `chunks` map's
+   *  VALUES), because `renderShell` bakes both verbatim into the shell's
+   *  `<script>` and `modulepreload` tags. So this manifest carries two
+   *  conventions: route values are tree-relative, these are request URLs. Do not
+   *  resolve `bundle` against the output tree, and do not run it through
+   *  `withPrefix` — either would double-count the prefix. */
   bundle: string;
 };
 
@@ -52,6 +73,25 @@ function assertSafeRouteValue(value: string, re: RegExp, what: string): void {
 export function assertSafeManifest(m: Manifest): void {
   assertSafeRouteValue(m.base, SAFE_PATH_RE, "manifest base");
   assertSafeRouteValue(m.fallback, SAFE_PATH_RE, "manifest fallback");
+  // "" and undefined are the two unprefixed spellings; SAFE_PATH_RE requires a
+  // leading "/" so it cannot validate either of those, and doesn't need to.
+  if (m.url_path_prefix) {
+    assertSafeRouteValue(m.url_path_prefix, SAFE_PATH_RE, "manifest url_path_prefix");
+    // SAFE_PATH_RE alone admits "/myrepo/" and "/", either of which yields a
+    // doubled slash once concatenated onto a leading-"/" route value
+    // (`location "/myrepo//app/"`, `.match = "//app/**"`) — a selector that
+    // matches no request path, so the SPA would 404 rather than fail loudly.
+    // The producer cannot emit those (src/spa.zig normalizes), which is exactly
+    // why the validator has to: its whole job is to be the guard for a manifest
+    // this build did not write.
+    if (m.url_path_prefix.endsWith("/")) {
+      throw new Error(
+        `emit-host-config: manifest url_path_prefix ${JSON.stringify(m.url_path_prefix)} must not ` +
+          `end with "/" — it is concatenated onto route values that already start with one, and ` +
+          `the resulting "//" matches no request path.`,
+      );
+    }
+  }
   for (const d of m.dynamic) {
     assertSafeRouteValue(d.pattern, SAFE_PATTERN_RE, "dynamic route pattern");
     assertSafeRouteValue(d.shell, SAFE_PATH_RE, "dynamic route shell");
@@ -138,24 +178,61 @@ function patternDir(pattern: string): string {
   return keep.length === 0 ? "/" : "/" + keep.join("/") + "/";
 }
 
+/** Apply a manifest's `url_path_prefix` to a tree-relative path FOR CONTEXTS
+ *  THAT MATCH OR REDIRECT AGAINST THE REAL REQUEST PATH — nginx `location`
+ *  selectors and `try_files` targets, ZigBase `.match` patterns. A no-op when
+ *  `prefix` is `""` (the manifest's unprefixed spelling), which is what keeps
+ *  every existing site's emitted output byte-identical.
+ *
+ *  Plain concatenation is correct, not merely convenient: `prefix` is
+ *  contractually one leading slash with no trailing slash, and every `path`
+ *  this is called with already starts with exactly one "/" (never "//") by
+ *  construction — `patternDir`/the `base.replace(/\/+$/, "") + "/"` idiom
+ *  below collapse to a single "/" at the root, so concatenating never
+ *  produces a doubled slash. Do NOT use this on a value that resolves against
+ *  the OUTPUT TREE rather than the request path (`.serve`, `fallback`,
+ *  `d.shell` as filesystem-relative targets) — see `emitZigbase`'s doc
+ *  comment for why that split is deliberate. */
+function withPrefix(prefix: string, path: string): string {
+  return prefix ? prefix + path : path;
+}
+
 export function emitNginx(m: Manifest): EmittedFile[] {
   assertSafeManifest(m);
+  const prefix = m.url_path_prefix ?? "";
   // A root-mounted SPA (base "/") must emit `location /`, NOT `location //`:
   // "//" matches no request path, so every deep link would 404 instead of
   // reaching the shell. Stripping the trailing slash before re-adding one also
-  // normalizes an author-written "/app/".
+  // normalizes an author-written "/app/". (With a prefix, the same guard
+  // keeps this "location /myrepo/", never "/myrepo//" — see withPrefix.)
   const baseDir = m.base.replace(/\/+$/, "") + "/";
   const lines: string[] = [
-    `# Generated by emit-host-config.ts for SPA namespace ${m.base}`,
-    `location ${nginxQuote(baseDir)} {`,
-    `    try_files $uri $uri/ ${nginxQuote(m.fallback)};`,
+    // Say where the tree must sit, the way the Apache header does. The
+    // selectors and try_files targets below are REQUEST paths carrying the
+    // prefix, while the files they name live in a tree that has no prefix
+    // directory — so they are only correct if the server resolves
+    // `<prefix>/…` to `<the built tree>/…`, i.e. the tree is mounted at
+    // <docroot>/<prefix>/ (or an `alias` achieves the same mapping). Getting
+    // that wrong is a 404 on every deep link, and nothing in the config itself
+    // reveals the assumption.
+    prefix
+      ? `# Generated by emit-host-config.ts for SPA namespace ${m.base}, mounted at URL ` +
+        `prefix ${prefix} — serve the built tree from <docroot>${prefix}/ (or alias ${prefix}/ to it)`
+      : `# Generated by emit-host-config.ts for SPA namespace ${m.base}`,
+    `location ${nginxQuote(withPrefix(prefix, baseDir))} {`,
+    `    try_files $uri $uri/ ${nginxQuote(withPrefix(prefix, m.fallback))};`,
     `}`,
   ];
   for (const d of m.dynamic) {
     const dir = patternDir(d.pattern);
     lines.push(
-      `location ${nginxQuote(dir)} {`,
-      `    try_files $uri ${nginxQuote(d.shell)} ${nginxQuote(m.fallback)};`,
+      `location ${nginxQuote(withPrefix(prefix, dir))} {`,
+      // The fallback/shell here are try_files' TARGETS, not filesystem paths:
+      // try_files treats a "/"-leading last argument as an internal redirect
+      // URI, which nginx resolves by re-running location matching — so it
+      // must carry the prefix too, or it falls through to a different (or no)
+      // location block and 404s instead of reaching the shell.
+      `    try_files $uri ${nginxQuote(withPrefix(prefix, d.shell))} ${nginxQuote(withPrefix(prefix, m.fallback))};`,
       `}`,
     );
   }
@@ -171,11 +248,36 @@ function noSlashes(s: string): string {
 
 export function emitApache(m: Manifest): EmittedFile[] {
   assertSafeManifest(m);
+  const prefix = m.url_path_prefix ?? "";
   const baseNoLeadingSlash = noSlashes(m.base);
   const lines: string[] = [
-    `# Generated by emit-host-config.ts for SPA namespace ${m.base} — install as <docroot>/.htaccess`,
+    prefix
+      ? `# Generated by emit-host-config.ts for SPA namespace ${m.base}, mounted at URL ` +
+        `prefix ${prefix} — install as <docroot>/.htaccess in the directory the host maps ` +
+        `${prefix}/ to (see RewriteBase below)`
+      : `# Generated by emit-host-config.ts for SPA namespace ${m.base} — install as <docroot>/.htaccess`,
     `RewriteEngine On`,
   ];
+  if (prefix) {
+    // RewriteBase is the documented mechanism for telling mod_rewrite the
+    // URL-path this directory is mounted at. It does NOT affect RewriteRule
+    // PATTERN matching (those already match correctly unprefixed: Apache
+    // strips the containing directory's — now prefixed — URL-path before a
+    // per-directory .htaccess ever sees the request path). It DOES affect a
+    // RELATIVE substitution TARGET (no leading slash): mod_rewrite resolves
+    // it as "<RewriteBase><target>" rather than auto-detecting the directory
+    // URL, which is unreliable under Alias and exactly why RewriteBase exists.
+    // That's why targets below drop their leading slash only in this branch —
+    // it puts the prefix in ONE place instead of duplicating it into every
+    // RewriteRule line. (A leading-slash-absolute target, the unprefixed
+    // form's scheme, is reprocessed as a brand-new URL from the server root
+    // instead — RewriteBase would not apply to it at all, so the two schemes
+    // must not be mixed.)
+    lines.push(`RewriteBase ${prefix}/`);
+  }
+  // Substitution targets: leading-slash-absolute when unprefixed (unchanged
+  // from before this field existed); relative-to-RewriteBase when prefixed.
+  const target = (path: string): string => (prefix ? noSlashes(path) : path);
   if (m.dynamic.length > 0) {
     lines.push(`# Dynamic route patterns → their prerendered shell`);
     for (const d of m.dynamic) {
@@ -188,7 +290,7 @@ export function emitApache(m: Manifest): EmittedFile[] {
       lines.push(
         `RewriteCond %{REQUEST_FILENAME} !-f`,
         `RewriteCond %{REQUEST_FILENAME} !-d`,
-        `RewriteRule ${pattern} ${d.shell} [L]`,
+        `RewriteRule ${pattern} ${target(d.shell)} [L]`,
       );
     }
   }
@@ -196,7 +298,7 @@ export function emitApache(m: Manifest): EmittedFile[] {
     `# Namespace fallback → the SPA shell`,
     `RewriteCond %{REQUEST_FILENAME} !-f`,
     `RewriteCond %{REQUEST_FILENAME} !-d`,
-    `RewriteRule ${baseNoLeadingSlash ? `^${escapePcre(baseNoLeadingSlash)}/.*$` : `^.*$`} ${m.fallback} [L]`,
+    `RewriteRule ${baseNoLeadingSlash ? `^${escapePcre(baseNoLeadingSlash)}/.*$` : `^.*$`} ${target(m.fallback)} [L]`,
   );
   return [{ name: "apache.htaccess", content: lines.join("\n") + "\n" }];
 }
@@ -230,29 +332,54 @@ function toZigbaseMatch(pattern: string): string {
  */
 export function emitZigbase(m: Manifest): EmittedFile[] {
   assertSafeManifest(m);
+  const prefix = m.url_path_prefix ?? "";
   const files: EmittedFile[] = [
-    // Tier 1 — the marker ZigBase's static server reads. Presence-only, empty.
+    // Tier 1 — the marker ZigBase's static server reads. Presence-only, empty,
+    // and its meaning is its LOCATION in the tree, not its content — a prefix
+    // changes nothing here.
     { name: ".spa", content: "" },
   ];
 
   // Tier 2 — an OPTIONAL comptime snippet recovering the per-pattern shells.
+  //
+  // .match is prefixed: ZigBase matches it against the real REQUEST path, and
+  // under a prefix that path carries the prefix. .serve is deliberately left
+  // TREE-RELATIVE, unprefixed, even though that looks inconsistent next to a
+  // prefixed .match on the same line: ZigBase resolves a route's .serve as
+  // `root ++ "/" ++ trimStart(serve, "/")` (see `validateRouteTargetsDir` in
+  // zigbase's src/static_files.zig) — i.e. against the SERVED ROOT DIRECTORY,
+  // which holds the built output tree exactly as this build wrote it, with NO
+  // prefix directory inside it (verified: a prefixed site's zig-out/site/
+  // holds its route directories directly, no extra path segment for the
+  // prefix). Prefixing .serve would make ZigBase look for
+  // "<root>/<prefix><shell-path>", which does not exist.
   const routes: string[] = [];
   for (const d of m.dynamic) {
     routes.push(
-      `    .{ .match = ${zigStringLiteral(toZigbaseMatch(d.pattern))}, ` +
+      `    .{ .match = ${zigStringLiteral(withPrefix(prefix, toZigbaseMatch(d.pattern)))}, ` +
         `.serve = ${zigStringLiteral(d.shell)} },`,
     );
   }
   const baseNoTrailing = m.base.replace(/\/+$/, "");
   routes.push(
-    `    .{ .match = ${zigStringLiteral(baseNoTrailing + "/**")}, ` +
+    `    .{ .match = ${zigStringLiteral(withPrefix(prefix, baseNoTrailing + "/**"))}, ` +
       `.serve = ${zigStringLiteral(m.fallback)} },`,
   );
 
   const exampleShell = m.dynamic[0]?.shell ?? `${baseNoTrailing}/<pattern>/_shell.html`;
+  // Only present when prefixed, so the unprefixed snippet stays byte-identical.
+  const prefixNote = prefix
+    ? `// Mounted at URL prefix "${prefix}": .match patterns below are prefixed (they match\n` +
+      `// the real request path); .serve targets deliberately stay tree-relative — ZigBase\n` +
+      `// resolves .serve against the served root directory, which holds this build's\n` +
+      `// output tree with no prefix directory in it. See emit-host-config.ts's emitZigbase\n` +
+      `// doc comment if this split looks like a bug: it isn't.\n` +
+      `//\n`
+    : "";
   const snippet =
     `// ZigBase >= 0.10.0 comptime static_routes for SPA namespace "${m.base}".\n` +
     `//\n` +
+    prefixNote +
     `// OPTIONAL — the shipped 'zigbase serve' binary needs NONE of this: the sibling\n` +
     `// '.spa' marker already serves ${m.fallback} for every miss under ${m.base}\n` +
     `// (deep links + hard refreshes). Use this only in a CUSTOM ZigBase build that wants\n` +

@@ -1,4 +1,4 @@
-import { Router, host, isServer, type GuardResult } from "@z/runtime";
+import { Router, host, type GuardResult } from "@z/runtime";
 import {
   AppShell, Home, GuidesLayout, GuidesIndex, Guide, GuideSkeleton,
   Account, Denied, NotFound, GuardFallback,
@@ -47,42 +47,16 @@ export const routes = [
   },
 ];
 
-// @z/runtime's Router has no built-in notion of the site's `url_path_prefix`
-// — AUDF-005 (src/spa.zig) only prefixes the shell's ASSET urls
-// (bundle/runtime/chunk); the client router's own `base` is untouched. The
-// build's SSR pass simulates each route at a pathname built from the
-// module's raw `spa.base` (src/spa.zig's `ssr_pathname`, e.g.
-// "/demos/app/guides" — unprefixed, per its own tests), but the deployed
-// BROWSER's `window.location.pathname` always carries the prefix: GitHub
-// Pages serves this project under /zigapagos/, and `zigapagos serve`'s
-// url_path_prefix strip (src/cli/serve.zig) mirrors that for local preview
-// too, so it's never actually unprefixed in a real request. One literal
-// can't satisfy both matches, so `isServer()` — the framework's own hook for
-// exactly this SSR/client split — picks the right one per environment; both
-// branches resolve to the SAME logical route, so the matched CONTENT (the
-// SSR'd skeleton and the first client render) still agree — hydration-safe.
-//
-// KNOWN LIMITATION: the nav's <a href> ATTRIBUTE values are a different
-// story. They're computed from this same `base` inside <Link>, so they
-// legitimately differ between the SSR'd shell (unprefixed) and the first
-// client render (prefixed) — and Preact's hydrate() does not diff element
-// attributes on that first pass (docs/spa.md's "Caveat (dynamic layouts)"
-// documents the same constraint for a param bound to an attribute). So the
-// visible href in the static shell — and in the DOM, indefinitely, since a
-// value that never changes again across renders never gets rediffed either —
-// stays at the unprefixed form. Clicking still soft-navigates correctly (the
-// onClick closure captures the freshly-resolved, correctly-prefixed target
-// each render, independent of the stale attribute) — verified against real
-// Chromium by site/test/spa_playwright.py (Task 12's Playwright smoke),
-// which drives a click and confirms both the URL change and that
-// window.__zp_marker survives, i.e. no full reload. What's for certain
-// either way: "view source" or "copy link" on the nav shows an address one
-// segment short of the real one.
-// Fixing that for real needs the framework to learn `url_path_prefix`
-// (nothing in `@z/runtime` exposes it today), which is out of scope for this
-// SPA's own source.
+// `base` is just `spa.base`. The site's `url_path_prefix` ("zigapagos") is
+// composed onto it INSIDE <Router> (issue #26): the build now SSRs each route
+// at the prefixed pathname and bakes the prefix into the shell's
+// `data-z-prefix`, so the server and the first client render compute the same
+// effective base — and the prerendered nav hrefs are the real
+// "/zigapagos/demos/app/…" addresses, which work without JavaScript. This file
+// used to carry an `isServer() ? spa.base : "/zigapagos" + spa.base` hack for
+// exactly this; it is gone because the framework now owns the composition, and
+// re-adding it here would double-count the prefix.
 export default function App() {
-  const routerBase = isServer() ? spa.base : "/zigapagos" + spa.base;
   // build.zig's `.not_found = "app"` makes this SPA's own "/" shell the
   // site-wide 404.html — the marketing site overrides that with its own
   // content/404.smd (aliased onto /404.html, written after the SPA
@@ -91,5 +65,5 @@ export default function App() {
   // deep-links fine (the client router picks it up after boot); it's only
   // the pre-hydration fallback for an UNMATCHED path that the site 404
   // owns instead of this SPA.
-  return <Router base={routerBase} routes={routes} notFound={NotFound} fallback={GuardFallback} />;
+  return <Router base={spa.base} routes={routes} notFound={NotFound} fallback={GuardFallback} />;
 }

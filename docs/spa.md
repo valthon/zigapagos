@@ -98,6 +98,27 @@ for how their origins are folded into the emitted policy. The check runs in
 release builds (`zigapagos release`); the dev server serves assets straight
 from the assets dir.
 
+**No `spa.head` at all, on a site with stylesheets, is a build-time warning.**
+SPA shells have a fixed `<head>` and do not inherit site styles, so a SPA
+that declares no `head` while the site has at least one `.css` asset will
+render its routes unstyled — the exact failure this project hit dogfooding
+its own marketing site. The build prints:
+
+```
+warning: spa '<src>' declares no spa.head, but the site has stylesheet assets (e.g. '/<path>') — SPA shells have a fixed <head> and do not inherit site styles, so this SPA's routes will render unstyled. Add a stylesheet to `export const spa` (head: [{ rel: "stylesheet", href: "/site.css" }]), or set head: [] to declare the SPA intentionally loads no head links.
+```
+
+naming the SPA and one qualifying stylesheet (picked deterministically — the
+lexicographically smallest matching asset path, not build-iteration-order
+dependent). `head: []` — an **explicitly empty array**, distinct from an
+absent `head` — declares "this SPA intentionally loads no head links"
+(inline styles, CSS-in-JS) and silences the warning permanently; any
+non-empty `head` (even preconnect-only) is silent too, since declaring the
+hook at all means you've made a deliberate choice. It is a warning, not a
+build error, and — like the head-asset staging check above — runs in
+**release builds only** (`zigapagos release`); the dev server does not
+evaluate it.
+
 ### Feature-flag defaults (`spa.flags`)
 
 `useFlag` reads the page-global flag state resolved by `initFlags` (a fetch of
@@ -294,7 +315,10 @@ Each shell is a complete HTML document that:
 - Includes the import map (mapping `@z/runtime` to the shared runtime bundle)
 - Includes the `data-z-flags` JSON data block when the SPA declares [`spa.flags`](#feature-flag-defaults-spaflags)
 - Includes `<link rel="modulepreload">` hints for the runtime and SPA bundle
-- Includes the mount root `<div id="z-spa-root">` (where the React tree hydrates)
+- Includes the mount root `<div id="z-spa-root">` (where the React tree hydrates) — carrying a
+  `data-z-prefix` attribute when the site has a `url_path_prefix`, so `mountSpa` can compose the
+  router's base identically to what the build's SSR pass used (see [Sites served under a path
+  prefix](#sites-served-under-a-path-prefix)); absent on an unprefixed site
 - Includes the `mountSpa` boot code to start the hydration
 
 ### 5. Emits artifacts
@@ -366,6 +390,52 @@ Resolution is **always applied** — an already-base-prefixed path is *not*
 deduped: `<Link href="/app/booking">` under base `/app` targets
 `/app/app/booking`, because `/app/booking` might be a legitimate in-app path.
 
+#### Sites served under a path prefix
+
+The router's **effective base is `url_path_prefix + spa.base`** — composed
+inside `<Router>`, never by the author. Nothing at a call site changes: you
+still write `base={spa.base}` and still author every `href`/`to`/`redirect`
+base-relative exactly as above.
+
+`url_path_prefix` (the site's `zigapagos.ziggy` setting, e.g. a GitHub Pages
+project site's `/myrepo`) can't be detected at runtime and folded in
+client-side: Preact's `hydrate()` does not diff element **attributes** on its
+first pass, so an `<a href>` the SSR pass and the first client render
+disagree about is left wrong in the DOM permanently. The prefix therefore has
+to reach the build's SSR pass itself, not just the browser.
+
+It gets there over two build-controlled channels that cannot disagree with
+each other:
+
+- The build SSRs each route at the **prefixed** pathname and sends the
+  prefix to the render sidecar as a `"prefix"` field on the NDJSON render
+  request (alongside `"pathname"`).
+- The shell carries the same prefix to the browser as a `data-z-prefix`
+  attribute on the `#z-spa-root` hydration root, which `mountSpa` reads
+  before the first render. The attribute rides on the hydration root
+  specifically: hydration renders *into* that element, so its own attributes
+  are never diffed away, and putting it there leaves the inline boot script
+  byte-unchanged, so a strict-CSP `script-src` hash (see [Content Security
+  Policy](#content-security-policy-strict-csp)) does not churn.
+
+What changes observably on a prefixed deploy: prerendered `<a href>` values
+are the real deployable URLs and work **without JavaScript**; a soft
+navigation now pushes the prefixed URL, so a subsequent hard refresh
+resolves instead of 404ing; and `useLocation().pathname` under SSR now
+agrees with what the browser reports. **A site with no `url_path_prefix` is
+unaffected, byte for byte** — the composition is a no-op.
+
+The prefix reaches the rest of the build too:
+
+- **Island pages get the same parity.** An island's SSR pathname
+  (`host.pathname()`, `useLocation()`) carries the prefix, so an island that
+  branches on the path — active-nav highlighting, breadcrumbs — renders the
+  same thing at build time as it does after hydration. (Same reason as above:
+  `hydrate()` does not repair a mismatched attribute.)
+- **The [host-config emitters](#deploy-targets) honour it**, each according to
+  its own semantics rather than by prepending the prefix everywhere — see
+  [Deploy targets under a path prefix](#deploy-targets-under-a-path-prefix).
+
 > **Migration (prerelease breaking change).** Previously `navigate(to)`
 > pushed `to` **verbatim** and `<Link href>` needed the full base-prefixed
 > path (`<Link href="/app/booking">`). Migrate every router-internal call
@@ -395,8 +465,23 @@ Renders the matched route's component, or `notFound` if no match.
 `href` is **base-relative** (see [Navigation is base-relative](#navigation-is-base-relative)):
 the rendered anchor carries the resolved `href` (`/app/booking`), and a click
 soft-navigates (hijacked, no reload). An absolute/protocol-relative URL
-renders a plain anchor (full-page navigation); outside a `Router` context the
-href renders verbatim with no interception.
+renders a plain anchor (full-page navigation).
+
+**Outside a `<Router>` is a build error.** With no router context the `href`
+cannot resolve against the SPA base and the click is never intercepted, so
+the prerendered shell would ship a dead link — on a path-prefixed host, a
+hard 404. The build's SSR pass therefore throws, and the build fails naming
+the `.spa.tsx` and the offending `href`. On the **client**, the same
+situation only warns once per `href` and degrades to a plain anchor rather
+than throwing — throwing during hydration would unmount the whole subtree,
+which is worse than one link that does a full page load.
+
+**Consequence worth stating explicitly:** `<Link>` is router-internal, so a
+`<Link>` inside an `.island.tsx` on an ordinary content page is now a build
+error too (an island SSRs through the same path). Use a plain `<a>` there.
+The same applies to a view unit-tested in isolation with `renderForTest`
+(see [Unit-testing a view](#unit-testing-a-view-renderfortest)) — wrap it in
+a `<Router>`, or use a plain `<a>`.
 
 ### Hooks
 
@@ -706,16 +791,15 @@ guard: zbGuard<Customer>({ collection: "customers", redirect: "/login" })
 ## Nested & Layout Routes
 
 Flat route arrays force every view to re-wrap the app chrome. A **layout route** declares
-`children` and renders shared chrome once with an `<Outlet/>` where the matched child renders:
+`children`, and its `component` is called with the matched child route **as its `children`
+prop** — render it (`{children}`) to place shared chrome around it:
 
 ```tsx
-import { Outlet } from "@z/runtime";
-
-function DashLayout() {
+function DashLayout({ children }) {
   return (
     <div data-dash-chrome>
       <nav>{/* persistent sidebar/tabs */}</nav>
-      <Outlet />        {/* the matched child renders here */}
+      {children}        {/* the matched child renders here */}
     </div>
   );
 }
@@ -731,6 +815,41 @@ export const routes = [
   },
 ];
 ```
+
+`<Outlet/>` is the **identical explicit form** — `children` literally *is* an `<Outlet/>`
+element, so there is no second mechanism that could drift between the two spellings:
+
+```tsx
+import { Outlet } from "@z/runtime";
+
+function DashLayout() {
+  return (
+    <div data-dash-chrome>
+      <nav>{/* persistent sidebar/tabs */}</nav>
+      <Outlet />        {/* the matched child renders here */}
+    </div>
+  );
+}
+```
+
+**Render exactly one of the two.** Rendering both `{children}` and an explicit `<Outlet/>`
+mounts the matched child **twice** — duplicate DOM, duplicate effects/fetches — and the router
+does not suppress the second instance: which one "won" would depend on render order, and
+silently picking one would make the client diverge from what SSR (which has no such ordering
+concept) produced. Rendering **neither** means the matched child route never renders at all —
+the silent trap this diagnostic exists for: the layout compiles, SSRs, and paints a
+plausible-looking but empty container, with its child route's component never invoked. Both
+cases are caught with a `console.warn` (once per layout route path) in the browser; both checks
+run in mount effects, so neither ever fires under SSR / at build time — a bad layout still
+builds cleanly and only warns once it's actually rendered in a browser.
+
+> **Known false positive.** The "rendered neither" check is deferred past its commit's whole
+> effect flush, so a correct layout never trips it on ordering. But a layout that deliberately
+> gates its outlet behind state flipped *after* mount (`{ready && children}` for a tab, an
+> auth-ready flag) genuinely renders neither channel on that first pass, so it warns — and
+> because the warning is once-per-path, it is never retracted when the outlet does appear. It is
+> console noise, not a behaviour change: the child renders normally once the gate opens. Render
+> the outlet unconditionally and gate *inside* the child if you would rather not see it.
 
 `/dash/overview` and `/dash/settings` each render `DashLayout` wrapping their child at the
 `<Outlet/>`. Matching is first-match-wins at **every** level; `:param` captures accumulate down
@@ -927,6 +1046,38 @@ One `RewriteRule` block per dynamic route pattern (matched against its static
 prefix directory), followed by one fallback block per SPA namespace. Rule
 *patterns* are relative (no leading slash, matched against the per-directory
 request path); rewrite *targets* keep their leading slash.
+
+### Deploy targets under a path prefix
+
+When the site sets a `url_path_prefix` (see [Sites served under a path
+prefix](#sites-served-under-a-path-prefix)), the emitted host configs account
+for it — but **not by prepending it everywhere**, because the three targets do
+not mean the same thing by a path.
+
+The reason is one fact about the build: **the output tree contains no prefix
+directory.** `url_path_prefix` says where a host *mounts* the tree, not where
+files sit inside it. So a path in the generated config is either a **request
+path** (which carries the prefix) or a **tree-relative path** (which must not),
+and which one it is depends on the directive:
+
+| target | prefixed | left tree-relative |
+|--------|----------|--------------------|
+| nginx | `location` selectors; `try_files` fallback/shell targets (an internal redirect that must re-enter the same `location`) | — |
+| Apache | a `RewriteBase <prefix>/` directive | `RewriteRule` patterns (a per-directory `.htaccess` matches with the directory's URL-path already stripped) and their targets, which resolve against `RewriteBase` |
+| ZigBase | `.match` patterns | `.serve` targets — ZigBase resolves them against its static root, so a prefixed one would name a file that does not exist |
+
+The `.spa` marker is unchanged: it is presence-only, and its meaning is its
+location in the tree.
+
+`routing-manifest.json` therefore carries the prefix as its own
+`url_path_prefix` field and leaves every route value tree-relative, so each
+emitter can apply it its own way. The field is **omitted entirely** when there
+is no prefix, so an unprefixed site's manifest and configs are byte-identical to
+those built before this existed.
+
+> The manifest's `bundle` (and the `chunks` *values*) are the deliberate
+> exception — they are already-prefixed URLs, because they are baked verbatim
+> into the shell's `<script>` and `modulepreload` tags.
 
 ### Universal `404.html`
 **File:** `/404.html`
@@ -1156,7 +1307,10 @@ browser-free coverage of a **single view's render logic** — what it renders fo
 given set of props, guard data, and flags — reach for `renderForTest` from
 `@z/runtime/testing`. It is a thin, in-process wrapper over the exact
 `renderToString` path the Bun SSR sidecar runs at build time (`isServer() ===
-true`), with each input injected through the same seam the runtime uses:
+true`), with each input injected through the same seam the runtime uses. It
+renders with **no `<Router>` context**, so a view under test that renders a
+`<Link>` directly needs its own `<Router>` wrapper (or a plain `<a>`) — see
+the [`<Link>` outside a Router](#components) note above.
 
 ```ts
 import { test, expect } from "bun:test";

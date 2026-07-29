@@ -216,7 +216,7 @@ import { h, type ComponentType } from "./core.ts";
 import { useEffect } from "./core.ts";
 import { ssrIsland, renderIsland, click, flush } from "@z/runtime/testing";
 import { setLocationPathname } from "@z/runtime/testing/parity";
-import { setSsrPathname } from "@z/runtime/ssr-env";
+import { setSsrPathname, setUrlPathPrefix, getUrlPathPrefix } from "@z/runtime/ssr-env";
 
 const Home = () =>
   h("div", { "data-view": "home" },
@@ -674,6 +674,140 @@ describe("Router nested/layout routes", () => {
 
     r.unmount();
     setLocationPathname("/app/");
+  });
+});
+
+// --- Layout routes receive `children` as an <Outlet/> (issue #22) ---------
+// `<Outlet/>` and `{children}` are the SAME channel: renderChainNode always
+// calls a rung's component as `h(comp, { children: h(Outlet, {}) })`, so a
+// layout written `<div>{children}</div>` (never mentioning Outlet at all)
+// must work identically to one that renders `<Outlet/>` explicitly — and
+// using both, or neither, must be caught (dev-only) rather than silently
+// producing a duplicated or permanently-empty outlet.
+function spyConsoleWarn(): { warnings: string[]; restore: () => void } {
+  const warnings: string[] = [];
+  const orig = console.warn;
+  console.warn = ((...args: unknown[]) => { warnings.push(String(args[0])); }) as typeof console.warn;
+  return { warnings, restore: () => { console.warn = orig; } };
+}
+
+let childrenLayoutMountCount = 0;
+const ChildrenLayout = (props: { children?: any }) => {
+  useEffect(() => { childrenLayoutMountCount++; }, []);
+  return h("div", { "data-view": "children-layout" },
+    h("header", { "data-layout-chrome": "" }, "CHROME"),
+    props.children); // the implicit-Outlet channel — no <Outlet/> in sight
+};
+const childrenLayoutRoutes: RouteDef[] = [
+  { path: "/", component: C },
+  {
+    path: "/dash-children", component: ChildrenLayout, children: [
+      { path: "/overview", component: Overview, skeleton: OverviewSkeleton },
+      { path: "/settings", component: Settings },
+    ],
+  },
+];
+const ChildrenLayoutApp = () =>
+  h(Router, { base: "/app", routes: childrenLayoutRoutes, notFound: () => h("div", { "data-view": "nf" }, "nf") });
+
+describe("Router layout children channel (issue #22)", () => {
+  test("a {children} layout SSRs chrome + the leaf skeleton together", () => {
+    const html = ssrIsland(ChildrenLayoutApp, {}, { pathname: "/app/dash-children/overview" });
+    expect(html).toContain("data-layout-chrome");
+    expect(html).toContain('data-view="overview-skeleton"');
+    expect(html).not.toContain('data-view="overview"');
+  });
+
+  test("a {children} layout client-renders the child and survives sibling soft-nav without remounting", async () => {
+    childrenLayoutMountCount = 0;
+    setLocationPathname("/app/dash-children/overview");
+    const r = renderIsland(ChildrenLayoutApp, {}, { mode: "render", pathname: "/app/dash-children/overview" });
+    await flush();
+    expect(r.html()).toContain("data-layout-chrome");
+    expect(r.html()).toContain('data-view="overview"');
+    expect(childrenLayoutMountCount).toBe(1);
+
+    navigate("/dash-children/settings");
+    await flush();
+    expect(window.location.pathname).toBe("/app/dash-children/settings");
+    expect(r.html()).toContain('data-view="settings"');
+    expect(r.html()).not.toContain('data-view="overview"');
+    expect(r.html()).toContain("data-layout-chrome");
+    expect(childrenLayoutMountCount).toBe(1); // same layout instance across sibling nav
+
+    r.unmount();
+    setLocationPathname("/app/");
+  });
+
+  test("two-phase hydrate of a {children} layout: SSR skeleton hydrates cleanly, then the leaf flips", async () => {
+    childrenLayoutMountCount = 0;
+    setLocationPathname("/app/dash-children/overview");
+    const r = renderIsland(ChildrenLayoutApp, {}, { mode: "hydrate", pathname: "/app/dash-children/overview" });
+    expect(r.html()).toContain("data-layout-chrome");
+    expect(r.html()).toContain('data-view="overview-skeleton"');
+    expect(r.html()).not.toContain('data-view="overview"');
+
+    await flush();
+
+    expect(r.html()).toContain('data-view="overview"');
+    expect(r.html()).not.toContain('data-view="overview-skeleton"');
+    expect(r.html()).toContain("data-layout-chrome");
+    expect(childrenLayoutMountCount).toBe(1);
+
+    r.unmount();
+    setLocationPathname("/app/");
+  });
+
+  test("both {children} and <Outlet/> ⇒ the matched child renders TWICE and the double-render warning fires once", async () => {
+    const BothChannelsLayout = (props: { children?: any }) =>
+      h("div", { "data-view": "both-layout" },
+        h("header", { "data-layout-chrome": "" }, "CHROME"),
+        props.children, // channel 1
+        h(Outlet, {})); // channel 2 — same channel, rendered twice
+    const routes: RouteDef[] = [
+      { path: "/", component: C },
+      { path: "/dash-both", component: BothChannelsLayout, children: [{ path: "/overview", component: Overview }] },
+    ];
+    const BothApp = () => h(Router, { base: "/app", routes });
+    const { warnings, restore } = spyConsoleWarn();
+    setLocationPathname("/app/dash-both/overview");
+    const r = renderIsland(BothApp, {}, { mode: "render", pathname: "/app/dash-both/overview" });
+    await flush();
+    try {
+      expect(r.getAll('[data-view="overview"]').length).toBe(2); // duplicated
+      const doubleWarnings = warnings.filter((w) => w.includes("renders both {children} and <Outlet/>"));
+      expect(doubleWarnings.length).toBe(1);
+      expect(doubleWarnings[0]).toContain('"/dash-both"');
+    } finally {
+      restore();
+      r.unmount();
+      setLocationPathname("/app/");
+    }
+  });
+
+  test("neither {children} nor <Outlet/> ⇒ the matched child never renders and the no-outlet warning fires", async () => {
+    const NoOutletLayout = () =>
+      h("div", { "data-view": "no-outlet-layout" },
+        h("header", { "data-layout-chrome": "" }, "CHROME")); // renders neither channel
+    const routes: RouteDef[] = [
+      { path: "/", component: C },
+      { path: "/dash-neither", component: NoOutletLayout, children: [{ path: "/overview", component: Overview }] },
+    ];
+    const NeitherApp = () => h(Router, { base: "/app", routes });
+    const { warnings, restore } = spyConsoleWarn();
+    setLocationPathname("/app/dash-neither/overview");
+    const r = renderIsland(NeitherApp, {}, { mode: "render", pathname: "/app/dash-neither/overview" });
+    await flush();
+    try {
+      expect(r.query('[data-view="overview"]')).toBeNull(); // the matched child never rendered
+      const noOutletWarnings = warnings.filter((w) => w.includes("rendered neither {children} nor an <Outlet/>"));
+      expect(noOutletWarnings.length).toBe(1);
+      expect(noOutletWarnings[0]).toContain('"/dash-neither"');
+    } finally {
+      restore();
+      r.unmount();
+      setLocationPathname("/app/");
+    }
   });
 });
 
@@ -1987,5 +2121,129 @@ describe("Router session-expiry (guard re-run on 401)", () => {
     r.unmount();
     setLocationPathname("/app/");
     __setUnauthorizedReRunCooldownForTest();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Issue #23 — <Link> outside a <Router> is a build error, not a dead anchor.
+// ---------------------------------------------------------------------------
+
+describe("Link outside a Router (#23)", () => {
+  test("SSR throws, naming the href and the escape hatch", () => {
+    // The prerendered shell is the artifact that would ship the dead href, so
+    // the build's SSR pass is where this has to fail.
+    expect(() => ssrIsland(() => h(Link, { href: "/guides" }, "guides"), {}))
+      .toThrow(/outside a <Router>/);
+  });
+
+  test("the client still renders the anchor, but warns exactly once per href", async () => {
+    // Throwing during hydration would unmount the whole subtree — worse than
+    // one link that does a full page load. Warn, render, carry on.
+    const Bare = () => h("div", null, h(Link, { href: "/warn-once-href", "data-testid": "bare" }, "x"));
+    const { warnings, restore } = spyConsoleWarn();
+    const r = renderIsland(Bare, {}, { mode: "render", pathname: "/app/" });
+    try {
+      await flush();
+      await r.rerender({} as any); // a second render of the same href must not re-warn
+      expect(r.get('[data-testid="bare"]').getAttribute("href")).toBe("/warn-once-href");
+      const outside = warnings.filter((w) => w.includes("rendered outside a <Router>"));
+      expect(outside.length).toBe(1);
+      expect(outside[0]).toContain("/warn-once-href");
+    } finally {
+      restore();
+      r.unmount();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Issue #26 — the site's url_path_prefix composes into the Router's base.
+//
+// The build SSRs at the PREFIXED pathname and the shell carries the prefix on
+// its hydration root, so both environments compute the same effective base and
+// the prerendered <a href> is the real, deployable URL. Preact's hydrate() does
+// not diff attributes, so anything less leaves the wrong href stuck in the DOM.
+// ---------------------------------------------------------------------------
+
+describe("url_path_prefix composition (#26)", () => {
+  test("setUrlPathPrefix normalizes every spelling of the config value", () => {
+    setUrlPathPrefix("myrepo");
+    expect(getUrlPathPrefix()).toBe("/myrepo");
+    setUrlPathPrefix("/myrepo/");
+    expect(getUrlPathPrefix()).toBe("/myrepo");
+    setUrlPathPrefix("/myrepo");
+    expect(getUrlPathPrefix()).toBe("/myrepo");
+    setUrlPathPrefix("");
+    expect(getUrlPathPrefix()).toBe("");
+  });
+
+  test("SSR: the prefix reaches <Link> hrefs and the route still matches", () => {
+    setUrlPathPrefix("/myrepo");
+    try {
+      const html = ssrIsland(App, {}, { pathname: "/myrepo/app/" });
+      // Matched at the FULL pathname the browser will actually have...
+      expect(html).toContain('data-view="home"');
+      // ...and the anchor is the real deployable URL, not "/app/booking".
+      expect(html).toContain('href="/myrepo/app/booking"');
+      expect(html).not.toContain('href="/app/booking"');
+    } finally {
+      setUrlPathPrefix("");
+    }
+  });
+
+  test("SSR with no prefix is unchanged", () => {
+    setUrlPathPrefix("");
+    const html = ssrIsland(App, {}, { pathname: "/app/" });
+    expect(html).toContain('href="/app/booking"');
+    expect(html).not.toContain("/myrepo");
+  });
+
+  test("client: a soft-nav pushes the PREFIXED url, so a hard refresh still resolves", async () => {
+    setUrlPathPrefix("/myrepo");
+    setLocationPathname("/myrepo/app/");
+    try {
+      const r = renderIsland(App, {}, { mode: "render", pathname: "/myrepo/app/" });
+      await flush();
+      expect(r.html()).toContain('data-view="home"');
+      expect((r.get('[data-testid="go"]') as HTMLAnchorElement).getAttribute("href"))
+        .toBe("/myrepo/app/booking");
+      await click(r.get('[data-testid="go"]'));
+      await flush();
+      expect(window.location.pathname).toBe("/myrepo/app/booking");
+      expect(r.html()).toContain('data-view="booking"');
+      r.unmount();
+    } finally {
+      setUrlPathPrefix("");
+      setLocationPathname("/app/");
+    }
+  });
+
+  test("mountSpa reads the prefix off the shell's hydration root", () => {
+    setUrlPathPrefix("");
+    const root = document.createElement("div");
+    root.id = "z-spa-root-prefix-probe";
+    root.setAttribute("data-z-prefix", "/myrepo");
+    document.body.appendChild(root);
+    try {
+      mountSpa(() => h("div", null, "x"), "#z-spa-root-prefix-probe");
+      expect(getUrlPathPrefix()).toBe("/myrepo");
+    } finally {
+      root.remove();
+      setUrlPathPrefix("");
+    }
+  });
+
+  test("mountSpa on a shell with no data-z-prefix clears a stale prefix", () => {
+    setUrlPathPrefix("/stale");
+    const root = document.createElement("div");
+    root.id = "z-spa-root-noprefix-probe";
+    document.body.appendChild(root);
+    try {
+      mountSpa(() => h("div", null, "x"), "#z-spa-root-noprefix-probe");
+      expect(getUrlPathPrefix()).toBe("");
+    } finally {
+      root.remove();
+      setUrlPathPrefix("");
+    }
   });
 });

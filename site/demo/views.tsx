@@ -1,12 +1,13 @@
 import { Link, Outlet, useParams, host } from "@z/runtime";
 
-// A layout route: `component`s on a route with `children` render via
-// renderChainNode, which never passes a `children` prop — only <Outlet/>
-// renders the matched child. The nav's <Link>s must live INSIDE the routed
-// tree too: Router wraps only its own rendered chain in the context Links
-// read to resolve base-relative hrefs and intercept clicks, so a Link
-// outside the Router (or, as here, outside this layout rung) would emit its
-// href verbatim and never soft-navigate.
+// A layout route. It renders its matched child through <Outlet/>; the
+// identical alternative is to take a `children` prop and render that — the
+// two are the same element, so render exactly one (rendering both mounts the
+// child twice, rendering neither renders it not at all, and the router warns
+// about either). The nav's <Link>s must live INSIDE the routed tree: Router
+// wraps only its own rendered chain in the context Links read to resolve
+// base-relative hrefs and intercept clicks, and a Link outside it is now a
+// build error rather than a silently dead anchor.
 export function AppShell() {
   return (
     <div class="spa">
@@ -22,14 +23,12 @@ export function AppShell() {
         application is one <code>.spa.tsx</code> file.
       </p>
       <p class="spa-hint">
-        Honest note, found by building this demo on a path-prefixed deploy:
-        the nav links above render with a base-relative <code>href</code>
-        (not this site's full <code>/zigapagos/…</code> address) — the
-        correct, prefixed destination is only resolved in the click handler.
-        View source or hover a link and you'll see the shorter address; a
-        click still lands in the right place, but it means this navigation
-        needs JavaScript. Native SPA support doesn't yet thread a deployed
-        site's URL prefix into the router itself — a real gap, not a choice.
+        Found by building this demo on a path-prefixed deploy, and since
+        fixed: the nav links above render with this site's full{" "}
+        <code>/zigapagos/…</code> address, resolved at build time rather than
+        only in the click handler. View source or hover a link and you'll see
+        the real destination — so these links also work with JavaScript
+        disabled, and a copied link is the address it says it is.
       </p>
     </div>
   );

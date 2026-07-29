@@ -23,6 +23,35 @@ export function getSsrPathname(): string {
   return ssrPathname;
 }
 
+// The site's `url_path_prefix` (zigapagos.ziggy) — "" for a root-mounted site,
+// else a normalized "/myrepo". It lives HERE, beside `ssrPathname`, because it
+// is the same kind of value: one the two environments learn through different
+// channels and must then agree on byte-for-byte. The build's SSR pass is told
+// by the sidecar protocol (`runtime/sidecar/render.ts` writes it per render
+// request); the browser reads it off the shell's hydration root
+// (`data-z-prefix`, read in `mountSpa`).
+//
+// It is deliberately NOT folded into `currentPathname()`/`currentSearch()`:
+// location-shaped values are always the FULL real pathname in both
+// environments (the build now SSRs at the prefixed pathname too). The prefix's
+// only consumer is `Router`, which composes it with `spa.base` to form the
+// router's effective base — see router.ts. Composing it anywhere else would
+// double-count it.
+let urlPathPrefix = "";
+
+/** Normalize to "" or "/segment[/segment…]" — one leading slash, no trailing
+ * slash — so `urlPathPrefix + base` is a plain concatenation at the single
+ * composition point in `Router`. Accepts the raw config spelling
+ * ("myrepo", "/myrepo/", "/myrepo") because both writers pass through here. */
+export function setUrlPathPrefix(prefix: string): void {
+  const trimmed = (prefix || "").replace(/^\/+|\/+$/g, "");
+  urlPathPrefix = trimmed.length === 0 ? "" : "/" + trimmed;
+}
+
+export function getUrlPathPrefix(): string {
+  return urlPathPrefix;
+}
+
 /** The pathname component only — a query-carrying SSR pathname (a SPA
  * prerender or test may set one) is trimmed so this always agrees with
  * window.location.pathname, which never includes the query. */

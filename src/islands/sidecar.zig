@@ -71,6 +71,61 @@ pub const Sidecar = struct {
         return line_aw.written();
     }
 
+    /// Build one NDJSON render-request line:
+    /// `{"id":N,"src":<str>,"props":<json>[,"slots":<json>],"pathname":<str>[,"prefix":<str>]}\n`.
+    /// Pure request-line assembly, factored out of `renderPrefixed` so the wire
+    /// format is unit-testable without a live Bun process — `render`/
+    /// `renderPrefixed` write straight into the child's stdin pipe, which a
+    /// test can't intercept without standing up a stub subprocess.
+    ///
+    /// `url_prefix` is emitted as `"prefix"`, immediately after `"pathname"`,
+    /// ONLY when non-empty — see `renderPrefixed`'s doc for why an empty
+    /// prefix must be a byte-for-byte no-op.
+    ///
+    /// NO_SLOP.md §2.2a contract 1: every write lands straight in the
+    /// `Allocating` writer's own buffer; `toOwnedSlice` hands that buffer to
+    /// the caller and resets the writer to empty, so on the SUCCESS path there
+    /// is nothing left to free on this side. The `errdefer` is what makes that
+    /// true on the ERROR path too — including the one that is easy to miss:
+    /// `toOwnedSlice` itself can fail (its shrink-to-fit both remaps and
+    /// allocates), so even the statement that performs the ownership transfer
+    /// can return with the fully-written buffer still owned by the writer. An
+    /// OOM growing the buffer mid-assembly does the same. Today's only
+    /// production caller passes the prerender arena, which reclaims either
+    /// wholesale — but contract 1 promises correctness under ANY allocator,
+    /// and a doc comment that promises what its error path does not deliver is
+    /// precisely what §2.2a exists to stop. Pinned by the FailingAllocator
+    /// test below, which leaks without this line.
+    fn buildRenderRequest(
+        alloc: std.mem.Allocator,
+        id: u64,
+        abs_src: []const u8,
+        props_json: []const u8,
+        slots_json: []const u8,
+        pathname: []const u8,
+        url_prefix: []const u8,
+    ) ![]const u8 {
+        var req_aw: std.Io.Writer.Allocating = .init(alloc);
+        errdefer req_aw.deinit();
+        const rw = &req_aw.writer;
+        try rw.print("{{\"id\":{d},\"src\":", .{id});
+        try std.json.Stringify.value(abs_src, .{}, rw);
+        try rw.writeAll(",\"props\":");
+        try rw.writeAll(props_json);
+        if (slots_json.len > 0 and !std.mem.eql(u8, slots_json, "{}")) {
+            try rw.writeAll(",\"slots\":");
+            try rw.writeAll(slots_json);
+        }
+        try rw.writeAll(",\"pathname\":");
+        try std.json.Stringify.value(pathname, .{}, rw);
+        if (url_prefix.len != 0) {
+            try rw.writeAll(",\"prefix\":");
+            try std.json.Stringify.value(url_prefix, .{}, rw);
+        }
+        try rw.writeAll("}\n");
+        return req_aw.toOwnedSlice();
+    }
+
     /// One render: write the NDJSON request, read the response line, parse it.
     /// Serialized by `mutex` because the Bun process is sequential-only.
     ///
@@ -93,6 +148,10 @@ pub const Sidecar = struct {
     /// written strings are owned by `arena`. Untouched on success or on a
     /// non-render error (bad response / IO); the returned error still
     /// distinguishes those.
+    ///
+    /// Thin `url_prefix = ""` delegate to `renderPrefixed` (below) — see that
+    /// function's doc for why the split exists. Everything documented above
+    /// (the contract, `src` resolution, `err_out`) applies identically here.
     pub fn render(
         self: *Sidecar,
         arena: RenderArena,
@@ -100,6 +159,38 @@ pub const Sidecar = struct {
         props_json: []const u8,
         slots_json: []const u8,
         pathname: []const u8,
+        err_out: ?*RenderError,
+    ) ![]const u8 {
+        return self.renderPrefixed(arena, src, props_json, slots_json, pathname, "", err_out);
+    }
+
+    /// `render`, plus `url_prefix` carried over the wire as a `"prefix"` field
+    /// (issue #26) — the site's normalized `url_path_prefix` ("" or
+    /// "/myrepo"). `runtime/sidecar/render.ts` hands this to the SPA Router so
+    /// its `base` composes exactly what a real browser sees at that path,
+    /// agreeing byte-for-byte with the prerendered `<a href>`s `src/spa.zig`
+    /// bakes into the shell (AUDF-005's sibling defect: one `base` literal
+    /// can't satisfy both an unprefixed SSR simulation and a prefixed real
+    /// deploy). Emitted only when non-empty (`buildRenderRequest`), so an
+    /// unprefixed site's request line stays byte-identical to one built
+    /// before this field existed.
+    ///
+    /// Split out from `render` rather than widening it because `render`'s
+    /// exact signature IS the duck-typed `renderer` interface
+    /// `islands/pass.zig`'s `process`/`rewrite` call (and three test stubs
+    /// there implement) — an island's SSR pathname is never routed, so
+    /// threading a prefix through every island call site for a value only
+    /// the SPA prerender pass (`src/spa.zig`, this function's only caller)
+    /// needs would be pure churn. Do not fold this back into `render` "to
+    /// clean it up" — that reintroduces exactly the churn this split avoids.
+    pub fn renderPrefixed(
+        self: *Sidecar,
+        arena: RenderArena,
+        src: []const u8,
+        props_json: []const u8,
+        slots_json: []const u8,
+        pathname: []const u8,
+        url_prefix: []const u8,
         err_out: ?*RenderError,
     ) ![]const u8 {
         // Resolve outside the lock: the CWD is fixed and `absSrc` touches no
@@ -112,21 +203,8 @@ pub const Sidecar = struct {
         const id = self.next_id;
         self.next_id += 1;
 
-        // --- build request line: {"id":N,"src":<str>,"props":<json>,"pathname":<str>}\n
-        var req_aw: std.Io.Writer.Allocating = .init(arena.a);
-        const rw = &req_aw.writer;
-        try rw.print("{{\"id\":{d},\"src\":", .{id});
-        try std.json.Stringify.value(abs_src, .{}, rw);
-        try rw.writeAll(",\"props\":");
-        try rw.writeAll(props_json);
-        if (slots_json.len > 0 and !std.mem.eql(u8, slots_json, "{}")) {
-            try rw.writeAll(",\"slots\":");
-            try rw.writeAll(slots_json);
-        }
-        try rw.writeAll(",\"pathname\":");
-        try std.json.Stringify.value(pathname, .{}, rw);
-        try rw.writeAll("}\n");
-        try self.writeAll(req_aw.written());
+        const req_line = try buildRenderRequest(arena.a, id, abs_src, props_json, slots_json, pathname, url_prefix);
+        try self.writeAll(req_line);
 
         // --- read one response line and parse
         // {"id":N,"html":"…"} | {"id":N,"error":"…","stack":"…"}
@@ -269,6 +347,95 @@ pub const SpaDescribe = struct {
     spa: SpaMeta,
     routes: []const RouteMeta,
 };
+
+test "buildRenderRequest leaks nothing when an allocation fails part-way through assembly" {
+    // The happy-path test below proves the WIRE FORMAT; it cannot prove the
+    // ownership contract, because on success `toOwnedSlice` transfers the
+    // buffer and there is nothing left to leak. That gap is exactly how the
+    // missing `errdefer` survived review: the only production caller passes
+    // the prerender arena, which reclaims a partially-grown buffer wholesale,
+    // so no allocator in the tree could observe the leak.
+    //
+    // `checkAllAllocationFailures` re-runs the function once per allocation
+    // site with that site forced to fail, and reports a leak if any run
+    // returns without freeing. It therefore exercises every intermediate
+    // `try` — the buffer growth inside `print`/`writeAll`/`Stringify` — under
+    // a leak-detecting allocator, which is the harsher execution NO_SLOP.md
+    // §2.2a asks contract-1 code to survive.
+    // Failing the first plain ALLOCATION proves nothing: while the buffer is
+    // empty `Writer.Allocating.ensureTotalCapacityPrecise` skips `remap`, so
+    // the initial allocation is the only `alloc` here — and failing it leaks
+    // nothing, because there is no buffer yet. That is why
+    // `std.testing.checkAllAllocationFailures`, which varies only the alloc
+    // index, passes with AND without the `errdefer`. (Verified, not assumed:
+    // it was the first thing tried here, and it was green either way.)
+    //
+    // The case that leaks is the shrink-to-fit inside `toOwnedSlice` — the
+    // statement that hands ownership to the caller, and the last one on the
+    // happy path. For this payload the buffer never has to grow, so that is
+    // also the first resize the function performs.
+    //
+    // It takes BOTH knobs to induce, because `toOwnedSlice` tries `rawRemap`
+    // and, when that returns null, FALLS BACK to `rawAlloc` + copy. Failing
+    // only the remap leaves the fallback to succeed and the call returns
+    // normally (verified: it did). With both failing, `toOwnedSlice` returns
+    // `error.OutOfMemory` while the fully-written buffer is still owned by
+    // `req_aw`, one line from being dropped.
+    var fa: std.testing.FailingAllocator = .init(std.testing.allocator, .{
+        .resize_fail_index = 0, // the remap `toOwnedSlice` tries first
+        .fail_index = 1, // ...and the rawAlloc it falls back to
+    });
+    // The longest shape: slots present AND a non-empty prefix, so the maximum
+    // number of fallible writes is on the path.
+    try std.testing.expectError(error.OutOfMemory, Sidecar.buildRenderRequest(
+        fa.allocator(),
+        1,
+        "/abs/Panel.island.tsx",
+        "{\"a\":1}",
+        "{\"default\":\"<p>x</p>\"}",
+        "/myrepo/faq",
+        "/myrepo",
+    ));
+    // Without this the test would pass vacuously if the growth pattern ever
+    // changed such that the injected failure was never reached.
+    try std.testing.expect(fa.has_induced_failure);
+    // The leak assertion itself is `std.testing.allocator`'s: it backs `fa`,
+    // and the test runner fails this test at teardown if the partially-grown
+    // buffer was never freed. Remove the `errdefer` and this test reports
+    // exactly that.
+}
+
+test "buildRenderRequest emits \"prefix\" only when url_prefix is non-empty" {
+    // Pins the wire format issue #26 adds — no live Bun process needed, since
+    // `buildRenderRequest` is the pure seam factored out of `renderPrefixed`
+    // precisely so this is testable at all.
+    const gpa = std.testing.allocator;
+
+    const with_prefix = try Sidecar.buildRenderRequest(gpa, 1, "/abs/App.island.tsx", "{}", "", "/myrepo/about", "/myrepo");
+    defer gpa.free(with_prefix);
+    try std.testing.expectEqualStrings(
+        "{\"id\":1,\"src\":\"/abs/App.island.tsx\",\"props\":{},\"pathname\":\"/myrepo/about\",\"prefix\":\"/myrepo\"}\n",
+        with_prefix,
+    );
+
+    // Empty prefix: the field is absent entirely, not emitted as `"prefix":""`
+    // — the no-op an unprefixed site's request line depends on.
+    const without_prefix = try Sidecar.buildRenderRequest(gpa, 1, "/abs/App.island.tsx", "{}", "", "/about", "");
+    defer gpa.free(without_prefix);
+    try std.testing.expectEqualStrings(
+        "{\"id\":1,\"src\":\"/abs/App.island.tsx\",\"props\":{},\"pathname\":\"/about\"}\n",
+        without_prefix,
+    );
+
+    // A non-empty slots payload still sits ahead of pathname/prefix, exactly
+    // as it did before this field existed.
+    const with_slots_and_prefix = try Sidecar.buildRenderRequest(gpa, 7, "/abs/Panel.island.tsx", "{}", "{\"default\":\"<p>x</p>\"}", "/myrepo/faq", "/myrepo");
+    defer gpa.free(with_slots_and_prefix);
+    try std.testing.expectEqualStrings(
+        "{\"id\":7,\"src\":\"/abs/Panel.island.tsx\",\"props\":{},\"slots\":{\"default\":\"<p>x</p>\"},\"pathname\":\"/myrepo/faq\",\"prefix\":\"/myrepo\"}\n",
+        with_slots_and_prefix,
+    );
+}
 
 test "sidecar renders a TSX island to SSR HTML over NDJSON" {
     // Requires `bun` on PATH (mise) and `runtime/`'s deps installed

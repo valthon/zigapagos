@@ -137,11 +137,19 @@ export type RouteDef = {
    */
   guard?: (loc: GuardLocation) => Promise<GuardResult<any>>;
   /**
-   * Nested child routes. A route with `children` is a **layout route**: its
-   * `component` renders shared chrome and places an `<Outlet/>` where the
-   * matched child renders. A child `path` is relative to the parent
-   * (`/dash` + `/settings` -> `/dash/settings`); a child with `path: "/"` is
-   * the index route shown when only the layout's path matches.
+   * Nested child routes. A route with `children` is a **layout route**: it
+   * receives its matched child route as `children` (`<div>{children}</div>`
+   * renders shared chrome around it), and `<Outlet/>` is the IDENTICAL
+   * explicit form — `children` literally IS an `<Outlet/>`, there is no
+   * second mechanism to keep in sync. Render exactly ONE of the two: using
+   * both mounts the matched child twice (warned once per layout path in the
+   * browser); using neither means the matched child never renders (warned the
+   * same way, since it silently produces an empty layout with dead route
+   * components behind it). Both checks run in mount effects, so they are
+   * client-only — SSR never executes them.
+   * A child `path` is relative to the parent (`/dash` + `/settings` ->
+   * `/dash/settings`); a child with `path: "/"` is the index route shown
+   * when only the layout's path matches.
    */
   children?: RouteDef[];
   /**
@@ -590,6 +598,19 @@ function assertValidRedirects(routes: RouteDef[], prefix = ""): void {
 }
 
 /**
+ * The BASE-RELATIVE pathname the build's SSR pass uses for a dynamic route's
+ * full path: every `:param`/`*` segment substituted with `"_"`, independent of
+ * any real params (mirrors `substituteParams` in `src/spa.zig`, which prepends
+ * the SPA's `base` — unknown here, hence "base-relative"). Used only to NAME
+ * the pathname in the no-skeleton diagnostic below, so an author sees the URL
+ * the build will actually SSR instead of re-deriving it from the substitution
+ * rule in their head.
+ */
+function ssrPathnameFor(full: string): string {
+  return "/" + splitSegs(full).map((seg) => (seg === "*" || seg.startsWith(":")) ? "_" : seg).join("/");
+}
+
+/**
  * The async superset of `flattenLeafPaths` the sidecar's `describe` calls:
  * flattens the route tree AND resolves each dynamic leaf's `staticPaths`
  * hook into concrete in-app paths. `staticPaths` on a static route is a
@@ -641,10 +662,11 @@ export async function describeRoutes(routes: RouteDef[]): Promise<LeafRouteMeta[
     // chain (whose own leaf is held to this rule instead).
     if (dynamic && route.skeleton == null && route.redirect === undefined) {
       throw new Error(
-        `dynamic route ${JSON.stringify(full)} declares no skeleton — its SSR (params ` +
-          `substituted with "_") differs from the first client render, which breaks hydration. ` +
-          `Give the route a param-independent \`skeleton\` component, or set \`skeleton: false\` ` +
-          `to assert the component is hydration-stable without one.`,
+        `dynamic route ${JSON.stringify(full)} declares no skeleton — the build SSRs its shell at ` +
+          `the base-relative path ${JSON.stringify(ssrPathnameFor(full))} (every :param and * ` +
+          `segment substituted with "_"), so its SSR output differs from the first client render, ` +
+          `which breaks hydration. Give the route a param-independent \`skeleton\` component, or ` +
+          `set \`skeleton: false\` to assert the component is hydration-stable without one.`,
       );
     }
     const meta: LeafRouteMeta = { path: full, dynamic, hasSkeleton: !!route.skeleton };
@@ -663,7 +685,7 @@ import {
   h, createContext, useContext, useState, useEffect, useRef, hydrate,
   useSyncExternalStore, useMemo, useCallback,
 } from "./core.ts";
-import { isServer, currentPathname, currentSearch } from "./ssr-env.ts";
+import { isServer, currentPathname, currentSearch, getUrlPathPrefix, setUrlPathPrefix } from "./ssr-env.ts";
 import { host } from "./host.ts";
 import { onUnauthorizedResponse } from "./session.ts";
 import { seedFlagsFromShell } from "./flags.ts";
@@ -686,8 +708,31 @@ type OutletCtx = {
   gateDepth: number; fallback: VNode<any> | null;
   /** depth → the guard data of the guarded rung at that depth (authorized rungs only). */
   guardData: ReadonlyMap<number, unknown>;
+  /**
+   * Live `<Outlet/>` instances currently mounted under THIS rung (registered
+   * by `Outlet`'s mount effect, unregistered on cleanup) — the misuse
+   * detector for issue #22 (`children` IS an `<Outlet/>`, so rendering both
+   * the `children` prop AND an explicit `<Outlet/>` mounts two, and rendering
+   * neither mounts zero). Owned by the `RouteRung` wrapper via `useRef` so it
+   * is stable across that rung's re-renders — a Set built fresh per
+   * `renderChainNode` call would make detection order-dependent.
+   */
+  live: Set<object>;
 };
 const OutletContext = createContext<OutletCtx | null>(null);
+
+// Dev-warn (once per layout route path) when BOTH channels are used —
+// `{children}` (an implicit Outlet) and an explicit `<Outlet/>` — which
+// mounts the matched child twice. Never suppress the second instance instead
+// of warning: which one "wins" would depend on render order, and silently
+// picking one would make SSR (which has no such ordering concept) diverge
+// from the client.
+const warnedDoubleOutlet = new Set<string>();
+// Dev-warn (once per layout route path) when NEITHER channel is used — the
+// original trap this issue was filed for: the layout compiles, SSRs, and
+// renders a plausible-looking (but silently empty) container, with its
+// matched child component never invoked.
+const warnedNoOutlet = new Set<string>();
 
 // The value the NEAREST enclosing guard provided via `{ ok: true, data }`.
 // Each guarded rung (and a Router-level guard) wraps its subtree in a fresh
@@ -723,14 +768,81 @@ export function provideGuardData(data: unknown, vnode: VNode<any>): VNode<any> {
 const EMPTY_GUARD_DATA: ReadonlyMap<number, unknown> = new Map();
 
 /**
+ * One rung's OutletContext.Provider + component, as a real component (not an
+ * inline `h()` call) so its `live` Set — the Outlet-misuse detector — is
+ * owned via `useRef` and stable across this rung's re-renders. Given directly
+ * to `h(comp, { children: h(Outlet, {}) })`: `children` IS an `<Outlet/>`,
+ * for every rung (leaves included — a leaf component simply never reads
+ * `children`, and `Outlet` itself renders `null` at a leaf depth, see below).
+ *
+ * For a non-leaf (layout) rung only, an effect with NO dependency array
+ * fires after every render/re-render and checks `live.size`. It reads a
+ * settled value because Preact flushes CHILD effects before the PARENT's —
+ * `Outlet`'s own registration effect (a child of this component, however
+ * deep inside `comp`'s tree it's mounted) has already run by the time this
+ * one does. `live.size === 0` after that means neither `{children}` nor an
+ * `<Outlet/>` rendered — the matched child route never renders (issue #22's
+ * original trap: no error, just a silently empty layout). `live.size > 1`
+ * means BOTH channels rendered, mounting the matched child twice; that
+ * detection lives in `Outlet` itself (see below), since a layout with a
+ * DEEPLY nested `<Outlet/>` needs the same check regardless of whether that
+ * `<Outlet/>` runs before or after this component's own effect.
+ */
+function RouteRung(props: {
+  chain: Match[]; depth: number; hydrated: boolean;
+  gateDepth: number; fallback: VNode<any> | null;
+  guardData: ReadonlyMap<number, unknown>;
+  comp: ComponentType<any>; isLeaf: boolean;
+}): VNode<any> {
+  const { chain, depth, hydrated, gateDepth, fallback, guardData, comp, isLeaf } = props;
+  const liveRef = useRef<Set<object> | null>(null);
+  if (!liveRef.current) liveRef.current = new Set();
+  const live = liveRef.current;
+  useEffect(() => {
+    if (isLeaf) return;
+    // Deferred to a MICROTASK, not checked synchronously in this effect body:
+    // Preact flushes one commit's effects in a single synchronous pass, but
+    // NOT reliably children-before-parent on a rung's very first mount — this
+    // rung's own effect can run before a freshly-mounted nested <Outlet/>'s
+    // own mount effect has registered, which would false-positive "neither
+    // channel used" on a perfectly correct layout. `queueMicrotask` defers
+    // the actual check past the CURRENT synchronous flush entirely, so every
+    // effect scheduled in this commit — this rung's and any nested Outlet's,
+    // regardless of which one Preact happened to run first — has already
+    // executed by the time it runs. `cancelled` guards against a rung that
+    // unmounts before its deferred check fires.
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled || live.size > 0) return;
+      const path = chain[depth].route.path;
+      if (warnedNoOutlet.has(path)) return;
+      warnedNoOutlet.add(path);
+      console.warn(
+        `zigapagos: layout route ${JSON.stringify(path)} rendered neither {children} nor an ` +
+          "<Outlet/> — its matched child route never renders.",
+      );
+    });
+    return () => { cancelled = true; };
+  });
+  return h(
+    OutletContext.Provider,
+    { value: { chain, depth, hydrated, gateDepth, fallback, guardData, live } },
+    h(comp, { children: h(Outlet, {}) }),
+  );
+}
+
+/**
  * Render the chain rung at `depth`. If `depth === gateDepth` the guard for this
  * scope hasn't authorized yet, so render the neutral `fallback` here in place of
  * the rung and its subtree (fail-closed) — authorized ancestor layouts above it
- * still render (and stay mounted). Otherwise the rung's component is wrapped in
- * an OutletContext so a nested `<Outlet/>` renders the next rung. The LEAF rung
- * follows the two-phase-hydration rule (`skeleton ?? component` on SSR + first
- * client render, the real `component` once `hydrated`); layout rungs render
- * their (static-chrome) `component` identically on both passes.
+ * still render (and stay mounted). Otherwise the rung's component is wrapped
+ * (via `RouteRung`) in an OutletContext, with `children: <Outlet/>` — the ONE
+ * channel by which the next rung renders, whether the component reads it via
+ * the `children` prop or an explicit `<Outlet/>` placement (they are the same
+ * element). The LEAF rung follows the two-phase-hydration rule (`skeleton ??
+ * component` on SSR + first client render, the real `component` once
+ * `hydrated`); layout rungs render their (static-chrome) `component`
+ * identically on both passes.
  *
  * NB: a layout rung renders its REAL component on the hydrate pass, so a layout
  * component must not bind a dynamic path param to an ATTRIBUTE — text children
@@ -760,11 +872,7 @@ function renderChainNode(
     const lz = lazyStateOf(node.route.component);
     comp = lz ? (lz.comp ?? skeletonOf(node.route) ?? EmptyView) : (node.route.component ?? EmptyView);
   }
-  let vnode: VNode<any> = h(
-    OutletContext.Provider,
-    { value: { chain, depth, hydrated, gateDepth, fallback, guardData } },
-    h(comp, {}),
-  );
+  let vnode: VNode<any> = h(RouteRung, { chain, depth, hydrated, gateDepth, fallback, guardData, comp, isLeaf });
   // A guarded rung provides ITS guard's data to itself + its subtree; nesting
   // shadows the outer provider (nearest guard wins). Provided even when the
   // data is undefined so an inner `true`-guard correctly shadows an outer
@@ -781,9 +889,38 @@ function EmptyView(): VNode<any> | null { return null; }
  * Placed inside a layout route's `component`, renders the next matched route in
  * the chain (the child that matched under this layout). Renders nothing when
  * this layout is the leaf (an index-less layout matched on its own).
+ *
+ * `children` IS an `<Outlet/>` (see `RouteRung`/`renderChainNode`): every
+ * rung's component is called with `{ children: h(Outlet, {}) }`, so a layout
+ * that renders `{children}` and one that renders `<Outlet/>` explicitly go
+ * through this exact function — there is no second, divergent code path.
+ * That also means an explicit `<Outlet/>` placed ALONGSIDE `{children}`
+ * mounts a second live instance; each instance registers itself into the
+ * enclosing rung's `live` set on mount (unregistering on cleanup) and warns
+ * once per layout path the first time it finds itself sharing that set.
  */
 export function Outlet(): VNode<any> | null {
   const oc = useContext(OutletContext);
+  const idRef = useRef<object | null>(null);
+  if (idRef.current === null) idRef.current = {};
+  useEffect(() => {
+    if (!oc) return;
+    const id = idRef.current!;
+    const live = oc.live;
+    live.add(id);
+    if (live.size > 1) {
+      const path = oc.chain[oc.depth].route.path;
+      if (!warnedDoubleOutlet.has(path)) {
+        warnedDoubleOutlet.add(path);
+        console.warn(
+          `zigapagos: layout route ${JSON.stringify(path)} renders both {children} and <Outlet/> — ` +
+            "they are the same channel (children IS an <Outlet/>), so the matched child renders " +
+            "twice. Render exactly one.",
+        );
+      }
+    }
+    return () => { live.delete(id); };
+  }, [oc]);
   if (!oc) return null;
   const next = oc.depth + 1;
   if (next >= oc.chain.length) return null;
@@ -1129,7 +1266,25 @@ export function Router(
     guard?: (loc: GuardLocation) => Promise<GuardResult<any>>;
   },
 ): VNode<any> {
-  const base = props.base ?? "";
+  // THE single composition point for the site's `url_path_prefix`. The
+  // router's effective base is `url_path_prefix + spa.base`, composed here and
+  // never by the author: everything downstream flows from this one variable —
+  // `routerBase` for the module-level `navigate()`, `matchChain`/`stripBase`,
+  // `ctx.base` for `<Link>`, the redirect URL-sync, and guard `scopeKey`.
+  //
+  // It has to be a BUILD-TIME constant threaded in, not something detected at
+  // runtime: Preact's `hydrate()` does not diff element attributes on its first
+  // pass, so an `<a href>` that the SSR pass and the first client render
+  // disagree about is left wrong in the DOM permanently (the same constraint
+  // the dynamic-layout caveat in docs/spa.md documents). Detecting the prefix
+  // client-side — import map, `document.baseURI`, a `<base>` tag — could never
+  // fix the prerendered markup either. So the prefix reaches the SSR pass over
+  // the sidecar protocol and the browser over the shell's `data-z-prefix`, and
+  // both compute the identical string here.
+  //
+  // With no prefix (`getUrlPathPrefix() === ""`) this is `props.base ?? ""`
+  // exactly as before — byte-for-byte unchanged for a root-mounted site.
+  const base = getUrlPathPrefix() + (props.base ?? "");
   // Register the base for the module-level `navigate()`: guard
   // redirects, `useNavigate()`, and direct `navigate()` calls all resolve
   // base-relative targets through it. One Router per document.
@@ -1412,14 +1567,63 @@ export function Router(
   return h(Ctx.Provider, { value: ctx }, view);
 }
 
+// Client-tier warn-once keys for `<Link>` rendered with no router context.
+const warnedNoRouterLink = new Set<string>();
+
+/**
+ * A `<Link>` was rendered with no enclosing `<Router>`. Loud on the server,
+ * survivable on the client — deliberately asymmetric:
+ *
+ * - **SSR (the build's prerender pass) throws.** The prerendered shell is the
+ *   artifact that actually ships the dead href, and it is produced by
+ *   `renderToString` in `runtime/sidecar/render.ts`. A throw there propagates
+ *   through the sidecar's catch as `{error, stack}`, `src/islands/sidecar.zig`
+ *   turns it into a structured `RenderError`, and `src/spa.zig` fatals with the
+ *   JS message and a source-mapped stack attributed to the `.spa.tsx` and
+ *   route. There is no dev/release distinction to make: a shell with dead nav
+ *   is defective in both, and the SPA prerender deliberately runs before the
+ *   page pass, so the fatal is minimally destructive. Warning instead was tried
+ *   by this codebase's own history and failed — the marketing site shipped a
+ *   demo whose every nav link was dead, through a green build.
+ * - **The client warns once per href and renders the anchor anyway.** Throwing
+ *   during hydration would unmount the whole subtree, which is strictly worse
+ *   than one link that does a full page load. This tier is defense in depth
+ *   (shells built by an older zigapagos, client-only render paths); it matches
+ *   the existing `warnedRedirects`/`warnedNoFallback` precedent — a module-level
+ *   Set and an unconditional `console.warn`, since no dev-vs-release runtime
+ *   split exists here and inventing one for a single warning is not worth it.
+ */
+function noRouterLink(href: string): void {
+  if (isServer()) {
+    throw new Error(
+      `zigapagos: <Link href="${href}"> rendered outside a <Router>. Without router context the ` +
+        "href cannot resolve against the SPA base and the anchor never soft-navigates — the " +
+        "prerendered shell would ship a dead link. Put app chrome in a layout route inside the " +
+        "Router, or use a plain <a> for a non-router anchor.",
+    );
+  }
+  if (warnedNoRouterLink.has(href)) return;
+  warnedNoRouterLink.add(href);
+  console.warn(
+    `zigapagos: <Link href="${href}"> rendered outside a <Router> — it degrades to a plain ` +
+      "anchor (unresolved href, no soft navigation). Move it inside the Router or use <a>.",
+  );
+}
+
 /**
  * An in-SPA anchor. A root-relative `href` is ROUTER-INTERNAL: it resolves
  * against the Router's `base` (`<Link href="/booking">` under base
  * `/app` renders `<a href="/app/booking">`) and clicks soft-navigate. An
  * absolute/protocol-relative URL renders a plain anchor with the href
  * untouched — the escape hatch for cross-SPA/external targets (as is any
- * plain `<a>`). Outside a Router (no context) the base is unknown, so the
- * href renders verbatim with no click interception.
+ * plain `<a>`).
+ *
+ * **Outside a Router there is no context, so nothing can be resolved.** That is
+ * never intentional — `Link` is router-internal, and `<a>` is the escape hatch
+ * — so it is a hard error on the SERVER (the build's SSR pass, where the
+ * defective shell is actually produced) and a warn-once on the CLIENT (throwing
+ * during hydration would kill the whole subtree, which is worse than one
+ * degraded link). See the two branches below.
  *
  * A caller-supplied `onClick` is CHAINED, never substituted: it runs first
  * (the close-the-nav-drawer pattern — `<Link href="/x" onClick={() => setOpen(false)}>`)
@@ -1431,6 +1635,7 @@ export function Link(
 ): VNode<any> {
   const { href, children, onClick: callerOnClick, ...rest } = props;
   const ctx = useContext(Ctx);
+  if (!ctx) noRouterLink(href);
   const internal = !!ctx && href.startsWith("/") && !isExternalHref(href);
   const resolved = internal ? resolveHref(href, ctx!.base) : href;
   const onClick = (e: any) => {
@@ -1539,6 +1744,17 @@ export function mountSpa(
   mod?: SpaModuleHooks,
 ): void {
   if (typeof document === "undefined") return;
+  const root = document.querySelector(selector);
+  // The site's `url_path_prefix`, baked into the shell by `src/spa.zig`. Read
+  // FIRST — before `clientInit` (which may `navigate()`) and before the first
+  // render — because `Router` composes it into its base and the first client
+  // render must reproduce the SSR'd hrefs exactly (hydrate() does not repair
+  // attributes). The attribute rides on the hydration ROOT precisely because
+  // hydration renders INTO that element, so its own attributes are never
+  // diffed; and putting it there leaves the inline boot script byte-unchanged,
+  // so a strict-CSP `script-src` hash does not churn. Absent (unprefixed site)
+  // → "", which makes the composition a no-op.
+  setUrlPathPrefix(root?.getAttribute("data-z-prefix") ?? "");
   seedFlagsFromShell();
   if (typeof mod?.clientInit === "function") {
     try {
@@ -1547,6 +1763,5 @@ export function mountSpa(
       host.reportError(err);
     }
   }
-  const root = document.querySelector(selector);
   if (root) hydrate(h(App, {}), root as any);
 }
