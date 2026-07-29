@@ -606,6 +606,28 @@ pub const Options = struct {
     /// `zigapagos release` populates it from the `ZIGAPAGOS_ISLAND_MANIFEST`
     /// environment variable, which only `zigapagos dev` sets.
     island_manifest_path: ?[]const u8 = null,
+    /// `--allow-missing-pages`: tolerate a `$link.page/sibling/sub` (content)
+    /// or `$site.page(...)` (template) reference to a page that doesn't exist
+    /// YET, instead of hard-failing the build. The TOLERANCE is deliberately
+    /// uniform rather than mode-dependent (e.g. warn-in-dev,
+    /// error-in-release): the workflow this exists for — an under-construction
+    /// site with real navigation to not-yet-written pages, deployed
+    /// continuously — needs `zigapagos release` (CI) to pass on the exact same
+    /// input a green `dev` preview just showed, or dev/release parity breaks
+    /// (a green preview, a red CI). A dangling internal link is what "under
+    /// construction" means; the opt-in flag is the escape hatch, the build-log
+    /// warning is the visibility mechanism. See issue #27 / DX-8. Off by
+    /// default: an unintentionally-dangling link should still fail the build.
+    ///
+    /// Which CLI commands accept it: `zigapagos release` and the bundled live
+    /// server (no subcommand) parse `--allow-missing-pages` directly. There is
+    /// deliberately NO `zigapagos dev --allow-missing-pages`: `dev` never
+    /// builds the site itself, it re-runs the consumer's rebuild command
+    /// (default `zig build`), so the flag reaches a dev loop through that
+    /// project's `build.zig` — `Options.allow_missing_pages` in `build/api.zig`,
+    /// which `website()` forwards. A flag on `dev` would have nothing to
+    /// forward it to.
+    allow_missing_pages: bool = false,
 
     pub const Mode = union(enum) {
         memory,
@@ -1255,7 +1277,10 @@ pub fn run(
 
             const page_errors = &p._analysis.page;
             if (page_errors.items.len > 0) {
-                if (!analysis_errors) {
+                // Error-severity check, not `.items.len > 0`: a page whose only
+                // page_errors are warnings (e.g. unknown_language, see
+                // PageAnalysisError.severity) must still render.
+                if (!analysis_errors and context.Page.PageAnalysisError.anyError(page_errors.items)) {
                     analysis_errors = true;
                 }
 
@@ -1294,11 +1319,13 @@ pub fn run(
                     } else "";
 
                     const fm_lines = p._parse.fm.lines;
+                    const severity_word = @tagName(err.severity());
+                    const note_line: NoteLine = .{ .note = err.note() };
                     std.debug.print(
-                        \\{f}:{}:{}: error: {s}
+                        \\{f}:{}:{}: {s}: {f}
                         \\|    {s}
                         \\|    {s}
-                        \\
+                        \\{f}
                         \\
                     , .{
                         p._scan.file.fmt(
@@ -1309,32 +1336,48 @@ pub fn run(
                         ),
                         fm_lines + n.startLine(),
                         n.startColumn(),
-                        err.title(),
+                        severity_word,
+                        err.fmt(),
                         line_trim,
                         highlight,
+                        note_line,
                     });
-                    if (build.mode == .memory) {
+
+                    // Only error-severity items enter the live server's build-error
+                    // list (see PageAnalysisError.severity's doc comment): that list
+                    // is the "the build failed" surface, and a warning like an
+                    // unknown code-fence language must not flip it.
+                    if (build.mode == .memory and err.severity() == .@"error") {
+                        // Contract 1 (self-freeing, NO_SLOP §2.2a): the only
+                        // allocation is this one escaping `msg`, which the caller
+                        // (build.mode.memory.errors) owns from here on -- same
+                        // contract this call already had before NoteLine let the
+                        // note collapse into the same format string instead of a
+                        // second allocPrint.
+                        const msg = try std.fmt.allocPrint(gpa,
+                            \\{f}:{}:{}: {s}: {f}
+                            \\|    {s}
+                            \\|    {s}
+                            \\{f}
+                            \\
+                        , .{
+                            p._scan.file.fmt(
+                                &v.string_table,
+                                &v.path_table,
+                                v.content_dir_path,
+                                "",
+                            ),
+                            fm_lines + n.startLine(),
+                            n.startColumn(),
+                            severity_word,
+                            err.fmt(),
+                            line_trim,
+                            highlight,
+                            note_line,
+                        });
                         try build.mode.memory.errors.append(gpa, .{
                             .ref = "",
-                            .msg = try std.fmt.allocPrint(gpa,
-                                \\{f}:{}:{}: error: {s}
-                                \\|    {s}
-                                \\|    {s}
-                                \\
-                                \\
-                            , .{
-                                p._scan.file.fmt(
-                                    &v.string_table,
-                                    &v.path_table,
-                                    v.content_dir_path,
-                                    "",
-                                ),
-                                fm_lines + n.startLine(),
-                                n.startColumn(),
-                                err.title(),
-                                line_trim,
-                                highlight,
-                            }),
+                            .msg = msg,
                         });
                     }
                 }
@@ -1891,7 +1934,10 @@ pub fn run(
                 if (!p._parse.active) continue;
                 if (p._parse.status != .parsed) continue;
                 if (p._analysis.frontmatter.items.len > 0) continue;
-                if (p._analysis.page.items.len > 0) continue;
+                // Error-severity check, not `.items.len > 0`: a warning-only page
+                // (e.g. an unknown code-fence language, see PageAnalysisError.severity)
+                // must still render, or the flag/warning design silently drops the page.
+                if (context.Page.PageAnalysisError.anyError(p._analysis.page.items)) continue;
 
                 // Incremental: skip any page whose source file did not change.
                 // Its output from the previous full build is still on disk.
@@ -2315,6 +2361,23 @@ test "assets: shouldMinifyCss gates on extension + release flags" {
     }
 }
 
+/// Renders as `|   note: <text>\n` when `note` is non-null, or nothing at all
+/// otherwise. Lets a single diagnostic format string carry an optional note
+/// line via `{f}` instead of branching into two near-identical format
+/// strings (one with the note line spliced in, one without) -- used by both
+/// the page-analysis print loop in `run` and, indirectly, the pattern
+/// `printSuperMdErrors` follows for its own (fixed-literal) note below.
+/// Allocation-free: it writes straight to the destination writer rather than
+/// building an intermediate string, so it's sound even on the disk-mode path
+/// where nothing else here allocates.
+const NoteLine = struct {
+    note: ?[]const u8,
+
+    pub fn format(self: NoteLine, w: *Writer) !void {
+        if (self.note) |n| try w.print("|   note: {s}\n", .{n});
+    }
+};
+
 fn printSuperMdErrors(
     gpa: Allocator,
     arena: Allocator,
@@ -2413,6 +2476,27 @@ fn printSuperMdErrors(
             highlight,
         });
 
+        // issue #32: SuperMD's `pathValidationError` rejects an empty path with
+        // the bare message "path is empty". That fires on `$link.page('')`, which
+        // looks like it should work because `$site.page('')` does (base.shtml's
+        // nav uses it for the home link) -- but the right builtin for "link to
+        // the site's home page" is `$link.site()`, which supermd's own `page`
+        // builtin DESCRIPTION already names, just never in the error itself.
+        // supermd is an external dependency pinned in build.zig.zon (fork policy:
+        // upstream syncs at release tags only), so this hint can't be added at
+        // the source -- this printing path is the legitimate in-repo enrichment
+        // point instead. Matching the exact upstream string is deliberate and
+        // degrades gracefully: if a release-tag sync rewords "path is empty" the
+        // hint just stops firing, and tests/rendering/empty-page-path-hint.sh
+        // (which asserts on it) goes red at sync time rather than silently
+        // drifting. The `.page(` substring check on the source line is what
+        // keeps this off `$image.asset('')` and friends, where "link to the site
+        // homepage" would be actively wrong -- `sub('')`/`sibling('')` are
+        // deliberately NOT hinted for the same reason (see issue #32 scope cut).
+        const empty_page_path_hint = err.kind == .scripty and
+            std.mem.eql(u8, msg, "path is empty") and
+            std.mem.indexOf(u8, line_trim, ".page(") != null;
+
         switch (err.kind) {
             .duplicate_id => |dup| {
                 std.debug.print(
@@ -2421,27 +2505,55 @@ fn printSuperMdErrors(
                     \\
                 , .{fm_lines + dup.original.range().start.row});
             },
-            else => std.debug.print("\n", .{}),
+            else => if (empty_page_path_hint) {
+                std.debug.print(
+                    \\|   note: to link to the site homepage, use $link.site()
+                    \\
+                    \\
+                , .{});
+            } else {
+                std.debug.print("\n", .{});
+            },
         }
 
         if (build.mode == .memory) {
+            // Unlike the `.duplicate_id` note above (a pre-existing gap this
+            // change isn't retrofitting), the empty-page-path hint is added to
+            // BOTH output paths, so the live server's error overlay carries it too.
+            //
+            // `note_segment` is one of two comptime string literals -- the hint
+            // text is fixed (unlike NoteLine's dynamic PageAnalysisError notes
+            // above), so a plain conditional is enough to collapse this to ONE
+            // allocPrint instead of branching into two near-identical ones. It
+            // carries its own trailing "\n" so the format string's final blank
+            // line reproduces the same "note line + blank separator" shape either
+            // way (see the analogous NoteLine reasoning above).
+            const note_segment: []const u8 = if (empty_page_path_hint)
+                "|   note: to link to the site homepage, use $link.site()\n"
+            else
+                "";
+            // Contract 1 (self-freeing, NO_SLOP §2.2a): `memory_msg` is the only
+            // allocation and it escapes as-is into build.mode.memory.errors, which
+            // owns it from here on.
+            const memory_msg = try std.fmt.allocPrint(gpa,
+                \\{f}:{}:{}: [{s}] {s}
+                \\|    {s}
+                \\|    {s}
+                \\{s}
+                \\
+            , .{
+                file.fmt(&v.string_table, &v.path_table, v.content_dir_path, ""),
+                fm_lines + range.start.row,
+                range.start.col,
+                tag_name,
+                msg,
+                line_trim,
+                highlight,
+                note_segment,
+            });
             try build.mode.memory.errors.append(gpa, .{
                 .ref = "",
-                .msg = try std.fmt.allocPrint(gpa,
-                    \\{f}:{}:{}: [{s}] {s}
-                    \\|    {s}
-                    \\|    {s}
-                    \\
-                    \\
-                , .{
-                    file.fmt(&v.string_table, &v.path_table, v.content_dir_path, ""),
-                    fm_lines + range.start.row,
-                    range.start.col,
-                    tag_name,
-                    msg,
-                    line_trim,
-                    highlight,
-                }),
+                .msg = memory_msg,
             });
         }
     }

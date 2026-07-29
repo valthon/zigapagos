@@ -69,6 +69,7 @@ pub fn website(comptime Zigapagos: type, project: *std.Build, opts: Options) *st
     });
 
     if (opts.force) run_zigapagos.addArg("--force");
+    if (opts.allow_missing_pages) run_zigapagos.addArg("--allow-missing-pages");
     run_zigapagos.addArg(project.fmt("--output={s}", .{full_output_path}));
 
     // Minify `.css` site assets during release staging, matching the
@@ -158,6 +159,8 @@ pub fn serve(comptime Zigapagos: type, project: *std.Build, opts: Options) *std.
     };
 
     run_zigapagos.setCwd(opts.website_root orelse project.path("."));
+
+    if (opts.allow_missing_pages) run_zigapagos.addArg("--allow-missing-pages");
 
     // Same configure-time `.not_found` check as `website()`: the
     // dev server has no universal 404.html to own, but a dangling name is a

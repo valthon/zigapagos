@@ -26,6 +26,7 @@ pub const Signature = struct {
 pub const ScriptyParam = union(enum) {
     Site,
     Page,
+    MissingPage,
     Build,
     Git,
     Asset,
@@ -72,6 +73,7 @@ pub const ScriptyParam = union(enum) {
             context.Template => .any,
             ?context.Value => .any,
             context.Page, *const context.Page => .Page,
+            context.MissingPage => .MissingPage,
             context.Site, *const context.Site => .Site,
             context.Build => .Build,
             context.Git => .Git,

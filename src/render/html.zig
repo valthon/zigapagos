@@ -328,8 +328,22 @@ pub fn html(
                             ) catch |err| switch (err) {
                                 error.OutOfMemory => return error.OutOfMemory,
                                 error.WriteFailed => return error.WriteFailed,
-                                // Already validated in analyzePage
-                                else => unreachable,
+                                // An unknown language is a WARNING, not a build
+                                // failure, as of issue #31 -- analyzeContent
+                                // (src/worker.zig) no longer aborts the page over
+                                // it, so this invariant ("the language was already
+                                // validated") is gone and this branch is reachable.
+                                // It is still sound to fall back rather than
+                                // propagate: highlightCode (src/highlight.zig)
+                                // resolves the language and creates the query
+                                // cursor with `try`s that all run BEFORE its first
+                                // `printSpan` write, so any error it returns here
+                                // means nothing has been written to `w` yet for
+                                // this call -- falling back to the escaped-code
+                                // path below is exactly the output
+                                // `enable_treesitter=false` already produces for
+                                // every language, known or not.
+                                else => try w.print("{f}", .{HtmlSafe{ .bytes = code }}),
                             };
                             try w.writeAll("</code></pre>\n");
                         }
@@ -577,9 +591,15 @@ fn renderDirective(
                         ) catch |err| switch (err) {
                             error.OutOfMemory => return error.OutOfMemory,
                             error.WriteFailed => return error.WriteFailed,
-                            // We assert success because the language code was
-                            // validated during the page analysis phase.
-                            else => unreachable,
+                            // See the matching CODE_BLOCK site above: an unknown
+                            // language is a WARNING as of issue #31, not a build
+                            // failure, so this invariant ("validated during page
+                            // analysis") no longer holds and the branch is
+                            // reachable. Sound for the same reason: highlightCode's
+                            // fallible calls all precede its first write, so
+                            // falling back to escaped output here matches
+                            // `enable_treesitter=false`'s behavior exactly.
+                            else => try w.print("{f}", .{HtmlSafe{ .bytes = code.src.?.url }}),
                         };
                     } else {
                         try w.print("{f}", .{HtmlSafe{ .bytes = code.src.?.url }});

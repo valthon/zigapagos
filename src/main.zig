@@ -21,6 +21,7 @@ const Command = enum {
     release,
     debug,
     e2e,
+    languages,
     help,
     @"-h",
     @"--help",
@@ -128,6 +129,7 @@ pub fn main(init: std.process.Init) u8 {
         .release => @import("cli/release.zig").release(io, gpa, args[2..], init.environ_map),
         .debug => @import("cli/debug.zig").debug(io, gpa, args[2..]),
         .e2e => @import("cli/e2e.zig").e2e(io, gpa, args[2..], init.environ_map) catch fatal.oom(),
+        .languages => @import("cli/languages.zig").languages(args[2..]),
         .dev, .develop => @import("cli/dev.zig").dev(io, gpa, args[2..], init.environ_map) catch fatal.oom(),
         .help, .@"-h", .@"--help" => fatal.help(),
         .version, .@"-v", .@"--version" => printVersion(),
@@ -213,4 +215,15 @@ test "dev" {
 // @import-ed from inside main()'s body)
 test "doctor" {
     _ = @import("cli/doctor.zig");
+}
+
+// Pull languages.zig into the test compilation unit for `zig build test-init`
+// and `test-spa`. languages.zig is only reached through worker.zig's
+// top-level import, and that one level of indirection past main.zig itself
+// isn't enough for Zig 0.16 to eagerly analyze its `test` blocks — same
+// reason as the anchors above, one hop further out. `test-init`/`test-spa`
+// (build/tests.zig) both run with an EMPTY filter, so this anchor's own name
+// doesn't need to match anything.
+test "languages" {
+    _ = @import("languages.zig");
 }

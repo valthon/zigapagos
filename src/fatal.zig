@@ -53,6 +53,7 @@ const help_menu =
     \\  migrate <dir>     Scan an Astro project and write a MIGRATION.md worklist
     \\  release           Create a release of a Zigapagos site
     \\  e2e               Serve a built site with ZigBase and run an e2e command
+    \\  languages         List code-fence languages registered for highlighting
     \\  help              Show this menu and exit
     \\  version           Print the Zigapagos version and exit
     \\  (no command)      Start the bundled live server
@@ -60,6 +61,14 @@ const help_menu =
     \\
     \\General Options:
     \\  --drafts          Enable draft pages
+    \\  --allow-missing-pages  Tolerate a dangling $link.page/$site.page
+    \\                    reference to a page that doesn't exist YET (emits its
+    \\                    would-be href + a build-log warning instead of
+    \\                    failing the build). Accepted by 'release' and by the
+    \\                    live server; for 'dev', set it in your build.zig
+    \\                    (zigapagos.Options.allow_missing_pages) instead --
+    \\                    'dev' re-runs your rebuild command rather than
+    \\                    building the site itself
     \\  --help, -h        Print command specific usage and extra options
     \\
     \\Dev loop (zigapagos dev [OPTIONS] [-- REBUILD-CMD [ARGS...]]):

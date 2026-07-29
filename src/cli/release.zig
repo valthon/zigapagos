@@ -63,6 +63,7 @@ pub fn release(
         .spa_not_found = cmd.spa_not_found,
         .changed_files = changed_files,
         .island_manifest_path = island_manifest_path,
+        .allow_missing_pages = cmd.allow_missing_pages,
     }) catch fatal.oom();
 
     defer if (builtin.mode == .Debug) build.deinit(io, gpa);
@@ -150,6 +151,11 @@ pub const Command = struct {
     /// universal 404.html, named by its `spaName(src)` basename. Null (the
     /// default) keeps the historical behavior: the FIRST declared SPA.
     spa_not_found: ?[]const u8 = null,
+    /// `--allow-missing-pages`: see `root.Options.allow_missing_pages`.
+    /// Same tolerance the live server applies -- see that field's doc comment
+    /// for why it is not mode-dependent, and why `dev` takes it from the
+    /// project's `build.zig` rather than its own argv.
+    allow_missing_pages: bool = false,
 
     pub fn deinit(co: *const Command, gpa: Allocator) void {
         gpa.free(co.spas);
@@ -169,6 +175,7 @@ pub const Command = struct {
         var island_props_check: @import("../islands/props_check.zig").Mode = .off;
         var spas: std.ArrayListUnmanaged(root.SpaSpec) = .empty;
         var spa_not_found: ?[]const u8 = null;
+        var allow_missing_pages = false;
         // src -> spa-chunks.json path. Collected separately because `--spa-chunks`
         // args precede the `--spa=` args, so the specs don't exist yet; attached
         // to the specs after the arg loop.
@@ -290,6 +297,8 @@ pub const Command = struct {
                 };
             } else if (eql(u8, arg, "--drafts")) {
                 drafts = true;
+            } else if (eql(u8, arg, "--allow-missing-pages")) {
+                allow_missing_pages = true;
             } else {
                 fatal.msg("error: unexpected cli argument '{s}'\n", .{arg});
             }
@@ -314,6 +323,7 @@ pub const Command = struct {
             .island_props_check = island_props_check,
             .spas = try spas.toOwnedSlice(gpa),
             .spa_not_found = spa_not_found,
+            .allow_missing_pages = allow_missing_pages,
         };
     }
 };
@@ -338,6 +348,10 @@ const help_message =
     \\                        (default: the first --spa declared)
     \\  --spa-chunks=SRC PATH Attach a SPA's spa-chunks.json (lazy-route map)
     \\  --spa-slice=SRC PATH  Attach a SPA's per-deployable runtime slice manifest
+    \\  --allow-missing-pages Tolerate a dangling $link.page/$site.page reference
+    \\                        to a page that doesn't exist YET (emits a real,
+    \\                        would-be href + a build-log warning instead of
+    \\                        failing the build)
     // \\  --build-assets FILE    Path to a file containing a list of build assets
     \\  --help, -h            Show this help menu
     \\
@@ -477,6 +491,17 @@ test "parse leaves slice_json null when no --spa-slice is given" {
     var cmd = try Command.parse(gpa, &.{"--spa=app/App.spa.tsx|/app"});
     defer cmd.deinit(gpa);
     try std.testing.expect(cmd.spas[0].slice_json == null);
+}
+
+test "parse recognizes --allow-missing-pages (and defaults it to false)" {
+    const gpa = std.testing.allocator;
+    var cmd = try Command.parse(gpa, &.{"--allow-missing-pages"});
+    defer cmd.deinit(gpa);
+    try std.testing.expect(cmd.allow_missing_pages);
+
+    var cmd_default = try Command.parse(gpa, &.{});
+    defer cmd_default.deinit(gpa);
+    try std.testing.expect(!cmd_default.allow_missing_pages);
 }
 
 test "parse defaults spas to empty" {

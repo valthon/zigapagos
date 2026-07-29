@@ -111,13 +111,20 @@ content/index.smd:47:1: error: missing page asset
 |    ![](bad.jpg) // wrong
 |    ^^^^^^^^^^^^
 
-content/other.smd:20:1: error: unknown language code
+content/other.smd:20:1: warning: unknown code-fence language 'zig++'; emitting the block unhighlighted (did you mean 'zig'?)
 |    ```zig++ wrong
 |    ^^^^^^^^^^^^^^^
+|   note: run 'zigapagos languages' for the full list
 
-content/other.smd:23:1: error: unknown language code
+content/other.smd:23:1: warning: unknown code-fence language 'zig++'; emitting the block unhighlighted (did you mean 'zig'?)
 |    [](<$code.siteAsset('code.zig').language('zig++')>) //wrong
 |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+|   note: run 'zigapagos languages' for the full list
+
+content/other.smd:26:1: error: this page has no subpages (page is not a section)
+|    []($link.sub('index')) //wrong -- other.smd is not index.smd, so it's not a section
+|    ^^^^^^^^^^^^^^^^^^^^^^
+|   note: a leading '.' means "subpage of this section", not a relative path -- to link a sibling page, use $link.page("...")
 
 ----------------------------
        -- VARIANT --

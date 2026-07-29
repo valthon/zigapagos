@@ -27,6 +27,7 @@ pub const md = @import("context/markdown.zig");
 pub const Root = @import("context/Root.zig");
 pub const Site = @import("context/Site.zig");
 pub const Page = @import("context/Page.zig");
+pub const MissingPage = @import("context/MissingPage.zig");
 pub const Build = @import("context/Build.zig");
 pub const Git = @import("context/Git.zig");
 pub const Asset = @import("context/Asset.zig");
@@ -45,6 +46,7 @@ pub const Value = union(enum) {
     root: *Root,
     site: *const Site,
     page: *const Page,
+    missing_page: MissingPage,
     ctx: Ctx(Value),
     alternative: Page.Alternative,
     content_section: Page.ContentSection,

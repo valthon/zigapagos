@@ -138,6 +138,15 @@ pub const PageAnalysisError = struct {
         unknown_page: struct {
             ref: []const u8,
         },
+        // --allow-missing-pages (issue #27 / DX-8): a WARNING-severity twin of
+        // `unknown_page`, appended instead of it (never both) when the flag is
+        // set. `url` is the root-relative href the page WILL have once it
+        // exists (see worker.zig's `missingPageUrl` for exactly how it's
+        // computed, and its documented host-url-qualification limitation).
+        missing_page_tolerated: struct {
+            ref: []const u8,
+            url: []const u8,
+        },
         unknown_alternative: struct {
             name: []const u8,
         },
@@ -150,6 +159,11 @@ pub const PageAnalysisError = struct {
         },
         unknown_language: struct {
             lang: []const u8,
+            // Filled in by worker.zig's analyzeContent from languages.suggest();
+            // null when no candidate was within the edit-distance threshold.
+            // Defaulted to null (rather than required) because this struct is
+            // also literal-constructed by tests that don't care about the hint.
+            suggestion: ?[]const u8 = null,
         },
         unknown_ref: struct {
             ref: []const u8,
@@ -159,23 +173,112 @@ pub const PageAnalysisError = struct {
         },
     },
 
-    pub fn title(err: PageAnalysisError) []const u8 {
+    pub const Severity = enum { @"error", warning };
+
+    // Exactly two kinds are warnings, and both earn it the same way: the build
+    // has a truthful output to emit anyway, so aborting over them is
+    // disproportionate.
+    //
+    //   - `unknown_language`: with `enable_treesitter=false`,
+    //     src/highlight.zig's highlightCode already emits an unrecognized
+    //     language as escaped text inside `<pre><code class="LANG">`. An
+    //     unknown language produces exactly that same valid output, so the
+    //     only thing lost is a highlight colour (issue #31).
+    //   - `missing_page_tolerated`: only ever appended when
+    //     `--allow-missing-pages` is set, and only in place of `unknown_page`
+    //     (never both). The link is rewritten to the URL the page WILL have,
+    //     so the emitted HTML is byte-identical to the eventual site (#27).
+    //
+    // Every other kind describes a link or asset reference that cannot be
+    // resolved at all, and for which there is no honest output to emit.
+    pub fn severity(err: PageAnalysisError) Severity {
         return switch (err.kind) {
-            .not_a_section => "this page has no subpages (page is not a section)",
-            .no_parent_section => "the root index page has no parent section",
-            .resource_kind_mismatch => "wrong resource kind",
-            .unknown_page => "unknown page",
-            .unknown_language => "unknown language code",
-            .unknown_alternative => "unknown alternative",
-            .unknown_ref => "unknown ref",
-            .locale_link_unsupported => "locale-qualified page links are not supported yet",
-            .missing_asset => |ma| switch (ma.kind) {
-                .site => "missing site asset",
-                .page => "missing page asset",
-                .build => "missing build asset",
-            },
-            .build_asset_missing_install_path => "build asset missing install path",
+            .unknown_language, .missing_page_tolerated => .warning,
+            else => .@"error",
         };
+    }
+
+    // Optional second line rendered as `|   note: ...`, following the style
+    // `printSuperMdErrors` already uses for `.duplicate_id` in root.zig. Returns
+    // null for kinds where the title is self-explanatory.
+    pub fn note(err: PageAnalysisError) ?[]const u8 {
+        return switch (err.kind) {
+            // AUD note (issue #28): a leading '.' in a link target means "subpage
+            // of this section" in SuperMD, not "relative path" -- the title alone
+            // states a fact about the current page and never hints that the LINK
+            // SYNTAX, not the page, is what's wrong. Cost a real site 55 build
+            // errors and a link-rewrite redesign before the syntax was understood.
+            .not_a_section => "a leading '.' means \"subpage of this section\", not a relative path -- to link a sibling page, use $link.page(\"...\")",
+            .unknown_language => "run 'zigapagos languages' for the full list",
+            // No note: the fmt() line below already states the ref, the
+            // computed href and the flag that's tolerating it.
+            .missing_page_tolerated => null,
+            else => null,
+        };
+    }
+
+    // Two kinds (`unknown_language`, `missing_page_tolerated`) need dynamic
+    // headline text -- the offending language, an optional suggestion, the
+    // computed URL -- that a static per-kind string can't carry, so callers
+    // that want to print a PageAnalysisError use `{f}` on this formatter
+    // rather than a plain title lookup. Every OTHER kind's headline is a
+    // fixed string with no dynamic part, so it's inlined directly in the
+    // `else` arm below instead of living behind a separate `title()` -- a
+    // prior version kept both, but `title()`'s only caller was this `else`
+    // arm, so the split bought nothing and left two of its arms
+    // (`unknown_language`, `missing_page_tolerated`) permanently unreachable
+    // dead code shadowed by the arms above them.
+    pub fn fmt(err: PageAnalysisError) Formatter {
+        return .{ .err = err };
+    }
+
+    pub const Formatter = struct {
+        err: PageAnalysisError,
+
+        pub fn format(f: Formatter, w: *Writer) !void {
+            switch (f.err.kind) {
+                .unknown_language => |ul| {
+                    try w.print(
+                        "unknown code-fence language '{s}'; emitting the block unhighlighted",
+                        .{ul.lang},
+                    );
+                    if (ul.suggestion) |s| {
+                        try w.print(" (did you mean '{s}'?)", .{s});
+                    }
+                },
+                .missing_page_tolerated => |mp| {
+                    try w.print(
+                        "missing page '{s}' -- emitting link to '{s}' (--allow-missing-pages)",
+                        .{ mp.ref, mp.url },
+                    );
+                },
+                .not_a_section => try w.writeAll("this page has no subpages (page is not a section)"),
+                .no_parent_section => try w.writeAll("the root index page has no parent section"),
+                .resource_kind_mismatch => try w.writeAll("wrong resource kind"),
+                .unknown_page => try w.writeAll("unknown page"),
+                .unknown_alternative => try w.writeAll("unknown alternative"),
+                .unknown_ref => try w.writeAll("unknown ref"),
+                .locale_link_unsupported => try w.writeAll("locale-qualified page links are not supported yet"),
+                .missing_asset => |ma| try w.writeAll(switch (ma.kind) {
+                    .site => "missing site asset",
+                    .page => "missing page asset",
+                    .build => "missing build asset",
+                }),
+                .build_asset_missing_install_path => try w.writeAll("build asset missing install path"),
+            }
+        }
+    };
+
+    // True when at least one item is error-severity. Fatal gates (root.zig's
+    // page-render loop and the `analysis_errors` flag, serve.zig's live-build
+    // gates) must call this instead of checking `.items.len > 0`, or a
+    // warning-only page (e.g. an unknown code-fence language) would wrongly
+    // block rendering / abort the build.
+    pub fn anyError(items: []const PageAnalysisError) bool {
+        for (items) |item| {
+            if (item.severity() == .@"error") return true;
+        }
+        return false;
     }
 };
 
