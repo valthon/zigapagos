@@ -184,19 +184,17 @@ jobs:
       # stays live. Moved below the upload it would still go red, but it would
       # go red about a site that had already shipped.
       #
-      # KNOWN GAP, stated rather than glossed: this workflow triggers on push
-      # to main and manual dispatch only, so these assertions do not gate a PR.
-      # A change that breaks one of them merges green and is caught at deploy
-      # time.
+      # The gap this note used to record — that these assertions ran nowhere on
+      # the PR path, so a change breaking one of them merged green and was
+      # caught at deploy time — is closed: ci.yml's `site` job runs all four on
+      # every pull request (#76). The measurement that note asked for came in at
+      # 4s for the build and under 5s for the four scripts, because that job
+      # takes build-binary's already-built `zigapagos` and compiles nothing.
       #
-      # The trade this note used to record — ~2s here against a ~120s cold
-      # consumer build on the PR path — no longer holds. ci.yml's build-binary
-      # job writes a cache carrying compiled objects, and every Zig job now
-      # restores it, so a site build on the PR path would start warm rather than
-      # compiling 632 tree-sitter grammar objects from scratch. Whether the
-      # remaining cost is worth a PR-path job is now a question to answer with a
-      # measurement rather than an assumption; the number to beat is whatever a
-      # warm consumer build actually costs, not the 120s cold one.
+      # They stay HERE as well, and not as a formality. A PR is not the only way
+      # main moves, and this is the last gate before bytes go live: keeping it
+      # means a direct push, a revert, or a merge whose result differs from what
+      # any single PR was tested against still cannot ship a broken site.
       - name: Assert the built site before uploading it (site/test/build.sh)
         run: bash site/test/build.sh
 
