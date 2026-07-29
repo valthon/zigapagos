@@ -66,7 +66,7 @@ there. A runtime `return error.SkipZigTest` does **not** help — Zig analyses t
 body regardless of runtime control flow — so prune the branch at comptime:
 `if (comptime !builtin.single_threaded) …`.
 
-**Shell e2e.** CI runs every `tests/*/*.sh` (currently 34). They are hermetic; `tests/serve/*`
+**Shell e2e.** CI runs every `tests/*/*.sh` (currently 36). They are hermetic; `tests/serve/*`
 boot real servers via a stub-zigbase binary and need `bun` on `PATH`. A new `tests/<area>/` is
 picked up by the glob automatically. `tests/branding.sh`, `tests/branding.test.sh` and
 `tests/confidentiality.sh` sit at `tests/` top level on purpose — they are cheap gates CI runs
