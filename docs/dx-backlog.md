@@ -178,6 +178,14 @@ mechanism was documented; the fact that `.link()` cannot do it was not.
 **Consider also:** a build-time warning for a root-relative `og:*` or canonical
 URL. It is never correct.
 
+**Resolved.** `$site.asset(...).absLink()` / `$page.asset(...).absLink()` now
+exist (`src/context/Asset.zig`), sharing `link()`'s install-refcount-bumping
+body via `linkImpl` so the two builtins cannot drift out of sync. The
+build-time warning is deferred to the `doctor` subcommand (#41) — the render
+pass never sees a finished attribute as "this is an og tag", so it can only
+ever be a lint, not a build invariant. Regression fixture:
+`tests/rendering/abs-link/`.
+
 ---
 
 ### DX-7 · [#26] `url_path_prefix` is not threaded into `Router.base`

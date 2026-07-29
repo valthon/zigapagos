@@ -685,7 +685,7 @@ fn printUrl(
             )});
         },
         .site_asset => |sa| {
-            try printAssetUrlPrefix(ctx, page, w);
+            try printAssetUrlPrefix(ctx, page, w, false);
 
             const pn: PathName = .{
                 .path = @enumFromInt(sa.resolved.path),
@@ -700,7 +700,7 @@ fn printUrl(
             )});
         },
         .build_asset => |ba| {
-            try printAssetUrlPrefix(ctx, page, w);
+            try printAssetUrlPrefix(ctx, page, w, false);
             try w.print("{s}", .{ba.ref});
         },
     }
@@ -710,10 +710,17 @@ pub fn printAssetUrlPrefix(
     ctx: *const context.Root,
     page: *const context.Page,
     w: *Writer,
+    /// When set to true the full host url will always be printed,
+    /// regardless of whether `page` is the page currently being
+    /// rendered. Used by `Asset.absLink()` (issue #25): an asset
+    /// referenced from its own page still needs an absolute URL for
+    /// contexts consumed outside the page itself (og:image, canonical
+    /// links, feeds).
+    force_host_url: bool,
 ) !void {
     switch (ctx.site._meta.kind) {
         .simple => |url_prefix_path| {
-            if (ctx.page != page) {
+            if (force_host_url or ctx.page != page) {
                 try w.print("{f}/", .{
                     root.fmtJoin('/', &.{
                         ctx.site.host_url,
@@ -728,8 +735,21 @@ pub fn printAssetUrlPrefix(
         },
         .multi => |locale| {
             const assets_prefix_path = ctx._meta.build.cfg.Multilingual.assets_prefix_path;
-            if (ctx.page != page or locale.host_url_override != null) {
-                try w.print("{f}", .{
+            if (force_host_url or ctx.page != page or locale.host_url_override != null) {
+                // Trailing separator, matching the `.simple` arm above and
+                // this arm's own `else` branch. `fmtJoin` never appends one
+                // and skips empty components, so without it the caller's
+                // asset name is concatenated straight onto the prefix:
+                // `https://example.com/static` + `site.css` came out as
+                // `https://example.com/staticsite.css`, and with an empty
+                // `assets_prefix_path` as `https://example.comsite.css`.
+                //
+                // NOT latent: the `locale.host_url_override != null` disjunct
+                // has always been reachable through plain `link()`, so any
+                // multilingual site with an override has been emitting this
+                // malformed site-asset URL. `absLink()` merely adds a third
+                // way in. Fixing it here repairs `link()` on those sites too.
+                try w.print("{f}/", .{
                     root.fmtJoin('/', &.{
                         ctx.site.host_url,
                         assets_prefix_path,

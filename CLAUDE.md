@@ -38,7 +38,7 @@ zig build check                # compile exe + all test binaries, run nothing
 zig build check -Dsingle-threaded   # required guard, see below
 zig build api-check            # fail if contract/generated drifted from the schema
 cd runtime && bun install --frozen-lockfile   # ONCE per fresh worktree
-cd runtime && bun test         # TypeScript suite (616 tests)
+cd runtime && bun test         # TypeScript suite (650 tests)
 cd runtime && bun test src/router   # one file — filter is a PATH substring
 bash scripts/check-allocator-contracts.sh   # allocator-contract gate (see NO_SLOP.md §2.2a)
 bash scripts/check-allocator-contracts.test.sh   # the gate's own self-tests
@@ -46,11 +46,12 @@ bash tests/serve/spa.sh                     # one shell e2e script
 ```
 
 **`zig build test` does NOT run the unit tests.** It builds the three-root snapshot fixtures and
-diffs them. The Zig unit tests live in twelve separate steps, and CI runs them explicitly:
+diffs them. The Zig unit tests live in thirteen separate steps, and CI runs them explicitly:
 
 ```sh
 zig build test-islands test-props test-migrate test-sidecar test-init \
-  test-release test-spa test-assets test-serve test-e2e test-dev test-doctor
+  test-release test-spa test-assets test-serve test-e2e test-dev \
+  test-doctor test-slugs
 ```
 
 **Running a single test.** Each `test-*` step is already a *filtered slice* of one test binary.
@@ -65,7 +66,7 @@ there. A runtime `return error.SkipZigTest` does **not** help — Zig analyses t
 body regardless of runtime control flow — so prune the branch at comptime:
 `if (comptime !builtin.single_threaded) …`.
 
-**Shell e2e.** CI runs every `tests/*/*.sh` (currently 20). They are hermetic; `tests/serve/*`
+**Shell e2e.** CI runs every `tests/*/*.sh` (currently 26). They are hermetic; `tests/serve/*`
 boot real servers via a stub-zigbase binary and need `bun` on `PATH`. A new `tests/<area>/` is
 picked up by the glob automatically. `tests/branding.sh` and `tests/confidentiality.sh` sit at
 `tests/` top level on purpose — they are cheap gates CI runs early, outside that glob.

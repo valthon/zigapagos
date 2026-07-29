@@ -1,0 +1,12 @@
+---
+.title = "Home",
+.date = @date("2020-07-06T00:00:00"),
+.author = "Test",
+.layout = "index.shtml",
+.draft = false,
+.translation_key = "home",
+---
+
+`page-og.png` and `site.css` are referenced ONLY through `absLink()`, so this
+fixture pins the install refcount as well as the URL: if `absLink()` stopped
+bumping it, both would be pruned from the snapshot output tree.

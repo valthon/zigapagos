@@ -253,9 +253,10 @@ fn appendHtmlEscaped(gpa: std.mem.Allocator, out: *std.ArrayListUnmanaged(u8), s
 
 // --- implementation ---
 
-/// Rewrite every <island ...>...</island> (or self-closing <island ... />) in
-/// `html` to the ratified placeholder markup with SSR'd component HTML and a
-/// JSON props script. `renderer` is any value with a
+/// Rewrite every <island ...>...</island> (or self-closing <island ... />) —
+/// or its content-authoring alias <z-island ...>...</z-island> (see
+/// `nextIslandStart`) — in `html` to the ratified placeholder markup with
+/// SSR'd component HTML and a JSON props script. `renderer` is any value with a
 /// `pub fn render(self, arena, src, props_json, slots_json, pathname, err_out) ![]const u8` method
 /// (the real `Sidecar`, or a test stub). `dispatch`/`dispatchProps` and the
 /// comptime registry are gone; props are resolved type-erased via
@@ -337,11 +338,21 @@ pub fn process(
     };
 }
 
-/// Rewrite every `<island>` in `html` to its placeholder markup, recursing into
-/// slot content so nested islands are also rewritten/SSR'd/hydrated. Appends each
-/// island (outer and nested) to `instances` and advances the shared `counter`
-/// (which assigns the unique `z-island-N` ids). Returns gpa-owned html. The
-/// runtime-script injection happens once in `process`, not here.
+/// Rewrite every `<island>` (or its content-authoring alias `<z-island>`) in
+/// `html` to its placeholder markup, recursing into slot content so nested
+/// islands are also rewritten/SSR'd/hydrated. Appends each island (outer and
+/// nested) to `instances` and advances the shared `counter` (which assigns the
+/// unique `z-island-N` ids). Returns gpa-owned html. The runtime-script
+/// injection happens once in `process`, not here.
+///
+/// The two spellings are otherwise identical — `<z-island>` exists solely
+/// because SuperHTML's `.html`-mode validator (used to vet the `=html` fenced
+/// escape hatch that lets an island appear in `.smd` content, see
+/// `docs/islands.md` "Islands in content") rejects a non-hyphenated custom
+/// element name; `<island>` only validates in a `.superhtml` layout, which is
+/// lax about unknown elements. `nextIslandStart` reports which spelling it
+/// matched, and every downstream step (`matchingClose`, `consume_end`) uses
+/// THAT spelling — see the nesting-depth note on `matchingClose`.
 ///
 /// Regions where the HTML tokenizer does not parse markup — comments and
 /// raw-text elements — are skipped by `nextIslandStart` and copied through
@@ -379,13 +390,40 @@ fn rewrite(
     // down: prefixing in place would double-prefix at every nested level.
     // `prefixed` with an empty prefix returns the path unchanged, so an
     // unprefixed site is byte-for-byte unaffected.
-    const ssr_pathname = try prefixed(arena.a, url_prefix, page_url);
+    //
+    // The no-prefix case borrows `page_url` instead of calling `prefixed`,
+    // which would dupe it. That makes `ssr_pathname` a borrowed-or-owned
+    // value — the shape NO_SLOP.md §2.2a flags — so it needs its licence
+    // stated rather than assumed:
+    //
+    //   * Nothing frees it. It is read once (the `renderer.render` call
+    //     below) and dies with the pass's arena. §2.2a permits this shape
+    //     exactly where nobody frees; adding a `free`/`defer free` for it,
+    //     or hoisting it somewhere gpa-owned, is what would break it.
+    //   * `page_url` outlives the borrow: it is this function's own
+    //     parameter, and the recursion passes the same unprefixed slice
+    //     down, so nested levels borrow the identical bytes.
+    //   * Output is unchanged — `prefixed` returns a copy of `url` in this
+    //     branch, so borrowing yields the same bytes without the copy.
+    //
+    // `prefixed` itself keeps its unconditional dupe and its contract-1
+    // signature: its gpa-side callers DO free the result, and it borrowed
+    // once before, which silently required an arena. The conditional belongs
+    // here, at the one call site that is arena-scoped, not in the callee.
+    //
+    // Practical effect beyond tidiness: an island-free page on an unprefixed
+    // site now allocates nothing here, which is every page of most sites.
+    const ssr_pathname = if (std.mem.trim(u8, url_prefix, "/").len == 0)
+        page_url
+    else
+        try prefixed(arena.a, url_prefix, page_url);
 
     var out: std.ArrayListUnmanaged(u8) = .empty;
     errdefer out.deinit(gpa);
 
     var i: usize = 0;
-    while (nextIslandStart(html, i)) |start| {
+    while (nextIslandStart(html, i)) |tok| {
+        const start = tok.start;
         // Copy everything before this island tag — including any comment or
         // raw-text region the scan stepped over, which passes through unmodified.
         try out.appendSlice(gpa, html[i..start]);
@@ -398,13 +436,14 @@ fn rewrite(
         const self_closing = open_end > 0 and html[open_end - 1] == '/';
 
         // Capture the inner HTML (already rendered by SuperHTML) as slot content,
-        // matching the `</island>` that closes THIS tag (skipping nested islands).
+        // matching the `</NAME>` that closes THIS tag (skipping nested islands of
+        // the SAME spelling — see `matchingClose`'s per-spelling depth note).
         var consume_end: usize = open_end + 1;
         var slot_html: []const u8 = "";
         if (!self_closing) {
-            const close = matchingClose(html, open_end + 1) orelse return error.MalformedIsland;
+            const close = matchingClose(html, open_end + 1, tok.tag) orelse return error.MalformedIsland;
             slot_html = std.mem.trim(u8, html[open_end + 1 .. close], " \t\r\n");
-            consume_end = close + "</island>".len;
+            consume_end = close + tok.tag.close.len;
         }
 
         // Extract attributes.
@@ -524,8 +563,8 @@ fn rewrite(
 }
 
 /// True when `c` terminates an HTML tag name. This is the word-boundary check
-/// that stops `<islandfoo>` from matching `<island` (and `<scripts>` from
-/// matching `<script`).
+/// that stops `<islandfoo>` from matching `<island` (and `<z-islandish>` from
+/// matching `<z-island`, and `<scripts>` from matching `<script`).
 fn isTagNameBoundary(c: u8) bool {
     return switch (c) {
         ' ', '\t', '\n', '\r', '>', '/' => true,
@@ -535,11 +574,50 @@ fn isTagNameBoundary(c: u8) bool {
 
 /// Element names whose content the HTML tokenizer does NOT parse as markup:
 /// `script`/`style` are raw text and `textarea`/`title` are escapable raw text
-/// (HTML spec §13.2.5). An `<island` inside one of these is text, not a tag.
+/// (HTML spec §13.2.5). An `<island` or `<z-island` inside one of these is
+/// text, not a tag.
 const raw_text_tags = [_][]const u8{ "script", "style", "textarea", "title" };
 
-/// Index of the next REAL `<island` open tag at or after `from`, or null if
-/// there is none. Regions where an `<island` is not markup are stepped over:
+/// One of the two spellings the islands pass recognizes, with its open- and
+/// close-tag needles spelled out rather than composed at runtime. Building
+/// `"</" ++ name ++ ">"` on the fly would mean a scratch buffer whose size is
+/// a magic number and a `catch unreachable` on the format call; these are
+/// compile-time constants, so neither is needed.
+const IslandTag = struct {
+    /// Bare element name, for doc/diagnostic purposes.
+    name: []const u8,
+    /// `"<" ++ name` — the open-tag prefix, before the word-boundary check.
+    open: []const u8,
+    /// `"</" ++ name ++ ">"` — the exact close tag.
+    close: []const u8,
+};
+
+/// The two spellings the islands pass recognizes as an island open tag.
+/// `island` is the layout spelling (`.superhtml` mode is lax about unknown
+/// element names, so it validates unhyphenated). `z-island` is the
+/// content-authoring alias: SuperHTML's `.html`-mode validator — used on the
+/// `=html` fenced escape hatch that lets an island appear in `.smd` content —
+/// rejects a non-hyphenated custom element name per the HTML spec, so authors
+/// write the hyphenated form there. Neither `open` needle is a prefix of the
+/// other (`<island` vs `<z-island` differ at the byte right after `<`), so the
+/// scans in `nextIslandStart`/`matchingClose` never cross-match.
+const island_tags = [_]IslandTag{
+    .{ .name = "z-island", .open = "<z-island", .close = "</z-island>" },
+    .{ .name = "island", .open = "<island", .close = "</island>" },
+};
+
+/// One island open tag found by `nextIslandStart`: where it starts, and which
+/// of `island_tags` it matched. Every downstream step (the matching close-tag
+/// search, `consume_end`) must key off `tag`, not assume `<island>` — see
+/// `matchingClose`'s per-spelling nesting-depth note.
+const IslandStart = struct {
+    start: usize,
+    tag: IslandTag,
+};
+
+/// Index of the next REAL `<island` or `<z-island` open tag at or after
+/// `from`, or null if there is none. Regions where neither spelling is markup
+/// are stepped over:
 ///
 ///   * HTML comments — `<!-- <island … /> -->` must ship no JavaScript.
 ///   * raw-text elements (`raw_text_tags`) — `<script>"<island …>"</script>`.
@@ -554,7 +632,7 @@ const raw_text_tags = [_][]const u8{ "script", "style", "textarea", "title" };
 /// is deliberately not an error — this pass rewrites islands, it does not
 /// validate the document, and a malformed region must not fail a build over
 /// markup that contains no island at all.
-fn nextIslandStart(html: []const u8, from: usize) ?usize {
+fn nextIslandStart(html: []const u8, from: usize) ?IslandStart {
     var p = from;
     while (std.mem.indexOfScalarPos(u8, html, p, '<')) |lt| {
         if (std.mem.startsWith(u8, html[lt..], "<!--")) {
@@ -565,12 +643,23 @@ fn nextIslandStart(html: []const u8, from: usize) ?usize {
             p = end; // always > lt, so the scan makes progress
             continue;
         }
-        if (std.mem.startsWith(u8, html[lt..], "<island")) {
-            const word_end = lt + "<island".len;
-            if (word_end < html.len and isTagNameBoundary(html[word_end])) return lt;
-            p = word_end; // truncated `<island` at EOF, or a false match like `<islandish>`
-            continue;
+        // At most one of the two spellings can match at `lt`: they differ in
+        // the byte right after `<` ('z' vs 'i'), so there is no ambiguity to
+        // resolve — whichever prefix matches is authoritative, and the loop
+        // breaks on it rather than falling through to the other.
+        var matched_prefix = false;
+        for (island_tags) |tag| {
+            if (!std.mem.startsWith(u8, html[lt..], tag.open)) continue;
+            matched_prefix = true;
+            const word_end = lt + tag.open.len;
+            if (word_end < html.len and isTagNameBoundary(html[word_end])) return .{ .start = lt, .tag = tag };
+            // A truncated `<island`/`<z-island` at EOF, or a false match like
+            // `<islandish>`/`<z-islandish>`: resume just past the matched word,
+            // which is always > lt, so the scan makes progress.
+            p = word_end;
+            break;
         }
+        if (matched_prefix) continue;
         p = lt + 1;
     }
     return null;
@@ -650,25 +739,36 @@ fn tagEnd(html: []const u8, start: usize) ?usize {
     return null;
 }
 
-/// Index of the `</island>` that matches an `<island>` whose content begins at
-/// `from`, skipping balanced nested islands. Self-closing nested islands don't
-/// nest. Returns null if no matching close exists. ("</island>" never matches the
-/// "<island" open-tag needle, since the char after '<' is '/', not 'i'.)
-fn matchingClose(html: []const u8, from: usize) ?usize {
+/// Index of the `</NAME>` that matches an `<NAME>` whose content begins at
+/// `from`, where `NAME` is whichever spelling `nextIslandStart` matched
+/// (`"island"` or `"z-island"`) — skipping balanced NESTED occurrences of THAT
+/// SAME spelling. Self-closing nested islands don't nest.
+///
+/// Non-negotiable: depth is counted per-spelling. A `<z-island>` nested inside
+/// an `<island>`'s slot content (or vice versa) does not affect this scan at
+/// all — only `<NAME` opens count toward `depth` here, so a `</island>` never
+/// closes a `<z-island>` and a `</z-island>` never closes an `<island>`. The
+/// two spellings never accidentally interleave: `rewrite`'s recursive call on
+/// slot content re-scans with `nextIslandStart`, which matches the OTHER
+/// spelling's nested island on its own next call, independent of this depth
+/// count.
+///
+/// Returns null if no matching close exists. ("</NAME>" never matches the
+/// "<NAME" open-tag needle, since the char after '<' is '/', not the name's
+/// first letter.)
+fn matchingClose(html: []const u8, from: usize, tag: IslandTag) ?usize {
     var depth: usize = 0;
     var p = from;
     while (p < html.len) {
-        const close = std.mem.indexOfPos(u8, html, p, "</island>") orelse return null;
-        // Find the first *real* nested `<island ...>` opening before this close.
+        const close = std.mem.indexOfPos(u8, html, p, tag.close) orelse return null;
+        // Find the first *real* nested `<NAME ...>` opening (same spelling
+        // only) before this close.
         var nested: ?usize = null;
         var scan = p;
-        while (std.mem.indexOfPos(u8, html, scan, "<island")) |o| {
+        while (std.mem.indexOfPos(u8, html, scan, tag.open)) |o| {
             if (o >= close) break;
-            const we = o + "<island".len;
-            const is_tag = we < html.len and switch (html[we]) {
-                ' ', '\t', '\n', '\r', '>', '/' => true,
-                else => false,
-            };
+            const we = o + tag.open.len;
+            const is_tag = we < html.len and isTagNameBoundary(html[we]);
             if (is_tag) {
                 nested = o;
                 break;
@@ -683,7 +783,7 @@ fn matchingClose(html: []const u8, from: usize) ?usize {
             return close;
         } else {
             depth -= 1;
-            p = close + "</island>".len;
+            p = close + tag.close.len;
         }
     }
     return null;
@@ -2044,4 +2144,193 @@ test "on_render_error=.placeholder emits a visible placeholder, records the erro
     // The error is also reported to the caller (for the dev warning log).
     try std.testing.expectEqual(@as(usize, 1), reports.items.len);
     try std.testing.expectEqualStrings("boom: undefined is not a function", reports.items[0].message);
+}
+
+// --- <z-island> content-authoring alias (issue #30) ---
+//
+// `<z-island>` exists purely so an island can appear inside an `=html` fenced
+// block in `.smd` content, where SuperHTML's `.html`-mode HTML validator
+// rejects the non-hyphenated `<island>` (invalid custom element name per the
+// HTML spec). See docs/islands.md "Islands in content" for the authoring
+// side; these tests pin the tokenizer's handling of the alias.
+
+test "a <z-island> is rewritten exactly like <island>: SSR markup + props script" {
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = RenderArena.from(&arena_state);
+
+    const input =
+        "<p>before</p><z-island src=\"components/Counter.island.tsx\" client:load " ++
+        ":props='{ .start = 2, .label = \"hi\" }'></z-island><p>after</p>";
+
+    var stub: StubRenderer = .{};
+    const result = try process(gpa, arena, input, "/", &stub, .{});
+    defer gpa.free(result.html);
+
+    try std.testing.expectEqual(@as(usize, 1), result.instances.len);
+    try std.testing.expectEqualStrings("z-island-0", result.instances[0].id);
+    // SSR'd placeholder wrapper present (data-z-src carries the ORIGINAL src
+    // attribute value, unrelated to the <z-island> tag-name spelling).
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "<div data-z-island id=\"z-island-0\" data-z-src=\"components/Counter.island.tsx\" data-z-client=\"load\" data-z-module=\"/islands/Counter.island.js\">") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "<stub data-src=\"Counter.island.tsx\">{\"start\":2,\"label\":\"hi\"}</stub>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "<script type=\"application/json\" data-z-props=\"z-island-0\">{\"start\":2,\"label\":\"hi\"}</script>") != null);
+    // No literal <z-island tag survives in the output.
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "<z-island") == null);
+    try std.testing.expect(std.mem.startsWith(u8, result.html, "<p>before</p>"));
+    try std.testing.expect(std.mem.endsWith(u8, result.html, "<p>after</p>"));
+}
+
+test "a self-closing <z-island /> is rewritten correctly" {
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = RenderArena.from(&arena_state);
+
+    const input =
+        "<header></header>" ++
+        "<z-island src=\"components/Counter.zig\" client:load :props='{ .start = 3, .label = \"x\" }' />" ++
+        "<footer></footer>";
+
+    var stub: StubRenderer = .{};
+    const result = try process(gpa, arena, input, "/", &stub, .{});
+    defer gpa.free(result.html);
+
+    try std.testing.expectEqual(@as(usize, 1), result.instances.len);
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "<stub data-src=\"Counter.zig\">{\"start\":3,\"label\":\"x\"}</stub>") != null);
+    try std.testing.expect(std.mem.startsWith(u8, result.html, "<header></header>"));
+    try std.testing.expect(std.mem.endsWith(u8, result.html, "<footer></footer>"));
+}
+
+test "<z-islandish> is not matched (word-boundary guard covers the alias too)" {
+    const gpa = std.testing.allocator;
+    // `forTest`, not a real arena: this input matches no island, so nothing
+    // reaches `props.resolveToJson`'s leaky ziggy parse AND `rewrite`'s
+    // `ssr_pathname` borrows on the no-prefix path rather than allocating.
+    // The whole pass is therefore allocation-free here, and the testing
+    // allocator's leak detection stays ON — which is the point (NO_SLOP.md
+    // §2.2a: an arena here would silently disable it).
+    const arena = RenderArena.forTest(gpa);
+
+    const input = "<z-islandish>not an island</z-islandish>";
+    var stub: StubRenderer = .{};
+    const result = try process(gpa, arena, input, "/", &stub, .{});
+    defer gpa.free(result.html);
+
+    try std.testing.expectEqual(@as(usize, 0), result.instances.len);
+    try std.testing.expectEqualStrings(input, result.html);
+}
+
+test "a <z-island> inside an HTML comment is passed through verbatim, not SSR'd" {
+    const gpa = std.testing.allocator;
+    // `forTest` for the same reason as the `<z-islandish>` test above: the
+    // commented-out island is never SSR'd, so the pass allocates nothing and
+    // leak detection stays on.
+    const arena = RenderArena.forTest(gpa);
+
+    const input =
+        "<main><!-- <z-island src=\"components/Old.island.tsx\" client:load></z-island> -->" ++
+        "<p>live</p></main>";
+
+    var stub: StubRenderer = .{};
+    const result = try process(gpa, arena, input, "/", &stub, .{});
+    defer gpa.free(result.html);
+
+    try std.testing.expectEqual(@as(usize, 0), result.instances.len);
+    try std.testing.expectEqualStrings(input, result.html);
+    try std.testing.expectEqualStrings("", stub.last_slots_json);
+}
+
+test "nested per-spelling depth: <z-island> nested inside <island>'s slot is rewritten correctly" {
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = RenderArena.from(&arena_state);
+
+    // An <island> Card wraps a <z-island> Counter in its default slot. The two
+    // spellings' nesting depth is counted independently: the outer </island>
+    // close must not be confused by the inner <z-island>/</z-island> pair, and
+    // vice versa were the nesting reversed (covered by the next test).
+    const input =
+        "<main><island src=\"components/Card.zig\" client:load :props='{ .title = \"Outer\" }'>" ++
+        "<z-island src=\"components/Counter.zig\" client:load :props='{ .start = 7, .label = \"n\" }'></z-island>" ++
+        "</island></main>";
+
+    var stub: StubRenderer = .{};
+    const result = try process(gpa, arena, input, "/", &stub, .{});
+    defer gpa.free(result.html);
+
+    try std.testing.expectEqual(@as(usize, 2), result.instances.len);
+    // `instances` fills in RECURSION order, not tag-encounter order: the id
+    // counter assigns the outer "z-island-0" before recursing into its slot,
+    // but the recursive call's `instances.append` for the nested island runs
+    // before the outer's own append — so instances[0] is the NESTED island
+    // (Counter, id z-island-1) and instances[1] is the outer (Card, id
+    // z-island-0). This ordering is pre-existing pass.zig behavior (see the
+    // same-spelling "nested island in slot content" test above, which doesn't
+    // assert index order for exactly this reason) — asserted explicitly here
+    // because it is easy to get backwards when reasoning about per-spelling depth.
+    try std.testing.expectEqualStrings("components/Counter.zig", result.instances[0].src);
+    try std.testing.expectEqualStrings("z-island-1", result.instances[0].id);
+    try std.testing.expectEqualStrings("components/Card.zig", result.instances[1].src);
+    try std.testing.expectEqualStrings("z-island-0", result.instances[1].id);
+    // Outer's slots_json (last render call) carries the nested island's id.
+    try std.testing.expect(std.mem.indexOf(u8, stub.last_slots_json, "z-island-1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "id=\"z-island-0\" data-z-src=\"components/Card.zig\"") != null);
+    try std.testing.expect(std.mem.startsWith(u8, result.html, "<main>"));
+    try std.testing.expect(std.mem.endsWith(u8, result.html, "</main>"));
+}
+
+test "nested per-spelling depth: <island> nested inside <z-island>'s slot is rewritten correctly" {
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = RenderArena.from(&arena_state);
+
+    // The reverse nesting from the test above: outer is the content-authoring
+    // spelling, nested is the layout spelling. Proves the depth counting is
+    // symmetric, not accidentally biased toward one spelling.
+    const input =
+        "<main><z-island src=\"components/Card.zig\" client:load :props='{ .title = \"Outer\" }'>" ++
+        "<island src=\"components/Counter.zig\" client:load :props='{ .start = 7, .label = \"n\" }'></island>" ++
+        "</z-island></main>";
+
+    var stub: StubRenderer = .{};
+    const result = try process(gpa, arena, input, "/", &stub, .{});
+    defer gpa.free(result.html);
+
+    try std.testing.expectEqual(@as(usize, 2), result.instances.len);
+    // Same recursion-order note as the previous test: instances[0] is the
+    // nested island (Counter, id z-island-1), instances[1] the outer (Card,
+    // id z-island-0).
+    try std.testing.expectEqualStrings("components/Counter.zig", result.instances[0].src);
+    try std.testing.expectEqualStrings("z-island-1", result.instances[0].id);
+    try std.testing.expectEqualStrings("components/Card.zig", result.instances[1].src);
+    try std.testing.expectEqualStrings("z-island-0", result.instances[1].id);
+    try std.testing.expect(std.mem.indexOf(u8, stub.last_slots_json, "z-island-1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "id=\"z-island-0\" data-z-src=\"components/Card.zig\"") != null);
+    try std.testing.expect(std.mem.startsWith(u8, result.html, "<main>"));
+    try std.testing.expect(std.mem.endsWith(u8, result.html, "</main>"));
+}
+
+test "a <z-island> nested in a same-spelling <z-island>'s slot still counts depth correctly" {
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = RenderArena.from(&arena_state);
+
+    const input =
+        "<z-island src=\"components/Card.zig\" client:load :props='{ .title = \"O\" }'>" ++
+        "<z-island src=\"components/Counter.zig\" client:load :props='{ .start = 1, .label = \"a\" }'></z-island>" ++
+        "</z-island>" ++
+        "<z-island src=\"components/Counter.zig\" client:load :props='{ .start = 2, .label = \"b\" }'></z-island>";
+
+    var stub: StubRenderer = .{};
+    const result = try process(gpa, arena, input, "/", &stub, .{});
+    defer gpa.free(result.html);
+
+    // Outer Card = 0, nested Counter = 1, the following top-level Counter = 2.
+    try std.testing.expectEqual(@as(usize, 3), result.instances.len);
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "id=\"z-island-2\" data-z-src=\"components/Counter.zig\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "<stub data-src=\"Counter.zig\">{\"start\":2,\"label\":\"b\"}</stub>") != null);
 }

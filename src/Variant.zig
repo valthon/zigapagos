@@ -121,11 +121,12 @@ pub const Section = struct {
         variant: *const Variant,
         index: *Page,
         drafts: bool,
+        auto_heading_ids: bool,
     ) void {
         const zone = tracy.trace(@src());
         defer zone.end();
 
-        index.parse(io, gpa, worker.cmark, null, variant, drafts);
+        index.parse(io, gpa, worker.cmark, null, variant, drafts, auto_heading_ids);
         s.active = index._parse.active;
     }
 

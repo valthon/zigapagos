@@ -13,6 +13,7 @@ const supermd = @import("supermd");
 const utils = @import("utils.zig");
 const tracy = @import("tracy");
 const root = @import("../root.zig");
+const heading_slugs = @import("../heading_slugs.zig");
 const fatal = @import("../fatal.zig");
 const render = @import("../render.zig");
 const Signature = @import("doctypes.zig").Signature;
@@ -294,6 +295,7 @@ pub fn parse(
     progress: ?std.Progress.Node,
     variant: *const @import("../Variant.zig"),
     drafts: bool,
+    auto_heading_ids: bool,
 ) void {
     const zone = tracy.trace(@src());
     defer zone.end();
@@ -399,7 +401,8 @@ pub fn parse(
     // the SuperMD data correctly, so te do that unconditionally in order to
     // report more errors at once.
 
-    const ast = try supermd.Ast.init(gpa, full_src[fm.offset..], cmark);
+    var ast = try supermd.Ast.init(gpa, full_src[fm.offset..], cmark);
+    if (auto_heading_ids) try heading_slugs.apply(gpa, &ast);
 
     p._parse = .{
         .active = !p.draft or drafts,
@@ -608,6 +611,10 @@ pub const Fields = struct {
         \\
         \\Every entry in the list is an output location where the 
         \\rendered page will be copied to.
+        \\
+        \\Entries are joined to the page's output directory; start an
+        \\entry with `/` to place it relative to the site root (e.g.
+        \\`"/404.html"` to override the site-wide 404 page).
     ;
     pub const alternatives =
         \\Alternative versions of the page, 

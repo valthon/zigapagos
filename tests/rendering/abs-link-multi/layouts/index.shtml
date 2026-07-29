@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title :text="$site.title"></title>
+
+    <!-- PAGE asset via absLink: must be absolute AND carry the locale's
+         output prefix. This is the one Copilot caught on #69: the flag
+         `printLinkPrefix` takes is only honoured across variants, and a page
+         asset is always in the page's own variant, so this used to come back
+         as a bare `/page-og.png`. -->
+    <link rel="canonical" href="$page.asset('page-og.png').absLink()">
+
+    <!-- SITE asset via absLink: must keep a separator between
+         `assets_prefix_path` and the asset name. This used to render as
+         `https://example.com/staticsite.css`. -->
+    <meta property="og:image" content="$site.asset('site.css').absLink()">
+
+    <!-- CROSS-VARIANT page asset via absLink, into a locale that sets
+         `host_url_override`. `printLinkPrefix` already prints the host across
+         variants, so absLink must NOT print it again — this pins exactly one
+         host. Regressed once as
+         `https://de.example.comhttps://de.example.com/de-DE/page-og.png`. -->
+    <meta name="cross-variant-abs" content="$page.locale('de-DE').asset('page-og.png').absLink()">
+
+    <!-- Control for the cell above: the same expression through plain link().
+         It is already absolute cross-variant (different host), and no absLink
+         change may alter it. -->
+    <meta name="cross-variant-rel" content="$page.locale('de-DE').asset('page-og.png').link()">
+
+    <!-- SAME-HOST cross-variant: fr-FR carries de-DE's override string byte
+         for byte but as a distinct slice, so the pointer compare in
+         `printLinkPrefix` says "hosts differ" for two identical hosts. Read
+         this row from the de-DE page in particular — there it is genuinely
+         "cross-variant, same host text", and absLink must still emit exactly
+         one host. -->
+    <meta name="same-host-cross-variant-abs" content="$page.locale('fr-FR').asset('page-og.png').absLink()">
+    <meta name="same-host-cross-variant-rel" content="$page.locale('fr-FR').asset('page-og.png').link()">
+
+    <!-- Control: plain link() stays root-relative and locale-prefixed, so a
+         regression that made everything absolute would fail here too. -->
+    <link rel="icon" href="$page.asset('logo.png').link()">
+  </head>
+  <body>
+    <h1 :text="$page.title"></h1>
+    <div :html="$page.content()"></div>
+  </body>
+</html>
