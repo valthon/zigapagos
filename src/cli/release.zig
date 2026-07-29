@@ -5,6 +5,7 @@ const tracy = @import("tracy");
 const fatal = @import("../fatal.zig");
 const root = @import("../root.zig");
 const worker = @import("../worker.zig");
+const diag = @import("../diag.zig");
 const Allocator = std.mem.Allocator;
 const BuildAsset = root.BuildAsset;
 
@@ -19,6 +20,11 @@ pub fn release(
     };
 
     const cmd: Command = try .parse(gpa, args);
+    // Authoritative assignment: main.zig's scanArgv already set diag.format
+    // as a stderr-suppression optimisation (before std.Progress/the banners),
+    // but Command.parse -- which validates the value and reports a proper
+    // usage error on garbage -- is what this build actually honors.
+    diag.format = cmd.format;
     const cfg, const base_dir_path = root.Config.load(io, gpa);
 
     // Incremental content re-render. `zigapagos dev` sets
@@ -164,6 +170,10 @@ pub const Command = struct {
     /// for why it is not mode-dependent, and why `dev` takes it from the
     /// project's `build.zig` rather than its own argv.
     allow_missing_pages: bool = false,
+    /// `--format=text|json` (issue #46 / DX-27): text (default) is the
+    /// historical multi-line prose; json emits one NDJSON diagnostic per line
+    /// on stderr with a stable `code`. See `src/diag.zig`.
+    format: diag.Format = .text,
 
     pub fn deinit(co: *const Command, gpa: Allocator) void {
         gpa.free(co.spas);
@@ -185,6 +195,7 @@ pub const Command = struct {
         var spas: std.ArrayListUnmanaged(root.SpaSpec) = .empty;
         var spa_not_found: ?[]const u8 = null;
         var allow_missing_pages = false;
+        var format: diag.Format = .text;
         // src -> spa-chunks.json path. Collected separately because `--spa-chunks`
         // args precede the `--spa=` args, so the specs don't exist yet; attached
         // to the specs after the arg loop.
@@ -310,6 +321,12 @@ pub const Command = struct {
                 drafts = true;
             } else if (eql(u8, arg, "--allow-missing-pages")) {
                 allow_missing_pages = true;
+            } else if (startsWith(u8, arg, "--format=")) {
+                const v = arg["--format=".len..];
+                format = diag.parseFormat(v) orelse fatal.usageError(
+                    "error: invalid --format value '{s}' (want text|json)\n",
+                    .{v},
+                );
             } else {
                 fatal.msg("error: unexpected cli argument '{s}'\n", .{arg});
             }
@@ -336,6 +353,7 @@ pub const Command = struct {
             .spas = try spas.toOwnedSlice(gpa),
             .spa_not_found = spa_not_found,
             .allow_missing_pages = allow_missing_pages,
+            .format = format,
         };
     }
 };
@@ -367,6 +385,9 @@ const help_message =
     \\                        to a page that doesn't exist YET (emits a real,
     \\                        would-be href + a build-log warning instead of
     \\                        failing the build)
+    \\  --format=FORMAT       text (default) | json -- emit diagnostics as
+    \\                        NDJSON on stderr with stable error codes; see
+    \\                        'zigapagos explain-code'
     // \\  --build-assets FILE    Path to a file containing a list of build assets
     \\  --help, -h            Show this help menu
     \\
@@ -542,4 +563,15 @@ test "parse defaults spas to empty" {
     var cmd = try Command.parse(gpa, &.{});
     defer cmd.deinit(gpa);
     try std.testing.expectEqual(@as(usize, 0), cmd.spas.len);
+}
+
+test "parse recognizes --format=json (and defaults to text)" {
+    const gpa = std.testing.allocator;
+    var cmd = try Command.parse(gpa, &.{"--format=json"});
+    defer cmd.deinit(gpa);
+    try std.testing.expectEqual(diag.Format.json, cmd.format);
+
+    var cmd_default = try Command.parse(gpa, &.{});
+    defer cmd_default.deinit(gpa);
+    try std.testing.expectEqual(diag.Format.text, cmd_default.format);
 }

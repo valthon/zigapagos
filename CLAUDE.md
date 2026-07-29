@@ -46,12 +46,12 @@ bash tests/serve/spa.sh                     # one shell e2e script
 ```
 
 **`zig build test` does NOT run the unit tests.** It builds the three-root snapshot fixtures and
-diffs them. The Zig unit tests live in fifteen separate steps, and CI runs them explicitly:
+diffs them. The Zig unit tests live in sixteen separate steps, and CI runs them explicitly:
 
 ```sh
 zig build test-islands test-props test-migrate test-sidecar test-init \
   test-release test-spa test-assets test-serve test-e2e test-dev \
-  test-doctor test-slugs test-validate test-explain
+  test-doctor test-slugs test-validate test-explain test-diag
 ```
 
 **Running a single test.** Each `test-*` step is already a *filtered slice* of one test binary.
@@ -66,7 +66,7 @@ there. A runtime `return error.SkipZigTest` does **not** help — Zig analyses t
 body regardless of runtime control flow — so prune the branch at comptime:
 `if (comptime !builtin.single_threaded) …`.
 
-**Shell e2e.** CI runs every `tests/*/*.sh` (currently 34). They are hermetic; `tests/serve/*`
+**Shell e2e.** CI runs every `tests/*/*.sh` (currently 36). They are hermetic; `tests/serve/*`
 boot real servers via a stub-zigbase binary and need `bun` on `PATH`. A new `tests/<area>/` is
 picked up by the glob automatically. `tests/branding.sh`, `tests/branding.test.sh` and
 `tests/confidentiality.sh` sit at `tests/` top level on purpose — they are cheap gates CI runs

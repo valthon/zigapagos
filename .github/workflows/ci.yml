@@ -77,7 +77,7 @@ jobs:
           bash scripts/check-allocator-contracts.sh
 
   # The compiler-facing surface: formatting, the snapshot diff, the
-  # single-threaded compile guard, all thirteen Zig unit-test steps, the Bun
+  # single-threaded compile guard, all sixteen Zig unit-test steps, the Bun
   # suite, and the API contract-drift gate. This is the only matrixed job —
   # everything below it is Linux-only, exactly as it was in the monolith.
   # Compile the generator ONCE per platform, and write the cache every other
@@ -355,7 +355,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       # `zig build test` runs ONLY the three-root snapshot diff — see CLAUDE.md.
-      # The unit tests are the thirteen `test-*` steps further down.
+      # The unit tests are the sixteen `test-*` steps further down.
       - name: Snapshot tests (zig build test)
         run: zig build test
 
@@ -380,7 +380,7 @@ jobs:
           zig build \
             test-islands test-props test-migrate test-sidecar test-init \
             test-release test-spa test-assets test-serve test-e2e test-dev \
-            test-doctor test-slugs test-validate test-explain
+            test-doctor test-slugs test-validate test-explain test-diag
 
       - name: Runtime TypeScript tests (Bun)
         working-directory: runtime

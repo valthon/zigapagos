@@ -648,3 +648,14 @@ Flag these during migration; use the workaround:
 6. **Build wiring**: register each island in `build.zig` (§10). Run `bun install`
    then `zig build`; fix SSR/TS diagnostics until clean.
 7. **Verify**: run the site and confirm each island SSRs correctly and hydrates.
+
+**Machine-readable diagnostics for step 6's fix loop (issue #46).** An agent
+driving this migration unattended can run the underlying release build with
+`--format=json` (e.g. `zigapagos release --format=json -o public`) to get one
+NDJSON object per build error on stderr instead of prose — a stable `code`
+field to switch on, plus `file`/`line`/`col` when known. Run `zigapagos
+explain-code <CODE>` for the long-form fix for any code that shows up
+(`zigapagos explain-code` with no argument lists them all). See
+[`docs/diagnostics.md`](../diagnostics.md)
+for the full schema and stability contract, including what stays
+prose (page-render errors, most `Config.load` fatals) as of this writing.

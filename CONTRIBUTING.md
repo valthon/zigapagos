@@ -61,12 +61,13 @@ cd runtime && bun install --frozen-lockfile     # ONCE per fresh clone/worktree
 ```
 
 **Trap 1: `zig build test` does not run the unit tests.** It builds the
-three-root snapshot fixtures and diffs them. The Zig unit tests live in **eleven
+three-root snapshot fixtures and diffs them. The Zig unit tests live in **sixteen
 separate steps**, and this is the command you actually want:
 
 ```sh
 zig build test-islands test-props test-migrate test-sidecar test-init \
-  test-release test-spa test-assets test-serve test-e2e test-dev
+  test-release test-spa test-assets test-serve test-e2e test-dev \
+  test-doctor test-slugs test-validate test-explain test-diag
 ```
 
 **Trap 2: a fresh clone or git worktree needs `bun install` in `runtime/` before
@@ -76,7 +77,7 @@ anything Bun-dependent.** Without it `bun test` reports every file as failing
 breakage and are neither.
 
 ```sh
-cd runtime && bun test              # TypeScript suite (616 tests / 54 files)
+cd runtime && bun test              # TypeScript suite (685 tests / 57 files)
 cd runtime && bun test src/router   # one file — the filter is a PATH substring
 ```
 
@@ -124,7 +125,8 @@ git ls-files -z '*.zig' | xargs -0 -r zig fmt --check
 zig build test                                    # snapshot diff
 zig build check -Dsingle-threaded
 zig build test-islands test-props test-migrate test-sidecar test-init \
-  test-release test-spa test-assets test-serve test-e2e test-dev
+  test-release test-spa test-assets test-serve test-e2e test-dev \
+  test-doctor test-slugs test-validate test-explain test-diag
 zig build api-check                               # if contract/ or apigen.ts changed
 
 # 4. TypeScript + shell e2e

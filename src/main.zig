@@ -5,6 +5,7 @@ const tracy = @import("tracy");
 const fatal = @import("fatal.zig");
 const worker = @import("worker.zig");
 const root = @import("root.zig");
+const diag = @import("diag.zig");
 const Allocator = std.mem.Allocator;
 
 const log = std.log.scoped(.main);
@@ -24,6 +25,7 @@ const Command = enum {
     debug,
     e2e,
     languages,
+    @"explain-code",
     help,
     @"-h",
     @"--help",
@@ -50,69 +52,108 @@ pub fn main(init: std.process.Init) u8 {
         error.OutOfMemory, error.Unexpected => fatal.oom(),
     };
 
-    root.progress = std.Progress.start(io, .{ .draw_buffer = &root.progress_buf });
+    // Bound before std.Progress.start (moved up from below the banners, where
+    // it originally sat) because scanArgv below needs it, and scanArgv must
+    // run before Progress and the Debug/tracy/tsan banners -- all three write
+    // to stderr and would interleave with the NDJSON stream otherwise. The
+    // errdefer above still covers this call (error.OutOfMemory,
+    // error.Unexpected), unchanged by the move.
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
+
+    // Diagnostic format is decided before std.Progress and before the
+    // Debug/tracy/tsan banners below, because all three write to stderr and
+    // would interleave with the NDJSON stream. Argv is scanned directly
+    // rather than waiting for the command's own parser, which runs far too
+    // late (release.zig re-affirms the assignment and owns the error message
+    // for a bad --format value; this pre-scan is purely a stderr-suppression
+    // optimisation).
+    //
+    // Gated to `release`, the ONLY command that accepts `--format` (see
+    // docs/diagnostics.md's scope section). An ungated pre-scan reads argv
+    // that belongs to some OTHER command's parser: `zigapagos dev
+    // --format=json` would flip the global format and then answer with an
+    // NDJSON `ZP_FATAL` complaining about a flag `dev` does not have, and
+    // `zigapagos explain-code --format=json` would do the same. Neither command
+    // documents the flag, so neither may switch the stream. src/root.zig's
+    // `.memory`-mode comment (the live server never emits JSON) rests on
+    // exactly this gate.
+    if (args.len >= 2 and std.mem.eql(u8, args[1], "release")) {
+        if (diag.scanArgv(args[2..])) |f| diag.format = f;
+    }
+
+    root.progress = std.Progress.start(io, .{
+        .draw_buffer = &root.progress_buf,
+        // In JSON mode stderr carries the NDJSON diagnostic stream; a
+        // progress bar interleaved into it would be unparseable noise (and
+        // on a non-tty stderr, std.Progress already draws nothing -- this
+        // only matters when stderr is a tty, e.g. an interactive agent or a
+        // PTY-allocating test harness).
+        .disable_printing = diag.format == .json,
+    });
     defer root.progress.end();
 
-    if (builtin.mode == .Debug) {
-        std.debug.print(
-            \\*-----------------------------------------------*
-            \\|  WARNING: THIS IS A DEBUG BUILD OF ZIGAPAGOS  |
-            \\|-----------------------------------------------|
-            \\| Debug builds enable expensive sanity checks   |
-            \\| that reduce performance.                      |
-            \\|                                               |
-            \\| To create a release build, run:               |
-            \\|                                               |
-            \\|           zig build --release=fast            |
-            \\|                                               |
-            \\| If you're investigating a bug in Zigapagos,   |
-            \\| then a debug build might turn confusing       |
-            \\| behavior into a crash.                        |
-            \\|                                               |
-            \\| To disable all forms of concurrency, you can  |
-            \\| add the following flag to your build command: |
-            \\|                                               |
-            \\|              -Dsingle-threaded                |
-            \\|                                               |
-            \\*-----------------------------------------------*
-            \\
-            \\
-        , .{});
-    }
-    if (tracy.enable) {
-        std.debug.print(
-            \\*-----------------------------------------------*
-            \\|            WARNING: TRACING ENABLED           |
-            \\|-----------------------------------------------|
-            \\| Tracing introduces a significant performance  |
-            \\| overhead.                                     |
-            \\|                                               |
-            \\| If you're not interested in tracing Zigapagos,|
-            \\| remove `-Dtracy` when building again.         |
-            \\*-----------------------------------------------*
-            \\
-            \\
-        , .{});
-    }
+    // The Debug/tracy/tsan warning banners are text-mode noise: in JSON mode
+    // they would be the first (unparseable) lines on the NDJSON stream.
+    if (diag.format == .text) {
+        if (builtin.mode == .Debug) {
+            std.debug.print(
+                \\*-----------------------------------------------*
+                \\|  WARNING: THIS IS A DEBUG BUILD OF ZIGAPAGOS  |
+                \\|-----------------------------------------------|
+                \\| Debug builds enable expensive sanity checks   |
+                \\| that reduce performance.                      |
+                \\|                                               |
+                \\| To create a release build, run:               |
+                \\|                                               |
+                \\|           zig build --release=fast            |
+                \\|                                               |
+                \\| If you're investigating a bug in Zigapagos,   |
+                \\| then a debug build might turn confusing       |
+                \\| behavior into a crash.                        |
+                \\|                                               |
+                \\| To disable all forms of concurrency, you can  |
+                \\| add the following flag to your build command: |
+                \\|                                               |
+                \\|              -Dsingle-threaded                |
+                \\|                                               |
+                \\*-----------------------------------------------*
+                \\
+                \\
+            , .{});
+        }
+        if (tracy.enable) {
+            std.debug.print(
+                \\*-----------------------------------------------*
+                \\|            WARNING: TRACING ENABLED           |
+                \\|-----------------------------------------------|
+                \\| Tracing introduces a significant performance  |
+                \\| overhead.                                     |
+                \\|                                               |
+                \\| If you're not interested in tracing Zigapagos,|
+                \\| remove `-Dtracy` when building again.         |
+                \\*-----------------------------------------------*
+                \\
+                \\
+            , .{});
+        }
 
-    if (options.tsan) {
-        std.debug.print(
-            \\*-----------------------------------------------*
-            \\|             WARNING: TSAN ENABLED             |
-            \\|-----------------------------------------------|
-            \\| Thread sanitizer introduces a significant     |
-            \\| performance overhead.                         |
-            \\|                                               |
-            \\| If you're not interested in debugging         |
-            \\| concurrency bugs in Zigapagos, remove         |
-            \\| `-Dtsan` when building again.                 |
-            \\*-----------------------------------------------*
-            \\
-            \\
-        , .{});
+        if (options.tsan) {
+            std.debug.print(
+                \\*-----------------------------------------------*
+                \\|             WARNING: TSAN ENABLED             |
+                \\|-----------------------------------------------|
+                \\| Thread sanitizer introduces a significant     |
+                \\| performance overhead.                         |
+                \\|                                               |
+                \\| If you're not interested in debugging         |
+                \\| concurrency bugs in Zigapagos, remove         |
+                \\| `-Dtsan` when building again.                 |
+                \\*-----------------------------------------------*
+                \\
+                \\
+            , .{});
+        }
     }
-
-    const args = try init.minimal.args.toSlice(init.arena.allocator());
 
     const cmd = blk: {
         if (args.len >= 2) {
@@ -134,6 +175,7 @@ pub fn main(init: std.process.Init) u8 {
         .debug => @import("cli/debug.zig").debug(io, gpa, args[2..]),
         .e2e => @import("cli/e2e.zig").e2e(io, gpa, args[2..], init.environ_map) catch fatal.oom(),
         .languages => @import("cli/languages.zig").languages(args[2..]),
+        .@"explain-code" => @import("cli/explain_code.zig").explainCode(args[2..]),
         .dev, .develop => @import("cli/dev.zig").dev(io, gpa, args[2..], init.environ_map) catch fatal.oom(),
         .help, .@"-h", .@"--help" => fatal.help(),
         .version, .@"-v", .@"--version" => printVersion(),
