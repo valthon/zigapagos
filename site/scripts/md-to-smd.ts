@@ -162,6 +162,69 @@ function addHeadingId(line: string, seen: Map<string, number>): string {
   return `${hashes} []($heading.id(${JSON.stringify(slug)})) ${text}`;
 }
 
+interface FenceDelimiter {
+  /** Leading whitespace, preserved verbatim when a language is remapped. */
+  indent: string;
+  /** The delimiter character: a backtick or a tilde. */
+  char: string;
+  /** How many of it — CommonMark's "at least three", and a closing fence must
+   * be at least as long as the opening one. */
+  len: number;
+  /** Everything after the delimiter run, trimmed. Non-empty means this line
+   * can only be an OPENING fence. */
+  info: string;
+}
+
+/**
+ * Recognise a fenced-code-block delimiter line, per CommonMark rather than the
+ * common-case subset.
+ *
+ * Both relaxations here are load-bearing, and getting either wrong desyncs the
+ * fence tracker for the whole rest of the file — silently, since an inverted
+ * tracker produces valid-looking output with heading ids and link rewrites
+ * simply missing (issue #76: `docs/islands.md`'s nested-fence example turned
+ * off heading ids for the file's last two thirds, which then failed the site
+ * build with `unknown ref` on two links whose targets had quietly lost their
+ * `$heading.id`).
+ *
+ *   - The run is `{3,}`, not exactly three. A doc that shows fenced Markdown
+ *     nests a ``` block inside a ```` one, and the inner closer must not be
+ *     mistaken for an opener.
+ *   - The info string is arbitrary text, not `[A-Za-z0-9_-]*`. SuperMD's own
+ *     raw-HTML escape hatch is the fence info `=html`, and fences elsewhere
+ *     carry attributes after the language.
+ *
+ * CommonMark's one restriction on a backtick fence's info string — it may not
+ * contain a backtick — is what keeps a line of inline code from being read as
+ * a fence, so it is enforced too.
+ */
+function fenceDelimiter(line: string): FenceDelimiter | null {
+  const m = /^(\s*)(`{3,}|~{3,})(.*)$/.exec(line);
+  if (!m) return null;
+  const [, indent, run, rest] = m;
+  const char = run[0];
+  if (char === "`" && rest.includes("`")) return null;
+  return { indent, char, len: run.length, info: rest.trim() };
+}
+
+/**
+ * An opening fence line with its language substituted, or the line verbatim
+ * when nothing maps. Only the FIRST token of the info string is a language;
+ * anything after it is attributes and is preserved as authored.
+ */
+function remapFenceLang(
+  line: string,
+  fence: FenceDelimiter,
+  remap: Readonly<Record<string, string>>,
+): string {
+  if (fence.info === "") return line;
+  const [lang, ...attrs] = fence.info.split(/\s+/);
+  const mapped = remap[lang];
+  if (!mapped) return line;
+  const tail = attrs.length > 0 ? ` ${attrs.join(" ")}` : "";
+  return `${fence.indent}${fence.char.repeat(fence.len)}${mapped}${tail}`;
+}
+
 export interface TransformOptions {
   /** Repo-relative path of the canonical file; relative link targets resolve
    * against its directory. */
@@ -195,6 +258,12 @@ export interface TransformOptions {
  * delimiter. The fence delimiter match tolerates leading whitespace — an
  * indented fence under a list item is still recognised.
  *
+ * The tracker holds the OPEN fence's delimiter rather than a boolean, because
+ * only a run of the same character that is at least as long and carries no
+ * info string closes it (see `fenceDelimiter`). A boolean cannot express that,
+ * and toggling on every delimiter-shaped line inverts the tracker for the rest
+ * of the file at the first nested fence.
+ *
  * `sawContent` tracks whether anything other than a blank line has been
  * emitted yet; it gates the title strip to the body's FIRST top-level
  * heading and nothing after it, and is set unconditionally by a fence
@@ -203,7 +272,7 @@ export interface TransformOptions {
  */
 export function transformBody(body: string, opts: TransformOptions): string {
   const headingIds = new Map<string, number>();
-  let inFence = false;
+  let openFence: FenceDelimiter | null = null;
   // Starting "already stripped" is how the option is honoured: the strip
   // branch below only runs while this is false.
   let strippedTitle = !opts.stripLeadingTitle;
@@ -211,22 +280,20 @@ export function transformBody(body: string, opts: TransformOptions): string {
   const out: string[] = [];
 
   for (const line of body.split("\n")) {
-    const fenceMatch = /^(\s*(?:```|~~~))([A-Za-z0-9_-]*)\s*$/.exec(line);
-    if (fenceMatch) {
-      const wasInFence = inFence;
-      inFence = !inFence;
-      sawContent = true;
-      if (wasInFence) {
-        out.push(line); // closing delimiter, unchanged
-      } else {
-        const [, prefix, lang] = fenceMatch;
-        const mapped = opts.fenceLangRemap[lang];
-        out.push(mapped ? `${prefix}${mapped}` : line);
-      }
+    const fence = fenceDelimiter(line);
+    if (openFence) {
+      const closes = fence !== null &&
+        fence.char === openFence.char &&
+        fence.len >= openFence.len &&
+        fence.info === "";
+      if (closes) openFence = null;
+      out.push(line); // fence body and closing delimiter alike: verbatim
       continue;
     }
-    if (inFence) {
-      out.push(line);
+    if (fence) {
+      openFence = fence;
+      sawContent = true;
+      out.push(remapFenceLang(line, fence, opts.fenceLangRemap));
       continue;
     }
 

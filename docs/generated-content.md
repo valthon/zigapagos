@@ -124,6 +124,19 @@ merely produces a wrong-looking page.
    canonical doc opens with exactly that shape once its banner blockquote is stripped, so
    this is "drop the title," not a general heading-removal pass.
 
+Three of those five — the link rewrite, the heading ids and the title strip — are gated on
+"is this line inside a fenced code block?", so the fence tracker is load-bearing for all of
+them, and it fails in a shape worth knowing about: an inverted tracker produces valid-looking
+output with heading ids and link rewrites simply *missing*, and the build error surfaces
+pages away, at whichever link pointed at an id that never got written. It therefore follows
+CommonMark rather than the common case. A delimiter run is three characters **or more**, so a
+doc that demonstrates fenced Markdown by nesting a three-backtick block inside a four-backtick
+one does not have the inner closer mistaken for an opener. The info string is arbitrary text,
+not just a language word, because SuperMD's own raw-HTML escape hatch *is* a fence whose info
+string is `=html`. And a closing fence must use the opener's character, be at least as long,
+and carry no info string of its own. Only the first token of an opening fence's info string is
+treated as the language for the remap in (4); anything after it is preserved as authored.
+
 What this pattern deliberately does **not** do is sanitize raw HTML. SuperMD rejects raw
 HTML in the page body outright (`html_is_forbidden`), so a canonical file that grows an
 HTML block fails the site build loudly, at the point the mistake was made. Silently
@@ -195,7 +208,7 @@ need to change for a different project's own registry and generator.
 
 The last variable points at [`site/test/md-to-smd.test.ts`](../site/test/md-to-smd.test.ts),
 which pins the transformer's sharp edges directly (the GitHub double-hyphen slug rule, the
-empty-link heading id, an indented fence, the link-rewrite cases). It is worth copying with
+empty-link heading id, an indented fence, a nested fence, the link-rewrite cases). It is worth copying with
 the module: it is the only check that runs on the pure functions rather than on the site
 build, so it is the one that tells you *which* transformation broke instead of just that a
 page came out wrong. Running it from inside the gate rather than from a separate CI step is
