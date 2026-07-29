@@ -462,6 +462,22 @@ taking literally, and these three are what stand between it and that.
 - **[#46] DX-27 · Machine-readable diagnostics.** Errors are prose on stderr with
   no codes. An agent parsing `this page has no subpages (page is not a section)`
   is guessing; one switching on a stable code is not.
+
+  **Resolved.** `zigapagos release --format=json` emits one NDJSON diagnostic
+  per line on stderr, each carrying a stable `code` (`src/diag.zig`), and
+  `zigapagos explain-code [CODE]` prints the long form or lists every registered
+  code. `src/diag-codes.frozen` is an append-only ledger that four test blocks
+  in `src/diag.zig` enforce, so a code is never renamed, dropped, or reused for
+  a different meaning after retirement. Coverage is the whole
+  prerender/analysis gate — every diagnostic that can set
+  `build.any_prerendering_error` — plus a catch-all `ZP_FATAL` for every
+  `fatal.msg` / `fatal.usageError` in the codebase. `docs/diagnostics.md` is
+  the consumer contract, and lists with reasons everything deliberately left
+  out of the conversion (page-render errors on worker threads, the `tsc` props
+  gate, `doctor`'s separate check-id namespace, `serve`/`dev`, …). This does
+  **not** resolve DX-28 below: that `explain` takes a *route*, this one takes a
+  diagnostic code. Regression fixtures: `tests/diagnostics/format-json.sh`,
+  `tests/diagnostics/explain-code.sh`.
 - **[#47] DX-28 · No `explain <route>`.** We answered "what did this emit, which
   layout rendered it" with `find` and `grep` throughout — and that habit
   produced a defect, a landing section describing a deploy tree no build emits.

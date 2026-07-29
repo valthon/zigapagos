@@ -1,8 +1,22 @@
 const std = @import("std");
 const main = @import("main.zig");
 const builtin = @import("builtin");
+const diag = @import("diag.zig");
 
+/// A fatal error. Text mode: print the message and, in a Debug build, panic
+/// with a stack trace (surfaces an internal Zigapagos bug loudly to a human).
+/// JSON mode (`--format=json`): emit ONE `ZP_FATAL` NDJSON line and exit 1 --
+/// deliberately WITHOUT the debug panic. In text mode the panic exists to
+/// surface an internal bug with a trace; in JSON mode the consumer is a
+/// machine, a stack trace is unparseable noise on the same stream, and
+/// panicking turns a clean exit 1 into SIGABRT (134) under the Debug build
+/// every shell test drives (`zig build` defaults to Debug). Text-mode
+/// behaviour below this branch is byte-for-byte unchanged.
 pub fn msg(comptime fmt: []const u8, args: anytype) noreturn {
+    if (diag.format == .json) {
+        diag.emitFatal(fmt, args);
+        std.process.exit(1);
+    }
     std.debug.print(fmt, args);
     if (builtin.mode == .Debug) std.debug.panic("\n\n(Zigapagos debug stack trace)\n", .{});
     std.process.exit(1);
@@ -25,6 +39,10 @@ pub fn usage(comptime fmt: []const u8, args: anytype) noreturn {
 /// input mistake, not a Zigapagos bug, so a stack trace is noise. Use for argument
 /// validation in CLI commands.
 pub fn usageError(comptime fmt: []const u8, args: anytype) noreturn {
+    if (diag.format == .json) {
+        diag.emitFatal(fmt, args);
+        std.process.exit(1);
+    }
     std.debug.print(fmt, args);
     std.process.exit(1);
 }
@@ -139,6 +157,14 @@ pub fn help() noreturn {
 /// Show the top-level help menu after an error and exit 1. Use this on error
 /// paths that print a diagnostic and then the menu (a bad invocation is still
 /// a failure, even though the menu is helpful).
+///
+/// Deliberately stays TEXT-ONLY in JSON mode (unlike `msg`/`usageError`): it
+/// prints the usage menu, not a diagnostic, and there is no sensible NDJSON
+/// shape for "here is the whole command reference." A real consequence: the
+/// missing-`zigapagos.ziggy` path (root.zig's config loader, which calls this
+/// after `std.debug.print`-ing prose) still prints plain text even under
+/// `--format=json` -- see docs/diagnostics.md, which documents this as a
+/// known exception rather than a bug.
 pub fn helpError() noreturn {
     std.debug.print(help_menu, .{});
     std.process.exit(1);

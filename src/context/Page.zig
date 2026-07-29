@@ -29,6 +29,7 @@ const PathTable = @import("../PathTable.zig");
 const Path = PathTable.Path;
 const PathName = PathTable.PathName;
 const StringTable = @import("../StringTable.zig");
+const diagcodes = @import("../diag.zig");
 const join = @import("../root.zig").join;
 
 pub const ziggy_options = struct {
@@ -173,7 +174,11 @@ pub const PageAnalysisError = struct {
         },
     },
 
-    pub const Severity = enum { @"error", warning };
+    // One enum, not two: this alias keeps PageAnalysisError.severity()'s
+    // signature and its call sites (Page.zig, root.zig) unchanged while
+    // giving `code()` below (and every JSON-mode caller) the SAME Severity
+    // type `diag.Diagnostic.severity` expects, with no conversion needed.
+    pub const Severity = diagcodes.Severity;
 
     // Exactly two kinds are warnings, and both earn it the same way: the build
     // has a truthful output to emit anyway, so aborting over them is
@@ -280,6 +285,30 @@ pub const PageAnalysisError = struct {
         }
         return false;
     }
+
+    // Exhaustive on purpose (no `else`): a new `kind` without a matching arm
+    // here is a COMPILE ERROR. This is what makes "every emitted diagnostic
+    // is registered in diag.Code" a compiler guarantee rather than a
+    // convention -- see diag.zig's module doc comment.
+    pub fn code(err: PageAnalysisError) diagcodes.Code {
+        return switch (err.kind) {
+            .not_a_section => .ZP_LINK_NOT_A_SECTION,
+            .no_parent_section => .ZP_LINK_NO_PARENT_SECTION,
+            .resource_kind_mismatch => .ZP_RESOURCE_KIND_MISMATCH,
+            .unknown_page => .ZP_UNKNOWN_PAGE,
+            .missing_page_tolerated => .ZP_MISSING_PAGE_TOLERATED,
+            .unknown_alternative => .ZP_UNKNOWN_ALTERNATIVE,
+            .missing_asset => |ma| switch (ma.kind) {
+                .site => .ZP_MISSING_SITE_ASSET,
+                .page => .ZP_MISSING_PAGE_ASSET,
+                .build => .ZP_MISSING_BUILD_ASSET,
+            },
+            .build_asset_missing_install_path => .ZP_BUILD_ASSET_NO_INSTALL_PATH,
+            .unknown_language => .ZP_UNKNOWN_LANGUAGE,
+            .unknown_ref => .ZP_UNKNOWN_REF,
+            .locale_link_unsupported => .ZP_LOCALE_LINK_UNSUPPORTED,
+        };
+    }
 };
 
 pub const FrontmatterAnalysisError = union(enum) {
@@ -302,6 +331,20 @@ pub const FrontmatterAnalysisError = union(enum) {
                 .name => "invalid name in alternatives",
                 .path => "invalid path in alternatives",
                 .layout => "invalid layout in alternatives",
+            },
+        };
+    }
+
+    // Exhaustive over BOTH the outer union and `alt.kind` -- no `else` arm --
+    // same enforcement reasoning as PageAnalysisError.code() above.
+    pub fn code(err: @This()) diagcodes.Code {
+        return switch (err) {
+            .layout => .ZP_MISSING_LAYOUT,
+            .alias => .ZP_INVALID_ALIAS,
+            .alternative => |alt| switch (alt.kind) {
+                .name => .ZP_INVALID_ALTERNATIVE_NAME,
+                .path => .ZP_INVALID_ALTERNATIVE_PATH,
+                .layout => .ZP_INVALID_ALTERNATIVE_LAYOUT,
             },
         };
     }

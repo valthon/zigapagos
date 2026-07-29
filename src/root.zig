@@ -10,6 +10,7 @@ const tracy = @import("tracy");
 const ziggy = @import("ziggy");
 const supermd = @import("supermd");
 const fatal = @import("fatal.zig");
+const diag = @import("diag.zig");
 const worker = @import("worker.zig");
 const context = @import("context.zig");
 const Build = @import("Build.zig");
@@ -253,9 +254,14 @@ pub const Config = union(enum) {
                 else => fatal.file(joined_path, err),
             };
 
-            var diag: ziggy.Diagnostic = .{ .path = joined_path };
+            // Named `cfg_diag`, not `diag` (the module import at the top of
+            // this file), to avoid shadowing it -- this is a config-load
+            // fatal, out of scope for this PR's code conversion (see
+            // docs/diagnostics.md's scope section); it still reaches
+            // `fatal.msg`, which handles the JSON branch on its own.
+            var cfg_diag: ziggy.Diagnostic = .{ .path = joined_path };
             const cfg = ziggy.parseLeaky(Config, arena, data, .{
-                .diagnostic = &diag,
+                .diagnostic = &cfg_diag,
                 .copy_strings = .to_unescape,
             }) catch {
                 fatal.msg(
@@ -264,7 +270,7 @@ pub const Config = union(enum) {
                     \\{f}
                     \\
                     \\
-                , .{diag.fmt(data)});
+                , .{cfg_diag.fmt(data)});
             };
 
             cfg.validate();
@@ -851,7 +857,22 @@ pub fn run(
                 }
                 if (matched == 0) {
                     static_assets_errors = true;
-                    std.debug.print("error: static asset glob '{s}' matched no assets\n", .{path});
+                    if (diag.format == .json) {
+                        var msg_buf: [1024]u8 = undefined;
+                        diag.emit(.{
+                            .code = .ZP_STATIC_ASSET_GLOB_EMPTY,
+                            .severity = .@"error",
+                            .message = diag.render(&msg_buf, "static asset glob '{s}' matched no assets", .{path}),
+                        });
+                    } else {
+                        std.debug.print("error: static asset glob '{s}' matched no assets\n", .{path});
+                    }
+                    // `build.mode == .memory` (the live server) never sees
+                    // diag.format == .json: main.zig gates its `--format=`
+                    // pre-scan to `zigapagos release`'s own arguments, and
+                    // serve.zig's parser rejects the flag outright. So this
+                    // block stays unconditional -- it is not part of the
+                    // text/json split above.
                     if (build.mode == .memory) {
                         try build.mode.memory.errors.append(gpa, .{
                             .ref = "",
@@ -874,9 +895,18 @@ pub fn run(
             }
 
             static_assets_errors = true;
-            std.debug.print("error: static asset '{s}' does not exist\n", .{
-                path,
-            });
+            if (diag.format == .json) {
+                var msg_buf: [1024]u8 = undefined;
+                diag.emit(.{
+                    .code = .ZP_STATIC_ASSET_MISSING,
+                    .severity = .@"error",
+                    .message = diag.render(&msg_buf, "static asset '{s}' does not exist", .{path}),
+                });
+            } else {
+                std.debug.print("error: static asset '{s}' does not exist\n", .{
+                    path,
+                });
+            }
 
             if (build.mode == .memory) {
                 try build.mode.memory.errors.append(gpa, .{
@@ -911,7 +941,17 @@ pub fn run(
                 })}) catch v.i18n_diag.path.?;
 
                 v.i18n_diag.path = path;
-                std.debug.print("{f}\n\n", .{v.i18n_diag.fmt(v.i18n_src)});
+                if (diag.format == .json) {
+                    var msg_buf: [4096]u8 = undefined;
+                    diag.emit(.{
+                        .code = .ZP_I18N_PARSE,
+                        .severity = .@"error",
+                        .file = path,
+                        .message = diag.render(&msg_buf, "{f}", .{v.i18n_diag.fmt(v.i18n_src)}),
+                    });
+                } else {
+                    std.debug.print("{f}\n\n", .{v.i18n_diag.fmt(v.i18n_src)});
+                }
                 if (build.mode == .memory) {
                     try build.mode.memory.errors.append(gpa, .{
                         .ref = "",
@@ -1049,14 +1089,29 @@ pub fn run(
                 switch (p._parse.status) {
                     .empty => {
                         // Page is empty, print warning and skip it
-                        std.debug.print("WARNING: Ignoring empty file '{f}'\n", .{
-                            p._scan.file.fmt(
-                                &v.string_table,
-                                &v.path_table,
-                                v.content_dir_path,
-                                "",
-                            ),
-                        });
+                        if (diag.format == .json) {
+                            var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+                            diag.emit(.{
+                                .code = .ZP_EMPTY_PAGE,
+                                .severity = .warning,
+                                .file = diag.render(&path_buf, "{f}", .{p._scan.file.fmt(
+                                    &v.string_table,
+                                    &v.path_table,
+                                    v.content_dir_path,
+                                    "",
+                                )}),
+                                .message = "ignoring empty file",
+                            });
+                        } else {
+                            std.debug.print("WARNING: Ignoring empty file '{f}'\n", .{
+                                p._scan.file.fmt(
+                                    &v.string_table,
+                                    &v.path_table,
+                                    v.content_dir_path,
+                                    "",
+                                ),
+                            });
+                        }
                         continue;
                     },
 
@@ -1070,20 +1125,43 @@ pub fn run(
                             error.OpenFrontmatter => "the frontmatter is missing a closing '---' frontmatter delimiter",
                         };
 
-                        std.debug.print(
-                            \\{f}:{}:1 error: frontmatter framing error
-                            \\   {s}
-                            \\
-                        , .{
-                            p._scan.file.fmt(
-                                &v.string_table,
-                                &v.path_table,
-                                v.content_dir_path,
-                                "",
-                            ),
-                            p._parse.fm.lines,
-                            note,
-                        });
+                        if (diag.format == .json) {
+                            var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+                            diag.emit(.{
+                                .code = .ZP_FRONTMATTER_FRAMING,
+                                .severity = .@"error",
+                                .file = diag.render(&path_buf, "{f}", .{p._scan.file.fmt(
+                                    &v.string_table,
+                                    &v.path_table,
+                                    v.content_dir_path,
+                                    "",
+                                )}),
+                                .line = p._parse.fm.lines,
+                                // The text-mode twin below prints a literal
+                                // ':1' for the column, so JSON must say 1 too
+                                // -- a null here would be the one converted
+                                // site where the two modes disagree on the
+                                // shape of a location.
+                                .col = 1,
+                                .message = "frontmatter framing error",
+                                .help = note,
+                            });
+                        } else {
+                            std.debug.print(
+                                \\{f}:{}:1 error: frontmatter framing error
+                                \\   {s}
+                                \\
+                            , .{
+                                p._scan.file.fmt(
+                                    &v.string_table,
+                                    &v.path_table,
+                                    v.content_dir_path,
+                                    "",
+                                ),
+                                p._parse.fm.lines,
+                                note,
+                            });
+                        }
                         if (build.mode == .memory) {
                             try build.mode.memory.errors.append(gpa, .{
                                 .ref = "",
@@ -1106,7 +1184,10 @@ pub fn run(
                         continue;
                     },
 
-                    .ziggy => |*diag| {
+                    // Captured as `ziggy_diag` (not `diag`, the module import
+                    // above) -- this arm's local shadowed the module and every
+                    // reference inside it needs to be the module now.
+                    .ziggy => |*ziggy_diag| {
                         if (!parse_errors) {
                             parse_errors = true;
                         }
@@ -1121,15 +1202,25 @@ pub fn run(
                             ),
                         }) catch unreachable;
 
-                        diag.path = path;
-                        std.debug.print("{f}\n\n", .{diag.fmt(p._parse.full_src)});
+                        ziggy_diag.path = path;
+                        if (diag.format == .json) {
+                            var msg_buf: [4096]u8 = undefined;
+                            diag.emit(.{
+                                .code = .ZP_FRONTMATTER_PARSE,
+                                .severity = .@"error",
+                                .file = path,
+                                .message = diag.render(&msg_buf, "{f}", .{ziggy_diag.fmt(p._parse.full_src)}),
+                            });
+                        } else {
+                            std.debug.print("{f}\n\n", .{ziggy_diag.fmt(p._parse.full_src)});
+                        }
                         if (build.mode == .memory) {
                             try build.mode.memory.errors.append(gpa, .{
                                 .ref = "",
                                 .msg = try std.fmt.allocPrint(
                                     gpa,
                                     "{f}\n\n",
-                                    .{diag.fmt(p._parse.full_src)},
+                                    .{ziggy_diag.fmt(p._parse.full_src)},
                                 ),
                             });
                         }
@@ -1311,25 +1402,42 @@ pub fn run(
                         break :blk h;
                     } else "";
 
-                    std.debug.print(
-                        \\{f}:{}:{}: error: {s}
-                        \\|    {s}
-                        \\|    {s}
-                        \\
-                        \\
-                    , .{
-                        p._scan.file.fmt(
-                            &v.string_table,
-                            &v.path_table,
-                            v.content_dir_path,
-                            "",
-                        ),
-                        sel.start.line,
-                        sel.start.col,
-                        err.title(),
-                        line_trim,
-                        highlight,
-                    });
+                    if (diag.format == .json) {
+                        var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+                        diag.emit(.{
+                            .code = err.code(),
+                            .severity = .@"error",
+                            .file = diag.render(&path_buf, "{f}", .{p._scan.file.fmt(
+                                &v.string_table,
+                                &v.path_table,
+                                v.content_dir_path,
+                                "",
+                            )}),
+                            .line = sel.start.line,
+                            .col = sel.start.col,
+                            .message = err.title(),
+                        });
+                    } else {
+                        std.debug.print(
+                            \\{f}:{}:{}: error: {s}
+                            \\|    {s}
+                            \\|    {s}
+                            \\
+                            \\
+                        , .{
+                            p._scan.file.fmt(
+                                &v.string_table,
+                                &v.path_table,
+                                v.content_dir_path,
+                                "",
+                            ),
+                            sel.start.line,
+                            sel.start.col,
+                            err.title(),
+                            line_trim,
+                            highlight,
+                        });
+                    }
                     if (build.mode == .memory) {
                         try build.mode.memory.errors.append(gpa, .{
                             .ref = "",
@@ -1403,27 +1511,46 @@ pub fn run(
                     const fm_lines = p._parse.fm.lines;
                     const severity_word = @tagName(err.severity());
                     const note_line: NoteLine = .{ .note = err.note() };
-                    std.debug.print(
-                        \\{f}:{}:{}: {s}: {f}
-                        \\|    {s}
-                        \\|    {s}
-                        \\{f}
-                        \\
-                    , .{
-                        p._scan.file.fmt(
-                            &v.string_table,
-                            &v.path_table,
-                            v.content_dir_path,
-                            "",
-                        ),
-                        fm_lines + n.startLine(),
-                        n.startColumn(),
-                        severity_word,
-                        err.fmt(),
-                        line_trim,
-                        highlight,
-                        note_line,
-                    });
+                    if (diag.format == .json) {
+                        var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+                        var msg_buf: [2048]u8 = undefined;
+                        diag.emit(.{
+                            .code = err.code(),
+                            .severity = err.severity(),
+                            .file = diag.render(&path_buf, "{f}", .{p._scan.file.fmt(
+                                &v.string_table,
+                                &v.path_table,
+                                v.content_dir_path,
+                                "",
+                            )}),
+                            .line = fm_lines + n.startLine(),
+                            .col = n.startColumn(),
+                            .message = diag.render(&msg_buf, "{f}", .{err.fmt()}),
+                            .help = err.note(),
+                        });
+                    } else {
+                        std.debug.print(
+                            \\{f}:{}:{}: {s}: {f}
+                            \\|    {s}
+                            \\|    {s}
+                            \\{f}
+                            \\
+                        , .{
+                            p._scan.file.fmt(
+                                &v.string_table,
+                                &v.path_table,
+                                v.content_dir_path,
+                                "",
+                            ),
+                            fm_lines + n.startLine(),
+                            n.startColumn(),
+                            severity_word,
+                            err.fmt(),
+                            line_trim,
+                            highlight,
+                            note_line,
+                        });
+                    }
 
                     // Only error-severity items enter the live server's build-error
                     // list (see PageAnalysisError.severity's doc comment): that list
@@ -1489,17 +1616,37 @@ pub fn run(
                         // an ordinary authoring mistake. Report both pages and
                         // the key instead of aborting the build. See AUD-011.
                         translation_key_errors = true;
-                        std.debug.print(
-                            \\error: duplicate translation_key '{s}' within one locale
-                            \\   between  {f}
-                            \\   and      {f}
-                            \\
-                            \\
-                        , .{
-                            tk,
-                            prev._scan.file.fmt(&v.string_table, &v.path_table, v.content_dir_path, ""),
-                            p._scan.file.fmt(&v.string_table, &v.path_table, v.content_dir_path, ""),
-                        });
+                        if (diag.format == .json) {
+                            var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+                            var prev_path_buf: [std.fs.max_path_bytes]u8 = undefined;
+                            var msg_buf: [2048]u8 = undefined;
+                            diag.emit(.{
+                                .code = .ZP_DUPLICATE_TRANSLATION_KEY,
+                                .severity = .@"error",
+                                // The SECOND page (the one that lost the getOrPut
+                                // race) is the one carrying this diagnostic; the
+                                // first page's path is folded into `message`
+                                // instead of a second `file`-shaped field, since
+                                // the schema has room for exactly one.
+                                .file = diag.render(&path_buf, "{f}", .{p._scan.file.fmt(&v.string_table, &v.path_table, v.content_dir_path, "")}),
+                                .message = diag.render(&msg_buf, "duplicate translation_key '{s}' within one locale (also defined in {s})", .{
+                                    tk,
+                                    diag.render(&prev_path_buf, "{f}", .{prev._scan.file.fmt(&v.string_table, &v.path_table, v.content_dir_path, "")}),
+                                }),
+                            });
+                        } else {
+                            std.debug.print(
+                                \\error: duplicate translation_key '{s}' within one locale
+                                \\   between  {f}
+                                \\   and      {f}
+                                \\
+                                \\
+                            , .{
+                                tk,
+                                prev._scan.file.fmt(&v.string_table, &v.path_table, v.content_dir_path, ""),
+                                p._scan.file.fmt(&v.string_table, &v.path_table, v.content_dir_path, ""),
+                            });
+                        }
                         if (build.mode == .memory) {
                             try build.mode.memory.errors.append(gpa, .{
                                 .ref = "",
@@ -1818,17 +1965,39 @@ pub fn run(
                 collision_errors = true;
             }
             for (v.collisions.items) |c| {
-                std.debug.print(
-                    \\{f}: error: output url collision detected
-                    \\   between  {f}
-                    \\   and      {f}
-                    \\
-                    \\
-                , .{
-                    c.url.fmt(&v.string_table, &v.path_table, null, ""),
-                    c.previous.fmt(&v.string_table, &v.path_table, v.pages.items),
-                    c.loc.fmt(&v.string_table, &v.path_table, v.pages.items),
-                });
+                if (diag.format == .json) {
+                    var url_buf: [std.fs.max_path_bytes]u8 = undefined;
+                    var a_buf: [std.fs.max_path_bytes]u8 = undefined;
+                    var b_buf: [std.fs.max_path_bytes]u8 = undefined;
+                    var msg_buf: [2048]u8 = undefined;
+                    diag.emit(.{
+                        .code = .ZP_URL_COLLISION,
+                        .severity = .@"error",
+                        // No `file`: a collision names the OUTPUT url and two
+                        // source locations, none of which is a single natural
+                        // fit for the schema's one `file` slot -- all three
+                        // are folded into a self-contained `message` instead
+                        // (this is a NEW string that exists only in JSON
+                        // mode; text mode below is unchanged).
+                        .message = diag.render(&msg_buf, "output url collision at '{s}' between '{s}' and '{s}'", .{
+                            diag.render(&url_buf, "{f}", .{c.url.fmt(&v.string_table, &v.path_table, null, "")}),
+                            diag.render(&a_buf, "{f}", .{c.previous.fmt(&v.string_table, &v.path_table, v.pages.items)}),
+                            diag.render(&b_buf, "{f}", .{c.loc.fmt(&v.string_table, &v.path_table, v.pages.items)}),
+                        }),
+                    });
+                } else {
+                    std.debug.print(
+                        \\{f}: error: output url collision detected
+                        \\   between  {f}
+                        \\   and      {f}
+                        \\
+                        \\
+                    , .{
+                        c.url.fmt(&v.string_table, &v.path_table, null, ""),
+                        c.previous.fmt(&v.string_table, &v.path_table, v.pages.items),
+                        c.loc.fmt(&v.string_table, &v.path_table, v.pages.items),
+                    });
+                }
                 if (build.mode == .memory) {
                     try build.mode.memory.errors.append(gpa, .{
                         .ref = "",
@@ -1879,7 +2048,16 @@ pub fn run(
                 &aw.writer,
             );
 
-            std.debug.print("{s}", .{aw.written()});
+            if (diag.format == .json) {
+                diag.emit(.{
+                    .code = .ZP_TEMPLATE_PARSE,
+                    .severity = .@"error",
+                    .file = path,
+                    .message = aw.written(),
+                });
+            } else {
+                std.debug.print("{s}", .{aw.written()});
+            }
             if (build.mode == .memory) {
                 // Store an exactly-sized owned copy so Build.deinit can free it
                 // (AUD-004); aw is emptied and freed by the defer.
@@ -1914,7 +2092,16 @@ pub fn run(
                 &aw.writer,
             ) catch return error.OutOfMemory;
 
-            std.debug.print("{s}", .{aw.written()});
+            if (diag.format == .json) {
+                diag.emit(.{
+                    .code = .ZP_TEMPLATE_PARSE,
+                    .severity = .@"error",
+                    .file = path,
+                    .message = aw.written(),
+                });
+            } else {
+                std.debug.print("{s}", .{aw.written()});
+            }
             if (build.mode == .memory) {
                 // Owned copy so Build.deinit can free it (AUD-004).
                 try build.mode.memory.errors.append(gpa, .{
@@ -1944,6 +2131,9 @@ pub fn run(
                 for (bads.items) |bad| {
                     const lc = Template.lineCol(template.src, bad.offset);
                     const bare = bad.name[1..];
+                    // The aw accumulation stays UNCONDITIONAL (not gated on
+                    // text mode): the memory-mode block below still needs the
+                    // whole rendered text block regardless of diag.format.
                     try aw.writer.print(
                         \\{s}:{d}:{d}: error: unknown ':' directive attribute '{s}'
                         \\    SuperHTML's only ':' directives are :if, :loop, :text, :html
@@ -1954,9 +2144,27 @@ pub fn run(
                         \\
                         \\
                     , .{ path, lc.line, lc.col, bad.name, bare, bad.name, bare, bare });
+
+                    if (diag.format == .json) {
+                        var msg_buf: [512]u8 = undefined;
+                        diag.emit(.{
+                            .code = .ZP_TEMPLATE_BAD_DIRECTIVE_ATTR,
+                            .severity = .@"error",
+                            .file = path,
+                            .line = lc.line,
+                            .col = lc.col,
+                            .message = diag.render(&msg_buf, "unknown ':' directive attribute '{s}'", .{bad.name}),
+                            .help = "SuperHTML's only ':' directives are :if, :loop, :text, :html (plus :props on <island>); a dynamic attribute uses the bare name with a Scripty value",
+                        });
+                    }
                 }
 
-                std.debug.print("{s}", .{aw.written()});
+                // Only the accumulated TEXT block is conditional -- one line
+                // per `bad` was already emitted above in JSON mode, so
+                // printing the whole aw block again here would duplicate it.
+                if (diag.format == .text) {
+                    std.debug.print("{s}", .{aw.written()});
+                }
                 if (build.mode == .memory) {
                     // Owned copy so Build.deinit can free it (AUD-004).
                     try build.mode.memory.errors.append(gpa, .{
@@ -2071,13 +2279,23 @@ pub fn run(
             });
 
             const parent_name = template.ast.nodes[template.ast.extends_idx].templateValue().span.slice(template.src);
-            std.debug.print(
-                \\{s}: error: extending a template that doesn't exist 
-                \\   template '{s}' does not exist
-                \\
-            , .{
-                path, parent_name,
-            });
+            if (diag.format == .json) {
+                var msg_buf: [1024]u8 = undefined;
+                diag.emit(.{
+                    .code = .ZP_TEMPLATE_MISSING_PARENT,
+                    .severity = .@"error",
+                    .file = path,
+                    .message = diag.render(&msg_buf, "extending a template that doesn't exist: template '{s}' does not exist", .{parent_name}),
+                });
+            } else {
+                std.debug.print(
+                    \\{s}: error: extending a template that doesn't exist 
+                    \\   template '{s}' does not exist
+                    \\
+                , .{
+                    path, parent_name,
+                });
+            }
             if (build.mode == .memory) {
                 try build.mode.memory.errors.append(gpa, .{
                     .ref = "",
@@ -2706,21 +2924,6 @@ fn printSuperMdErrors(
             },
             else => @tagName(err.kind),
         };
-        std.debug.print(
-            \\{f}:{}:{}: [{s}] {s}
-            \\|    {s}
-            \\|    {s}
-            \\
-        , .{
-            file.fmt(&v.string_table, &v.path_table, v.content_dir_path, ""),
-            fm_lines + range.start.row,
-            range.start.col,
-            tag_name,
-            msg,
-            line_trim,
-            highlight,
-        });
-
         // issue #32: SuperMD's `pathValidationError` rejects an empty path with
         // the bare message "path is empty". That fires on `$link.page('')`, which
         // looks like it should work because `$site.page('')` does (base.shtml's
@@ -2742,23 +2945,65 @@ fn printSuperMdErrors(
             std.mem.eql(u8, msg, "path is empty") and
             std.mem.indexOf(u8, line_trim, ".page(") != null;
 
-        switch (err.kind) {
-            .duplicate_id => |dup| {
-                std.debug.print(
-                    \\|   note: original was defined on line {}
-                    \\
-                    \\
-                , .{fm_lines + dup.original.range().start.row});
-            },
-            else => if (empty_page_path_hint) {
-                std.debug.print(
-                    \\|   note: to link to the site homepage, use $link.site()
-                    \\
-                    \\
-                , .{});
-            } else {
-                std.debug.print("\n", .{});
-            },
+        // The JSON `help` value mirrors whichever note text mode would have
+        // printed as the second `std.debug.print` block below -- computed
+        // once here so both branches (and the `.memory` block further down)
+        // read from a single source instead of re-deriving it.
+        var help_buf: [256]u8 = undefined;
+        const help_text: ?[]const u8 = switch (err.kind) {
+            .duplicate_id => |dup| diag.render(&help_buf, "original was defined on line {}", .{fm_lines + dup.original.range().start.row}),
+            else => if (empty_page_path_hint)
+                "to link to the site homepage, use $link.site()"
+            else
+                null,
+        };
+
+        if (diag.format == .json) {
+            var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+            var msg_buf: [1024]u8 = undefined;
+            diag.emit(.{
+                .code = .ZP_SUPERMD,
+                .severity = .@"error",
+                .file = diag.render(&path_buf, "{f}", .{file.fmt(&v.string_table, &v.path_table, v.content_dir_path, "")}),
+                .line = fm_lines + range.start.row,
+                .col = range.start.col,
+                .message = diag.render(&msg_buf, "[{s}] {s}", .{ tag_name, msg }),
+                .help = help_text,
+            });
+        } else {
+            std.debug.print(
+                \\{f}:{}:{}: [{s}] {s}
+                \\|    {s}
+                \\|    {s}
+                \\
+            , .{
+                file.fmt(&v.string_table, &v.path_table, v.content_dir_path, ""),
+                fm_lines + range.start.row,
+                range.start.col,
+                tag_name,
+                msg,
+                line_trim,
+                highlight,
+            });
+
+            switch (err.kind) {
+                .duplicate_id => |dup| {
+                    std.debug.print(
+                        \\|   note: original was defined on line {}
+                        \\
+                        \\
+                    , .{fm_lines + dup.original.range().start.row});
+                },
+                else => if (empty_page_path_hint) {
+                    std.debug.print(
+                        \\|   note: to link to the site homepage, use $link.site()
+                        \\
+                        \\
+                    , .{});
+                } else {
+                    std.debug.print("\n", .{});
+                },
+            }
         }
 
         if (build.mode == .memory) {
