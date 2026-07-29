@@ -511,6 +511,16 @@ taking literally, and these three are what stand between it and that.
   serve stale CSS against fresh HTML, which is what prevents long-lived cache
   headers on output that is otherwise perfectly cacheable.
 
+  **Resolved.** `.asset_fingerprint = true` in `zigapagos.ziggy` installs every
+  *linked* site asset under `<stem>.<8 hex>.<ext>` (`src/fingerprint.zig`), and
+  every seam that prints a site-asset URL — `.link()`/`.absLink()`, the content
+  directives, and `spa.head` hrefs — resolves to that name through one shared
+  formatter, so an installed file and a link to it cannot drift apart.
+  `static_assets` entries keep their fixed path (that is what they are for),
+  and build/page assets are out of scope. Opt-in and release-only; see
+  `docs/assets.md`. Proofs: `tests/assets/fingerprint.sh`,
+  `tests/spa/head-fingerprint.sh`.
+
 ## Diagnosability
 
 - **[#54] DX-35 · Asset pruning is invisible.** A hand-authored SVG vanished with no

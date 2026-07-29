@@ -16,6 +16,7 @@ const Int = context.Int;
 const PathTable = @import("../PathTable.zig");
 const PathName = PathTable.PathName;
 const html = @import("../render/html.zig");
+const fingerprint = @import("../fingerprint.zig");
 const join = @import("../root.zig").join;
 const Signature = @import("doctypes.zig").Signature;
 
@@ -139,11 +140,19 @@ fn linkImpl(
             const rc = ctx._meta.build.site_assets.getPtr(asset._meta.url).?;
             _ = rc.fetchAdd(1, .acq_rel);
 
+            // `fingerprint.fmtUrl`, not `PathName.fmt`: with
+            // `asset_fingerprint` on, this asset is INSTALLED under a
+            // content-hashed basename (issue #53) and a link printed from the
+            // verbatim name would 404. The map is empty on every other build,
+            // in which case this is byte-identical to the plain formatter.
             const st = &ctx._meta.build.st;
             const pt = &ctx._meta.build.pt;
-            w.print("{f}", .{
-                asset._meta.url.fmt(st, pt, null, "/"),
-            }) catch return error.OutOfMemory;
+            w.print("{f}", .{fingerprint.fmtUrl(
+                asset._meta.url,
+                st,
+                pt,
+                &ctx._meta.build.asset_fingerprints,
+            )}) catch return error.OutOfMemory;
         },
         .build => {
             html.printAssetUrlPrefix(ctx, ctx.page, w, force_host_url) catch return error.OutOfMemory;

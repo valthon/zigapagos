@@ -324,6 +324,17 @@ pub fn prerenderAll(io: std.Io, gpa: std.mem.Allocator, build: *Build, cfg: *con
         // SPA's `src`, so it can fatal with a message the site author can act on.
         // `renderHeadLinks`/`renderShell` still re-validate (see their doc
         // comments) as a defense-in-depth, testable error path.
+        //
+        // The `spa.head` entries this SPA's shells actually render. Identical
+        // to `desc.spa.head` unless `asset_fingerprint` is on AND some href
+        // names a fingerprinted site asset, in which case that entry's href is
+        // rewritten to the installed (hashed) name below — a shell linking
+        // `/site.css` while the install pass wrote `/site.a1b2c3d4.css` is the
+        // same silent-404 the surrounding staging check exists to prevent.
+        // Rebound rather than mutated in place so a build with the feature off
+        // reuses the parsed slice untouched and emits byte-identical shells.
+        var head_for_shell = desc.spa.head;
+
         if (desc.spa.head) |head| {
             // Local head assets: a root-relative `href` (e.g.
             // "/site.css") that nothing installs is a silent-404 foot-gun —
@@ -337,7 +348,12 @@ pub fn prerenderAll(io: std.Io, gpa: std.mem.Allocator, build: *Build, cfg: *con
             // skipped (`headHrefAssetPath` returns null), and a site's
             // `url_path_prefix` (hoisted above the SPA loop) is stripped from
             // prefixed hrefs first.
-            for (head) |entry| {
+            // Allocated (and `head_for_shell` repointed at it) only on the
+            // first entry that actually needs a rewritten href, so the common
+            // case costs nothing.
+            var rewritten: ?[]std.json.ArrayHashMap([]const u8) = null;
+
+            for (head, 0..) |entry, entry_idx| {
                 var it = entry.map.iterator();
                 while (it.next()) |kv| {
                     if (!isValidHeadAttrName(kv.key_ptr.*)) fatal.msg(
@@ -352,6 +368,25 @@ pub fn prerenderAll(io: std.Io, gpa: std.mem.Allocator, build: *Build, cfg: *con
                 if (PathName.get(&build.st, &build.pt, rel_path)) |pn| {
                     if (build.site_assets.getPtr(pn)) |rc| {
                         _ = rc.fetchAdd(1, .acq_rel);
+                        if (build.asset_fingerprints.get(pn)) |hashed| {
+                            const slice = rewritten orelse blk: {
+                                const s = try arena.a.dupe(std.json.ArrayHashMap([]const u8), head);
+                                rewritten = s;
+                                head_for_shell = s;
+                                break :blk s;
+                            };
+                            // Clone the entry's map before touching it: the
+                            // parsed `desc` is shared with the manifest/serve
+                            // paths, and mutating it in place would leak a
+                            // release-only rewrite into them.
+                            var map = try entry.map.clone(arena.a);
+                            try map.put(
+                                arena.a,
+                                "href",
+                                try fingerprintedHref(arena.a, href, hashed),
+                            );
+                            slice[entry_idx] = .{ .map = map };
+                        }
                         continue;
                     }
                 }
@@ -439,7 +474,7 @@ pub fn prerenderAll(io: std.Io, gpa: std.mem.Allocator, build: *Build, cfg: *con
             // value the client Router composes its base from (issue #26).
             const prefixed_pathname = try pass.prefixed(arena.a, url_path_prefix, planned.ssr_pathname);
             const skeleton = try renderSkeleton(sc, arena, src, prefixed_pathname, norm_prefix);
-            const html = try renderShell(arena.a, title, noindex, bundle_url, runtime_url, chunk_url, norm_prefix, desc.spa.head, desc.spa.flags, skeleton);
+            const html = try renderShell(arena.a, title, noindex, bundle_url, runtime_url, chunk_url, norm_prefix, head_for_shell, desc.spa.flags, skeleton);
             try writeFile(io, out_dir, planned.out_path, html);
             if (planned.static_url) |u| {
                 try static_urls.append(arena.a, u);
@@ -471,7 +506,7 @@ pub fn prerenderAll(io: std.Io, gpa: std.mem.Allocator, build: *Build, cfg: *con
                     if (std.mem.eql(u8, planned_c.out_path, root_index_path)) has_root_index = true;
                     const prefixed_pathname_c = try pass.prefixed(arena.a, url_path_prefix, planned_c.ssr_pathname);
                     const skeleton_c = try renderSkeleton(sc, arena, src, prefixed_pathname_c, norm_prefix);
-                    const html_c = try renderShell(arena.a, title, noindex, bundle_url, runtime_url, chunk_url, norm_prefix, desc.spa.head, desc.spa.flags, skeleton_c);
+                    const html_c = try renderShell(arena.a, title, noindex, bundle_url, runtime_url, chunk_url, norm_prefix, head_for_shell, desc.spa.flags, skeleton_c);
                     try writeFile(io, out_dir, planned_c.out_path, html_c);
                     try static_urls.append(arena.a, u);
                     // A lazy pattern route's chunk backs its concrete pages too.
@@ -1049,6 +1084,38 @@ fn headHrefAssetPath(href: []const u8, url_path_prefix: []const u8) ?[]const u8 
     }
     if (rest.len == 0) return null;
     return rest;
+}
+
+/// Rewrite a `spa.head` href so its final path segment is `hashed` — the
+/// content-fingerprinted basename the install pass will actually write (issue
+/// #53). `/css/site.css` + `site.a1b2c3d4.css` → `/css/site.a1b2c3d4.css`.
+///
+/// Operates on the href rather than rebuilding one from the `PathName`,
+/// because the href carries two things the `PathName` does not: the site's
+/// `url_path_prefix` (which `headHrefAssetPath` strips before the lookup) and
+/// any `?query`/`#fragment` the author wrote. Both have to survive, so the
+/// substitution is scoped to the last segment of the path portion only.
+///
+/// `href` always starts with `/` here (`headHrefAssetPath` returned non-null
+/// for it, and that requires a leading slash), so the `lastIndexOfScalar`
+/// below cannot fail; the `orelse 0` is a belt-and-braces fallback rather than
+/// a reachable branch.
+///
+/// Allocator contract: self-freeing (NO_SLOP §2.2a contract 1). One
+/// allocation, and it is the return value.
+fn fingerprintedHref(
+    alloc: std.mem.Allocator,
+    href: []const u8,
+    hashed: []const u8,
+) ![]const u8 {
+    const cut = std.mem.indexOfAny(u8, href, "?#") orelse href.len;
+    const path = href[0..cut];
+    const slash = std.mem.lastIndexOfScalar(u8, path, '/') orelse 0;
+    return std.fmt.allocPrint(alloc, "{s}{s}{s}", .{
+        path[0 .. slash + 1],
+        hashed,
+        href[cut..],
+    });
 }
 
 /// Find a declared build asset whose `install_path` claims `rel_path`
@@ -2207,6 +2274,44 @@ test "spa headHrefAssetPath maps root-relative hrefs to assets-relative paths" {
     try std.testing.expect(headHrefAssetPath("site.css", "") == null);
     try std.testing.expect(headHrefAssetPath("/", "") == null);
     try std.testing.expect(headHrefAssetPath("", "") == null);
+}
+
+test "spa fingerprintedHref replaces only the last path segment" {
+    const gpa = std.testing.allocator;
+
+    const flat = try fingerprintedHref(gpa, "/site.css", "site.a1b2c3d4.css");
+    defer gpa.free(flat);
+    try std.testing.expectEqualStrings("/site.a1b2c3d4.css", flat);
+
+    // Directory components survive.
+    const nested = try fingerprintedHref(gpa, "/css/site.css", "site.a1b2c3d4.css");
+    defer gpa.free(nested);
+    try std.testing.expectEqualStrings("/css/site.a1b2c3d4.css", nested);
+
+    // So does a url_path_prefix: `headHrefAssetPath` strips it to find the
+    // file, but the SERVED url still needs it, so the rewrite must not eat it.
+    const prefixed = try fingerprintedHref(gpa, "/zigapagos/site.css", "site.a1b2c3d4.css");
+    defer gpa.free(prefixed);
+    try std.testing.expectEqualStrings("/zigapagos/site.a1b2c3d4.css", prefixed);
+}
+
+test "spa fingerprintedHref preserves a query or fragment suffix" {
+    const gpa = std.testing.allocator;
+
+    // A hand-written `?v=2` is redundant once the hash is in the name, but
+    // silently dropping something the author wrote is a worse outcome than a
+    // belt-and-braces cache buster.
+    const q = try fingerprintedHref(gpa, "/site.css?v=2", "site.a1b2c3d4.css");
+    defer gpa.free(q);
+    try std.testing.expectEqualStrings("/site.a1b2c3d4.css?v=2", q);
+
+    const f = try fingerprintedHref(gpa, "/css/site.css#top", "site.a1b2c3d4.css");
+    defer gpa.free(f);
+    try std.testing.expectEqualStrings("/css/site.a1b2c3d4.css#top", f);
+
+    const both = try fingerprintedHref(gpa, "/site.css?v=2#top", "site.a1b2c3d4.css");
+    defer gpa.free(both);
+    try std.testing.expectEqualStrings("/site.a1b2c3d4.css?v=2#top", both);
 }
 
 test "spa headHrefAssetPath strips a matching url_path_prefix at a segment boundary" {

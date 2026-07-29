@@ -1,7 +1,8 @@
 # Assets
 
-How a file under `assets_dir_path` becomes a file in the output tree, and what
-decides whether it is installed at all.
+How a file under `assets_dir_path` becomes a file in the output tree, and the
+two switches that change that: which assets are installed at all, and under
+what name.
 
 This document covers **site assets** — files under `assets_dir_path`, reached
 from a template as `$site.asset('...')` and from content as
@@ -91,11 +92,87 @@ it is a legitimate state. Details worth knowing:
   scanned as a site asset and the report would name your whole content tree.
   Give assets their own directory to get it back.
 
+## Content-hashed filenames
+
+By default a site asset is installed at its verbatim path: `assets/style.css`
+→ `/style.css`. That path is stable across deploys, which is exactly what makes
+a long-lived `Cache-Control` unsafe — a CDN or GitHub Pages can serve a
+returning visitor last week's stylesheet against today's HTML.
+
+Turn on fingerprinting (issue #53) and the content hash goes into the filename:
+
+```ziggy
+Site {
+    .title = "…",
+    .host_url = "https://example.com",
+    .content_dir_path = "content",
+    .layouts_dir_path = "layouts",
+    .assets_dir_path = "assets",
+    .asset_fingerprint = true,
+}
+```
+
+```
+assets/style.css        ->  /style.a1b2c3d4.css
+assets/fonts/inter.woff2 -> /fonts/inter.5e6f7a8b.woff2
+```
+
+Every reference resolves to the hashed name automatically — `.link()`,
+`.absLink()`, the content directives, and `spa.head` hrefs. You do not spell
+the hash anywhere. A changed file is a changed URL, so the whole asset tree can
+be served `Cache-Control: public, max-age=31536000, immutable`.
+
+The name is `<stem>.<8 hex>.<ext>`. The hash sits **before** the extension
+because the extension is load-bearing downstream: a web server picks the
+`Content-Type` from it, and a browser refuses a stylesheet served as
+`text/plain`. An extension-less file gets the hash appended
+(`CNAME` → `CNAME.a1b2c3d4`); only the last extension moves
+(`archive.tar.gz` → `archive.tar.a1b2c3d4.gz`).
+
+### What is deliberately *not* fingerprinted
+
+- **`static_assets` entries.** They are installed unconditionally precisely
+  because something outside the build fetches them at a fixed path; hashing
+  `favicon.ico` or `CNAME` would break exactly the thing they exist for.
+- **Build assets.** Their install path is yours to choose in `build.zig`, and
+  the generated ones (`zigapagos-runtime.js`, `spa/<name>.js`,
+  `islands/<name>.js`) have their URLs baked into import maps, routing
+  manifests and the hydration bootstrap.
+- **Page assets.** They are installed next to the page that owns them, and a
+  page's own assets are invalidated by the same deploy that rewrites the page.
+
+### Release builds only
+
+The in-memory live server (`zigapagos` with no subcommand) always serves
+verbatim names, the same way it skips the CSS minify pass: dev serves what you
+wrote, release serves what you ship. `zigapagos release` — and therefore
+`zigapagos dev`, which drives a real release build — applies fingerprinting.
+
+### Cost
+
+Turning it on reads every non-`static_assets` file in `assets/` once per build,
+including files nothing ends up linking: which assets are referenced is not
+known until the render pass has run, and the URLs are needed *during* it. That
+is why the feature is opt-in rather than the default.
+
+One caveat worth stating plainly: the hash is taken over the **source** bytes,
+not the installed bytes. `.css` assets are minified on the way out, so a change
+to the minifier itself changes the installed file without changing its name.
+Bumping the toolchain is a full redeploy anyway; a change to *your* CSS is what
+this exists to catch, and that always moves the hash.
+
 ## Where this lives in the code
 
-- `src/root.zig` — the site-asset install loop and `reportPrunedSiteAssets`.
+- `src/fingerprint.zig` — the name and the URL formatter, shared by every seam
+  that prints a site-asset URL so an installed file and a link to it cannot
+  disagree.
+- `src/root.zig` — `computeAssetFingerprints` (fills the map, once, before the
+  render pass), the site-asset install loop, and `reportPrunedSiteAssets`.
 - `src/context/Asset.zig` — `linkImpl`, the one place `.link()`/`.absLink()`
   bump a refcount, and `markSiteRead`, the one place the read builtins record
   a build-time read.
+- `src/render/html.zig` — the `.site_asset` arm, for content directives.
+- `src/spa.zig` — `spa.head` href staging and rewriting.
 
-Proof: `tests/assets/pruned-report.sh`.
+Proofs: `tests/assets/fingerprint.sh`, `tests/assets/pruned-report.sh`,
+`tests/spa/head-fingerprint.sh`.

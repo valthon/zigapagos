@@ -13,6 +13,7 @@ const StringTable = @import("../StringTable.zig");
 const PathTable = @import("../PathTable.zig");
 const Path = PathTable.Path;
 const PathName = PathTable.PathName;
+const fingerprint = @import("../fingerprint.zig");
 const HtmlSafe = @import("superhtml").HtmlSafe;
 
 const log = std.log.scoped(.render);
@@ -712,11 +713,15 @@ fn printUrl(
                 .name = @enumFromInt(sa.resolved.name),
             };
 
-            try w.print("{f}", .{pn.fmt(
+            // The SuperMD-directive twin of `context/Asset.zig`'s `.site` arm:
+            // a `![](…)` reference to a site asset must resolve to the same
+            // (possibly content-hashed) name the install pass writes, so it
+            // goes through the same formatter. See issue #53.
+            try w.print("{f}", .{fingerprint.fmtUrl(
+                pn,
                 &ctx._meta.build.st,
                 &ctx._meta.build.pt,
-                null,
-                "/",
+                &ctx._meta.build.asset_fingerprints,
             )});
         },
         .build_asset => |ba| {

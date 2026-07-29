@@ -11,6 +11,7 @@ const ziggy = @import("ziggy");
 const supermd = @import("supermd");
 const fatal = @import("fatal.zig");
 const diag = @import("diag.zig");
+const fingerprint = @import("fingerprint.zig");
 const worker = @import("worker.zig");
 const context = @import("context.zig");
 const Build = @import("Build.zig");
@@ -87,6 +88,31 @@ pub const Site = struct {
     /// runs after the build. Must be one of "zigbase" (default, the
     /// first-party host), "nginx", or "apache" — enforced by `Config.validate`.
     deploy_target: []const u8 = "zigbase",
+    /// When enabled, every site asset that is installed *because something
+    /// linked it* is installed under a content-hashed filename instead of its
+    /// verbatim one: `assets/style.css` → `/style.a1b2c3d4.css`, and every
+    /// `$site.asset('style.css').link()` / `![](…)` reference resolves to that
+    /// URL. See `src/fingerprint.zig` and issue #53.
+    ///
+    /// This is what lets a deploy set a far-future `Cache-Control` on the
+    /// whole asset tree: a changed file is a changed URL, so a returning
+    /// visitor can never be served a stale stylesheet against fresh HTML.
+    ///
+    /// Deliberately NOT fingerprinted, so the escape hatches still work:
+    /// `static_assets` entries (`favicon.ico`, `CNAME`, `robots.txt` — things
+    /// something *outside* the build looks up at a fixed path), build assets
+    /// (their install path is yours to choose in `build.zig`), and page
+    /// assets (installed next to the page that owns them).
+    ///
+    /// Release builds only. The in-memory live server — started by running
+    /// `zigapagos` with NO subcommand; `zigapagos serve` is an error that
+    /// points you at that, see `main.zig`'s `.serve` arm — always serves
+    /// verbatim names, mirroring how it also skips the CSS minify pass. Dev
+    /// serves what you wrote, release serves what you ship.
+    ///
+    /// Off by default: turning it on changes every linked asset's URL, which
+    /// is a deploy-visible change no site should get without asking.
+    asset_fingerprint: bool = false,
     /// When enabled, every heading that doesn't already carry an explicit
     /// `$heading.id(...)`/`$section.id(...)` gets a GitHub-compatible slug
     /// id injected automatically (`src/heading_slugs.zig`), so a same-page
@@ -148,6 +174,12 @@ pub const MultilingualSite = struct {
     ///   - `code`
     ///   - `output_prefix_override` (if set) + `host_url_override`
     locales: []const Locale,
+    /// Content-hashed filenames for linked site assets. See the field of the
+    /// same name on a single-locale `Site` for the full rationale and the
+    /// exclusion list. Multilingual sites keep ONE copy of the site assets
+    /// (installed under `assets_prefix_path`), so one fingerprint per asset
+    /// covers every locale.
+    asset_fingerprint: bool = false,
     /// When enabled, Zigapagos will automatically add 'width' and 'height'
     /// attributes to <img> elements for local assets.
     /// Be aware that setting 'width' and 'heigth' of an image will in some
@@ -479,6 +511,15 @@ pub const Config = union(enum) {
         return switch (c.*) {
             .Site => |s| s.static_assets,
             .Multilingual => |m| m.static_assets,
+        };
+    }
+
+    /// `asset_fingerprint` (issue #53) — content-hashed filenames for linked
+    /// site assets.
+    pub fn getAssetFingerprint(c: *const Config) bool {
+        return switch (c.*) {
+            .Site => |s| s.asset_fingerprint,
+            .Multilingual => |m| m.asset_fingerprint,
         };
     }
 
@@ -921,6 +962,29 @@ pub fn run(
         }
 
         worker.wait(); // variants done scanning their content + i18n ziggy file
+
+        // Content-hashed asset filenames (issue #53). This has to sit HERE,
+        // between the `static_assets` expansion above and the render pass
+        // below, for two independent reasons:
+        //
+        //  * AFTER the expansion, because that is what marks the assets that
+        //    must keep a stable name. `computeAssetFingerprints` reads the
+        //    refcount to tell them apart, and at this exact point in the pass
+        //    order a non-zero refcount can ONLY have come from `static_assets`
+        //    — nothing has rendered yet, so no `.link()` has bumped anything.
+        //  * BEFORE the render pass, because the map is consulted by the
+        //    render workers (`context/Asset.zig`, `render/html.zig`) and by
+        //    the SPA prerender. Filling it once here and never touching it
+        //    again is what makes those lock-free reads correct.
+        //
+        // It also runs on the INCREMENTAL dev path, which skips the install
+        // pass entirely: the pages that do re-render still have to emit the
+        // same fingerprinted URLs the previous full build installed, and
+        // because the name is a pure function of the file's bytes, recomputing
+        // it reproduces exactly those URLs.
+        if (build.mode == .disk and build.cfg.getAssetFingerprint()) {
+            computeAssetFingerprints(io, gpa, &build);
+        }
     }
 
     // Activate sections by parsing their index.smd page
@@ -2592,6 +2656,11 @@ pub fn run(
         };
 
         var buf: [std.fs.max_path_bytes]u8 = undefined;
+        // Wider than `buf` by exactly what a fingerprint adds — `.` plus
+        // `hash_len` hex digits — so that a source path which fits in `buf`
+        // has a destination that provably fits here, and the `catch
+        // unreachable` below stays as sound as the one above it.
+        var dest_buf: [std.fs.max_path_bytes + 1 + fingerprint.hash_len]u8 = undefined;
         var site_it = build.site_assets.iterator();
         while (site_it.next()) |entry| {
             const key = entry.key_ptr.*;
@@ -2613,7 +2682,22 @@ pub fn run(
             }) catch unreachable;
 
             if (entry.value_ptr.raw > 0) {
-                const dest = std.mem.trimStart(u8, path, "/");
+                // The SOURCE path is `path`; the DESTINATION is the same
+                // thing with the fingerprinted basename substituted (issue
+                // #53). `fingerprint.fmtUrl` is the single place that decides
+                // that name — the same formatter the three URL-printing seams
+                // use — so an installed file and every link to it cannot
+                // disagree. With fingerprinting off (or for a `static_assets`
+                // entry) the map has no entry and this reproduces `path`
+                // byte-for-byte.
+                const dest = std.mem.trimStart(u8, std.fmt.bufPrint(&dest_buf, "{f}", .{
+                    fingerprint.fmtUrl(
+                        key,
+                        &build.st,
+                        &build.pt,
+                        &build.asset_fingerprints,
+                    ),
+                }) catch unreachable, "/");
                 // Minify text assets (currently `.css`) through Bun
                 // during release staging, matching the island/SPA JS minify
                 // pass. Gated on `css_minify_driver` being threaded — only the
@@ -2657,6 +2741,70 @@ pub fn run(
     reportPrunedSiteAssets(gpa, &build);
 
     return build;
+}
+
+/// Fill `build.asset_fingerprints` (issue #53). One entry per site asset that
+/// is eligible for a content-hashed filename; assets left OUT of the map keep
+/// their verbatim name everywhere.
+///
+/// Two exclusions, both deliberate:
+///
+///  * `rc > 0` — a `static_assets` entry. See the call site for why a non-zero
+///    refcount at this point in the pass order means exactly that, and
+///    `fingerprint.zig`'s header for why those must keep a stable path.
+///  * A file that cannot be read. That is not fatal here: an unreadable asset
+///    that nothing links is not an error at all today (it is simply never
+///    installed), and one that IS linked already fails with a proper
+///    `fatal.file` in the install pass, which reports the same errno with the
+///    path the user actually wrote. Failing here instead would turn a
+///    never-installed broken symlink in `assets/` into a hard build failure
+///    the moment fingerprinting is switched on.
+///
+/// Cost: this reads every non-static asset once, including ones nothing ends
+/// up linking, because which assets are referenced is not known until the
+/// render pass has run and the URLs are needed *during* it. That is the price
+/// of the feature and the reason it is opt-in.
+///
+/// Allocator contract: self-freeing (NO_SLOP §2.2a contract 1) for its own
+/// scratch — every file buffer it reads is freed before returning. The names
+/// it stores into `build.asset_fingerprints` are gpa-owned by `Build` and
+/// freed in `Build.deinit`.
+fn computeAssetFingerprints(io: Io, gpa: Allocator, build: *Build) void {
+    const zone = tracy.trace(@src());
+    defer zone.end();
+
+    var p = progress.start("Fingerprint assets", build.site_assets.count());
+    defer p.end();
+
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var it = build.site_assets.iterator();
+    while (it.next()) |entry| {
+        p.completeOne();
+        if (entry.value_ptr.raw > 0) continue; // `static_assets`: stable path
+
+        const path = std.fmt.bufPrint(&buf, "{f}", .{
+            entry.key_ptr.fmt(&build.st, &build.pt, null, "/"),
+        }) catch continue;
+
+        // Streamed, not slurped: this pass reads EVERY non-`static_assets`
+        // file, so a single large asset (a video, a PDF) would otherwise set
+        // the build's peak RSS just to be named. See `fingerprint.hashFile`.
+        const name = fingerprint.hashFile(
+            gpa,
+            io,
+            build.site_assets_dir,
+            path,
+            entry.key_ptr.name.slice(&build.st),
+        ) catch |err| switch (err) {
+            error.OutOfMemory => fatal.oom(),
+            else => continue,
+        };
+        build.asset_fingerprints.putNoClobber(
+            gpa,
+            entry.key_ptr.*,
+            name,
+        ) catch fatal.oom();
+    }
 }
 
 /// Does `assets_dir_path` name a directory that is ALSO a content dir?
