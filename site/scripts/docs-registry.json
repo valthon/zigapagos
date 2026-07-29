@@ -21,6 +21,13 @@
     "description": "Generating a typed client from a shared schema so the Zig and TypeScript tiers cannot drift."
   },
   {
+    "canonical": "docs/generated-content.md",
+    "mirror": "generated-content.smd",
+    "slug": "generated-content",
+    "title": "Generated content",
+    "description": "Why Zigapagos ships no content-generator hook, and the four-piece recipe — registry, generator, gitignore, freshness gate — this site's own docs pages use instead."
+  },
+  {
     "canonical": "docs/observability.md",
     "mirror": "observability.smd",
     "slug": "observability",
