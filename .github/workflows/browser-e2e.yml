@@ -360,15 +360,52 @@ jobs:
           # disk build — a symlink is the simplest way to preview the disk
           # output under the same path Pages puts it at.
           ln -s site zig-out/zigapagos
-          bunx serve -l 8080 zig-out &
+
+          # python3's stdlib server, and NOT the `bunx serve` this step used to
+          # run (#50). `bunx` RESOLVES AND DOWNLOADS an npm package at workflow
+          # runtime, in a repository that pins zig and bun in mise.toml, passes
+          # --frozen-lockfile to every `bun install`, and materializes its Zig
+          # dependency tree from hashes in build.zig.zon. That single unpinned
+          # fetch was the only one left, and it was both a reproducibility hole
+          # and a supply-chain surface. `serve -l 8080` was also observed
+          # ignoring the requested port and binding a random one in a sandboxed
+          # environment, which presents here as a browser timing out against a
+          # site that is up. tests/meta/ci-package-pins.sh fails the build if an
+          # unpinned runner comes back.
+          #
+          # http.server covers what this step actually needs. It is threaded
+          # (`python -m http.server` has used ThreadingHTTPServer since 3.7, so
+          # the browser's parallel subresource requests do not serialize behind
+          # each other), it serves index.html for a directory request — which is
+          # every URL both helpers load, all of them trailing-slash — and it
+          # follows the symlink above. The one thing it does NOT do is `serve`'s
+          # extensionless-URL rewriting, and nothing here wanted that: zigapagos
+          # emits directory-style output, so all 25 asset references on the
+          # three pages these helpers load resolve unrewritten.
+          #
+          # 127.0.0.1 rather than `localhost` on both sides: the runner resolves
+          # `localhost` to ::1 as well as 127.0.0.1 and http.server binds one
+          # address family, so naming the address removes a fallback that only
+          # ever shows up as a slow start.
+          python3 -m http.server 8080 --bind 127.0.0.1 --directory zig-out &
           SERVER_PID=$!
-          for i in $(seq 1 30); do
-            curl -sf http://localhost:8080/zigapagos/ >/dev/null && break
+          trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+
+          BASE=http://127.0.0.1:8080/zigapagos
+          for _ in $(seq 1 30); do
+            curl -sf "$BASE/" >/dev/null && break
             sleep 1
           done
-          mise exec -- python3 test/hydrate_playwright.py http://localhost:8080/zigapagos
-          mise exec -- python3 test/spa_playwright.py http://localhost:8080/zigapagos
-          kill "$SERVER_PID"
+          # Say WHICH thing failed. Without this the loop falls through on a
+          # server that never came up and the first Playwright helper reports a
+          # navigation error, which reads like a defect in the site.
+          curl -sf "$BASE/" >/dev/null || {
+            echo "::error::static server never answered on $BASE after 30s"
+            exit 1
+          }
+
+          mise exec -- python3 test/hydrate_playwright.py "$BASE"
+          mise exec -- python3 test/spa_playwright.py "$BASE"
 
       - name: Record result in the run summary
         if: always()

@@ -53,8 +53,15 @@ jobs:
       # they need a git repo but no history: a shallow checkout is enough.
       - uses: actions/checkout@v7
 
-      - name: Branding gate
-        run: tests/branding.sh
+      # Self-tests first, then the gate — the same order and the same reasoning
+      # as the allocator gate below. tests/branding.sh now carries a marker
+      # parser (an inline `branding-ok:` opt-out, #60), and a parser has a
+      # failure mode a single grep does not: it can go PERMISSIVE without going
+      # red. tests/branding.test.sh pins each rule from both sides.
+      - name: Branding gate (self-tests, then the gate)
+        run: |
+          bash tests/branding.test.sh
+          bash tests/branding.sh
 
       - name: Confidentiality gate
         run: tests/confidentiality.sh
