@@ -1131,6 +1131,101 @@ fn analyzeContent(
     }
 }
 
+/// The `{f}` formatter for a page's output directory -- the *un-rendered* core
+/// of `pageDir`/`mainOutputPath`/`suffixedOutputPath` below. Allocates nothing.
+/// It exists so each of those three is a SINGLE `allocPrint` with no
+/// intermediate directory string to allocate, leak or free: that is what makes
+/// all three honest §2.2a contract-1 functions, and it keeps the emit path at
+/// the one allocation per output it had before this extraction. (The first cut
+/// of the extraction formatted `pageDir`'s *result* instead, which both doubled
+/// the allocation count on the hot path and leaked the intermediate under any
+/// non-arena allocator -- a contract-4 leak wearing a contract-1 label.)
+///
+/// The only difference between the two config shapes is the locale prefix: a
+/// `.Site` has none, a `.Multilingual` variant contributes its
+/// `output_path_prefix`.
+fn urlFmt(
+    cfg: *const root.Config,
+    variant: *const Variant,
+    page: *const Page,
+) PathTable.Path.Formatter {
+    const prefix: ?[]const u8 = switch (cfg.*) {
+        .Site => null,
+        .Multilingual => variant.output_path_prefix,
+    };
+    return page._scan.url.fmt(&variant.string_table, &variant.path_table, prefix, true);
+}
+
+/// The directory a page's own output lands in, relative to the output
+/// directory root: "" for the site's root page, otherwise a `/`-terminated
+/// path. This is the shared core of `mainOutputPath`/`suffixedOutputPath`
+/// below, and the exact formula `renderPage`'s disk-mode emit path further
+/// down uses for `out_dir_path` (the main-output case) -- extracted (H7 in the
+/// `dx/introspection` plan, issues #45/#47) so `zigapagos explain` reports the
+/// REAL emitted path instead of a second, driftable copy of this formula: a
+/// stale copy of exactly this kind is the defect issue #47 exists to fix (a doc
+/// claimed a deploy tree no build actually emits).
+///
+/// NO_SLOP.md §2.2a contract 1 (self-freeing): exactly one allocation and it
+/// escapes as the return; there is no scratch. Correct under ANY allocator,
+/// not just the render arena the emit path happens to hand it.
+pub fn pageDir(
+    alloc: Allocator,
+    cfg: *const root.Config,
+    variant: *const Variant,
+    page: *const Page,
+) ![]const u8 {
+    return std.fmt.allocPrint(alloc, "{f}", .{urlFmt(cfg, variant, page)});
+}
+
+/// A page's MAIN output path (its rendered `index.html`), relative to the
+/// output directory -- `pageDir` plus the filename every main output gets. See
+/// `pageDir`'s doc comment for why this is extracted.
+///
+/// NO_SLOP.md §2.2a contract 1 (self-freeing), same as `pageDir`: the filename
+/// is appended INSIDE the single `allocPrint` via `urlFmt` rather than by
+/// formatting `pageDir`'s result, so there is no intermediate allocation left
+/// unfreed.
+pub fn mainOutputPath(
+    alloc: Allocator,
+    cfg: *const root.Config,
+    variant: *const Variant,
+    page: *const Page,
+) ![]const u8 {
+    return std.fmt.allocPrint(alloc, "{f}index.html", .{urlFmt(cfg, variant, page)});
+}
+
+/// The output path of one of a page's `aliases` entries or one
+/// `alternatives[].output`, relative to the output directory -- the exact
+/// formula `renderPage`'s disk-mode emit path further down uses for both
+/// (identical logic; only the source field differs, see the two call sites).
+/// `suffix` is the raw frontmatter string (`a` or `alt.output`): root-relative
+/// (leading '/') suffixes are used verbatim (minus the leading '/', no locale
+/// prefix -- they are declared relative to the SITE root, not the page);
+/// anything else is joined onto `pageDir` (so it DOES pick up the locale prefix
+/// on a `.Multilingual` site). See `pageDir`'s doc comment for why this is
+/// extracted.
+///
+/// NO_SLOP.md §2.2a contract 1 (self-freeing), ALWAYS-OWNED in both branches.
+/// The rooted branch could hand back `suffix[1..]` for free -- the inline code
+/// this replaced did exactly that -- but as a *function* result that is the
+/// borrowed-or-owned return §2.2a flags by name: the caller cannot free it
+/// without knowing which branch ran, so it would only be sound where nobody
+/// frees. One `dupe` of a short frontmatter string (root-relative aliases are
+/// the rare spelling, and most pages declare no aliases at all) buys a result
+/// every caller can treat identically. The joined branch is still the single
+/// `allocPrint` it was before the extraction.
+pub fn suffixedOutputPath(
+    alloc: Allocator,
+    cfg: *const root.Config,
+    variant: *const Variant,
+    page: *const Page,
+    suffix: []const u8,
+) ![]const u8 {
+    if (suffix[0] == '/') return alloc.dupe(u8, suffix[1..]);
+    return std.fmt.allocPrint(alloc, "{f}{s}", .{ urlFmt(cfg, variant, page), suffix });
+}
+
 pub const RenderJobKind = union(enum) { main, alternative: u32 };
 const SuperVM = superhtml.VM(context.Value);
 fn renderPage(
@@ -1334,13 +1429,23 @@ fn renderPage(
             // release/deploy, so fail rather than publish a page whose island
             // never hydrates; dev serve keeps going so the author can see the
             // page, with the cause logged at .err (the CLI's level).
-            log.err(
-                "island rendering error on {s}: the page uses <island> but no island sidecar is configured" ++
-                    " — declare the island in build.zig's `.islands` (needs bun, the sidecar script," ++
-                    " and the island source dir)",
-                .{page_path},
-            );
-            if (build.mode == .disk) build.any_rendering_error.store(true, .release);
+            //
+            // `island_sidecar_optional` (validate/explain, see
+            // root.Options.island_sidecar_optional): those commands
+            // deliberately configure NO sidecar -- their whole point is
+            // checking/reporting on a site without the Bun toolchain -- so "no
+            // sidecar" is their normal state, not an authoring mistake.
+            // Suppress the log line for them; everything else (release, dev,
+            // the live server) keeps the diagnostic verbatim.
+            if (!build.island_sidecar_optional) {
+                log.err(
+                    "island rendering error on {s}: the page uses <island> but no island sidecar is configured" ++
+                        " — declare the island in build.zig's `.islands` (needs bun, the sidecar script," ++
+                        " and the island source dir)",
+                    .{page_path},
+                );
+                if (build.mode == .disk) build.any_rendering_error.store(true, .release);
+            }
             break :blk raw;
         };
         // The page's URL path (leading slash; trailing slash; "" → "/"), passed to
@@ -1525,26 +1630,7 @@ fn renderPage(
                 .main => blk: {
                     // aliases
                     for (page.aliases) |a| {
-                        const out_path = if (a[0] == '/') a[1..] else switch (build.cfg.*) {
-                            .Site => try std.fmt.allocPrint(arena.a, "{f}{s}", .{
-                                page._scan.url.fmt(
-                                    &variant.string_table,
-                                    &variant.path_table,
-                                    null,
-                                    true,
-                                ),
-                                a,
-                            }),
-                            .Multilingual => try std.fmt.allocPrint(arena.a, "{f}{s}", .{
-                                page._scan.url.fmt(
-                                    &variant.string_table,
-                                    &variant.path_table,
-                                    variant.output_path_prefix,
-                                    true,
-                                ),
-                                a,
-                            }),
-                        };
+                        const out_path = try suffixedOutputPath(arena.a, build.cfg, variant, page, a);
 
                         if (std.fs.path.dirnamePosix(out_path)) |path| {
                             disk.output_dir.createDirPath(
@@ -1568,24 +1654,7 @@ fn renderPage(
 
                     // main
                     {
-                        const out_dir_path = switch (build.cfg.*) {
-                            .Site => try std.fmt.allocPrint(arena.a, "{f}", .{
-                                page._scan.url.fmt(
-                                    &variant.string_table,
-                                    &variant.path_table,
-                                    null,
-                                    true,
-                                ),
-                            }),
-                            .Multilingual => try std.fmt.allocPrint(arena.a, "{f}", .{
-                                page._scan.url.fmt(
-                                    &variant.string_table,
-                                    &variant.path_table,
-                                    variant.output_path_prefix,
-                                    true,
-                                ),
-                            }),
-                        };
+                        const out_dir_path = try pageDir(arena.a, build.cfg, variant, page);
 
                         // note: do not close build.install_dir
                         var out_dir = if (out_dir_path.len == 0) disk.output_dir else disk.output_dir.createDirPathOpen(
@@ -1605,26 +1674,7 @@ fn renderPage(
 
                 .alternative => |idx| blk: {
                     const raw_path = page.alternatives[idx].output;
-                    const out_path = if (raw_path[0] == '/') raw_path[1..] else switch (build.cfg.*) {
-                        .Site => try std.fmt.allocPrint(arena.a, "{f}{s}", .{
-                            page._scan.url.fmt(
-                                &variant.string_table,
-                                &variant.path_table,
-                                null,
-                                true,
-                            ),
-                            raw_path,
-                        }),
-                        .Multilingual => try std.fmt.allocPrint(arena.a, "{f}{s}", .{
-                            page._scan.url.fmt(
-                                &variant.string_table,
-                                &variant.path_table,
-                                variant.output_path_prefix,
-                                true,
-                            ),
-                            raw_path,
-                        }),
-                    };
+                    const out_path = try suffixedOutputPath(arena.a, build.cfg, variant, page, raw_path);
 
                     if (std.fs.path.dirnamePosix(out_path)) |path| {
                         disk.output_dir.createDirPath(

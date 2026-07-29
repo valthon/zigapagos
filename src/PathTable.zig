@@ -414,6 +414,12 @@ pub const Path = enum(u32) {
     };
 };
 
+// NOTE (fork): this test called a `getPath` that no longer exists upstream.
+// It never failed to build because nothing in the test binaries had ever
+// *analyzed* this container -- Zig is lazy, and every prior use of PathTable
+// came from non-test code paths -- so the rot stayed invisible until a fork
+// unit test (cli/explain.zig's emitted-path ownership test) touched it. The
+// call is `getPathNoName` with an empty prefix; the assertions are untouched.
 test PathTable {
     const gpa = std.testing.allocator;
 
@@ -427,20 +433,20 @@ test PathTable {
     defer path_table.deinit(gpa);
 
     const s1 = "a/b/c/d";
-    try std.testing.expectEqual(null, path_table.getPath(&string_table, s1));
+    try std.testing.expectEqual(null, path_table.getPathNoName(&string_table, &.{}, s1));
     const p1 = try path_table.internPath(gpa, &string_table, s1);
-    try std.testing.expectEqual(path_table.getPath(&string_table, s1), p1);
+    try std.testing.expectEqual(path_table.getPathNoName(&string_table, &.{}, s1), p1);
 
     const s2 = "1/2/3/4/";
-    try std.testing.expectEqual(null, path_table.getPath(&string_table, s2));
+    try std.testing.expectEqual(null, path_table.getPathNoName(&string_table, &.{}, s2));
     const p2 = try path_table.internPath(gpa, &string_table, s2);
-    try std.testing.expectEqual(p2, path_table.getPath(&string_table, s2));
+    try std.testing.expectEqual(p2, path_table.getPathNoName(&string_table, &.{}, s2));
     try std.testing.expect(p1 != p2);
 
     const s3 = "1/2/3/4";
-    try std.testing.expectEqual(p2, path_table.getPath(&string_table, s3));
+    try std.testing.expectEqual(p2, path_table.getPathNoName(&string_table, &.{}, s3));
     const p3 = try path_table.internPath(gpa, &string_table, s3);
-    try std.testing.expectEqual(p3, path_table.getPath(&string_table, s3));
+    try std.testing.expectEqual(p3, path_table.getPathNoName(&string_table, &.{}, s3));
     try std.testing.expectEqual(p2, p3);
 }
 
