@@ -4,6 +4,7 @@
 .author = "Test",
 .layout = "index.shtml",
 .draft = false,
+.translation_key = "home",
 ---
 
 `page-og.png` and `site.css` are referenced ONLY through `absLink()`, so this

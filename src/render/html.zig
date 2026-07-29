@@ -743,9 +743,12 @@ pub fn printAssetUrlPrefix(
                 // `https://example.com/static` + `site.css` came out as
                 // `https://example.com/staticsite.css`, and with an empty
                 // `assets_prefix_path` as `https://example.comsite.css`.
-                // Latent until now — nothing reached this branch with a
-                // forced host url on a multilingual site — and newly
-                // reachable through `Asset.absLink()`.
+                //
+                // NOT latent: the `locale.host_url_override != null` disjunct
+                // has always been reachable through plain `link()`, so any
+                // multilingual site with an override has been emitting this
+                // malformed site-asset URL. `absLink()` merely adds a third
+                // way in. Fixing it here repairs `link()` on those sites too.
                 try w.print("{f}/", .{
                     root.fmtJoin('/', &.{
                         ctx.site.host_url,

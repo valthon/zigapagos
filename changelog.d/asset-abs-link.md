@@ -10,6 +10,13 @@
 ### Fixed
 
 - `absLink()` on a multilingual site returned a root-relative URL for page
-  assets (`$page.asset(...)`), and dropped the separator after
-  `assets_prefix_path` for site assets (`https://example.com/staticfoo.css`).
-  Both are now absolute and well-formed in every locale.
+  assets (`$page.asset(...)`). It is now absolute in every locale, and stays
+  correct across locales too: `$page.locale('de').asset(...).absLink()` emits
+  the target locale's host exactly once, including when that locale sets
+  `host_url_override`.
+
+- On a multilingual site whose locale sets `host_url_override`, a site asset
+  linked with `link()` lost the separator after `assets_prefix_path` and came
+  out as `https://example.com/staticfoo.css` (or `https://example.comfoo.css`
+  with no prefix). This affected `link()` on those sites before `absLink()`
+  existed, and is fixed for both.

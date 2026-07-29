@@ -78,35 +78,50 @@ fn linkImpl(
     const w = &buf.writer;
     switch (asset._meta.kind) {
         .page => |variant_id| {
-            // `printLinkPrefix`'s own `force_host_url` is NOT usable here.
-            // Its `.multi` arm honours that flag only INSIDE
-            // `if (other_variant_id != our_variant_id)` (`Root.zig`), and a
-            // page asset is by definition in the page's own variant — so on a
-            // multilingual site the flag never fires and `absLink()` would
-            // hand back a root-relative URL, silently reintroducing the exact
-            // defect issue #25 exists to fix.
+            // `printLinkPrefix` handles `force_host_url` in every case but
+            // ONE, and that one cell is what this block fills in.
             //
-            // That coupling is inherited and deliberate: `printUrl`'s call
-            // sites in `render/html.zig` pass `page != ctx.page`, i.e. there
-            // the flag doubles as "this is a cross-page reference", and the
-            // comment there explicitly relies on the variant check to decide
-            // whether a host url is needed. Hoisting the flag out of that
-            // guard would change `$link` output for every multilingual site.
-            // So we leave `printLinkPrefix` alone and print the host here.
+            // Its `.multi` arm honours the flag only INSIDE
+            // `if (other_variant_id != our_variant_id)` (`Root.zig`). A
+            // `.page` asset usually IS in the page's own variant, so on a
+            // multilingual site the flag never fired and `absLink()` handed
+            // back a root-relative URL — the exact defect issue #25 exists to
+            // fix. But "usually" is not "always": `$page.locale(…)` and
+            // `translation()` return the OTHER variant's Page, and `.asset()`
+            // stamps that page's `variant_id` (see `Page.zig`), so a `.page`
+            // asset can be cross-variant. There `printLinkPrefix` does print
+            // the host, and printing it here too yielded a doubled
+            // `https://it.example.comhttps://it.example.com/…`.
+            //
+            // Hence `handled`: print the host ourselves ONLY in the cell
+            // `printLinkPrefix` ignores (multilingual, same variant), and keep
+            // passing the flag through so its own `force or hosts-differ`
+            // short-circuit covers everything else — every cross-variant case
+            // and the simple-site case, including two locales whose override
+            // strings are equal but not pointer-equal.
+            //
+            // Not hoisting the flag out of that inherited guard is deliberate:
+            // `printUrl`'s call sites in `render/html.zig` pass
+            // `page != ctx.page`, so there the flag doubles as "this is a
+            // cross-page reference" — and `page != ctx.page` with the SAME
+            // variant is reachable via embedded content — so hoisting would
+            // change `$link` output for every multilingual site.
             //
             // `sites[variant_id].host_url` is the same value that arm reads as
-            // `other_host_url`: `host_url_override orelse host_url` for a
-            // locale (see `root.zig`'s sites map), and the plain `host_url`
-            // for a single-locale site — so this is correct in both, and the
-            // simple-site output is byte-identical to what the flag produced.
-            if (force_host_url) {
-                const site = ctx._meta.sites.entries.items(.value)[variant_id];
+            // `other_host_url`: `host_url_override orelse host_url` per locale
+            // (see `root.zig`'s sites map).
+            const site = ctx._meta.sites.entries.items(.value)[variant_id];
+            const handled = switch (site._meta.kind) {
+                .simple => true,
+                .multi => variant_id != ctx.page._scan.variant_id,
+            };
+            if (force_host_url and !handled) {
                 w.print("{s}", .{site.host_url}) catch return error.OutOfMemory;
             }
             ctx.printLinkPrefix(
                 w,
                 variant_id,
-                false,
+                force_host_url,
             ) catch return error.OutOfMemory;
             const v = ctx._meta.build.variants[variant_id];
             const hint = v.urls.getPtr(asset._meta.url).?;

@@ -16,6 +16,18 @@
          `https://example.com/staticsite.css`. -->
     <meta property="og:image" content="https://example.com/static/site.css">
 
+    <!-- CROSS-VARIANT page asset via absLink, into a locale that sets
+         `host_url_override`. `printLinkPrefix` already prints the host across
+         variants, so absLink must NOT print it again — this pins exactly one
+         host. Regressed once as
+         `https://de.example.comhttps://de.example.com/de-DE/page-og.png`. -->
+    <meta name="cross-variant-abs" content="https://de.example.com/de-DE/page-og.png">
+
+    <!-- Control for the cell above: the same expression through plain link().
+         It is already absolute cross-variant (different host), and no absLink
+         change may alter it. -->
+    <meta name="cross-variant-rel" content="https://de.example.com/de-DE/page-og.png">
+
     <!-- Control: plain link() stays root-relative and locale-prefixed, so a
          regression that made everything absolute would fail here too. -->
     <link rel="icon" href="/it-IT/logo.png">

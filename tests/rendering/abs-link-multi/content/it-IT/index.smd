@@ -4,6 +4,7 @@
 .author = "Test",
 .layout = "index.shtml",
 .draft = false,
+.translation_key = "home",
 ---
 
 The second locale is what makes the page-asset URL interesting: its output

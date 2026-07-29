@@ -1,0 +1,13 @@
+---
+.title = "Home",
+.date = @date("2020-07-06T00:00:00"),
+.author = "Test",
+.layout = "index.shtml",
+.draft = false,
+.translation_key = "home",
+---
+
+This locale sets `host_url_override`, which is what makes the cross-variant
+`absLink()` cell in the layout meaningful: linking into it from another locale
+crosses a host boundary, so `printLinkPrefix` prints a host of its own and
+`absLink()` must not add a second one.

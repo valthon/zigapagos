@@ -28,5 +28,19 @@ Multilingual {
             .site_title = "Abs Link Multi",
             .content_dir_path = "content/it-IT",
         },
+        // `host_url_override` is what makes the CROSS-VARIANT cell bite. A
+        // `.page` asset is usually in the page's own variant, but
+        // `$page.locale(…)` returns the other variant's Page and `.asset()`
+        // stamps THAT variant — and `printLinkPrefix` does print the host
+        // across variants whenever the two hosts differ. An `absLink()` that
+        // also printed it unconditionally emitted the host twice
+        // (`https://de.example.comhttps://de.example.com/de-DE/…`).
+        {
+            .code = "de-DE",
+            .name = "Deutsch",
+            .site_title = "Abs Link Multi",
+            .content_dir_path = "content/de-DE",
+            .host_url_override = "https://de.example.com",
+        },
     ],
 }
