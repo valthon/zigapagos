@@ -19,6 +19,7 @@ const Command = enum {
     migrate,
     doctor,
     validate,
+    explain,
     release,
     debug,
     e2e,
@@ -128,6 +129,7 @@ pub fn main(init: std.process.Init) u8 {
         .migrate => @import("cli/migrate.zig").migrate(io, gpa, args[2..]),
         .doctor => @import("cli/doctor.zig").doctor(io, gpa, args[2..]),
         .validate => @import("cli/validate.zig").validate(io, gpa, args[2..]),
+        .explain => @import("cli/explain.zig").explain(io, gpa, args[2..]),
         .release => @import("cli/release.zig").release(io, gpa, args[2..], init.environ_map),
         .debug => @import("cli/debug.zig").debug(io, gpa, args[2..]),
         .e2e => @import("cli/e2e.zig").e2e(io, gpa, args[2..], init.environ_map) catch fatal.oom(),
@@ -224,6 +226,13 @@ test "doctor" {
 // @import-ed from inside main()'s body)
 test "validate: cli" {
     _ = @import("cli/validate.zig");
+}
+
+// Pull explain.zig into the test compilation unit for `zig build test-explain`.
+// (same lazy-analysis reason as the anchors above -- explain.zig is only
+// @import-ed from inside main()'s body)
+test "explain: cli" {
+    _ = @import("cli/explain.zig");
 }
 
 // Pull languages.zig into the test compilation unit for `zig build test-init`

@@ -1577,7 +1577,11 @@ pub const Server = struct {
     /// a legal filename byte), but the file-system APIs on other platforms honor
     /// it, so a separator-correct guard rejects `..\` traversal defensively too.
     /// Run on the percent-decoded path so encoded traversal (`%2e%2e`) is caught.
-    fn hasTraversalSegment(path: []const u8) bool {
+    ///
+    /// `src/cli/explain.zig` reuses this same guard for its route argument —
+    /// same reason `stripPathPrefix` above is `pub`: a second hand-rolled
+    /// traversal check is how the two copies drift.
+    pub fn hasTraversalSegment(path: []const u8) bool {
         var it = std.mem.splitAny(u8, path, "/\\");
         while (it.next()) |seg| {
             if (std.mem.eql(u8, seg, "..") or std.mem.eql(u8, seg, ".")) return true;
@@ -2205,7 +2209,10 @@ pub const Server = struct {
 /// rest of the handler "../foo", a traversal that the guard at the top of
 /// `handleRequest` had already cleared and does not re-run. An empty prefix
 /// matches everything and strips only the leading '/' (the single-variant case).
-fn stripPathPrefix(path: []const u8, prefix: []const u8) ?[]const u8 {
+///
+/// `src/cli/explain.zig` resolves a route through this same helper — the
+/// segment-boundary rule is a traversal guard, and a second copy would drift.
+pub fn stripPathPrefix(path: []const u8, prefix: []const u8) ?[]const u8 {
     if (path.len == 0 or path[0] != '/') return null;
     const body = path[1..];
     if (!std.mem.startsWith(u8, body, prefix)) return null;

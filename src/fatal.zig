@@ -55,6 +55,9 @@ const help_menu =
     \\  validate          Parse + analyze the site WITHOUT bundling islands,
     \\                    running Bun, or writing output (a fast subset of
     \\                    `release`'s checks; see `zigapagos validate --help`)
+    \\  explain <route>   Report the content file, layout chain, frontmatter,
+    \\                    islands, assets and EMITTED PATHS behind one output
+    \\                    route
     \\  e2e               Serve a built site with ZigBase and run an e2e command
     \\  languages         List code-fence languages registered for highlighting
     \\  help              Show this menu and exit

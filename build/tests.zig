@@ -179,6 +179,16 @@ const exe_module: []const ExeModule = &.{
         .description = "Run validate CLI Command.parse unit tests",
         .filters = &.{"validate:"},
     },
+    // `zigapagos explain` CLI parse + route-normalization unit tests (the
+    // `Command.parse` surface and `routeCandidates`). Route resolution BEYOND
+    // normalization needs a whole `Build`, so it is covered by
+    // `tests/explain/explain.sh` against a real site instead -- do not widen
+    // this description to imply otherwise.
+    .{
+        .step_name = "test-explain",
+        .description = "Run explain CLI parse + route-normalization unit tests",
+        .filters = &.{"explain:"},
+    },
 };
 
 /// Registers every `test-*` step and hangs the test binaries off `check`.

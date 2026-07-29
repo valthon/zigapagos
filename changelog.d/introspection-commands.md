@@ -11,3 +11,10 @@
   `examples/tsx-site`, warm caches): a content-only edit loop goes from `zig build`'s ~2s to
   `validate`'s ~0.02–0.03s — and unlike `zig build`, `validate` needs no `bun`, `node_modules`,
   `build.zig`, or consumer build graph, and never writes the output tree.
+- `zigapagos explain <route>`: resolves one output route to its content source, layout `extends`
+  chain (for a route that is one of a page's `alternatives`, that alternative's OWN layout, not the
+  page's), effective frontmatter (after schema defaults), islands (as declared in the markup, not
+  SSR-verified), page-owned assets (referenced vs. pruned), and EMITTED PATHS relative to the
+  output directory (issue #47). Runs the same kind of fast in-memory build as `validate`. Content
+  routes only — a memory build never prerenders SPAs, so a client-routed SPA route is not covered;
+  the miss message says so.
