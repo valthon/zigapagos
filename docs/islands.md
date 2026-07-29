@@ -217,8 +217,9 @@ stays lenient.
 
 ## Module preloading
 
-Pages with islands emit `<link rel="modulepreload">` tags for the shared runtime
-and each island module, deduped and placed **after the import map**:
+Pages with islands emit `<link rel="modulepreload">` tags for the runtime that
+page loads (see [Runtime slicing](#runtime-slicing)) and each island module,
+deduped and placed **after the import map**:
 
 ```html
 <script type="importmap">…</script>
@@ -243,6 +244,47 @@ produces a single preload link — dedup is by module URL.
 instead of N sequential calls) is on hold pending co-design with `sidecar-slots`'
 nested-slot weaving — the `BatchItem` struct must carry `slots_json` and the
 deferred-splice sentinel must round-trip through slot-weaving for nested islands.
+
+## Runtime slicing
+
+The shared runtime (`/zigapagos-runtime.js`) is the whole `@z/runtime` barrel:
+the SPA router, the feature-flag client, the API client, the observability and
+error relays, and the full preact/compat React surface. A page whose only island
+is a counter loaded all of it.
+
+A release build therefore also produces a **sliced islands runtime** at
+`/islands/_runtime.js`, containing only `islands.ts`'s hydration auto-init, the
+JSX-transform names, and the union of the named `@z/runtime` exports the site's
+islands actually import. On the dogfooded site that is 60,271 bytes -> 21,686
+bytes, a 64% reduction on every island page.
+
+Selection is per page, and conservative:
+
+- The slicer reads each island's **built bundle** — the exact, already-resolved
+  statement of what the browser will ask the runtime for. An island whose bundle
+  imports `@z/runtime/compat`, a bare `react` specifier, any other
+  `@z/runtime/*` subpath, a namespace or default import, a re-export, a dynamic
+  `import()`, or a name the barrel does not export **bails** and keeps the shared
+  runtime. (Reading island *sources* instead would miss a `react` import that
+  arrives transitively through a dependency — and that page would then load a
+  runtime with no React surface.)
+- A page loads the slice **only if every island on it is one the slice covers**.
+  A single uncovered island puts the whole page back on the shared runtime: one
+  URL feeds the import map, the `modulepreload` and the module `<script>`, so a
+  page can never end up with two runtimes and two Preact instances.
+- If no island can be proved safe, **no slice is emitted at all** and every page
+  keeps the shared runtime — the worst case is the pre-slicing behaviour.
+
+Two consequences worth knowing:
+
+- The shared runtime is always emitted, even on a site where every page is
+  sliced, so such a site ships one unreferenced bundle in its output tree. The
+  slice decision is a build-time fact and the asset is declared at configure
+  time. (The SPA slicer has the same wart.)
+- `zigapagos serve` and the `zigapagos dev` hot loop never slice. The live server
+  serves the shared runtime from its own cache dir, and a slice entry does not
+  call `installHmr()`, so slicing the dev build would silently disable island
+  hot-swap. Payload size is not a dev-loop concern.
 
 ## Import guardrail
 

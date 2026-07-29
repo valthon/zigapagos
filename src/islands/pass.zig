@@ -129,6 +129,17 @@ pub const ProcessOptions = struct {
     /// .err, with page context) instead of pass.zig logging directly. Appended
     /// with `gpa`; string fields are owned by the `arena` passed to `process`.
     render_errors: ?*std.ArrayListUnmanaged(RenderErrorReport) = null,
+    /// The per-site SLICED islands runtime URL (`/islands/_runtime.js`), or null
+    /// when this build produced no slice — which is also the default, so every
+    /// existing caller keeps the shared runtime byte-identically. Un-prefixed:
+    /// `process` applies the site's `url_path_prefix` itself, exactly as
+    /// `src/spa.zig` does for a sliced SPA runtime.
+    sliced_runtime_url: ?[]const u8 = null,
+    /// Island module names (see `islandModuleName`) the slice provably serves.
+    /// A page whose EVERY island is in this set loads `sliced_runtime_url`; any
+    /// other page loads the shared runtime. Empty (the default) means no page is
+    /// ever sliced.
+    sliced_islands: []const []const u8 = &.{},
 };
 
 /// Prepend `/` + `prefix` to `url` (e.g. `prefixed(alloc, "zigapagos", "/foo.js")`
@@ -175,28 +186,32 @@ test "importMapFor points every specifier at a sliced runtime URL" {
     try std.testing.expect(std.mem.indexOf(u8, map, "\"@z/runtime\":\"/spa/public-runtime.js\"") != null);
 }
 
-/// Build the modulepreload <link> block for a page's islands: the shared runtime
+/// Build the modulepreload <link> block for a page's islands: the page's runtime
 /// first, then one link per UNIQUE island module_url (first-seen order). Returns ""
 /// when there are no islands. Deduped so two instances of the same component emit
 /// one link; client:only modules are included (imported at mount).
 ///
-/// NO_SLOP.md §2.2a contract 1: the dedup set and the prefixed-URL scratch are
-/// freed here and exactly one allocation escapes (`""` for the no-island case is
-/// a zero-length free, which `Allocator.free` short-circuits), so this is correct
-/// under any allocator — not just under the pass arena its caller passes.
-fn preloadLinks(alloc: std.mem.Allocator, instances: []const IslandInstance, url_prefix: []const u8) ![]u8 {
+/// `runtime_url` is the ALREADY-PREFIXED URL of the runtime this page loads — the
+/// shared one, or the per-site slice. Taking it rather than re-deriving it from
+/// the prefix is what keeps the preload, the import map and the module `<script>`
+/// pointing at ONE runtime: a page that preloaded a different runtime than it
+/// imported would fetch two bundles and, if both executed, get two Preacts.
+///
+/// NO_SLOP.md §2.2a contract 1: the dedup set is freed here and exactly one
+/// allocation escapes (`""` for the no-island case is a zero-length free, which
+/// `Allocator.free` short-circuits), so this is correct under any allocator —
+/// not just under the pass arena its caller passes.
+fn preloadLinks(alloc: std.mem.Allocator, instances: []const IslandInstance, runtime_url: []const u8) ![]u8 {
     if (instances.len == 0) return "";
     var seen: std.StringHashMapUnmanaged(void) = .empty;
     defer seen.deinit(alloc);
     var out: std.ArrayListUnmanaged(u8) = .empty;
     errdefer out.deinit(alloc);
-    // Fast path: with no prefix, use the precomputed constant (byte-identical
-    // to the pre-`ProcessOptions` output).
-    if (url_prefix.len == 0) {
+    // Fast path: the shared runtime with no prefix is the precomputed constant
+    // (byte-identical to the pre-`ProcessOptions` output).
+    if (std.mem.eql(u8, runtime_url, shared_runtime_url)) {
         try out.appendSlice(alloc, runtime_preload);
     } else {
-        const runtime_url = try prefixed(alloc, url_prefix, shared_runtime_url);
-        defer alloc.free(runtime_url);
         const link = try runtimePreloadFor(alloc, runtime_url);
         defer alloc.free(link);
         try out.appendSlice(alloc, link);
@@ -301,6 +316,23 @@ pub fn process(
     // </head> (build-output injection: the static output is self-contained).
     if (instances.items.len > 0) {
         if (std.mem.indexOf(u8, body, "</head>")) |head_end| {
+            // Which runtime this PAGE loads. The per-site slice serves only the
+            // island bundles the build proved it covers, so a page carrying ANY
+            // other island — one that imports @z/runtime/compat, bare `react`,
+            // or a barrel name the slice does not export — must load the full
+            // shared runtime. A page must never load two runtimes, or it gets
+            // two Preacts and hydration breaks; ONE url feeds every import-map
+            // specifier, the modulepreload and the module <script> below, which
+            // is what makes that impossible by construction rather than by
+            // convention.
+            const use_sliced = if (opts.sliced_runtime_url) |_| blk: {
+                for (instances.items) |inst| {
+                    if (!containsName(opts.sliced_islands, islandModuleName(inst.src))) break :blk false;
+                }
+                break :blk true;
+            } else false;
+            const runtime_url_raw = if (use_sliced) opts.sliced_runtime_url.? else shared_runtime_url;
+
             var injected: std.ArrayListUnmanaged(u8) = .empty;
             errdefer injected.deinit(gpa);
             try injected.appendSlice(gpa, body[0..head_end]);
@@ -310,20 +342,21 @@ pub fn process(
             // A later map is silently disregarded by the browser — cache-state
             // flaky, since a cold cache usually loses the race to parse the map
             // first while a warm one wins it and breaks.
-            // Fast path: with no prefix, use the precomputed constants so the
-            // output is byte-identical to the pre-`ProcessOptions` behavior.
-            if (opts.url_prefix.len == 0) {
+            // Fast path: no prefix AND the shared runtime — emit the precomputed
+            // constants so the output stays byte-identical to the pre-slicing
+            // behavior on every site that has no slice.
+            if (opts.url_prefix.len == 0 and !use_sliced) {
                 try injected.appendSlice(gpa, import_map);
                 // `preloadLinks`/`importMapFor`/`runtimeScriptFor`/`prefixed` are
                 // contract 1, reached through `arena.a` — the sanctioned bridge.
                 // Their results are copied into `injected` and then dead; this
                 // function is contract 4, so the arena drop reclaims them.
-                try injected.appendSlice(gpa, try preloadLinks(arena.a, instances.items, opts.url_prefix));
+                try injected.appendSlice(gpa, try preloadLinks(arena.a, instances.items, shared_runtime_url));
                 try injected.appendSlice(gpa, runtime_script);
             } else {
-                const runtime_url = try prefixed(arena.a, opts.url_prefix, shared_runtime_url);
+                const runtime_url = try prefixed(arena.a, opts.url_prefix, runtime_url_raw);
                 try injected.appendSlice(gpa, try importMapFor(arena.a, runtime_url));
-                try injected.appendSlice(gpa, try preloadLinks(arena.a, instances.items, opts.url_prefix));
+                try injected.appendSlice(gpa, try preloadLinks(arena.a, instances.items, runtime_url));
                 try injected.appendSlice(gpa, try runtimeScriptFor(arena.a, runtime_url));
             }
             try injected.appendSlice(gpa, body[head_end..]);
@@ -916,13 +949,37 @@ fn islandExtent(html: []const u8, tok: IslandStart) ?IslandExtent {
     };
 }
 
-/// Map a component `src` to the URL of its bundled JS module.
-/// "components/Hero.island.tsx" -> "/islands/Hero.island.js". Contract 1.
-fn moduleUrl(alloc: std.mem.Allocator, src: []const u8) ![]u8 {
+/// Basename of `src` with its final extension stripped — the name the island's
+/// bundle is emitted under (`/islands/<name>.js`) and the key the runtime-slice
+/// manifest lists its covered islands by.
+///
+/// Byte-identical to `build/validate.zig`'s `islandName`, which is what names the
+/// bundle file the slice driver analyses; the two must agree or the join silently
+/// misses and every page falls back to the shared runtime.
+///
+/// Matching on the module NAME rather than the raw `src` string is deliberate: a
+/// layout may legitimately write `src="./components/Foo.island.tsx"` while
+/// `build.zig` declares `"components/Foo.island.tsx"`. Both name `Foo.island`.
+/// Contract 3: allocates nothing; the result is a slice of `src`.
+pub fn islandModuleName(src: []const u8) []const u8 {
     var name = src;
     if (std.mem.lastIndexOfScalar(u8, name, '/')) |slash| name = name[slash + 1 ..];
     if (std.mem.lastIndexOfScalar(u8, name, '.')) |dot| name = name[0..dot]; // strip final ext
-    return std.fmt.allocPrint(alloc, "/islands/{s}.js", .{name});
+    return name;
+}
+
+/// Map a component `src` to the URL of its bundled JS module.
+/// "components/Hero.island.tsx" -> "/islands/Hero.island.js". Contract 1.
+fn moduleUrl(alloc: std.mem.Allocator, src: []const u8) ![]u8 {
+    return std.fmt.allocPrint(alloc, "/islands/{s}.js", .{islandModuleName(src)});
+}
+
+/// True when `names` contains `needle`. Contract 3: allocates nothing.
+/// A linear scan on purpose: `names` is the site's sliceable-island list (a
+/// handful of entries) and this runs once per island instance per page.
+fn containsName(names: []const []const u8, needle: []const u8) bool {
+    for (names) |n| if (std.mem.eql(u8, n, needle)) return true;
+    return false;
 }
 
 /// Collect `prop-NAME="value"` attributes from the island open tag.
@@ -2079,7 +2136,7 @@ test "preloadLinks: runtime link first, island modules deduped, client:only incl
         .{ .id = "z-island-1", .src = "components/Counter.island.tsx", .client = "only", .props_json = "{}", .module_url = "/islands/Counter.island.js" },
         .{ .id = "z-island-2", .src = "components/Hero.island.tsx", .client = "load", .props_json = "{}", .module_url = "/islands/Hero.island.js" }, // dup module
     };
-    const links = try preloadLinks(gpa, &insts, "");
+    const links = try preloadLinks(gpa, &insts, shared_runtime_url);
     defer gpa.free(links);
     // runtime link present and FIRST.
     try std.testing.expect(std.mem.startsWith(u8, links, "<link rel=\"modulepreload\" href=\"/zigapagos-runtime.js\">"));
@@ -2091,7 +2148,7 @@ test "preloadLinks: runtime link first, island modules deduped, client:only incl
 
 test "preloadLinks: empty instances -> empty string" {
     const gpa = std.testing.allocator;
-    const links = try preloadLinks(gpa, &.{}, "");
+    const links = try preloadLinks(gpa, &.{}, shared_runtime_url);
     defer gpa.free(links); // zero-length: `Allocator.free` short-circuits
     try std.testing.expectEqualStrings("", links);
 }
@@ -2120,6 +2177,123 @@ test "process injects the import map before any modulepreload links, only when i
     // all before </head>.
     const head_end = std.mem.indexOf(u8, result.html, "</head>").?;
     try std.testing.expect(im < head_end);
+}
+
+test "islandModuleName is the slice manifest's join key for every spelling of src (#52)" {
+    // Byte-identical to build/validate.zig's `islandName`, which names the bundle
+    // file the slice driver reads — and therefore names the manifest entry. A
+    // layout may write `./components/Foo.island.tsx` where build.zig declared
+    // `components/Foo.island.tsx`; both must join.
+    try std.testing.expectEqualStrings("Foo.island", islandModuleName("components/Foo.island.tsx"));
+    try std.testing.expectEqualStrings("Foo.island", islandModuleName("./components/Foo.island.tsx"));
+    try std.testing.expectEqualStrings("Foo.island", islandModuleName("Foo.island.tsx"));
+    try std.testing.expectEqualStrings("Foo.island", islandModuleName("/a/b/Foo.island.tsx"));
+}
+
+test "a page whose every island is covered loads the SLICED runtime and nothing else (#52)" {
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = RenderArena.from(&arena_state);
+    var stub: StubRenderer = .{};
+
+    const input =
+        "<html><head><title>t</title></head><body>" ++
+        // One `./`-prefixed src, to pin the module-name join rather than a raw
+        // string compare against the manifest.
+        "<island src=\"./components/Clean.island.tsx\" client:load :props='{}'></island>" ++
+        "<island src=\"components/Also.island.tsx\" client:load :props='{}'></island>" ++
+        "</body></html>";
+    const result = try process(gpa, arena, input, "/", &stub, .{
+        .sliced_runtime_url = "/islands/_runtime.js",
+        .sliced_islands = &.{ "Clean.island", "Also.island" },
+    });
+    defer gpa.free(result.html);
+
+    // Import map, modulepreload and the module <script> all name the slice…
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "\"@z/runtime\":\"/islands/_runtime.js\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "<link rel=\"modulepreload\" href=\"/islands/_runtime.js\">") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "<script type=\"module\" src=\"/islands/_runtime.js\"></script>") != null);
+    // …and the shared runtime appears NOWHERE. Presence-only assertions pass
+    // even when BOTH runtimes are emitted, which is the two-Preact catastrophe.
+    try std.testing.expect(std.mem.indexOf(u8, result.html, shared_runtime_url) == null);
+}
+
+test "ONE uncovered island on the page forces the shared runtime for the whole page (#52)" {
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = RenderArena.from(&arena_state);
+    var stub: StubRenderer = .{};
+
+    // `Mixed` is not in the slice (it imports react / compat / an unexported
+    // name — the driver bailed it), so this page must load the full runtime.
+    const input =
+        "<html><head><title>t</title></head><body>" ++
+        "<island src=\"components/Clean.island.tsx\" client:load :props='{}'></island>" ++
+        "<island src=\"components/Mixed.island.tsx\" client:load :props='{}'></island>" ++
+        "</body></html>";
+    const result = try process(gpa, arena, input, "/", &stub, .{
+        .sliced_runtime_url = "/islands/_runtime.js",
+        .sliced_islands = &.{"Clean.island"},
+    });
+    defer gpa.free(result.html);
+
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "\"@z/runtime\":\"/zigapagos-runtime.js\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "<script type=\"module\" src=\"/zigapagos-runtime.js\"></script>") != null);
+    // The slice URL survives nowhere — not in the map, not as a preload.
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "_runtime.js") == null);
+}
+
+test "a sliced page on a url_path_prefix site prefixes every runtime URL (#52)" {
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = RenderArena.from(&arena_state);
+    var stub: StubRenderer = .{};
+
+    const input =
+        "<html><head><title>t</title></head><body>" ++
+        "<island src=\"components/Clean.island.tsx\" client:load :props='{}'></island>" ++
+        "</body></html>";
+    const result = try process(gpa, arena, input, "/", &stub, .{
+        .url_prefix = "myrepo",
+        .sliced_runtime_url = "/islands/_runtime.js",
+        .sliced_islands = &.{"Clean.island"},
+    });
+    defer gpa.free(result.html);
+
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "\"@z/runtime\":\"/myrepo/islands/_runtime.js\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "<link rel=\"modulepreload\" href=\"/myrepo/islands/_runtime.js\">") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "<script type=\"module\" src=\"/myrepo/islands/_runtime.js\"></script>") != null);
+    // Neither the UNPREFIXED slice URL nor the shared runtime survives: an
+    // unprefixed href on a project-path site is a 404, which reads as "the
+    // island silently didn't hydrate".
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "\"/islands/_runtime.js\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "zigapagos-runtime.js") == null);
+}
+
+test "a slice URL with no covered islands never wins (empty sliced_islands) (#52)" {
+    // Defence in depth: a manifest naming a runtime but listing no islands (a
+    // driver bug, or a hand-written CLI invocation) must fall back rather than
+    // slice every page vacuously.
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = RenderArena.from(&arena_state);
+    var stub: StubRenderer = .{};
+
+    const input =
+        "<html><head><title>t</title></head><body>" ++
+        "<island src=\"components/Clean.island.tsx\" client:load :props='{}'></island>" ++
+        "</body></html>";
+    const result = try process(gpa, arena, input, "/", &stub, .{
+        .sliced_runtime_url = "/islands/_runtime.js",
+        .sliced_islands = &.{},
+    });
+    defer gpa.free(result.html);
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "_runtime.js") == null);
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "<script type=\"module\" src=\"/zigapagos-runtime.js\"></script>") != null);
 }
 
 test "self-closing island renders correctly" {

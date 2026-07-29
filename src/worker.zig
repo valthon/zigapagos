@@ -1383,6 +1383,10 @@ fn renderPage(
             .url_prefix = url_prefix,
             .on_render_error = on_render_error,
             .render_errors = &render_errors,
+            // Null/empty on every build that produced no slice, which makes this
+            // page's <head> byte-identical to the pre-slicing output.
+            .sliced_runtime_url = build.islands_slice.url,
+            .sliced_islands = build.islands_slice.islands,
         }) catch |err| {
             // Release/deploy: surface the real cause, attributed to the page, and
             // fail the build. `render_errors` holds the failing island's detail
