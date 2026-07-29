@@ -1099,12 +1099,22 @@ test "process forwards the URL-PREFIXED page_url as the island's SSR pathname" {
     // SPA route pass's prefixed `ssr_pathname` (src/spa.zig).
     const gpa = std.testing.allocator;
 
+    // Records every pathname it is handed, so the nested case below can assert
+    // the value reaching EACH level directly rather than inferring it from the
+    // rendered HTML (where a nested island's output is JSON-encoded into the
+    // outer's slots payload and easy to match by accident).
     const PathnameStub = struct {
-        pub fn render(_: *@This(), ra: RenderArena, src: []const u8, props_json: []const u8, slots_json: []const u8, pathname: []const u8, err_out: ?*sidecar.RenderError) ![]const u8 {
+        seen: [8][]const u8 = undefined,
+        n: usize = 0,
+        pub fn render(self: *@This(), ra: RenderArena, src: []const u8, props_json: []const u8, slots_json: []const u8, pathname: []const u8, err_out: ?*sidecar.RenderError) ![]const u8 {
             _ = src;
             _ = props_json;
             _ = slots_json;
             _ = err_out;
+            if (self.n < self.seen.len) {
+                self.seen[self.n] = try ra.a.dupe(u8, pathname);
+                self.n += 1;
+            }
             return std.fmt.allocPrint(ra.a, "<p>path: {s}</p>", .{pathname});
         }
     };
@@ -1137,6 +1147,33 @@ test "process forwards the URL-PREFIXED page_url as the island's SSR pathname" {
         defer gpa.free(result.html);
         try std.testing.expect(std.mem.indexOf(u8, result.html, "path: /guides/") != null);
         try std.testing.expect(std.mem.indexOf(u8, result.html, "/myrepo") == null);
+    }
+
+    {
+        // NESTED × PREFIX — the cell neither the nested-slot tests (unprefixed)
+        // nor the cases above (no slots) covered.
+        //
+        // `rewrite` recurses for slot content, and it derives the prefixed
+        // pathname from the UNPREFIXED `page_url` at each level precisely so
+        // the recursion cannot compound it. Nothing failed if a later change
+        // prefixed `page_url` before the recursive call instead: the inner
+        // island would then be rendered at "/myrepo/myrepo/guides/" and every
+        // existing test would still pass. That is the regression this pins.
+        var ps: PathnameStub = .{};
+        const nested =
+            "<main><island src=\"components/Card.zig\" client:load :props='{}'>" ++
+            "<island src=\"components/Counter.zig\" client:load :props='{}'></island>" ++
+            "</island></main>";
+        const result = try process(gpa, arena, nested, "/guides/", &ps, .{ .url_prefix = "myrepo" });
+        defer gpa.free(result.html);
+
+        // Both levels rendered, and BOTH were handed the singly-prefixed path.
+        try std.testing.expectEqual(@as(usize, 2), result.instances.len);
+        try std.testing.expectEqual(@as(usize, 2), ps.n);
+        for (ps.seen[0..ps.n]) |p| try std.testing.expectEqualStrings("/myrepo/guides/", p);
+        // The compounding failure mode, asserted on the output too: a
+        // double-prefixed path must appear nowhere, at any nesting depth.
+        try std.testing.expect(std.mem.indexOf(u8, result.html, "/myrepo/myrepo") == null);
     }
 }
 

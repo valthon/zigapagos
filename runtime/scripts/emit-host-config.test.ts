@@ -173,6 +173,35 @@ test("assertSafeManifest rejects a malicious url_path_prefix, naming it", () => 
   expect(() => assertSafeManifest(m)).not.toThrow();
 });
 
+test("assertSafeManifest rejects a TRAILING-SLASH url_path_prefix", () => {
+  // SAFE_PATH_RE alone accepts "/myrepo/" and "/", and both concatenate onto
+  // leading-"/" route values into a doubled slash — `location "/myrepo//app/"`,
+  // `.match = "//app/**"` — which matches no request path, so every deep link
+  // 404s instead of the build failing. src/spa.zig normalizes and so cannot
+  // produce these; the validator's whole job is to guard a manifest this build
+  // did not write.
+  expect(() => assertSafeManifest({ ...m, url_path_prefix: "/myrepo/" }))
+    .toThrow(/must not end with "\/"/);
+  expect(() => assertSafeManifest({ ...m, url_path_prefix: "/" }))
+    .toThrow(/must not end with "\/"/);
+  // The normalized form is still accepted.
+  expect(() => assertSafeManifest({ ...m, url_path_prefix: "/myrepo" })).not.toThrow();
+});
+
+test("the nginx config states the mount the prefixed selectors assume", () => {
+  // The selectors and try_files targets are REQUEST paths carrying the prefix,
+  // but the files they name live in a tree with no prefix directory — so they
+  // are only correct when the server maps <prefix>/… onto the built tree.
+  // Nothing in the directives reveals that, and getting it wrong 404s every
+  // deep link, so the header has to say it (as Apache's already did).
+  const [file] = emitNginx(mPrefixed);
+  expect(file.content).toContain("mounted at URL prefix /myrepo");
+  expect(file.content).toMatch(/serve the built tree from <docroot>\/myrepo\//);
+  // An unprefixed site has no such assumption to state.
+  const [bare] = emitNginx(m);
+  expect(bare.content).not.toContain("mounted at URL prefix");
+});
+
 test("every emitter validates url_path_prefix before interpolating", () => {
   const bad: Manifest = { ...m, url_path_prefix: '/myrepo"; evil' };
   expect(() => emitNginx(bad)).toThrow();
