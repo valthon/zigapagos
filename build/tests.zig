@@ -169,6 +169,16 @@ const exe_module: []const ExeModule = &.{
         .description = "Run zigapagos-doctor CLI parse + check-helper unit tests",
         .filters = &.{"doctor"},
     },
+    // `zigapagos validate` CLI parse unit tests. The "validate:" filter matches
+    // main.zig's anchor and every `test "validate: …"` block. The COLON is
+    // load-bearing: a bare "validate" filter also matches the unrelated
+    // validateClientDirective / validateConcretePath / validateRoutePath /
+    // validateSpaBase tests in pass.zig and spa.zig.
+    .{
+        .step_name = "test-validate",
+        .description = "Run validate CLI Command.parse unit tests",
+        .filters = &.{"validate:"},
+    },
 };
 
 /// Registers every `test-*` step and hangs the test binaries off `check`.

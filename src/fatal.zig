@@ -52,6 +52,9 @@ const help_menu =
     \\  init              Initialize a Zigapagos site in the current directory
     \\  migrate <dir>     Scan an Astro project and write a MIGRATION.md worklist
     \\  release           Create a release of a Zigapagos site
+    \\  validate          Parse + analyze the site WITHOUT bundling islands,
+    \\                    running Bun, or writing output (a fast subset of
+    \\                    `release`'s checks; see `zigapagos validate --help`)
     \\  e2e               Serve a built site with ZigBase and run an e2e command
     \\  languages         List code-fence languages registered for highlighting
     \\  help              Show this menu and exit
