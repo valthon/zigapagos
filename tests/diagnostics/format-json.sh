@@ -325,4 +325,80 @@ FM_JSON_COL="$(bun -e "process.stdout.write(String(JSON.parse(process.argv[1]).c
 [[ "$FM_JSON_COL" == "$FM_TEXT_COL" ]] || fail "frontmatter col mismatch: text=$FM_TEXT_COL json=$FM_JSON_COL"
 echo "ok: text ($FM_TEXT_LINE:$FM_TEXT_COL) and json ($FM_JSON_LINE:$FM_JSON_COL) agree"
 
+echo "=== Phase 6: the inert-directive template lint emits one code per kind ==="
+# `lintInertDirectives` (src/Template.zig) is the newest producer of
+# `template_errors`, and `template_errors` feeds `build.any_prerendering_error`
+# -- the exact set docs/diagnostics.md promises is fully converted. Its two
+# kinds get two codes, not one, so a consumer can tell ':else' (never
+# evaluated) from ':if'/':loop' on an element with no end tag (re-emits the
+# whole template source) by switching on `code` alone.
+SITE5="$WORK/site5"
+mkdir -p "$SITE5/content" "$SITE5/layouts"
+cp "$SITE0/zigapagos.ziggy" "$SITE5/zigapagos.ziggy"
+cp "$SITE0/content/index.smd" "$SITE5/content/index.smd"
+# Exactly one of each kind, so "exactly 1 object with this code" is a real
+# assertion rather than a coincidence of a fixture that trips one lint twice.
+cat > "$SITE5/layouts/index.shtml" <<'EOF'
+<!DOCTYPE html>
+<html>
+<head><title :text="$page.title"></title></head>
+<body>
+  <ctx :if="$page.title">A</ctx>
+  <ctx :else>B</ctx>
+  <img src="/a.png" :if="$page.draft">
+</body>
+</html>
+EOF
+
+set +e
+( cd "$SITE5" && "$ZIGAPAGOS" release --force -o out ) >"$WORK/p6text.out" 2>"$WORK/p6text.err"
+RC6T=$?
+set -e
+[[ "$RC6T" -ne 0 ]] || { cat "$WORK/p6text.err"; fail "text-mode build of the inert-directive fixture succeeded -- fixture stopped triggering the lint"; }
+grep -q "':else' is parsed but never evaluated" "$WORK/p6text.err" \
+  || { cat "$WORK/p6text.err"; fail "text-mode stderr missing the ':else' headline"; }
+grep -q "':if' on <img> can never work" "$WORK/p6text.err" \
+  || { cat "$WORK/p6text.err"; fail "text-mode stderr missing the void-element branching headline"; }
+
+set +e
+( cd "$SITE5" && "$ZIGAPAGOS" release --force -o out2 --format=json ) >"$WORK/p6json.out" 2>"$WORK/p6json.err"
+RC6J=$?
+set -e
+[[ "$RC6J" -ne 0 ]] || { cat "$WORK/p6json.out"; fail "json-mode build of the inert-directive fixture succeeded"; }
+
+OBJ6E="$(bun run "$WORK/check.mjs" all-parse-and-one-matches "$WORK/p6json.err" ZP_TEMPLATE_ELSE_DIRECTIVE)" \
+  || fail "json-mode stderr did not have exactly one parseable ZP_TEMPLATE_ELSE_DIRECTIVE object"
+OBJ6B="$(bun run "$WORK/check.mjs" all-parse-and-one-matches "$WORK/p6json.err" ZP_TEMPLATE_BRANCHING_WITHOUT_END_TAG)" \
+  || fail "json-mode stderr did not have exactly one parseable ZP_TEMPLATE_BRANCHING_WITHOUT_END_TAG object"
+echo "$OBJ6E"
+echo "$OBJ6B"
+
+# The text printer must be suppressed, not supplemented -- same
+# non-vacuousness guard as Phase 1c. This lint accumulates every message into
+# one `aw` block and prints it once, so a missed `diag.format == .text` gate
+# would leak the WHOLE block alongside the NDJSON.
+# Matched on the `: error: ` prefix, not on the headline text alone: the
+# headline text is ALSO the JSON `message`, so a bare substring grep matches
+# the diagnostic it is supposed to tolerate and fails vacuously.
+! grep -q ": error: ':else' is parsed but never evaluated" "$WORK/p6json.err" \
+  || { cat "$WORK/p6json.err"; fail "json-mode stderr contains the ':else' text headline -- the text printer ran too"; }
+! grep -q ": error: ':if' on <img> can never work" "$WORK/p6json.err" \
+  || { cat "$WORK/p6json.err"; fail "json-mode stderr contains the branching text headline -- the text printer ran too"; }
+# The continuation lines are unique to the text block (no JSON field carries
+# them), so they pin the rest of the suppressed prose directly.
+! grep -q 'SuperHTML validates' "$WORK/p6json.err" \
+  || { cat "$WORK/p6json.err"; fail "json-mode stderr contains the ':else' explanation block -- the text printer ran too"; }
+
+# Both objects must locate themselves; a lint whose whole value is "line N of
+# this layout" emitting line:null would be useless to the consumer this
+# stream exists for.
+for OBJ6 in "$OBJ6E" "$OBJ6B"; do
+  L6="$(bun -e "process.stdout.write(String(JSON.parse(process.argv[1]).line))" "$OBJ6")"
+  C6="$(bun -e "process.stdout.write(String(JSON.parse(process.argv[1]).col))" "$OBJ6")"
+  F6="$(bun -e "process.stdout.write(String(JSON.parse(process.argv[1]).file))" "$OBJ6")"
+  [[ "$L6" != "null" && "$C6" != "null" ]] || { echo "$OBJ6"; fail "inert-directive diagnostic emitted a null line/col"; }
+  [[ "$F6" == "layouts/index.shtml" ]] || { echo "$OBJ6"; fail "inert-directive diagnostic named file '$F6', want 'layouts/index.shtml'"; }
+done
+echo "ok: one ZP_TEMPLATE_ELSE_DIRECTIVE + one ZP_TEMPLATE_BRANCHING_WITHOUT_END_TAG, located, no prose alongside"
+
 echo "PASS: tests/diagnostics/format-json.sh"

@@ -2201,19 +2201,37 @@ pub fn run(
 
                 for (inert.items) |bad| {
                     const lc = Template.lineCol(template.src, bad.offset);
+                    // As in the `:` directive-attribute lint above, the aw
+                    // accumulation stays UNCONDITIONAL: the memory-mode block
+                    // below needs the whole rendered text block whatever
+                    // diag.format is. Each kind emits its own code, so a
+                    // consumer switching on `code` gets the two distinct
+                    // failures apart without parsing prose.
                     switch (bad.kind) {
-                        .else_directive => try aw.writer.print(
-                            \\{s}:{d}:{d}: error: ':else' is parsed but never evaluated
-                            \\    SuperHTML validates ':else' at parse time and then has no case for
-                            \\    it at render time: the evaluator reads the attribute's value, which
-                            \\    a bare ':else' does not have, and panics on the null unwrap. No
-                            \\    template using ':else' has ever rendered.
-                            \\    Write the negated condition on a second <ctx> instead:
-                            \\        <ctx :if="$cond">...</ctx>
-                            \\        <ctx :if="$cond.not()">...</ctx>
-                            \\
-                            \\
-                        , .{ path, lc.line, lc.col }),
+                        .else_directive => {
+                            try aw.writer.print(
+                                \\{s}:{d}:{d}: error: ':else' is parsed but never evaluated
+                                \\    SuperHTML validates ':else' at parse time and then has no case for
+                                \\    it at render time: the evaluator reads the attribute's value, which
+                                \\    a bare ':else' does not have, and panics on the null unwrap. No
+                                \\    template using ':else' has ever rendered.
+                                \\    Write the negated condition on a second <ctx> instead:
+                                \\        <ctx :if="$cond">...</ctx>
+                                \\        <ctx :if="$cond.not()">...</ctx>
+                                \\
+                                \\
+                            , .{ path, lc.line, lc.col });
+
+                            if (diag.format == .json) diag.emit(.{
+                                .code = .ZP_TEMPLATE_ELSE_DIRECTIVE,
+                                .severity = .@"error",
+                                .file = path,
+                                .line = lc.line,
+                                .col = lc.col,
+                                .message = "':else' is parsed but never evaluated",
+                                .help = "SuperHTML has no render-time case for ':else'; write the negated condition on a second <ctx> ($cond, then $cond.not())",
+                            });
+                        },
                         .branching_without_end_tag => {
                             const is_loop = std.mem.eql(u8, bad.name, ":loop");
                             try aw.writer.print(
@@ -2246,11 +2264,29 @@ pub fn run(
                                 if (is_loop) "$items" else "$cond",
                                 bad.tag,
                             });
+
+                            if (diag.format == .json) {
+                                var msg_buf: [256]u8 = undefined;
+                                diag.emit(.{
+                                    .code = .ZP_TEMPLATE_BRANCHING_WITHOUT_END_TAG,
+                                    .severity = .@"error",
+                                    .file = path,
+                                    .line = lc.line,
+                                    .col = lc.col,
+                                    .message = diag.render(&msg_buf, "'{s}' on <{s}> can never work", .{ bad.name, bad.tag }),
+                                    .help = "the element has no end tag for SuperHTML to rewind to, and the directive only affects an element's body anyway; wrap it in a <ctx> that carries the directive",
+                                });
+                            }
                         },
                     }
                 }
 
-                std.debug.print("{s}", .{aw.written()});
+                // Only the accumulated TEXT block is conditional -- one
+                // diagnostic per entry was already emitted above in JSON mode,
+                // so printing the whole aw block again here would duplicate it.
+                if (diag.format == .text) {
+                    std.debug.print("{s}", .{aw.written()});
+                }
                 if (build.mode == .memory) {
                     // Owned copy so Build.deinit can free it (AUD-004). These
                     // are error severity, so they DO belong in the live

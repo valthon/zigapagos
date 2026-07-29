@@ -220,6 +220,10 @@ pub const Code = enum {
     ZP_TEMPLATE_PARSE,
     // emitted by: root.zig, a `:name="..."` directive attribute isn't a real directive
     ZP_TEMPLATE_BAD_DIRECTIVE_ATTR,
+    // emitted by: root.zig, `:if`/`:loop` on an element with no end tag
+    ZP_TEMPLATE_BRANCHING_WITHOUT_END_TAG,
+    // emitted by: root.zig, a `:else` directive SuperHTML parses and never evaluates
+    ZP_TEMPLATE_ELSE_DIRECTIVE,
     // emitted by: root.zig, a template `:extends`s a parent that doesn't exist
     ZP_TEMPLATE_MISSING_PARENT,
     // emitted by: root.zig printSuperMdErrors, any SuperMD-reported error
@@ -500,11 +504,42 @@ pub fn info(c: Code) Info {
             .summary = "a `:name=\"...\"` attribute isn't a real SuperHTML directive",
             .explanation =
             \\SuperHTML's only `:`-prefixed directives are `:if`, `:loop`,
-            \\`:else`, `:text`, `:html` (plus `:props` on `<island>`). A
-            \\dynamic ordinary attribute uses the BARE name with a Scripty
-            \\value -- write `name="$expr"`, not `:name="$expr"`. The `:` form
+            \\`:text`, `:html` (plus `:props` on `<island>`). A dynamic
+            \\ordinary attribute uses the BARE name with a Scripty value --
+            \\write `name="$expr"`, not `:name="$expr"`. The `:` form
             \\evaluates the value but keeps the literal `:name` attribute, so
             \\the real `name` attribute is silently never set.
+            \\
+            \\`:else` parses but never renders; it has its own code
+            \\(`ZP_TEMPLATE_ELSE_DIRECTIVE`) and is not in the list above.
+            ,
+        },
+        .ZP_TEMPLATE_BRANCHING_WITHOUT_END_TAG => .{
+            .summary = "`:if`/`:loop` sits on an element that has no end tag",
+            .explanation =
+            \\SuperHTML restarts a conditional or a loop by rewinding its print
+            \\cursor to the element's end tag. A void element (`<img>`, `<br>`,
+            \\...) or a self-closing one has none, so the rewind goes to offset
+            \\0 and the whole raw template source is spliced into the page --
+            \\with exit code 0 -- or the slice runs backwards and panics.
+            \\
+            \\`:if`/`:loop` only ever affect an element's BODY anyway: the tag
+            \\and all of its attributes are emitted either way. Wrap the element
+            \\in a `<ctx>` that carries the directive instead:
+            \\`<ctx :if="$cond"><img ...></ctx>`.
+            ,
+        },
+        .ZP_TEMPLATE_ELSE_DIRECTIVE => .{
+            .summary = "`:else` is parsed at parse time and never evaluated at render time",
+            .explanation =
+            \\SuperHTML validates `:else` while parsing and then has no case for
+            \\it in the evaluator: it reads the attribute's value, which a bare
+            \\`:else` does not have, and panics on the null unwrap. No template
+            \\using `:else` has ever rendered.
+            \\
+            \\Write the negated condition on a second `<ctx>` instead:
+            \\`<ctx :if="$cond">...</ctx>` followed by
+            \\`<ctx :if="$cond.not()">...</ctx>`.
             ,
         },
         .ZP_TEMPLATE_MISSING_PARENT => .{

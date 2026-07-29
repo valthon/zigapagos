@@ -105,8 +105,8 @@ a follow-up in [Scope](#scope) below.
 **Converted in this PR:** every diagnostic that can set
 `build.any_prerendering_error` in `src/root.zig` (static asset checks, i18n
 parsing, content parsing, frontmatter/page analysis, duplicate translation
-keys, URL collisions, template parsing/linting), plus the two warnings printed
-in that same region (`ZP_EMPTY_PAGE`, and the warning-severity
+keys, URL collisions, template parsing/linting), plus two of the warnings
+printed in that same region (`ZP_EMPTY_PAGE`, and the warning-severity
 `PageAnalysisError` kinds), plus a catch-all: every `fatal.msg` /
 `fatal.usageError` call anywhere in the codebase emits as `ZP_FATAL`. That is
 a complete phase — the whole prerender/analysis gate — not a sample.
@@ -155,7 +155,15 @@ a complete phase — the whole prerender/analysis gate — not a sample.
    instead; only the outer `ZP_SUPERMD` code is a stability guarantee.
 10. **stderr is not pure NDJSON** — covered above, repeated here because it's
     the single most likely thing to trip up a naive consumer.
-11. **`explain-code`'s own output is not part of this stream** — it prints human
+11. **Two scan-time advisories stay prose**, both in `src/root.zig`: the
+    site-wide-artifact alias warning (`aliases: ["404.html"]` on a non-root
+    page) and the sectionless-directory warning (a content directory with
+    pages but no `index.smd`). Neither touches `any_prerendering_error` — they
+    are advisory only, and both are multi-line `note:`-style blocks whose
+    value is in the prose. Promoting them is mechanical and a fine follow-up;
+    until then they are exactly the "line that does not parse as JSON" the
+    consumer rule above exists for.
+12. **`explain-code`'s own output is not part of this stream** — it prints human
     prose to stderr, not NDJSON and not stdout. stderr is what `zigapagos
     languages` (the sibling informational subcommand) already does, so this
     PR does not split the two adjacent listing commands across two streams.
