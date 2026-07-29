@@ -19,3 +19,5 @@
 |                                               |
 *-----------------------------------------------*
 
+warning: 1 asset(s) under 'assets' were not installed because nothing references them. Link one from a template or a content file ($site.asset('...').link()), or list it in `static_assets` in zigapagos.ziggy if something outside the build fetches it at a fixed path:
+  - css/site.css

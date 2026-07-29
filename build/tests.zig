@@ -137,13 +137,22 @@ const exe_module: []const ExeModule = &.{
         .step_name = "test-spa",
         .description = "Run SPA prerender helper unit tests",
     },
-    // CSS-minify gating unit tests. `shouldMinifyCss` lives in
-    // src/root.zig, which main.zig imports at the top level, so its test blocks
-    // are eagerly discovered under the exe root_module. The "assets:" filter
-    // matches every `test "assets: …"` block.
+    // Static-asset unit tests: the CSS-minify gate + the pruned-asset report's
+    // suppressions (src/root.zig) and content-hashed filenames
+    // (src/fingerprint.zig). The "assets:" filter matches every
+    // `test "assets: …"` block.
+    //
+    // This step NEEDS main.zig's `test "assets: unit-test anchor"`. The comment
+    // this replaces claimed root.zig's blocks were "eagerly discovered because
+    // main.zig imports it at the top level"; they were not. A top-level `const`
+    // is analyzed only when analyzed code references it, and in a FILTERED
+    // compile the only analyzed code is the matching tests — of which there
+    // were none in main.zig. The step therefore compiled and ran ZERO tests
+    // and still exited 0, for as long as it has existed. If you ever add a
+    // suite here, make its filter match an anchor.
     .{
         .step_name = "test-assets",
-        .description = "Run static-asset (CSS minify) gating unit tests",
+        .description = "Run static-asset (minify/fingerprint/report) unit tests",
         .filters = &.{"assets:"},
     },
     // `serve` CLI parse tests — Command.parse must recognise the --proxy flag

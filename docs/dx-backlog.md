@@ -511,12 +511,32 @@ taking literally, and these three are what stand between it and that.
   serve stale CSS against fresh HTML, which is what prevents long-lived cache
   headers on output that is otherwise perfectly cacheable.
 
+  **Resolved.** `.asset_fingerprint = true` in `zigapagos.ziggy` installs every
+  *linked* site asset under `<stem>.<8 hex>.<ext>` (`src/fingerprint.zig`), and
+  every seam that prints a site-asset URL — `.link()`/`.absLink()`, the content
+  directives, and `spa.head` hrefs — resolves to that name through one shared
+  formatter, so an installed file and a link to it cannot drift apart.
+  `static_assets` entries keep their fixed path (that is what they are for),
+  and build/page assets are out of scope. Opt-in and release-only; see
+  `docs/assets.md`. Proofs: `tests/assets/fingerprint.sh`,
+  `tests/spa/head-fingerprint.sh`.
+
 ## Diagnosability
 
 - **[#54] DX-35 · Asset pruning is invisible.** A hand-authored SVG vanished with no
   message when its last reference went away. The behaviour is right; the silence
   is not — and it creates a second-order trap where a `.link()` call must stay
   nested inside another expression purely to hold a refcount.
+
+  **Resolved.** A full build now ends by naming what it dropped
+  (`reportPrunedSiteAssets` in `src/root.zig`): a sorted, capped list with the
+  true total and both fixes spelled out. A warning, not an error — staging a
+  file ahead of the page that will use it is legitimate. Skipped on incremental
+  rebuilds (which only re-derive the changed pages' refcounts and would report
+  the rest of the site as pruned), for `.keep`/`.gitkeep`, and where
+  `assets_dir_path` doubles as a content dir. `tests/rendering/static-assets-glob`
+  now pins one real instance in its snapshot; proof:
+  `tests/assets/pruned-report.sh`.
 - **[#55] DX-36 · A directory without `index.smd` yields no subpages, not an error.**
   A missing section presents as "my list is empty" with nothing naming the cause.
   **Resolved:** the scan now warns, naming the directory, the URL that is not

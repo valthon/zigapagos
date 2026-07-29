@@ -297,3 +297,27 @@ test "languages" {
 test "templates" {
     _ = @import("Template.zig");
 }
+
+// Pull root.zig and fingerprint.zig into the test compilation unit for
+// `zig build test-assets`.
+//
+// This anchor is NOT redundant with main.zig's top-level `const root =
+// @import("root.zig")`. Under a `--test-filter` (and `filters` is a
+// COMPILE-time option in Zig 0.16, see build/tests.zig) the compiler analyzes
+// only the test decls whose name MATCHES, and a top-level `const` is analyzed
+// only when something already-analyzed references it. `root` is referenced
+// from `main()`'s body, which a test build never analyzes — so with no
+// matching anchor here, nothing pulled root.zig in, `test-assets` compiled
+// ZERO tests, and the step still exited 0. It was a green gate pinning
+// nothing: inverting an assertion in `test "assets: shouldMinifyCss …"` left
+// it passing. Hence the anchor's own name has to match the "assets:" filter.
+//
+// fingerprint.zig needs its own line for the same reason one hop further out:
+// root.zig imports it at the top level, but root.zig's own `assets:` tests
+// never reference that `const`, so it too stayed unanalyzed — which also kept
+// it out of the UNFILTERED `checked` suite, i.e. out of
+// `check -Dsingle-threaded`.
+test "assets: unit-test anchor" {
+    _ = @import("root.zig");
+    _ = @import("fingerprint.zig");
+}

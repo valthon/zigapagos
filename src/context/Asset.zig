@@ -16,6 +16,7 @@ const Int = context.Int;
 const PathTable = @import("../PathTable.zig");
 const PathName = PathTable.PathName;
 const html = @import("../render/html.zig");
+const fingerprint = @import("../fingerprint.zig");
 const join = @import("../root.zig").join;
 const Signature = @import("doctypes.zig").Signature;
 
@@ -139,11 +140,19 @@ fn linkImpl(
             const rc = ctx._meta.build.site_assets.getPtr(asset._meta.url).?;
             _ = rc.fetchAdd(1, .acq_rel);
 
+            // `fingerprint.fmtUrl`, not `PathName.fmt`: with
+            // `asset_fingerprint` on, this asset is INSTALLED under a
+            // content-hashed basename (issue #53) and a link printed from the
+            // verbatim name would 404. The map is empty on every other build,
+            // in which case this is byte-identical to the plain formatter.
             const st = &ctx._meta.build.st;
             const pt = &ctx._meta.build.pt;
-            w.print("{f}", .{
-                asset._meta.url.fmt(st, pt, null, "/"),
-            }) catch return error.OutOfMemory;
+            w.print("{f}", .{fingerprint.fmtUrl(
+                asset._meta.url,
+                st,
+                pt,
+                &ctx._meta.build.asset_fingerprints,
+            )}) catch return error.OutOfMemory;
         },
         .build => {
             html.printAssetUrlPrefix(ctx, ctx.page, w, force_host_url) catch return error.OutOfMemory;
@@ -166,6 +175,38 @@ fn linkImpl(
     }
 
     return Value.from(gpa, buf.written());
+}
+
+/// Record that a build-time READ builtin consumed this site asset's bytes.
+///
+/// `bytes()`, `size()`, `sriHash()` and `ziggy()` inline an asset into the
+/// page (or into a hash) instead of publishing it, so — unlike `linkImpl` —
+/// they must NOT bump the install refcount: an asset the build read is an
+/// asset the deploy has no reason to carry.
+///
+/// They are still a real use, though, and that is what this counter is for.
+/// Issue #54's pruned-asset report keys off the install refcount alone, so
+/// without it a legitimately inlined `$site.asset('data.ziggy').ziggy()` gets
+/// named on EVERY build as "not installed because nothing references them",
+/// with two suggested remedies that are both wrong — the `static_assets` one
+/// would publish a private data file. A warning that fires on correct code is
+/// the failure mode that report already exists to avoid.
+///
+/// Site assets only: the report is site-asset-only, and page/build assets have
+/// their own install rules (a build asset with no `install_path` is explicitly
+/// a read-only asset, see `installBuildAssets`).
+///
+/// NO_SLOP.md §2.2a contract 3 (caller-buffer): allocates nothing.
+fn markSiteRead(ctx: *const context.Root, url: PathName) void {
+    // The key set is frozen when `Build.scanSiteAssets` returns — every
+    // `site_assets` key is inserted into `site_asset_reads` in the same
+    // statement — so this lookup cannot miss for an asset that resolved to
+    // `.site`. It stays an `if` rather than an `.?` because failing to record
+    // a read must never crash a build; the worst case is one spurious line in
+    // a warning.
+    if (ctx._meta.build.site_asset_reads.getPtr(url)) |reads| {
+        _ = reads.fetchAdd(1, .acq_rel);
+    }
 }
 
 pub const Builtins = struct {
@@ -265,6 +306,7 @@ pub const Builtins = struct {
                     return Int.init(@intCast(stat.size));
                 },
                 .site => {
+                    markSiteRead(ctx, asset._meta.url);
                     const path = std.fmt.bufPrint(&buf, "{f}", .{
                         asset._meta.url.fmt(
                             &ctx._meta.build.st,
@@ -335,6 +377,7 @@ pub const Builtins = struct {
                     return Value.from(gpa, data);
                 },
                 .site => {
+                    markSiteRead(ctx, asset._meta.url);
                     const path = std.fmt.bufPrint(&buf, "{f}", .{
                         asset._meta.url.fmt(
                             &ctx._meta.build.st,
@@ -409,6 +452,7 @@ pub const Builtins = struct {
                     };
                 },
                 .site => blk: {
+                    markSiteRead(ctx, asset._meta.url);
                     const path = std.fmt.bufPrint(&buf, "{f}", .{
                         asset._meta.url.fmt(
                             &ctx._meta.build.st,
@@ -497,6 +541,7 @@ pub const Builtins = struct {
                     };
                 },
                 .site => blk: {
+                    markSiteRead(ctx, asset._meta.url);
                     const path = std.fmt.bufPrint(&buf, "{f}", .{
                         asset._meta.url.fmt(
                             &ctx._meta.build.st,

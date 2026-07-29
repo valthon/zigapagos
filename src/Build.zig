@@ -48,6 +48,34 @@ layouts_dir: Io.Dir,
 templates: Templates = .{},
 site_assets_dir: Io.Dir,
 site_assets: Assets = .empty,
+/// How many times each site asset was CONSUMED AT BUILD TIME without being
+/// installed — `$site.asset('x').bytes()`/`.size()`/`.sriHash()`/`.ziggy()`
+/// (`src/context/Asset.zig`). Keyed identically to `site_assets`: every key is
+/// inserted alongside its `site_assets` entry in `scanSiteAssets`, so the two
+/// key sets cannot diverge and a worker only ever bumps a counter that already
+/// exists (which is what makes the concurrent `fetchAdd` safe — no insertion
+/// ever happens after the scan).
+///
+/// It deliberately does NOT feed the install decision: an asset read into the
+/// page at build time is fully inlined and must stay out of the output tree.
+/// Its only consumer is `root.zig`'s `reportPrunedSiteAssets` (issue #54),
+/// which would otherwise warn that a legitimately-inlined `data.ziggy` "was
+/// not installed because nothing references them" and suggest two remedies
+/// that are both wrong — the `static_assets` one would publish a private data
+/// file.
+site_asset_reads: Assets = .empty,
+/// Content-hashed basenames for site assets (issue #53). Empty — the default,
+/// and the whole of it unless `asset_fingerprint` is on in `zigapagos.ziggy`
+/// — means every asset keeps its verbatim name, so an absent entry is not an
+/// error condition anywhere (see `fingerprint.Map`).
+///
+/// Written ONCE, by `root.zig`'s `computeAssetFingerprints`, before the render
+/// pass starts; read-only from then on. That is what makes it safe for the
+/// multithreaded render workers to consult without a lock, and it is why the
+/// map cannot be filled lazily as assets are referenced.
+///
+/// Values are gpa-owned and freed in `deinit`.
+asset_fingerprints: @import("fingerprint.zig").Map = .empty,
 i18n_dir: Io.Dir,
 // Translation key map. Each entry is a slice with the same length as the
 // number of variants.
@@ -150,6 +178,15 @@ pub fn deinit(b: *const Build, io: Io, gpa: Allocator) void {
     {
         var dir = b.site_assets_dir;
         dir.close(io);
+    }
+    // Fingerprinted basenames (issue #53): each value is one gpa `allocPrint`
+    // from `fingerprint.hashName`. Keys are `PathName`s (plain integers into
+    // the string/path tables), so only the values need freeing.
+    {
+        var fps = b.asset_fingerprints;
+        var it = fps.valueIterator();
+        while (it.next()) |name| gpa.free(name.*);
+        fps.deinit(gpa);
     }
     switch (b.mode) {
         .memory => |m| {
@@ -468,6 +505,12 @@ pub fn scanSiteAssets(
                     };
 
                     try b.site_assets.putNoClobber(gpa, pn, .init(0));
+                    // Same key, same statement: the build-time READ counter is
+                    // only ever `fetchAdd`-ed from the render workers, never
+                    // inserted into, so its key set has to be complete when
+                    // the scan ends. Keeping the two puts adjacent is what
+                    // guarantees that.
+                    try b.site_asset_reads.putNoClobber(gpa, pn, .init(0));
                 },
                 .directory => {
                     const path_bytes = try std.fs.path.join(arena, &.{
