@@ -129,6 +129,17 @@ pub const ProcessOptions = struct {
     /// .err, with page context) instead of pass.zig logging directly. Appended
     /// with `gpa`; string fields are owned by the `arena` passed to `process`.
     render_errors: ?*std.ArrayListUnmanaged(RenderErrorReport) = null,
+    /// The per-site SLICED islands runtime URL (`/islands/_runtime.js`), or null
+    /// when this build produced no slice — which is also the default, so every
+    /// existing caller keeps the shared runtime byte-identically. Un-prefixed:
+    /// `process` applies the site's `url_path_prefix` itself, exactly as
+    /// `src/spa.zig` does for a sliced SPA runtime.
+    sliced_runtime_url: ?[]const u8 = null,
+    /// Island module names (see `islandModuleName`) the slice provably serves.
+    /// A page whose EVERY island is in this set loads `sliced_runtime_url`; any
+    /// other page loads the shared runtime. Empty (the default) means no page is
+    /// ever sliced.
+    sliced_islands: []const []const u8 = &.{},
 };
 
 /// Prepend `/` + `prefix` to `url` (e.g. `prefixed(alloc, "zigapagos", "/foo.js")`
@@ -175,28 +186,32 @@ test "importMapFor points every specifier at a sliced runtime URL" {
     try std.testing.expect(std.mem.indexOf(u8, map, "\"@z/runtime\":\"/spa/public-runtime.js\"") != null);
 }
 
-/// Build the modulepreload <link> block for a page's islands: the shared runtime
+/// Build the modulepreload <link> block for a page's islands: the page's runtime
 /// first, then one link per UNIQUE island module_url (first-seen order). Returns ""
 /// when there are no islands. Deduped so two instances of the same component emit
 /// one link; client:only modules are included (imported at mount).
 ///
-/// NO_SLOP.md §2.2a contract 1: the dedup set and the prefixed-URL scratch are
-/// freed here and exactly one allocation escapes (`""` for the no-island case is
-/// a zero-length free, which `Allocator.free` short-circuits), so this is correct
-/// under any allocator — not just under the pass arena its caller passes.
-fn preloadLinks(alloc: std.mem.Allocator, instances: []const IslandInstance, url_prefix: []const u8) ![]u8 {
+/// `runtime_url` is the ALREADY-PREFIXED URL of the runtime this page loads — the
+/// shared one, or the per-site slice. Taking it rather than re-deriving it from
+/// the prefix is what keeps the preload, the import map and the module `<script>`
+/// pointing at ONE runtime: a page that preloaded a different runtime than it
+/// imported would fetch two bundles and, if both executed, get two Preacts.
+///
+/// NO_SLOP.md §2.2a contract 1: the dedup set is freed here and exactly one
+/// allocation escapes (`""` for the no-island case is a zero-length free, which
+/// `Allocator.free` short-circuits), so this is correct under any allocator —
+/// not just under the pass arena its caller passes.
+fn preloadLinks(alloc: std.mem.Allocator, instances: []const IslandInstance, runtime_url: []const u8) ![]u8 {
     if (instances.len == 0) return "";
     var seen: std.StringHashMapUnmanaged(void) = .empty;
     defer seen.deinit(alloc);
     var out: std.ArrayListUnmanaged(u8) = .empty;
     errdefer out.deinit(alloc);
-    // Fast path: with no prefix, use the precomputed constant (byte-identical
-    // to the pre-`ProcessOptions` output).
-    if (url_prefix.len == 0) {
+    // Fast path: the shared runtime with no prefix is the precomputed constant
+    // (byte-identical to the pre-`ProcessOptions` output).
+    if (std.mem.eql(u8, runtime_url, shared_runtime_url)) {
         try out.appendSlice(alloc, runtime_preload);
     } else {
-        const runtime_url = try prefixed(alloc, url_prefix, shared_runtime_url);
-        defer alloc.free(runtime_url);
         const link = try runtimePreloadFor(alloc, runtime_url);
         defer alloc.free(link);
         try out.appendSlice(alloc, link);
@@ -301,6 +316,23 @@ pub fn process(
     // </head> (build-output injection: the static output is self-contained).
     if (instances.items.len > 0) {
         if (std.mem.indexOf(u8, body, "</head>")) |head_end| {
+            // Which runtime this PAGE loads. The per-site slice serves only the
+            // island bundles the build proved it covers, so a page carrying ANY
+            // other island — one that imports @z/runtime/compat, bare `react`,
+            // or a barrel name the slice does not export — must load the full
+            // shared runtime. A page must never load two runtimes, or it gets
+            // two Preacts and hydration breaks; ONE url feeds every import-map
+            // specifier, the modulepreload and the module <script> below, which
+            // is what makes that impossible by construction rather than by
+            // convention.
+            const use_sliced = if (opts.sliced_runtime_url) |_| blk: {
+                for (instances.items) |inst| {
+                    if (!containsName(opts.sliced_islands, islandModuleName(inst.src))) break :blk false;
+                }
+                break :blk true;
+            } else false;
+            const runtime_url_raw = if (use_sliced) opts.sliced_runtime_url.? else shared_runtime_url;
+
             var injected: std.ArrayListUnmanaged(u8) = .empty;
             errdefer injected.deinit(gpa);
             try injected.appendSlice(gpa, body[0..head_end]);
@@ -310,20 +342,21 @@ pub fn process(
             // A later map is silently disregarded by the browser — cache-state
             // flaky, since a cold cache usually loses the race to parse the map
             // first while a warm one wins it and breaks.
-            // Fast path: with no prefix, use the precomputed constants so the
-            // output is byte-identical to the pre-`ProcessOptions` behavior.
-            if (opts.url_prefix.len == 0) {
+            // Fast path: no prefix AND the shared runtime — emit the precomputed
+            // constants so the output stays byte-identical to the pre-slicing
+            // behavior on every site that has no slice.
+            if (opts.url_prefix.len == 0 and !use_sliced) {
                 try injected.appendSlice(gpa, import_map);
                 // `preloadLinks`/`importMapFor`/`runtimeScriptFor`/`prefixed` are
                 // contract 1, reached through `arena.a` — the sanctioned bridge.
                 // Their results are copied into `injected` and then dead; this
                 // function is contract 4, so the arena drop reclaims them.
-                try injected.appendSlice(gpa, try preloadLinks(arena.a, instances.items, opts.url_prefix));
+                try injected.appendSlice(gpa, try preloadLinks(arena.a, instances.items, shared_runtime_url));
                 try injected.appendSlice(gpa, runtime_script);
             } else {
-                const runtime_url = try prefixed(arena.a, opts.url_prefix, shared_runtime_url);
+                const runtime_url = try prefixed(arena.a, opts.url_prefix, runtime_url_raw);
                 try injected.appendSlice(gpa, try importMapFor(arena.a, runtime_url));
-                try injected.appendSlice(gpa, try preloadLinks(arena.a, instances.items, opts.url_prefix));
+                try injected.appendSlice(gpa, try preloadLinks(arena.a, instances.items, runtime_url));
                 try injected.appendSlice(gpa, try runtimeScriptFor(arena.a, runtime_url));
             }
             try injected.appendSlice(gpa, body[head_end..]);
@@ -428,23 +461,19 @@ fn rewrite(
         // raw-text region the scan stepped over, which passes through unmodified.
         try out.appendSlice(gpa, html[i..start]);
 
-        // Find the end of the opening tag's '>' (quote-aware, so a `>` inside a
-        // quoted attribute value like `:props='{ .x = "a > b" }'` doesn't end it).
-        // Note: a single-quoted `:props` value cannot itself contain a literal `'`.
-        const open_end = tagEnd(html, start) orelse return error.MalformedIsland;
-        const tag_text = html[start .. open_end + 1];
-        const self_closing = open_end > 0 and html[open_end - 1] == '/';
+        // Where this island's open tag ends, where its content ends, and where the
+        // next scan resumes. `findFallbackSlots` resolves nested islands with the
+        // SAME helper, which is what keeps the two scans' idea of "this island's
+        // own bytes" identical (see `islandExtent`).
+        //
+        // A missing '>' and a missing `</NAME>` are both `MalformedIsland`, as
+        // they were when this was two separate `orelse return`s here.
+        const ext = islandExtent(html, tok) orelse return error.MalformedIsland;
+        const tag_text = html[start .. ext.open_end + 1];
 
-        // Capture the inner HTML (already rendered by SuperHTML) as slot content,
-        // matching the `</NAME>` that closes THIS tag (skipping nested islands of
-        // the SAME spelling — see `matchingClose`'s per-spelling depth note).
-        var consume_end: usize = open_end + 1;
-        var slot_html: []const u8 = "";
-        if (!self_closing) {
-            const close = matchingClose(html, open_end + 1, tok.tag) orelse return error.MalformedIsland;
-            slot_html = std.mem.trim(u8, html[open_end + 1 .. close], " \t\r\n");
-            consume_end = close + tok.tag.close.len;
-        }
+        // Inner HTML (already rendered by SuperHTML) is this island's slot content.
+        const slot_html = std.mem.trim(u8, ext.inner, " \t\r\n");
+        const consume_end = ext.end;
 
         // Extract attributes.
         // attrDouble/attrSingle return slices into tag_text (which aliases html);
@@ -466,6 +495,60 @@ fn rewrite(
         const module_url = try prefixed(arena.a, url_prefix, try moduleUrl(arena.a, src));
         const is_only = std.mem.eql(u8, cd.name, "only");
 
+        // A `<template slot="fallback">` is build-time placeholder markup for the
+        // window between "HTML parsed" and "island mounted". It only makes sense
+        // for `client:only`, the one directive that ships NO server-rendered
+        // content; on every other directive the real component is already in the
+        // HTML, so a fallback there is authored markup the runtime would never
+        // remove and the reader would see stacked on top of the real thing.
+        // Reject it rather than silently degrading it to an ordinary named slot.
+        //
+        // Scanned on the RAW `slot_html`, before the recursive `rewrite` below:
+        // that is the only point where a nested `<island>` inside the fallback is
+        // still an `<island>` rather than an already-rewritten placeholder div.
+        //
+        // THIS island's templates only — `findFallbackSlots` skips nested island
+        // subtrees, whose fallbacks are governed by the nested island's own
+        // directive and are validated by its own `rewrite` call below.
+        const fallbacks = findFallbackSlots(slot_html);
+        if (fallbacks.first) |fb| {
+            // Reject a second fallback before anything else: `collectSlots` keeps
+            // both, the LAST would win the placeholder, and only the FIRST is
+            // validated below — so a nested island in a later block would escape
+            // the guard entirely. See `FallbackSlots`.
+            if (fallbacks.count > 1) {
+                if (!builtin.is_test) std.log.err(
+                    "island '{s}': {d} <template slot=\"fallback\"> blocks; there must be at most one " ++
+                        "(the placeholder can only show one of them, and the others would be silently discarded)",
+                    .{ src_raw, fallbacks.count },
+                );
+                return error.DuplicateFallbackSlot;
+            }
+            if (!is_only) {
+                // `!builtin.is_test`: Zig's test runner fails the whole step on
+                // any .err-level log, even when every assertion passes — same
+                // gate as `validateClientDirective`.
+                if (!builtin.is_test) std.log.err(
+                    "island '{s}': <template slot=\"fallback\"> is only meaningful on client:only " ++
+                        "(every other directive server-renders the component, so real content is already there)",
+                    .{src_raw},
+                );
+                return error.FallbackSlotRequiresClientOnly;
+            }
+            // `nextIslandStart` (not a raw substring search) so a commented-out
+            // island inside the fallback correctly does NOT trip this, and prose
+            // mentioning the tag does not false-positive.
+            if (nextIslandStart(fb, 0) != null) {
+                if (!builtin.is_test) std.log.err(
+                    "island '{s}': a client:only fallback must not contain an <island> — " ++
+                        "the fallback is discarded the moment the component mounts, so a nested " ++
+                        "island would hydrate and then be torn out",
+                    .{src_raw},
+                );
+                return error.IslandInFallbackSlot;
+            }
+        }
+
         // Recurse into the slot content so any nested `<island>` is rewritten to
         // its placeholder + SSR'd + counted (sharing this counter/instances). The
         // rewritten slot is what goes into the slots_json / the sidecar slots
@@ -478,6 +561,38 @@ fn rewrite(
 
         // Partition slot content into named and default slots for the sidecar slots argument.
         const slots = try collectSlots(arena, slot_rewritten);
+
+        // The reserved `fallback` slot is BUILD-TIME markup for the wrapper div,
+        // not a slot the component receives: partition it out before
+        // `slotsToJson` so it never reaches the client and the component never
+        // sees a bogus `fallback` slot prop. (A nested island inside it was
+        // rejected above, so the rewritten bytes equal the raw bytes here.)
+        //
+        // `fallback_html` borrows into `slot_rewritten`, which is `defer gpa.free`d
+        // at the end of THIS loop-body block; the `out.print` that copies it into
+        // the output runs earlier in the same block, so the borrow is sound.
+        var fallback_html: []const u8 = "";
+        const component_slots = blk: {
+            var found = false;
+            for (slots) |s| {
+                if (std.mem.eql(u8, s.name, fallback_slot_name)) {
+                    fallback_html = s.html;
+                    found = true;
+                }
+            }
+            // Only allocate when a fallback is actually present: with none — the
+            // overwhelmingly common case — the slot slice passes through
+            // untouched and this whole block allocates nothing.
+            if (!found) break :blk slots;
+            var kept: std.ArrayListUnmanaged(Slot) = .empty;
+            for (slots) |s| {
+                if (std.mem.eql(u8, s.name, fallback_slot_name)) continue;
+                try kept.append(arena.a, s);
+            }
+            // Arena-owned like `slots` itself (collectSlots is contract 4); no
+            // deinit, no free — it dies with the page render.
+            break :blk try kept.toOwnedSlice(arena.a);
+        };
         // Dynamic props: prop-NAME="value" attrs (SuperHTML already evaluated any
         // $scripty values), coerced to the Props field types, override :props.
         const dyn = try collectDynProps(arena, tag_text);
@@ -489,9 +604,12 @@ fn rewrite(
         // client:only is NOT server-rendered (placeholder starts empty; the
         // component mounts fresh on the client). All other directives SSR the
         // component so content is present without JS. props are always emitted.
-        const slots_json = try slotsToJson(arena.a, slots);
+        const slots_json = try slotsToJson(arena.a, component_slots);
+        // A client:only island's placeholder carries its `fallback` slot markup
+        // (empty when there is none, which is byte-identical to the pre-fallback
+        // behaviour). The client runtime clears it at mount.
         const rendered = if (is_only)
-            try gpa.dupe(u8, "")
+            try gpa.dupe(u8, fallback_html)
         else blk: {
             // Capture the sidecar's structured error (message + source-mapped
             // stack) so a failed render is surfaced with context, not
@@ -539,7 +657,7 @@ fn rewrite(
                 "<script type=\"application/json\" data-z-props=\"{s}\">{s}</script>",
             .{ id, src, client, media_attr, module_url, rendered, id, props_json },
         );
-        if (slots.len > 0) {
+        if (component_slots.len > 0) {
             try out.print(
                 gpa,
                 "<script type=\"application/json\" data-z-slots=\"{s}\">{s}</script>",
@@ -789,13 +907,79 @@ fn matchingClose(html: []const u8, from: usize, tag: IslandTag) ?usize {
     return null;
 }
 
-/// Map a component `src` to the URL of its bundled JS module.
-/// "components/Hero.island.tsx" -> "/islands/Hero.island.js". Contract 1.
-fn moduleUrl(alloc: std.mem.Allocator, src: []const u8) ![]u8 {
+/// The bytes one island element occupies, as resolved by `islandExtent`.
+const IslandExtent = struct {
+    /// Index of the '>' that ends the OPEN tag, so `html[tok.start..open_end + 1]`
+    /// is the open tag text.
+    open_end: usize,
+    /// The element's inner HTML, untrimmed; empty for a self-closing tag.
+    inner: []const u8,
+    /// Index just past the element's last byte — where a scan resumes.
+    end: usize,
+};
+
+/// Resolve the extent of the island opened at `tok` (as returned by
+/// `nextIslandStart`), or null when the open tag has no '>' or no matching close.
+///
+/// This exists so `rewrite` and `findFallbackSlots` cannot disagree about where a
+/// nested island's subtree begins and ends. That agreement is what makes the
+/// fallback scan sound: `findFallbackSlots` must skip EXACTLY the bytes the
+/// recursive `rewrite` call will consume for that nested island, because those
+/// bytes belong to the nested island's own fallback validation, not the outer
+/// one's. Two independent copies of "open tag, self-closing?, matching close"
+/// would be one refactor away from drifting apart and reintroducing the
+/// misattribution.
+///
+/// NO_SLOP.md §2.2a contract 3 (caller-buffer): allocates nothing; `inner` is a
+/// slice of `html`.
+fn islandExtent(html: []const u8, tok: IslandStart) ?IslandExtent {
+    // Quote-aware, so a `>` inside a quoted attribute value like
+    // `:props='{ .x = "a > b" }'` doesn't end the tag early.
+    const open_end = tagEnd(html, tok.start) orelse return null;
+    if (open_end > 0 and html[open_end - 1] == '/') {
+        return .{ .open_end = open_end, .inner = "", .end = open_end + 1 };
+    }
+    // Match the `</NAME>` that closes THIS tag, skipping nested islands of the
+    // SAME spelling — see `matchingClose`'s per-spelling depth note.
+    const close = matchingClose(html, open_end + 1, tok.tag) orelse return null;
+    return .{
+        .open_end = open_end,
+        .inner = html[open_end + 1 .. close],
+        .end = close + tok.tag.close.len,
+    };
+}
+
+/// Basename of `src` with its final extension stripped — the name the island's
+/// bundle is emitted under (`/islands/<name>.js`) and the key the runtime-slice
+/// manifest lists its covered islands by.
+///
+/// Byte-identical to `build/validate.zig`'s `islandName`, which is what names the
+/// bundle file the slice driver analyses; the two must agree or the join silently
+/// misses and every page falls back to the shared runtime.
+///
+/// Matching on the module NAME rather than the raw `src` string is deliberate: a
+/// layout may legitimately write `src="./components/Foo.island.tsx"` while
+/// `build.zig` declares `"components/Foo.island.tsx"`. Both name `Foo.island`.
+/// Contract 3: allocates nothing; the result is a slice of `src`.
+pub fn islandModuleName(src: []const u8) []const u8 {
     var name = src;
     if (std.mem.lastIndexOfScalar(u8, name, '/')) |slash| name = name[slash + 1 ..];
     if (std.mem.lastIndexOfScalar(u8, name, '.')) |dot| name = name[0..dot]; // strip final ext
-    return std.fmt.allocPrint(alloc, "/islands/{s}.js", .{name});
+    return name;
+}
+
+/// Map a component `src` to the URL of its bundled JS module.
+/// "components/Hero.island.tsx" -> "/islands/Hero.island.js". Contract 1.
+fn moduleUrl(alloc: std.mem.Allocator, src: []const u8) ![]u8 {
+    return std.fmt.allocPrint(alloc, "/islands/{s}.js", .{islandModuleName(src)});
+}
+
+/// True when `names` contains `needle`. Contract 3: allocates nothing.
+/// A linear scan on purpose: `names` is the site's sliceable-island list (a
+/// handful of entries) and this runs once per island instance per page.
+fn containsName(names: []const []const u8, needle: []const u8) bool {
+    for (names) |n| if (std.mem.eql(u8, n, needle)) return true;
+    return false;
 }
 
 /// Collect `prop-NAME="value"` attributes from the island open tag.
@@ -919,6 +1103,95 @@ pub fn escapeScriptContent(alloc: std.mem.Allocator, input: []const u8) ![]const
     // Each "</" (2 bytes) → "<\/" (3 bytes); output grows by count bytes.
     const out = try alloc.alloc(u8, input.len + count);
     _ = std.mem.replace(u8, input, needle, "<\\/", out);
+    return out;
+}
+
+/// The reserved slot name that supplies pre-hydration content for a
+/// `client:only` island. Everything else about it is an ordinary named slot,
+/// so `collectSlots` parses it; this constant only names the reservation.
+const fallback_slot_name = "fallback";
+
+/// Every `<template slot="fallback">…</template>` in RAW island inner HTML.
+///
+/// `count` matters as much as `first`: `collectSlots` keeps EVERY named slot, so
+/// two fallback templates would both be partitioned out while the LAST one won
+/// the placeholder — and only the first was ever validated. A second block
+/// carrying a nested `<island>` would then slip past the guard, be recursively
+/// rewritten into a real island instance (with a preload and a hydration root),
+/// and be torn out again the moment the outer component mounted. `rewrite`
+/// therefore rejects `count > 1` outright, which is what makes "the block that
+/// was validated" and "the block that is rendered" the same block by
+/// construction.
+const FallbackSlots = struct {
+    /// Inner bytes of the FIRST fallback template, or null when there is none.
+    first: ?[]const u8 = null,
+    count: usize = 0,
+};
+
+/// Scan RAW island inner HTML for the fallback templates that belong to THIS
+/// island — i.e. the ones outside any nested `<island>` subtree.
+///
+/// Same marker scan as `collectSlots` (the slot attribute must be the template's
+/// FIRST attribute), deliberately duplicated rather than shared: this one runs
+/// BEFORE the recursive rewrite of slot content, which is the only point at which
+/// a nested `<island>` inside the fallback is still distinguishable from an
+/// already-rewritten placeholder.
+///
+/// Skipping nested subtrees is not an optimization, it is the correctness
+/// condition. Nested islands in slot content are a first-class feature, and a
+/// nested `client:only` island carries its own fallback; a flat scan attributes
+/// that inner template to the OUTER island and then fails the build with a
+/// diagnostic that states the opposite of the truth — `client:load` outer +
+/// `client:only` inner became `FallbackSlotRequiresClientOnly` ("this island is
+/// not client:only") about a template on an island that *was*, and two nested
+/// `client:only` islands with one fallback each became `DuplicateFallbackSlot`.
+/// Both are legitimate documents. The nested island's own `rewrite` call sees its
+/// own template and validates it there, which is where the directive that governs
+/// it actually lives.
+///
+/// The skip uses `nextIslandStart` + `islandExtent`, the same pair `rewrite` uses
+/// to consume an island, so "bytes this scan skips" and "bytes the recursive
+/// rewrite owns" are the same set by construction. Consequences worth stating:
+///
+///   * `nextIslandStart` steps over comments and raw-text elements, so a
+///     commented-out `<island>` does NOT open a skipped region — its contents
+///     stay in this island's scan, matching `collectSlots`, which is equally
+///     comment-unaware and would still partition such a template out.
+///   * A malformed nested island (no '>' or no matching close) ends the scan.
+///     `rewrite` fails that input with `MalformedIsland` a few lines later
+///     regardless, so returning what was found so far cannot change an outcome.
+///   * A template that OPENS before a nested island and CLOSES after it (the
+///     island is inside the fallback) is counted here, and the cursor lands past
+///     `</template>` — that island is then rejected by the nested-island guard on
+///     the fallback body, not silently skipped.
+///
+/// NO_SLOP.md §2.2a contract 3 (caller-buffer): allocates nothing; `first` is a
+/// slice of `inner`.
+fn findFallbackSlots(inner: []const u8) FallbackSlots {
+    const marker = "<template slot=\"" ++ fallback_slot_name ++ "\"";
+    var out: FallbackSlots = .{};
+    var i: usize = 0;
+    while (i < inner.len) {
+        // The marker ends at the closing quote, so `slot="fallbackish"` cannot
+        // match — exactly the boundary `collectSlots` gets by reading to the
+        // next quote.
+        const marker_at = std.mem.indexOfPos(u8, inner, i, marker);
+        // Whichever comes first decides the next step: a nested island before the
+        // next marker means everything up to its close belongs to that island.
+        if (nextIslandStart(inner, i)) |tok| {
+            if (marker_at == null or tok.start < marker_at.?) {
+                const ext = islandExtent(inner, tok) orelse return out;
+                i = ext.end;
+                continue;
+            }
+        }
+        const t = marker_at orelse return out;
+        const open_end = std.mem.indexOfScalarPos(u8, inner, t + marker.len, '>') orelse return out;
+        const close = std.mem.indexOfPos(u8, inner, open_end + 1, "</template>") orelse return out;
+        out.count += 1;
+        if (out.first == null) out.first = inner[open_end + 1 .. close];
+        i = close + "</template>".len;
+    }
     return out;
 }
 
@@ -1490,6 +1763,263 @@ test "client:only with slots: empty div but data-z-slots script still emitted" {
     try std.testing.expect(std.mem.indexOf(u8, result.html, "<z-slot") == null);
 }
 
+test "client:only fallback slot renders into the placeholder and is NOT shipped as a slot (#58)" {
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = RenderArena.from(&arena_state);
+
+    const input =
+        "<island src=\"components/Chart.island.tsx\" client:only :props='{}'>" ++
+        "<template slot=\"fallback\"><div class=\"chart-skeleton\">Loading chart…</div></template>" ++
+        "<p>ordinary default slot</p></island>";
+
+    var stub: StubRenderer = .{};
+    const result = try process(gpa, arena, input, "/", &stub, .{});
+    defer gpa.free(result.html);
+
+    // The wrapper div is no longer empty: it carries the fallback markup verbatim.
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "data-z-module=\"/islands/Chart.island.js\"><div class=\"chart-skeleton\">Loading chart…</div></div>") != null);
+    // …and the component was still NOT server-rendered.
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "<stub") == null);
+
+    // The data-z-slots payload carries the default slot but NOT the fallback:
+    // the fallback is build-time markup for the placeholder, not a slot prop.
+    const slots_at = std.mem.indexOf(u8, result.html, "data-z-slots=\"z-island-0\">").?;
+    const slots_json = result.html[slots_at..];
+    try std.testing.expect(std.mem.indexOf(u8, slots_json, "\"default\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, slots_json, "\"fallback\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, slots_json, "chart-skeleton") == null);
+}
+
+test "a nested client:only fallback is NOT attributed to a client:load parent (#58)" {
+    // Regression: `findFallbackSlots` used to flat-scan the outer island's whole
+    // raw inner HTML, so the INNER island's fallback was blamed on the OUTER one.
+    // A client:load parent wrapping a client:only child is an ordinary
+    // composition, and it failed the build with
+    // `FallbackSlotRequiresClientOnly` — a message asserting the exact opposite
+    // of the truth about the island that actually owns the template.
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = RenderArena.from(&arena_state);
+
+    const input =
+        "<island src=\"components/Panel.island.tsx\" client:load :props='{}'>" ++
+        "<island src=\"components/Chart.island.tsx\" client:only :props='{}'>" ++
+        "<template slot=\"fallback\"><div class=\"chart-skeleton\">Loading…</div></template>" ++
+        "</island></island>";
+
+    var stub: StubRenderer = .{};
+    const result = try process(gpa, arena, input, "/", &stub, .{});
+    defer gpa.free(result.html);
+
+    try std.testing.expectEqual(@as(usize, 2), result.instances.len);
+    // The nested island is appended during the recursion, i.e. BEFORE its parent.
+    try std.testing.expectEqualStrings("components/Chart.island.tsx", result.instances[0].src);
+    try std.testing.expectEqualStrings("only", result.instances[0].client);
+
+    // The outer island is client:load, so its rewritten slot content reaches the
+    // output JSON-encoded inside `data-z-slots` rather than verbatim (the stub
+    // renderer, like the real sidecar, weaves slots itself). Assert there: the
+    // skeleton sits INSIDE the Chart placeholder, i.e. after the attribute that
+    // opens it.
+    const chart_at = std.mem.indexOf(u8, stub.last_slots_json, "/islands/Chart.island.js").?;
+    const skeleton_at = std.mem.indexOf(u8, stub.last_slots_json, "chart-skeleton").?;
+    try std.testing.expect(skeleton_at > chart_at);
+    // …and the outer island received no `fallback` slot prop of its own (slot
+    // names are unescaped JSON keys, so this would match if one existed).
+    try std.testing.expect(std.mem.indexOf(u8, stub.last_slots_json, "\"fallback\":") == null);
+}
+
+test "two nested client:only islands may each carry their own fallback (#58)" {
+    // Regression: one fallback per nested island read as `count == 2` on the
+    // PARENT under the old flat scan, so this composition died with
+    // `DuplicateFallbackSlot` even though no island had more than one.
+    // The duplicate rule is per-island, and this pins that.
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = RenderArena.from(&arena_state);
+
+    const input =
+        "<island src=\"components/Panel.island.tsx\" client:load :props='{}'>" ++
+        "<island src=\"components/A.island.tsx\" client:only :props='{}'>" ++
+        "<template slot=\"fallback\"><p>a-skeleton</p></template></island>" ++
+        "<island src=\"components/B.island.tsx\" client:only :props='{}'>" ++
+        "<template slot=\"fallback\"><p>b-skeleton</p></template></island>" ++
+        "</island>";
+
+    var stub: StubRenderer = .{};
+    const result = try process(gpa, arena, input, "/", &stub, .{});
+    defer gpa.free(result.html);
+
+    try std.testing.expectEqual(@as(usize, 3), result.instances.len);
+
+    // Each skeleton sits inside its OWN placeholder: A's after A's module
+    // attribute and before B's, B's after B's. (Encoded in the outer island's
+    // slots JSON — see the sibling test for why.)
+    const slots = stub.last_slots_json;
+    const a_at = std.mem.indexOf(u8, slots, "/islands/A.island.js").?;
+    const b_at = std.mem.indexOf(u8, slots, "/islands/B.island.js").?;
+    const a_skel = std.mem.indexOf(u8, slots, "a-skeleton").?;
+    const b_skel = std.mem.indexOf(u8, slots, "b-skeleton").?;
+    try std.testing.expect(a_at < a_skel and a_skel < b_at and b_at < b_skel);
+}
+
+test "the duplicate-fallback rule still fires on ONE island's own templates (#58)" {
+    // The nested-subtree skip must not blunt the per-island rule: two templates
+    // on the SAME island, with a nested island between them, is still an error.
+    // (Pins that the fix narrowed attribution rather than disabling counting.)
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = RenderArena.from(&arena_state);
+
+    const input =
+        "<island src=\"components/Chart.island.tsx\" client:only :props='{}'>" ++
+        "<template slot=\"fallback\"><p>first</p></template>" ++
+        "<island src=\"components/Inner.island.tsx\" client:load :props='{}'></island>" ++
+        "<template slot=\"fallback\"><p>second</p></template></island>";
+
+    var stub: StubRenderer = .{};
+    try std.testing.expectError(
+        error.DuplicateFallbackSlot,
+        process(gpa, arena, input, "/", &stub, .{}),
+    );
+}
+
+test "a nested island INSIDE a client:only fallback is still rejected (#58)" {
+    // The skip walks nested subtrees only when the island opens BEFORE the next
+    // template marker. An island inside the fallback opens after it, so the
+    // template is still counted here and the fallback body still reaches the
+    // nested-island guard — the skip must not become an escape hatch.
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = RenderArena.from(&arena_state);
+
+    const input =
+        "<island src=\"components/Chart.island.tsx\" client:only :props='{}'>" ++
+        "<p>lead</p>" ++
+        "<template slot=\"fallback\">" ++
+        "<island src=\"components/Spinner.island.tsx\" client:load :props='{}'></island>" ++
+        "</template></island>";
+
+    var stub: StubRenderer = .{};
+    try std.testing.expectError(
+        error.IslandInFallbackSlot,
+        process(gpa, arena, input, "/", &stub, .{}),
+    );
+}
+
+test "a fallback slot on any directive other than client:only is a hard error (#58)" {
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = RenderArena.from(&arena_state);
+
+    // client:load server-renders the component, so the real content is already
+    // in the HTML — a fallback would be permanently stacked on top of it.
+    const input =
+        "<island src=\"components/Chart.island.tsx\" client:load :props='{}'>" ++
+        "<template slot=\"fallback\"><p>skeleton</p></template></island>";
+
+    var stub: StubRenderer = .{};
+    try std.testing.expectError(
+        error.FallbackSlotRequiresClientOnly,
+        process(gpa, arena, input, "/", &stub, .{}),
+    );
+}
+
+test "a client:only fallback containing an <island> is a hard error (#58)" {
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = RenderArena.from(&arena_state);
+
+    // The fallback is torn out at mount, so a nested island in it would hydrate
+    // and then be destroyed — a leak of a live component, not a no-op.
+    const input =
+        "<island src=\"components/Chart.island.tsx\" client:only :props='{}'>" ++
+        "<template slot=\"fallback\">" ++
+        "<island src=\"components/Spinner.island.tsx\" client:load :props='{}'></island>" ++
+        "</template></island>";
+
+    var stub: StubRenderer = .{};
+    try std.testing.expectError(
+        error.IslandInFallbackSlot,
+        process(gpa, arena, input, "/", &stub, .{}),
+    );
+}
+
+test "a COMMENTED-OUT island inside a client:only fallback is allowed (#58)" {
+    // The nested-island guard uses `nextIslandStart`, which skips comments and
+    // raw-text regions — so commented-out markup does not trip it.
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = RenderArena.from(&arena_state);
+
+    const input =
+        "<island src=\"components/Chart.island.tsx\" client:only :props='{}'>" ++
+        "<template slot=\"fallback\"><!-- <island src=\"x.tsx\" client:load></island> -->ok</template>" ++
+        "</island>";
+
+    var stub: StubRenderer = .{};
+    const result = try process(gpa, arena, input, "/", &stub, .{});
+    defer gpa.free(result.html);
+    try std.testing.expectEqual(@as(usize, 1), result.instances.len);
+}
+
+test "more than one client:only fallback template is a hard error (#58)" {
+    // `collectSlots` keeps every named slot, so two fallback blocks would both be
+    // partitioned out while the LAST won the placeholder — and only the FIRST was
+    // ever validated. A nested island in the second block would then be rewritten
+    // into a live hydration root that the mount immediately tears out. Rejecting
+    // the duplicate up front is what makes "validated block" and "rendered block"
+    // the same block.
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = RenderArena.from(&arena_state);
+
+    const input =
+        "<island src=\"components/Chart.island.tsx\" client:only :props='{}'>" ++
+        "<template slot=\"fallback\"><p>first</p></template>" ++
+        "<template slot=\"fallback\">" ++
+        "<island src=\"components/Spinner.island.tsx\" client:load :props='{}'></island>" ++
+        "</template></island>";
+
+    var stub: StubRenderer = .{};
+    try std.testing.expectError(
+        error.DuplicateFallbackSlot,
+        process(gpa, arena, input, "/", &stub, .{}),
+    );
+}
+
+test "a client:only island whose ONLY slot is the fallback emits NO data-z-slots script (#58)" {
+    // The bug this pins: partitioning the fallback out of the placeholder but not
+    // out of the slot set. The div would look right while the component received
+    // a bogus `fallback` slot prop carrying the skeleton markup.
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = RenderArena.from(&arena_state);
+
+    const input =
+        "<island src=\"components/Chart.island.tsx\" client:only :props='{}'>" ++
+        "<template slot=\"fallback\"><p>skeleton</p></template></island>";
+
+    var stub: StubRenderer = .{};
+    const result = try process(gpa, arena, input, "/", &stub, .{});
+    defer gpa.free(result.html);
+
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "data-z-slots") == null);
+    // The fallback still reached the placeholder.
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "<p>skeleton</p></div>") != null);
+}
+
 test "leaf island: no data-z-slots script emitted (byte-identical regression guard)" {
     const gpa = std.testing.allocator;
     var arena_state = std.heap.ArenaAllocator.init(gpa);
@@ -1606,7 +2136,7 @@ test "preloadLinks: runtime link first, island modules deduped, client:only incl
         .{ .id = "z-island-1", .src = "components/Counter.island.tsx", .client = "only", .props_json = "{}", .module_url = "/islands/Counter.island.js" },
         .{ .id = "z-island-2", .src = "components/Hero.island.tsx", .client = "load", .props_json = "{}", .module_url = "/islands/Hero.island.js" }, // dup module
     };
-    const links = try preloadLinks(gpa, &insts, "");
+    const links = try preloadLinks(gpa, &insts, shared_runtime_url);
     defer gpa.free(links);
     // runtime link present and FIRST.
     try std.testing.expect(std.mem.startsWith(u8, links, "<link rel=\"modulepreload\" href=\"/zigapagos-runtime.js\">"));
@@ -1618,7 +2148,7 @@ test "preloadLinks: runtime link first, island modules deduped, client:only incl
 
 test "preloadLinks: empty instances -> empty string" {
     const gpa = std.testing.allocator;
-    const links = try preloadLinks(gpa, &.{}, "");
+    const links = try preloadLinks(gpa, &.{}, shared_runtime_url);
     defer gpa.free(links); // zero-length: `Allocator.free` short-circuits
     try std.testing.expectEqualStrings("", links);
 }
@@ -1647,6 +2177,123 @@ test "process injects the import map before any modulepreload links, only when i
     // all before </head>.
     const head_end = std.mem.indexOf(u8, result.html, "</head>").?;
     try std.testing.expect(im < head_end);
+}
+
+test "islandModuleName is the slice manifest's join key for every spelling of src (#52)" {
+    // Byte-identical to build/validate.zig's `islandName`, which names the bundle
+    // file the slice driver reads — and therefore names the manifest entry. A
+    // layout may write `./components/Foo.island.tsx` where build.zig declared
+    // `components/Foo.island.tsx`; both must join.
+    try std.testing.expectEqualStrings("Foo.island", islandModuleName("components/Foo.island.tsx"));
+    try std.testing.expectEqualStrings("Foo.island", islandModuleName("./components/Foo.island.tsx"));
+    try std.testing.expectEqualStrings("Foo.island", islandModuleName("Foo.island.tsx"));
+    try std.testing.expectEqualStrings("Foo.island", islandModuleName("/a/b/Foo.island.tsx"));
+}
+
+test "a page whose every island is covered loads the SLICED runtime and nothing else (#52)" {
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = RenderArena.from(&arena_state);
+    var stub: StubRenderer = .{};
+
+    const input =
+        "<html><head><title>t</title></head><body>" ++
+        // One `./`-prefixed src, to pin the module-name join rather than a raw
+        // string compare against the manifest.
+        "<island src=\"./components/Clean.island.tsx\" client:load :props='{}'></island>" ++
+        "<island src=\"components/Also.island.tsx\" client:load :props='{}'></island>" ++
+        "</body></html>";
+    const result = try process(gpa, arena, input, "/", &stub, .{
+        .sliced_runtime_url = "/islands/_runtime.js",
+        .sliced_islands = &.{ "Clean.island", "Also.island" },
+    });
+    defer gpa.free(result.html);
+
+    // Import map, modulepreload and the module <script> all name the slice…
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "\"@z/runtime\":\"/islands/_runtime.js\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "<link rel=\"modulepreload\" href=\"/islands/_runtime.js\">") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "<script type=\"module\" src=\"/islands/_runtime.js\"></script>") != null);
+    // …and the shared runtime appears NOWHERE. Presence-only assertions pass
+    // even when BOTH runtimes are emitted, which is the two-Preact catastrophe.
+    try std.testing.expect(std.mem.indexOf(u8, result.html, shared_runtime_url) == null);
+}
+
+test "ONE uncovered island on the page forces the shared runtime for the whole page (#52)" {
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = RenderArena.from(&arena_state);
+    var stub: StubRenderer = .{};
+
+    // `Mixed` is not in the slice (it imports react / compat / an unexported
+    // name — the driver bailed it), so this page must load the full runtime.
+    const input =
+        "<html><head><title>t</title></head><body>" ++
+        "<island src=\"components/Clean.island.tsx\" client:load :props='{}'></island>" ++
+        "<island src=\"components/Mixed.island.tsx\" client:load :props='{}'></island>" ++
+        "</body></html>";
+    const result = try process(gpa, arena, input, "/", &stub, .{
+        .sliced_runtime_url = "/islands/_runtime.js",
+        .sliced_islands = &.{"Clean.island"},
+    });
+    defer gpa.free(result.html);
+
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "\"@z/runtime\":\"/zigapagos-runtime.js\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "<script type=\"module\" src=\"/zigapagos-runtime.js\"></script>") != null);
+    // The slice URL survives nowhere — not in the map, not as a preload.
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "_runtime.js") == null);
+}
+
+test "a sliced page on a url_path_prefix site prefixes every runtime URL (#52)" {
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = RenderArena.from(&arena_state);
+    var stub: StubRenderer = .{};
+
+    const input =
+        "<html><head><title>t</title></head><body>" ++
+        "<island src=\"components/Clean.island.tsx\" client:load :props='{}'></island>" ++
+        "</body></html>";
+    const result = try process(gpa, arena, input, "/", &stub, .{
+        .url_prefix = "myrepo",
+        .sliced_runtime_url = "/islands/_runtime.js",
+        .sliced_islands = &.{"Clean.island"},
+    });
+    defer gpa.free(result.html);
+
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "\"@z/runtime\":\"/myrepo/islands/_runtime.js\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "<link rel=\"modulepreload\" href=\"/myrepo/islands/_runtime.js\">") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "<script type=\"module\" src=\"/myrepo/islands/_runtime.js\"></script>") != null);
+    // Neither the UNPREFIXED slice URL nor the shared runtime survives: an
+    // unprefixed href on a project-path site is a 404, which reads as "the
+    // island silently didn't hydrate".
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "\"/islands/_runtime.js\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "zigapagos-runtime.js") == null);
+}
+
+test "a slice URL with no covered islands never wins (empty sliced_islands) (#52)" {
+    // Defence in depth: a manifest naming a runtime but listing no islands (a
+    // driver bug, or a hand-written CLI invocation) must fall back rather than
+    // slice every page vacuously.
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = RenderArena.from(&arena_state);
+    var stub: StubRenderer = .{};
+
+    const input =
+        "<html><head><title>t</title></head><body>" ++
+        "<island src=\"components/Clean.island.tsx\" client:load :props='{}'></island>" ++
+        "</body></html>";
+    const result = try process(gpa, arena, input, "/", &stub, .{
+        .sliced_runtime_url = "/islands/_runtime.js",
+        .sliced_islands = &.{},
+    });
+    defer gpa.free(result.html);
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "_runtime.js") == null);
+    try std.testing.expect(std.mem.indexOf(u8, result.html, "<script type=\"module\" src=\"/zigapagos-runtime.js\"></script>") != null);
 }
 
 test "self-closing island renders correctly" {

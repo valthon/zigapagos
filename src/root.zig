@@ -14,6 +14,7 @@ const worker = @import("worker.zig");
 const context = @import("context.zig");
 const Build = @import("Build.zig");
 const islands = @import("islands/sidecar.zig");
+const islands_slice = @import("islands/slice.zig");
 const RenderArena = @import("islands/render_arena.zig").RenderArena;
 const Template = @import("Template.zig");
 const Variant = @import("Variant.zig");
@@ -573,6 +574,20 @@ pub const Options = struct {
     /// serves readable, un-mangled CSS (mirroring Vite: minify on build, not dev).
     css_minify_driver: ?[]const u8 = null,
     island_props_check: @import("islands/props_check.zig").Mode = .off,
+    /// Path to the per-SITE islands runtime slice manifest, threaded through by
+    /// `zigapagos release --islands-slice=<path>` (see
+    /// `runtime/scripts/build-islands-runtime.ts`). Two shapes:
+    /// `{"runtime":"/islands/_runtime.js","islands":[…]}` — a slice was built and
+    /// covers those island modules — or `{"fallback":true}` — no island could be
+    /// proved safe, so every island page keeps the shared runtime.
+    /// Null (the default) means no slicing at all: every island page loads the
+    /// shared runtime, the same PAGE OUTPUT a fallback manifest produces. It is
+    /// not the same INVOCATION, though — a manifest-less run also skips the
+    /// stale-slice prune below, deliberately; see the comment there.
+    /// `zigapagos serve` never sets it: the live server serves
+    /// `/zigapagos-runtime.js` from its own cache dir via a hard-coded route and
+    /// never bundles a slice.
+    islands_slice_json: ?[]const u8 = null,
     /// SPAs declared in `build.zig`'s `Options.spas`, threaded through by
     /// `zigapagos release --spa=<src>|<base>` (one per SPA). Consumed by
     /// `src/spa.zig`'s release-time prerender pass.
@@ -674,6 +689,48 @@ pub fn run(
         };
     };
     build.island_props_check_mode = options.island_props_check;
+    // The islands runtime slice, read ONCE for the whole build: the render pass
+    // is multithreaded, every worker reads this and nobody writes it. This is a
+    // READ, not a write — it produces no output-tree writes of its own — so it
+    // sits here, above every pass, without disturbing the pass ordering
+    // documented below.
+    if (options.islands_slice_json) |slice_path| {
+        build.islands_slice = islands_slice.load(io, gpa, slice_path) catch |err| fatal.msg(
+            "error: could not read the islands runtime slice manifest '{s}': {s}\n",
+            .{ slice_path, @errorName(err) },
+        );
+        // A build whose decision flipped SLICED -> FALLBACK leaves the previous
+        // build's `/islands/_runtime.js` behind: nothing prunes the output tree
+        // (`addInstallDirectory` only copies, and `--force` only skips the
+        // empty-output check). Same treatment, and the same rationale, as
+        // `src/spa.zig`'s `deleteStaleSlicedRuntime` (AUDF-015). It runs before
+        // this build's install steps, which install nothing under that name when
+        // the decision is fallback, so the deletion sticks.
+        //
+        // NOT gated on `!incremental`: the manifest cannot flip during an
+        // incremental dev rebuild (that path only fires when every changed file
+        // is a content page, and the manifest depends solely on island bundles),
+        // so this is a no-op there rather than a hazard.
+        //
+        // Deliberately INSIDE the `islands_slice_json != null` branch, matching
+        // `src/spa.zig`. An invocation that was never told about slicing — a
+        // hand-written `zigapagos release`, or a ZIGAPAGOS_HOT_ISLANDS dev build,
+        // where `build/bundles.zig` skips the slicer entirely — has no basis for
+        // deleting a file it did not produce and knows nothing about. The cost of
+        // that choice is bounded and already-familiar: an unreferenced
+        // `islands/_runtime.js` can linger in an output tree that a sliced build
+        // wrote earlier, exactly as the shared runtime lingers unreferenced on a
+        // fully-sliced site (see docs/islands.md). Nothing points at it, so it is
+        // dead weight, never a wrong runtime.
+        if (build.mode == .disk) islands_slice.deleteStaleRuntime(
+            io,
+            build.mode.disk.output_dir,
+            build.islands_slice.url == null,
+        ) catch |err| fatal.msg(
+            "error: could not delete the stale sliced islands runtime: {s}\n",
+            .{@errorName(err)},
+        );
+    }
     // Dev-only: a non-null path turns on per-page island-usage
     // collection in the render workers (see worker.zig's renderPage).
     build.island_manifest_path = if (options.mode == .disk) options.island_manifest_path else null;

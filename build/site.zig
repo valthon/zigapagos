@@ -94,7 +94,7 @@ pub fn website(comptime Zigapagos: type, project: *std.Build, opts: Options) *st
             // Release builds enforce the typed-props contract (fail loudly on mismatch).
             run_zigapagos.addArg("--island-props-check=error");
             // Bundle each island JS file as a build asset.
-            bundles.addIslandAssets(project, zb, run_zigapagos, opts.islands, website_root, opts.source_maps);
+            bundles.addIslandAssets(project, zb, run_zigapagos, opts.islands, website_root, opts.output_path, opts.source_maps);
         }
         if (opts.spas.len > 0) {
             bundles.addSpaAssets(project, zb, run_zigapagos, opts.spas, website_root, opts.output_path, opts.source_maps);
