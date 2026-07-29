@@ -128,7 +128,7 @@ zig build api-check                               # if contract/ or apigen.ts ch
 
 # 4. TypeScript + shell e2e
 (cd runtime && bun install --frozen-lockfile && bun test)
-for s in tests/*/*.sh; do bash "$s" || echo "FAIL $s"; done   # 13 scripts, hermetic
+for s in tests/*/*.sh; do bash "$s" || echo "FAIL $s"; done   # hermetic; the glob is the list
 ```
 
 Notes on the ones with sharp edges:

@@ -460,6 +460,11 @@ taking literally, and these three are what stand between it and that.
   defects this project shipped — can sit broken on `main` for a day.
 - **[#50] DX-31 · CI pulls an unpinned npm package at runtime** (`bunx serve`), in a
   repository that otherwise pins its toolchain and vendors its dependencies.
+  **Resolved.** `browser-e2e.yml`'s site job serves the build with `python3 -m
+  http.server`, which every runner already has and which fetches nothing, and
+  `tests/meta/ci-package-pins.sh` fails CI on an unpinned `npx` / `bunx` /
+  `bun x` / `pnpm dlx` in any workflow — so that was the last runtime resolve
+  and it stays the last one.
 - **[#51] DX-32 · No preview deploy.** Every visual judgement here was made by
   reading emitted HTML. That works for assertions and not for "does this read
   well".
