@@ -498,6 +498,11 @@ taking literally, and these three are what stand between it and that.
   nested inside another expression purely to hold a refcount.
 - **[#55] DX-36 · A directory without `index.smd` yields no subpages, not an error.**
   A missing section presents as "my list is empty" with nothing naming the cause.
+  **Resolved:** the scan now warns, naming the directory, the URL that is not
+  built, and the `index.smd` to create (and, when a sibling `<dirname>.smd`
+  already owns that URL, saying so). A warning rather than an error — an
+  index-less directory is a legitimate URL-shaping tool. Fixture:
+  `tests/content-scanning/sectionless-dir/`.
 
 ## Authoring ergonomics
 

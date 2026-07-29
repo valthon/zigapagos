@@ -1649,6 +1649,86 @@ pub fn run(
         }
     }
 
+    // Scan-time advisory: a content directory that holds pages but no index.smd
+    // never became a section (see Variant.SectionlessDir), so its pages land in
+    // the enclosing section with deeper URLs, no page is built at the
+    // directory's own URL, and `$page.subpages()` aimed at it returns an empty
+    // list. Deliberately a WARNING and not an error -- the empty-list return is
+    // documented upstream behaviour and orphan directories are a legitimate
+    // URL-shaping tool (tests/rendering/simple/content/nested/ uses one on
+    // purpose). Deliberately NOT appended to `build.mode.memory.errors` either:
+    // that list is the live server's "the build failed" surface and makes every
+    // URL answer with a build-error page, so only error-severity diagnostics may
+    // enter it (the same rule PageAnalysisError.severity follows). Nothing here
+    // touches `any_prerendering_error`, so a warning-only build stays exit 0.
+    for (build.variants) |*v| {
+        if (v.sectionless_dirs.items.len == 0) continue;
+
+        // `dir_names` is filled in filesystem iteration order and, unlike
+        // `page_names`, is never sorted -- not even in Debug builds. The
+        // snapshot suite diffs stderr byte for byte, so sorting here is
+        // load-bearing rather than cosmetic. Format each path once into the
+        // arena and sort those bytes, instead of formatting inside a comparator.
+        const Entry = struct {
+            /// e.g. "content/projects/"
+            dir: []const u8,
+            /// e.g. "projects/" -- the URL that is NOT built.
+            url: []const u8,
+            /// e.g. "content/projects" -- the sibling page's path, sans ".smd".
+            stem: []const u8,
+            page_count: u32,
+            sibling_leaf_page: bool,
+
+            fn lessThan(_: void, a: @This(), b: @This()) bool {
+                return std.mem.order(u8, a.dir, b.dir) == .lt;
+            }
+        };
+
+        const entries = try arena.alloc(Entry, v.sectionless_dirs.items.len);
+        for (entries, v.sectionless_dirs.items) |*e, sd| {
+            e.* = .{
+                .dir = try std.fmt.allocPrint(arena, "{f}", .{
+                    sd.path.fmt(&v.string_table, &v.path_table, v.content_dir_path, true),
+                }),
+                .url = try std.fmt.allocPrint(arena, "{f}", .{
+                    sd.path.fmt(&v.string_table, &v.path_table, null, true),
+                }),
+                .stem = try std.fmt.allocPrint(arena, "{f}", .{
+                    sd.path.fmt(&v.string_table, &v.path_table, v.content_dir_path, false),
+                }),
+                .page_count = sd.page_count,
+                .sibling_leaf_page = sd.sibling_leaf_page,
+            };
+        }
+        std.mem.sort(Entry, entries, {}, Entry.lessThan);
+
+        for (entries) |e| {
+            std.debug.print(
+                \\{s}: warning: directory has {d} {s} but no index.smd, so it is not a section
+                \\|   note: its pages join the enclosing section instead, and no page is built at '{s}'
+                \\
+            , .{
+                e.dir,
+                e.page_count,
+                if (e.page_count == 1) "page" else "pages",
+                e.url,
+            });
+            if (e.sibling_leaf_page) {
+                std.debug.print(
+                    \\|   note: '{s}.smd' is a plain page, not this directory's index -- move it to '{s}index.smd' to make it one
+                    \\
+                    \\
+                , .{ e.stem, e.dir });
+            } else {
+                std.debug.print(
+                    \\|   note: create '{s}index.smd' to make it a section ($page.subpages() is empty for anything that is not one)
+                    \\
+                    \\
+                , .{e.dir});
+            }
+        }
+    }
+
     var collision_errors = false;
     for (build.variants) |v| {
         if (v.collisions.items.len > 0) {

@@ -13,6 +13,15 @@
 
 ### Fixed
 
+- A content directory that holds `.smd` pages but no `index.smd` now produces a build-log
+  warning. Such a directory never becomes a section, so its pages join the enclosing
+  section with deeper URLs, no page is built at the directory's own URL, and
+  `$page.subpages()` aimed at it returns an empty list — which previously looked like
+  "my section is empty" with nothing pointing at the cause. The warning names the
+  directory, the URL that is not built, and the `index.smd` to create; when a sibling
+  `<dirname>.smd` already occupies that URL it says so, since that is the usual shape of
+  the mistake. It is a warning, not an error: an index-less directory is a legitimate
+  URL-shaping tool.
 - The migration guide now spells out the three separate `:if` traps, including the one
   that is still legal and still surprising: `:if` on a real element gates only its BODY,
   so the tag and **every one of its attributes** are emitted either way (this is how a

@@ -31,6 +31,10 @@ content/nested/path/page.smd:15:15: error: invalid layout in alternatives
 |    .layout = "",
 |              ^^
 
+content/nested/path/: warning: directory has 1 page but no index.smd, so it is not a section
+|   note: its pages join the enclosing section instead, and no page is built at 'nested/path/'
+|   note: create 'content/nested/path/index.smd' to make it a section ($page.subpages() is empty for anything that is not one)
+
 page/index.html: error: output url collision detected
    between  page.smd (main output)
    and      page/index.smd (main output)

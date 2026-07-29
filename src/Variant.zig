@@ -40,6 +40,9 @@ pages: std.ArrayListUnmanaged(Page),
 urls: std.AutoHashMapUnmanaged(PathName, LocationHint),
 /// Overflowing LocationHints end up in here, populated alongside 'urls'.
 collisions: std.ArrayListUnmanaged(Collision),
+/// Content directories that hold pages but no index.smd, collected during the
+/// scan and reported (as warnings) from the main thread in root.zig.
+sectionless_dirs: std.ArrayListUnmanaged(SectionlessDir),
 
 i18n: context.Map.ZiggyMap,
 i18n_src: [:0]const u8,
@@ -50,6 +53,26 @@ const Collision = struct {
     url: PathName,
     loc: LocationHint,
     previous: LocationHint,
+};
+
+/// A content directory that holds `.smd` pages but no `index.smd`, so it never
+/// became a section: its pages reparent to the enclosing section with deeper
+/// URLs, no page is generated at the directory's own URL, and
+/// `$page.subpages()` for anything pointing at it returns an empty list (the
+/// `subsection_id == 0` short-circuit in context/Page.zig). Collected during
+/// the worker-threaded scan and printed from the main thread in root.zig -- a
+/// WARNING, not an error: the empty-list return is documented upstream
+/// behaviour and the pattern is legitimately used for URL shaping (see
+/// tests/rendering/simple/content/nested/).
+pub const SectionlessDir = struct {
+    path: PathTable.Path,
+    /// Direct `.smd` pages in the directory. `index.smd` is by definition
+    /// absent, so it is not counted.
+    page_count: u32,
+    /// True when a page elsewhere already owns this directory's would-be index
+    /// URL -- i.e. a sibling `<dirname>.smd` that looks like the section index
+    /// but is a plain page. Sharpens the note.
+    sibling_leaf_page: bool,
 };
 
 /// Tells you where to look when figuring out what an output URL maps to.
@@ -207,6 +230,10 @@ pub fn deinit(v: *const Variant, io: Io, gpa: Allocator) void {
         var c = v.collisions;
         c.deinit(gpa);
     }
+    {
+        var s = v.sectionless_dirs;
+        s.deinit(gpa);
+    }
     v.i18n_arena.promote(gpa).deinit();
 }
 
@@ -248,6 +275,7 @@ pub fn scanContentDir(
 
     var urls: std.AutoHashMapUnmanaged(PathName, LocationHint) = .empty;
     var collisions: std.ArrayListUnmanaged(Collision) = .empty;
+    var sectionless_dirs: std.ArrayListUnmanaged(SectionlessDir) = .empty;
 
     var dir_stack: std.ArrayListUnmanaged(struct {
         path: []const u8,
@@ -399,6 +427,35 @@ pub fn scanContentDir(
                 "error: the content root requires a content/index.smd page\n",
                 .{},
             );
+        }
+
+        // This directory holds pages but no index.smd, so it never became a
+        // section (see SectionlessDir). Detected here and not earlier because
+        // `found_index_smd` and `page_names` are only final once the entry
+        // iteration above has finished, and not later because `page_names` is
+        // cleared at the bottom of the loop. The root case fataled just above,
+        // hence the non-empty-path guard.
+        if (dir_entry.path.len > 0 and !found_index_smd and page_names.items.len > 0) {
+            // A hit here is a page from the PARENT directory whose output URL
+            // is exactly this directory's would-be index -- i.e. a sibling
+            // `<dirname>.smd`. The lookup is complete at this point: a parent
+            // is always scanned before its children (children are only pushed
+            // onto `dir_stack` while their parent is being processed) and the
+            // parent's page URLs are inserted before that push. `found_index_smd`
+            // is false here, so this can never be our own index.
+            const would_be_index: PathName = .{
+                .path = content_sub_path,
+                .name = index_html,
+            };
+            const sibling = if (urls.get(would_be_index)) |hint|
+                hint.kind == .page_main
+            else
+                false;
+            try sectionless_dirs.append(gpa, .{
+                .path = content_sub_path,
+                .page_count = @intCast(page_names.items.len),
+                .sibling_leaf_page = sibling,
+            });
         }
 
         const section = &sections.items[current_section];
@@ -577,6 +634,7 @@ pub fn scanContentDir(
         .pages = pages,
         .urls = urls,
         .collisions = collisions,
+        .sectionless_dirs = sectionless_dirs,
         .i18n = i18n,
         .i18n_src = i18n_src,
         .i18n_diag = i18n_diag,

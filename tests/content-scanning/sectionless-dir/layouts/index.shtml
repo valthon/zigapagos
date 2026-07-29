@@ -1,0 +1,7 @@
+<!DOCTYPE html>
+<html>
+<head><title :text="$page.title"></title></head>
+<body>
+  <ul :loop="$page.subpages()"><li :text="$loop.it.title"></li></ul>
+</body>
+</html>
