@@ -78,10 +78,35 @@ fn linkImpl(
     const w = &buf.writer;
     switch (asset._meta.kind) {
         .page => |variant_id| {
+            // `printLinkPrefix`'s own `force_host_url` is NOT usable here.
+            // Its `.multi` arm honours that flag only INSIDE
+            // `if (other_variant_id != our_variant_id)` (`Root.zig`), and a
+            // page asset is by definition in the page's own variant — so on a
+            // multilingual site the flag never fires and `absLink()` would
+            // hand back a root-relative URL, silently reintroducing the exact
+            // defect issue #25 exists to fix.
+            //
+            // That coupling is inherited and deliberate: `printUrl`'s call
+            // sites in `render/html.zig` pass `page != ctx.page`, i.e. there
+            // the flag doubles as "this is a cross-page reference", and the
+            // comment there explicitly relies on the variant check to decide
+            // whether a host url is needed. Hoisting the flag out of that
+            // guard would change `$link` output for every multilingual site.
+            // So we leave `printLinkPrefix` alone and print the host here.
+            //
+            // `sites[variant_id].host_url` is the same value that arm reads as
+            // `other_host_url`: `host_url_override orelse host_url` for a
+            // locale (see `root.zig`'s sites map), and the plain `host_url`
+            // for a single-locale site — so this is correct in both, and the
+            // simple-site output is byte-identical to what the flag produced.
+            if (force_host_url) {
+                const site = ctx._meta.sites.entries.items(.value)[variant_id];
+                w.print("{s}", .{site.host_url}) catch return error.OutOfMemory;
+            }
             ctx.printLinkPrefix(
                 w,
                 variant_id,
-                force_host_url,
+                false,
             ) catch return error.OutOfMemory;
             const v = ctx._meta.build.variants[variant_id];
             const hint = v.urls.getPtr(asset._meta.url).?;

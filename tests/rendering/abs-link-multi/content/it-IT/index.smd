@@ -1,0 +1,11 @@
+---
+.title = "Home",
+.date = @date("2020-07-06T00:00:00"),
+.author = "Test",
+.layout = "index.shtml",
+.draft = false,
+---
+
+The second locale is what makes the page-asset URL interesting: its output
+prefix is `it-IT`, so an absolute page-asset link must be
+`https://example.com/it-IT/…` — host AND locale prefix, not one or the other.

@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>Abs Link Multi</title>
+
+    <!-- PAGE asset via absLink: must be absolute AND carry the locale's
+         output prefix. This is the one Copilot caught on #69: the flag
+         `printLinkPrefix` takes is only honoured across variants, and a page
+         asset is always in the page's own variant, so this used to come back
+         as a bare `/page-og.png`. -->
+    <link rel="canonical" href="https://example.com/it-IT/page-og.png">
+
+    <!-- SITE asset via absLink: must keep a separator between
+         `assets_prefix_path` and the asset name. This used to render as
+         `https://example.com/staticsite.css`. -->
+    <meta property="og:image" content="https://example.com/static/site.css">
+
+    <!-- Control: plain link() stays root-relative and locale-prefixed, so a
+         regression that made everything absolute would fail here too. -->
+    <link rel="icon" href="/it-IT/logo.png">
+  </head>
+  <body>
+    <h1>Home</h1>
+    <div><p>The second locale is what makes the page-asset URL interesting: its output prefix is <code>it-IT</code>, so an absolute page-asset link must be <code>https://example.com/it-IT/…</code> — host AND locale prefix, not one or the other.</p></div>
+  </body>
+</html>

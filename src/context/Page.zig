@@ -603,13 +603,13 @@ pub const Fields = struct {
         \\as set in the SuperMD frontmatter.
     ;
     pub const aliases =
-        \\Aliases of the current page,
+        \\Aliases of the current page, 
         \\as set in the SuperMD frontmatter.
         \\
         \\Aliases can be used to make the same page available
         \\from different locations.
         \\
-        \\Every entry in the list is an output location where the
+        \\Every entry in the list is an output location where the 
         \\rendered page will be copied to.
         \\
         \\Entries are joined to the page's output directory; start an

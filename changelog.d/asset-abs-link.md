@@ -6,3 +6,10 @@
   consumed outside the page itself — `og:*`/`twitter:*` meta tags, canonical
   links, feeds — since `link()`'s output is root-relative and scrapers do not
   resolve those (#25).
+
+### Fixed
+
+- `absLink()` on a multilingual site returned a root-relative URL for page
+  assets (`$page.asset(...)`), and dropped the separator after
+  `assets_prefix_path` for site assets (`https://example.com/staticfoo.css`).
+  Both are now absolute and well-formed in every locale.

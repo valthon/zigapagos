@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>Abs Link Multi</title>
+
+    <!-- PAGE asset via absLink: must be absolute AND carry the locale's
+         output prefix. This is the one Copilot caught on #69: the flag
+         `printLinkPrefix` takes is only honoured across variants, and a page
+         asset is always in the page's own variant, so this used to come back
+         as a bare `/page-og.png`. -->
+    <link rel="canonical" href="https://example.com/page-og.png">
+
+    <!-- SITE asset via absLink: must keep a separator between
+         `assets_prefix_path` and the asset name. This used to render as
+         `https://example.com/staticsite.css`. -->
+    <meta property="og:image" content="https://example.com/static/site.css">
+
+    <!-- Control: plain link() stays root-relative and locale-prefixed, so a
+         regression that made everything absolute would fail here too. -->
+    <link rel="icon" href="/logo.png">
+  </head>
+  <body>
+    <h1>Home</h1>
+    <div><p><code>page-og.png</code> and <code>site.css</code> are referenced ONLY through <code>absLink()</code>, so this fixture pins the install refcount as well as the URL: if <code>absLink()</code> stopped bumping it, both would be pruned from the snapshot output tree.</p></div>
+  </body>
+</html>

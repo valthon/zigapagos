@@ -736,7 +736,17 @@ pub fn printAssetUrlPrefix(
         .multi => |locale| {
             const assets_prefix_path = ctx._meta.build.cfg.Multilingual.assets_prefix_path;
             if (force_host_url or ctx.page != page or locale.host_url_override != null) {
-                try w.print("{f}", .{
+                // Trailing separator, matching the `.simple` arm above and
+                // this arm's own `else` branch. `fmtJoin` never appends one
+                // and skips empty components, so without it the caller's
+                // asset name is concatenated straight onto the prefix:
+                // `https://example.com/static` + `site.css` came out as
+                // `https://example.com/staticsite.css`, and with an empty
+                // `assets_prefix_path` as `https://example.comsite.css`.
+                // Latent until now — nothing reached this branch with a
+                // forced host url on a multilingual site — and newly
+                // reachable through `Asset.absLink()`.
+                try w.print("{f}/", .{
                     root.fmtJoin('/', &.{
                         ctx.site.host_url,
                         assets_prefix_path,

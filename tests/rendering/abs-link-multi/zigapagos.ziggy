@@ -1,0 +1,32 @@
+// Multilingual counterpart of `tests/rendering/abs-link/`.
+//
+// `absLink()` on a MULTILINGUAL site takes different code than on a simple
+// one — page assets go through `Root.printLinkPrefix`'s `.multi` arm and site
+// assets through `printAssetUrlPrefix`'s — and the simple-site fixture next
+// door exercises neither. Both were broken; see the layout for what this pins.
+//
+// `assets_prefix_path` is set because an empty one hides the separator half of
+// the defect: with no prefix the joined host url happens to end where the
+// asset name begins.
+Multilingual {
+    .host_url = "https://example.com",
+    .i18n_dir_path = "i18n",
+    .layouts_dir_path = "layouts",
+    .assets_dir_path = "assets",
+    .assets_prefix_path = "static",
+    .locales = [
+        {
+            .code = "en-US",
+            .name = "English",
+            .site_title = "Abs Link Multi",
+            .content_dir_path = "content/en-US",
+            .output_prefix_override = "",
+        },
+        {
+            .code = "it-IT",
+            .name = "Italiano",
+            .site_title = "Abs Link Multi",
+            .content_dir_path = "content/it-IT",
+        },
+    ],
+}
