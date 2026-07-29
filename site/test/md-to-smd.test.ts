@@ -107,6 +107,71 @@ test("fence language remap: an unmapped language is left alone", () => {
   expect(out.split("\n")[0]).toBe("```ts");
 });
 
+test("fence language remap: attributes after the language survive the remap", () => {
+  const body = ['```jsonc title="a.json"', '{ "a": 1 }', "```", ""].join("\n");
+  const out = transformBody(body, opts({ fenceLangRemap: { jsonc: "json" } }));
+  expect(out.split("\n")[0]).toBe('```json title="a.json"');
+});
+
+test("fence: a nested ``` block inside a ```` block does not desync the tracker", () => {
+  // Issue #76. `docs/islands.md` shows fenced Markdown that itself contains a
+  // fence; a tracker that toggles on every delimiter-shaped line reads the
+  // INNER closer as an opener and stays inverted for the rest of the file —
+  // silently, since the only symptom is heading ids and link rewrites going
+  // missing. The `.smd` mirror then failed the site build with `unknown ref`
+  // on links whose targets had lost their `$heading.id`.
+  const body = [
+    "````markdown",
+    "```=html",
+    "<z-island></z-island>",
+    "```",
+    "````",
+    "",
+    "## After the block",
+    "",
+  ].join("\n");
+  const out = transformBody(body, opts());
+  const lines = out.split("\n");
+  // Nothing inside the outer fence was touched...
+  expect(lines[1]).toBe("```=html");
+  expect(lines[3]).toBe("```");
+  // ...and the heading that follows it is back outside the fence.
+  expect(out).toContain('## []($heading.id("after-the-block")) After the block');
+});
+
+test("fence: a closing run shorter than the opening one does not close it", () => {
+  const body = ["````", "```", "## Still fenced", "````", "", "## Real", ""].join("\n");
+  const out = transformBody(body, opts());
+  expect(out).toContain("## Still fenced");
+  expect(out).not.toContain('$heading.id("still-fenced")');
+  expect(out).toContain('$heading.id("real")');
+});
+
+test("fence: a tilde fence is not closed by a backtick fence", () => {
+  const body = ["~~~", "```", "## Still fenced", "~~~", "", "## Real", ""].join("\n");
+  const out = transformBody(body, opts());
+  expect(out).not.toContain('$heading.id("still-fenced")');
+  expect(out).toContain('$heading.id("real")');
+});
+
+test("fence: an info string is not restricted to a bare language", () => {
+  // SuperMD's raw-HTML escape hatch IS a fence whose info string is `=html`,
+  // so an info-string pattern of `[A-Za-z0-9_-]*` fails to see it at all.
+  const body = ["```=html", "## Not a heading", "```", "", "## Real", ""].join("\n");
+  const out = transformBody(body, opts());
+  expect(out).not.toContain('$heading.id("not-a-heading")');
+  expect(out).toContain('$heading.id("real")');
+});
+
+test("fence: a delimiter-shaped line whose info string holds a backtick is not a fence", () => {
+  // CommonMark forbids a backtick in a backtick fence's info string; honouring
+  // that is what stops a prose line of inline code from opening a fence and
+  // swallowing the rest of the document.
+  const body = ["```` `x` is code", "", "## Real", ""].join("\n");
+  const out = transformBody(body, opts());
+  expect(out).toContain('$heading.id("real")');
+});
+
 // ---------------------------------------------------------------------------
 // link rewriting
 // ---------------------------------------------------------------------------

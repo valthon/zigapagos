@@ -410,6 +410,120 @@ jobs:
         if: runner.os == 'Linux'
         run: zig build api-check
 
+
+  # The marketing site, built and asserted on the PR path (#76).
+  #
+  # site/ is a consumer project: it depends on the zigapagos package by path and
+  # regenerates ten `.smd` mirrors from the canonical docs before rendering. It
+  # is therefore the only place several classes of defect surface at all — a
+  # generator change that emits a link SuperMD cannot resolve, a doc edit that
+  # breaks the mirror transform, a prefix regression that 404s every script on
+  # Pages — and until this job existed none of them were on the PR path. site/
+  # was built only by pages.yml (push-to-main, i.e. after merge) and
+  # browser-e2e.yml (scheduled). Four PRs merged green in one day while
+  # progressively breaking the public site; #76 is the one that stopped the
+  # deploy outright.
+  #
+  # The four scripts below already existed and already ran — as DEPLOY gates in
+  # pages.yml, where a failure means the site does not ship and someone has to
+  # go back and fix main. Running them here as well moves the same assertions
+  # one step earlier without weakening the deploy gate: pages.yml keeps its own
+  # copies, because a PR is not the only way main moves.
+  #
+  # pages.yml's own note asked for a measurement rather than an assumption
+  # before adopting this on the PR path, on the grounds that a cold consumer
+  # build costs ~120s. That number no longer applies: this job takes the
+  # `zigapagos` binary build-binary already produced, exactly as the three e2e
+  # jobs do, and with `ZIGAPAGOS_BIN` set nothing compiles. Measured on this
+  # repo against a cold site/.zig-cache: 4s for the build, 2s for build.sh, 2s
+  # for docs-mirror.sh (which does its own, now-warm, `zig build`), under a
+  # second each for links.sh and js-budget.sh. The job's wall time is dominated
+  # by runner setup, it `needs:` only build-binary, and it is nowhere near the
+  # critical path — the Astro-importer shard is still ~9m.
+  #
+  # Linux-only, like every other consumer-project job here: the site build is
+  # OS-independent and macOS is already off the PR path.
+  site:
+    needs: build-binary
+    name: Build the site (site/)
+    runs-on: ubuntu-latest
+    env:
+      ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
+    steps:
+      # docs-mirror.sh asserts that no mirror is tracked in git, via
+      # `git ls-files --error-unmatch`, so this needs a real repo — but no
+      # history, hence the default shallow checkout.
+      - uses: actions/checkout@v7
+
+      - name: Setup toolchain (mise — zig 0.16.0 + bun 1.2)
+        uses: jdx/mise-action@v4
+        with:
+          cache: true
+
+      - name: Pin tool versions globally (shims must resolve outside the repo)
+        run: mise use -g zig@0.16.0 bun@1.2
+
+      # `ZIGAPAGOS_BIN` is what build/api.zig reads to swap the `zigapagos`
+      # dependency from a source build to a path, so site/'s `zig build`
+      # performs zero compile steps. No Zig cache restore here, for the same
+      # reason pages.yml skips one on this path: with the binary in hand there
+      # are no objects to reuse.
+      - name: Download zigapagos binary
+        uses: actions/download-artifact@v4
+        with:
+          name: zigapagos-${{ runner.os }}
+          path: zig-out/bin
+
+      - name: Use the prebuilt zigapagos
+        run: |
+          chmod +x zig-out/bin/zigapagos
+          echo "ZIGAPAGOS_BIN=$GITHUB_WORKSPACE/zig-out/bin/zigapagos" >> "$GITHUB_ENV"
+
+      # The site build bundles the shipped runtime by invoking
+      # runtime/sidecar/bundle-island.ts on runtime/src/browser-entry.ts, and
+      # Bun resolves that entry's imports upward from runtime/src. Installing
+      # only in site/ does not put preact on that path — site/node_modules holds
+      # `@z/runtime` as a link, not the runtime's own dependency tree — and the
+      # zigapagos-runtime bundle step then fails with nine `Could not resolve`
+      # errors. Same ordering pages.yml documents.
+      - name: Install runtime dependencies (the site build bundles @z/runtime)
+        working-directory: runtime
+        run: bun install --frozen-lockfile
+
+      - name: Build the site
+        working-directory: site
+        run: |
+          bun install --frozen-lockfile
+          bun run scripts/gen-docs-mirror.ts
+          zig build
+
+      # Five properties of the finished tree: index.html exists, the runtime URL
+      # carries the /zigapagos/ Pages path prefix, the Counter island's client
+      # bundle was emitted, the island was actually SSR'd, and no upstream
+      # branding leaked into the output.
+      - name: Assert the built site (site/test/build.sh)
+        run: bash site/test/build.sh
+
+      # Every registry entry produced a file, the frontmatter is Ziggy and not
+      # YAML, a second generator run produces no diff, no mirror is tracked in
+      # git, and no Scripty directive leaked into rendered prose. Runs the
+      # md-to-smd.ts unit tests first — that is where #76's fence-tracker
+      # regression is pinned.
+      - name: Assert the docs mirror (site/test/docs-mirror.sh)
+        working-directory: site
+        run: bash test/docs-mirror.sh
+
+      # The one class the build itself cannot catch: a hand-written href that
+      # resolves in local preview (no prefix) and 404s on Pages (prefixed).
+      - name: Assert internal links resolve (site/test/links.sh)
+        working-directory: site
+        run: bash test/links.sh
+
+      # Pins the "zero JS by default" claim the landing page makes.
+      - name: Assert the JavaScript budget (site/test/js-budget.sh)
+        working-directory: site
+        run: bash test/js-budget.sh
+
   # --- Shell e2e, sharded ------------------------------------------------------
   # The three jobs below partition `tests/*/*.sh` — the same glob the monolith
   # used, so a new tests/<area>/ directory is still covered the day it is added.
