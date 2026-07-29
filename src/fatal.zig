@@ -47,6 +47,8 @@ const help_menu =
     \\Commands:
     \\  dev               Build the site, serve it with the STOCK ZigBase
     \\                    binary, and rebuild on source changes
+    \\  doctor [DIR]      Audit a BUILT site tree (default 'public') for
+    \\                    root-relative social-meta URLs and dangling links
     \\  init              Initialize a Zigapagos site in the current directory
     \\  migrate <dir>     Scan an Astro project and write a MIGRATION.md worklist
     \\  release           Create a release of a Zigapagos site

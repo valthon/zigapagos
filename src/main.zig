@@ -17,6 +17,7 @@ pub const std_options: std.Options = .{
 const Command = enum {
     init,
     migrate,
+    doctor,
     release,
     debug,
     e2e,
@@ -123,6 +124,7 @@ pub fn main(init: std.process.Init) u8 {
     const any_error = switch (cmd) {
         .init => @import("cli/init.zig").init(io, gpa, args[2..]),
         .migrate => @import("cli/migrate.zig").migrate(io, gpa, args[2..]),
+        .doctor => @import("cli/doctor.zig").doctor(io, gpa, args[2..]),
         .release => @import("cli/release.zig").release(io, gpa, args[2..], init.environ_map),
         .debug => @import("cli/debug.zig").debug(io, gpa, args[2..]),
         .e2e => @import("cli/e2e.zig").e2e(io, gpa, args[2..], init.environ_map) catch fatal.oom(),
@@ -204,4 +206,11 @@ test "e2e" {
 test "dev" {
     _ = @import("cli/dev.zig");
     _ = @import("cli/reload.zig");
+}
+
+// Pull doctor.zig into the test compilation unit for `zig build test-doctor`.
+// (same lazy-analysis reason as the anchors above — doctor.zig is only
+// @import-ed from inside main()'s body)
+test "doctor" {
+    _ = @import("cli/doctor.zig");
 }
