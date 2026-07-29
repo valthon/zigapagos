@@ -87,6 +87,17 @@ export async function bootIsland(rootEl: HTMLElement): Promise<void> {
   mounted.set(rootEl, record);
 
   const mod = await importModule(moduleUrl);
+  // A `client:only` root may carry build-time fallback markup — the reserved
+  // `<template slot="fallback">`, see src/islands/pass.zig. Clear it before the
+  // mount, and only AFTER the module import resolved:
+  //   * after the await, so a module that fails to load leaves the fallback on
+  //     screen rather than replacing it with a blank box;
+  //   * before hydrate(), because Preact's hydrate() ADOPTS existing DOM and
+  //     never diffs attributes — adopting the fallback would weld the fallback's
+  //     classes/attributes onto the mounted component permanently.
+  // A client:only root with no fallback is already empty, so this is a no-op
+  // there and needs no branch beyond the directive check.
+  if (rootEl.dataset.zClient === "only") rootEl.replaceChildren();
   // Preact adopt-hydration: reuse the SSR DOM in place (no clear-and-remount).
   // When slots present, pass children (default slot) + slots (named) so Preact
   // rebuilds the same dangerouslySetInnerHTML VNodes as the sidecar SSR'd → byte-identical adopt.
