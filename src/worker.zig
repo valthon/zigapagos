@@ -1334,13 +1334,23 @@ fn renderPage(
             // release/deploy, so fail rather than publish a page whose island
             // never hydrates; dev serve keeps going so the author can see the
             // page, with the cause logged at .err (the CLI's level).
-            log.err(
-                "island rendering error on {s}: the page uses <island> but no island sidecar is configured" ++
-                    " — declare the island in build.zig's `.islands` (needs bun, the sidecar script," ++
-                    " and the island source dir)",
-                .{page_path},
-            );
-            if (build.mode == .disk) build.any_rendering_error.store(true, .release);
+            //
+            // `island_sidecar_optional` (validate/explain, see
+            // root.Options.island_sidecar_optional): those commands
+            // deliberately configure NO sidecar -- their whole point is
+            // checking/reporting on a site without the Bun toolchain -- so "no
+            // sidecar" is their normal state, not an authoring mistake.
+            // Suppress the log line for them; everything else (release, dev,
+            // the live server) keeps the diagnostic verbatim.
+            if (!build.island_sidecar_optional) {
+                log.err(
+                    "island rendering error on {s}: the page uses <island> but no island sidecar is configured" ++
+                        " — declare the island in build.zig's `.islands` (needs bun, the sidecar script," ++
+                        " and the island source dir)",
+                    .{page_path},
+                );
+                if (build.mode == .disk) build.any_rendering_error.store(true, .release);
+            }
             break :blk raw;
         };
         // The page's URL path (leading slash; trailing slash; "" → "/"), passed to

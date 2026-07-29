@@ -643,6 +643,26 @@ pub const Options = struct {
     /// which `website()` forwards. A flag on `dev` would have nothing to
     /// forward it to.
     allow_missing_pages: bool = false,
+    /// The introspection commands (`zigapagos validate`, `zigapagos explain`)
+    /// deliberately run a full in-memory build with NO island sidecar: their
+    /// whole point is to check/report on content, layouts and links without
+    /// the Bun toolchain, a build graph, or an output tree. Without this flag,
+    /// worker.zig's renderPage treats "this page mounts an <island> but no
+    /// sidecar is configured" as an authoring mistake and logs one error line
+    /// PER island page -- correct for `release`/`dev`/the live server, where
+    /// an unconfigured sidecar really is a missing `.islands` declaration in
+    /// build.zig, and pure noise for a command that never asked for SSR
+    /// (measured: 201 lines on a 201-page island fixture).
+    ///
+    /// When true, that branch stays silent and the raw `<island>` markup is
+    /// left in `page._render.out` -- which is exactly what `explain` then
+    /// tokenizes to enumerate a page's islands Bun-free.
+    ///
+    /// It suppresses a LOG LINE ONLY. It cannot mask a build failure: the
+    /// error flag on that branch is already gated on `build.mode == .disk`,
+    /// and this option is asserted `.memory`-only in `run` below. `release`,
+    /// `dev` and the live server never set it.
+    island_sidecar_optional: bool = false,
 
     pub const Mode = union(enum) {
         memory,
@@ -689,6 +709,11 @@ pub fn run(
         };
     };
     build.island_props_check_mode = options.island_props_check;
+    // Introspection-only, and memory-only: a disk build that renders an
+    // <island> with no sidecar ships an inert element, which is a build
+    // error, not a preference. Assert rather than silently honour it.
+    assert(!(options.island_sidecar_optional and options.mode == .disk));
+    build.island_sidecar_optional = options.island_sidecar_optional;
     // The islands runtime slice, read ONCE for the whole build: the render pass
     // is multithreaded, every worker reads this and nobody writes it. This is a
     // READ, not a write — it produces no output-tree writes of its own — so it

@@ -71,6 +71,8 @@ spa_not_found: ?[]const u8 = null,
 /// appended to (mutex-guarded) during the render phase and consumed once after
 /// it, in root.run. gpa-owned dups; freed in deinit.
 island_props_check_mode: @import("islands/props_check.zig").Mode = .off,
+/// See `root.Options.island_sidecar_optional`. Read by worker.zig's renderPage.
+island_sidecar_optional: bool = false,
 island_props_checks: std.ArrayListUnmanaged(@import("islands/props_check.zig").PropsCheck) = .empty,
 island_props_checks_mutex: std.Io.Mutex = .init,
 /// Dev-only island-usage collection: (island src, page source
