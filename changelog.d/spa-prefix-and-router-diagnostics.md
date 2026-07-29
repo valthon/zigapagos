@@ -21,6 +21,18 @@
   disagree. Sites with no `url_path_prefix` are unaffected, byte for byte.
 - `zigapagos serve` prefixes the SPA bundle and runtime URLs it bakes into dev
   shells, which its own request handler already required.
+- An island's SSR pathname (`host.pathname()`, `useLocation()`) now carries the
+  site's `url_path_prefix`, matching what the browser reports. An island that
+  branches on the path — active-nav highlighting, breadcrumbs — used to render
+  one thing at build time and another after hydration.
+- The generated nginx, Apache and ZigBase host configs now account for a site's
+  `url_path_prefix`, each according to its own semantics rather than by
+  prepending the prefix everywhere: nginx prefixes its `location` selectors and
+  `try_files` targets; Apache emits a `RewriteBase` and keeps its per-directory
+  patterns relative; ZigBase prefixes its `.match` patterns but leaves `.serve`
+  targets pointing at the output tree, which has no prefix directory.
+  `routing-manifest.json` carries the prefix as its own `url_path_prefix` field
+  for them to apply — its route values stay tree-relative.
 
 ### Changed
 

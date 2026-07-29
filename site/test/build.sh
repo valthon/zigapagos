@@ -146,6 +146,33 @@ grep -q 'href="/zigapagos/demos/app/guides"' "$OUT/demos/app/index.html" \
 grep -q 'id="z-spa-root" data-z-spa data-z-prefix="/zigapagos"' "$OUT/demos/app/index.html" \
   || { echo "FAIL: SPA shell carries no data-z-prefix for the client router"; exit 1; }
 
+# The host-config emitters under a url_path_prefix. This site is the only place
+# the whole chain runs for real (emit-host-config is a build.zig step, not part
+# of `zigapagos release`), and it is genuinely prefixed, so these are the
+# strongest assertions available for that half of the feature.
+#
+# The manifest carries the prefix as its OWN field and leaves route values
+# TREE-RELATIVE — the output tree has no /zigapagos directory, so a prefixed
+# `fallback` would name a file that does not exist.
+MAN="$OUT/demos/app/routing-manifest.json"
+grep -q '"url_path_prefix":"/zigapagos"' "$MAN" \
+  || { echo "FAIL: routing manifest carries no url_path_prefix"; exit 1; }
+grep -q '"fallback":"/demos/app/index.html"' "$MAN" \
+  || { echo "FAIL: manifest fallback is not tree-relative"; exit 1; }
+grep -q '"/zigapagos/demos/app' "$MAN" \
+  && { echo "FAIL: a manifest route value carries the prefix (must stay tree-relative)"; exit 1; }
+# ZigBase: `.match` is a REQUEST path (prefixed); `.serve` is resolved against
+# the served root directory (tree-relative). Asserting both halves is the point
+# — a blanket prefix would satisfy the first and break the second silently.
+ZBR="$OUT/demos/app/zigbase.static_routes.zig"
+test -f "$ZBR" || { echo "FAIL: zigbase.static_routes.zig missing"; exit 1; }
+grep -q '\.match = "/zigapagos/demos/app/\*\*"' "$ZBR" \
+  || { echo "FAIL: zigbase .match pattern is not prefixed"; exit 1; }
+grep -q '\.serve = "/demos/app/index.html"' "$ZBR" \
+  || { echo "FAIL: zigbase .serve target is not tree-relative"; exit 1; }
+grep -q '\.serve = "/zigapagos' "$ZBR" \
+  && { echo "FAIL: a zigbase .serve target carries the prefix — it would name a file that does not exist"; exit 1; }
+
 # Task 10: compare and download exist, and compare names its alternatives.
 test -f "$OUT/compare/index.html" || { echo "FAIL: compare page missing"; exit 1; }
 test -f "$OUT/download/index.html" || { echo "FAIL: download page missing"; exit 1; }

@@ -138,6 +138,27 @@ grep -q 'data-z-prefix="/myproj"' "$SHELL_PFX" \
        fail "the shell's hydration root does not carry data-z-prefix=\"/myproj\" -- the browser has no way to reproduce the SSR'd base on hydration"; }
 echo "leg 2 OK: hydration root carries data-z-prefix=\"/myproj\""
 
+# --- (2b) the manifest carries the prefix as its OWN field ------------------
+# The host-config emitters need to know where the tree is mounted, but they
+# need it SEPARATELY from the route values: those name positions inside the
+# output tree, which has no prefix directory, and two of the three emitters
+# consume them tree-relative (Apache's per-directory patterns, ZigBase's
+# `.serve`). So the manifest must carry the prefix and leave the routes alone —
+# asserting only that the field is present would still pass if the route values
+# had ALSO been prefixed, which is the bug this shape exists to avoid.
+MANIFEST_PFX="$OUT_PFX/app/routing-manifest.json"
+[[ -f "$MANIFEST_PFX" ]] || fail "expected manifest not written: $MANIFEST_PFX"
+grep -q '"url_path_prefix":"/myproj"' "$MANIFEST_PFX" \
+  || { echo "--- manifest ---"; cat "$MANIFEST_PFX"
+       fail "the routing manifest does not carry url_path_prefix -- the host-config emitters cannot know where the tree is mounted"; }
+grep -q '"fallback":"/app/index.html"' "$MANIFEST_PFX" \
+  || { echo "--- manifest ---"; cat "$MANIFEST_PFX"
+       fail "the manifest's fallback is not tree-relative -- a prefixed one names a file that does not exist on disk"; }
+grep -q '"/myproj/app' "$MANIFEST_PFX" \
+  && { echo "--- manifest ---"; cat "$MANIFEST_PFX"
+       fail "a manifest ROUTE value carries the prefix -- route values must stay tree-relative"; }
+echo "leg 2b OK: manifest carries url_path_prefix; its route values stay tree-relative"
+
 # --- (3) THE NO-OP CONTROL: the same fixture with NO url_path_prefix --------
 SITE_BARE="$WORK/bare"; OUT_BARE="$WORK/out-bare"
 new_site "$SITE_BARE" bare
@@ -159,6 +180,9 @@ grep -q '/myproj' "$SHELL_BARE" \
 grep -q 'href="/app/guides"' "$SHELL_BARE" \
   || { echo "--- shell ---"; cat "$SHELL_BARE"
        fail "control: the unprefixed shell does not even contain the plain href -- fixture is broken, not proving the no-op"; }
-echo "leg 3 OK: an unprefixed site's shell carries neither data-z-prefix nor /myproj"
+grep -q 'url_path_prefix' "$OUT_BARE/app/routing-manifest.json" \
+  && { echo "--- manifest ---"; cat "$OUT_BARE/app/routing-manifest.json"
+       fail "control: an UNPREFIXED site's manifest carries a url_path_prefix key -- it must be omitted entirely, not emitted as \"\""; }
+echo "leg 3 OK: an unprefixed site's shell and manifest carry neither data-z-prefix nor /myproj"
 
 echo "PASS: url_path_prefix composes into the SPA Router base, SSR and hydration agree, and unprefixed sites are unaffected"

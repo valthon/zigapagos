@@ -425,14 +425,16 @@ resolves instead of 404ing; and `useLocation().pathname` under SSR now
 agrees with what the browser reports. **A site with no `url_path_prefix` is
 unaffected, byte for byte** — the composition is a no-op.
 
-Two limitations, stated as deliberate scope, not oversights:
+The prefix reaches the rest of the build too:
 
-- `<base>/routing-manifest.json` and the nginx/apache/zigbase [host-config
-  emitters](#deploy-targets) stay **unprefixed**. A path-prefixed deploy
-  today means GitHub Pages, which consumes none of them.
-- Island-page SSR pathnames (`host.pathname()`) are still unprefixed on a
-  prefixed site — the same underlying gap, tracked separately from the SPA
-  router fix documented here.
+- **Island pages get the same parity.** An island's SSR pathname
+  (`host.pathname()`, `useLocation()`) carries the prefix, so an island that
+  branches on the path — active-nav highlighting, breadcrumbs — renders the
+  same thing at build time as it does after hydration. (Same reason as above:
+  `hydrate()` does not repair a mismatched attribute.)
+- **The [host-config emitters](#deploy-targets) honour it**, each according to
+  its own semantics rather than by prepending the prefix everywhere — see
+  [Deploy targets under a path prefix](#deploy-targets-under-a-path-prefix).
 
 > **Migration (prerelease breaking change).** Previously `navigate(to)`
 > pushed `to` **verbatim** and `<Link href>` needed the full base-prefixed
@@ -1044,6 +1046,38 @@ One `RewriteRule` block per dynamic route pattern (matched against its static
 prefix directory), followed by one fallback block per SPA namespace. Rule
 *patterns* are relative (no leading slash, matched against the per-directory
 request path); rewrite *targets* keep their leading slash.
+
+### Deploy targets under a path prefix
+
+When the site sets a `url_path_prefix` (see [Sites served under a path
+prefix](#sites-served-under-a-path-prefix)), the emitted host configs account
+for it — but **not by prepending it everywhere**, because the three targets do
+not mean the same thing by a path.
+
+The reason is one fact about the build: **the output tree contains no prefix
+directory.** `url_path_prefix` says where a host *mounts* the tree, not where
+files sit inside it. So a path in the generated config is either a **request
+path** (which carries the prefix) or a **tree-relative path** (which must not),
+and which one it is depends on the directive:
+
+| target | prefixed | left tree-relative |
+|--------|----------|--------------------|
+| nginx | `location` selectors; `try_files` fallback/shell targets (an internal redirect that must re-enter the same `location`) | — |
+| Apache | a `RewriteBase <prefix>/` directive | `RewriteRule` patterns (a per-directory `.htaccess` matches with the directory's URL-path already stripped) and their targets, which resolve against `RewriteBase` |
+| ZigBase | `.match` patterns | `.serve` targets — ZigBase resolves them against its static root, so a prefixed one would name a file that does not exist |
+
+The `.spa` marker is unchanged: it is presence-only, and its meaning is its
+location in the tree.
+
+`routing-manifest.json` therefore carries the prefix as its own
+`url_path_prefix` field and leaves every route value tree-relative, so each
+emitter can apply it its own way. The field is **omitted entirely** when there
+is no prefix, so an unprefixed site's manifest and configs are byte-identical to
+those built before this existed.
+
+> The manifest's `bundle` (and the `chunks` *values*) are the deliberate
+> exception — they are already-prefixed URLs, because they are baked verbatim
+> into the shell's `<script>` and `modulepreload` tags.
 
 ### Universal `404.html`
 **File:** `/404.html`

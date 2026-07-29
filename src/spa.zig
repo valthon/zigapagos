@@ -492,7 +492,7 @@ pub fn prerenderAll(io: std.Io, gpa: std.mem.Allocator, build: *Build, cfg: *con
             .{ src, base },
         );
 
-        const manifest = try renderManifest(arena.a, url_base, static_urls.items, dynamics.items, chunk_entries.items, fallback, bundle_url, deploy_target);
+        const manifest = try renderManifest(arena.a, url_base, static_urls.items, dynamics.items, chunk_entries.items, fallback, bundle_url, deploy_target, norm_prefix);
         const manifest_path = try diskJoin(arena.a, disk_prefix, "routing-manifest.json");
         try writeFile(io, out_dir, manifest_path, manifest);
     }
@@ -1139,6 +1139,12 @@ fn renderManifest(
     fallback: []const u8,
     bundle: []const u8,
     deploy_target: []const u8,
+    // The site's normalized `url_path_prefix` ("" or "/myrepo"): where a host
+    // MOUNTS this tree, delivered as its own field rather than folded into the
+    // route values above. Emitted only when non-empty, so an unprefixed site's
+    // manifest stays byte-identical. See the key-order comment below for why
+    // the split exists.
+    url_path_prefix: []const u8,
 ) ![]u8 {
     var aw: std.Io.Writer.Allocating = .init(alloc);
     errdefer aw.deinit();
@@ -1151,6 +1157,38 @@ fn renderManifest(
     try std.json.Stringify.value(base, .{}, w);
     try w.writeAll(",\"deploy_target\":");
     try std.json.Stringify.value(deploy_target, .{}, w);
+    // `url_path_prefix` — present ONLY when non-empty, which is what keeps an
+    // unprefixed site's manifest byte-identical to one built before this field
+    // existed.
+    //
+    // Why it is a separate field instead of being baked into the route values:
+    // every route value here (`base`, `static`, `dynamic.pattern`,
+    // `dynamic.shell`, `fallback`, and the `chunks` KEYS) is a position inside
+    // the built output TREE, and the tree has no prefix directory — the prefix
+    // says where a host mounts that tree. The three emitters then need
+    // different things from it, so a pre-baked prefix would have to be stripped
+    // back off by two of them:
+    //   - nginx wants it on `location` and on the `try_files` internal-redirect
+    //     targets (request paths);
+    //   - Apache must NOT have it on its patterns (a per-directory `.htaccess`
+    //     matches with that prefix already stripped) and takes it as
+    //     `RewriteBase` instead;
+    //   - ZigBase wants it on `.match` but NOT on `.serve`, which
+    //     `static_files.zig`'s `validateRouteTargetsDir` resolves as
+    //     `root ++ "/" ++ trimStart(serve, "/")` — a prefixed `.serve` names a
+    //     file that does not exist.
+    // `runtime/scripts/emit-host-config.ts` is the manifest's only consumer, so
+    // this stays an internal build contract rather than a published shape.
+    //
+    // NOT the same convention as `bundle` (and the `chunks` VALUES) below,
+    // which are already-prefixed URLs because they are baked verbatim into
+    // shell `<script>`/`modulepreload` tags by `renderShell`. Two conventions in
+    // one document is a wart; it is called out here rather than left to be
+    // rediscovered.
+    if (url_path_prefix.len != 0) {
+        try w.writeAll(",\"url_path_prefix\":");
+        try std.json.Stringify.value(url_path_prefix, .{}, w);
+    }
     try w.writeAll(",\"static\":[");
     for (statics, 0..) |u, i| {
         if (i != 0) try w.writeAll(",");
@@ -1770,7 +1808,7 @@ test "renderManifest normalizes a root base to \"/\" and produces valid, escaped
 
     const statics = [_][]const u8{"/"};
     const dynamics = [_]DynamicEntry{.{ .pattern = "/club/:id", .shell = "/club/_shell.html" }};
-    const manifest = try renderManifest(gpa, "/", &statics, &dynamics, &.{}, "/index.html", "/spa/App.js", "zigbase");
+    const manifest = try renderManifest(gpa, "/", &statics, &dynamics, &.{}, "/index.html", "/spa/App.js", "zigbase", "");
     defer gpa.free(manifest);
 
     try std.testing.expect(std.mem.indexOf(u8, manifest, "\"base\":\"/\"") != null);
@@ -1791,12 +1829,47 @@ test "renderManifest normalizes a root base to \"/\" and produces valid, escaped
     try std.testing.expectEqualStrings("/index.html", parsed.value.fallback);
 }
 
+test "renderManifest carries url_path_prefix as its own field, and omits it entirely when empty" {
+    // The prefix reaches the host-config emitters as a SEPARATE field rather
+    // than baked into the route values, because the three emitters need
+    // different things from it (nginx wants it on `location`, Apache must not
+    // have it on a per-directory pattern, ZigBase wants it on `.match` but not
+    // on `.serve`). See `renderManifest`'s own comment for the full reasoning.
+    const gpa = std.testing.allocator;
+
+    const statics = [_][]const u8{"/app/"};
+    const dynamics = [_]DynamicEntry{.{ .pattern = "/app/club/:id", .shell = "/app/club/_shell.html" }};
+
+    const prefixed_manifest = try renderManifest(gpa, "/app", &statics, &dynamics, &.{}, "/app/index.html", "/myrepo/spa/App.js", "nginx", "/myrepo");
+    defer gpa.free(prefixed_manifest);
+    try std.testing.expect(std.mem.indexOf(u8, prefixed_manifest, "\"url_path_prefix\":\"/myrepo\"") != null);
+    // The route values stay TREE-RELATIVE — they name positions inside the
+    // built output tree, which has no prefix directory. Asserting the prefix
+    // field alone would pass just as well if they had ALSO been prefixed, which
+    // is the bug this design exists to avoid.
+    try std.testing.expect(std.mem.indexOf(u8, prefixed_manifest, "\"base\":\"/app\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, prefixed_manifest, "\"fallback\":\"/app/index.html\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, prefixed_manifest, "\"pattern\":\"/app/club/:id\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, prefixed_manifest, "\"shell\":\"/app/club/_shell.html\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, prefixed_manifest, "\"/myrepo/app") == null);
+    // `bundle` is the deliberate exception: it is baked verbatim into shell
+    // script tags, so it arrives already prefixed.
+    try std.testing.expect(std.mem.indexOf(u8, prefixed_manifest, "\"bundle\":\"/myrepo/spa/App.js\"") != null);
+
+    // Empty prefix: the key is absent ENTIRELY, not emitted as "". This is what
+    // keeps an unprefixed site's manifest byte-identical to one built before
+    // the field existed.
+    const bare = try renderManifest(gpa, "/app", &statics, &dynamics, &.{}, "/app/index.html", "/spa/App.js", "nginx", "");
+    defer gpa.free(bare);
+    try std.testing.expect(std.mem.indexOf(u8, bare, "url_path_prefix") == null);
+}
+
 test "renderManifest escapes a quote inside a string value" {
     const gpa = std.testing.allocator;
 
     // Not a realistic base, but proves a raw '"' can't break the JSON.
     const statics = [_][]const u8{"/weird\"quote/"};
-    const manifest = try renderManifest(gpa, "/app", &statics, &.{}, &.{}, "/app/index.html", "/spa/App.js", "zigbase");
+    const manifest = try renderManifest(gpa, "/app", &statics, &.{}, &.{}, "/app/index.html", "/spa/App.js", "zigbase", "");
     defer gpa.free(manifest);
 
     // The raw JSON must contain an escaped quote, not a bare one that would
@@ -2226,7 +2299,7 @@ test "renderManifest emits a per-route chunks map" {
 
     const statics = [_][]const u8{ "/app/", "/app/heavy/" };
     const chunks = [_]ChunkEntry{.{ .url = "/app/heavy/", .chunk = "/spa/Heavy-abc123.js" }};
-    const manifest = try renderManifest(gpa, "/app", &statics, &.{}, &chunks, "/app/index.html", "/spa/app.js", "zigbase");
+    const manifest = try renderManifest(gpa, "/app", &statics, &.{}, &chunks, "/app/index.html", "/spa/app.js", "zigbase", "");
     defer gpa.free(manifest);
 
     const Parsed = struct {
