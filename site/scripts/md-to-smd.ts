@@ -163,7 +163,10 @@ function addHeadingId(line: string, seen: Map<string, number>): string {
 }
 
 interface FenceDelimiter {
-  /** Leading whitespace, preserved verbatim when a language is remapped. */
+  /** Leading whitespace before the delimiter run. With `len` it gives the
+   * offset of the info string within the original line, which is how
+   * `remapFenceLang` substitutes a language without disturbing a byte around
+   * it. */
   indent: string;
   /** The delimiter character: a backtick or a tilde. */
   char: string;
@@ -211,6 +214,15 @@ function fenceDelimiter(line: string): FenceDelimiter | null {
  * An opening fence line with its language substituted, or the line verbatim
  * when nothing maps. Only the FIRST token of the info string is a language;
  * anything after it is attributes and is preserved as authored.
+ *
+ * "As authored" is why this splices into the ORIGINAL line rather than
+ * reassembling one from the parsed parts: a fence info string is arbitrary
+ * text, so its whitespace can be significant (`title="a  b"` names a file with
+ * two spaces in it) and the transform has no business normalising it.
+ * Rebuilding the line from `info.split(/\s+/)` collapsed every run of
+ * whitespace to one space, dropped any spacing between the delimiter and the
+ * language, and dropped trailing whitespace — turning a remap of ONE token
+ * into a rewrite of the whole line, and only on the lines that happened to map.
  */
 function remapFenceLang(
   line: string,
@@ -218,11 +230,15 @@ function remapFenceLang(
   remap: Readonly<Record<string, string>>,
 ): string {
   if (fence.info === "") return line;
-  const [lang, ...attrs] = fence.info.split(/\s+/);
+  const lang = fence.info.split(/\s/)[0];
   const mapped = remap[lang];
   if (!mapped) return line;
-  const tail = attrs.length > 0 ? ` ${attrs.join(" ")}` : "";
-  return `${fence.indent}${fence.char.repeat(fence.len)}${mapped}${tail}`;
+  // `info` is the line past the delimiter run, trimmed, so the language token
+  // starts at that run's end plus whatever leading whitespace the trim ate.
+  const restStart = fence.indent.length + fence.len;
+  const rest = line.slice(restStart);
+  const langStart = restStart + (rest.length - rest.trimStart().length);
+  return line.slice(0, langStart) + mapped + line.slice(langStart + lang.length);
 }
 
 export interface TransformOptions {

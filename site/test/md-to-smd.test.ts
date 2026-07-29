@@ -113,6 +113,37 @@ test("fence language remap: attributes after the language survive the remap", ()
   expect(out.split("\n")[0]).toBe('```json title="a.json"');
 });
 
+test("fence language remap: the info string after the language is preserved byte-for-byte", () => {
+  // A fence info string is arbitrary text, so its spacing can carry meaning:
+  // `title="a  b"` names a file with two spaces in it, and re-joining tokens
+  // on a single space silently renames it. Splitting on /\s+/ and re-joining
+  // also collapses the run between attributes and drops any spacing between
+  // the delimiter and the language, none of which is this transform's to
+  // normalise — the remap replaces ONE token and touches nothing else.
+  const body = ['```  jsonc  title="a  b"   data-x=1  ', '{ "a": 1 }', "```", ""].join("\n");
+  const out = transformBody(body, opts({ fenceLangRemap: { jsonc: "json" } }));
+  expect(out.split("\n")[0]).toBe('```  json  title="a  b"   data-x=1  ');
+});
+
+test("fence language remap: a tab-separated info string keeps its tabs", () => {
+  // The same defect with a whitespace character that is not a space: re-joining
+  // on " " turns an authored tab into a space.
+  const body = ["```jsonc\ttitle=x", '{ "a": 1 }', "```", ""].join("\n");
+  const out = transformBody(body, opts({ fenceLangRemap: { jsonc: "json" } }));
+  expect(out.split("\n")[0]).toBe("```json\ttitle=x");
+});
+
+test("fence language remap: a whitespace-only info string is left alone", () => {
+  // Trailing whitespace after a delimiter is not an info string (CommonMark
+  // lets a CLOSING fence carry it), so there is no language token to remap and
+  // nothing may be rewritten — including the whitespace itself. Reassembling
+  // the line from the parsed delimiter, which is what the collapsing version
+  // did on its mapped path, would silently eat those three spaces.
+  const body = ["```   ", "text", "```", ""].join("\n");
+  const out = transformBody(body, opts({ fenceLangRemap: { jsonc: "json" } }));
+  expect(out.split("\n")[0]).toBe("```   ");
+});
+
 test("fence: a nested ``` block inside a ```` block does not desync the tracker", () => {
   // Issue #76. `docs/islands.md` shows fenced Markdown that itself contains a
   // fence; a tracker that toggles on every delimiter-shaped line reads the
