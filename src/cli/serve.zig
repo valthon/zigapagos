@@ -20,6 +20,7 @@ const StringTable = @import("../StringTable.zig");
 const Path = PathTable.Path;
 const String = StringTable.String;
 const Channel = @import("../channel.zig").Channel;
+const PageAnalysisError = @import("../context/Page.zig").PageAnalysisError;
 
 const zigapagos_reload_js = @embedFile("serve/zigapagos-reload.js");
 const not_found_html = @embedFile("serve/404.html");
@@ -552,7 +553,10 @@ pub fn serve(io: Io, gpa: Allocator, args: []const []const u8) error{OutOfMemory
                             if (!p._parse.active) continue;
                             if (p._parse.status != .parsed) continue;
                             if (p._analysis.frontmatter.items.len > 0) continue;
-                            if (p._analysis.page.items.len > 0) continue;
+                            // Error-severity check: a warning-only page (e.g.
+                            // unknown code-fence language) still rendered and may
+                            // still have a genuine render error to report below.
+                            if (PageAnalysisError.anyError(p._analysis.page.items)) continue;
 
                             if (p._render.errors.len > 0) {
                                 var aw: Writer.Allocating = .init(gpa);
@@ -1290,7 +1294,9 @@ pub const Server = struct {
                     "This page has frontmatter errors",
                 );
 
-                if (page._analysis.page.items.len > 0) return sendError(
+                // Error-severity check: a warning-only page (e.g. unknown
+                // code-fence language) still rendered successfully.
+                if (PageAnalysisError.anyError(page._analysis.page.items)) return sendError(
                     arena,
                     req,
                     "This page contains SuperMD errors",

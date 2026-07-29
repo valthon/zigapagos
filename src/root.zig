@@ -1255,7 +1255,10 @@ pub fn run(
 
             const page_errors = &p._analysis.page;
             if (page_errors.items.len > 0) {
-                if (!analysis_errors) {
+                // Error-severity check, not `.items.len > 0`: a page whose only
+                // page_errors are warnings (e.g. unknown_language, see
+                // PageAnalysisError.severity) must still render.
+                if (!analysis_errors and context.Page.PageAnalysisError.anyError(page_errors.items)) {
                     analysis_errors = true;
                 }
 
@@ -1294,9 +1297,10 @@ pub fn run(
                     } else "";
 
                     const fm_lines = p._parse.fm.lines;
+                    const severity_word = @tagName(err.severity());
                     const note_line: NoteLine = .{ .note = err.note() };
                     std.debug.print(
-                        \\{f}:{}:{}: error: {s}
+                        \\{f}:{}:{}: {s}: {f}
                         \\|    {s}
                         \\|    {s}
                         \\{f}
@@ -1310,34 +1314,48 @@ pub fn run(
                         ),
                         fm_lines + n.startLine(),
                         n.startColumn(),
-                        err.title(),
+                        severity_word,
+                        err.fmt(),
                         line_trim,
                         highlight,
                         note_line,
                     });
-                    if (build.mode == .memory) {
+
+                    // Only error-severity items enter the live server's build-error
+                    // list (see PageAnalysisError.severity's doc comment): that list
+                    // is the "the build failed" surface, and a warning like an
+                    // unknown code-fence language must not flip it.
+                    if (build.mode == .memory and err.severity() == .@"error") {
+                        // Contract 1 (self-freeing, NO_SLOP §2.2a): the only
+                        // allocation is this one escaping `msg`, which the caller
+                        // (build.mode.memory.errors) owns from here on -- same
+                        // contract this call already had before NoteLine let the
+                        // note collapse into the same format string instead of a
+                        // second allocPrint.
+                        const msg = try std.fmt.allocPrint(gpa,
+                            \\{f}:{}:{}: {s}: {f}
+                            \\|    {s}
+                            \\|    {s}
+                            \\{f}
+                            \\
+                        , .{
+                            p._scan.file.fmt(
+                                &v.string_table,
+                                &v.path_table,
+                                v.content_dir_path,
+                                "",
+                            ),
+                            fm_lines + n.startLine(),
+                            n.startColumn(),
+                            severity_word,
+                            err.fmt(),
+                            line_trim,
+                            highlight,
+                            note_line,
+                        });
                         try build.mode.memory.errors.append(gpa, .{
                             .ref = "",
-                            .msg = try std.fmt.allocPrint(gpa,
-                                \\{f}:{}:{}: error: {s}
-                                \\|    {s}
-                                \\|    {s}
-                                \\{f}
-                                \\
-                            , .{
-                                p._scan.file.fmt(
-                                    &v.string_table,
-                                    &v.path_table,
-                                    v.content_dir_path,
-                                    "",
-                                ),
-                                fm_lines + n.startLine(),
-                                n.startColumn(),
-                                err.title(),
-                                line_trim,
-                                highlight,
-                                note_line,
-                            }),
+                            .msg = msg,
                         });
                     }
                 }
@@ -1894,7 +1912,10 @@ pub fn run(
                 if (!p._parse.active) continue;
                 if (p._parse.status != .parsed) continue;
                 if (p._analysis.frontmatter.items.len > 0) continue;
-                if (p._analysis.page.items.len > 0) continue;
+                // Error-severity check, not `.items.len > 0`: a warning-only page
+                // (e.g. an unknown code-fence language, see PageAnalysisError.severity)
+                // must still render, or the flag/warning design silently drops the page.
+                if (context.Page.PageAnalysisError.anyError(p._analysis.page.items)) continue;
 
                 // Incremental: skip any page whose source file did not change.
                 // Its output from the previous full build is still on disk.

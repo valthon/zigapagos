@@ -9,6 +9,7 @@ const superhtml = @import("superhtml");
 const ziggy = @import("ziggy");
 const tracy = @import("tracy");
 const syntax = @import("syntax");
+const languages = @import("languages.zig");
 const root = @import("root.zig");
 const fatal = @import("fatal.zig");
 const context = @import("context.zig");
@@ -371,6 +372,7 @@ fn analyzeContent(
                     .kind = .{
                         .unknown_language = .{
                             .lang = lang,
+                            .suggestion = languages.suggest(lang),
                         },
                     },
                 });
@@ -495,15 +497,22 @@ fn analyzeContent(
                 ) catch |err| fatal.file(path, err);
 
                 if (!languageExists(code.language)) {
+                    // Warn-and-continue (issue #31), NOT `continue :outer`: unlike
+                    // the fence-path site above, this arm still has to run --
+                    // `directive.kind.code.src` below is what the renderer reads
+                    // (src/render/html.zig's `code.src.?.url`), and it's still a
+                    // `.page_asset`/`.site_asset`/`.build_asset` union member at
+                    // this point. Skipping the assignment would leave the render
+                    // pass reading a stale union tag instead of the resolved URL.
                     try errors.append(page_arena, .{
                         .node = n,
                         .kind = .{
                             .unknown_language = .{
                                 .lang = code.language.?,
+                                .suggestion = languages.suggest(code.language.?),
                             },
                         },
                     });
-                    continue :outer;
                 }
                 const snippet = if (code.lines) |lines| blk: {
                     var line_num: usize = 1;
@@ -674,6 +683,7 @@ fn analyzeContent(
                             log.debug("absolute page link '{s}': hint not found", .{
                                 p.ref,
                             });
+
                             try errors.append(page_arena, .{
                                 .node = n,
                                 .kind = .{

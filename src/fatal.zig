@@ -53,6 +53,7 @@ const help_menu =
     \\  migrate <dir>     Scan an Astro project and write a MIGRATION.md worklist
     \\  release           Create a release of a Zigapagos site
     \\  e2e               Serve a built site with ZigBase and run an e2e command
+    \\  languages         List code-fence languages registered for highlighting
     \\  help              Show this menu and exit
     \\  version           Print the Zigapagos version and exit
     \\  (no command)      Start the bundled live server
