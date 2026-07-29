@@ -223,6 +223,7 @@ pub fn serve(io: Io, gpa: Allocator, args: []const []const u8) error{OutOfMemory
         .island_sidecar = cmd.island_sidecar,
         .island_src_dir = cmd.island_src_dir,
         .island_props_check = cmd.island_props_check,
+        .allow_missing_pages = cmd.allow_missing_pages,
     }) catch fatal.oom();
 
     // Bundle the runtime + each island at startup so the dev server can serve
@@ -443,6 +444,7 @@ pub fn serve(io: Io, gpa: Allocator, args: []const []const u8) error{OutOfMemory
                     .island_sidecar = cmd.island_sidecar,
                     .island_src_dir = cmd.island_src_dir,
                     .island_props_check = cmd.island_props_check,
+                    .allow_missing_pages = cmd.allow_missing_pages,
                 }) catch fatal.oom();
                 build_lock.unlock(io);
 
@@ -653,6 +655,11 @@ pub const Command = struct {
     /// The code-splitting bundle driver (`runtime/sidecar/bundle-island.ts`)
     /// serve runs to build SPA entry + chunks (`--spa-bundle-driver=<path>`).
     spa_bundle_driver: ?[]const u8,
+    /// `--allow-missing-pages`: see `root.Options.allow_missing_pages`.
+    /// Same tolerance `release` applies -- see that field's doc comment for
+    /// why it is not mode-dependent, and why `dev` takes it from the
+    /// project's `build.zig` rather than its own argv.
+    allow_missing_pages: bool = false,
 
     /// Frees the slices `parse` allocated. The live server never calls this
     /// (the Command lives for the whole process), but the unit tests do so the
@@ -770,6 +777,7 @@ pub const Command = struct {
         var proxies: std.ArrayListUnmanaged(ProxyRule) = .empty;
         var spas: std.ArrayListUnmanaged(SpaArg) = .empty;
         var spa_bundle_driver: ?[]const u8 = null;
+        var allow_missing_pages = false;
 
         var idx: usize = 0;
         while (idx < args.len) : (idx += 1) {
@@ -862,6 +870,8 @@ pub const Command = struct {
                 };
             } else if (std.mem.eql(u8, arg, "--drafts")) {
                 drafts = true;
+            } else if (std.mem.eql(u8, arg, "--allow-missing-pages")) {
+                allow_missing_pages = true;
             } else if (std.mem.startsWith(u8, arg, "--bun=")) {
                 bun_path = arg["--bun=".len..];
             } else if (std.mem.startsWith(u8, arg, "--island-sidecar=")) {
@@ -919,6 +929,7 @@ pub const Command = struct {
             .proxies = try proxies.toOwnedSlice(gpa),
             .spas = try spas.toOwnedSlice(gpa),
             .spa_bundle_driver = spa_bundle_driver,
+            .allow_missing_pages = allow_missing_pages,
         };
     }
 };
@@ -2653,6 +2664,20 @@ test "serve defaults proxies to empty" {
     const cmd = try Command.parse(gpa, &.{});
     defer cmd.deinit(gpa);
     try std.testing.expectEqual(@as(usize, 0), cmd.proxies.len);
+}
+
+test "serve parse recognizes --allow-missing-pages (and defaults it to false)" {
+    // Mirrors src/cli/release.zig's identically-named test: `serve` gained
+    // this flag with no unit test of its own. `test-serve` filters on the
+    // string "serve" (build/tests.zig), so this name must contain it.
+    const gpa = std.testing.allocator;
+    const cmd = try Command.parse(gpa, &.{"--allow-missing-pages"});
+    defer cmd.deinit(gpa);
+    try std.testing.expect(cmd.allow_missing_pages);
+
+    const cmd_default = try Command.parse(gpa, &.{});
+    defer cmd_default.deinit(gpa);
+    try std.testing.expect(!cmd_default.allow_missing_pages);
 }
 
 test "serve matchProxy picks the longest prefix at a segment boundary" {

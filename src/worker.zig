@@ -342,6 +342,110 @@ pub fn validOutputPath(path: []const u8) bool {
     return true;
 }
 
+/// --allow-missing-pages (issue #27 / DX-8): which base to prepend to a
+/// dangling `$link.page/sibling/sub` ref when computing the URL the target
+/// page WOULD have. Mirrors the three ways `analyzeContent` resolves a ref's
+/// base in the `path: Path = switch (p.kind) { ... }` block below.
+const MissingPageBase = union(enum) {
+    /// `.absolute`: the ref is rooted at the content dir, no base to prepend.
+    root,
+    /// `.sibling`/`.sub`: the parent section's `content_sub_path`, or the
+    /// section page's own `_scan.file.path` -- formatted with a trailing
+    /// slash (mirrors `Path.Formatter`'s `trailing_slash=true`), then `ref`
+    /// is appended after it.
+    base_dir: Path,
+    /// The fourth `unknown_page` site: `getPathNoName` already resolved a
+    /// full `Path` for `ref` (some OTHER content under the same directory
+    /// already exists, e.g. a sibling asset) -- format it directly. `ref` is
+    /// already baked into this `Path`, so it must NOT be appended again.
+    resolved: Path,
+};
+
+/// NO_SLOP.md §2.2a contract 1 (self-freeing): the only allocation is the
+/// returned string, from `page_arena` so it outlives analysis and survives
+/// into render (the caller stashes it into `directive.kind.*.src = .{ .url =
+/// ... }` and/or a `PageAnalysisError`). Returned via `aw.toOwnedSlice()`, not
+/// `aw.written()`: the latter can return a slice shorter than the buffer it
+/// points into, which a caller cannot `free` under an arbitrary allocator --
+/// contract 1 promises exactly one allocation a caller CAN free, and
+/// `toOwnedSlice` is what actually makes that true (harmless today, since
+/// `page_arena` never frees anyway, but the label has to hold regardless of
+/// which allocator happens to be passed).
+///
+/// Computes the URL a not-yet-existing page WOULD have once its content file
+/// lands, so an `--allow-missing-pages` build can emit a real, url_prefix-
+/// /locale-prefix-aware `href` instead of failing the build. Mirrors
+/// `render/html.zig`'s `printUrl` `.page` arm (`printLinkPrefix` +
+/// `Path.Formatter`, `trailing_slash=true`), but works from static build
+/// state (`b.cfg`/the variant) instead of a live `context.Root`, since
+/// analysis runs long before any page renders.
+///
+/// KNOWN, ACCEPTED LIMITATION: `printUrl` emits an ABSOLUTE (host-qualified)
+/// URL when the page containing the link is rendered embedded inside a
+/// DIFFERENT page (`page != ctx.page` -- e.g. an index listing that pulls in
+/// another page's content), or across variants with differing
+/// `host_url_override`s. Analysis runs once per source AST, before any
+/// renderer knows which page(s) will embed it, so this helper always emits
+/// the root-relative form. Accepted because the tolerated link only ever
+/// points at a page that does not exist yet -- a 404 either way -- and is
+/// only reachable at all behind the explicit `--allow-missing-pages` opt-in.
+fn missingPageUrl(
+    page_arena: Allocator,
+    b: *const Build,
+    variant_id: u32,
+    base: MissingPageBase,
+    ref: []const u8,
+) error{OutOfMemory}![]const u8 {
+    const variant = &b.variants[variant_id];
+    var aw: Writer.Allocating = .init(page_arena);
+    const w = &aw.writer;
+
+    missingPageLinkPrefix(w, b.cfg, variant_id) catch return error.OutOfMemory;
+
+    switch (base) {
+        .root => {},
+        .base_dir => |p| w.print("{f}", .{
+            p.fmt(&variant.string_table, &variant.path_table, null, true),
+        }) catch return error.OutOfMemory,
+        .resolved => |p| {
+            w.print("{f}", .{
+                p.fmt(&variant.string_table, &variant.path_table, null, true),
+            }) catch return error.OutOfMemory;
+            return aw.toOwnedSlice();
+        },
+    }
+
+    w.writeAll(ref) catch return error.OutOfMemory;
+    w.writeAll("/") catch return error.OutOfMemory;
+    return aw.toOwnedSlice();
+}
+
+/// The non-`force_host_url` half of `context/Root.zig`'s `printLinkPrefix`,
+/// reimplemented against static `Config` state (analysis has no
+/// `context.Root` yet -- see `missingPageUrl`'s doc comment for why that's
+/// the accepted tradeoff here).
+fn missingPageLinkPrefix(
+    w: *Writer,
+    cfg: *const root.Config,
+    variant_id: u32,
+) error{WriteFailed}!void {
+    switch (cfg.*) {
+        .Site => |s| {
+            if (s.url_path_prefix.len > 0) {
+                try w.print("/{s}/", .{s.url_path_prefix});
+            } else {
+                try w.writeAll("/");
+            }
+        },
+        .Multilingual => |ml| {
+            const locale = ml.locales[variant_id];
+            try w.writeAll("/");
+            const path_prefix = locale.output_prefix_override orelse locale.code;
+            if (path_prefix.len > 0) try w.print("{s}/", .{path_prefix});
+        },
+    }
+}
+
 fn analyzeContent(
     io: Io,
     page_arena: Allocator,
@@ -599,6 +703,24 @@ fn analyzeContent(
                                     }
                                 }
 
+                                // --allow-missing-pages: read `ref` out before
+                                // overwriting `val.src` below -- `p` points
+                                // INTO `val.src`'s `.page` payload, so once we
+                                // assign the `.url` variant `p.ref` aliases
+                                // whatever bytes now live there.
+                                if (b.allow_missing_pages) {
+                                    const ref = p.ref;
+                                    const url = try missingPageUrl(page_arena, b, variant_id, .root, ref);
+                                    try errors.append(page_arena, .{
+                                        .node = n,
+                                        .kind = .{
+                                            .missing_page_tolerated = .{ .ref = ref, .url = url },
+                                        },
+                                    });
+                                    val.src = .{ .url = url };
+                                    continue :outer;
+                                }
+
                                 try errors.append(page_arena, .{
                                     .node = n,
                                     .kind = .{
@@ -630,6 +752,27 @@ fn analyzeContent(
                                     ),
                                     p.ref,
                                 )) |path| break :blk path;
+
+                                // --allow-missing-pages: same ordering caveat
+                                // as the `.absolute` site above.
+                                if (b.allow_missing_pages) {
+                                    const ref = p.ref;
+                                    const url = try missingPageUrl(
+                                        page_arena,
+                                        b,
+                                        variant_id,
+                                        .{ .base_dir = section.content_sub_path },
+                                        ref,
+                                    );
+                                    try errors.append(page_arena, .{
+                                        .node = n,
+                                        .kind = .{
+                                            .missing_page_tolerated = .{ .ref = ref, .url = url },
+                                        },
+                                    });
+                                    val.src = .{ .url = url };
+                                    continue :outer;
+                                }
 
                                 try errors.append(page_arena, .{
                                     .node = n,
@@ -666,6 +809,27 @@ fn analyzeContent(
                                     p.ref,
                                 )) |path| break :blk path;
 
+                                // --allow-missing-pages: same ordering caveat
+                                // as the `.absolute` site above.
+                                if (b.allow_missing_pages) {
+                                    const ref = p.ref;
+                                    const url = try missingPageUrl(
+                                        page_arena,
+                                        b,
+                                        variant_id,
+                                        .{ .base_dir = page._scan.file.path },
+                                        ref,
+                                    );
+                                    try errors.append(page_arena, .{
+                                        .node = n,
+                                        .kind = .{
+                                            .missing_page_tolerated = .{ .ref = ref, .url = url },
+                                        },
+                                    });
+                                    val.src = .{ .url = url };
+                                    continue :outer;
+                                }
+
                                 try errors.append(page_arena, .{
                                     .node = n,
                                     .kind = .{
@@ -683,6 +847,30 @@ fn analyzeContent(
                             log.debug("absolute page link '{s}': hint not found", .{
                                 p.ref,
                             });
+
+                            // --allow-missing-pages: `path` already resolved
+                            // (some other content shares its directory), so
+                            // format it directly -- see `MissingPageBase.resolved`.
+                            // Same read-before-overwrite ordering as the three
+                            // sites above.
+                            if (b.allow_missing_pages) {
+                                const ref = p.ref;
+                                const url = try missingPageUrl(
+                                    page_arena,
+                                    b,
+                                    variant_id,
+                                    .{ .resolved = path },
+                                    ref,
+                                );
+                                try errors.append(page_arena, .{
+                                    .node = n,
+                                    .kind = .{
+                                        .missing_page_tolerated = .{ .ref = ref, .url = url },
+                                    },
+                                });
+                                val.src = .{ .url = url };
+                                continue :outer;
+                            }
 
                             try errors.append(page_arena, .{
                                 .node = n,

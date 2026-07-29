@@ -295,9 +295,19 @@ pub const Builtins = struct {
                 &variant.string_table,
                 &.{},
                 ref,
-            ) orelse return Value.errFmt(gpa, "missing page '{s}'", .{
-                ref,
-            });
+            ) orelse {
+                // --allow-missing-pages (issue #27 / DX-8): a page that hasn't
+                // been written YET is not the same mistake as a page that will
+                // never exist -- tolerate it under the explicit opt-in flag.
+                // Only the "not found" case is tolerated; see the strict
+                // `hint.kind != .page_main` arm below, which stays an error
+                // (a resource-kind mismatch is a real authoring mistake, not
+                // an unwritten page).
+                if (ctx._meta.build.allow_missing_pages) {
+                    return context.MissingPage.tolerate(ctx, site, ref);
+                }
+                return Value.errFmt(gpa, "missing page '{s}'", .{ref});
+            };
 
             const index_html: StringTable.String = @enumFromInt(11);
             std.debug.assert(variant.string_table.get("index.html") == index_html);
@@ -306,11 +316,15 @@ pub const Builtins = struct {
                 .name = index_html,
             };
 
-            const hint = variant.urls.get(pn) orelse return Value.errFmt(
-                gpa,
-                "missing page '{s}'",
-                .{ref},
-            );
+            const hint = variant.urls.get(pn) orelse {
+                // Same tolerance, second "not found" shape: the directory
+                // component of `ref` resolved (e.g. a sibling asset already
+                // lives there) but no page claims it yet.
+                if (ctx._meta.build.allow_missing_pages) {
+                    return context.MissingPage.tolerate(ctx, site, ref);
+                }
+                return Value.errFmt(gpa, "missing page '{s}'", .{ref});
+            };
 
             switch (hint.kind) {
                 .page_main => {},

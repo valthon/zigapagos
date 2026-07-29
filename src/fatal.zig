@@ -61,6 +61,14 @@ const help_menu =
     \\
     \\General Options:
     \\  --drafts          Enable draft pages
+    \\  --allow-missing-pages  Tolerate a dangling $link.page/$site.page
+    \\                    reference to a page that doesn't exist YET (emits its
+    \\                    would-be href + a build-log warning instead of
+    \\                    failing the build). Accepted by 'release' and by the
+    \\                    live server; for 'dev', set it in your build.zig
+    \\                    (zigapagos.Options.allow_missing_pages) instead --
+    \\                    'dev' re-runs your rebuild command rather than
+    \\                    building the site itself
     \\  --help, -h        Print command specific usage and extra options
     \\
     \\Dev loop (zigapagos dev [OPTIONS] [-- REBUILD-CMD [ARGS...]]):

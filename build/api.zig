@@ -136,6 +136,18 @@ pub const Options = struct {
     /// prefix.
     output_path: []const u8 = "",
 
+    /// Tolerate a `$link.page/sibling/sub` or `$site.page(...)` reference to a
+    /// page that doesn't exist YET, instead of failing the build. Threaded to
+    /// `zigapagos` as `--allow-missing-pages`, uniformly for both `website()`
+    /// (release) and `serve()` (the deprecated live server) -- `dev()` needs
+    /// no separate wiring, since it re-runs the consumer's own rebuild
+    /// command, which goes through `website()`. A tolerated reference renders
+    /// as a real, url_prefix-aware `href` (the URL the page will have once
+    /// it's written -- a 404 until then) plus a build-log warning. Off by
+    /// default: an unintentionally-dangling link should still fail the build.
+    /// See `root.Options.allow_missing_pages` for the full design rationale.
+    allow_missing_pages: bool = false,
+
     /// Ignore the presence of other files in the output directory.
     /// When set to `false`, Zigapagos will refuse to output a release to a directory
     /// that contains other files. Note that when set to `true` old files will

@@ -138,6 +138,15 @@ pub const PageAnalysisError = struct {
         unknown_page: struct {
             ref: []const u8,
         },
+        // --allow-missing-pages (issue #27 / DX-8): a WARNING-severity twin of
+        // `unknown_page`, appended instead of it (never both) when the flag is
+        // set. `url` is the root-relative href the page WILL have once it
+        // exists (see worker.zig's `missingPageUrl` for exactly how it's
+        // computed, and its documented host-url-qualification limitation).
+        missing_page_tolerated: struct {
+            ref: []const u8,
+            url: []const u8,
+        },
         unknown_alternative: struct {
             name: []const u8,
         },
@@ -166,16 +175,25 @@ pub const PageAnalysisError = struct {
 
     pub const Severity = enum { @"error", warning };
 
-    // `unknown_language` is deliberately the only warning: with
-    // `enable_treesitter=false`, src/highlight.zig's highlightCode already emits
-    // an unrecognized language as escaped text inside `<pre><code class="LANG">`
-    // -- an unknown language produces exactly that same valid output, so failing
-    // the whole build over a missing highlight colour is disproportionate (see
-    // issue #31). Every other kind describes a link or asset reference that
-    // cannot be resolved at all, which has no such safe fallback.
+    // Exactly two kinds are warnings, and both earn it the same way: the build
+    // has a truthful output to emit anyway, so aborting over them is
+    // disproportionate.
+    //
+    //   - `unknown_language`: with `enable_treesitter=false`,
+    //     src/highlight.zig's highlightCode already emits an unrecognized
+    //     language as escaped text inside `<pre><code class="LANG">`. An
+    //     unknown language produces exactly that same valid output, so the
+    //     only thing lost is a highlight colour (issue #31).
+    //   - `missing_page_tolerated`: only ever appended when
+    //     `--allow-missing-pages` is set, and only in place of `unknown_page`
+    //     (never both). The link is rewritten to the URL the page WILL have,
+    //     so the emitted HTML is byte-identical to the eventual site (#27).
+    //
+    // Every other kind describes a link or asset reference that cannot be
+    // resolved at all, and for which there is no honest output to emit.
     pub fn severity(err: PageAnalysisError) Severity {
         return switch (err.kind) {
-            .unknown_language => .warning,
+            .unknown_language, .missing_page_tolerated => .warning,
             else => .@"error",
         };
     }
@@ -192,18 +210,24 @@ pub const PageAnalysisError = struct {
             // errors and a link-rewrite redesign before the syntax was understood.
             .not_a_section => "a leading '.' means \"subpage of this section\", not a relative path -- to link a sibling page, use $link.page(\"...\")",
             .unknown_language => "run 'zigapagos languages' for the full list",
+            // No note: the fmt() line below already states the ref, the
+            // computed href and the flag that's tolerating it.
+            .missing_page_tolerated => null,
             else => null,
         };
     }
 
-    // `unknown_language` needs dynamic headline text -- the offending language
-    // plus an optional did-you-mean -- that a static per-kind string can't
-    // carry, so callers that want to print a PageAnalysisError use `{f}` on
-    // this formatter rather than a plain title lookup. Every OTHER kind's
-    // headline is a fixed string with no dynamic part, so it is inlined
-    // directly in the switch below rather than living behind a separate
-    // `title()`: that split would leave `unknown_language`'s own arm in
-    // `title()` permanently unreachable, shadowed by the arm above it.
+    // Two kinds (`unknown_language`, `missing_page_tolerated`) need dynamic
+    // headline text -- the offending language, an optional suggestion, the
+    // computed URL -- that a static per-kind string can't carry, so callers
+    // that want to print a PageAnalysisError use `{f}` on this formatter
+    // rather than a plain title lookup. Every OTHER kind's headline is a
+    // fixed string with no dynamic part, so it's inlined directly in the
+    // `else` arm below instead of living behind a separate `title()` -- a
+    // prior version kept both, but `title()`'s only caller was this `else`
+    // arm, so the split bought nothing and left two of its arms
+    // (`unknown_language`, `missing_page_tolerated`) permanently unreachable
+    // dead code shadowed by the arms above them.
     pub fn fmt(err: PageAnalysisError) Formatter {
         return .{ .err = err };
     }
@@ -221,6 +245,12 @@ pub const PageAnalysisError = struct {
                     if (ul.suggestion) |s| {
                         try w.print(" (did you mean '{s}'?)", .{s});
                     }
+                },
+                .missing_page_tolerated => |mp| {
+                    try w.print(
+                        "missing page '{s}' -- emitting link to '{s}' (--allow-missing-pages)",
+                        .{ mp.ref, mp.url },
+                    );
                 },
                 .not_a_section => try w.writeAll("this page has no subpages (page is not a section)"),
                 .no_parent_section => try w.writeAll("the root index page has no parent section"),

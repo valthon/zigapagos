@@ -606,6 +606,28 @@ pub const Options = struct {
     /// `zigapagos release` populates it from the `ZIGAPAGOS_ISLAND_MANIFEST`
     /// environment variable, which only `zigapagos dev` sets.
     island_manifest_path: ?[]const u8 = null,
+    /// `--allow-missing-pages`: tolerate a `$link.page/sibling/sub` (content)
+    /// or `$site.page(...)` (template) reference to a page that doesn't exist
+    /// YET, instead of hard-failing the build. The TOLERANCE is deliberately
+    /// uniform rather than mode-dependent (e.g. warn-in-dev,
+    /// error-in-release): the workflow this exists for — an under-construction
+    /// site with real navigation to not-yet-written pages, deployed
+    /// continuously — needs `zigapagos release` (CI) to pass on the exact same
+    /// input a green `dev` preview just showed, or dev/release parity breaks
+    /// (a green preview, a red CI). A dangling internal link is what "under
+    /// construction" means; the opt-in flag is the escape hatch, the build-log
+    /// warning is the visibility mechanism. See issue #27 / DX-8. Off by
+    /// default: an unintentionally-dangling link should still fail the build.
+    ///
+    /// Which CLI commands accept it: `zigapagos release` and the bundled live
+    /// server (no subcommand) parse `--allow-missing-pages` directly. There is
+    /// deliberately NO `zigapagos dev --allow-missing-pages`: `dev` never
+    /// builds the site itself, it re-runs the consumer's rebuild command
+    /// (default `zig build`), so the flag reaches a dev loop through that
+    /// project's `build.zig` — `Options.allow_missing_pages` in `build/api.zig`,
+    /// which `website()` forwards. A flag on `dev` would have nothing to
+    /// forward it to.
+    allow_missing_pages: bool = false,
 
     pub const Mode = union(enum) {
         memory,

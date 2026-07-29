@@ -81,6 +81,27 @@ island_props_checks_mutex: std.Io.Mutex = .init,
 island_manifest_path: ?[]const u8 = null,
 island_page_usage: std.ArrayListUnmanaged(@import("islands/manifest.zig").Use) = .empty,
 island_page_usage_mutex: std.Io.Mutex = .init,
+/// `--allow-missing-pages`, verbatim from `root.Options.allow_missing_pages`.
+/// See that field's doc comment for why the tolerance is uniform rather than
+/// mode-dependent, and which CLI commands accept it. Consulted at analysis time
+/// (`worker.zig`'s `analyzeContent`, the four `unknown_page` sites) and at
+/// render time (`context/Site.zig`'s `page` builtin).
+allow_missing_pages: bool = false,
+/// Dedup state for the `--allow-missing-pages` TEMPLATE-lookup warning
+/// (`$site.page(ref)` misses; the content-link path warns inline via
+/// `PageAnalysisError` instead, since each dangling `$link.page` site is
+/// visited at most once per build). A POINTER field: `context.Root._meta.build`
+/// is `*const Build`, and `const` applies to the `Build` struct itself, not
+/// through a pointer it holds -- so mutating what this pointer points AT
+/// needs no `@constCast`, while a plain (non-pointer) field would be
+/// unreachable through a `*const Build` at all. Backed by its OWN allocator
+/// (NOT the per-render-job arena, which resets after every page) so a
+/// duplicate warning for page 2 is still suppressed after page 1's render job
+/// has already reset its arena; guarded by a mutex because the render pass is
+/// multithreaded. Always allocated (even when the flag is off) so every call
+/// site can dereference it unconditionally. Allocated in `Build.load`, freed
+/// in `Build.deinit`.
+missing_page_warnings: *context.MissingPage.Warnings,
 
 pub const Mode = union(enum) {
     memory: struct {
@@ -183,6 +204,15 @@ pub fn deinit(b: *const Build, io: Io, gpa: Allocator) void {
         var list = b.island_page_usage;
         list.deinit(gpa);
     }
+
+    // Mirrors island_sidecar above: Build.deinit takes *const by convention,
+    // but the dedup set's own gpa-backed storage must be freed and the
+    // pointer itself destroyed exactly once per build. `Warnings.deinit` owns
+    // freeing the `seen` keys as well as the map: they are gpa-duped on insert
+    // precisely because a `ref` can be a render-time-computed string owned by
+    // the per-job arena (see MissingPage.Warnings' doc comment).
+    b.missing_page_warnings.deinit();
+    gpa.destroy(b.missing_page_warnings);
 }
 
 test "Build.island_sidecar defaults to null and deinit tolerates it" {
@@ -265,6 +295,14 @@ pub fn load(io: Io, gpa: Allocator, cfg: *const root.Config, opts: root.Options)
     var data_arena = std.heap.ArenaAllocator.init(gpa);
     const site_data = loadSiteData(io, &data_arena, base_dir, cfg.getDataDirPath());
 
+    // Always allocated (see the field's doc comment): every render-time call
+    // site dereferences `missing_page_warnings` unconditionally, flag on or
+    // off, so there is no null to check. gpa-backed (build lifetime), not the
+    // per-render-job arena, which would erase the dedup set on the very next
+    // job.
+    const missing_page_warnings = try gpa.create(context.MissingPage.Warnings);
+    missing_page_warnings.* = .init(gpa);
+
     return .{
         .cfg = cfg,
         .build_assets = opts.build_assets,
@@ -280,6 +318,8 @@ pub fn load(io: Io, gpa: Allocator, cfg: *const root.Config, opts: root.Options)
         .data_arena = data_arena.state,
         .spas = opts.spas,
         .spa_not_found = opts.spa_not_found,
+        .allow_missing_pages = opts.allow_missing_pages,
+        .missing_page_warnings = missing_page_warnings,
     };
 }
 
