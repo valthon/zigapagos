@@ -43,6 +43,7 @@ const stripPathPrefix = serve.stripPathPrefix;
 const hasTraversalSegment = serve.Server.hasTraversalSegment;
 const Allocator = std.mem.Allocator;
 const BuildAsset = root.BuildAsset;
+const diag = @import("../diag.zig");
 
 /// NO_SLOP.md §2.2a contract 1 (self-freeing): every allocation made here is
 /// freed before return -- `cmd` by its `deinit`, and `resolveRoute` /
@@ -615,6 +616,24 @@ pub const Command = struct {
             } else if (startsWith(u8, arg, "-")) {
                 fatal.usageError("error: unexpected cli argument '{s}'\n", .{arg});
             } else if (route == null) {
+                // `zigapagos explain <route>` (issue #47) and `zigapagos
+                // explain-code <CODE>` (issue #46) are adjacent commands with
+                // DISJOINT argument grammars -- a route must start with '/', a
+                // code is a member of a closed, gated enum -- so an argument
+                // that IS a registered code is unambiguously someone who
+                // reached for the wrong one of the two.
+                //
+                // Checked HERE and not at `resolveRoute`'s route guard, which
+                // is the natural-looking home: `explain` loads the site config
+                // and runs a whole in-memory build before it resolves a route,
+                // so outside a site directory the wrong-command user gets
+                // `Config.load`'s usage MENU and never reaches the guard.
+                // Argument parsing is the last point that runs unconditionally.
+                if (std.meta.stringToEnum(diag.Code, arg) != null) fatal.usageError(
+                    "error: '{s}' is a diagnostic code, not a route\n" ++
+                        "note: run 'zigapagos explain-code {s}' for its long-form explanation\n",
+                    .{ arg, arg },
+                );
                 route = arg;
             } else {
                 fatal.usageError("error: unexpected second positional argument '{s}' (route is already '{s}')\n", .{ arg, route.? });

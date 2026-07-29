@@ -71,6 +71,14 @@ const standalone: []const Standalone = &.{
         .root_source_file = "src/heading_slugs.zig",
         .supermd = true,
     },
+    // Machine-readable diagnostics registry (issue #46 / DX-27): std-only, no
+    // ziggy/supermd/host_target/repo_root_cwd needed. Part of `standalone` so
+    // `-Dsingle-threaded` covers it automatically via `check`.
+    .{
+        .step_name = "test-diag",
+        .description = "Run diagnostic-code registry tests",
+        .root_source_file = "src/diag.zig",
+    },
 };
 
 /// A suite compiled from `zigapagos_exe.root_module`.

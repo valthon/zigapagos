@@ -60,6 +60,9 @@ const help_menu =
     \\                    route
     \\  e2e               Serve a built site with ZigBase and run an e2e command
     \\  languages         List code-fence languages registered for highlighting
+    \\  explain-code      Print the long-form explanation for a diagnostic CODE
+    \\    [CODE]          (or list every code with no argument); see
+    \\                    'release --format=json'
     \\  help              Show this menu and exit
     \\  version           Print the Zigapagos version and exit
     \\  (no command)      Start the bundled live server

@@ -1,0 +1,50 @@
+# Frozen diagnostic-code registry (issue #46). THIS FILE IS THE STABILITY CONTRACT.
+#
+# A code, once shipped, is permanent. Tooling switches on these strings.
+#
+#  * To ADD a code: add the enum field in src/diag.zig AND append a line to
+#    ACTIVE. Order within a section does not matter to the gate; keep it
+#    alphabetical so diffs and duplicates are obvious.
+#  * To STOP emitting a code: MOVE its line from ACTIVE to RETIRED and delete
+#    the enum field. The line never disappears.
+#  * NEVER reuse a retired name for a different meaning. The gate fails if an
+#    enum field matches a RETIRED line.
+#  * NEVER rename a code. That is a removal plus an addition, and consumers
+#    break silently. If you truly must, retire the old and add a new one.
+#
+# src/diag.zig's `test "diag: ..."` blocks enforce all of the above.
+
+[ACTIVE]
+ZP_BUILD_ASSET_NO_INSTALL_PATH
+ZP_DUPLICATE_TRANSLATION_KEY
+ZP_EMPTY_PAGE
+ZP_FATAL
+ZP_FRONTMATTER_FRAMING
+ZP_FRONTMATTER_PARSE
+ZP_I18N_PARSE
+ZP_INVALID_ALIAS
+ZP_INVALID_ALTERNATIVE_LAYOUT
+ZP_INVALID_ALTERNATIVE_NAME
+ZP_INVALID_ALTERNATIVE_PATH
+ZP_LINK_NOT_A_SECTION
+ZP_LINK_NO_PARENT_SECTION
+ZP_LOCALE_LINK_UNSUPPORTED
+ZP_MISSING_BUILD_ASSET
+ZP_MISSING_LAYOUT
+ZP_MISSING_PAGE_ASSET
+ZP_MISSING_PAGE_TOLERATED
+ZP_MISSING_SITE_ASSET
+ZP_RESOURCE_KIND_MISMATCH
+ZP_STATIC_ASSET_GLOB_EMPTY
+ZP_STATIC_ASSET_MISSING
+ZP_SUPERMD
+ZP_TEMPLATE_BAD_DIRECTIVE_ATTR
+ZP_TEMPLATE_MISSING_PARENT
+ZP_TEMPLATE_PARSE
+ZP_UNKNOWN_ALTERNATIVE
+ZP_UNKNOWN_LANGUAGE
+ZP_UNKNOWN_PAGE
+ZP_UNKNOWN_REF
+ZP_URL_COLLISION
+
+[RETIRED]
