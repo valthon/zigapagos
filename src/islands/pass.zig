@@ -363,6 +363,24 @@ fn rewrite(
     // anyerror: this function is recursive (slot content is re-processed), which
     // rules out an inferred error set; the union of renderer/print/ziggy errors is
     // wide, and `process`'s callers already handle errors generically.
+
+    // The pathname an island's SSR sees (`host.pathname()` / `useLocation()`).
+    // It must be the pathname a REAL BROWSER reports, which on a site with a
+    // `url_path_prefix` carries that prefix — the same parity the SPA route
+    // pass already has (src/spa.zig prefixes its `ssr_pathname`). Without this
+    // an island on a prefixed site server-rendered against "/guides" while the
+    // browser reported "/myrepo/guides", so any island branching on the path
+    // (active-nav highlighting, breadcrumbs) rendered one thing at build time
+    // and another after hydration — and Preact's hydrate() does not repair a
+    // mismatched attribute.
+    //
+    // Derived from the UNPREFIXED `page_url` rather than reassigning it,
+    // because this function recurses for slot content and passes `page_url`
+    // down: prefixing in place would double-prefix at every nested level.
+    // `prefixed` with an empty prefix returns the path unchanged, so an
+    // unprefixed site is byte-for-byte unaffected.
+    const ssr_pathname = try prefixed(arena.a, url_prefix, page_url);
+
     var out: std.ArrayListUnmanaged(u8) = .empty;
     errdefer out.deinit(gpa);
 
@@ -441,7 +459,7 @@ fn rewrite(
             // swallowed. `renderer` is duck-typed, but every real renderer
             // fills `err_out` on `error.SidecarRenderFailed`; stubs ignore it.
             var rerr: sidecar.RenderError = .{};
-            const html_out = renderer.render(arena, src, props_json, slots_json, page_url, &rerr) catch |err| {
+            const html_out = renderer.render(arena, src, props_json, slots_json, ssr_pathname, &rerr) catch |err| {
                 // Record which island/route broke, with the JS message + stack,
                 // into the caller-owned sink. The CALLER logs it (at .err, with
                 // page-path context) — pass.zig deliberately does not log here so
@@ -1070,6 +1088,56 @@ test "process forwards page_url to the renderer as pathname" {
 
     // page_url "/booking/" reached the renderer's pathname arg.
     try std.testing.expect(std.mem.indexOf(u8, result.html, "path: /booking/") != null);
+}
+
+test "process forwards the URL-PREFIXED page_url as the island's SSR pathname" {
+    // Island/browser pathname parity on a `url_path_prefix` site: the SSR pass
+    // must simulate the pathname a real browser reports, or an island that
+    // branches on the path (active-nav highlighting, breadcrumbs) renders one
+    // thing at build time and another after hydration — and hydrate() does not
+    // repair a mismatched attribute. This is the island-side counterpart of the
+    // SPA route pass's prefixed `ssr_pathname` (src/spa.zig).
+    const gpa = std.testing.allocator;
+
+    const PathnameStub = struct {
+        pub fn render(_: *@This(), ra: RenderArena, src: []const u8, props_json: []const u8, slots_json: []const u8, pathname: []const u8, err_out: ?*sidecar.RenderError) ![]const u8 {
+            _ = src;
+            _ = props_json;
+            _ = slots_json;
+            _ = err_out;
+            return std.fmt.allocPrint(ra.a, "<p>path: {s}</p>", .{pathname});
+        }
+    };
+    const input = "<main><island src=\"components/Location.zig\" client:load :props='{}'></island></main>";
+
+    // ONE arena for both cases (NO_SLOP.md §2.2a): `RenderArena.forTest` was
+    // tried first, as that section asks, and `process` is genuinely contract 4
+    // — under the raw testing allocator it leaks 22 allocations, the
+    // interlinked instance/props/slot graph that only dropping the arena can
+    // reclaim. So a real arena it is, and a single one rather than one per
+    // case, to add the fewest possible leak-detector-disabled sites.
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = RenderArena.from(&arena_state);
+
+    {
+        var ps: PathnameStub = .{};
+        const result = try process(gpa, arena, input, "/guides/", &ps, .{ .url_prefix = "myrepo" });
+        defer gpa.free(result.html);
+        try std.testing.expect(std.mem.indexOf(u8, result.html, "path: /myrepo/guides/") != null);
+        // The bare form must NOT survive: asserting only the presence of the
+        // prefixed string would also pass if BOTH were emitted somewhere.
+        try std.testing.expect(std.mem.indexOf(u8, result.html, "path: /guides/") == null);
+    }
+
+    {
+        // The no-op that keeps every unprefixed site unaffected.
+        var ps: PathnameStub = .{};
+        const result = try process(gpa, arena, input, "/guides/", &ps, .{ .url_prefix = "" });
+        defer gpa.free(result.html);
+        try std.testing.expect(std.mem.indexOf(u8, result.html, "path: /guides/") != null);
+        try std.testing.expect(std.mem.indexOf(u8, result.html, "/myrepo") == null);
+    }
 }
 
 test "process replaces an island with SSR markup + props script" {
