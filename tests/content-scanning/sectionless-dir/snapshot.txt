@@ -19,7 +19,29 @@
 |                                               |
 *-----------------------------------------------*
 
-content/nested/: warning: directory has 1 page but no index.smd, so it is not a section
-|   note: its pages join the enclosing section instead, and no page is built at 'nested/'
-|   note: create 'content/nested/index.smd' to make it a section ($page.subpages() is empty for anything that is not one)
+content/notes/: warning: directory has 1 page but no index.smd, so it is not a section
+|   note: its pages join the enclosing section instead, and no page is built at 'notes/'
+|   note: create 'content/notes/index.smd' to make it a section ($page.subpages() is empty for anything that is not one)
 
+content/projects/: warning: directory has 1 page but no index.smd, so it is not a section
+|   note: its pages join the enclosing section instead, and no page is built at 'projects/'
+|   note: 'content/projects.smd' is a plain page, not this directory's index -- move it to 'content/projects/index.smd' to make it one
+
+----------------------------
+       -- VARIANT --
+----------------------------
+.id = 0,
+.content_dir_path = content
+
+  ------- SECTION -------
+.index = 1,
+.section_path = content/,
+.pages = [
+    content/projects/alpha.smd
+    content/projects.smd
+    content/notes/one.smd
+],
+
+
+
+ ----- EXIT CODE: 0 -----

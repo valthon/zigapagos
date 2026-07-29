@@ -1,0 +1,9 @@
+<!DOCTYPE html>
+<html>
+<head><title :text="$page.title"></title></head>
+<body>
+  <ctx :if="$page.title">A</ctx>
+  <div :else>B</div>
+  <ctx :else>C</ctx>
+</body>
+</html>

@@ -167,7 +167,7 @@ link instead of a build error.
 |---|---|
 | `{title}` | `:text="$page.title"` (on the element) |
 | `<Fragment set:html={content} />` | `:html="$page.content()"` |
-| `{cond && <p>…</p>}` | `<p :if="$cond">…</p>` |
+| `{cond && <p>…</p>}` | `<ctx :if="$cond"><p>…</p></ctx>` |
 | `{items.map(i => <li>{i}</li>)}` | `<ul :loop="$items"><li :text="$loop.it"></li></ul>` |
 | `<Layout>` wrapper / `<slot/>` | `<extend template="base.shtml">` + `<super>` slots |
 | `import Header from …; <Header/>` (static) | `<extend>`/partials in `layouts/templates/` |
@@ -178,7 +178,7 @@ expression language). See the upstream SuperHTML docs linked from the
 [repository README's Acknowledgements](../../README.md#acknowledgements).
 
 > **A dynamic attribute uses the BARE name — not a `:` prefix.** The only `:`
-> directives are `:if`, `:loop`, `:else`, `:text`, `:html` (plus `:props` on
+> directives are `:if`, `:loop`, `:text`, `:html` (plus `:props` on
 > `<island>`). For a dynamic `src`/`href`/`class`/etc., write the **bare** name
 > with a Scripty value — `src="$page.custom.get('hero')"`, **not**
 > `:src="$expr"`. By analogy with `:text`, migrators reach for `:src`/`:href`;
@@ -204,6 +204,32 @@ expression language). See the upstream SuperHTML docs linked from the
 > If the items are objects/maps, index fields with `$loop.it.get('field')` (e.g.
 > `<ul :loop="$rows"><li :text="$loop.it.get('name')"></li></ul>`). The loop body
 > can contain multiple repeated children — they all repeat together per item.
+
+> **`:if` does NOT make the element conditional — and there is no `:else`.**
+> Three separate traps, all of which used to build green and emit wrong HTML:
+>
+> 1. **`:if` on a real element only gates its BODY.** The tag and **every one of
+>    its attributes** are emitted either way, with `$if` bound to the value. So
+>    `<a aria-current="page" :if="$isCurrent">Docs</a>` marks *every* nav link as
+>    the current page and merely blanks the ones that should not be — the exact
+>    bug this repo shipped. To make the element itself conditional, wrap it in
+>    `<ctx>`, which never prints a tag of its own:
+>
+>    ```html
+>    <ctx :if="$isCurrent"><a aria-current="page" href="$url">Docs</a></ctx>
+>    <ctx :if="$isCurrent.not()"><a href="$url">Docs</a></ctx>
+>    ```
+>
+> 2. **`:if`/`:loop` on a void element is a build error.** `<img>`, `<br>`,
+>    `<input>`, … (and a self-closing `<item/>` in an `.xml` alternative layout)
+>    have no end tag, and SuperHTML restarts a conditional or a loop by rewinding
+>    to the end tag. With none it rewinds to the start of the file and splices the
+>    **whole raw template source** into the page — previously with exit code 0.
+>    Wrap the element instead.
+>
+> 3. **There is no `:else`.** SuperHTML parses it and then never evaluates it;
+>    it is now a build error. Write the negated condition on a second `<ctx>`,
+>    as in the pair above.
 
 **No `:with`/scoping directive — repeat the full path (or flatten the
 frontmatter).** There is **no** way to bind a sub-object to a short alias for a

@@ -73,6 +73,22 @@ nothing is worse than one that does not exist.
 
 **Fix (docs).** State the `<ctx>` rule wherever conditionals are documented.
 
+**Resolved, in part.** `Template.lintInertDirectives` (`src/Template.zig`) makes
+two shapes hard build errors, reported with file:line:col before the output tree
+is touched: a bare `:else`, and `:if`/`:loop` on an element with no end tag (a
+void element, or a self-closing element in an `.xml` layout) — the latter
+rewinds SuperHTML's print cursor to byte 0 and splices the whole raw template
+source into the page with exit code 0, or slices backwards and panics.
+Regression fixtures: `tests/content-scanning/else-directive/` and
+`tests/content-scanning/void-branching-directive/`.
+
+`:if` on a *closed* element deliberately stays legal:
+`<div :if="$x">body</div>` is the keep-the-element / conditional-body pattern,
+used by the `init` scaffold and `tests/rendering/multi`, so rejecting it would
+break correct templates. The attribute-emission trap this entry actually hit is
+therefore a docs fix, and is now the first of three `:if` traps spelled out in
+`docs/migration/astro-to-zigapagos.md`, with the `<ctx>` wrapping that fixes it.
+
 ---
 
 ### DX-2 · [#21] `.aliases` entries are section-relative unless they start with `/`
@@ -487,6 +503,11 @@ taking literally, and these three are what stand between it and that.
   nested inside another expression purely to hold a refcount.
 - **[#55] DX-36 · A directory without `index.smd` yields no subpages, not an error.**
   A missing section presents as "my list is empty" with nothing naming the cause.
+  **Resolved:** the scan now warns, naming the directory, the URL that is not
+  built, and the `index.smd` to create (and, when a sibling `<dirname>.smd`
+  already owns that URL, saying so). A warning rather than an error — an
+  index-less directory is a legitimate URL-shaping tool. Fixture:
+  `tests/content-scanning/sectionless-dir/`.
 
 ## Authoring ergonomics
 

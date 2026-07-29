@@ -1706,6 +1706,86 @@ pub fn run(
         }
     }
 
+    // Scan-time advisory: a content directory that holds pages but no index.smd
+    // never became a section (see Variant.SectionlessDir), so its pages land in
+    // the enclosing section with deeper URLs, no page is built at the
+    // directory's own URL, and `$page.subpages()` aimed at it returns an empty
+    // list. Deliberately a WARNING and not an error -- the empty-list return is
+    // documented upstream behaviour and orphan directories are a legitimate
+    // URL-shaping tool (tests/rendering/simple/content/nested/ uses one on
+    // purpose). Deliberately NOT appended to `build.mode.memory.errors` either:
+    // that list is the live server's "the build failed" surface and makes every
+    // URL answer with a build-error page, so only error-severity diagnostics may
+    // enter it (the same rule PageAnalysisError.severity follows). Nothing here
+    // touches `any_prerendering_error`, so a warning-only build stays exit 0.
+    for (build.variants) |*v| {
+        if (v.sectionless_dirs.items.len == 0) continue;
+
+        // `dir_names` is filled in filesystem iteration order and, unlike
+        // `page_names`, is never sorted -- not even in Debug builds. The
+        // snapshot suite diffs stderr byte for byte, so sorting here is
+        // load-bearing rather than cosmetic. Format each path once into the
+        // arena and sort those bytes, instead of formatting inside a comparator.
+        const Entry = struct {
+            /// e.g. "content/projects/"
+            dir: []const u8,
+            /// e.g. "projects/" -- the URL that is NOT built.
+            url: []const u8,
+            /// e.g. "content/projects" -- the sibling page's path, sans ".smd".
+            stem: []const u8,
+            page_count: u32,
+            sibling_leaf_page: bool,
+
+            fn lessThan(_: void, a: @This(), b: @This()) bool {
+                return std.mem.order(u8, a.dir, b.dir) == .lt;
+            }
+        };
+
+        const entries = try arena.alloc(Entry, v.sectionless_dirs.items.len);
+        for (entries, v.sectionless_dirs.items) |*e, sd| {
+            e.* = .{
+                .dir = try std.fmt.allocPrint(arena, "{f}", .{
+                    sd.path.fmt(&v.string_table, &v.path_table, v.content_dir_path, true),
+                }),
+                .url = try std.fmt.allocPrint(arena, "{f}", .{
+                    sd.path.fmt(&v.string_table, &v.path_table, null, true),
+                }),
+                .stem = try std.fmt.allocPrint(arena, "{f}", .{
+                    sd.path.fmt(&v.string_table, &v.path_table, v.content_dir_path, false),
+                }),
+                .page_count = sd.page_count,
+                .sibling_leaf_page = sd.sibling_leaf_page,
+            };
+        }
+        std.mem.sort(Entry, entries, {}, Entry.lessThan);
+
+        for (entries) |e| {
+            std.debug.print(
+                \\{s}: warning: directory has {d} {s} but no index.smd, so it is not a section
+                \\|   note: its pages join the enclosing section instead, and no page is built at '{s}'
+                \\
+            , .{
+                e.dir,
+                e.page_count,
+                if (e.page_count == 1) "page" else "pages",
+                e.url,
+            });
+            if (e.sibling_leaf_page) {
+                std.debug.print(
+                    \\|   note: '{s}.smd' is a plain page, not this directory's index -- move it to '{s}index.smd' to make it one
+                    \\
+                    \\
+                , .{ e.stem, e.dir });
+            } else {
+                std.debug.print(
+                    \\|   note: create '{s}index.smd' to make it a section ($page.subpages() is empty for anything that is not one)
+                    \\
+                    \\
+                , .{e.dir});
+            }
+        }
+    }
+
     var collision_errors = false;
     for (build.variants) |v| {
         if (v.collisions.items.len > 0) {
@@ -1837,30 +1917,113 @@ pub fn run(
                 defer aw.deinit();
 
                 for (bads.items) |bad| {
-                    var line: usize = 1;
-                    var col: usize = 1;
-                    for (template.src[0..bad.offset]) |ch| {
-                        if (ch == '\n') {
-                            line += 1;
-                            col = 1;
-                        } else col += 1;
-                    }
+                    const lc = Template.lineCol(template.src, bad.offset);
                     const bare = bad.name[1..];
                     try aw.writer.print(
                         \\{s}:{d}:{d}: error: unknown ':' directive attribute '{s}'
-                        \\    SuperHTML's only ':' directives are :if, :loop, :else, :text, :html
+                        \\    SuperHTML's only ':' directives are :if, :loop, :text, :html
                         \\    (plus :props on <island>). A dynamic attribute uses the BARE name
                         \\    with a Scripty value: write {s}="$expr", not {s}="$expr"
                         \\    (the ':' form evaluates the value but keeps the ':{s}' name, so the
                         \\    real '{s}' attribute is never set).
                         \\
                         \\
-                    , .{ path, line, col, bad.name, bare, bad.name, bare, bare });
+                    , .{ path, lc.line, lc.col, bad.name, bare, bad.name, bare, bare });
                 }
 
                 std.debug.print("{s}", .{aw.written()});
                 if (build.mode == .memory) {
                     // Owned copy so Build.deinit can free it (AUD-004).
+                    try build.mode.memory.errors.append(gpa, .{
+                        .ref = "",
+                        .msg = try aw.toOwnedSlice(),
+                    });
+                }
+            }
+        }
+
+        // Lint for `:` directives SuperHTML parses and then cannot honour: a
+        // bare `:else` (validated at parse time, then never read, so the
+        // evaluator null-unwraps its absent value and panics the renderer) and
+        // `:if`/`:loop` on an element with no end tag (skip_body rewinds
+        // `print_cursor` to `close.start`, which is 0 there, so the whole raw
+        // template source is spliced into the page with exit code 0). Both
+        // reach the renderer today; turning them into located template errors
+        // here means the build aborts at the `template_errors` gate below,
+        // BEFORE the output tree is touched. Only a clean html tree is scanned
+        // -- on a broken one `close.start == 0` also means "unclosed element",
+        // which SuperHTML already reports as `missing end tag`.
+        if (template.html_ast.errors.len == 0) {
+            var inert: std.ArrayListUnmanaged(Template.InertDirective) = .empty;
+            defer inert.deinit(gpa);
+            try template.lintInertDirectives(gpa, &inert);
+            if (inert.items.len > 0) {
+                template_errors = true;
+                const path = try std.fmt.allocPrint(arena, "{f}", .{
+                    tpn.fmt(&build.st, &build.pt, build.cfg.getLayoutsDirPath(), "/"),
+                });
+
+                var aw: Writer.Allocating = .init(gpa);
+                defer aw.deinit();
+
+                for (inert.items) |bad| {
+                    const lc = Template.lineCol(template.src, bad.offset);
+                    switch (bad.kind) {
+                        .else_directive => try aw.writer.print(
+                            \\{s}:{d}:{d}: error: ':else' is parsed but never evaluated
+                            \\    SuperHTML validates ':else' at parse time and then has no case for
+                            \\    it at render time: the evaluator reads the attribute's value, which
+                            \\    a bare ':else' does not have, and panics on the null unwrap. No
+                            \\    template using ':else' has ever rendered.
+                            \\    Write the negated condition on a second <ctx> instead:
+                            \\        <ctx :if="$cond">...</ctx>
+                            \\        <ctx :if="$cond.not()">...</ctx>
+                            \\
+                            \\
+                        , .{ path, lc.line, lc.col }),
+                        .branching_without_end_tag => {
+                            const is_loop = std.mem.eql(u8, bad.name, ":loop");
+                            try aw.writer.print(
+                                \\{s}:{d}:{d}: error: '{s}' on <{s}> can never work
+                                \\    <{s}> is {s}: it has no end tag, and SuperHTML restarts a
+                                \\    conditional or a loop by rewinding to the element's end tag.
+                                \\    With none it rewinds to the start of the file and re-emits the
+                                \\    whole template source into the page (exit code 0), or slices
+                                \\    backwards and panics.
+                                \\    '{s}' also only affects an element's BODY -- the tag and all of
+                                \\    its attributes are emitted either way.
+                                \\    {s}
+                                \\        <ctx {s}="{s}"><{s} ...></ctx>
+                                \\
+                                \\
+                            , .{
+                                path,
+                                lc.line,
+                                lc.col,
+                                bad.name,
+                                bad.tag,
+                                bad.tag,
+                                if (bad.void_element) "a void element" else "self-closing",
+                                bad.name,
+                                if (is_loop)
+                                    "To repeat the element, wrap it:"
+                                else
+                                    "To make the element itself conditional, wrap it:",
+                                bad.name,
+                                if (is_loop) "$items" else "$cond",
+                                bad.tag,
+                            });
+                        },
+                    }
+                }
+
+                std.debug.print("{s}", .{aw.written()});
+                if (build.mode == .memory) {
+                    // Owned copy so Build.deinit can free it (AUD-004). These
+                    // are error severity, so they DO belong in the live
+                    // server's error list -- that list makes every URL answer
+                    // with a build-error page, which is right for a template
+                    // that cannot render and wrong for a mere warning.
                     try build.mode.memory.errors.append(gpa, .{
                         .ref = "",
                         .msg = try aw.toOwnedSlice(),

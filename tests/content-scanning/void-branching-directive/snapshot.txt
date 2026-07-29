@@ -19,12 +19,27 @@
 |                                               |
 *-----------------------------------------------*
 
-layouts/index.shtml:5:8: error: unknown ':' directive attribute ':src'
-    SuperHTML's only ':' directives are :if, :loop, :text, :html
-    (plus :props on <island>). A dynamic attribute uses the BARE name
-    with a Scripty value: write src="$expr", not :src="$expr"
-    (the ':' form evaluates the value but keeps the ':src' name, so the
-    real 'src' attribute is never set).
+layouts/index.shtml:5:21: error: ':if' on <img> can never work
+    <img> is a void element: it has no end tag, and SuperHTML restarts a
+    conditional or a loop by rewinding to the element's end tag.
+    With none it rewinds to the start of the file and re-emits the
+    whole template source into the page (exit code 0), or slices
+    backwards and panics.
+    ':if' also only affects an element's BODY -- the tag and all of
+    its attributes are emitted either way.
+    To make the element itself conditional, wrap it:
+        <ctx :if="$cond"><img ...></ctx>
+
+layouts/index.shtml:6:7: error: ':loop' on <br> can never work
+    <br> is a void element: it has no end tag, and SuperHTML restarts a
+    conditional or a loop by rewinding to the element's end tag.
+    With none it rewinds to the start of the file and re-emits the
+    whole template source into the page (exit code 0), or slices
+    backwards and panics.
+    ':loop' also only affects an element's BODY -- the tag and all of
+    its attributes are emitted either way.
+    To repeat the element, wrap it:
+        <ctx :loop="$items"><br ...></ctx>
 
 ----------------------------
        -- VARIANT --
