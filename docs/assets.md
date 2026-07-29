@@ -138,6 +138,13 @@ because the extension is load-bearing downstream: a web server picks the
   the generated ones (`zigapagos-runtime.js`, `spa/<name>.js`,
   `islands/<name>.js`) have their URLs baked into import maps, routing
   manifests and the hydration bootstrap.
+- **Anything `build.zig` installs as a whole directory** — the sliced islands
+  runtime (`islands/_runtime.js`, #52) and the sliced SPA runtimes and lazy
+  chunks under `spa/`. These never enter `site_assets` at all: `zigapagos`
+  neither scans nor installs them, `addInstallDirectory` copies them after the
+  site is written, and their URLs are likewise baked into import maps. They are
+  therefore outside *both* halves of this document — not fingerprinted, and not
+  candidates for the pruned-asset report either.
 - **Page assets.** They are installed next to the page that owns them, and a
   page's own assets are invalidated by the same deploy that rewrites the page.
 
