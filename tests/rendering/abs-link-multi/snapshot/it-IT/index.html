@@ -28,6 +28,15 @@
          change may alter it. -->
     <meta name="cross-variant-rel" content="https://de.example.com/de-DE/page-og.png">
 
+    <!-- SAME-HOST cross-variant: fr-FR carries de-DE's override string byte
+         for byte but as a distinct slice, so the pointer compare in
+         `printLinkPrefix` says "hosts differ" for two identical hosts. Read
+         this row from the de-DE page in particular — there it is genuinely
+         "cross-variant, same host text", and absLink must still emit exactly
+         one host. -->
+    <meta name="same-host-cross-variant-abs" content="https://de.example.com/fr-FR/page-og.png">
+    <meta name="same-host-cross-variant-rel" content="https://de.example.com/fr-FR/page-og.png">
+
     <!-- Control: plain link() stays root-relative and locale-prefixed, so a
          regression that made everything absolute would fail here too. -->
     <link rel="icon" href="/it-IT/logo.png">

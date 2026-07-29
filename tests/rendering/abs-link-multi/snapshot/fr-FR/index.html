@@ -9,7 +9,7 @@
          `printLinkPrefix` takes is only honoured across variants, and a page
          asset is always in the page's own variant, so this used to come back
          as a bare `/page-og.png`. -->
-    <link rel="canonical" href="https://de.example.com/de-DE/page-og.png">
+    <link rel="canonical" href="https://de.example.com/fr-FR/page-og.png">
 
     <!-- SITE asset via absLink: must keep a separator between
          `assets_prefix_path` and the asset name. This used to render as
@@ -26,7 +26,7 @@
     <!-- Control for the cell above: the same expression through plain link().
          It is already absolute cross-variant (different host), and no absLink
          change may alter it. -->
-    <meta name="cross-variant-rel" content="/de-DE/page-og.png">
+    <meta name="cross-variant-rel" content="https://de.example.com/de-DE/page-og.png">
 
     <!-- SAME-HOST cross-variant: fr-FR carries de-DE's override string byte
          for byte but as a distinct slice, so the pointer compare in
@@ -35,14 +35,14 @@
          "cross-variant, same host text", and absLink must still emit exactly
          one host. -->
     <meta name="same-host-cross-variant-abs" content="https://de.example.com/fr-FR/page-og.png">
-    <meta name="same-host-cross-variant-rel" content="https://de.example.com/fr-FR/page-og.png">
+    <meta name="same-host-cross-variant-rel" content="/fr-FR/page-og.png">
 
     <!-- Control: plain link() stays root-relative and locale-prefixed, so a
          regression that made everything absolute would fail here too. -->
-    <link rel="icon" href="/de-DE/logo.png">
+    <link rel="icon" href="/fr-FR/logo.png">
   </head>
   <body>
     <h1>Home</h1>
-    <div><p>This locale sets <code>host_url_override</code>, which is what makes the cross-variant <code>absLink()</code> cell in the layout meaningful: linking into it from another locale crosses a host boundary, so <code>printLinkPrefix</code> prints a host of its own and <code>absLink()</code> must not add a second one.</p></div>
+    <div><p>This locale exists to share <code>de-DE</code>’s <code>host_url_override</code> string without sharing its pointer, so the <code>same-host-cross-variant</code> cells in the layout exercise the one branch where <code>printLinkPrefix</code> decides by pointer identity.</p></div>
   </body>
 </html>

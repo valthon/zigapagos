@@ -42,5 +42,26 @@ Multilingual {
             .content_dir_path = "content/de-DE",
             .host_url_override = "https://de.example.com",
         },
+        // Deliberately the SAME override string as de-DE, byte for byte, from
+        // a different place in the config — so the two locales' `host_url`
+        // slices are equal in content but NOT pointer-equal.
+        //
+        // `printLinkPrefix`'s cross-variant branch decides whether to print a
+        // host with `our_host_url.ptr != other_host_url.ptr` — a POINTER
+        // compare. Between de-DE and fr-FR that pointer test is the only thing
+        // separating "same host, omit it" from "different host, print it", and
+        // it answers "different" for two identical hosts. `absLink()` must
+        // come out with exactly one host either way, which is what the
+        // `same-host-cross-variant` cells in the layout pin. Nothing else in
+        // the repo covers this, and it is the cell most likely to regress
+        // silently if anyone ever "tidies" that pointer compare into a
+        // `mem.eql`.
+        {
+            .code = "fr-FR",
+            .name = "Français",
+            .site_title = "Abs Link Multi",
+            .content_dir_path = "content/fr-FR",
+            .host_url_override = "https://de.example.com",
+        },
     ],
 }

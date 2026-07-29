@@ -38,7 +38,7 @@ zig build check                # compile exe + all test binaries, run nothing
 zig build check -Dsingle-threaded   # required guard, see below
 zig build api-check            # fail if contract/generated drifted from the schema
 cd runtime && bun install --frozen-lockfile   # ONCE per fresh worktree
-cd runtime && bun test         # TypeScript suite (616 tests)
+cd runtime && bun test         # TypeScript suite (650 tests)
 cd runtime && bun test src/router   # one file — filter is a PATH substring
 bash scripts/check-allocator-contracts.sh   # allocator-contract gate (see NO_SLOP.md §2.2a)
 bash scripts/check-allocator-contracts.test.sh   # the gate's own self-tests
@@ -66,7 +66,7 @@ there. A runtime `return error.SkipZigTest` does **not** help — Zig analyses t
 body regardless of runtime control flow — so prune the branch at comptime:
 `if (comptime !builtin.single_threaded) …`.
 
-**Shell e2e.** CI runs every `tests/*/*.sh` (currently 20). They are hermetic; `tests/serve/*`
+**Shell e2e.** CI runs every `tests/*/*.sh` (currently 26). They are hermetic; `tests/serve/*`
 boot real servers via a stub-zigbase binary and need `bun` on `PATH`. A new `tests/<area>/` is
 picked up by the glob automatically. `tests/branding.sh` and `tests/confidentiality.sh` sit at
 `tests/` top level on purpose — they are cheap gates CI runs early, outside that glob.

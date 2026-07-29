@@ -1,0 +1,12 @@
+---
+.title = "Home",
+.date = @date("2020-07-06T00:00:00"),
+.author = "Test",
+.layout = "index.shtml",
+.draft = false,
+.translation_key = "home",
+---
+
+This locale exists to share `de-DE`'s `host_url_override` string without
+sharing its pointer, so the `same-host-cross-variant` cells in the layout
+exercise the one branch where `printLinkPrefix` decides by pointer identity.
