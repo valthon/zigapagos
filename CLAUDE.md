@@ -68,8 +68,14 @@ body regardless of runtime control flow — so prune the branch at comptime:
 
 **Shell e2e.** CI runs every `tests/*/*.sh` (currently 31). They are hermetic; `tests/serve/*`
 boot real servers via a stub-zigbase binary and need `bun` on `PATH`. A new `tests/<area>/` is
-picked up by the glob automatically. `tests/branding.sh` and `tests/confidentiality.sh` sit at
-`tests/` top level on purpose — they are cheap gates CI runs early, outside that glob.
+picked up by the glob automatically. `tests/branding.sh`, `tests/branding.test.sh` and
+`tests/confidentiality.sh` sit at `tests/` top level on purpose — they are cheap gates CI runs
+early, outside that glob, and are therefore named explicitly in `ci.yml`'s `gates` job.
+
+The branding gate takes an inline opt-out: `<!-- branding-ok: why -->` sanctions the upstream
+name on that line, and `<!-- branding-ok:begin why -->` / `<!-- branding-ok:end -->` sanctions a
+block. A reason is required, an unbalanced block fails, and a marker that exempts nothing fails
+as stale — so it is an exemption you have to justify, not a mute button.
 
 **A fresh git worktree needs `bun install` in `runtime/` before anything bun-dependent.** Without
 it `bun test` reports every file as failing (`0 pass / 54 fail`, an `ENOENT resolving 'typescript'`

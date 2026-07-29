@@ -110,6 +110,7 @@ build. In order of how quickly it fails:
 
 ```sh
 # 1. cheap text gates (no toolchain needed)
+bash tests/branding.test.sh                       # the branding gate's own self-tests
 bash tests/branding.sh                            # no stray upstream-name references
 bash tests/confidentiality.sh                     # no references to the author's private project
 bash scripts/check-allocator-contracts.test.sh    # the gate's own self-tests
@@ -142,9 +143,18 @@ Notes on the ones with sharp edges:
   canonical formatter's call — take it.
 - **The shell e2e are hermetic but not free.** `tests/serve/*` boot real servers
   against a stub `zigbase` and need `bun` on `PATH`. A new `tests/<area>/*.sh` is
-  picked up by CI's glob automatically. `tests/branding.sh` and
-  `tests/confidentiality.sh` deliberately sit at the `tests/` top level, outside
-  that glob, because CI runs them early as cheap gates.
+  picked up by CI's glob automatically. `tests/branding.sh`,
+  `tests/branding.test.sh` and `tests/confidentiality.sh` deliberately sit at the
+  `tests/` top level, outside that glob, because CI runs them early as cheap
+  gates — which means those three are named in `ci.yml` and a fourth would have
+  to be too.
+- **The branding gate has an inline opt-out.** `<!-- branding-ok: why -->`
+  sanctions the upstream project's name on that line and
+  `<!-- branding-ok:begin why -->` / `<!-- branding-ok:end -->` sanctions a
+  block, for the cases where naming it literally is the accurate thing to do
+  (the fork-point tag is named after it). The reason is required, an unbalanced
+  block fails, and a marker that exempts nothing fails as stale, so it cannot
+  quietly become a file allowlist.
 - **Check exit codes, not output.** Every gate here is an exit-code check, and
   two shell facts each yield a *plausible wrong answer* rather than an error:
   `cmd | tail` reports `tail`'s status, not `cmd`'s (and `${PIPESTATUS[0]}`

@@ -511,7 +511,12 @@ taking literally, and these three are what stand between it and that.
 - **[#60] DX-41 · The branding gate cannot express a legitimate literal mention.**
   The fork-point tag is *named* with the upstream word, so documentation that
   needs to name that tag cannot pass the gate. We hit this correcting a false
-  changelog claim and had to reword around it.
+  changelog claim and had to reword around it. **Resolved.** `tests/branding.sh`
+  takes an inline `branding-ok:` marker, per line or per block, with a required
+  reason; an unbalanced block fails, and a marker that exempts nothing fails as
+  stale, so it cannot decay into a file allowlist. `CHANGELOG.md` names the tag
+  again, and the gate — which used to exclude itself from its own search —
+  no longer does.
 
 ## The through-line
 

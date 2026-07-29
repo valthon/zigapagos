@@ -15,8 +15,9 @@ Two things to know before reading it:
   subsystem specs in `docs/` are the source of truth for *what the code does*;
   this file records *when it changed*, starting now.
 - **This repository does not carry the forked project's release tags.** A
-  single fork-point tag marks where the history diverges, and `0.1.0` — what
-  `build.zig.zon` declares — is the first Zigapagos version number.
+  single fork-point tag, `fork-point-zine-v0-11-2`, marks where the history <!-- branding-ok: the tag is named for the upstream release it marks -->
+  diverges, and `0.1.0` — what `build.zig.zon` declares — is the first
+  Zigapagos version number.
   `zigapagos version` prints a `git describe --tags` string built
   against the tags that actually exist here, so on a commit past a release it
   looks like `v0.1.1-<n>-g<sha>`: the last released version, how many commits
