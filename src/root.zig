@@ -1294,11 +1294,12 @@ pub fn run(
                     } else "";
 
                     const fm_lines = p._parse.fm.lines;
+                    const note_line: NoteLine = .{ .note = err.note() };
                     std.debug.print(
                         \\{f}:{}:{}: error: {s}
                         \\|    {s}
                         \\|    {s}
-                        \\
+                        \\{f}
                         \\
                     , .{
                         p._scan.file.fmt(
@@ -1312,6 +1313,7 @@ pub fn run(
                         err.title(),
                         line_trim,
                         highlight,
+                        note_line,
                     });
                     if (build.mode == .memory) {
                         try build.mode.memory.errors.append(gpa, .{
@@ -1320,7 +1322,7 @@ pub fn run(
                                 \\{f}:{}:{}: error: {s}
                                 \\|    {s}
                                 \\|    {s}
-                                \\
+                                \\{f}
                                 \\
                             , .{
                                 p._scan.file.fmt(
@@ -1334,6 +1336,7 @@ pub fn run(
                                 err.title(),
                                 line_trim,
                                 highlight,
+                                note_line,
                             }),
                         });
                     }
@@ -2314,6 +2317,23 @@ test "assets: shouldMinifyCss gates on extension + release flags" {
         try std.testing.expect(!shouldMinifyCss("style.css", o));
     }
 }
+
+/// Renders as `|   note: <text>\n` when `note` is non-null, or nothing at all
+/// otherwise. Lets a single diagnostic format string carry an optional note
+/// line via `{f}` instead of branching into two near-identical format
+/// strings (one with the note line spliced in, one without) -- used by both
+/// the page-analysis print loop in `run` and, indirectly, the pattern
+/// `printSuperMdErrors` follows for its own (fixed-literal) note below.
+/// Allocation-free: it writes straight to the destination writer rather than
+/// building an intermediate string, so it's sound even on the disk-mode path
+/// where nothing else here allocates.
+const NoteLine = struct {
+    note: ?[]const u8,
+
+    pub fn format(self: NoteLine, w: *Writer) !void {
+        if (self.note) |n| try w.print("|   note: {s}\n", .{n});
+    }
+};
 
 fn printSuperMdErrors(
     gpa: Allocator,

@@ -119,6 +119,11 @@ content/other.smd:23:1: error: unknown language code
 |    [](<$code.siteAsset('code.zig').language('zig++')>) //wrong
 |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+content/other.smd:26:1: error: this page has no subpages (page is not a section)
+|    []($link.sub('index')) //wrong -- other.smd is not index.smd, so it's not a section
+|    ^^^^^^^^^^^^^^^^^^^^^^
+|   note: a leading '.' means "subpage of this section", not a relative path -- to link a sibling page, use $link.page("...")
+
 ----------------------------
        -- VARIANT --
 ----------------------------

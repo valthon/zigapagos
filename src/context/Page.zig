@@ -159,6 +159,21 @@ pub const PageAnalysisError = struct {
         },
     },
 
+    // Optional second line rendered as `|   note: ...`, following the style
+    // `printSuperMdErrors` already uses for `.duplicate_id` in root.zig. Returns
+    // null for kinds where the title is self-explanatory.
+    pub fn note(err: PageAnalysisError) ?[]const u8 {
+        return switch (err.kind) {
+            // AUD note (issue #28): a leading '.' in a link target means "subpage
+            // of this section" in SuperMD, not "relative path" -- the title alone
+            // states a fact about the current page and never hints that the LINK
+            // SYNTAX, not the page, is what's wrong. Cost a real site 55 build
+            // errors and a link-rewrite redesign before the syntax was understood.
+            .not_a_section => "a leading '.' means \"subpage of this section\", not a relative path -- to link a sibling page, use $link.page(\"...\")",
+            else => null,
+        };
+    }
+
     pub fn title(err: PageAnalysisError) []const u8 {
         return switch (err.kind) {
             .not_a_section => "this page has no subpages (page is not a section)",

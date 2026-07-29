@@ -20,3 +20,6 @@ Lorem Ipsum 3
 ```
 
 [](<$code.siteAsset('code.zig').language('zig++')>) //wrong
+
+# Sub on a non-section page (issue #28)
+[]($link.sub('index')) //wrong -- other.smd is not index.smd, so it's not a section
