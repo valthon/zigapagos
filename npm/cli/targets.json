@@ -1,0 +1,16 @@
+[
+  {
+    "key": "darwin-x64",
+    "zig": "x86_64-macos",
+    "os": "darwin",
+    "cpu": "x64",
+    "archive": "x86_64-macos.zip"
+  },
+  {
+    "key": "linux-x64",
+    "zig": "x86_64-linux-musl",
+    "os": "linux",
+    "cpu": "x64",
+    "archive": "x86_64-linux-musl.tar.xz"
+  }
+]
