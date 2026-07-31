@@ -1640,7 +1640,7 @@ implicitly**:
 3. the pinned release in the zigapagos cache:
    `~/.cache/zigapagos/zigbase/<pinned_version>/zigbase` (respects `XDG_CACHE_HOME`;
    `%LOCALAPPDATA%` on Windows). The pin is the `pinned_version` constant in
-   `src/cli/zigbase.zig` (currently `v0.11.0`, the latest release; the `.spa`-marker
+   `src/cli/zigbase.zig` (currently `v0.12.0`, the latest release; the `.spa`-marker
    contract needs ≥ 0.10.0).
 
 When nothing is found, the step fails fast with these instructions — **unless** you

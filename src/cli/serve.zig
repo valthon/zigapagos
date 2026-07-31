@@ -12,6 +12,7 @@ const spa_mod = @import("../spa.zig");
 const RenderArena = @import("../islands/render_arena.zig").RenderArena;
 const BuildAsset = root.BuildAsset;
 const worker = @import("../worker.zig");
+const release_cli = @import("release.zig");
 const fatal = @import("../fatal.zig");
 const Build = @import("../Build.zig");
 const PathTable = @import("../PathTable.zig");
@@ -49,7 +50,12 @@ pub const ServeEvent = union(enum) {
     disconnect: WebSocket,
 };
 
-pub fn serve(io: Io, gpa: Allocator, args: []const []const u8) error{OutOfMemory}!noreturn {
+pub fn serve(
+    io: Io,
+    gpa: Allocator,
+    args: []const []const u8,
+    environ_map: *const std.process.Environ.Map,
+) error{OutOfMemory}!noreturn {
     if (builtin.single_threaded) {
         std.debug.print(
             "error: single-threaded zigapagos does not yet support running the live server, sorry\n\n",
@@ -59,7 +65,57 @@ pub fn serve(io: Io, gpa: Allocator, args: []const []const u8) error{OutOfMemory
         fatal.helpError();
     }
 
-    const cmd: Command = try .parse(gpa, args);
+    var cmd: Command = try .parse(gpa, args);
+
+    // The same bundled-runtime defaults `release` applies, for the same reason:
+    // an npm install has no build graph to pass these paths in, and `zigapagos`
+    // with no subcommand is the FIRST command the published README shows. Without
+    // this, an islands site would build under `zigapagos release` and then fail in
+    // the live server — the same project working or not depending on which
+    // command was typed, which is a worse outcome than not supporting it at all.
+    //
+    // Never freed, deliberately: `serve` is `noreturn` and these strings are
+    // borrowed by `cmd` for the life of the process. A `defer` here would be
+    // unreachable, and pretending otherwise would be the misleading kind of tidy.
+    if (environ_map.get(release_cli.runtime_dir_env)) |raw| {
+        const dir = std.mem.trim(u8, raw, " \t\r\n");
+        if (dir.len != 0) {
+            const d = try release_cli.runtimeDefaults(gpa, dir);
+            if (cmd.island_sidecar == null) cmd.island_sidecar = d.sidecar;
+            if (cmd.island_runtime_entry == null) cmd.island_runtime_entry = d.runtime_entry;
+            // serve bundles islands through `bunBuild` directly and only reaches
+            // for a driver when SPAs are involved, so this is the SPA half of the
+            // same default. The SELF-CONTAINED bundler entry, not
+            // `bundle-island.ts`: `bundleSpas` runs the driver in code-splitting
+            // mode, which imports the `.spa.tsx` in-process to map lazy routes to
+            // chunks, and that import needs the bare `@z/runtime` answered out of
+            // the shipped tree. Without it the driver logs a resolution failure on
+            // every rebundle and silently maps nothing.
+            if (cmd.spa_bundle_driver == null) cmd.spa_bundle_driver = d.spa_bundle_driver;
+        }
+    }
+    // Gated on a sidecar actually being configured, so a content-only site never
+    // acquires a bun dependency by accident. Matches `release.applyDefaults`.
+    if (cmd.island_sidecar != null) {
+        if (cmd.bun_path == null) cmd.bun_path = "bun";
+        if (cmd.island_src_dir == null) cmd.island_src_dir = ".";
+        // ...and the entries themselves, for the same reason `release` discovers
+        // them: with the sidecar now available here, a page's island would SSR
+        // while `cmd.islands` stayed empty, so nothing would bundle it and the
+        // server would 404 `/islands/<name>.js` on hydration. Giving the sidecar
+        // to this path without this is what would have introduced that.
+        //
+        // Not freed either, for the reason stated above: `serve` is `noreturn`
+        // and the discovered paths are borrowed by `cmd` for the life of the
+        // process.
+        if (cmd.islands.len == 0) {
+            const found = try release_cli.discoverEntries(io, gpa, cmd.island_src_dir.?, ".island.tsx");
+            if (found.len > 0) {
+                gpa.free(cmd.islands);
+                cmd.islands = found;
+            } else gpa.free(found);
+        }
+    }
 
     worker.start(io);
     defer if (builtin.mode == .Debug) worker.stopWaitAndDeinit(io);

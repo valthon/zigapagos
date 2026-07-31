@@ -100,43 +100,60 @@ async function handle(line: string): Promise<string> {
   }
 }
 
-// ONE streaming decoder for the whole of stdin. `Bun.stdin.stream()` chunks on
-// BYTE counts, not codepoints, so a multi-byte UTF-8 sequence routinely straddles
-// a chunk boundary; a fresh (non-streaming) TextDecoder per chunk turns each half
-// into U+FFFD, silently corrupting the prerendered HTML (an em-dash/emoji in a
-// large props/slots payload) or breaking JSON.parse on a request that was valid.
-// `{ stream: true }` holds the partial sequence back until its continuation
-// arrives.
-const decoder = new TextDecoder();
-
 // A request line is large (props + slots for a whole page section) but bounded.
 // Without a cap, a peer that never terminates a line grows `buf` until the
 // process dies of OOM with no diagnostic; instead reject THAT line loudly and
 // resynchronize on the next newline.
 const MAX_LINE_CHARS = 64 * 1024 * 1024;
 
-let buf = "";
-let discarding = false; // dropping the tail of an over-long line
-for await (const chunk of Bun.stdin.stream()) {
-  buf += decoder.decode(chunk, { stream: true });
-  let nl: number;
-  while ((nl = buf.indexOf("\n")) !== -1) {
-    const line = buf.slice(0, nl).trim();
-    buf = buf.slice(nl + 1);
-    if (discarding) { discarding = false; continue; } // tail of a rejected line
-    if (line) await Bun.write(Bun.stdout, (await handle(line)) + "\n");
+/**
+ * Serve NDJSON render requests on stdin until it closes.
+ *
+ * Exported rather than run at module scope so a second entry point can import
+ * this module — and therefore run the `registerSsrModuleOverrides` call above,
+ * which MUST happen before any island is imported — and then register its own
+ * fallbacks before the loop starts. That is exactly what `standalone.ts` (the
+ * prebundled sidecar shipped on npm) does: ES module bodies run before the
+ * importer's, so importing this file is what orders the site's own `resolve`
+ * map ahead of the bundled defaults. A top-level loop here would have left no
+ * point between the two.
+ */
+export async function runSidecar(): Promise<void> {
+  // ONE streaming decoder for the whole of stdin. `Bun.stdin.stream()` chunks on
+  // BYTE counts, not codepoints, so a multi-byte UTF-8 sequence routinely straddles
+  // a chunk boundary; a fresh (non-streaming) TextDecoder per chunk turns each half
+  // into U+FFFD, silently corrupting the prerendered HTML (an em-dash/emoji in a
+  // large props/slots payload) or breaking JSON.parse on a request that was valid.
+  // `{ stream: true }` holds the partial sequence back until its continuation
+  // arrives.
+  const decoder = new TextDecoder();
+  let buf = "";
+  let discarding = false; // dropping the tail of an over-long line
+  for await (const chunk of Bun.stdin.stream()) {
+    buf += decoder.decode(chunk, { stream: true });
+    let nl: number;
+    while ((nl = buf.indexOf("\n")) !== -1) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (discarding) { discarding = false; continue; } // tail of a rejected line
+      if (line) await Bun.write(Bun.stdout, (await handle(line)) + "\n");
+    }
+    if (!discarding && buf.length > MAX_LINE_CHARS) {
+      discarding = true;
+      await Bun.write(
+        Bun.stdout,
+        JSON.stringify({
+          id: -1,
+          error: `request line exceeds ${MAX_LINE_CHARS} chars without a newline; discarded`,
+        }) + "\n",
+      );
+    }
+    // Whatever remains after the loop holds no newline, so once we are discarding
+    // it all belongs to the rejected line and must not be retained.
+    if (discarding) buf = "";
   }
-  if (!discarding && buf.length > MAX_LINE_CHARS) {
-    discarding = true;
-    await Bun.write(
-      Bun.stdout,
-      JSON.stringify({
-        id: -1,
-        error: `request line exceeds ${MAX_LINE_CHARS} chars without a newline; discarded`,
-      }) + "\n",
-    );
-  }
-  // Whatever remains after the loop holds no newline, so once we are discarding
-  // it all belongs to the rejected line and must not be retained.
-  if (discarding) buf = "";
 }
+
+// `bun runtime/sidecar/render.ts` (what the Zig build integration spawns) is
+// still a self-running script; only an importer gets the seam above.
+if (import.meta.main) await runSidecar();
