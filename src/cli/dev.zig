@@ -269,7 +269,7 @@ pub fn dev(
         fatal.helpError();
     }
 
-    const cmd: Command = try .parse(gpa, args);
+    var cmd: Command = try .parse(gpa, args);
 
     // Input discovery: the same dirs the live server watches (assets, layouts,
     // content, i18n + per-locale content), anchored at the site root — plus
@@ -389,6 +389,40 @@ pub fn dev(
     // (1) Initial build. `zig build dev` reaches here with everything already
     // compiled, so this is mostly cache hits + one site render; for direct CLI
     // use it guarantees the tree exists before zigbase boots.
+    // `zig build` is the right default for a Zig-build project and cannot be the
+    // right one for a project that has no build.zig — which is exactly what an
+    // npm install produces. Left alone, that install's `dev` died on
+    // `failed to spawn 'zig': FileNotFound`, naming a toolchain the user was
+    // never told they needed and never asked for.
+    //
+    // So when the default is still in force and there is no build.zig beside the
+    // site, rebuild through THIS binary's own `release` instead — resolved by
+    // absolute path rather than by name, because the whole point is that we
+    // cannot assume anything useful is on PATH.
+    //
+    // Deliberately not a fallback after a failed spawn: choosing up front means
+    // the command is printed before it runs (below) and a genuine `zig build`
+    // failure in a Zig project is still reported as itself.
+    if (cmd.rebuild_argv.ptr == default_rebuild_cmd.ptr and
+        Io.Dir.cwd().access(io, "build.zig", .{}) == error.FileNotFound)
+    {
+        const self = std.process.executablePathAlloc(io, gpa) catch |err| fatal.msg(
+            "error: dev: no build.zig here and this executable's own path is " ++
+                "unavailable ({s}); pass an explicit rebuild command after `--`\n",
+            .{@errorName(err)},
+        );
+        // No `--island=` flags are needed: on this path `release` discovers the
+        // site's `*.island.tsx` entries itself (see release.zig's
+        // discoverEntries), which is what keeps the SSR'd markup and the client
+        // bundles in step without dev having to know the list.
+        cmd.rebuild_argv = try gpa.dupe([]const u8, &.{
+            self,
+            "release",
+            try std.fmt.allocPrint(gpa, "--output={s}", .{cmd.site}),
+            "--force",
+        });
+    }
+
     std.debug.print("dev: initial build:", .{});
     for (cmd.rebuild_argv) |a| std.debug.print(" {s}", .{a});
     std.debug.print("\n", .{});
