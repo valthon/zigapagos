@@ -529,14 +529,76 @@ out="$(cd "$PKG/npm/cli-$KEY" && npm pack --pack-destination "$REAL_TARBALLS" 2>
 REAL_PLAT_TGZ="$REAL_TARBALLS/zigapagos-cli-$KEY-$VERSION.tgz"
 [[ -f "$REAL_PLAT_TGZ" ]] || fail "expected $REAL_PLAT_TGZ"
 
-# `zigapagos version` prints the version the BINARY was stamped with, which
-# build/config.zig derives from `git describe` AT BUILD TIME. That is `v<zon
-# version>...` on a tagged or full-history build and the literal `unknown` on a
-# shallow one — ci.yml's build-binary job does not fetch tags, so the artifact this
-# runs against in CI says `unknown` while the release workflow's says the real
-# version. Accept either and nothing else: what is being pinned is that the real
-# native binary ran through the installed launcher and answered, not what its build
-# stamped into it.
+# `zigapagos version` prints the version the BINARY was stamped with — one line,
+# `options.version` verbatim (src/main.zig's printVersion) — which
+# build/config.zig derives from `git describe --match '*.*.*' --tags` AT BUILD
+# TIME. Its `getVersion` can produce exactly three strings, and nothing else:
+#
+#   v<zon version>           `.tag` — describe landed ON a tag, so the tag is
+#                            printed verbatim. Tags here are `v<semver>`:
+#                            build/release.zig compares `version.tag[1..]` with
+#                            the zon version and refuses to build a release when
+#                            they disagree, so a release build says `v$VERSION`.
+#   v<prev tag>-dev.<n>+<sha>  `.commit` — an untagged commit, assembled as
+#                            `{ancestor}-dev.{height}+{sha}`. The ancestor is that
+#                            same v-prefixed tag and contains no `-` (config.zig
+#                            only takes this branch when describe's output holds
+#                            exactly two of them); the height is describe's decimal
+#                            commit count; the sha is its abbreviated hex id with
+#                            the `g` stripped — config.zig PANICS if that `g` is
+#                            absent, so it is never part of the string.
+#   unknown                  no `git` on PATH, or `git describe` failed — a shallow
+#                            checkout. ci.yml's build-binary job does not fetch
+#                            tags, so the artifact this runs against in CI says
+#                            `unknown` while the release workflow's says the real
+#                            version.
+#
+# The second shape is not an edge case, it is every release pull request: the tag
+# has to point at the commit that bumps build.zig.zon, so between the bump and the
+# tag `git describe` necessarily still reports the PREVIOUS version. Matching only
+# `v$VERSION*` made this assertion red for the whole life of every release PR — and
+# release.yml runs tests/npm/** on pull requests, so it would have been discovered
+# there every time.
+#
+# WHY A REGEX AND NOT A GLOB. Admitting the dev stamp as `v*-dev.*+*` also admitted
+# `v-dev.+`, `v1-dev.x+` and a stamp whose sha is empty — an assertion that named a
+# format it did not actually pin, right under a comment claiming it accepted "those
+# three and nothing else". A reformat that dropped the sha, or a `git describe` that
+# stopped abbreviating to hex, would have sailed through it.
+#
+# `{4,40}` rather than a fixed 7: git widens the abbreviation as the object count
+# grows and `core.abbrev` can narrow it to 4, its own floor. The sha's LENGTH is not
+# what is being pinned — that it is hex and non-empty is.
+version_stamp_re='^v[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]+\+[0-9a-f]{4,40}$'
+
+# True for a string `zigapagos version` can legitimately print. What is being pinned
+# is that the real native binary ran through the installed launcher and answered in
+# one of build/config.zig's shapes — not which one, since that is a property of the
+# checkout the binary was built from.
+version_ok() {
+  case "$1" in
+    "$VERSION" | "v$VERSION" | unknown) return 0 ;;
+  esac
+  [[ "$1" =~ $version_stamp_re ]]
+}
+
+# The matcher's own self-test, because the defect it replaces was invisible from
+# the outside: a pattern that accepts garbage passes this suite exactly as a
+# correct one does, so only driving it with garbage can tell them apart. Every
+# rejected string below was ACCEPTED by the `v*-dev.*+*` glob. Pure string
+# matching, no process spawns — it costs nothing to run on every invocation.
+for good in "$VERSION" "v$VERSION" unknown \
+            "v0.1.1-dev.85+e1d7033" "v0.11.2-dev.0+0123456789abcdef0123"; do
+  version_ok "$good" || fail "version_ok rejected the legitimate stamp '$good'"
+done
+for bad in "v-dev.+" "v1-dev.x+" "v0.1.1-dev.12+" "v0.1.1-dev.+e1d7033" \
+           "v0.1.1-dev.12+zzzzzzz" "v0.1.1-dev.12+E1D7033" \
+           "v0.1.1-dev.12+e1d7033-dirty" "0.1.1-dev.12+e1d7033" \
+           "v$VERSION-rc.1" "Unknown" ""; do
+  ! version_ok "$bad" || fail "version_ok accepted the malformed stamp '$bad'"
+done
+echo "ok: the version matcher takes every shape build/config.zig emits and no other"
+
 expect_version() {
   local name="$1"; shift
   local rc=0 got last
@@ -546,13 +608,12 @@ expect_version() {
     fail "$name — expected exit 0, got $rc"
   fi
   last="$(printf '%s\n' "$got" | grep -v '^[[:space:]]*$' | tail -1)"
-  case "$last" in
-    "$VERSION" | v"$VERSION"* | unknown) echo "ok: $name (reported '$last')" ;;
-    *)
-      printf '%s\n' "$got" | sed 's/^/    /'
-      fail "$name — last line '$last' is neither '$VERSION' nor 'unknown'"
-      ;;
-  esac
+  if version_ok "$last"; then
+    echo "ok: $name (reported '$last')"
+  else
+    printf '%s\n' "$got" | sed 's/^/    /'
+    fail "$name — last line '$last' is none of '$VERSION', 'v$VERSION', a 'v<tag>-dev.<n>+<sha>' stamp, or 'unknown'"
+  fi
 }
 
 REAL_PROJ="$WORK/proj-real"

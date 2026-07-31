@@ -1,6 +1,6 @@
 .{
     .name = .zigapagos,
-    .version = "0.1.1",
+    .version = "0.2.0",
     .fingerprint = 0xdd20b203a298a456,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
