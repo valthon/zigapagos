@@ -51,7 +51,13 @@ fail() { echo "FAIL: $*"; exit 1; }
 # --- (e) locator: nothing anywhere -> clear instructions ------------------------
 # Run FIRST, before the stub goes on PATH. Skipped when the machine has a real
 # zigbase (PATH) or the pinned release in the cache — the locator would find it.
-CACHE_PIN="${XDG_CACHE_HOME:-$HOME/.cache}/zigapagos/zigbase/v0.11.0/zigbase"
+# The pinned version comes from the file that owns it, not a copy: this check
+# has to name the SAME cache dir the locator builds, and a stale literal here
+# would look at an empty directory, decide no zigbase exists, and then run the
+# case with one on the machine after all.
+PIN="$(sed -n 's/^[[:space:]]*pub const pinned_version[[:space:]]*=[[:space:]]*"\(v\{0,1\}[0-9.]*\)".*/\1/p' "$REPO/src/cli/zigbase.zig")"
+[[ -n "$PIN" ]] || fail "could not read pinned_version from src/cli/zigbase.zig"
+CACHE_PIN="${XDG_CACHE_HOME:-$HOME/.cache}/zigapagos/zigbase/$PIN/zigbase"
 if command -v zigbase >/dev/null 2>&1 || [[ -x "$CACHE_PIN" ]]; then
   echo "SKIP: locator-missing case (a zigbase exists on this machine: $(command -v zigbase || echo "$CACHE_PIN"))"
 else
@@ -63,7 +69,7 @@ else
   grep -q "zigbase binary not found" "$WORK/nozb.log" || { cat "$WORK/nozb.log"; fail "locator failure lacks the not-found message"; }
   grep -q -- "--zigbase=" "$WORK/nozb.log" || { cat "$WORK/nozb.log"; fail "locator failure lacks the --zigbase= option"; }
   grep -q -- "--download-zigbase" "$WORK/nozb.log" || { cat "$WORK/nozb.log"; fail "locator failure lacks the --download-zigbase option"; }
-  grep -q "v0.11.0" "$WORK/nozb.log" || { cat "$WORK/nozb.log"; fail "locator failure lacks the pinned version"; }
+  grep -q -- "$PIN" "$WORK/nozb.log" || { cat "$WORK/nozb.log"; fail "locator failure lacks the pinned version"; }
   echo "PASS: locator failure is actionable (PATH / --zigbase= / pinned cache instructions)"
 fi
 

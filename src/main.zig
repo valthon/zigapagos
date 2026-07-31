@@ -162,7 +162,7 @@ pub fn main(init: std.process.Init) u8 {
             }
         }
 
-        @import("cli/serve.zig").serve(io, gpa, args[1..]) catch fatal.oom();
+        @import("cli/serve.zig").serve(io, gpa, args[1..], init.environ_map) catch fatal.oom();
     };
 
     const any_error = switch (cmd) {
@@ -234,14 +234,27 @@ test "serve" {
     _ = @import("cli/serve.zig");
 }
 
-// Pull e2e.zig (and, via its top-level import, zigbase.zig) into the test
-// compilation unit for `zig build test-e2e`. e2e.zig is only @import-ed from
-// inside main()'s function body (the `zigapagos e2e` dispatch), so — same as
-// the anchors above — Zig's lazy analysis skips its test blocks unless
-// something forces eager inclusion. `test-e2e` filters on "e2e", which
-// matches this anchor AND every `test "e2e …"` block in e2e.zig/zigbase.zig.
+// Pull e2e.zig AND zigbase.zig into the test compilation unit for
+// `zig build test-e2e`. e2e.zig is only @import-ed from inside main()'s function
+// body (the `zigapagos e2e` dispatch), so — same as the anchors above — Zig's
+// lazy analysis skips its test blocks unless something forces eager inclusion.
+// `test-e2e` filters on "e2e", which matches this anchor AND every
+// `test "e2e …"` block in e2e.zig/zigbase.zig.
+//
+// zigbase.zig needs its OWN line here. It was previously left to e2e.zig's
+// top-level `const zigbase = @import("zigbase.zig")`, on the assumption that
+// importing e2e.zig drags it in — the same assumption build/tests.zig's
+// `test-assets` comment already records as false: a top-level `const` is
+// analyzed only when analyzed code references it, and in a FILTERED compile the
+// only analyzed code is the matching tests. Nothing in e2e.zig's own `test
+// "e2e …"` blocks touches `zigbase`, so all four `test "e2e zigbase: …"` blocks
+// went unanalyzed and `test-e2e` reported success without running them — an
+// assertion made deliberately impossible still passed. Adding a suite whose
+// filter matches an anchor is not enough; every FILE the suite is meant to
+// cover has to be reachable from the anchor's body.
 test "e2e" {
     _ = @import("cli/e2e.zig");
+    _ = @import("cli/zigbase.zig");
 }
 
 // Pull dev.zig into the test compilation unit for `zig build test-dev`.

@@ -420,7 +420,17 @@ export async function bundleSpa(args: SpaBundleArgs): Promise<void> {
   await Bun.write(args.depfile, makeDepfile(resolve(args.chunksJson), deps));
 }
 
-if (import.meta.main) {
+/**
+ * The driver's whole command line, as a function.
+ *
+ * Split out of the `import.meta.main` block so `bundle-standalone.ts` — the
+ * entry a toolchain-free install uses, which must register the bundled
+ * `@z/runtime` before any SPA entry is imported — can run the SAME argument
+ * parsing and the SAME two modes rather than reimplementing them. Reading
+ * `process.argv` directly (instead of taking an argv parameter) keeps both
+ * entry points on one code path with nothing to thread through.
+ */
+export async function runBundleCli(): Promise<void> {
   const get = (k: string) => {
     const a = process.argv.find((x) => x.startsWith(`--${k}=`));
     return a ? a.slice(k.length + 3) : undefined;
@@ -465,3 +475,5 @@ if (import.meta.main) {
     });
   }
 }
+
+if (import.meta.main) await runBundleCli();

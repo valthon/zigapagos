@@ -123,12 +123,19 @@ const exe_module: []const ExeModule = &.{
         .checked = true,
         .repo_root_cwd = true,
     },
-    // The "parse" filter matches main.zig's anchor AND the actual test in
+    // The "parse" filter matches main.zig's anchor AND the actual tests in
     // release.zig ("parse recognizes the island sidecar args").
+    //
+    // Every filter here is a SUBSTRING of a test name, and a test whose name
+    // matches none of them is silently not built — so a new test in this file is
+    // not run until its name is covered. That is how a test can pass with the fix
+    // AND without it: it never executed either time. `discoverEntries` and
+    // `containsComponent` are listed because the toolchain-free island/SPA scan is
+    // named for what it does rather than for `parse`.
     .{
         .step_name = "test-release",
-        .description = "Run release CLI Command.parse unit tests",
-        .filters = &.{"parse"},
+        .description = "Run release CLI Command.parse + entry-discovery unit tests",
+        .filters = &.{ "parse", "discoverEntries", "containsComponent" },
     },
     // SPA prerender helper unit tests (path/manifest/shell helpers in
     // src/spa.zig: spaName, defaultBase, substituteParams, joinUrl,

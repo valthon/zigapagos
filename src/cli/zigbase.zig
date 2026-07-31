@@ -23,7 +23,19 @@ const fatal = @import("../fatal.zig");
 /// The ZigBase release zigapagos is pinned to: the latest published release,
 /// verified against this harness. (The `.spa`-marker contract needs >= 0.10.0;
 /// the `serve` CLI flags used by e2e are identical from v0.10.0 through main.)
-pub const pinned_version = "v0.11.0";
+///
+/// v0.12.0 ships four BREAKING changes, none of which reach this consumer:
+/// they are all library/embedding API (`RequestArena` replacing bare
+/// `Allocator` on the request seams, `jwt.sign` gaining `error.TokenTooLarge`),
+/// a build option only a from-source embedder passes (`-Ddev-clock` renamed
+/// `-Ddev-mode`), or a file-download token rule for hand-built URLs. zigapagos
+/// drives a PREBUILT zigbase as a standalone binary over its `serve` CLI, and
+/// that surface is byte-identical across the two tags: diffing `src/cli.zig`
+/// between v0.11.0 and v0.12.0 shows the only additions are the new `import`
+/// subcommand and `typegen --lang/--package`, with `serve`'s flags
+/// (`--http-host`, `--http-port`, `--data-dir`, `--serve-static`,
+/// `--insecure-cookies`) and their defaults untouched.
+pub const pinned_version = "v0.12.0";
 
 /// The GitHub repo the pinned release is published under.
 pub const release_repo = "valthon/zigbase";
@@ -248,7 +260,19 @@ pub fn missingMessage(
         \\(production-faithful: real same-origin API + '.spa'-marker SPA fallback).
         \\Nothing is ever downloaded without you asking. Pick one:
         \\
-        \\  1. install 'zigbase' on your PATH, or
+        \\  1. install zigbase on your PATH. In an npm project that is
+        \\     `npm i -D @zigbase/server@{s}`, with no flag: npm puts
+        \\     node_modules/.bin on PATH for `npm run` scripts and for `npx`, and
+        \\     this search reads PATH. (A bare shell does not, so use one of
+        \\     those.) The SCOPED package at that exact version, not the bare
+        \\     `zigbase` alias -- the alias was published exactly once, so 0.12.0
+        \\     is the only version it will ever have. It matches the pin above
+        \\     only for as long as the pin stays there; the next bump leaves you
+        \\     with a zigbase that is not the one option 3 downloads. Only the
+        \\     scoped package carries the whole release history, so only it can
+        \\     follow this pin. (Installing zigapagos itself from npm already brings
+        \\     this along, so you are here only if you got zigapagos some other
+        \\     way.) Or
         \\  2. point at a binary explicitly: --zigbase=/path/to/zigbase
         \\     (from build.zig: E2eOptions/DevOptions .zigbase_path), or
         \\  3. let zigapagos fetch the pinned release ({s}) for you: re-run with
@@ -259,6 +283,7 @@ pub fn missingMessage(
         \\     binary there yourself works too.)
         \\
     , .{
+        pinned_version[1..],
         pinned_version,
         release_repo,
         pinned_version,
@@ -288,6 +313,28 @@ test "e2e zigbase: empty environment yields null (and a message that still guide
     try std.testing.expect(std.mem.indexOf(u8, msg, "zigbase binary not found") != null);
     try std.testing.expect(std.mem.indexOf(u8, msg, pinned_version) != null);
     try std.testing.expect(std.mem.indexOf(u8, msg, "--download-zigbase") != null);
+    // The npm route is a real answer to option 1, verified end to end: the
+    // dependency's bin lands in node_modules/.bin, which `locate` scans, so `dev`
+    // boots with no flag. It is named here because this message is where a user
+    // actually is when they need it, and an npm project is now a first-class way
+    // to get zigapagos (see npm/).
+    //
+    // The SCOPED package, at the pinned version. The bare `zigbase` alias was
+    // published exactly once, so 0.12.0 is the only version it will ever have:
+    // it happens to equal today's pin and stops matching at the next bump, at
+    // which point advising it here would hand the user a different zigbase than
+    // option 3 of this very message downloads -- the install-path split that
+    // npm/check-toolchain.mjs exists to prevent, reintroduced through the
+    // guidance instead of the manifest. That the two agree right now is exactly
+    // why the wording has to name the alias rather than the version.
+    try std.testing.expect(
+        std.mem.indexOf(u8, msg, "npm i -D @zigbase/server@" ++ pinned_version[1..]) != null,
+    );
+    try std.testing.expect(std.mem.indexOf(u8, msg, "not the bare") != null);
+    // ...along with the one condition that makes it fail: outside `npm run`/`npx`,
+    // node_modules/.bin is not on PATH, and then the advice above looks broken.
+    try std.testing.expect(std.mem.indexOf(u8, msg, "node_modules/.bin") != null);
+    try std.testing.expect(std.mem.indexOf(u8, msg, "bare shell") != null);
 }
 
 test "e2e zigbase: cachedPath honors XDG_CACHE_HOME, then HOME/.cache" {
@@ -317,7 +364,7 @@ test "e2e zigbase: cachedPath honors XDG_CACHE_HOME, then HOME/.cache" {
 }
 
 test "e2e zigbase: release asset name + URL match the channel's naming" {
-    // Verified against `gh release view v0.11.0` (valthon/zigbase): assets are
+    // Verified against `gh release view v0.12.0` (valthon/zigbase): assets are
     // zigbase-<ver>-<target>.tar.gz plus SHA256SUMS, under
     // github.com/valthon/zigbase/releases/download/<tag>/.
     const gpa = std.testing.allocator;

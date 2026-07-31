@@ -1,10 +1,14 @@
 name: Release
 
-# Runs in two modes, and the difference is exactly one job.
+# Runs in two modes, and the difference is exactly two jobs.
 #
-#   push of a v* tag   build every target, then PUBLISH the GitHub release.
-#   pull_request /     build every target and stop. No release, no tag, no
-#   workflow_dispatch  write permission.
+#   push of a v* tag   build every target, then PUBLISH the GitHub release, and —
+#                      if and only if the repo variable NPM_PUBLISH_ENABLED is
+#                      'true' — publish the npm packages built from those same
+#                      archives.
+#   pull_request /     build every target, assemble and INSTALL-TEST the npm
+#   workflow_dispatch  packages, and stop. No release, no upload, no tag, no
+#                      write permission.
 #
 # The smoke mode exists because the publish path used to be reachable only by
 # pushing a tag: a typo in this file, a broken target, or a missing CHANGELOG
@@ -23,6 +27,12 @@ on:
       - 'build.zig.zon'
       - 'scripts/assert-version.sh'
       - 'scripts/extract-release-notes.sh'
+      # The npm packages are cut from this workflow's own archives, so a change to
+      # either side belongs on the same smoke path. tests/npm/ is here rather than
+      # only in ci.yml because the version of it that matters runs against the real
+      # ReleaseFast binary, which only exists on this workflow.
+      - 'npm/**'
+      - 'tests/npm/**'
   workflow_dispatch:
 
 # Read-only by default; only the publishing job elevates.
@@ -136,6 +146,78 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # --- npm distribution -------------------------------------------------------
+  # Assemble the three npm packages from the archives `build` just produced, pack
+  # them, and install-test them. Runs on EVERY trigger, including pull requests:
+  # the whole point of this workflow's smoke mode is that a packaging mistake is
+  # executed for real before a tag, and npm is worse than the GitHub release in
+  # that respect — a published version cannot be replaced, only deprecated.
+  #
+  # It CONSUMES the archives rather than rebuilding. A rebuild from the same commit
+  # is a second chance to be different, and it would double the release's compile
+  # time for bytes that must be identical anyway.
+  npm-package:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      # Before anything is packed: build/release.zig, npm/cli/targets.json and this
+      # file's matrix must name the same targets. A stale targets.json publishes a
+      # platform package whose binary nobody built — an install that resolves and
+      # then cannot run. ci.yml runs the same gate on every PR through
+      # tests/npm/targets.sh; here it guards the release itself.
+      - name: Release target drift gate
+        run: node npm/check-targets.mjs
+
+      # And the dependency ranges @zigapagos/cli publishes: preact from
+      # runtime/package.json, @zigbase/server from src/cli/zigbase.zig's
+      # pinned_version, bun from mise.toml. A zigbase range that has drifted from
+      # the pin ships a CLI whose `dev` installs one version over npm and
+      # downloads another on a PATH miss. ci.yml runs the same gate on every PR
+      # through tests/npm/toolchain.sh; here it guards the release itself.
+      - name: Toolchain dependency drift gate
+        run: node npm/check-toolchain.mjs
+
+      - name: Download every target's archive
+        uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+
+      # Generates the manifests, extracts one binary per platform package out of
+      # the archives, verifies the version pins and the exec bits, and packs all
+      # three. No registry contact: publish.mjs uploads only with --publish.
+      - name: Assemble, verify and pack the npm packages
+        run: node npm/publish.mjs --archives dist --pack tarballs
+
+      # The same install e2e ci.yml runs, but pointed at the binary that is about
+      # to be published rather than at a Debug build: pack, `npm install --offline`
+      # into throwaway projects, and run the CLI through both @zigapagos/cli and
+      # the bare `zigapagos` alias. This is the only place the ReleaseFast musl
+      # binary is executed through the npm launcher.
+      - name: Install and run the packaged CLI (tests/npm/packaging.sh)
+        env:
+          ZIGAPAGOS_BIN: ${{ github.workspace }}/npm/cli-linux-x64/zigapagos
+        run: bash tests/npm/packaging.sh
+
+      # Kept for one day so a failed or suspicious release can be inspected —
+      # `tar tzf` on the exact tarball the publish job would have uploaded.
+      - name: Upload the npm tarballs
+        uses: actions/upload-artifact@v7
+        with:
+          name: npm-tarballs
+          path: tarballs/*.tgz
+          if-no-files-found: error
+          retention-days: 1
+
   publish:
     # Tag pushes only: a PR or dispatch run stops after `build`.
     if: github.event_name == 'push'
@@ -199,3 +281,78 @@ jobs:
             --notes-file RELEASE_NOTES.md \
             --verify-tag \
             dist/*
+
+  publish-npm:
+    # THREE conditions, and each one is a separate deliberate act.
+    #
+    #   1. a v* tag push — a PR or dispatch run never reaches this job at all;
+    #   2. the repository VARIABLE NPM_PUBLISH_ENABLED set to 'true'. Until someone
+    #      sets it, this job is skipped and a tag ships exactly what it ships today.
+    #      It is a variable and not a secret because `vars` is the only one of the
+    #      two contexts allowed in a job-level `if`;
+    #   3. the repository SECRET NPM_TOKEN, checked in the first step below. If the
+    #      variable is on and the secret is missing, this fails loudly rather than
+    #      half-publishing.
+    #
+    # `needs: npm-package` is load-bearing beyond ordering: nothing is uploaded
+    # until the same tree has been packed, installed and run.
+    if: github.event_name == 'push' && vars.NPM_PUBLISH_ENABLED == 'true'
+    needs: [npm-package, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      # npm --provenance signs the package against this workflow run.
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: 'https://registry.npmjs.org'
+
+      # Re-asserted rather than inherited, for the same reason the GitHub-release
+      # job re-asserts it: `needs` says the other jobs passed, not that this one
+      # checked out what they did. The npm versions come from build.zig.zon, so a
+      # mismatch here would publish a version the tag does not name.
+      - name: Check tag against build.zig.zon
+        run: scripts/assert-version.sh "$GITHUB_REF_NAME"
+
+      - name: Require an npm token
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::error::NPM_PUBLISH_ENABLED is set but the NPM_TOKEN secret is missing." \
+                 "Add it in Settings → Secrets and variables → Actions, or unset" \
+                 "NPM_PUBLISH_ENABLED. See npm/README.md."
+            exit 1
+          fi
+
+      - name: Release target drift gate
+        run: node npm/check-targets.mjs
+
+      # And the dependency ranges @zigapagos/cli publishes: preact from
+      # runtime/package.json, @zigbase/server from src/cli/zigbase.zig's
+      # pinned_version, bun from mise.toml. A zigbase range that has drifted from
+      # the pin ships a CLI whose `dev` installs one version over npm and
+      # downloads another on a PATH miss. ci.yml runs the same gate on every PR
+      # through tests/npm/toolchain.sh; here it guards the release itself.
+      - name: Toolchain dependency drift gate
+        run: node npm/check-toolchain.mjs
+
+      - name: Download every target's archive
+        uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+
+      # Platform packages first, then @zigapagos/cli, then the bare `zigapagos`
+      # alias — publish.mjs enforces that order and skips any version already on
+      # the registry, so a partially failed release is safe to re-run.
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: node npm/publish.mjs --archives dist --publish --provenance

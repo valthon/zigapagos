@@ -41,3 +41,28 @@ test("readSourcesOrFail returns null (fallback) when a captured CODE file cannot
   ]);
   expect(res).toBeNull();
 });
+
+// ── The slicer must be reached LAZILY, so typescript stays optional ─────────
+
+// `slice-host.ts` does `import ts from "typescript"` at module scope. This file
+// is shipped inside @zigapagos/cli, where typescript is an OPTIONAL dependency —
+// so on an install that skipped it, a VALUE import of slice-host.ts here makes
+// this whole module unloadable and fails the build outright, for a step that is
+// only ever an optimization (`loadSlicer` falls back to the shared runtime).
+//
+// That is exactly what happened: a hermetic npm install died with "Cannot find
+// package 'typescript'". The property is a source-level one — whether the edge
+// is static or dynamic — so it is asserted on the source. A behavioural test
+// cannot reach it: Bun resolves node_modules by walking up from the FILE, so a
+// test process cannot hide typescript from a module in this tree.
+test("build-spa-runtime imports slice-host lazily, never as a static value import", async () => {
+  const src = await Bun.file(join(import.meta.dir, "build-spa-runtime.ts")).text();
+  // A type-only import is erased at runtime, so it is fine and expected.
+  expect(src).toContain('import type { Source, HostMember } from "./slice-host.ts"');
+  // Any non-`type` static import of it is the defect.
+  const staticValueImport = /^import\s+(?!type\b)[^;]*from\s+["']\.\/slice-host\.ts["']/m;
+  expect(staticValueImport.test(src)).toBe(false);
+  // ...and the lazy edge has to actually be there, or the first assertion would
+  // pass on a file that simply stopped slicing.
+  expect(src).toContain('await import("./slice-host.ts")');
+});

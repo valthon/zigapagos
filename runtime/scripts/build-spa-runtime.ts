@@ -23,7 +23,9 @@ import { reactAliasBuildPlugin, resolveOverridePlugin } from "./react-alias.ts";
 import { makeDepfile, findTsconfig, siteConfigFor, retargetSourceMappingUrl } from "../sidecar/bundle-island.ts";
 import { effectiveResolveMap } from "./z-runtime-config.ts";
 import { siteDataPlugin } from "./site-data.ts";
-import { analyzeHostUsage, generateSlicedHost, type Source, type HostMember } from "./slice-host.ts";
+// TYPE-ONLY, so this module can be loaded without `typescript` on the resolution
+// path — see `loadSlicer`. A value import here would be eager and fatal.
+import type { Source, HostMember } from "./slice-host.ts";
 
 // Every code-module extension Bun may load as a source that could `import { host }`
 // or a compat/react specifier: ts/tsx/js/jsx + the mjs/cjs/mts/cts variants. A
@@ -122,14 +124,47 @@ function slicedHostPlugin(slicedSource: string, resolveDir: string): BunPlugin {
   };
 }
 
+/**
+ * `slice-host.ts`, or null when it cannot be loaded — which in practice means
+ * `typescript` is not resolvable, since the slicer parses every source with the
+ * TS compiler API.
+ *
+ * WHY LAZY, AND WHY NOT FATAL. `typescript` is a devDependency of the runtime
+ * package: a repo checkout that has run `bun install` always has it, and a
+ * consumer's tree may not — `@zigapagos/cli` declares it only as an
+ * OPTIONAL dependency, so `--omit=optional` (or any install that skips it) leaves
+ * this module resolvable and its analysis impossible. An eager import turned that
+ * into a hard build failure with a message about a package the user never named.
+ *
+ * Returning null instead routes it into the SAFE-FALLBACK this file already has
+ * for every other "cannot prove what this SPA uses" case: no per-SPA runtime, the
+ * shared `/zigapagos-runtime.js`, worst case = the pre-slicing behaviour. Slicing
+ * is a size optimization; not being able to do it must never fail a build.
+ * `sidecar/hot-transform.ts` degrades on the same dependency the same way.
+ */
+async function loadSlicer(): Promise<typeof import("./slice-host.ts") | null> {
+  try {
+    return await import("./slice-host.ts");
+  } catch (e) {
+    console.error(
+      "build-spa-runtime: the host slicer is unavailable (typescript not resolvable?) — " +
+        "this SPA will use the shared runtime:",
+      e,
+    );
+    return null;
+  }
+}
+
 export async function buildSpaRuntime(args: SpaRuntimeArgs): Promise<{ fallback: boolean }> {
   mkdirSync(args.outdir, { recursive: true });
 
   // (1) capture + (2) analyze. A captured CODE file that fails to read forces the
-  // SAFE-FALLBACK (readSourcesOrFail returns null) — never a silent drop.
+  // SAFE-FALLBACK (readSourcesOrFail returns null) — never a silent drop. So does
+  // an unloadable slicer (see `loadSlicer`).
+  const slicer = await loadSlicer();
   const captured = await captureSpaSources(args.entry);
-  const sources = readSourcesOrFail(captured);
-  const used = sources === null ? null : analyzeHostUsage(sources);
+  const sources = slicer === null ? null : readSourcesOrFail(captured);
+  const used = sources === null ? null : slicer!.analyzeHostUsage(sources);
 
   // Deps common to both outcomes: the SPA's transitive sources + tsconfig + stamp.
   const baseDeps = [
@@ -146,7 +181,8 @@ export async function buildSpaRuntime(args: SpaRuntimeArgs): Promise<{ fallback:
   }
 
   // (3) SLICED: bundle spa-entry.ts with host.ts aliased to the generated slice.
-  const slicedSource = generateSlicedHost(used, {
+  // `slicer` is non-null here: `used` is only non-null when it loaded.
+  const slicedSource = slicer!.generateSlicedHost(used, {
     hostModule: args.hostModule, ssrEnvModule: args.ssrEnvModule, name: args.name,
   });
   const captured2 = new Set<string>();
