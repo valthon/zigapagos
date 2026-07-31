@@ -88,6 +88,7 @@ out_has() { printf '%s\n' "$out" | grep -qF -- "$1"; }
 has() { grep -qF -- "$2" "$1"; }
 hasnt() { ! grep -qF -- "$2" "$1"; }
 hasre() { grep -qE -- "$2" "$1"; }
+hasntre() { ! grep -qE -- "$2" "$1"; }
 
 t="$(mktemp -d)"
 trap 'rm -rf "$t"' EXIT
@@ -312,9 +313,16 @@ cat > "$t/c12/changelog.d/two.md" << 'EOF'
 
 - extractable internal bullet
 EOF
-expect_exit 0 "assembles into a copy of the real CHANGELOG.md" "$t/c12" 0.2.0 2026-08-05
+# The scratch version must be one the real CHANGELOG.md can never carry. The assembler
+# refuses to write a second `## [<version>]` section — a duplicate would shadow the first
+# for extract-release-notes.sh — so any plausible version hardcoded here becomes a failing
+# test on the day the project actually releases it. This case was written with `0.2.0` and
+# broke on exactly that release. `99.0.0` is unreachable, and the value is arbitrary: the
+# insert anchor is the first `## [<digit>` heading regardless of what the version is.
+scratch_version=99.0.0
+expect_exit 0 "assembles into a copy of the real CHANGELOG.md" "$t/c12" "$scratch_version" 2026-08-05
 notes="$t/c12/notes.txt"
-if extract "$t/c12/CHANGELOG.md" 0.2.0 > "$notes" 2> /dev/null; then
+if extract "$t/c12/CHANGELOG.md" "$scratch_version" > "$notes" 2> /dev/null; then
     pass "the extractor locates the assembled section by its heading"
 else
     fail "the extractor locates the assembled section by its heading"
@@ -322,7 +330,12 @@ fi
 check "extracted notes are non-empty" test -s "$notes"
 check "extracted notes carry the first section's bullets" has "$notes" '- extractable added bullet'
 check "extracted notes carry the last section's bullets" has "$notes" '- extractable internal bullet'
-check "extracted notes stop before the next release's heading" hasnt "$notes" '## [0.1.0]'
+# Asserted as "no version heading at all" rather than naming the section that happens to
+# sit below this one today: the assembler inserts above the newest release, so the adjacent
+# heading changes every time one ships. The contract being pinned is the extractor's, that a
+# section stops at the next `## ` — which is exactly "the notes contain no version heading".
+check "extracted notes stop before the next release's heading" \
+    hasntre "$notes" '^## \['
 check "extracted notes carry none of the next release's bullets" \
     hasnt "$notes" 'First public release. Fork point'
 check "extracted notes do not leak the preamble" hasnt "$notes" 'Two things to know'

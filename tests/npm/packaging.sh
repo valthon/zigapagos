@@ -530,13 +530,28 @@ REAL_PLAT_TGZ="$REAL_TARBALLS/zigapagos-cli-$KEY-$VERSION.tgz"
 [[ -f "$REAL_PLAT_TGZ" ]] || fail "expected $REAL_PLAT_TGZ"
 
 # `zigapagos version` prints the version the BINARY was stamped with, which
-# build/config.zig derives from `git describe` AT BUILD TIME. That is `v<zon
-# version>...` on a tagged or full-history build and the literal `unknown` on a
-# shallow one — ci.yml's build-binary job does not fetch tags, so the artifact this
-# runs against in CI says `unknown` while the release workflow's says the real
-# version. Accept either and nothing else: what is being pinned is that the real
-# native binary ran through the installed launcher and answered, not what its build
-# stamped into it.
+# build/config.zig derives from `git describe` AT BUILD TIME. Three shapes are
+# legitimate:
+#
+#   v<zon version>...        a tagged or full-history build
+#   unknown                  a shallow build — ci.yml's build-binary job does not
+#                            fetch tags, so the artifact this runs against in CI
+#                            says `unknown` while the release workflow's says the
+#                            real version
+#   v<prev tag>-dev.<n>+<sha>  an untagged commit, where build/config.zig stamps
+#                            the tagged ANCESTOR plus a commit height
+#
+# The third shape is not an edge case, it is every release pull request: the tag
+# has to point at the commit that bumps build.zig.zon, so between the bump and the
+# tag `git describe` necessarily still reports the PREVIOUS version. Matching only
+# `v$VERSION*` made this assertion red for the whole life of every release PR — and
+# release.yml runs tests/npm/** on pull requests, so it would have been discovered
+# there every time.
+#
+# Accept those three and nothing else: what is being pinned is that the real native
+# binary ran through the installed launcher and answered, not what its build stamped
+# into it. (`unknown` is already the loosest of the three, so admitting a dev stamp
+# does not weaken the check.)
 expect_version() {
   local name="$1"; shift
   local rc=0 got last
@@ -547,10 +562,10 @@ expect_version() {
   fi
   last="$(printf '%s\n' "$got" | grep -v '^[[:space:]]*$' | tail -1)"
   case "$last" in
-    "$VERSION" | v"$VERSION"* | unknown) echo "ok: $name (reported '$last')" ;;
+    "$VERSION" | v"$VERSION"* | v*-dev.*+* | unknown) echo "ok: $name (reported '$last')" ;;
     *)
       printf '%s\n' "$got" | sed 's/^/    /'
-      fail "$name — last line '$last' is neither '$VERSION' nor 'unknown'"
+      fail "$name — last line '$last' is none of '$VERSION', a 'v<tag>-dev.<n>+<sha>' stamp, or 'unknown'"
       ;;
   esac
 }
