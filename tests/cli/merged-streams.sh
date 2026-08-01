@@ -15,9 +15,9 @@
 # the structured stdout of a command whose stderr was merged got corrupt input.
 #
 # The check is a byte-count identity plus a line-survival check, run against
-# three commands (`explain`, `doctor`, `validate`) because the four report
-# writers are separate call sites and a fix applied to one proves nothing about
-# the others:
+# all four report writers (`explain`, `doctor`, `validate` and
+# `migrate --doctor`) because they are separate call sites in separate files
+# and a fix applied to one proves nothing about the others:
 #
 #   (1) merged size == separate stdout size + separate stderr size. An
 #       overwrite makes the merged file SHORTER than the sum -- the bytes are
@@ -110,10 +110,16 @@ check() { # $1 = tag, $2 = cwd, remaining = argv
   [[ "$rc_split" -eq "$rc_merged" ]] \
     || fail "($tag) the two runs exited differently ($rc_split vs $rc_merged) -- not comparable"
 
+  # `wc -c <file`, not `stat -c%s`: `-c` is a GNU-coreutils spelling and BSD
+  # stat (macOS) wants `-f%z`, so this whole check would die there rather than
+  # report anything. Redirected, not passed as an argument, so `wc` prints the
+  # count alone with no filename to strip. Wrapped in `$(( ))` because BSD wc
+  # right-pads its count with spaces, which the arithmetic comparisons below
+  # tolerate but the failure messages would print verbatim.
   local n_out n_err n_merged
-  n_out=$(stat -c%s "$WORK/$tag.out")
-  n_err=$(stat -c%s "$WORK/$tag.err")
-  n_merged=$(stat -c%s "$WORK/$tag.merged")
+  n_out=$(( $(wc -c <"$WORK/$tag.out") ))
+  n_err=$(( $(wc -c <"$WORK/$tag.err") ))
+  n_merged=$(( $(wc -c <"$WORK/$tag.merged") ))
 
   [[ "$n_out" -gt 0 ]] || fail "($tag) wrote nothing to stdout -- this command cannot exercise the defect"
   [[ "$n_err" -gt 0 ]] || fail "($tag) wrote nothing to stderr -- nothing to clobber, so this check would be vacuous (a Debug build's banner normally guarantees it)"
