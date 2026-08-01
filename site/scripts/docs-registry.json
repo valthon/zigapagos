@@ -28,6 +28,13 @@
     "description": "Why Zigapagos ships no content-generator hook, and the four-piece recipe — registry, generator, gitignore, freshness gate — this site's own docs pages use instead."
   },
   {
+    "canonical": "docs/scripty.md",
+    "mirror": "scripty.smd",
+    "slug": "scripty",
+    "title": "Scripty reference",
+    "description": "Generated from the source: every builtin on every Scripty type, plus the SuperMD content directives."
+  },
+  {
     "canonical": "docs/build-errors.md",
     "mirror": "build-errors.smd",
     "slug": "build-errors",
