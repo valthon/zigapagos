@@ -16,6 +16,23 @@
 # this checkout, and nothing needs to be staged (the gate reads the filesystem,
 # not the index).
 set -euo pipefail
+
+# Portable in-place sed. BSD/macOS sed REQUIRES an argument to -i (a backup
+# suffix), so bare `sed_i 'expr' file` there consumes the expression as the
+# suffix and then fails on a file it cannot find -- a mangled test rather than a
+# clear error. Writing through a temp file works identically on both.
+#
+# `\n` in a replacement is the other half of the same problem: GNU sed expands
+# it to a newline, BSD sed emits a literal 'n'. The two call sites that need a
+# newline build it with $NL below, which is a backslash followed by a REAL
+# newline -- the form POSIX defines and both accept.
+sed_i() { # $1 = expression, $2 = file
+  local tmp
+  tmp=$(mktemp)
+  sed "$1" "$2" > "$tmp" && mv "$tmp" "$2"
+}
+NL='\
+'
 cd "$(git rev-parse --show-toplevel)"
 
 GATE="$PWD/tests/meta/runtime-deps-doc.sh"
@@ -128,7 +145,7 @@ check "a consistent tree passes" 0 "PASS"
 # ── 1. The command table is the command set ─────────────────────────────────
 
 newcase
-sed -i 's/^    e2e,$/    e2e,\n    doctor,/' "$d/src/main.zig"
+sed_i "s/^    e2e,\$/    e2e,${NL}    doctor,/" "$d/src/main.zig"
 check "a new subcommand with no table row is caught" 1 "has no row for: doctor"
 
 newcase
@@ -138,13 +155,13 @@ check "a table row for a command that does not exist is caught" 1 "documents com
 # `e2e` is the case that caught the gate's own first bug: a command whose name
 # contains a digit. Pinned so the character class cannot lose it again.
 newcase
-sed -i '/`zigapagos e2e`/d' "$d/docs/runtime-dependencies.md"
+sed_i '/`zigapagos e2e`/d' "$d/docs/runtime-dependencies.md"
 check "a dropped row for a digit-bearing command (e2e) is caught" 1 "has no row for: e2e"
 
 # ── 2. The pinned ZigBase version and its cache path ────────────────────────
 
 newcase
-sed -i 's/v9\.9\.9/v8.8.8/' "$d/src/cli/zigbase.zig"
+sed_i 's/v9\.9\.9/v8.8.8/' "$d/src/cli/zigbase.zig"
 check "a pin bump the page did not follow is caught" 1 "but the pin is"
 
 newcase
@@ -152,29 +169,29 @@ printf '\nAn older note mentions v1.2.3.\n' >> "$d/docs/runtime-dependencies.md"
 check "a second, stale version left on the page is caught" 1 "names version 'v1.2.3'"
 
 newcase
-sed -i 's/@zigbase\/server@9\.9\.9/@zigbase\/server@1.0.0/' "$d/docs/runtime-dependencies.md"
+sed_i 's/@zigbase\/server@9\.9\.9/@zigbase\/server@1.0.0/' "$d/docs/runtime-dependencies.md"
 check "a stale v-less @zigbase/server pin is caught" 1 "@zigbase/server@1.0.0"
 
 newcase
-sed -i 's|zigapagos/zigbase/v9\.9\.9/zigbase|zigapagos/zigbase/v0.0.1/zigbase|' "$d/docs/runtime-dependencies.md"
+sed_i 's|zigapagos/zigbase/v9\.9\.9/zigbase|zigapagos/zigbase/v0.0.1/zigbase|' "$d/docs/runtime-dependencies.md"
 check "a cache path the page quotes wrong is caught" 1 "does not quote the cache path"
 
 # Dropping the "zigbase" segment while `exe_name = "zigbase"` still sits two
 # lines up: the shape a per-segment check would wave through.
 newcase
-sed -i 's/"zigbase", pinned_version/pinned_version/' "$d/src/cli/zigbase.zig"
+sed_i 's/"zigbase", pinned_version/pinned_version/' "$d/src/cli/zigbase.zig"
 check "a cache path that lost a segment in the source is caught" 1 "no longer joins"
 
 # A `zig fmt` reflow to one element per line is not a change; the gate must not
 # read it as one.
 newcase
-sed -i 's/"zigapagos", "zigbase", pinned_version, exe_name/"zigapagos",\n        "zigbase",\n        pinned_version,\n        exe_name/' "$d/src/cli/zigbase.zig"
+sed_i "s|\"zigapagos\", \"zigbase\", pinned_version, exe_name|\"zigapagos\",${NL}        \"zigbase\",${NL}        pinned_version,${NL}        exe_name|" "$d/src/cli/zigbase.zig"
 check "a reflowed join list still passes" 0 "PASS"
 
 # ── 3. The runtime-tree environment variable ────────────────────────────────
 
 newcase
-sed -i 's/"ZP_RT_DIR"/"ZP_RUNTIME"/' "$d/src/cli/release.zig"
+sed_i 's/"ZP_RT_DIR"/"ZP_RUNTIME"/' "$d/src/cli/release.zig"
 check "a renamed runtime-dir variable is caught" 1 "never names the runtime-tree variable"
 
 # ── 4. @z/runtime is still private ──────────────────────────────────────────
@@ -190,24 +207,24 @@ printf 'tar.addDirectoryArg(runtime_tree);\n' >> "$d/build/release.zig"
 check "shipping a runtime tree inside an archive is caught" 1 "adds a runtime tree to an archive"
 
 newcase
-sed -i '/tar.addArg/d' "$d/build/release.zig"
+sed_i '/tar.addArg/d' "$d/build/release.zig"
 check "an archive that stopped carrying the bare binary is caught" 1 "no longer tars the bare binary"
 
 # ── 6. Every flag the page names still exists ───────────────────────────────
 
 newcase
-sed -i 's/"--no-download"//' "$d/src/cli/dev.zig"
+sed_i 's/"--no-download"//' "$d/src/cli/dev.zig"
 check "a flag the page names but dev no longer parses is caught" 1 "no longer parses --no-download"
 
 newcase
-sed -i 's/--download-zigbase//' "$d/docs/runtime-dependencies.md"
+sed_i 's/--download-zigbase//' "$d/docs/runtime-dependencies.md"
 check "a flag silently dropped from the page is caught" 1 "no longer mentions --download-zigbase"
 
 # ── Anti-vacuity ────────────────────────────────────────────────────────────
 # The two ways this gate could pass forever while checking nothing.
 
 newcase
-sed -i 's/^const Command = enum {$/const Cmd = enum {/' "$d/src/main.zig"
+sed_i 's/^const Command = enum {$/const Cmd = enum {/' "$d/src/main.zig"
 check "an unparseable command enum fails instead of passing quietly" 1 "parsed no commands"
 
 newcase
