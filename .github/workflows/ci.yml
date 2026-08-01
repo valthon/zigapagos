@@ -497,6 +497,54 @@ jobs:
           bun run scripts/gen-docs-mirror.ts
           zig build
 
+      # The built tree, downloadable from the run page (#51).
+      #
+      # pages.yml deploys only on push to main, so before this step there was no
+      # way to LOOK at the site a pull request produces. Every visual and content
+      # judgement in this project was made by grepping emitted HTML, which works
+      # for assertions and not at all for "does this page read well". The four
+      # scripts below are exactly that grep: they are the reason a broken site
+      # cannot merge, and they are no help at all in deciding whether a rewritten
+      # paragraph scans.
+      #
+      # No new build: the job above already produced site/zig-out/site, which is
+      # the identical path pages.yml hands to upload-pages-artifact. 1.2MB across
+      # 50 files, measured on this repo.
+      #
+      # Placed BEFORE the four assertion steps deliberately. A reviewer most wants
+      # to see the tree when a gate went red, and a step appended after them would
+      # be skipped in exactly that case. `if: always()` would cover it too, but
+      # then a FAILED BUILD — where there is no tree — would fail this step as
+      # well via if-no-files-found, reporting two problems for one cause.
+      #
+      # if-no-files-found: error rather than the default warning, because that
+      # flag is the closest thing this step can carry to a self-test: a path that
+      # stops being right (site/build.zig's `.output_path`, say) turns into a red
+      # job instead of a silently empty zip nobody opens until they need it.
+      #
+      # Unconditional rather than `if: github.event_name == 'pull_request'`: it is
+      # 1.2MB, and the same artifact is what you want from a workflow_dispatch on
+      # a branch or from a push-to-main run that deployed something surprising.
+      #
+      # TO VIEW IT: unzip, then serve it under the /zigapagos/ path prefix the
+      # HTML is built for — every script, stylesheet and prerendered SPA shell
+      # references it absolutely, so opening index.html over file:// shows an
+      # unstyled page. The site-browser job below does exactly this, and the same
+      # two commands work locally:
+      #
+      #     mkdir -p preview && unzip site-preview.zip -d preview/site
+      #     ln -s site preview/zigapagos
+      #     python3 -m http.server 8080 --bind 127.0.0.1 --directory preview
+      #     # then open http://127.0.0.1:8080/zigapagos/
+      - name: Upload the built site (reviewable preview)
+        uses: actions/upload-artifact@v4
+        with:
+          name: site-preview
+          path: site/zig-out/site
+          # PR-review lifetime, not archival. The deployed site is the archive.
+          retention-days: 7
+          if-no-files-found: error
+
       # Five properties of the finished tree: index.html exists, the runtime URL
       # carries the /zigapagos/ Pages path prefix, the Counter island's client
       # bundle was emitted, the island was actually SSR'd, and no upstream
