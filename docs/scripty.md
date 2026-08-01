@@ -87,21 +87,21 @@ Fields:
 
 ### Site
 
-The global site configuration. The fields come from the call to 
-`website` in your `build.zig`.
+The global site configuration. The fields come from your 
+`zigapagos.ziggy`.
  
  Gives you also access to assets and static assets from the directories 
  defined in your site configuration.
 
 Fields:
 
-- `host_url` : String — The host URL, as defined in your `build.zig`.
-- `title` : String — The website title, as defined in your `build.zig`.
+- `host_url` : String — The host URL, as defined in your `zigapagos.ziggy`.
+- `title` : String — The website title, as defined in your `zigapagos.ziggy`.
 
 #### `Site.localeCode() -> String`
 
 In a multilingual website, returns the locale of the current 
-variant as defined in your `build.zig` file. 
+variant as defined in your `zigapagos.ziggy`. 
 
 ```superhtml
 <html lang="$site.localeCode()"></html>
@@ -110,7 +110,7 @@ variant as defined in your `build.zig` file.
 #### `Site.localeName() -> String`
 
 In a multilingual website, returns the locale name of the current 
-variant as defined in your `build.zig` file. 
+variant as defined in your `zigapagos.ziggy`. 
 
 ```superhtml
 <span :text="$site.localeName()"></span>
@@ -613,7 +613,7 @@ Fields:
 
 #### `Build.asset(String) -> Asset`
 
-Retuns a build-time asset (i.e. an asset generated through your 'build.zig' file) by name.
+Returns a build-time asset (one declared with `--build-asset=NAME PATH`) by name.
 
 ```superhtml
 <div :text="$build.asset('foo').bytes()"></div>
@@ -705,8 +705,8 @@ under the same relative path into the output directory.
     `content/post/bar.jpg` -> `public/post/bar.jpg`
   `assets/foo/bar/baz.jpg` -> `public/foo/bar/baz.jpg`
 
-Build assets will be installed under the path defined in
-your `build.zig`.
+Build assets will be installed under the path their
+`--install`/`--install-always` names.
 
 The result is root-relative. Use `absLink()` instead for a
 URL that is consumed outside the page and therefore has to
