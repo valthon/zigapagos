@@ -28,6 +28,13 @@
     "description": "Why Zigapagos ships no content-generator hook, and the four-piece recipe — registry, generator, gitignore, freshness gate — this site's own docs pages use instead."
   },
   {
+    "canonical": "docs/superhtml.md",
+    "mirror": "superhtml.smd",
+    "slug": "superhtml",
+    "title": "SuperHTML directives",
+    "description": "Every SuperHTML template construct in one page: the five colon directives, ctx/extend/super, and an explicit list of what does not exist."
+  },
+  {
     "canonical": "docs/observability.md",
     "mirror": "observability.smd",
     "slug": "observability",
