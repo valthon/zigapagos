@@ -25,6 +25,7 @@ const sidecar = @import("islands/sidecar.zig");
 const fatal = @import("fatal.zig");
 const PathName = @import("PathTable.zig").PathName;
 const RenderArena = @import("islands/render_arena.zig").RenderArena;
+const BuildSummary = @import("summary.zig").Summary;
 
 const log = std.log.scoped(.islands);
 
@@ -153,7 +154,18 @@ fn deleteStaleSlicedRuntime(io: std.Io, alloc: std.mem.Allocator, out_dir: std.I
     }
 }
 
-pub fn prerenderAll(io: std.Io, gpa: std.mem.Allocator, build: *Build, cfg: *const root.Config) !void {
+/// `collect` is the optional `--summary` inventory (issue #42): non-null only
+/// for a `zigapagos release --summary`, and written to beside each `writeFile`
+/// below so the report cannot drift from what this pass actually wrote. It is
+/// a parameter rather than a field on `*Build` because `root.run` returns its
+/// `Build` by value and the collector lives on that function's frame.
+pub fn prerenderAll(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    build: *Build,
+    cfg: *const root.Config,
+    collect: ?*BuildSummary,
+) !void {
     const spa_specs = build.spas;
     if (spa_specs.len == 0) return;
     const sc = &(build.island_sidecar orelse return error.SpaNeedsSidecar);
@@ -476,6 +488,7 @@ pub fn prerenderAll(io: std.Io, gpa: std.mem.Allocator, build: *Build, cfg: *con
             const skeleton = try renderSkeleton(sc, arena, src, prefixed_pathname, norm_prefix);
             const html = try renderShell(arena.a, title, noindex, bundle_url, runtime_url, chunk_url, norm_prefix, head_for_shell, desc.spa.flags, skeleton);
             try writeFile(io, out_dir, planned.out_path, html);
+            if (collect) |sm| try sm.add(gpa, .spa_shell, planned.out_path);
             if (planned.static_url) |u| {
                 try static_urls.append(arena.a, u);
                 if (chunk_url) |cu| try chunk_entries.append(arena.a, .{ .url = u, .chunk = cu });
@@ -508,6 +521,7 @@ pub fn prerenderAll(io: std.Io, gpa: std.mem.Allocator, build: *Build, cfg: *con
                     const skeleton_c = try renderSkeleton(sc, arena, src, prefixed_pathname_c, norm_prefix);
                     const html_c = try renderShell(arena.a, title, noindex, bundle_url, runtime_url, chunk_url, norm_prefix, head_for_shell, desc.spa.flags, skeleton_c);
                     try writeFile(io, out_dir, planned_c.out_path, html_c);
+                    if (collect) |sm| try sm.add(gpa, .spa_shell, planned_c.out_path);
                     try static_urls.append(arena.a, u);
                     // A lazy pattern route's chunk backs its concrete pages too.
                     if (chunk_url) |cu| try chunk_entries.append(arena.a, .{ .url = u, .chunk = cu });
@@ -530,6 +544,7 @@ pub fn prerenderAll(io: std.Io, gpa: std.mem.Allocator, build: *Build, cfg: *con
         const manifest = try renderManifest(arena.a, url_base, static_urls.items, dynamics.items, chunk_entries.items, fallback, bundle_url, deploy_target, norm_prefix);
         const manifest_path = try diskJoin(arena.a, disk_prefix, "routing-manifest.json");
         try writeFile(io, out_dir, manifest_path, manifest);
+        if (collect) |sm| try sm.add(gpa, .spa_manifest, manifest_path);
     }
 
     // Universal 404 fallback = the 404-owner SPA's "/" shell, captured above
@@ -537,6 +552,7 @@ pub fn prerenderAll(io: std.Io, gpa: std.mem.Allocator, build: *Build, cfg: *con
     if (owner_root_shell) |shell| {
         defer gpa.free(shell);
         try writeFile(io, out_dir, "404.html", shell);
+        if (collect) |sm| try sm.add(gpa, .spa_fallback, "404.html");
     } else {
         std.log.warn(
             "spa: skipping 404.html — the 404-owner SPA ({s}) has no \"/\" route",

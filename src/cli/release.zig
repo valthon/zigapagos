@@ -154,6 +154,7 @@ pub fn release(
         .changed_files = changed_files,
         .island_manifest_path = island_manifest_path,
         .allow_missing_pages = cmd.allow_missing_pages,
+        .summary = cmd.summary,
     }) catch fatal.oom();
 
     defer if (builtin.mode == .Debug) build.deinit(io, gpa);
@@ -282,6 +283,11 @@ pub const Command = struct {
     /// historical multi-line prose; json emits one NDJSON diagnostic per line
     /// on stderr with a stable `code`. See `src/diag.zig`.
     format: diag.Format = .text,
+    /// `--summary` (issue #42): print an inventory of the files this build
+    /// emitted, grouped by category, on stdout after every pass has run. See
+    /// `root.Options.summary`. Off by default — a build that prints a page list
+    /// nobody asked for is noise on a 5,000-page site.
+    summary: bool = false,
 
     pub fn deinit(co: *const Command, gpa: Allocator) void {
         gpa.free(co.spas);
@@ -308,6 +314,7 @@ pub const Command = struct {
         var spa_not_found: ?[]const u8 = null;
         var allow_missing_pages = false;
         var format: diag.Format = .text;
+        var summary = false;
         // src -> spa-chunks.json path. Collected separately because `--spa-chunks`
         // args precede the `--spa=` args, so the specs don't exist yet; attached
         // to the specs after the arg loop.
@@ -443,6 +450,8 @@ pub const Command = struct {
                 drafts = true;
             } else if (eql(u8, arg, "--allow-missing-pages")) {
                 allow_missing_pages = true;
+            } else if (eql(u8, arg, "--summary")) {
+                summary = true;
             } else if (startsWith(u8, arg, "--format=")) {
                 const v = arg["--format=".len..];
                 format = diag.parseFormat(v) orelse fatal.usageError(
@@ -478,6 +487,7 @@ pub const Command = struct {
             .spas = try spas.toOwnedSlice(gpa),
             .spa_not_found = spa_not_found,
             .allow_missing_pages = allow_missing_pages,
+            .summary = summary,
             .format = format,
         };
     }
@@ -518,6 +528,9 @@ const help_message =
     \\  --format=FORMAT       text (default) | json -- emit diagnostics as
     \\                        NDJSON on stderr with stable error codes; see
     \\                        'zigapagos explain-code'
+    \\  --summary             After the build, print on stdout an inventory of
+    \\                        the files it emitted, grouped by category (pages,
+    \\                        assets, SPA shells and routing manifests)
     // \\  --build-assets FILE    Path to a file containing a list of build assets
     \\  --help, -h            Show this help menu
     \\
@@ -1262,6 +1275,20 @@ test "parse leaves slice_json null when no --spa-slice is given" {
     var cmd = try Command.parse(gpa, &.{"--spa=app/App.spa.tsx|/app"});
     defer cmd.deinit(gpa);
     try std.testing.expect(cmd.spas[0].slice_json == null);
+}
+
+test "parse recognizes --summary (and defaults it to false)" {
+    // Issue #42. The default matters as much as the flag: a `zig build website`
+    // that started printing a page inventory nobody asked for would be a
+    // regression on every site with more than a handful of pages.
+    const gpa = std.testing.allocator;
+    var cmd = try Command.parse(gpa, &.{"--summary"});
+    defer cmd.deinit(gpa);
+    try std.testing.expect(cmd.summary);
+
+    var cmd_default = try Command.parse(gpa, &.{"--force"});
+    defer cmd_default.deinit(gpa);
+    try std.testing.expect(!cmd_default.summary);
 }
 
 test "parse recognizes --allow-missing-pages (and defaults it to false)" {
