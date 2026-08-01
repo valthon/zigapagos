@@ -1,10 +1,7 @@
 ---
 .title = "Overview",
 .description = "What Zigapagos is, how a build runs, and when to reach for it.",
-.date = @date("2026-07-27T00:00:00"),
-.author = "Zigapagos",
 .layout = "docs.shtml",
-.draft = false,
 .custom = { .slug = "overview" },
 ---
 
@@ -61,4 +58,5 @@ The [quick start]($link.page("docs/quick-start")) has a site building in about
 five minutes. The [tutorial]($link.page("docs/tutorial")) builds a real one. If
 you are coming from Astro, read
 [migrating from Astro]($link.page("docs/migrate-from-astro")) first — much of
-the conversion is mechanical and `zigapagos migrate` does it for you.
+the conversion is mechanical, and `zigapagos migrate` inventories the project
+into a worklist to work through. It writes the worklist, not the ported site.

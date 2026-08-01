@@ -637,6 +637,12 @@ Flag these during migration; use the workaround:
    zigapagos migrate src/my-astro-site -o MIGRATION.md
    ```
 
+   That report is the only thing `migrate` produces. It reads `<astro-dir>` and
+   converts nothing in it: steps 2-7 below are the conversion, and the mapping
+   sections above are what they follow. The one exception is `--scaffold DIR`,
+   which writes a starter island per detected island — React imports already
+   rewritten, `interface Props` carried over — as a head start on step 4.
+
 2. **Static layer**: convert each `src/pages/*.astro` → `content/*.smd` (§4) and
    each `src/layouts/*.astro` → `layouts/*.shtml` (§5). Map routing per §3.
 3. **Inventory islands**: list every component used with a `client:*` directive.

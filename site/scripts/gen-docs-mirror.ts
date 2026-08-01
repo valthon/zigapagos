@@ -8,7 +8,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { frontmatter, transformBody, ziggyRaw } from "./md-to-smd.ts";
+import { frontmatter, transformBody } from "./md-to-smd.ts";
 
 interface Entry {
   canonical: string;
@@ -69,13 +69,14 @@ for (const entry of REGISTRY) {
     },
   });
   const out =
+    // Only what a docs page actually needs. `date`, `author` and `draft` have
+    // defaults in src/context/Page.zig and no site layout renders them, so
+    // emitting them wrote three dead fields into every mirror -- and stamped a
+    // publication date on a generated page that has none (issue #57).
     frontmatter({
       title: entry.title,
       description: entry.description,
-      date: ziggyRaw('@date("2026-07-27T00:00:00")'),
-      author: "Zigapagos",
       layout: "docs.shtml",
-      draft: false,
       custom: { slug: entry.slug, canonical: entry.canonical },
     }) + body;
   writeFileSync(join(SITE_DIR, "content/docs", entry.mirror), out);

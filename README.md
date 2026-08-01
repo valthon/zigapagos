@@ -47,9 +47,11 @@ map. No island on the page? Zero JavaScript shipped.
   soft navigation, route guards, nested layouts. Host-agnostic routing
   manifests (ZigBase / Nginx / Apache) generated for you.
 - **LLM-native Astro migration** — `zigapagos migrate <astro-dir>` detects
-  `client:*` component usage and emits ready-to-follow scaffolds with the
-  React → `@z/runtime` import swaps already applied. The docs are written as a
-  deterministic mapping spec so an AI agent can complete a migration unattended.
+  `client:*` component usage and writes a `MIGRATION.md` worklist; opt into
+  `--scaffold` and it also emits a starter island per detected island with the
+  React → `@z/runtime` import swaps already applied. It converts no page, layout
+  or config itself — the docs are written as a deterministic mapping spec so an
+  AI agent can complete the migration unattended.
 - **Batteries-included dev server** — instant rebuilds with live reload over
   SSE, an API reverse proxy (`--proxy`) for cookie-auth backends, and live
   feature flags.

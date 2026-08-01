@@ -1,10 +1,7 @@
 ---
 .title = "Quick start",
 .description = "Install the toolchain, generate a site, and see it rebuild as you edit.",
-.date = @date("2026-07-27T00:00:00"),
-.author = "Zigapagos",
 .layout = "docs.shtml",
-.draft = false,
 .custom = { .slug = "quick-start" },
 ---
 
@@ -43,6 +40,25 @@ mkdir my-site && cd my-site
 a devlog, the layouts that render them, and the assets they reference. It is
 worth reading before deleting — the sample copy demonstrates SuperMD syntax you
 will otherwise have to look up.
+
+## Write a page
+
+A content file opens with a Ziggy frontmatter block. Two fields are required:
+
+```
+---
+.title = "About",
+.layout = "page.shtml",
+---
+```
+
+`.title` is the page's title and `.layout` names the template in `layouts/` that
+renders it. Every other field has a default — `.description` and `.author` are
+empty, `.date` is the Unix epoch, `.draft` is `false`, `.tags`, `.aliases` and
+`.alternatives` are empty lists — so add one when something reads it, not by
+habit. A blog post needs `.date` because the listing layout renders it for each
+entry; a landing page usually needs neither a date nor an author, and the
+scaffold `init` writes reflects that.
 
 ## Run the development server
 

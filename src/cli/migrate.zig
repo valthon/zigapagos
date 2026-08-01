@@ -13,6 +13,14 @@ const usage =
     \\Astro source file to its Zigapagos target, the islands to port, and the
     \\standard migration procedure. Follow docs/migration/astro-to-zigapagos.md.
     \\
+    \\IT CONVERTS NOTHING. <astro-dir> is read, never written. No .astro page
+    \\becomes an .smd, no layout becomes an .shtml, no astro.config becomes a
+    \\zigapagos.ziggy. The port is yours to carry out (or your agent's);
+    \\MIGRATION.md is the worklist for it and the guide above is the mapping
+    \\spec it follows. The one exception is --scaffold, which writes a STARTER
+    \\island per detected island into a separate directory you name -- a head
+    \\start on one step of that worklist, not a finished port.
+    \\
     \\Options:
     \\  -o, --output PATH      Report path (default: MIGRATION.md)
     \\  --scaffold DIR         Write a starter TSX island per island into DIR.
@@ -1057,4 +1065,33 @@ test "scaffoldIslands real-port path rewrites React imports and frees its scratc
     try std.testing.expect(std.mem.indexOf(u8, out, "import { useState } from \"@z/runtime\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "NO-NPM-GUARDRAIL") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "react-google-recaptcha") != null);
+}
+
+test "usage says outright that migrate converts nothing" {
+    // Issue #40: this project itself wrote copy claiming `migrate` "applies the
+    // mappings" three times before catching it, and a fourth survived into a
+    // published page description. The tool's own help is where that belief starts,
+    // and it never contradicted it — it described what migrate DOES (scan, write a
+    // worklist) and left the reader to infer the much larger set of things it does
+    // not. Inference is exactly what went wrong four times.
+    //
+    // So the disclaimer is load-bearing copy, pinned the way src/fatal.zig pins the
+    // live-reload help: a reword may move it, but it may not drop it.
+    const usage_text = usage;
+    try std.testing.expect(std.mem.indexOf(u8, usage_text, "CONVERTS NOTHING") != null);
+    // The three conversions a reader most plausibly assumes happen. Naming the
+    // target extensions is what makes the denial concrete rather than a hedge.
+    try std.testing.expect(std.mem.indexOf(u8, usage_text, ".smd") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage_text, ".shtml") != null);
+    // --scaffold is the single exception, and the denial is false unless it is
+    // named as one INSIDE the denial paragraph itself. The search is bounded to
+    // that paragraph on purpose: the Options block underneath always lists
+    // `--scaffold DIR`, so searching to the end of the usage string would hold
+    // even with the exception sentence deleted -- and an assertion that cannot
+    // fail pins nothing.
+    const nothing_at = std.mem.indexOf(u8, usage_text, "CONVERTS NOTHING").?;
+    const after_denial = usage_text[nothing_at..];
+    const options_at = std.mem.indexOf(u8, after_denial, "\nOptions:") orelse
+        return error.DenialParagraphNoLongerPrecedesOptions;
+    try std.testing.expect(std.mem.indexOf(u8, after_denial[0..options_at], "--scaffold") != null);
 }
