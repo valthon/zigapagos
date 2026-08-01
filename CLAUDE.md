@@ -46,12 +46,12 @@ bash tests/spa/prerender-order.sh           # one shell e2e script
 ```
 
 **`zig build test` does NOT run the unit tests.** It builds the three-root snapshot fixtures and
-diffs them. The Zig unit tests live in fifteen separate steps, and CI runs them explicitly:
+diffs them. The Zig unit tests live in sixteen separate steps, and CI runs them explicitly:
 
 ```sh
 zig build test-islands test-props test-migrate test-sidecar test-init \
   test-release test-spa test-assets test-e2e test-dev \
-  test-doctor test-slugs test-validate test-explain test-diag
+  test-doctor test-slugs test-validate test-explain test-diag test-summary
 ```
 
 **Running a single test.** Each `test-*` step is already a *filtered slice* of one test binary.

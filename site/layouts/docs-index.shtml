@@ -22,6 +22,18 @@
       <a class="card" href="$site.page('docs/spa').link()">
         <h3>Native SPAs</h3><p>One .spa.tsx to a client-routed app.</p>
       </a>
+      <a class="card" href="$site.page('docs/testing').link()">
+        <h3>Testing a built site</h3><p>Assertions for the output tree, with a self-test.</p>
+      </a>
+      <a class="card" href="$site.page('docs/scripty').link()">
+        <h3>Scripty reference</h3><p>Every builtin, generated from the source.</p>
+      </a>
+      <a class="card" href="$site.page('docs/build-errors').link()">
+        <h3>Common build errors</h3><p>Message, cause, fix — for the first hour.</p>
+      </a>
+      <a class="card" href="$site.page('docs/superhtml').link()">
+        <h3>SuperHTML directives</h3><p>The template constructs, and what does not exist.</p>
+      </a>
       <a class="card" href="$site.page('docs/migrate-from-astro').link()">
         <h3>From Astro</h3><p>The deterministic mapping, and the migrate command.</p>
       </a>

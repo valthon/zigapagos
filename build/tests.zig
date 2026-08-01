@@ -79,6 +79,15 @@ const standalone: []const Standalone = &.{
         .description = "Run diagnostic-code registry tests",
         .root_source_file = "src/diag.zig",
     },
+    // `--summary` emitted-artifact inventory (issue #42). Std-only for the same
+    // reason `test-diag` is: the collector deliberately knows nothing about the
+    // build — it takes paths and prints them — so it needs no deps and belongs
+    // in `standalone`, where `-Dsingle-threaded` covers it via `check`.
+    .{
+        .step_name = "test-summary",
+        .description = "Run build-summary inventory tests",
+        .root_source_file = "src/summary.zig",
+    },
 };
 
 /// A suite compiled from `zigapagos_exe.root_module`.

@@ -1358,16 +1358,25 @@ fn clientDirective(tag_text: []const u8) ?Client {
 /// schedules (islands.ts: load | idle | visible | media | only). An unknown
 /// name (e.g. a typo like `client:visable`) or a value on a non-media
 /// directive (e.g. Astro's `client:only="react"`) previously slipped through
-/// silently — the island would never hydrate, or the value leaked out as a
-/// stray data-z-media attribute. Fail the build instead; worker.zig's handler
-/// (`log.err("island rendering error on {s}: {s}", ...)` at src/worker.zig:1084)
+/// silently — and silently is the whole of it, NOT "never hydrated":
+/// islands.ts's `schedule()` has no error path, so an unrecognised name falls
+/// into its `default:` branch and mounts the island IMMEDIATELY. The typo
+/// quietly degrades the directive to `client:load` rather than breaking
+/// anything visible; the stray value, meanwhile, leaked out as a bogus
+/// data-z-media attribute. Fail the build instead; worker.zig's handler
+/// (`log.err("island rendering error on {s}: {s}", ...)` in `renderPage`)
 /// adds the page path, while the logs here carry the offending directive text —
 /// on a page with several islands the error name alone doesn't say which one.
 /// The logs are gated on `!builtin.is_test` because Zig's test runner fails the
 /// whole test step on any `.err`-level log, even when every test's assertions
 /// pass — the error-path tests below would turn a green suite red.
 fn validateClientDirective(cd: Client) error{ UnknownClientDirective, UnexpectedClientDirectiveValue, MissingMediaQuery }!void {
-    if (cd.name.len == 0) return; // no client:* attribute: SSR-only island
+    // No client:* attribute at all. Nothing to validate — but note this is NOT
+    // an SSR-only island: pass.zig still emits `data-z-client=""`, the runtime's
+    // `[data-z-client]` selector matches on attribute presence, and `schedule()`
+    // mounts it from `default:`. See docs/islands.md, "Omitting `client:`
+    // entirely".
+    if (cd.name.len == 0) return;
     const known = [_][]const u8{ "load", "idle", "visible", "media", "only" };
     for (known) |k| {
         if (std.mem.eql(u8, cd.name, k)) break;
@@ -1377,8 +1386,11 @@ fn validateClientDirective(cd: Client) error{ UnknownClientDirective, Unexpected
     }
     if (std.mem.eql(u8, cd.name, "media")) {
         // client:media with no query — or an empty one (`client:media=""`) —
-        // would never mount client-side (islands.ts's media case has no query
-        // to match) — a silent-never-hydrate trap.
+        // is not a never-hydrate: islands.ts's media case reads
+        // `el.dataset.zMedia || "all"`, and `all` matches in every browser, so
+        // the island would mount immediately for every visitor. The directive
+        // silently becomes `client:load`, which is the opposite of what an
+        // author writing `client:media` asked for.
         if (cd.value == null or cd.value.?.len == 0) {
             if (!builtin.is_test) std.log.err("'client:media' requires a media query value, e.g. client:media=\"(min-width: 600px)\"", .{});
             return error.MissingMediaQuery;
@@ -2454,8 +2466,9 @@ test "validateClientDirective rejects unknown names, stray values, and a query-l
     // it loudly instead of silently emitting it as a stray data-z-media attribute.
     try std.testing.expectError(error.UnexpectedClientDirectiveValue, validateClientDirective(.{ .name = "only", .value = "react" }));
     try std.testing.expectError(error.UnexpectedClientDirectiveValue, validateClientDirective(.{ .name = "load", .value = "x" }));
-    // client:media with no query would never mount client-side (islands.ts's media
-    // case has no query to match) — a silent-never-hydrate trap.
+    // client:media with no query would mount IMMEDIATELY for every visitor, not
+    // never: islands.ts's media case falls back to `matchMedia("all")`. The
+    // silent failure is a lost deferral, not a lost island.
     try std.testing.expectError(error.MissingMediaQuery, validateClientDirective(.{ .name = "media" }));
     // An EMPTY query (`client:media=""`) is the same trap as a missing one.
     try std.testing.expectError(error.MissingMediaQuery, validateClientDirective(.{ .name = "media", .value = "" }));

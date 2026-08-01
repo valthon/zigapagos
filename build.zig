@@ -68,9 +68,14 @@ pub fn build(b: *std.Build) !void {
     const zigapagos_exe = exe.addZigapagosExe(b, cfg.exeConfig());
 
     release.setup(b, cfg.version);
-    docgen.setup(b, cfg);
+    const docgen_reference_exe = docgen.setup(b, cfg);
 
     const check = exe.addCheckStep(b, zigapagos_exe);
+    // The Scripty reference generator walks src/context/* with @typeInfo, so a
+    // context-type change can break it. Folding it into `check` means that
+    // breaks at the usual gate rather than the next time someone regenerates
+    // docs/scripty.md. (docgen.setup runs above, before `check` exists.)
+    check.dependOn(&docgen_reference_exe.step);
     exe.addRunStep(b, zigapagos_exe);
 
     tests.setup(b, cfg, zigapagos_exe, check);

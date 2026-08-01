@@ -380,7 +380,8 @@ jobs:
           zig build \
             test-islands test-props test-migrate test-sidecar test-init \
             test-release test-spa test-assets test-e2e test-dev \
-            test-doctor test-slugs test-validate test-explain test-diag
+            test-doctor test-slugs test-validate test-explain test-diag \
+            test-summary
 
       - name: Runtime TypeScript tests (Bun)
         working-directory: runtime

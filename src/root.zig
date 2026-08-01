@@ -12,6 +12,8 @@ const supermd = @import("supermd");
 const fatal = @import("fatal.zig");
 const diag = @import("diag.zig");
 const fingerprint = @import("fingerprint.zig");
+/// The `--summary` emitted-artifact inventory (issue #42).
+const BuildSummary = @import("summary.zig").Summary;
 const worker = @import("worker.zig");
 const context = @import("context.zig");
 const Build = @import("Build.zig");
@@ -687,6 +689,17 @@ pub const Options = struct {
     /// `build/api.zig` when the rebuild command is a project's `zig build`.
     /// A flag on `dev` would have nothing to forward it to.
     allow_missing_pages: bool = false,
+    /// `zigapagos release --summary` (issue #42): print an inventory of the
+    /// files this build emitted, grouped by category, once every pass has run.
+    ///
+    /// Read-only bookkeeping — collecting it cannot reorder or skip a pass, and
+    /// the report prints after the asset-install phase, which must stay last.
+    /// The two early returns below (`mode == .memory`, `incremental`) skip it
+    /// for free and correctly: the live server emits no tree at all, and an
+    /// incremental rebuild re-emits only the pages that changed, so an
+    /// inventory of *this* run would read as if the rest of the site had
+    /// vanished.
+    summary: bool = false,
     /// The introspection commands (`zigapagos validate`, `zigapagos explain`)
     /// deliberately run a full in-memory build with NO island sidecar: their
     /// whole point is to check/report on content, layouts and links without
@@ -736,6 +749,19 @@ pub fn run(
     };
     _ = arena_state.reset(.retain_capacity);
 
+    // `--summary` (issue #42). A live-server build emits no tree at all, so the
+    // collector stays null there and every `if (collect)` below compiles to
+    // nothing measurable for the two modes that do not print it.
+    //
+    // Kept as a LOCAL and threaded by pointer rather than parked on `*Build`:
+    // `run` returns its `Build` BY VALUE, so a field pointing at this frame
+    // would be a dangling pointer in the returned copy the moment the function
+    // ends. `prerenderAll` — the one pass outside this file that emits files —
+    // takes it as an explicit parameter for the same reason.
+    var summary: BuildSummary = .{};
+    defer summary.deinit(gpa);
+    const collect: ?*BuildSummary = if (options.summary and options.mode == .disk) &summary else null;
+
     // Spawn the island sidecar once for the entire build, stored on *Build so
     // Build.deinit kills it. If spawn fails, fatal.msg exits loudly.
     //
@@ -748,8 +774,53 @@ pub fn run(
     // two facts meet — worker.zig's renderPage, which knows both that the
     // sidecar is null and that this page actually asked for an island.
     if (options.bun_path) |bun| if (options.island_sidecar) |script| if (options.island_src_dir) |root_dir| {
-        build.island_sidecar = islands.Sidecar.spawn(io, bun, script, root_dir) catch |err| {
-            fatal.msg("error: failed to spawn island sidecar ({s} {s}): {s}\n", .{ bun, script, @errorName(err) });
+        build.island_sidecar = islands.Sidecar.spawn(io, bun, script, root_dir) catch |err| switch (err) {
+            // The three ENOENT cases get three messages, each naming the input
+            // that is actually missing (issue #82). The old single catch-all
+            // stringified the raw errno beside the bun+script pair, so the
+            // overwhelmingly common failure -- no `bun` on PATH -- read as
+            // "render.ts is missing" about a path that resolves. `Sidecar.spawn`
+            // does the disambiguation; this is where the fix goes into words.
+            //
+            // The bar is worker.zig's no-sidecar-configured diagnostic: name the
+            // cause AND the fix. The fix here is deliberately not "install bun":
+            // for an npm-installed consumer (#81) bun alone does not enable
+            // islands, because the sidecar script and `@z/runtime` are supplied
+            // by the Zig build integration and `@z/runtime` is unpublished.
+            error.InterpreterNotFound => fatal.msg(
+                "error: island sidecar interpreter not found: '{s}'\n" ++
+                    "  the sidecar script '{s}' resolves — the missing thing is the interpreter itself.\n" ++
+                    "  islands are server-rendered by bun at build time, wired up by build.zig's `.islands`\n" ++
+                    "  (bun, the sidecar script, and the island source dir). Note that installing bun on its\n" ++
+                    "  own is not enough for a toolchain-free install: the sidecar script and `@z/runtime`\n" ++
+                    "  come from that Zig build integration.\n",
+                .{ bun, script },
+            ),
+            // Says nothing about the interpreter, deliberately. `Sidecar.spawn`
+            // resolves the script BEFORE it spawns anything, so on this path
+            // `bun` was never executed and both inputs may well be missing.
+            // Exonerating one of them here would be #82's own defect —
+            // a confident claim about an input that was never checked — just
+            // pointed the other way. The interpreter case can afford the
+            // reverse sentence because it reaches its message only after the
+            // script has resolved.
+            error.SidecarScriptNotFound => fatal.msg(
+                "error: island sidecar script not found: '{s}'\n" ++
+                    "  this is the `render.ts` supplied by build.zig's `.islands` integration; point\n" ++
+                    "  `--island-sidecar` at it, or let build.zig's `.islands` wiring supply it.\n",
+                .{script},
+            ),
+            error.ProjectRootNotFound => fatal.msg(
+                "error: island source dir not found: '{s}'\n" ++
+                    "  the sidecar runs with that directory as its cwd, so bun resolves each island's\n" ++
+                    "  `@z/runtime` and JSX imports from the `node_modules` beneath it. Set it to the\n" ++
+                    "  site's project root in build.zig's `.islands`.\n",
+                .{root_dir},
+            ),
+            else => fatal.msg(
+                "error: failed to spawn island sidecar ({s} {s}): {s}\n",
+                .{ bun, script, @errorName(err) },
+            ),
         };
     };
     build.island_props_check_mode = options.island_props_check;
@@ -2476,7 +2547,7 @@ pub fn run(
     // (see the sidecar-spawn call above, and worker.zig's write call sites) —
     // failures are converted to a loud fatal exit rather than propagated.
     if (build.mode == .disk and !incremental) {
-        @import("spa.zig").prerenderAll(io, gpa, &build, cfg) catch |err| switch (err) {
+        @import("spa.zig").prerenderAll(io, gpa, &build, cfg, collect) catch |err| switch (err) {
             error.OutOfMemory => fatal.oom(),
             else => fatal.msg("error: SPA prerender failed: {s}\n", .{@errorName(err)}),
         };
@@ -2563,6 +2634,36 @@ pub fn run(
                         },
                     });
                 }
+
+                // `--summary` bookkeeping, recorded HERE — beside the jobs that
+                // do the writing, and past every `continue` that skips a page —
+                // so the inventory lists exactly the set this build emits
+                // rather than a second, independently-derived guess at it. The
+                // three path helpers are the ones `renderPage` itself formats
+                // its output paths with (and that `zigapagos explain` reports),
+                // so a divergence between the report and the tree would have to
+                // be a divergence inside a single shared function.
+                if (collect) |sm| {
+                    const main_path = try worker.mainOutputPath(gpa, build.cfg, v, p);
+                    defer gpa.free(main_path);
+                    try sm.add(gpa, .page, main_path);
+                    // `validOutputPath` mirrors `explain`: a page that reached
+                    // this loop has already passed analysis, which rejects an
+                    // invalid alias/alternative as a page error, so this filter
+                    // is belt-and-braces rather than load-bearing.
+                    for (p.aliases) |a| {
+                        if (!worker.validOutputPath(a)) continue;
+                        const alias_path = try worker.suffixedOutputPath(gpa, build.cfg, v, p, a);
+                        defer gpa.free(alias_path);
+                        try sm.add(gpa, .page_alias, alias_path);
+                    }
+                    for (p.alternatives) |alt| {
+                        if (!worker.validOutputPath(alt.output)) continue;
+                        const alt_path = try worker.suffixedOutputPath(gpa, build.cfg, v, p, alt.output);
+                        defer gpa.free(alt_path);
+                        try sm.add(gpa, .page_alternative, alt_path);
+                    }
+                }
             }
         }
 
@@ -2610,7 +2711,7 @@ pub fn run(
     // back to a full rebuild (empty `changed_files`), which runs every pass
     // as before.
     if (incremental) {
-        installBuildAssets(io, &build);
+        try installBuildAssets(io, gpa, &build, collect);
         return build;
     }
 
@@ -2700,6 +2801,7 @@ pub fn run(
                 // pass. Gated on `css_minify_driver` being threaded — only the
                 // disk-mode (release) build sets it, so the in-memory live
                 // server (dev loop) always takes the verbatim copy below.
+                if (collect) |sm| try sm.add(gpa, .site_asset, dest);
                 if (shouldMinifyCss(path, options)) {
                     installMinifiedCss(
                         io,
@@ -2724,10 +2826,34 @@ pub fn run(
         }
     }
 
-    installBuildAssets(io, &build);
+    try installBuildAssets(io, gpa, &build, collect);
 
     worker.wait(); // done installing assets
     progress_install_assets.end();
+
+    // Page assets are the ONE category not recorded at its write: they are
+    // installed by `Variant.installAssets` on the worker threads whose jobs
+    // were queued above. This re-states that function's filter (a `urls` entry
+    // of kind `.page_asset` with a non-zero refcount) and its install-path
+    // expression, so the two must be kept in step by hand — which is why
+    // `tests/summary/summary.sh` compares the whole printed set against the
+    // emitted tree rather than only spot-checking a path.
+    if (collect) |sm| {
+        for (build.variants) |*v| {
+            var url_it = v.urls.iterator();
+            while (url_it.next()) |entry| {
+                if (entry.value_ptr.kind != .page_asset) continue;
+                if (entry.value_ptr.kind.page_asset.raw == 0) continue;
+                var asset_buf: [std.fs.max_path_bytes]u8 = undefined;
+                const install_path = std.fmt.bufPrint(&asset_buf, "{s}{s}{f}", .{
+                    v.output_path_prefix,
+                    if (v.output_path_prefix.len > 0) "/" else "",
+                    entry.key_ptr.fmt(&v.string_table, &v.path_table, null, ""),
+                }) catch continue;
+                try sm.add(gpa, .page_asset, install_path);
+            }
+        }
+    }
 
     // Issue #54: every site asset whose refcount is still zero was just
     // silently dropped from the output. Say so. This runs only on the FULL
@@ -2736,6 +2862,59 @@ pub fn run(
     // the pages that changed and would report every asset the rest of the
     // site links as pruned.
     reportPrunedSiteAssets(gpa, &build);
+
+    // `--summary` (issue #42), printed LAST: the asset-install phase above must
+    // stay last among the passes, so this is the first moment the inventory is
+    // complete.
+    //
+    // On STDOUT, unlike the pruned-asset warning three lines up. That warning
+    // is a diagnostic the user did not ask for and belongs with the rest of the
+    // build's chatter; this is a report the user asked for by name, and the
+    // whole point of issue #42 is that somebody wanted to read (and grep, and
+    // diff) what a build emitted — which means it has to be separable from the
+    // build log. `--format=json`'s NDJSON diagnostics go to stderr, so stdout
+    // is free.
+    //
+    // A build with rendering errors gets a one-line refusal instead of an
+    // inventory. Its output tree is genuinely incomplete — `worker.zig` marks a
+    // failed page and carries on, and `cli/release.zig` turns the flag into a
+    // non-zero exit *after* this returns — so a list printed here would name
+    // files that were never written. Same fail-closed reasoning as
+    // `reportPrunedSiteAssets` and `writeIslandManifest`.
+    //
+    // The refusal goes to STDOUT TOO, through this same writer, and that is the
+    // whole reason the branch is inside the `if (collect)` rather than around
+    // it. It began life as a `std.debug.print`, which always targets stderr:
+    // `--summary`'s output stream then depended on the build's OUTCOME, so
+    // `zigapagos release --summary >inventory.txt` silently produced an empty
+    // file on the one run where the reader most needs to know why. Whichever
+    // stream a flag answers on, it has to be the same one every time — a
+    // caller cannot redirect conditionally on a result it has not seen yet.
+    // The refusal deliberately does NOT start with `build summary: `, so a
+    // script grepping for the report's header still tells a refusal apart from
+    // an inventory that happens to be empty.
+    if (collect) |sm| {
+        var out_buf: [8 * 1024]u8 = undefined;
+        // `writerStreaming`, not `writer`: the positional writer tracks its
+        // own file offset, which corrupts the output of `cmd >f 2>&1` where
+        // stderr has already advanced the shared one (issue #78).
+        var fw = std.Io.File.stdout().writerStreaming(io, &out_buf);
+        const w = &fw.interface;
+        if (build.any_rendering_error.load(.acquire)) {
+            w.writeAll(
+                "summary: not printed — this build had rendering errors, so its output tree is incomplete\n",
+            ) catch |err| fatal.msg("error writing the build summary to stdout: {t}\n", .{err});
+        } else {
+            sm.render(
+                w,
+                options.mode.disk.output_dir_path orelse "public",
+            ) catch |err| fatal.msg("error writing the build summary to stdout: {t}\n", .{err});
+        }
+        w.flush() catch |err| fatal.msg(
+            "error writing the build summary to stdout: {t}\n",
+            .{err},
+        );
+    }
 
     return build;
 }
@@ -3097,7 +3276,15 @@ fn reportPrunedSiteAssets(gpa: Allocator, build: *const Build) void {
 /// incremental rebuild must reinstall the freshly rebundled
 /// `islands/<name>.js` (an `install_always` asset, rc'd from the start), and
 /// `updateFile` is a cheap stat-compare no-op for unchanged files.
-fn installBuildAssets(io: Io, build: *const Build) void {
+/// Allocator contract: `gpa` is used only by the optional `--summary`
+/// collector, which owns what it stores (NO_SLOP.md §2.2a contract 2) and is
+/// freed by its owner in `run`; this function allocates nothing of its own.
+fn installBuildAssets(
+    io: Io,
+    gpa: Allocator,
+    build: *const Build,
+    collect: ?*BuildSummary,
+) error{OutOfMemory}!void {
     for (build.build_assets.values()) |ba| {
         // Avoid installing if already rc'd
         if (ba.rc.load(.acquire) > 0) {
@@ -3107,6 +3294,7 @@ fn installBuildAssets(io: Io, build: *const Build) void {
             // here; skip defensively rather than unwrapping a null optional,
             // mirroring the sibling install loop in spa.zig.
             const install_rel = std.mem.trimStart(u8, ba.install_path orelse continue, "/");
+            if (collect) |sm| try sm.add(gpa, .build_asset, install_rel);
             _ = build.base_dir.updateFile(
                 io,
                 ba.input_path,

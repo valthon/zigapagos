@@ -101,7 +101,17 @@ pub fn validate(
     // writer to land where callers (and the shell tests) expect it.
     var out_buf: [256]u8 = undefined;
     const stdout = Io.File.stdout();
-    var fw = stdout.writer(io, &out_buf);
+    // `writerStreaming`, not `writer`: `Io.File.writer` defaults to POSITIONAL
+    // writes, which track their own offset and ignore the file's shared one.
+    // With `cmd >f 2>&1` both descriptors point at ONE open file description,
+    // and stderr's `std.debug.print` has already advanced its offset by the
+    // time this buffered report flushes -- so a positional flush from offset
+    // zero overwrites what stderr committed, silently corrupting anything that
+    // parses the merged stream (issue #78). Streaming (positionless, appending)
+    // writes advance the shared offset instead. On a pipe or a tty the
+    // positional writer already fell back to streaming, so this changes
+    // behaviour in exactly the broken case and nowhere else.
+    var fw = stdout.writerStreaming(io, &out_buf);
     fw.interface.print("validate: OK — {d} page{s}, {d} layout{s}, 0 errors\n", .{
         pages,   if (pages == 1) "" else "s",
         layouts, if (layouts == 1) "" else "s",

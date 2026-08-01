@@ -4,6 +4,90 @@
 
 Zigapagos supports authoring and building first-class Single Page Applications (SPAs) using the same TypeScript + Bun + `@z/runtime` toolchain as islands. This document covers SPA authoring, the build rendering model, the runtime router API, and deployment configuration.
 
+## Quickstart: the smallest SPA that works
+
+Everything below this section is reference material. This is the on-ramp: two
+files, one build, a client-routed app with prerendered shells.
+
+An SPA is one `.spa.tsx` file exporting `spa` (where it lives), `routes` (what
+it renders) and a default component (usually a `Router` over those routes):
+
+```tsx
+import { Router, Link } from "@z/runtime";
+
+export const spa = { base: "/app", title: "Hello" };
+
+function Home() {
+  return (
+    <main>
+      <h1>Home</h1>
+      <Link href="/about">About</Link>
+    </main>
+  );
+}
+
+function About() {
+  return (
+    <main>
+      <h1>About</h1>
+      <Link href="/">Home</Link>
+    </main>
+  );
+}
+
+export const routes = [
+  { path: "/", component: Home },
+  { path: "/about", component: About },
+];
+
+export default function App() {
+  return <Router base={spa.base} routes={routes} />;
+}
+```
+
+Declare it in `build.zig`. The `.base` here **must** equal the `base` in
+`export const spa` — the build compares them and fails if they diverge:
+
+```zig
+const spas: []const zigapagos.Spa = &.{
+    .{ .root = b.path("app/app.spa.tsx"), .src = "app/app.spa.tsx", .base = "/app" },
+};
+
+const site = zigapagos.website(b, .{ .spas = spas, .output_path = "site" });
+b.getInstallStep().dependOn(&site.step);
+```
+
+`zig build` then emits, under the site's output tree:
+
+```
+app/index.html          prerendered shell for "/"    (Home, server-rendered)
+app/about/index.html    prerendered shell for "/about" (About, server-rendered)
+spa/app.js              the client bundle
+app/routing-manifest.json  what a host needs to serve the above
+```
+
+Two properties that fall out of this and are the whole point of the design:
+
+- **Every route is a real file.** A visitor deep-linking to `/app/about` gets
+  HTML with `About` already rendered into it, before any JavaScript runs. There
+  is no "loading…" frame and no blank page for a crawler.
+- **Navigation between them is soft.** `<Link>` is handled by the router, so
+  moving from `/app` to `/app/about` is a client render, not a document load.
+
+`href` on a `<Link>` is **base-relative**: `"/about"` means `/app/about`. The
+router composes the base — and the site's `url_path_prefix`, if it has one — so
+the same source works at the root of a domain and under a project-pages subpath.
+
+Both routes here are static. A route with a parameter (`/club/:id`) is a
+*dynamic* route, needs a `skeleton`, and prerenders differently — that is the
+first thing to read about next ([2. Classifies routes](#2-classifies-routes)),
+along with [guards](#route-guards--gated-spas) and
+[nested layouts](#nested--layout-routes).
+
+The snippet above is not illustrative: `tests/spa/doc-quickstart.sh` extracts it
+from this page, builds a site out of it with the real binary, and asserts a
+shell was prerendered for each of its routes. If it stops working, CI says so.
+
 ## What an SPA is
 
 An SPA in Zigapagos is declared as a single `.spa.tsx` file that exports:
