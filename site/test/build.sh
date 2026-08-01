@@ -204,4 +204,43 @@ grep -q 'property="og:image" content="[^"]*og\.png"' "$OUT/index.html" \
 grep -q 'property="og:image" content="https://[^"]*og\.png"' "$OUT/index.html" \
   || { echo "FAIL: og:image is not an absolute URL"; exit 1; }
 
+# Task 11b: the DERIVED card is not stale (#44).
+#
+# og.png is rasterised from og.svg by a browser (site/scripts/rasterise-og.py)
+# and by nothing in `zig build` — the asset installer copies both files through
+# untouched. So an edit to the SVG leaves the PNG showing the previous artwork,
+# and every assertion above stays green: they check that og.png EXISTS and that
+# og:image points at it, which a stale file satisfies perfectly. The only thing
+# that can catch it is a record of which source the PNG was made from.
+#
+# The stamp holds sha256(og.svg) as of the last regeneration, and
+# rasterise-og.py writes it in the same run that writes the PNG. Content hash
+# rather than an mtime comparison on purpose: git does not preserve mtimes, so
+# in a fresh CI checkout both files carry the checkout time and "PNG older than
+# SVG" is never true — a timestamp gate here would be vacuously green.
+#
+# This lives in build.sh rather than in a workflow so it runs on both paths that
+# already call this script: ci.yml's PR-time `site` job and pages.yml's deploy
+# gate.
+if command -v sha256sum >/dev/null 2>&1; then
+  OG_HASH=$(sha256sum assets/og.svg | cut -d' ' -f1)
+elif command -v shasum >/dev/null 2>&1; then   # macOS ships no sha256sum
+  OG_HASH=$(shasum -a 256 assets/og.svg | cut -d' ' -f1)
+else
+  # Loudly, not silently. A skipped freshness check is indistinguishable from a
+  # passing one in the log, which is the whole failure mode this gate exists for.
+  echo "FAIL: neither sha256sum nor shasum is available to verify og.png freshness"; exit 1
+fi
+test -f scripts/og.svg.sha256 || {
+  echo "FAIL: scripts/og.svg.sha256 is missing — run 'python3 site/scripts/rasterise-og.py' to regenerate og.png and write the stamp"; exit 1; }
+OG_STAMP=$(tr -d '[:space:]' < scripts/og.svg.sha256)
+if [ "$OG_HASH" != "$OG_STAMP" ]; then
+  echo "FAIL: assets/og.svg changed but assets/og.png was not regenerated."
+  echo "      og.svg is now  $OG_HASH"
+  echo "      stamp records  $OG_STAMP"
+  echo "  Fix: python3 site/scripts/rasterise-og.py"
+  echo "       (rewrites assets/og.png AND refreshes scripts/og.svg.sha256; commit both)"
+  exit 1
+fi
+
 echo PASS

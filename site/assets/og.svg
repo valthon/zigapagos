@@ -1,3 +1,25 @@
+<!--
+  Hand-authored source for the site's Open Graph card. The file social scrapers
+  actually fetch is the RASTERISED og.png beside it (base.shtml's og:image);
+  this SVG is published too, but only for direct linking.
+
+  EDIT THIS FILE, THEN REGENERATE:
+
+      python3 site/scripts/rasterise-og.py
+
+  That one command rewrites og.png AND refreshes
+  site/scripts/og.svg.sha256, the stamp recording this file's content hash
+  at the last regeneration.
+  site/test/build.sh compares the stamp against the current hash and fails when
+  they differ, so a card edited here and not regenerated is caught on the pull
+  request rather than discovered months later in a link preview. (Content hash,
+  not mtime: git does not preserve mtimes, so a "PNG older than SVG" check would
+  be vacuous in a fresh CI checkout.)
+
+  See the script's docstring for why the rasteriser is a browser: the two
+  font-family stacks below are CSS system-font keywords, which the standalone
+  SVG rasterisers do not resolve.
+-->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
   <rect width="1200" height="630" fill="#0d1013"/>
   <circle cx="980" cy="150" r="26"  fill="#252c32"/>
