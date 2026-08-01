@@ -47,6 +47,8 @@ jobs:
   # living in a matrixed job.)
   gates:
     name: Text gates
+    # Longest successful run measured: 10s. A hang here sits for 15-45min.
+    timeout-minutes: 5
     runs-on: ubuntu-latest
     steps:
       # Both of the first two gates are `git grep` over the working tree, so
@@ -98,6 +100,10 @@ jobs:
   # the whole dependency tree.
   build-binary:
     name: Build zigapagos (${{ matrix.os }})
+    # Longest successful ubuntu run measured: 126s. Deliberately looser than
+    # the other jobs: this is a matrix job and the macOS leg does not run per
+    # PR (see the matrix note), so its duration is unmeasured here.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -213,6 +219,10 @@ jobs:
   build-test:
     needs: build-binary
     name: Build + unit tests (${{ matrix.os }})
+    # Longest successful ubuntu run measured: 211s. Deliberately looser than
+    # the other jobs: this is a matrix job and the macOS leg does not run per
+    # PR (see the matrix note), so its duration is unmeasured here.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -444,6 +454,8 @@ jobs:
   site:
     needs: build-binary
     name: Build the site (site/)
+    # Longest successful run measured: 55s. A hang here sits for 15-45min.
+    timeout-minutes: 6
     runs-on: ubuntu-latest
     env:
       ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
@@ -606,7 +618,8 @@ jobs:
     runs-on: ubuntu-latest
     # ~2 minutes expected (see above). 15 leaves room for a slow apt mirror or a
     # cold pip cache without letting a hung browser burn an hour.
-    timeout-minutes: 15
+    # Longest successful run measured: 86s.
+    timeout-minutes: 6
     env:
       ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
     steps:
@@ -764,6 +777,8 @@ jobs:
   e2e-astro-importer:
     needs: build-binary
     name: Shell e2e — Astro importer
+    # Longest successful run measured: 139s. A hang here sits for 15-45min.
+    timeout-minutes: 8
     runs-on: ubuntu-latest
     env:
       ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
@@ -855,6 +870,8 @@ jobs:
   e2e-dev-loop:
     needs: build-binary
     name: Shell e2e — dev loop + tsx-site e2e
+    # Longest successful run measured: 195s. A hang here sits for 15-45min.
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     env:
       ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
@@ -1044,6 +1061,8 @@ jobs:
   e2e-rest:
     needs: build-binary
     name: Shell e2e — everything else
+    # Longest successful run measured: 132s. A hang here sits for 15-45min.
+    timeout-minutes: 8
     runs-on: ubuntu-latest
     env:
       ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
