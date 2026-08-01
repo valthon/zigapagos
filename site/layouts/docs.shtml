@@ -146,6 +146,22 @@
             </ctx>
           </li>
           <li>
+            <ctx :if="$page.custom.get('slug').eql('assets')">
+              <a aria-current="page" href="$site.page('docs/assets').link()">Assets</a>
+            </ctx>
+            <ctx :if="$page.custom.get('slug').eql('assets').not()">
+              <a href="$site.page('docs/assets').link()">Assets</a>
+            </ctx>
+          </li>
+          <li>
+            <ctx :if="$page.custom.get('slug').eql('diagnostics')">
+              <a aria-current="page" href="$site.page('docs/diagnostics').link()">Machine-readable diagnostics</a>
+            </ctx>
+            <ctx :if="$page.custom.get('slug').eql('diagnostics').not()">
+              <a href="$site.page('docs/diagnostics').link()">Machine-readable diagnostics</a>
+            </ctx>
+          </li>
+          <li>
             <ctx :if="$page.custom.get('slug').eql('observability')">
               <a aria-current="page" href="$site.page('docs/observability').link()">Observability</a>
             </ctx>
