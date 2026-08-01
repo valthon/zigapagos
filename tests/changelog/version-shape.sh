@@ -4,14 +4,15 @@
 #
 # WHY THIS EXISTS. `zigapagos version` prints, verbatim, the string build/config.zig
 # stamped into the binary at configure time. Its `getVersion` runs
-# `git describe --match '*.*.*' --tags` and then REFORMATS the untagged case into
-# semver — the commit height becomes a `-dev.<n>` pre-release, the abbreviated hash
-# becomes `+<sha>` build metadata, and describe's conventional `g` prefix is stripped
-# (config.zig panics if that `g` is absent, so it can never reach the output). The
-# changelog preamble documented describe's own raw spelling, `v0.1.1-<n>-g<sha>`, as if
-# that were what the tool prints — a shape `getVersion` cannot emit. CHANGELOG.md is
-# mirrored to the published docs site by site/scripts/gen-docs-mirror.ts (registry slug
-# `changelog`), so the false shape was live on the site. See issue #43.
+# `git describe --match '*.*.*' --tags` and then REFORMATS the untagged case into a
+# semver version behind the tag's own `v` prefix — the commit height becomes a
+# `-dev.<n>` pre-release, the abbreviated hash becomes `+<sha>` build metadata, and
+# describe's conventional `g` prefix is stripped (config.zig panics if that `g` is
+# absent, so it can never reach the output). The changelog preamble documented
+# describe's own raw spelling, `v0.1.1-<n>-g<sha>`, as if that were what the tool
+# prints — a shape `getVersion` cannot emit. CHANGELOG.md is mirrored to the published
+# docs site by site/scripts/gen-docs-mirror.ts (registry slug `changelog`), so the
+# false shape was live on the site. See issue #43.
 #
 # WHAT IT PINS. The preamble lists the emittable shapes as a bullet list, one example
 # per bullet, each bullet opening with the example in backticks. This script extracts
