@@ -68,16 +68,17 @@ pub const default_rebuild_cmd: []const []const u8 = &.{ "zig", "build" };
 /// across dev sessions; delete the directory for a fresh backend.
 pub const default_data_dir = ".zigbase";
 
-/// Fast-refresh island bundles. The dev loop sets this in the
-/// rebuild command's environment (unless `--no-live-reload`, which is for
-/// release-fidelity testing); the consumer's `zig build` reads it at CONFIGURE
-/// time (repo `build.zig`, `addIslandAssets`) and passes `--hot` to the island
-/// bundle driver, so dev island bundles route their components through the
-/// hot registry and a hot-swap preserves plain `useState` state. Plain
-/// `zig build` / `zigapagos release` never see the variable, so release
-/// bundles stay byte-identical. The name is duplicated as a string literal in
-/// `build.zig` (which cannot import this file) — keep them in sync.
-pub const hot_islands_env = "ZIGAPAGOS_HOT_ISLANDS";
+/// Fast-refresh island bundles. The dev loop sets this in the rebuild
+/// command's environment (unless `--no-live-reload`, which is for
+/// release-fidelity testing) and the rebuild reads it: `zigapagos release`
+/// through `hotIslands` (release.zig, which owns the name) and a consumer's
+/// `zig build` at CONFIGURE time (`build/bundles.zig`, which cannot import
+/// either file and duplicates the literal — keep them in sync). Either way the
+/// island bundle driver gets `--hot`, so its components route through the hot
+/// registry and a hot-swap preserves plain `useState` state. A rebuild that
+/// does not inherit this environment never sees the variable, so plain release
+/// bundles stay byte-identical.
+pub const hot_islands_env = release_cli.hot_islands_env;
 
 /// Default dev invocation: the shared `zigbase serve` template plus
 /// `--insecure-cookies` — the dev loop serves plain `http://`, where ZigBase's

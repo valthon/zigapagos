@@ -107,8 +107,8 @@ pub fn addIslandAssets(
 
     // Dev-only fast refresh: `zigapagos dev` sets
     // ZIGAPAGOS_HOT_ISLANDS=1 in the rebuild command's environment
-    // (src/cli/dev.zig's `hot_islands_env` — keep the names in sync; this file
-    // cannot import that one), so a dev-loop `zig build` bundles each island
+    // (src/cli/release.zig's `hot_islands_env` — keep the names in sync; this
+    // file cannot import that one), so a dev-loop `zig build` bundles each island
     // with the fast-refresh transform (`--hot`) and an island hot-swap
     // preserves plain useState/useReducer state. Read at CONFIGURE time so the
     // flag lands in the Run step's argv — the zig build cache hashes argv, not

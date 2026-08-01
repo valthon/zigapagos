@@ -273,10 +273,9 @@ pub const Command = struct {
     /// universal 404.html, named by its `spaName(src)` basename. Null (the
     /// default) keeps the historical behavior: the FIRST declared SPA.
     spa_not_found: ?[]const u8 = null,
-    /// `--allow-missing-pages`: see `root.Options.allow_missing_pages`.
-    /// Same tolerance the live server applies -- see that field's doc comment
-    /// for why it is not mode-dependent, and why `dev` takes it from the
-    /// project's `build.zig` rather than its own argv.
+    /// `--allow-missing-pages`: see `root.Options.allow_missing_pages` for why
+    /// the tolerance is not mode-dependent. `dev` has no flag of its own for
+    /// it -- put it in the rebuild command after `--`.
     allow_missing_pages: bool = false,
     /// `--format=text|json` (issue #46 / DX-27): text (default) is the
     /// historical multi-line prose; json emits one NDJSON diagnostic per line
@@ -729,6 +728,11 @@ fn containsComponent(path: []const u8, name: []const u8) bool {
 /// construction (content-addressed cache) and this path is not.
 const bundle_cache_path = ".zigapagos-cache/bundles";
 
+/// Environment variable asking for fast-refresh island bundles; see
+/// `hotIslands`. Defined here rather than in dev.zig because THIS file is the
+/// reader, and dev.zig already imports this one (the reverse would be a cycle).
+pub const hot_islands_env = "ZIGAPAGOS_HOT_ISLANDS";
+
 /// `src` -> the basename the browser bundle is served under, dropping the
 /// directory and the FINAL extension only: `components/Counter.island.tsx` ->
 /// `Counter.island`, so the URL is `/islands/Counter.island.js`.
@@ -867,7 +871,7 @@ fn bundleClient(
 
     try bundleSharedRuntime(io, arena, cmd, bun_path, src_dir, cache_abs, &env);
     if (cmd.islands.len > 0)
-        try bundleIslands(io, arena, cmd, bun_path, src_dir, cache_abs, &env);
+        try bundleIslands(io, arena, cmd, bun_path, src_dir, cache_abs, &env, hotIslands(environ_map));
     // `rt.?` is safe by construction: the caller only fills `spas` when
     // `rt_defaults` is non-null (see `cli_spas`), because the SPA drivers are
     // paths INTO the shipped runtime tree and there is nowhere else to get them.
@@ -915,6 +919,20 @@ fn bundleSharedRuntime(
     try addBundleAsset(gpa, cmd, "zigapagos-runtime", rt_out, "zigapagos-runtime.js");
 }
 
+/// True when the environment asks for fast-refresh island bundles.
+///
+/// `zigapagos dev` sets ZIGAPAGOS_HOT_ISLANDS=1 in the rebuild command's
+/// environment (src/cli/dev.zig's `hot_islands_env`), and since `dev` now
+/// rebuilds through `zigapagos release` by default, THIS is the reader that
+/// makes island hot-swap work. `build/bundles.zig` reads the same variable for
+/// the `zig build` path and must keep the same spelling and the same
+/// truthiness rule — a bare `!= null` here would make `=0` mean "on" in one
+/// path and "off" in the other.
+fn hotIslands(environ_map: *const std.process.Environ.Map) bool {
+    const v = environ_map.get(hot_islands_env) orelse return false;
+    return v.len > 0 and !std.mem.eql(u8, v, "0");
+}
+
 /// One `/islands/<name>.js` per `--island=` entry.
 /// Contract 4 (arena-scoped) — see `bundleClient`.
 fn bundleIslands(
@@ -925,6 +943,7 @@ fn bundleIslands(
     src_dir: []const u8,
     cache_abs: []const u8,
     env: *const std.process.Environ.Map,
+    hot: bool,
 ) !void {
     const gpa = arena.a;
     const driver = cmd.island_bundle_driver.?; // checked by bundleSharedRuntime
@@ -932,7 +951,8 @@ fn bundleIslands(
         const name = bundleName(src);
         const out = try std.fmt.allocPrint(gpa, "{s}/{s}.js", .{ cache_abs, name });
         const dep = try std.fmt.allocPrint(gpa, "{s}/{s}.d", .{ cache_abs, name });
-        try runDriver(io, gpa, bun_path, src_dir, &.{
+        var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+        try argv.appendSlice(gpa, &.{
             driver,
             try std.fmt.allocPrint(gpa, "--entry={s}", .{src}),
             try std.fmt.allocPrint(gpa, "--outfile={s}", .{out}),
@@ -943,7 +963,13 @@ fn bundleIslands(
             "--external=@z/runtime",
             "--external=@z/runtime/jsx-runtime",
             "--minify",
-        }, env);
+        });
+        // Routes the entry's components through @z/runtime's hot registry, so a
+        // dev hot-swap preserves plain useState/useReducer state. Never set for
+        // a plain `zigapagos release`, which is what keeps release bundles
+        // byte-identical to a hot-free build.
+        if (hot) try argv.append(gpa, "--hot");
+        try runDriver(io, gpa, bun_path, src_dir, argv.items, env);
         try addBundleAsset(
             gpa,
             cmd,
