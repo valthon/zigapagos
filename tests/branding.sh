@@ -79,8 +79,8 @@ fails=0
 #   * a marker shown as an EXAMPLE — inside a backtick span, or inside a fenced
 #     code block — has to read as documentation rather than as an instruction.
 #
-# That second rule is not hypothetical. CLAUDE.md, CONTRIBUTING.md, ci.yml and
-# this gate's entry in docs/dx-backlog.md all spell the marker out in order to
+# That second rule is not hypothetical. CLAUDE.md, CONTRIBUTING.md and ci.yml
+# all spell the marker out in order to
 # explain it, and every one of them would otherwise parse as a stray unbalanced
 # fragment and fail the gate on its own documentation. Writing a REAL marker
 # inside backticks does not work, by the same rule — the mention it was meant to

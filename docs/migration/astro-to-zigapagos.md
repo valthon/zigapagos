@@ -224,7 +224,7 @@ expression language). See the upstream SuperHTML docs linked from the
 >    `<input>`, … (and a self-closing `<item/>` in an `.xml` alternative layout)
 >    have no end tag, and SuperHTML restarts a conditional or a loop by rewinding
 >    to the end tag. With none it rewinds to the start of the file and splices the
->    **whole raw template source** into the page — previously with exit code 0.
+>    **whole raw template source** into the page, so the build rejects it.
 >    Wrap the element instead.
 >
 > 3. **There is no `:else`.** SuperHTML parses it and then never evaluates it;
@@ -442,7 +442,7 @@ bun install --frozen-lockfile 2>/dev/null || bun install
 
 exec zigapagos release \
   --force \
-  --output=zig-out/site \
+  --output=public \
   --island-props-check=error \
   --island=components/Hero.island.tsx \
   --island=components/Promo.island.tsx \
@@ -480,8 +480,9 @@ See `examples/tsx-site/` for a complete working project (`build.sh`, `package.js
 > **Toolchain — you need `zigapagos` and `bun`, and no Zig.** `zigapagos` is a
 > standalone executable: install it with `npx zigapagos` (which brings its
 > runtime tree and Bun with it) or download a precompiled binary from the
-> releases page. Nothing in a migrated project is compiled from Zig source.
-> If you see those, check `zig version` / `mise current` first.
+> releases page. Nothing in a migrated project is compiled from Zig source, so
+> no Zig toolchain error can come from your site — if you hit one, it is coming
+> from a source build of zigapagos itself, not from the migration.
 
 ## 11. Content collections & site-wide data
 

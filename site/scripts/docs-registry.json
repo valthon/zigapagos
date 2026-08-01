@@ -63,6 +63,20 @@
     "description": "What the standalone binary needs at run time: which commands require Bun or ZigBase, how each is obtained, and what npm supplies that a release archive does not."
   },
   {
+    "canonical": "docs/assets.md",
+    "mirror": "assets.smd",
+    "slug": "assets",
+    "title": "Assets",
+    "description": "How a file under assets_dir_path reaches the output tree: refcounted installs, the two switches that change that, and why an unreferenced asset is dropped."
+  },
+  {
+    "canonical": "docs/diagnostics.md",
+    "mirror": "diagnostics.smd",
+    "slug": "diagnostics",
+    "title": "Machine-readable diagnostics",
+    "description": "The --format=json NDJSON diagnostic stream: the wire schema, which fields are a stability guarantee, and how to consume it safely."
+  },
+  {
     "canonical": "docs/observability.md",
     "mirror": "observability.smd",
     "slug": "observability",

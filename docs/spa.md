@@ -45,19 +45,19 @@ export default function App() {
 }
 ```
 
-Declare it in `build.zig`. The `.base` here **must** equal the `base` in
-`export const spa` — the build compares them and fails if they diverge:
+Declare it on the build command. The base after the `|` **must** equal the
+`base` in `export const spa` — the build compares them and fails if they
+diverge:
 
-```zig
-const spas: []const zigapagos.Spa = &.{
-    .{ .root = b.path("app/app.spa.tsx"), .src = "app/app.spa.tsx", .base = "/app" },
-};
-
-const site = zigapagos.website(b, .{ .spas = spas, .output_path = "site" });
-b.getInstallStep().dependOn(&site.step);
+```sh
+zigapagos release --output=public --force --spa='app/app.spa.tsx|/app'
 ```
 
-`zig build` then emits, under the site's output tree:
+Nothing here is a build graph: `zigapagos` is a standalone executable and this
+one command is the whole build. Keep it in a `build.sh` at the project root so
+the entries are declared in exactly one place.
+
+That emits, under the output tree:
 
 ```
 app/index.html          prerendered shell for "/"    (Home, server-rendered)
@@ -519,15 +519,11 @@ The prefix reaches the rest of the build too:
   its own semantics rather than by prepending the prefix everywhere — see
   [Deploy targets under a path prefix](#deploy-targets-under-a-path-prefix).
 
-> **Migration (prerelease breaking change).** Previously `navigate(to)`
-> pushed `to` **verbatim** and `<Link href>` needed the full base-prefixed
-> path (`<Link href="/app/booking">`). Migrate every router-internal call
-> site by stripping the base prefix: `href="/app/booking"` → `href="/booking"`,
-> `navigate("/app/login")` → `navigate("/login")`, and guard redirects
-> `{ redirect: "/app/login" }` → `{ redirect: "/login" }`. Links that
-> deliberately pointed *outside* the base (previously rendered as plain
-> anchors) must become absolute URLs or plain `<a>` tags — a root-relative
-> `<Link href>` is now always router-internal.
+> **Every router-internal path is base-relative.** `href="/booking"`,
+> `navigate("/login")` and a guard's `{ redirect: "/login" }` are all composed
+> against the base, so none of them carries it. A root-absolute `<Link href>` is
+> always router-internal — to point *outside* the base, use an absolute URL or a
+> plain `<a>` tag.
 
 ### Components
 
@@ -1074,7 +1070,7 @@ To serve each dynamic route's dedicated prerendered shell, a custom ZigBase buil
 
 Paste it into your `zigbase.App(.{ ... })` config. First match wins in declaration order; `:id` matches one segment, `**` matches zero-or-more trailing segments. Declaring `static_routes` turns the `.spa` marker off by default (set `.enable_spa_marker = true` to keep both — routes match first, the marker is the residual fallback). Real files always win over both tiers, so the static route shells (`<base>/booking/index.html`, …) are served directly and don't need rules.
 
-> The pre-0.10.0 adapter emitted a `zigbase.zigbase.json` manifest copy on the assumption ZigBase would read it directly. It never did; the `.spa` marker (+ optional `static_routes`) is the real contract, so the manifest copy is no longer emitted. The canonical `<base>/routing-manifest.json` remains as zigapagos's own artifact (the emitter reads it) but no server consumes it.
+> No `zigbase.zigbase.json` is emitted: ZigBase does not read a manifest copy, and the `.spa` marker (+ optional `static_routes`) is the whole contract. The canonical `<base>/routing-manifest.json` is zigapagos's own artifact — the emitter reads it — but no server consumes it.
 
 ### Nginx
 **File:** `<base>/nginx.nginx.conf`
@@ -1516,7 +1512,7 @@ examples/tsx-site/
 2. **Declare** it with `--spa='<src>|<base>'`; ensure the base matches the export.
 3. **Set `deploy_target`** in `zigapagos.ziggy` (default `"zigbase"`).
 4. **Run `zigapagos release`** to build: prerender shells, bundle, emit manifests and host configs.
-5. **Deploy** the `zig-out/site/` output:
+5. **Deploy** the `public/` output:
    - Copy HTML shells, static assets, JS bundle to your hosting layer.
    - If using **ZigBase** (≥ 0.10.0), the emitted `<base>/.spa` marker ships in the tree; the stock `zigbase serve` binary needs no further config. For dedicated per-route shells, compile the emitted `zigbase.static_routes.zig` snippet into a custom build.
    - If using **Nginx**, include the emitted `nginx.nginx.conf`.
@@ -1646,8 +1642,8 @@ binary** (real same-origin API, real `.spa`-marker SPA fallback), so what the dr
 exercises is what production serves.
 
 ```sh
-zigapagos release --output=zig-out/site --force --spa='app/app.spa.tsx|/app'
-zigapagos e2e --site=zig-out/site -- npx playwright test
+zigapagos release --output=public --force --spa='app/app.spa.tsx|/app'
+zigapagos e2e --site=public -- npx playwright test
 ```
 
 The command:
@@ -1709,7 +1705,7 @@ template — subcommand included, placeholders available — with repeatable
 `--zigbase-arg=`:
 
 ```sh
-zigapagos e2e --site=zig-out/site \
+zigapagos e2e --site=public \
   --zigbase-arg=serve --zigbase-arg=--listen --zigbase-arg='127.0.0.1:{port}' \
   --zigbase-arg=--static --zigbase-arg='{site}' -- npx playwright test
 ```
@@ -1741,7 +1737,7 @@ test("booking flow against the real backend", async ({ page }) => {
 });
 ```
 
-The same shape works CLI-only: `zigapagos e2e --site=zig-out/site -- <cmd>` (plus
+The same shape works CLI-only: `zigapagos e2e --site=public -- <cmd>` (plus
 `--data-dir=`, `--zigbase=`, `--zigbase-arg=`, `--ready-path=`, `--timeout-ms=`; see
 `zigapagos help`). `tests/dev/e2e.sh` exercises the whole contract end to end against
 a clearly-labeled stub server (`tests/dev/stub-zigbase.ts`) honoring the same

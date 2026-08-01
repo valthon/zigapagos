@@ -1,3 +1,5 @@
+> This documentation is also published, web-native, at <https://valthon.github.io/zigapagos/docs/assets/> — the site is the canonical reading experience.
+
 # Assets
 
 How a file under `assets_dir_path` becomes a file in the output tree, and the

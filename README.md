@@ -63,25 +63,12 @@ map. No island on the page? Zero JavaScript shipped.
 
 ## Quickstart
 
-### From source
-
-`zig build` builds ZIGAPAGOS. It does not build websites — the binary does that,
-and needs no Zig toolchain of its own.
+**Building a site needs no Zig toolchain.** `zigapagos` is a standalone
+executable; nothing in a Zigapagos project is compiled from Zig source.
 
 ```bash
-# toolchain (or install zig 0.16.0 + bun 1.2 yourself)
-mise install
-
-zig build          # build the zigapagos binary
-zig-out/bin/zigapagos init   # scaffold a site
-zig-out/bin/zigapagos dev    # dev loop at http://127.0.0.1:1990
-```
-
-### From npm, no toolchain
-
-```bash
-npx zigapagos init                            # scaffold a content site
-npx zigapagos dev                             # dev loop at http://127.0.0.1:1990
+npx zigapagos init                             # scaffold a content site
+npx zigapagos dev                              # dev loop at http://127.0.0.1:1990
 npx zigapagos release --output=public --force  # build it
 ```
 
@@ -116,15 +103,24 @@ components/*.island.tsx ──► Bun sidecar (SSR) ─────────�
 
 One render seam: after a page renders, islands found in it are SSR'd and the
 resulting HTML + `data-z-props` are injected, along with a `modulepreload` hint,
-an import map, and the shared runtime script. Everything else is plain zine-style
-static generation.
+an import map, and the shared runtime script. Everything else is ordinary static
+generation.
 
 ## Status
 
-Zigapagos is **v0.1.0** and pre-1.0: APIs may change between minor versions.
-Zig version: **0.16.0** (we track released Zig, not nightlies). The islands
-engine, SPA support, and Astro migration tooling are complete and covered by
-unit + real-browser e2e tests.
+Zigapagos is pre-1.0: APIs may change between minor versions. Only the most
+recent release is supported — see
+[releases](https://github.com/valthon/zigapagos/releases) for the current one
+and [CHANGELOG.md](CHANGELOG.md) for what changed. The islands engine, SPA
+support, and Astro migration tooling are complete and covered by unit +
+real-browser e2e tests.
+
+## Contributing
+
+Building *Zigapagos itself* is the only thing that needs a Zig toolchain (0.16.0
+— we track released Zig, not nightlies). See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the setup, the test suites, and the
+review standard in [NO_SLOP.md](NO_SLOP.md).
 
 ## Acknowledgements
 

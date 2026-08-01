@@ -161,10 +161,8 @@ content/index.smd:9:1: warning: unknown code-fence language 'jsonc'; emitting th
 **Cause.** The fence's info string is not a registered syntax.
 
 **This is a warning, not an error** — the block is emitted unhighlighted and the
-build succeeds. It used to be fatal, with no list of accepted languages
-anywhere, which made the loop "guess a language, wait two minutes, fail, guess
-again". `zigapagos languages` prints the registered list, and a near-miss gets a
-did-you-mean.
+build succeeds. `zigapagos languages` prints the registered list, and a
+near-miss gets a did-you-mean, so you do not have to guess.
 
 Code: `ZP_UNKNOWN_LANGUAGE`.
 

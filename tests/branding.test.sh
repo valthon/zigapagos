@@ -162,7 +162,7 @@ EOF
 check "a marker that exempts nothing fails as stale" 1 "exempts nothing"
 
 # ── A marker shown as an example is documentation, not an instruction ────────
-# CLAUDE.md, CONTRIBUTING.md, ci.yml and docs/dx-backlog.md all spell the marker
+# CLAUDE.md, CONTRIBUTING.md and ci.yml all spell the marker
 # out to explain it. Without this rule the gate fails on its own documentation.
 
 newcase
