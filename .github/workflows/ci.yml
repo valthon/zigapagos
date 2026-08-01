@@ -923,6 +923,23 @@ jobs:
         working-directory: runtime
         run: bun install --frozen-lockfile
 
+      # Runs BEFORE dev.sh, and `continue-on-error` so dev.sh still runs and both
+      # verdicts land in one run. This is the same build dev shells out for on
+      # the zero-config leg, with dev removed: if it crashes here the fault is in
+      # `release`, and if it passes while dev.sh fails the fault is in how dev
+      # spawns or supervises the child. The script also lives in the e2e-rest
+      # shard, but that job has been wedging on this repo for hours at a time,
+      # and this answer is needed from a job that reliably finishes.
+      - name: tests/release/zero-config-release.sh (probe — see #108 SIGILL)
+        continue-on-error: true
+        run: |
+          script=tests/release/zero-config-release.sh
+          if [[ ! -f "$script" ]]; then
+            echo "::error::$script is gone — the probe and this step must move together"
+            exit 1
+          fi
+          bash "$script"
+
       - name: tests/dev/dev.sh
         run: |
           script=tests/dev/dev.sh
