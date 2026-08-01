@@ -28,6 +28,13 @@
     "description": "Why Zigapagos ships no content-generator hook, and the four-piece recipe — registry, generator, gitignore, freshness gate — this site's own docs pages use instead."
   },
   {
+    "canonical": "docs/testing.md",
+    "mirror": "testing.smd",
+    "slug": "testing",
+    "title": "Testing a built site",
+    "description": "A sourceable assertion library for the built output tree, and the three wrong assertions it exists to prevent."
+  },
+  {
     "canonical": "docs/scripty.md",
     "mirror": "scripty.smd",
     "slug": "scripty",
