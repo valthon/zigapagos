@@ -281,6 +281,23 @@ pub fn dev(
         fatal.helpError();
     }
 
+    // FIRST output of the process, before any work that can hang or crash.
+    //
+    // Everything from here to the `dev: initial build:` line below -- argument
+    // parsing, watch-dir discovery, path resolution, the inside-a-watched-dir
+    // guards -- used to be silent, so a dev that died or wedged in that window
+    // produced a log with nothing in it at all. CI hit exactly that: a crash
+    // signature appeared in dev's log with no dev output above it, and the
+    // absence of even a startup line is what made it impossible to tell whether
+    // dev had crashed, hung, or never really started. Three diagnoses began
+    // from the wrong end.
+    //
+    // The pid is here for the same reason. dev spawns children (the rebuild,
+    // then zigbase); when one of them dies, the reader's first question is
+    // whether the corpse is dev or something dev started, and a log that names
+    // dev's own pid answers it without guessing.
+    std.debug.print("dev: starting (pid {d})\n", .{std.c.getpid()});
+
     const cmd: Command = try .parse(gpa, args);
 
     // Input discovery: assets, layouts, content and i18n + per-locale content,
