@@ -119,8 +119,8 @@ const help_menu =
     \\  --debounce=MS     Quiet window before a rebuild (default 25)
     \\  --no-live-reload  Disable browser live reload (release-fidelity)
     \\  --reload-port=N   SSE reload-server port (default 0 = pick a free port)
-    \\  --watch-dir=DIR   Watch an extra directory (repeatable). Given even
-    \\                    once, this REPLACES the discovered island/SPA dirs
+    \\  --watch-dir=DIR   Watch this directory instead of the discovered
+    \\                    island/SPA dirs (repeatable; any use replaces them)
     \\
     \\End-to-end testing (zigapagos e2e ... -- CMD [ARGS...]):
     \\  Boots the STOCK zigbase binary over the built site on a free port,

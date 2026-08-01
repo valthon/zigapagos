@@ -199,9 +199,10 @@ pub fn prerenderAll(
 
     const owner_idx = notFoundOwnerIndex(spa_specs, build.spa_not_found) orelse {
         fatal.msg(
-            "error: --spa-not-found names '{s}' but no declared SPA has that " ++
-                "name — an SPA's name is its file basename sans .spa.tsx, " ++
-                "and must match one of the declared --spa entries\n",
+            "error: --spa-not-found names '{s}' but no SPA in this build has " ++
+                "that name — an SPA's name is its file basename sans .spa.tsx, " ++
+                "and must match one this build registered, whether passed " ++
+                "with --spa or discovered as a *.spa.tsx source\n",
             .{build.spa_not_found.?},
         );
     };
