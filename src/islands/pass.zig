@@ -1364,7 +1364,7 @@ fn clientDirective(tag_text: []const u8) ?Client {
 /// quietly degrades the directive to `client:load` rather than breaking
 /// anything visible; the stray value, meanwhile, leaked out as a bogus
 /// data-z-media attribute. Fail the build instead; worker.zig's handler
-/// (`log.err("island rendering error on {s}: {s}", ...)` at src/worker.zig:1084)
+/// (`log.err("island rendering error on {s}: {s}", ...)` in `renderPage`)
 /// adds the page path, while the logs here carry the offending directive text —
 /// on a page with several islands the error name alone doesn't say which one.
 /// The logs are gated on `!builtin.is_test` because Zig's test runner fails the
