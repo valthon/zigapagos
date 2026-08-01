@@ -28,6 +28,28 @@
 #
 # (3) and (4) are what stop the "fix" from being "always say bun is missing",
 # which would trade one misattribution for two.
+#
+# (5) closes the same hole on the OTHER side. `spawn` tells a missing cwd from a
+# missing interpreter by probing the cwd with `openDir`, and the first cut of
+# that probe mapped EVERY probe failure to "island source dir not found" -- so a
+# project root that exists but merely cannot be opened was reported as absent,
+# reintroducing exactly the misattribution this file exists to pin. (5) points
+# the build at a directory that is REAL but search-only (`0111`) and asserts
+# that it is not blamed.
+#
+# Read the platform note before "fixing" this leg: it can only ever FAIL on
+# macOS. `Io.Threaded.dirOpenDirPosix` adds `O_PATH` when `iterate` is false,
+# and only Linux has `O_PATH`, so:
+#   * on Linux the probe needs search on the PARENTS and nothing on the target,
+#     which is strictly weaker than the `chdir` the child already survived --
+#     every permission failure is therefore reported by `spawn` itself
+#     (verified: a `0000` cwd and an unsearchable parent both come back as
+#     `AccessDenied` from `spawn`, never reaching the probe), so this leg passes
+#     on Linux with or without the narrowing;
+#   * on macOS/BSD the same call is a real `O_RDONLY` open needing READ on the
+#     target, so `0111` denies the probe while `chdir` walked in happily. That
+#     is where the blanket `catch` printed "island source dir not found" about a
+#     working directory, and where this leg bites.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 REPO="$(pwd)"
@@ -133,5 +155,24 @@ if grep -qE "interpreter '[^']*' not found" "$WORK/nosrcdir.log"; then
   sed -n '1,30p' "$WORK/nosrcdir.log"; fail "(4) a missing SOURCE DIR was blamed on the interpreter"
 fi
 echo "PASS (4): a missing island source dir is attributed to that dir"
+
+# --- (5) PRESENT island source dir that the probe cannot open ----------------
+# Real directory, mode 0111: `chdir` into it succeeds, so it is emphatically not
+# "not found". Paired with a missing interpreter so the spawn still fails with
+# the ENOENT that sends `spawn` to its probe in the first place.
+SEARCHONLY="$WORK/searchable-not-readable"
+mkdir -p "$SEARCHONLY"
+chmod 0111 "$SEARCHONLY"
+release lockeddir "$WORK/definitely-missing-bun" "$SIDECAR" "$SEARCHONLY"
+# Restore before any assertion can `exit`, so the EXIT trap's rm -rf can descend.
+chmod 0755 "$SEARCHONLY"
+[[ "$(cat "$WORK/lockeddir.rc")" -ne 0 ]] || {
+  sed -n '1,30p' "$WORK/lockeddir.log"; fail "(5) a missing interpreter must fail the build"
+}
+if grep -qF 'island source dir not found' "$WORK/lockeddir.log"; then
+  sed -n '1,30p' "$WORK/lockeddir.log"
+  fail "(5) a project root that EXISTS was reported as missing -- the probe collapsed a non-ENOENT failure into ProjectRootNotFound"
+fi
+echo "PASS (5): a present-but-unopenable island source dir is not reported as missing"
 
 echo "PASS: a failed sidecar spawn names the input that is actually missing"
