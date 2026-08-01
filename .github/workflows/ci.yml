@@ -524,6 +524,183 @@ jobs:
         working-directory: site
         run: bash test/js-budget.sh
 
+  # The site's two REAL-BROWSER smokes, moved here from browser-e2e.yml's
+  # nightly schedule (#49).
+  #
+  # Everything in the `site` job above asserts over emitted BYTES. That cannot
+  # see the two failure modes these catch, both of which this project has
+  # actually shipped: markup that is correct on disk and still does not hydrate,
+  # and a "soft" navigation that is secretly a full page load. A grep cannot tell
+  # those from working code, so before this job the only proof either feature
+  # worked arrived up to 24 hours after the merge that broke it.
+  #
+  # WHY THIS IS AFFORDABLE HERE AND NOT IN browser-e2e.yml. That workflow's
+  # "Why scheduled, and NOT a PR gate" note costs its browser jobs at ~265s of
+  # cold consumer build plus ~125s of assertions each. Both halves of that number
+  # belong to the examples/tsx-site suites, which stay nightly and are NOT
+  # promoted by this change. site/ is a different shape: it builds against the
+  # binary build-binary already produced, so nothing compiles — measured at 4s
+  # for the build in the job above — and the two helpers together are seconds.
+  # What is left is the browser install, ~15s of pip plus ~60-90s for
+  # `playwright install --with-deps chrome`, so call the job ~2 minutes wall.
+  # It `needs:` only build-binary and runs in parallel with five other jobs; the
+  # run's critical path is still e2e-astro-importer's ~9m of consumer builds.
+  #
+  # WHY A SEPARATE JOB rather than four more steps on `site`. Browser automation
+  # is the flakiest thing in any suite (browser-e2e.yml's reason 3). Keeping it
+  # off the job that carries the four fast text assertions means a timing artifact
+  # here never obscures which of build.sh / docs-mirror.sh / links.sh /
+  # js-budget.sh actually failed, and this job's timeout can be sized to a browser
+  # rather than to a build.
+  #
+  # The nightly copy of this job is deleted rather than kept as a second run:
+  # ci.yml already triggers on pull_request, push-to-main, a 03:11 schedule AND
+  # workflow_dispatch, so every cadence browser-e2e.yml gave these two smokes is
+  # covered here, and running them twice a day in two files is how the two copies
+  # start to drift.
+  site-browser:
+    needs: build-binary
+    name: Browser smokes (site/)
+    runs-on: ubuntu-latest
+    # ~2 minutes expected (see above). 15 leaves room for a slow apt mirror or a
+    # cold pip cache without letting a hung browser burn an hour.
+    timeout-minutes: 15
+    env:
+      ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
+    steps:
+      # Shallow, like the `site` job: with ZIGAPAGOS_BIN set nothing in this job
+      # compiles the generator, so build/config.zig's `git describe --tags`
+      # version stamp — the reason the e2e jobs use fetch-depth 0 — never runs.
+      - uses: actions/checkout@v7
+
+      - name: Setup toolchain (mise — zig 0.16.0 + bun 1.2)
+        uses: jdx/mise-action@v4
+        with:
+          cache: true
+
+      - name: Pin tool versions globally (shims must resolve outside the repo)
+        run: mise use -g zig@0.16.0 bun@1.2
+
+      - name: Download zigapagos binary
+        uses: actions/download-artifact@v4
+        with:
+          name: zigapagos-${{ runner.os }}
+          path: zig-out/bin
+
+      - name: Use the prebuilt zigapagos
+        run: |
+          chmod +x zig-out/bin/zigapagos
+          echo "ZIGAPAGOS_BIN=$GITHUB_WORKSPACE/zig-out/bin/zigapagos" >> "$GITHUB_ENV"
+
+      # BEFORE the build, deliberately: a broken browser install then fails in
+      # seconds instead of after the site build, and this is the one step in the
+      # job that talks to the network for something other than a lockfile.
+      #
+      # THE BROWSER. Both helpers launch with
+      #
+      #     p.chromium.launch(channel="chrome")
+      #
+      # a CHANNEL, not Playwright's bundled build. `playwright install chromium`
+      # — the obvious command — satisfies neither: the run dies at launch with
+      # "Chromium distribution 'chrome' is not found at /opt/google/chrome/chrome".
+      # `chrome` installs Google Chrome stable, which is what the channel
+      # resolves to; `--with-deps` pulls the shared libraries a headless browser
+      # needs on a bare runner image.
+      #
+      # The venv is not ceremony either. The helpers are invoked through
+      # `mise exec -- python3`, and mise.toml declares only zig and bun, so that
+      # resolves to whatever python3 is first on PATH. Ubuntu's system python3 is
+      # PEP 668 externally-managed and refuses `pip install` outright. A venv
+      # exported through GITHUB_PATH is prepended ahead of mise's shim directory,
+      # so the later steps' `python3` IS this interpreter with playwright
+      # importable — no --break-system-packages, and no dependence on which
+      # python the runner image ships.
+      - name: Install Playwright + Google Chrome
+        run: |
+          set -euo pipefail
+          python3 -m venv "${RUNNER_TEMP}/pw"
+          "${RUNNER_TEMP}/pw/bin/python" -m pip install --upgrade pip
+          "${RUNNER_TEMP}/pw/bin/python" -m pip install playwright
+          echo "${RUNNER_TEMP}/pw/bin" >> "$GITHUB_PATH"
+          "${RUNNER_TEMP}/pw/bin/python" -m playwright install --with-deps chrome
+
+      # Launches through the exact path the helpers do — `mise exec -- python3`
+      # for the interpreter resolution, `channel="chrome"` for the browser — so a
+      # green check here means the two things this job adds over `site` are both
+      # actually present, and a red one names the install rather than the site.
+      - name: Verify the browser launches the way the helpers launch it
+        run: |
+          set -euo pipefail
+          mise exec -- python3 - <<'PY'
+          import sys
+          from playwright.sync_api import sync_playwright
+          print("interpreter:", sys.executable)
+          with sync_playwright() as p:
+              b = p.chromium.launch(channel="chrome")
+              print("PASS: launched", b.version)
+              b.close()
+          PY
+
+      # Same ordering hazard the `site` job documents: bundling @z/runtime needs
+      # preact/preact-compat/preact-render-to-string resolvable from
+      # runtime/node_modules, which a site-only install does not provide.
+      - name: Install runtime dependencies (the site build bundles @z/runtime)
+        working-directory: runtime
+        run: bun install --frozen-lockfile
+
+      - name: Build the site
+        working-directory: site
+        run: |
+          bun install --frozen-lockfile
+          bun run scripts/gen-docs-mirror.ts
+          zig build
+
+      - name: Serve the built site and run the browser smokes
+        working-directory: site
+        run: |
+          set -euo pipefail
+          # zig build's install path is "site" (site/build.zig's .output_path),
+          # not "zigapagos" — the prefix zigapagos.ziggy's url_path_prefix
+          # declares — so a plain static file server needs the build output
+          # reachable AT that path for every /zigapagos/... reference in the HTML
+          # (scripts, styles, the SPA's prerendered shells) to resolve the way
+          # Pages serves them. zigapagos's own dev server strips the prefix in
+          # code (src/cli/serve.zig), but that is the live in-memory mode, not
+          # this disk build — a symlink is the simplest way to preview disk
+          # output under the path Pages puts it at.
+          ln -s site zig-out/zigapagos
+
+          # python3's stdlib server, and NOT `bunx serve` (#50): bunx RESOLVES
+          # AND DOWNLOADS an npm package at workflow runtime, in a repository
+          # that pins every other tool. tests/meta/ci-package-pins.sh fails the
+          # build if an unpinned runner comes back. http.server is threaded, it
+          # serves index.html for a directory request — which is every URL both
+          # helpers load, all trailing-slash — and it follows the symlink above.
+          #
+          # 127.0.0.1 rather than `localhost` on both sides: the runner resolves
+          # `localhost` to ::1 as well, and http.server binds one address family,
+          # so naming the address removes a fallback that only ever shows up as a
+          # slow start.
+          python3 -m http.server 8080 --bind 127.0.0.1 --directory zig-out &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+
+          BASE=http://127.0.0.1:8080/zigapagos
+          for _ in $(seq 1 30); do
+            curl -sf "$BASE/" >/dev/null && break
+            sleep 1
+          done
+          # Say WHICH thing failed. Without this the loop falls through on a
+          # server that never came up and the first helper reports a navigation
+          # error, which reads like a defect in the site.
+          curl -sf "$BASE/" >/dev/null || {
+            echo "::error::static server never answered on $BASE after 30s"
+            exit 1
+          }
+
+          mise exec -- python3 test/hydrate_playwright.py "$BASE"
+          mise exec -- python3 test/spa_playwright.py "$BASE"
+
   # --- Shell e2e, sharded ------------------------------------------------------
   # The three jobs below partition `tests/*/*.sh` — the same glob the monolith
   # used, so a new tests/<area>/ directory is still covered the day it is added.
