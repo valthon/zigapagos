@@ -43,7 +43,17 @@ cd runtime && bun test src/router   # one file — filter is a PATH substring
 bash scripts/check-allocator-contracts.sh   # allocator-contract gate (see NO_SLOP.md §2.2a)
 bash scripts/check-allocator-contracts.test.sh   # the gate's own self-tests
 bash tests/spa/prerender-order.sh           # one shell e2e script
+bash site/build.sh                          # build the marketing site
+bash examples/tsx-site/build.sh             # build the tsx example
 ```
+
+**`zig build` builds ZIGAPAGOS, never a website.** There is no consumer build API: a site is
+built by RUNNING the binary, and `site/build.sh` / `examples/tsx-site/build.sh` are the two
+worked invocations — one place each where that project's islands and SPAs are declared. Both
+honour `ZIGAPAGOS_BIN` and otherwise fall back to compiling `zig-out/bin/zigapagos` once.
+Both also export `ZIGAPAGOS_RUNTIME_DIR=<repo>/runtime`, which is where the sidecar, the
+bundlers and both runtime slicers come from; without it a `--spa` entry cannot be bundled at
+all (only prerendered).
 
 **`zig build test` does NOT run the unit tests.** It builds the three-root snapshot fixtures and
 diffs them. The Zig unit tests live in sixteen separate steps, and CI runs them explicitly:
@@ -79,7 +89,7 @@ as stale — so it is an exemption you have to justify, not a mute button.
 
 **A fresh git worktree needs `bun install` in `runtime/` before anything bun-dependent.** Without
 it `bun test` reports every file as failing (`0 pass / 54 fail`, an `ENOENT resolving 'typescript'`
-per file) and an `examples/tsx-site` build dies in the SPA-runtime step — both look like code
+per file) and `examples/tsx-site/build.sh` dies in the SPA-runtime step — both look like code
 breakage and are neither.
 
 **Formatting is gated, with no exceptions.** The whole first-party tree is `zig fmt`-clean and CI
@@ -90,9 +100,9 @@ git ls-files -z '*.zig' | xargs -0 -r zig fmt --check
 ```
 
 Run that before pushing. The file list comes from `git ls-files` rather than a directory walk on
-purpose: `zig-pkg/` and `examples/tsx-site/zig-pkg/` are **gitignored** trees of materialized
-third-party dependencies, so a path-based invocation passes on a clean checkout and then starts
-failing on vendored source as soon as anything populates them. Never reformat those.
+purpose: `zig-pkg/` is a **gitignored** tree of materialized third-party dependencies, so a
+path-based invocation passes on a clean checkout and then starts failing on vendored source as
+soon as anything populates it. Never reformat it.
 
 Note `zig fmt` rewrites manually column-aligned literals into one element per line; that is the
 canonical formatter's call, so take it rather than fighting it.
@@ -161,9 +171,11 @@ with a `data-z-props` JSON block, an import map, and one shared runtime script.
   stdin/stdout, one request per line.
 - `runtime/scripts/` — codegen (`apigen`/`apiclient`), the host-config emitters
   (zigbase/nginx/apache), runtime slicing, parity harness.
-- `build.zig` is an 87-line table of contents; the real wiring is in `build/*.zig`
-  (`exe`, `deps`, `tests`, `harness`, `bundles`, `site`, `release`, `api`, `codegen`, `config`,
-  `validate`, `snapshot`, `docgen`).
+- `build.zig` is a table of contents; the real wiring is in `build/*.zig`
+  (`exe`, `deps`, `tests`, `release`, `codegen`, `config`, `snapshot`, `docgen`, `camera`).
+  It builds ZIGAPAGOS and nothing else: there is no consumer build API, and a website is
+  built by running the binary (`site/build.sh` and `examples/tsx-site/build.sh` are the
+  two worked invocations).
 
 The behaviour these subsystems are *supposed* to have is specified in `docs/islands.md`,
 `docs/spa.md`, `docs/assets.md`, `docs/cross-tier-codegen.md`, `docs/observability.md` and

@@ -45,9 +45,9 @@ jobs:
       github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     env:
-      # Same location ci.yml's build-binary job writes. Job-level so the site's
-      # `zig build` — and the consumer build it triggers for the zigapagos
-      # dependency — both read it.
+      # Same location ci.yml's build-binary job writes. Only the fallback path
+      # below — where no prebuilt binary was available and one is compiled from
+      # source — reads it.
       ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
     steps:
       # A workflow_run job checks out the DEFAULT BRANCH unless told otherwise,
@@ -77,11 +77,10 @@ jobs:
       # This mirrors the same install ordering ci.yml already does.
       # The generator CI just built for THIS commit.
       #
-      # site/ depends on the zigapagos package by path, so `zig build` otherwise
-      # compiles the generator and its whole dependency tree before rendering a
-      # page — 653 compile steps, 632 of them tree-sitter grammar objects, for
-      # build work of 0.69s. With the binary in hand: zero compile steps.
-      # Measured cold on this site, 23s becomes 2s, byte-identical output.
+      # `site/build.sh` reads ZIGAPAGOS_BIN and compiles nothing when it is set.
+      # Unset, it falls back to `zig build` at the repository root — 653 compile
+      # steps, 632 of them tree-sitter grammar objects, for site build work of
+      # 0.69s.
       #
       # `run-id` is what makes this cross-workflow: the artifact belongs to the
       # ci.yml run that triggered this one, not to this run. Needs `actions:
@@ -121,7 +120,9 @@ jobs:
           fi
 
       # Fallback path only. With ZIGAPAGOS_BIN set nothing compiles, so
-      # restoring a cache of compiled objects would be pure latency.
+      # restoring a cache of compiled objects would be pure latency. Everything
+      # gated on `env.ZIGAPAGOS_BIN == ''` below exists for the one case where
+      # this job has to build the binary itself.
       - name: Get Zig version
         if: env.ZIGAPAGOS_BIN == ''
         id: zig-version
@@ -129,12 +130,11 @@ jobs:
 
       # Restore-only, and deliberately not gated on a hit.
       #
-      # site/ depends on the zigapagos package by path, so `zig build` here
-      # compiles the generator and its whole dependency tree before rendering a
-      # single page: 653 compile steps, 632 of them tree-sitter grammar objects
-      # across 82 languages. With no cache at all this workflow spent 6m11s of a
+      # The fallback build compiles the generator and its whole dependency tree:
+      # 653 compile steps, 632 of them tree-sitter grammar objects across 82
+      # languages. With no cache at all this workflow once spent 6m11s of a
       # 6m34s job inside that one step, to produce a site whose own build work is
-      # 0.69s. ci.yml's build-binary job now writes exactly these objects.
+      # 0.69s. ci.yml's build-binary job writes exactly these objects.
       #
       # This workflow cannot `needs:` a job in ci.yml — both trigger on push to
       # main and run concurrently — so it takes whatever that key chain offers.
@@ -155,12 +155,18 @@ jobs:
         working-directory: runtime
         run: bun install --frozen-lockfile
 
+      # Compile a binary only if the download above did not produce one. The
+      # site build itself never invokes a compiler: `site/build.sh` runs the
+      # `zigapagos` binary over the tree.
+      - name: Build zigapagos from source (fallback only)
+        if: env.ZIGAPAGOS_BIN == ''
+        run: zig build
+
+      # The one canonical invocation — bun install, docs-mirror generation and
+      # the `zigapagos release` flags all live in the script, so this workflow
+      # and ci.yml's `site` job cannot drift apart on how the site is built.
       - name: Build site
-        run: |
-          bun install --frozen-lockfile
-          bun run scripts/gen-docs-mirror.ts
-          zig build
-        working-directory: site
+        run: bash site/build.sh
 
       # A DEPLOY GATE, and deliberately placed between the build and the upload.
       #
@@ -172,11 +178,9 @@ jobs:
       # (data-z-props present), and that no upstream branding leaked into the
       # output.
       #
-      # It ran nowhere before this. It is not free anywhere else — site/ is a
-      # third consumer project with its own .zig-cache, so no ci.yml job has a
-      # warm one and adopting it there costs a full ~120s cold build. Here the
-      # build above has already happened and the script's own `bun install` +
-      # `zig build` are warm no-ops, so the five greps cost ~2s.
+      # Here the build above has already happened and the script re-runs
+      # `site/build.sh`, whose bun install and docs-mirror generation are warm
+      # no-ops, so the assertions cost seconds.
       #
       # Running BEFORE `Upload artifact` is the whole point: a failure here
       # fails the build job, the artifact is never uploaded, and `deploy`
@@ -205,7 +209,7 @@ jobs:
       # This script's two reasons for existing — "no mirror is ever tracked
       # in git" and "the generator is deterministic" — never ran anywhere
       # else. build.sh above only exercises the generator's HAPPY path (it
-      # calls it once, to produce the mirrors zig build needs); it does not
+      # calls it once, to produce the mirrors the render needs); it does not
       # check for a hand-edited/committed mirror or a second run producing a
       # diff. ci.yml's `tests/*/*.sh` glob does not reach site/test/, so
       # without this step those properties were asserted by a script nothing

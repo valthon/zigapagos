@@ -29,8 +29,8 @@ permissions:
 # So the job is split along that measured seam, not an aesthetic one: the two
 # multi-minute e2e scripts each get their own runner, the remaining ten share a
 # third, and the build/unit surface stops waiting behind them. Nothing is gained
-# by splitting further — the critical path is now from-astro.sh's two consumer
-# builds, which are serial inside that one script.
+# by splitting further: with the consumer build API retired, no job in this
+# workflow compiles zigapagos more than once.
 #
 # Every gate the monolith ran still runs, exactly once per run; each job below
 # notes which steps it inherited.
@@ -177,13 +177,12 @@ jobs:
 
       # Debug, matching what every downstream job actually compiles.
       #
-      # This built ReleaseFast at first, justified as "what website() defaults
-      # consumers to". That justification died in the same PR: the consumer
-      # builds are now pinned to Debug, and `zig build test` / `check` /
-      # `test-*` always used Zig's Debug default. A different optimize mode is a
-      # different cache entry, so the warmed objects matched nothing downstream
-      # and this job was pure added latency — measured at +6 minutes of critical
-      # path with no downstream saving.
+      # This built ReleaseFast at first, justified by what a consumer's build
+      # graph defaulted to — a justification that has now outlived the build
+      # graph entirely. `zig build test` / `check` / `test-*` always used Zig's
+      # Debug default, a different optimize mode is a different cache entry, so
+      # the warmed objects matched nothing downstream and this job was pure
+      # added latency — measured at +6 minutes of critical path.
       #
       # If a ReleaseFast artifact is ever needed in CI, it belongs in a separate
       # job that nothing blocks on; `zig build release` (build/release.zig) is
@@ -316,10 +315,9 @@ jobs:
       # guard their build with `if [[ ! -x "$ZIGAPAGOS" ]]`, so a binary sitting
       # there means they never call the compiler.
       #
-      # `ZIGAPAGOS_BIN` covers the consumer builds those scripts drive
-      # (examples/tsx-site, and site/ over in pages.yml), which would otherwise
-      # compile the generator and its whole dependency tree per invocation.
-      # build/site.zig reads it and switches to `zigapagos = .path`.
+      # `ZIGAPAGOS_BIN` covers the same thing for the consumer projects those
+      # scripts build: `site/build.sh` and `examples/tsx-site/build.sh` both
+      # read it, and fall back to compiling zigapagos only when it is unset.
       - name: Download zigapagos binary
         uses: actions/download-artifact@v4
         with:
@@ -414,8 +412,9 @@ jobs:
 
   # The marketing site, built and asserted on the PR path (#76).
   #
-  # site/ is a consumer project: it depends on the zigapagos package by path and
-  # regenerates ten `.smd` mirrors from the canonical docs before rendering. It
+  # site/ is a consumer project: it is built by running the `zigapagos` binary
+  # over it, and regenerates ten `.smd` mirrors from the canonical docs before
+  # rendering. It
   # is therefore the only place several classes of defect surface at all — a
   # generator change that emits a link SuperMD cannot resolve, a doc edit that
   # breaks the mirror transform, a prefix regression that 404s every script on
@@ -433,14 +432,12 @@ jobs:
   #
   # pages.yml's own note asked for a measurement rather than an assumption
   # before adopting this on the PR path, on the grounds that a cold consumer
-  # build costs ~120s. That number no longer applies: this job takes the
-  # `zigapagos` binary build-binary already produced, exactly as the three e2e
-  # jobs do, and with `ZIGAPAGOS_BIN` set nothing compiles. Measured on this
-  # repo against a cold site/.zig-cache: 4s for the build, 2s for build.sh, 2s
-  # for docs-mirror.sh (which does its own, now-warm, `zig build`), under a
-  # second each for links.sh and js-budget.sh. The job's wall time is dominated
-  # by runner setup, it `needs:` only build-binary, and it is nowhere near the
-  # critical path — the Astro-importer shard is still ~9m.
+  # build costs ~120s. That number stopped applying when this job started taking
+  # the `zigapagos` binary build-binary already produced, and stopped applying
+  # twice over now that site/ has no build graph to configure: `site/build.sh`
+  # is the binary plus bun, and no compiler runs in this job at all. The job's
+  # wall time is dominated by runner setup, it `needs:` only build-binary, and
+  # it is nowhere near the critical path.
   #
   # Linux-only, like every other consumer-project job here: the site build is
   # OS-independent and macOS is already off the PR path.
@@ -464,11 +461,10 @@ jobs:
       - name: Pin tool versions globally (shims must resolve outside the repo)
         run: mise use -g zig@0.16.0 bun@1.2
 
-      # `ZIGAPAGOS_BIN` is what build/api.zig reads to swap the `zigapagos`
-      # dependency from a source build to a path, so site/'s `zig build`
-      # performs zero compile steps. No Zig cache restore here, for the same
-      # reason pages.yml skips one on this path: with the binary in hand there
-      # are no objects to reuse.
+      # `ZIGAPAGOS_BIN` is what `site/build.sh` reads instead of compiling
+      # zigapagos, so this job runs no compiler at all. No Zig cache restore
+      # here, for the same reason pages.yml skips one on this path: with the
+      # binary in hand there are no objects to reuse.
       - name: Download zigapagos binary
         uses: actions/download-artifact@v4
         with:
@@ -491,12 +487,11 @@ jobs:
         working-directory: runtime
         run: bun install --frozen-lockfile
 
+      # The one canonical invocation. `site/build.sh` owns the bun install, the
+      # docs-mirror generation and the `zigapagos release` flags, so this step
+      # and the four assertion scripts below cannot drift apart from each other.
       - name: Build the site
-        working-directory: site
-        run: |
-          bun install --frozen-lockfile
-          bun run scripts/gen-docs-mirror.ts
-          zig build
+        run: bash site/build.sh
 
       # The built tree, downloadable from the run page (#51).
       #
@@ -520,7 +515,7 @@ jobs:
       #
       # if-no-files-found: error rather than the default warning, because that
       # flag is the closest thing this step can carry to a self-test: a path that
-      # stops being right (site/build.zig's `.output_path`, say) turns into a red
+      # stops being right (site/build.sh's `--output`, say) turns into a red
       # job instead of a silently empty zip nobody opens until they need it.
       #
       # Unconditional rather than `if: github.event_name == 'pull_request'`: it is
@@ -584,16 +579,14 @@ jobs:
   # worked arrived up to 24 hours after the merge that broke it.
   #
   # WHY THIS IS AFFORDABLE HERE AND NOT IN browser-e2e.yml. That workflow's
-  # "Why scheduled, and NOT a PR gate" note costs its browser jobs at ~265s of
-  # cold consumer build plus ~125s of assertions each. Both halves of that number
-  # belong to the examples/tsx-site suites, which stay nightly and are NOT
-  # promoted by this change. site/ is a different shape: it builds against the
-  # binary build-binary already produced, so nothing compiles — measured at 4s
-  # for the build in the job above — and the two helpers together are seconds.
-  # What is left is the browser install, ~15s of pip plus ~60-90s for
-  # `playwright install --with-deps chrome`, so call the job ~2 minutes wall.
-  # It `needs:` only build-binary and runs in parallel with five other jobs; the
-  # run's critical path is still e2e-astro-importer's ~9m of consumer builds.
+  # "Why scheduled, and NOT a PR gate" note costs its browser jobs at ~125s of
+  # assertions each on top of a build. Those suites stay nightly and are NOT
+  # promoted by this change. site/ is cheaper: it builds against the binary
+  # build-binary already produced, so nothing compiles, and the two helpers
+  # together are seconds. What is left is the browser install, ~15s of pip plus
+  # ~60-90s for `playwright install --with-deps chrome`, so call the job ~2
+  # minutes wall. It `needs:` only build-binary and runs in parallel with five
+  # other jobs.
   #
   # WHY A SEPARATE JOB rather than four more steps on `site`. Browser automation
   # is the flakiest thing in any suite (browser-e2e.yml's reason 3). Keeping it
@@ -697,19 +690,18 @@ jobs:
         working-directory: runtime
         run: bun install --frozen-lockfile
 
+      # The one canonical invocation. `site/build.sh` owns the bun install, the
+      # docs-mirror generation and the `zigapagos release` flags, so this step
+      # and the four assertion scripts below cannot drift apart from each other.
       - name: Build the site
-        working-directory: site
-        run: |
-          bun install --frozen-lockfile
-          bun run scripts/gen-docs-mirror.ts
-          zig build
+        run: bash site/build.sh
 
       - name: Serve the built site and run the browser smokes
         working-directory: site
         run: |
           set -euo pipefail
-          # zig build's install path is "site" (site/build.zig's .output_path),
-          # not "zigapagos" — the prefix zigapagos.ziggy's url_path_prefix
+          # The build's output path is site/zig-out/site (site/build.sh's
+          # `--output`), not "zigapagos" — the prefix zigapagos.ziggy's url_path_prefix
           # declares — so a plain static file server needs the build output
           # reachable AT that path for every /zigapagos/... reference in the HTML
           # (scripts, styles, the SPA's prerendered shells) to resolve the way
@@ -762,27 +754,19 @@ jobs:
   # OS-independent build/serve plumbing, so one OS suffices and macOS runner
   # minutes stay down.
 
-  # 9m08s of the old 16m06s e2e step. The script generates a consumer project
-  # from the Astro sample and runs `zig build` in it TWICE (islands and
-  # no-islands variants), each a from-scratch compile of zigapagos as a
-  # dependency — ~4.5 minutes apiece, and serial inside the script. This is the
-  # run's critical path; it gets a runner to itself.
+  # The script generates a consumer project from the Astro sample and builds it
+  # twice (islands and no-islands variants). Both builds are now the `zigapagos`
+  # binary plus bun — a scaffolded project has no build graph — where each used
+  # to be a from-scratch ~4.5-minute compile of zigapagos as a path dependency.
+  # That was 9m08s of the old 16m06s e2e step and the run's critical path; it
+  # keeps its own runner because the script is still one long serial e2e, not
+  # because it is long.
   e2e-astro-importer:
     needs: build-binary
     name: Shell e2e — Astro importer
     runs-on: ubuntu-latest
     env:
       ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
-      # Deliberately NOT sharing ZIG_LOCAL_CACHE_DIR across the projects this
-      # job builds. It looks like it should help — zig's local cache is
-      # per-project, so the repo build and the two generated consumer projects
-      # each compile the same third-party objects from zero, and the cache is
-      # content-addressed — but it was tried and measured on run 30260063269 and
-      # the two consumer builds moved 263.5s -> 262.3s and 273.2s -> 268.5s,
-      # i.e. nothing. The reuse does not happen because each consumer build is a
-      # distinct root module and zig keys a compilation on its whole input set,
-      # not per source file. Left out rather than left in as a plausible-looking
-      # no-op; if this is revisited, the number to beat is ~265s per build.
     steps:
       - uses: actions/checkout@v7
         with:
@@ -821,10 +805,9 @@ jobs:
       # guard their build with `if [[ ! -x "$ZIGAPAGOS" ]]`, so a binary sitting
       # there means they never call the compiler.
       #
-      # `ZIGAPAGOS_BIN` covers the consumer builds those scripts drive
-      # (examples/tsx-site, and site/ over in pages.yml), which would otherwise
-      # compile the generator and its whole dependency tree per invocation.
-      # build/site.zig reads it and switches to `zigapagos = .path`.
+      # `ZIGAPAGOS_BIN` covers the same thing for the consumer projects those
+      # scripts build: `site/build.sh` and `examples/tsx-site/build.sh` both
+      # read it, and fall back to compiling zigapagos only when it is unset.
       - name: Download zigapagos binary
         uses: actions/download-artifact@v4
         with:
@@ -861,22 +844,20 @@ jobs:
           fi
           bash "$script"
 
-  # 6m08s of the old 16m06s e2e step, nearly all of it examples/tsx-site's
-  # `zig build dev` — a cold consumer build driving the public zigapagos.dev()
-  # API. Same reasoning as the importer job: one long serial script, one runner.
+  # tests/dev/dev.sh, which drives `zigapagos dev` against examples/tsx-site,
+  # plus the ten non-browser scripts under examples/tsx-site/test/. One long
+  # serial script and its neighbours, one runner.
   #
-  # That cold consumer build is now this job's second reason to exist: the
-  # ten non-browser examples/tsx-site/test scripts each need one, and this is
-  # the only job that has already paid for it. See the second step for the
-  # measurement and for why they are named rather than globbed.
+  # This was 6m08s of the old 16m06s e2e step, nearly all of it a cold consumer
+  # compile of zigapagos as a path dependency. That compile is gone: the example
+  # is built by `examples/tsx-site/build.sh`, which is the binary this job
+  # downloads plus bun.
   e2e-dev-loop:
     needs: build-binary
     name: Shell e2e — dev loop + tsx-site e2e
     runs-on: ubuntu-latest
     env:
       ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
-      # No shared ZIG_LOCAL_CACHE_DIR — see e2e-astro-importer for the
-      # measurement that says it buys nothing.
     steps:
       - uses: actions/checkout@v7
         with:
@@ -912,10 +893,9 @@ jobs:
       # guard their build with `if [[ ! -x "$ZIGAPAGOS" ]]`, so a binary sitting
       # there means they never call the compiler.
       #
-      # `ZIGAPAGOS_BIN` covers the consumer builds those scripts drive
-      # (examples/tsx-site, and site/ over in pages.yml), which would otherwise
-      # compile the generator and its whole dependency tree per invocation.
-      # build/site.zig reads it and switches to `zigapagos = .path`.
+      # `ZIGAPAGOS_BIN` covers the same thing for the consumer projects those
+      # scripts build: `site/build.sh` and `examples/tsx-site/build.sh` both
+      # read it, and fall back to compiling zigapagos only when it is unset.
       - name: Download zigapagos binary
         uses: actions/download-artifact@v4
         with:
@@ -959,27 +939,10 @@ jobs:
       # running the file. tests/meta/script-coverage.sh now makes that state
       # declared rather than accidental; this step pays off the cheap half of it.
       #
-      # WHY THIS JOB, measured rather than assumed. Every one of these scripts
-      # runs `zig build` inside examples/tsx-site, i.e. a full CONSUMER build of
-      # zigapagos-as-a-dependency. e2e-dev-loop is the only job that already pays
-      # for one — the step above drives examples/tsx-site's own `zig build dev`
-      # — so here they land on a warm .zig-cache. In e2e-rest (`tests/*/*.sh`,
-      # which builds the REPO, not the example) the same ten would first buy
-      # a cold ~265s consumer build and make THAT job the run's critical path.
-      #
-      # Measured on run 30313041568, the first run to include this step: 49s of
-      # wall time for the step, against 468s for the dev.sh step above it. Per
-      # script —
-      # ssr 4.2, parity 4.5, parity-bundle 3.2, incremental 9.3, props_check 6.2,
-      # doctor 1.6, spa 4.3, spa_flags 3.2, spa_guards 3.4, spa_nested 3.8.
-      #
-      # The cost is real but small, and the margin is thinner than it looks. On
-      # the five green runs before this one e2e-dev-loop was 342-528s against
-      # e2e-astro-importer's 558-716s; run 30313041568 came in at 536s against an
-      # unusually fast 532s importer, i.e. this job took the critical path by 4
-      # SECONDS. So the honest claim is: ~49s added, normally well inside the
-      # importer's shadow, occasionally a few seconds past it. Every alternative
-      # placement is worse, because each one buys another cold consumer build.
+      # WHY THIS JOB. Each of these scripts builds examples/tsx-site, and this
+      # is the job whose dev.sh step already does. They sit beside it rather
+      # than in e2e-rest so the example's bun install and node_modules are warm
+      # when they run; the last measurement of the step as a whole was 49s.
       #
       # WHY A LITERAL LIST rather than a glob + exclusion, which is what e2e-rest
       # does. There, self-maintenance is the whole point: a new tests/<area>/
@@ -993,9 +956,8 @@ jobs:
       # NOT LISTED, deliberately: examples/tsx-site/test/hydrate.sh and
       # examples/tsx-site/test/spa_slice.sh. Both drive real Chromium through
       # python3 + playwright (~150MB of browser) and are ~125s each;
-      # spa_slice.sh additionally `rm -rf`s .zig-cache and zig-out, which would
-      # throw away the warm build this step exists to reuse and force everything
-      # after it to rebuild cold. They are NOT unrun — they moved to
+      # spa_slice.sh additionally `rm -rf`s zig-out, so everything after it
+      # rebuilds from an empty output tree. They are NOT unrun — they moved to
       # .github/workflows/browser-e2e.yml, a nightly schedule + workflow_dispatch
       # job with one matrix runner each. Adding them here instead would put a
       # browser install and ~250s on the PR path for a signal almost no PR moves.
@@ -1019,7 +981,7 @@ jobs:
             examples/tsx-site/test/ssr.sh
             examples/tsx-site/test/parity.sh
             examples/tsx-site/test/parity-bundle.sh
-            examples/tsx-site/test/incremental.sh
+            examples/tsx-site/test/rebundle.sh
             examples/tsx-site/test/props_check.sh
             examples/tsx-site/test/doctor.sh
             examples/tsx-site/test/spa.sh
@@ -1111,10 +1073,9 @@ jobs:
       # guard their build with `if [[ ! -x "$ZIGAPAGOS" ]]`, so a binary sitting
       # there means they never call the compiler.
       #
-      # `ZIGAPAGOS_BIN` covers the consumer builds those scripts drive
-      # (examples/tsx-site, and site/ over in pages.yml), which would otherwise
-      # compile the generator and its whole dependency tree per invocation.
-      # build/site.zig reads it and switches to `zigapagos = .path`.
+      # `ZIGAPAGOS_BIN` covers the same thing for the consumer projects those
+      # scripts build: `site/build.sh` and `examples/tsx-site/build.sh` both
+      # read it, and fall back to compiling zigapagos only when it is unset.
       - name: Download zigapagos binary
         uses: actions/download-artifact@v4
         with:

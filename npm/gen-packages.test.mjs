@@ -325,6 +325,25 @@ test("neither README claims islands are impossible over npm", () => {
   });
 });
 
+// The READMEs used to describe this package as a build with two documented
+// shortfalls against a Zig build: no depfile caching, and no per-SITE islands
+// runtime slice ("island pages load the full shared /zigapagos-runtime.js").
+// Both described the BUILD GRAPH's exclusive capabilities. There is no build
+// graph now — `zigapagos release` is what builds every zigapagos site,
+// including this project's own — and it computes both runtime slices. A
+// revision that reintroduces the caveat is claiming a shortfall that does not
+// exist, in the one document a new user reads first.
+test("neither README claims the npm build lacks the islands runtime slice", () => {
+  withGenerated((dir) => {
+    for (const p of [["cli", "README.md"], ["zigapagos", "README.md"]]) {
+      const readme = readText(dir, ...p);
+      assert.doesNotMatch(readme, /islands runtime slice[^.]*is not\s+computed/s);
+      assert.doesNotMatch(readme, /differences from a Zig build/);
+      assert.doesNotMatch(readme, /no-slice default/);
+    }
+  });
+});
+
 // zigbase is now INSTALLED rather than asked for, so the old `npm i -D zigbase`
 // instruction must not survive as advice — a reader who follows it installs a
 // second copy at a version the CLI does not pin. The size it costs is stated

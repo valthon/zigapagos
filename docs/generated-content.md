@@ -12,8 +12,8 @@ alongside the hand-authored on-ramp pages that have no canonical source elsewher
 page is one of the mirrors.
 
 Zigapagos has no built-in `content_generators` config hook. Invoking a script during the
-build is the cheap part — a `zig build` pre-step or a `postinstall` script solves that in a
-few lines, for any generator. What actually costs is the transformation from ordinary
+build is the cheap part — a line in your build script, or a `postinstall` hook, solves that
+in a few lines, for any generator. What actually costs is the transformation from ordinary
 Markdown into SuperMD: five problems that any canonical-Markdown-to-site-page pipeline
 hits, four of which fail the build outright, and none of which a generic "run this script"
 hook could do on your behalf, because each depends on what the canonical source actually
@@ -198,7 +198,7 @@ REGISTRY=scripts/docs-registry.json
 MIRROR_DIR=content/docs
 BUILD_OUT=zig-out/site
 PAGE_PATH_PREFIX=docs
-BUILD_CMD=(zig build)
+BUILD_CMD=(bash build.sh)
 UNIT_TESTS=test/md-to-smd.test.ts
 ```
 

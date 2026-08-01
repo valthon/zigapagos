@@ -29,7 +29,7 @@ The **TSX island engine is built and merged to main**:
 - **Zig-WASM island path retired/deleted.** The old `render(*Z)` / WASM island
   path has been removed. Migration from React is now a near-mechanical import
   swap (see [astro-to-zigapagos.md](migration/astro-to-zigapagos.md)).
-- **Worked example**: `examples/tsx-site/` — `Hero.island.tsx`, layout, `build.zig`,
+- **Worked example**: `examples/tsx-site/` — `Hero.island.tsx`, layout, `build.sh`,
   `package.json`/`tsconfig.json`, SSR + hydration tests.
 
 ---
@@ -100,7 +100,7 @@ a ZigBase backend — queued the migration backlog. Ordering for the migration p
 5. **Any time:** browser error relay, same-origin fetch defaults, live flags,
    router paper cuts, state-preserving reload. CSP-compatible emit is **shipped**:
    any site with islands or SPAs gets per-inline-script sha256 hashes written to
-   `csp.{nginx.conf,apache.conf,zigbase.txt}` (`build/site.zig`, `docs/spa.md`).
+   `csp.{nginx.conf,apache.conf,zigbase.txt}` (`zigapagos release`, `docs/spa.md`).
 
 **Cross-cutting — ZigBase integration seams.** Route guards, browser error relay,
 same-origin fetch defaults, live flags, and native codegen each have a backend

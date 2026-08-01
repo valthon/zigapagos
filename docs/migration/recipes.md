@@ -40,7 +40,7 @@ Place it in a layout with an `<island>` tag:
 <island src="components/Hero.island.tsx" client:load prop-headline="$page.title"></island>
 ```
 
-- **`src`** — path relative to the project root; matches the entry in `build.zig`.
+- **`src`** — path relative to the project root; matches the `--island=` entry in `build.sh`.
 - **`client:*`** — hydration timing: `load` | `idle` | `visible` | `media="(query)"` | `only`.
 - **`prop-NAME="$expr"`** — a SuperHTML/Scripty expression evaluated at build time.
   The result is JSON-serialised and passed to the component as the named prop.
@@ -415,19 +415,15 @@ A consumer project is a **Bun project** with `@z/runtime` as a path-dependency.
 }
 ```
 
-**`build.zig`** — register each island in `zigapagos.website(.islands)`:
+**`build.sh`** — one `--island=` per island:
 
-```zig
-const site = zigapagos.website(b, .{
-    .islands = &.{
-        .{ .root = b.path("components/Hero.island.tsx"),
-           .src  = "components/Hero.island.tsx" },
-        .{ .root = b.path("components/Promo.island.tsx"),
-           .src  = "components/Promo.island.tsx" },
-    },
-    .output_path = "site",
-    .force = true,
-});
+```sh
+exec zigapagos release \
+  --force \
+  --output=zig-out/site \
+  --island=components/Hero.island.tsx \
+  --island=components/Promo.island.tsx \
+  "$@"
 ```
 
 `src` is the string you write in `<island src="...">`. The build spawns the Bun

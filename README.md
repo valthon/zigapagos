@@ -65,6 +65,9 @@ map. No island on the page? Zero JavaScript shipped.
 
 ### From source
 
+`zig build` builds ZIGAPAGOS. It does not build websites — the binary does that,
+and needs no Zig toolchain of its own.
+
 ```bash
 # toolchain (or install zig 0.16.0 + bun 1.2 yourself)
 mise install
@@ -87,14 +90,13 @@ either OS until a native aarch64 build lands, and `npm install` refuses those ho
 rather than substituting the x64 binary. `zigapagos` is an alias for the canonical
 [`@zigapagos/cli`](npm/README.md). This channel covers **everything**: content
 sites, the CLI tooling (`init`, `migrate`, `doctor`, `validate`, `explain`),
-**islands**, **native SPAs** and `zigapagos dev`, with no Zig toolchain and no
-`build.zig`. The package ships the `@z/runtime` sources and the Bun sidecar, and
-depends on `bun` and `@zigbase/server`, so `release` discovers your
-`*.island.tsx` / `*.spa.tsx` entries and bundles them itself.
+**islands**, **native SPAs** and `zigapagos dev`, with no Zig toolchain. The
+package ships the `@z/runtime` sources and the Bun sidecar, and depends on `bun`
+and `@zigbase/server`, so `release` discovers your `*.island.tsx` / `*.spa.tsx`
+entries and bundles them itself.
 
-What a Zig build still adds is caching, not capability: `build.zig` drives Bun
-through the build graph, so an unchanged bundle is skipped. See
-[npm/README.md](npm/README.md) for the full comparison and the install size.
+Downloading a precompiled binary from the releases page gets you the same thing;
+see [npm/README.md](npm/README.md) for what npm adds and the install size.
 
 To add your first island, see [docs/islands.md](docs/islands.md). A complete
 worked example lives in [`examples/tsx-site/`](examples/tsx-site/) — islands,

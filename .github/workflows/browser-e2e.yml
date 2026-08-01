@@ -21,18 +21,19 @@
 # NOT HERE ANY MORE: site/test/hydrate_playwright.py and
 # site/test/spa_playwright.py. Those two moved to ci.yml's `site-browser` job and
 # now gate every pull request (#49). The cost argument below is entirely about
-# the examples/tsx-site consumer build, and site/ never paid it — it builds
-# against the binary ci.yml's build-binary job already produced, in ~4s with no
-# compile at all. Do not move them back, and do not promote these two to join
-# them: the numbers in reason 1 are theirs.
+# the browser install and the assertions themselves; site/ builds against the
+# binary ci.yml's build-binary job already produced, in seconds with no compile
+# at all. Do not move them back, and do not promote these two to join them: the
+# numbers in reason 1 are theirs.
 #
 # Why scheduled, and NOT a PR gate
 # --------------------------------
 # Three reasons, in order of weight:
 #
-#  1. COST. Each script is ~125s of assertions on top of a ~265s cold consumer
-#     build (examples/tsx-site compiles zigapagos as a path dependency), plus a
-#     ~150MB browser install. Putting that on every pull request roughly doubles
+#  1. COST. Each script is ~125s of assertions plus a ~150MB browser install,
+#     on top of compiling zigapagos itself — this workflow is triggered by
+#     `schedule`/`workflow_dispatch`, so there is no upstream CI run to take a
+#     prebuilt binary from. Putting that on every pull request roughly doubles
 #     the run for a signal almost no PR moves. A browser job on the PR path is
 #     also the kind of cost that gets switched off six weeks later, and a deleted
 #     check catches nothing at all.
@@ -81,7 +82,7 @@ jobs:
   browser:
     name: "Browser e2e — ${{ matrix.label }}"
     runs-on: ubuntu-latest
-    # ~265s cold consumer build + ~150MB browser install + ~125s of assertions,
+    # A cold zigapagos build + ~150MB browser install + ~125s of assertions,
     # call it 8 minutes; 25 leaves room for a slow runner and a cold package
     # cache without letting a hung browser burn an hour.
     timeout-minutes: 25
@@ -100,22 +101,17 @@ jobs:
     # ONE SCRIPT PER RUNNER, and this is the load-bearing detail of the whole
     # file rather than a stylistic choice.
     #
-    # spa_slice.sh opens with `rm -rf .zig-cache zig-out` inside
-    # examples/tsx-site — on purpose, because it asserts on the SIZES and
-    # CONTENTS of freshly sliced runtime bundles and a stale bundle would let it
-    # pass against code that no longer exists. The consequence is that it
-    # destroys the warm consumer build anything sequenced before it just paid
-    # for, and forces anything sequenced after it to rebuild from cold.
-    #
-    # That is also exactly why the pair could not simply join ci.yml's
-    # e2e-dev-loop step, whose entire premise is reusing one warm consumer build.
+    # spa_slice.sh opens with `rm -rf zig-out` inside examples/tsx-site — on
+    # purpose, because it asserts on the SIZES and CONTENTS of freshly sliced
+    # runtime bundles and a stale content-hashed chunk left behind by an earlier
+    # build would let it bill the wrong file. Anything sequenced after it
+    # therefore starts from an empty output tree.
     #
     # A matrix makes the hazard structurally impossible instead of merely
     # avoided: each leg is its own runner with its own workspace, so there is
     # nothing for the `rm -rf` to destroy and no ordering to get wrong. It costs
-    # nothing to do it this way — the two scripts CANNOT share a build (the
-    # deletion is the point of one of them), so a shared runner would buy no
-    # reuse and only serialize ~8 minutes into ~13.
+    # nothing to do it this way — a shared runner would buy no reuse and only
+    # serialize ~8 minutes into ~13.
     #
     # If a third browser script is ever added, give it its own matrix row. Do not
     # sequence it in a step beside spa_slice.sh.
@@ -134,10 +130,8 @@ jobs:
       - uses: actions/checkout@v7
         with:
           # Not depth-1: build/config.zig bakes `git describe --tags` into the
-          # binary, and both scripts additionally use `git ls-files --deleted` +
-          # `git restore` to undo the root build.zig's configure-time deletion of
-          # the committed tests/**/snapshot baselines. Same setting every e2e job
-          # in ci.yml uses.
+          # binary, and both scripts build it. Same setting every e2e job in
+          # ci.yml uses.
           fetch-depth: 0
 
       - name: Setup toolchain (mise — zig 0.16.0 + bun 1.2)
@@ -195,7 +189,7 @@ jobs:
       # downloads Playwright's own Chromium revision and satisfies none of them:
       # the run dies at launch with "Chromium distribution 'chrome' is not found
       # at /opt/google/chrome/chrome", after having already paid for the whole
-      # consumer build. `chrome` installs Google Chrome stable itself, which is
+      # build. `chrome` installs Google Chrome stable itself, which is
       # what the channel resolves to. `--with-deps` pulls the shared libraries a
       # headless browser needs on a bare runner image (it shells out to apt, so
       # it needs the passwordless sudo GitHub-hosted runners have).
@@ -217,8 +211,8 @@ jobs:
           echo "${RUNNER_TEMP}/pw/bin" >> "$GITHUB_PATH"
           "${RUNNER_TEMP}/pw/bin/python" -m playwright install --with-deps chrome
 
-      # Fails in seconds on a broken browser install instead of after the ~265s
-      # consumer build the next step pays for. It launches through the exact path
+      # Fails in seconds on a broken browser install instead of after the
+      # zigapagos build the next step pays for. It launches through the exact path
       # the helpers do — `mise exec -- python3` for the interpreter resolution,
       # `channel="chrome"` for the browser — so a green check here means the two
       # things this workflow adds over ci.yml are both actually present.

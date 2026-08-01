@@ -6,9 +6,6 @@
   standalone executable has no default action: run bare it now prints its help
   and exits 0, which is what `npx zigapagos` does too. An argument that names no
   command prints the same menu and exits non-zero.
-- `zigapagos.serve()` is removed from the consumer build API, together with
-  `zigapagos.Proxy` and `Options.proxies`. The `serve` steps in `site/build.zig`
-  and `examples/tsx-site/build.zig` went with it.
 
 ### Changed
 
@@ -29,10 +26,4 @@
     `--download-zigbase`, because an unannounced network fetch in CI is a
     surprise rather than a convenience.
 - `zigapagos init` now points a new site at `zigapagos dev` rather than at the
-  bare command, and `zigapagos init --from-astro` no longer scaffolds a `serve`
-  step into the generated `build.zig`.
-- **`DevOptions.download_zigbase` is now `DevOptions.no_download`** in the
-  consumer build API, following the flag it passes through. `zig build dev`
-  fetches the pinned zigbase implicitly, exactly like `zigapagos dev`; set
-  `.no_download = true` to make a missing binary fail instead.
-  `E2eOptions.download_zigbase` is unchanged and still opt-in.
+  bare command.

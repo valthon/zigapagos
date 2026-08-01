@@ -16,7 +16,8 @@ pub const ZigapagosExeConfig = struct {
 };
 
 /// Construct the `zigapagos` executable in builder `zb`, wiring all dependencies.
-/// Shared by the in-repo `build()` and by `website()` when building from source.
+/// The in-repo `build()` is the only caller — `build/release.zig` cross-compiles
+/// its own, deliberately (see the wuffs note below).
 pub fn addZigapagosExe(zb: *std.Build, cfg: ZigapagosExeConfig) *std.Build.Step.Compile {
     const target = cfg.target;
     const optimize = cfg.optimize;
