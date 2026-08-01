@@ -18,8 +18,11 @@
 # A malformed heading fails nothing and silently yields empty or run-on release notes, which
 # is why the version/date are validated here rather than trusted.
 #
-# There is no site mirror to update: site/ has no generated changelog page (checked), so
-# CHANGELOG.md is the only target.
+# CHANGELOG.md is nonetheless the only file this script writes. site/ DOES publish a
+# changelog page (site/scripts/docs-registry.json maps CHANGELOG.md -> changelog.smd), but
+# that mirror is a gitignored build artifact regenerated from this file on every site
+# build, so it needs no release-time step. The claim here used to be that no such mirror
+# existed; it was true for one day, until the site landed in e5f2fe9.
 #
 # Usage: scripts/assemble-changelog.sh [<version> [<date>]] [--dry-run]
 #   <version>  defaults to build.zig.zon's .version (the single source of truth).
