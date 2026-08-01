@@ -335,6 +335,9 @@ Everything else on this page is SuperHTML 0.6.2's own behaviour, from the
 vendored package in the Zig package cache: the directive set is `Ast.SpecialAttr`
 (`src/Ast.zig:68`), the parse-time validation is in the same file's attribute
 loop (`:else` at `src/Ast.zig:698`, the mutual-exclusion checks in the
-directive switch at `src/Ast.zig:743`), and the render-time dispatch that silently ignores `:else`
-is `src/template.zig:300`. That tree is a build input and is never edited here —
+directive switch at `src/Ast.zig:743`), and the render-time dispatch is
+`src/template.zig:300` — a `switch` with no `:else` arm, so the directive would
+fall through it doing nothing. "Would" because nothing reaches it: `:else` with a
+value is rejected at parse time, and a bare one panics on the null unwrap above
+before dispatch runs. That tree is a build input and is never edited here —
 when a fork-added lint and upstream disagree, the lint is what changes.
