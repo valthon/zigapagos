@@ -42,6 +42,27 @@ test("slugifyHeading: does not collapse other multi-space runs either", () => {
   expect(slugifyHeading("a   b")).toBe("a---b");
 });
 
+test("slugifyHeading: a double-backtick span is one span, not two empty ones", () => {
+  // Issue #66's secondary note. Stripping code markers with `/`([^`]*)`/g`
+  // reads a ``-run as an empty span rather than as the delimiter of a span
+  // that may contain a literal backtick, so "`` `b` ``" decomposes into two
+  // bogus empty spans and leaves the padding spaces behind — one of which
+  // survives into the slug as an extra hyphen ("a-and--b"). GitHub renders one
+  // span whose content is "`b`" and anchors the heading "a-and-b".
+  expect(slugifyHeading("`a` and `` `b` ``")).toBe("a-and-b");
+});
+
+test("slugifyHeading: a span containing a literal backtick keeps its content", () => {
+  expect(slugifyHeading("Use ``a`b`` here")).toBe("use-ab-here");
+});
+
+test("slugifyHeading: an unmatched backtick is not a span", () => {
+  // No run of equal length follows, so the backtick is literal text and is
+  // dropped by the character class like any other punctuation. Pinned because
+  // the span-aware strip must not start swallowing the rest of the heading.
+  expect(slugifyHeading("a ` b")).toBe("a--b");
+});
+
 // ---------------------------------------------------------------------------
 // heading ids via transformBody
 // ---------------------------------------------------------------------------
@@ -203,6 +224,40 @@ test("fence: a delimiter-shaped line whose info string holds a backtick is not a
   expect(out).toContain('$heading.id("real")');
 });
 
+test("fence language remap: an inherited Object property is a MISS, not a hit", () => {
+  // Issue #67. `fenceLangRemap` is an ordinary object literal, so its prototype
+  // is `Object.prototype`. A raw `remap[lang]` therefore resolves a fence
+  // tagged `constructor` to the `Object` constructor — truthy, so the miss
+  // check passes and the whole source text of a function is spliced into the
+  // fence's language slot. The build error that follows names the stringified
+  // function rather than the fence the author wrote.
+  //
+  // Every name below is a real `Object.prototype` member and every one of them
+  // corrupts the fence under a raw index; `constructor` is only the loudest.
+  for (const lang of ["constructor", "toString", "valueOf", "hasOwnProperty", "isPrototypeOf"]) {
+    const body = ["```" + lang, "sample", "```", ""].join("\n");
+    const out = transformBody(body, opts({ fenceLangRemap: {} }));
+    expect(out).toBe(body);
+  }
+});
+
+test("fence language remap: `__proto__` is a miss too", () => {
+  // Separate from the loop above because `__proto__` is an accessor rather than
+  // a plain inherited value: `remap["__proto__"]` yields `Object.prototype`
+  // itself, which stringifies to "[object Object]".
+  const body = ["```__proto__", "sample", "```", ""].join("\n");
+  const out = transformBody(body, opts({ fenceLangRemap: {} }));
+  expect(out).toBe(body);
+});
+
+test("fence language remap: an own property named `constructor` still maps", () => {
+  // The guard rejects INHERITED names, not the name itself — a caller that
+  // genuinely maps `constructor` must still be honoured.
+  const body = ["```constructor", "sample", "```", ""].join("\n");
+  const out = transformBody(body, opts({ fenceLangRemap: { constructor: "ts" } }));
+  expect(out.split("\n")[0]).toBe("```ts");
+});
+
 // ---------------------------------------------------------------------------
 // link rewriting
 // ---------------------------------------------------------------------------
@@ -267,6 +322,102 @@ test("link: link TEXT is never rewritten, only the target", () => {
     opts({ published: new Map([["docs/other.md", "docs/other"]]) }),
   );
   expect(out).toBe('[./other.md as text]($link.page("docs/other"))');
+});
+
+// ---------------------------------------------------------------------------
+// inline code spans (issue #66)
+//
+// The three rows below are the reduced case from the issue body: the same
+// link-shaped string, published / unpublished / fenced. Only the third was
+// handled before the fix, and neither of the first two failed loudly — one
+// published a `$link.page(...)` directive the author never wrote, the other a
+// bare GitHub URL with no marker at all. Nothing gates them elsewhere either:
+// site/test/docs-mirror.sh's rendered-HTML check strips <pre> and <code>
+// before matching, precisely so a page may legitimately document a directive.
+// ---------------------------------------------------------------------------
+
+test("code span: a PUBLISHED target inside an inline span is left literal", () => {
+  const out = transformBody(
+    "A link written as `[text](./spa.md)` is a link.",
+    opts({ published: new Map([["docs/spa.md", "docs/spa"]]) }),
+  );
+  expect(out).toBe("A link written as `[text](./spa.md)` is a link.");
+  expect(out).not.toContain("$link.page");
+});
+
+test("code span: an UNPUBLISHED target inside an inline span is left literal", () => {
+  const seen: string[] = [];
+  const out = transformBody(
+    "A link written as `[text](./nope.md)` is a link.",
+    opts({ onOffsiteLink: (_c, target) => seen.push(target) }),
+  );
+  expect(out).toBe("A link written as `[text](./nope.md)` is a link.");
+  // Not merely unrewritten: the sample must not be reported as a real off-site
+  // link either, or a doc that shows link syntax pollutes the offsite report.
+  expect(seen).toEqual([]);
+});
+
+test("code span: the fenced control from the same case is still untouched", () => {
+  const body = ["```", "[text](./spa.md)", "```", ""].join("\n");
+  const out = transformBody(
+    body,
+    opts({ published: new Map([["docs/spa.md", "docs/spa"]]) }),
+  );
+  expect(out).toBe(body);
+});
+
+test("code span: a double-backtick span protects a link-shaped string", () => {
+  const out = transformBody(
+    "See ``[text](./other.md)`` here.",
+    opts({ published: new Map([["docs/other.md", "docs/other"]]) }),
+  );
+  expect(out).toBe("See ``[text](./other.md)`` here.");
+});
+
+test("code span: a span containing a literal backtick closes on a run of exactly N", () => {
+  // CommonMark: a span opened with N backticks closes at the next run of
+  // EXACTLY N, so the lone backtick in the middle is span content, not a
+  // closer. A splitter that closed on the first run of length >= 1 would end
+  // the span early and rewrite the link that follows it.
+  const out = transformBody(
+    "x ``a ` [text](./other.md)`` y",
+    opts({ published: new Map([["docs/other.md", "docs/other"]]) }),
+  );
+  expect(out).toBe("x ``a ` [text](./other.md)`` y");
+});
+
+test("code span: a link OUTSIDE a span on the same line is still rewritten", () => {
+  // The guard against over-skipping: a line with a span must not stop being
+  // link-rewritten wholesale.
+  const out = transformBody(
+    "See [a](./other.md) and `[b](./other.md)` done.",
+    opts({ published: new Map([["docs/other.md", "docs/other"]]) }),
+  );
+  expect(out).toBe('See [a]($link.page("docs/other")) and `[b](./other.md)` done.');
+});
+
+test("code span: an unmatched backtick opens nothing", () => {
+  // No later run of equal length, so the backtick is literal text and the rest
+  // of the line is ordinary prose — treating it as an opener would silently
+  // switch link rewriting off for everything after it.
+  const out = transformBody(
+    "a ` b [text](./other.md)",
+    opts({ published: new Map([["docs/other.md", "docs/other"]]) }),
+  );
+  expect(out).toBe('a ` b [text]($link.page("docs/other"))');
+});
+
+test("code span: a heading's code span is protected, and the heading still gets an id", () => {
+  // The heading path runs the link rewrite first and slugifies the result, so
+  // both halves have to hold at once: the span survives verbatim AND the id is
+  // GitHub's slug for the heading as rendered.
+  const out = transformBody(
+    "## Writing `[text](./other.md)` links",
+    opts({ published: new Map([["docs/other.md", "docs/other"]]) }),
+  );
+  expect(out).toBe(
+    '## []($heading.id("writing-textothermd-links")) Writing `[text](./other.md)` links',
+  );
 });
 
 // ---------------------------------------------------------------------------
