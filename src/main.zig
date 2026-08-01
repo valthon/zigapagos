@@ -179,14 +179,14 @@ pub fn main(init: std.process.Init) u8 {
         .dev, .develop => @import("cli/dev.zig").dev(io, gpa, args[2..], init.environ_map) catch fatal.oom(),
         .help, .@"-h", .@"--help" => fatal.help(),
         .version, .@"-v", .@"--version" => printVersion(),
-        .serve, .server => {
-            std.debug.print(
-                "error: run zigapagos without any subcommand to start the deprecated live server,\n" ++
-                    "or use 'zigapagos dev' to serve the release output with the stock ZigBase binary\n\n",
-                .{},
-            );
-            fatal.helpError();
-        },
+        // An explicit alias for the bare command, not a second server. The
+        // documentation has spelled it `zigapagos serve` since long before this
+        // arm existed (docs/spa.md, docs/islands.md, docs/observability.md,
+        // tests/serve/*.sh), and until now that was the one spelling the binary
+        // rejected -- it printed the help menu and exited 1. Flags parse
+        // identically: Command.parse takes only flags, so args[2..] here is
+        // args[1..] there. See issue #56.
+        .serve, .server => @import("cli/serve.zig").serve(io, gpa, args[2..], init.environ_map) catch fatal.oom(),
     };
 
     return @intFromBool(any_error);

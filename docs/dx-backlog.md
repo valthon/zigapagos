@@ -393,6 +393,14 @@ description — because the surrounding documentation reads as though the tool
 does more than it does. Tighten the tool's own help text and the migration
 guide's framing so the mistake is harder to make.
 
+**Resolved.** `migrate --help` now opens its description with "IT CONVERTS
+NOTHING", names the three conversions a reader assumes (`.astro` -> `.smd`,
+layout -> `.shtml`, `astro.config` -> `zigapagos.ziggy`) and names `--scaffold`
+as the one exception; a unit test keeps the sentence from being dropped in a
+reword. The surviving overclaims in `README.md` and the site's overview page are
+gone, and the migration guide's step 1 says the report is all the command
+produces.
+
 ---
 
 ## P3 — Tooling
@@ -550,11 +558,18 @@ taking literally, and these three are what stand between it and that.
 - **[#56] DX-37 · The recommended first command is one the binary calls deprecated.**
   `zigapagos` with no subcommand is what `init` tells a new user to run, and
   `main.zig` calls it "the deprecated live server". `dev` needs a ZigBase binary,
-  so it is not a drop-in.
+  so it is not a drop-in. **Resolved** in favour of the preview server: it is no
+  longer called deprecated anywhere, `zigapagos serve` starts it instead of
+  erroring, and `dev` is positioned as the loop to switch to once the site has a
+  backend. npm distribution (#81) settled it — a toolchain-free consumer has no
+  `build.zig` for `dev`'s default rebuild command and no zigbase binary.
 - **[#57] DX-38 · `init` scaffolds optional frontmatter as required.** `author`,
   `date` and `draft` all have defaults; every template writes them anyway, so
   every consumer copies fields that do nothing. This site's 404 page has an
-  author and a publication date.
+  author and a publication date. **Resolved.** The scaffold writes `.title` and
+  `.layout`, plus `.date` only on the blog posts and devlog years whose listing
+  layouts render one; the sample homepage and the quick start now document the
+  defaults, and this site's own pages (the 404 included) were trimmed to match.
 - **[#58] DX-39 · `client:only` has no placeholder API.** No fallback content for the
   interval before hydration, so the directive demo had to describe the downside
   in prose rather than show a graceful version.

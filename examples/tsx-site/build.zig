@@ -71,8 +71,9 @@ pub fn build(b: *std.Build) void {
     }, .{});
     dev_step.dependOn(&dev_run.step);
 
-    // DEPRECATED (use `zig build dev`): the bundled live server.
-    const serve_step = b.step("serve", "Start the Zigapagos live server (DEPRECATED: use 'zig build dev')");
+    // The bundled preview server: in-memory build, live reload, no backend.
+    // `zig build dev` is the loop to use once /api is real.
+    const serve_step = b.step("serve", "Start the Zigapagos preview server (in-memory; see 'zig build dev' for a backend)");
     const serve_run = zigapagos.serve(b, .{
         // Debug rather than the .ReleaseFast default. This is a build-time tool
         // that runs for well under a second on this site; ReleaseFast costs 58s

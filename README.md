@@ -70,14 +70,14 @@ mise install
 
 zig build          # build the zigapagos binary
 zig-out/bin/zigapagos init   # scaffold a site
-zig-out/bin/zigapagos        # dev server at http://localhost:1990
+zig-out/bin/zigapagos serve  # preview server at http://localhost:1990
 ```
 
 ### From npm, no toolchain
 
 ```bash
 npx zigapagos init                            # scaffold a content site
-npx zigapagos                                 # live server at http://localhost:1990
+npx zigapagos serve                           # preview server at http://localhost:1990
 npx zigapagos release --output=public --force  # build it
 ```
 

@@ -1,6 +1,6 @@
 //! The two site-building entry points a consumer's `build.zig` calls:
-//! `website()` (the release/SSG pass) and `serve()` (the deprecated bundled
-//! live server). Both are re-exported from the root `build.zig`, which passes
+//! `website()` (the release/SSG pass) and `serve()` (the bundled preview
+//! server). Both are re-exported from the root `build.zig`, which passes
 //! its own `@This()` as `Zigapagos` so `dependencyFromBuildZig` can find the
 //! zigapagos dependency in the consumer's package graph.
 
@@ -137,12 +137,13 @@ pub fn website(comptime Zigapagos: type, project: *std.Build, opts: Options) *st
     return run_zigapagos;
 }
 
-/// DEPRECATED: prefer `dev()` (the zigbase-backed dev loop). The bundled live
-/// server serves an in-memory build on its own HTTP server — it cannot serve
-/// a real backend (only `--proxy` shims) and will be removed in a future
-/// release once `dev()` covers the remaining workflows.
+/// The bundled preview server: an in-memory build on its own HTTP server,
+/// needing no backend, no zigbase binary and no rebuild command. That is what
+/// makes it the first thing a new site runs. It cannot serve a real backend
+/// (only `--proxy` shims), so prefer `dev()` — the zigbase-backed loop over the
+/// real release tree — once the site has one.
 ///
-/// Serves a Zigapagos website via the Zigapagos live server, allowing you to edit
+/// Serves a Zigapagos website via the Zigapagos preview server, allowing you to edit
 /// the input files and obtaining instant rebuild and page reload.
 /// Currently does not support `--watch` but will in the future.
 ///

@@ -32,7 +32,7 @@ const WatchEntry = struct {
 /// `zigapagos dev` loop spawns a `zig build` per rebuild plus a long-lived
 /// zigbase, and without close-on-exec the inotify fd — and with it every watch
 /// descriptor the watcher owns — is inherited by all of them for the whole dev
-/// session. The `dev` fork is what made this matter; the legacy live server
+/// session. The `dev` fork is what made this matter; the preview server
 /// spawned nothing.
 const notify_init_flags: u32 = std.os.linux.IN.CLOEXEC;
 

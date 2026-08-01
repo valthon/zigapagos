@@ -316,6 +316,35 @@ test("both published READMEs stop telling the user to install zigbase themselves
   });
 });
 
+// Issue #56 made `zigapagos serve` a real command and stopped the tool calling
+// what it starts "the deprecated live server". These two READMEs are the docs for
+// the audience that decision was made FOR — the toolchain-free `npx zigapagos`
+// consumer npm distribution created — so they are the last place that may keep
+// teaching the old world. Two specific rots to keep out: the usage block that
+// showed only the bare command (leaving `serve`, the spelling the repo README,
+// docs/spa.md and every tests/serve/*.sh use, undocumented), and the words "dev
+// server" for it, which now name a DIFFERENT command — `zigapagos dev`, the
+// zigbase-backed watch loop these same READMEs describe a few lines earlier.
+test("both published READMEs teach `zigapagos serve` and call it the preview server", () => {
+  withGenerated((dir) => {
+    for (const p of [["cli", "README.md"], ["zigapagos", "README.md"]]) {
+      const readme = readText(dir, ...p);
+      // The usage block runs the subcommand and names the server the same way
+      // the binary's own help menu does.
+      assert.match(readme, /npx \S+ serve\s+# preview server on http:\/\/localhost:1990/);
+      // Neither of the two names it used to carry. "live server" was the
+      // deprecated framing; "dev server" collides with `zigapagos dev`.
+      assert.doesNotMatch(readme, /live server/);
+      assert.doesNotMatch(readme, /dev server/);
+      // The bare command is an ALIAS, not a superseded form, and it stays
+      // documented as equivalent: tests/serve/serve-subcommand.sh pins that the
+      // two invocations do the same thing, and a README that dropped one would
+      // let them diverge unnoticed.
+      assert.match(readme, /with no subcommand at all/);
+    }
+  });
+});
+
 test("the alias README says it is an alias and names the canonical package", () => {
   withGenerated((dir) => {
     const readme = readText(dir, "zigapagos", "README.md");

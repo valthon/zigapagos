@@ -184,8 +184,9 @@ pub const DevOptions = struct {
 /// RELEASE output, serves it with the STOCK ZigBase binary (real same-origin
 /// `/api`, admin UI, `.spa`-marker fallback — production-faithful, no
 /// `--proxy` shims), watches the site's inputs (content/layouts/assets +
-/// island/SPA sources), and re-runs the build on change. Supersedes the
-/// deprecated `serve()` live server.
+/// island/SPA sources), and re-runs the build on change. The recommended loop
+/// for a site with a backend; `serve()` remains the zero-setup preview for one
+/// without (it needs no zigbase binary and no rebuild command).
 ///
 /// ```zig
 /// // opts must carry the SAME output_path as your website() call: the dev

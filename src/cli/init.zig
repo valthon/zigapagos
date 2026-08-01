@@ -159,9 +159,12 @@ pub fn init(io: Io, gpa: Allocator, args: []const []const u8) bool {
 
     std.debug.print(
         \\
-        \\Run `zigapagos` to run the Zigapagos development server.
+        \\Run `zigapagos serve` to preview the site and rebuild as you edit.
         \\Run `zigapagos release` to build your website in 'public/'.
         \\Run `zigapagos help` for more commands and options.
+        \\
+        \\Once the site needs a backend, `zigapagos dev` serves the real release
+        \\tree from ZigBase — same-origin /api — and rebuilds on change too.
         \\
         \\Read https://github.com/valthon/zigapagos/tree/main/docs to learn more about Zigapagos.
         \\

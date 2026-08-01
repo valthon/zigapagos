@@ -48,8 +48,10 @@ pub fn website(project: *std.Build, opts: Options) *std.Build.Step.Run {
     return site.website(@This(), project, opts);
 }
 
-/// DEPRECATED: prefer `dev()`. Serves a Zigapagos website via the bundled live
-/// server. See `build/site.zig` for the full docs.
+/// Serves a Zigapagos website via the bundled preview server (in-memory build,
+/// live reload, no backend). Prefer `dev()` once the site has a backend: it
+/// serves the real release tree from ZigBase, same-origin `/api` included. See
+/// `build/site.zig` for the full docs.
 pub fn serve(project: *std.Build, opts: Options) *std.Build.Step.Run {
     return site.serve(@This(), project, opts);
 }

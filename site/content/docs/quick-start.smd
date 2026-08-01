@@ -60,14 +60,22 @@ habit. A blog post needs `.date` because the listing layout renders it for each
 entry; a landing page usually needs neither a date nor an author, and the
 scaffold `init` writes reflects that.
 
-## Run the development server
+## Run the preview server
 
 ```sh
-../zig-out/bin/zigapagos
+../zig-out/bin/zigapagos serve
 ```
 
 The site rebuilds when you edit content, layouts, or assets, and the page in
-your browser refreshes itself.
+your browser refreshes itself. The server builds in memory and needs nothing but
+the binary — no backend, no `build.zig`. (Running `zigapagos` with no command at
+all does the same thing; `serve` is the spelling worth learning.)
+
+Once the site has a backend, switch to `zigapagos dev`: it rebuilds the same way
+but serves the real release tree from
+[ZigBase](https://github.com/valthon/zigbase), so `/api` is same-origin instead
+of proxied. It needs a `--site` directory, a rebuild command and a zigbase
+binary, which is why it is the second command you run, not the first.
 
 ## Add an island
 

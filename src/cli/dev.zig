@@ -2,10 +2,14 @@
 //!
 //! Maintainer decision (2026-07-10): the STOCK ZigBase binary is THE server
 //! for local development — zigapagos does not bundle its own HTTP serving.
-//! Unlike the legacy live server (`src/cli/serve.zig`, deprecated), `dev`
-//! serves the site's real RELEASE output tree with the real backend on the
-//! same origin: what you develop against is what production serves (real
-//! `/api`, admin UI at `/_/`, `.spa`-marker fallback — no `--proxy` shims).
+//! Unlike the bundled preview server (`src/cli/serve.zig`, which builds the
+//! site in memory and needs nothing but this binary), `dev` serves the site's
+//! real RELEASE output tree with the real backend on the same origin: what you
+//! develop against is what production serves (real `/api`, admin UI at `/_/`,
+//! `.spa`-marker fallback — no `--proxy` shims). That fidelity is why it is the
+//! recommended loop for a site with a backend; it is not a replacement for the
+//! zero-setup preview, since it requires `--site`, a rebuild command and a
+//! zigbase binary (see issue #56).
 //!
 //! Orchestration:
 //!
@@ -108,7 +112,7 @@ pub const Command = struct {
     /// Listen host (`--host=`, default 127.0.0.1). Must be an IP literal —
     /// the readiness probe connects to it directly (no DNS).
     host: []const u8,
-    /// Listen port (`--port=`, default 1990 like the legacy live server;
+    /// Listen port (`--port=`, default 1990 like the preview server;
     /// 0 = pick a free port).
     port: u16,
     /// Watch-cascade quiet window in ms (`--debounce=`, default 25).
@@ -576,7 +580,7 @@ pub fn dev(
         const event = channel.get(io) catch unreachable;
         switch (event) {
             .change => {},
-            // WebSocket events exist only for the legacy live server's reload
+            // WebSocket events exist only for the preview server's reload
             // channel; nothing produces them here.
             .connect, .disconnect => continue,
         }

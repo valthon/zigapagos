@@ -451,12 +451,13 @@ pub fn serve(
     );
 
     std.debug.print(
-        \\Starting the Zigapagos development server.
+        \\Starting the Zigapagos preview server.
         \\
-        \\DEPRECATED: this bundled live server is deprecated and will be removed
-        \\in a future release. Use 'zigapagos dev' (build.zig: zigapagos.dev(),
-        \\i.e. 'zig build dev'), which serves the real release output with the
-        \\stock ZigBase binary — real same-origin /api, no --proxy shims.
+        \\This builds the site in memory and reloads the browser as you edit —
+        \\no toolchain, no backend, nothing to install. When the site grows a
+        \\backend, switch to 'zigapagos dev' (build.zig: zigapagos.dev(), i.e.
+        \\'zig build dev'): it serves the real release output from the stock
+        \\ZigBase binary, so /api is same-origin instead of proxied.
         \\
         \\Run 'zigapagos help' to learn more about available options.
         \\

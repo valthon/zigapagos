@@ -139,7 +139,7 @@ pub const Options = struct {
     /// Tolerate a `$link.page/sibling/sub` or `$site.page(...)` reference to a
     /// page that doesn't exist YET, instead of failing the build. Threaded to
     /// `zigapagos` as `--allow-missing-pages`, uniformly for both `website()`
-    /// (release) and `serve()` (the deprecated live server) -- `dev()` needs
+    /// (release) and `serve()` (the bundled preview server) -- `dev()` needs
     /// no separate wiring, since it re-runs the consumer's own rebuild
     /// command, which goes through `website()`. A tolerated reference renders
     /// as a real, url_prefix-aware `href` (the URL the page will have once

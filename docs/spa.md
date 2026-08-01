@@ -944,8 +944,8 @@ for used class names and is unsafe with dynamically-composed classes.
 
 **Release-only, mirroring Vite (minify on build, not dev).** Minification runs
 only in the **release** (disk-mode) build — `zigapagos release` / `zig build` /
-the `zigapagos dev` loop, which all serve the real release tree. The deprecated
-in-memory live server (`zigapagos serve`) copies CSS **verbatim**, so
+the `zigapagos dev` loop, which all serve the real release tree. The in-memory
+preview server (`zigapagos serve`) copies CSS **verbatim**, so
 fast-iteration dev output stays readable and un-mangled. The gate is structural:
 `build.zig`'s `website()` threads `--bun=bun --css-minify-driver=…` into the
 `release` invocation; the live server never does, and the install phase that
@@ -1487,7 +1487,7 @@ inject reload scripts into release output — refresh the browser after the
 Notes:
 
 - The route TABLE is part of the build, so added/removed SPA routes flow through on the
-  next rebuild automatically (unlike the deprecated live server, which needed a restart).
+  next rebuild automatically (unlike the preview server, which needs a restart).
 - Non-enumerated SPA deep links in dev use the `.spa` marker, which the host-config
   emitter plants for `deploy_target: "zigbase"` namespaces. If your production target is
   nginx/apache, enumerated shells still serve fine; wiring a dev-only
@@ -1495,12 +1495,13 @@ Notes:
 - Direct CLI form (what `dev()` drives): `zigapagos dev --site=DIR [options] --
   REBUILD-CMD…` — see `zigapagos help`.
 
-## Developing Against a Backend (`--proxy`) — DEPRECATED live server
+## Developing Against a Backend (`--proxy`) — preview server
 
-> **Deprecated:** `zigapagos serve` (the bundled live server) and its `--proxy` flag are
-> superseded by `zig build dev` above, which serves the real backend on the same origin —
-> no proxying needed. The live server remains functional for now; removal is planned
-> once the dev loop covers the remaining workflows (e.g. instant reload).
+> **Which loop:** `zig build dev` above is the recommended one for a site with a backend —
+> it serves the real release tree from ZigBase, so `/api` is genuinely same-origin and no
+> proxying is involved. `zigapagos serve` is the zero-setup preview: it needs no zigbase
+> binary and no rebuild command, which is why it is still what `init` points a new site at,
+> and `--proxy` is how it reaches a backend running elsewhere.
 
 SPAs (and islands) call relative `/api/*`, which in production is routed to the backend on
 the same origin by ZigBase/nginx. In development, `zigapagos serve` is otherwise static-only, so
@@ -1560,7 +1561,7 @@ await apiFetch("/api/contact", { method: "POST", body: JSON.stringify(form) });
   guard re-runs once and its `{ redirect }` sends the visitor to login. The Response still
   reaches the caller unchanged.
 - Pairs with `zig build dev` (a real same-origin ZigBase in development) — or the
-  deprecated live server's `--proxy` flag: relative `/api/*` behaves the same in dev and prod.
+  preview server's `--proxy` flag: relative `/api/*` behaves the same in dev and prod.
 
 ### Error reporting — `initErrorRelay` + `ErrorBoundary`
 
@@ -1710,7 +1711,7 @@ invocation, so it runs on machines without a real ZigBase.
 
 ## State-Preserving Dev Reload
 
-> Applies to the **deprecated** `zigapagos serve` live server only. `zig build dev`
+> Applies to the `zigapagos serve` preview server only. `zig build dev`
 > (the zigbase-backed dev loop) has no reload client — you refresh manually, and a manual
 > refresh also fires no `zigapagos:beforereload`, so state restoration doesn't apply there.
 

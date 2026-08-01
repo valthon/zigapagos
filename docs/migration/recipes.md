@@ -458,11 +458,12 @@ Bun is **build-time only**; production is nginx + static files + the API server.
 
 ## Dev server (`zigapagos serve`) — live island preview
 
-> **Deprecated:** the bundled live server is superseded by the zigbase-backed dev loop —
-> `zigapagos.dev()` / `zig build dev` (see `docs/spa.md` § "Local Development") — which
-> serves the real release output with the stock ZigBase binary (real same-origin `/api`,
-> manual browser refresh instead of livereload). `zigapagos serve` remains functional for
-> now; removal is planned.
+> **Which loop:** `zigapagos serve` is the zero-setup preview — it builds in memory,
+> live-reloads, and needs nothing but the binary, which is why a fresh site starts here.
+> For a site with a backend, prefer the zigbase-backed dev loop, `zigapagos.dev()` /
+> `zig build dev` (see `docs/spa.md` § "Local Development"): it serves the real release
+> output with the stock ZigBase binary, so `/api` is same-origin rather than proxied
+> (manual browser refresh instead of livereload).
 
 `zigapagos serve` live-previews island sites: edit a `.island.tsx`, and the dev server
 auto-rebundles and reloads the browser (Fork A — full-page reload).
@@ -512,11 +513,11 @@ in dev and prod; the only difference is bundle size.
 
 ### State-preserving hot-swap — use `zigapagos dev`
 
-The deprecated `zig build serve` loop above (v1, Fork A) does a **full-page reload** on
+The `zig build serve` preview loop above (v1, Fork A) does a **full-page reload** on
 every island edit. State-preserving targeted swap — where only the changed island's DOM
 subtree is swapped without resetting unrelated component state — is **shipped** in the
 current `zigapagos dev` loop (Fork C): in-place island hot-swap plus fast refresh that
 preserves `useState`/`useReducer` state across an edit. See
 [Dev hot-swap (HMR) and fast refresh](../islands.md#dev-hot-swap-hmr-and-fast-refresh).
-The full-reload limitation described here applies only to the deprecated `serve` path;
+The full-reload limitation described here applies only to the `serve` preview path;
 prefer `zigapagos dev` for interactive editing.

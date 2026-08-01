@@ -3,7 +3,7 @@
 #
 # Pre-fix behaviour (verified before implementing, per the plan): the command
 # was not a member of main.zig's `Command` enum, so `args[1]` fell through to
-# `cli/serve.zig`'s deprecated-live-server argument parser, which printed
+# `cli/serve.zig`'s preview-server argument parser, which printed
 # "error: unexpected cli argument 'explain-code'" and called
 # `fatal.helpError()` -- exit 1, no hang. That means every exit-0 assertion
 # below fails cleanly pre-fix rather than hanging the test.

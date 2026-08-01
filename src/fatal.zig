@@ -83,8 +83,13 @@ const help_menu =
     \\                    'release --format=json'
     \\  help              Show this menu and exit
     \\  version           Print the Zigapagos version and exit
-    \\  (no command)      Start the bundled live server
-    \\                    (DEPRECATED: use 'zigapagos dev'; removal planned)
+    \\  serve             Start the bundled preview server: builds the site in
+    \\                    memory, serves it, rebuilds and reloads the browser
+    \\                    on change. Needs nothing but this binary. Same as
+    \\                    running zigapagos with no command at all. Reach for
+    \\                    'zigapagos dev' once the site has a backend -- it
+    \\                    serves the real release tree from ZigBase, so /api is
+    \\                    same-origin instead of proxied
     \\
     \\General Options:
     \\  --drafts          Enable draft pages
@@ -123,7 +128,7 @@ const help_menu =
     \\  --reload-port=N   SSE reload-server port (default 0 = pick a free port)
     \\  --watch-dir=DIR   Watch an extra directory (repeatable)
     \\
-    \\Deprecated live server options (no command):
+    \\Preview server (zigapagos serve, or no command at all):
     \\  --host HOST       Listening host (default 'localhost')
     \\  --port PORT       Listening port (default 1990)
     \\  --debounce <ms>   Rebuild delay after a file change (default 25)
@@ -168,6 +173,36 @@ pub fn help() noreturn {
 pub fn helpError() noreturn {
     std.debug.print(help_menu, .{});
     std.process.exit(1);
+}
+
+test "serve is a listed command and the help menu deprecates nothing" {
+    // Issue #56: `init` told a new user to run the bare command, main.zig called
+    // what that starts "the deprecated live server", and the help menu carried a
+    // removal notice for it — while `dev`, the thing it pointed at, needs a
+    // --site, a rebuild command and a zigbase binary a fresh scaffold has none of.
+    // The resolution is that the bundled server is the supported preview, so the
+    // menu must list `serve` as a command (docs and this project's own e2e scripts
+    // have spelled it that way for a year) and must not carry deprecation copy the
+    // tool itself tells people to trigger.
+    // Match the COMMANDS-COLUMN ROW, not the bare word. "serve" is a substring of
+    // "server", "preview server", "serves" and "--serve-static", all of which this
+    // menu contains in prose -- `indexOf(help_menu, "serve")` was already true of
+    // the PRE-fix menu ("Start the bundled live server"), so it would have pinned
+    // nothing. A line beginning with the two-space command indent and the exact
+    // name is the listing itself.
+    const serve_row = std.mem.indexOf(u8, help_menu, "\n  serve ") orelse
+        return error.ServeIsNotListedAsACommand;
+    // ...and it has to be in the Commands block. The word also occurs in the
+    // options prose and in the "Preview server (zigapagos serve, ...)" heading
+    // further down, neither of which makes it an invocable command.
+    try std.testing.expect(serve_row > std.mem.indexOf(u8, help_menu, "Commands:").?);
+    try std.testing.expect(serve_row < std.mem.indexOf(u8, help_menu, "General Options:").?);
+    try std.testing.expect(std.mem.indexOf(u8, help_menu, "DEPRECATED") == null);
+    try std.testing.expect(std.mem.indexOf(u8, help_menu, "Deprecated") == null);
+    // The pointer to the full-fidelity loop is the other half of the decision:
+    // dropping the warning without saying when to reach for `dev` would just make
+    // the menu quieter, not more honest.
+    try std.testing.expect(std.mem.indexOf(u8, help_menu, "zigapagos dev") != null);
 }
 
 test "help menu describes live reload (on by default) and its opt-out flags" {
