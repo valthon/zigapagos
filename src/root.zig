@@ -782,17 +782,28 @@ pub fn run(
             // does the disambiguation; this is where the fix goes into words.
             //
             // The bar is worker.zig's no-sidecar-configured diagnostic: name the
-            // cause AND the fix. The fix here is deliberately not "install bun":
-            // for an npm-installed consumer (#81) bun alone does not enable
-            // islands, because the sidecar script and `@z/runtime` are supplied
-            // by the Zig build integration and `@z/runtime` is unpublished.
+            // cause AND the fix. All three messages used to end by pointing at
+            // `build.zig`'s `.islands` table -- the consumer build API, which no
+            // longer exists: a site is built by RUNNING this binary, and the
+            // three inputs come from `--bun` / `--island-sidecar` /
+            // `--island-src-dir` or from the runtime tree `ZIGAPAGOS_RUNTIME_DIR`
+            // points at. The interpreter message also carried a claim that is
+            // now simply false -- that bun alone cannot enable islands on a
+            // toolchain-free install (#81), because the sidecar and `@z/runtime`
+            // "come from that Zig build integration". `@z/runtime` is indeed
+            // unpublished, but `@zigapagos/cli` SHIPS those sources inside
+            // itself, so an npm install has both halves and an `npm i bun` on
+            // top of it is all that path can be missing. The install that bun
+            // alone does not rescue is the RELEASE ARCHIVE, which carries the
+            // binary and no runtime tree. docs/runtime-dependencies.md is the
+            // full account, and is gated against this file.
             error.InterpreterNotFound => fatal.msg(
                 "error: island sidecar interpreter not found: '{s}'\n" ++
                     "  the sidecar script '{s}' resolves — the missing thing is the interpreter itself.\n" ++
-                    "  islands are server-rendered by bun at build time, wired up by build.zig's `.islands`\n" ++
-                    "  (bun, the sidecar script, and the island source dir). Note that installing bun on its\n" ++
-                    "  own is not enough for a toolchain-free install: the sidecar script and `@z/runtime`\n" ++
-                    "  come from that Zig build integration.\n",
+                    "  islands are server-rendered by bun at build time: install bun and put it on PATH,\n" ++
+                    "  or pass --bun=PATH. An `npm i zigapagos` install carries its own bun; a binary from\n" ++
+                    "  the release archive carries neither bun nor the `@z/runtime` tree. See\n" ++
+                    "  docs/runtime-dependencies.md.\n",
                 .{ bun, script },
             ),
             // Says nothing about the interpreter, deliberately. `Sidecar.spawn`
@@ -805,15 +816,17 @@ pub fn run(
             // script has resolved.
             error.SidecarScriptNotFound => fatal.msg(
                 "error: island sidecar script not found: '{s}'\n" ++
-                    "  this is the `render.ts` supplied by build.zig's `.islands` integration; point\n" ++
-                    "  `--island-sidecar` at it, or let build.zig's `.islands` wiring supply it.\n",
+                    "  this is the render sidecar inside the `@z/runtime` tree; point --island-sidecar at\n" ++
+                    "  it, or set ZIGAPAGOS_RUNTIME_DIR to a runtime tree and let it default. That tree is\n" ++
+                    "  not on npm on its own: it comes from an `@zigapagos/cli` install or a checkout.\n" ++
+                    "  See docs/runtime-dependencies.md.\n",
                 .{script},
             ),
             error.ProjectRootNotFound => fatal.msg(
                 "error: island source dir not found: '{s}'\n" ++
                     "  the sidecar runs with that directory as its cwd, so bun resolves each island's\n" ++
-                    "  `@z/runtime` and JSX imports from the `node_modules` beneath it. Set it to the\n" ++
-                    "  site's project root in build.zig's `.islands`.\n",
+                    "  `@z/runtime` and JSX imports from the `node_modules` beneath it. Set it with\n" ++
+                    "  --island-src-dir=DIR; it defaults to the site root.\n",
                 .{root_dir},
             ),
             else => fatal.msg(

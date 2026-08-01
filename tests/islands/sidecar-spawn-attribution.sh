@@ -20,8 +20,8 @@
 # script or cwd inherit the interpreter's message:
 #   (1) control: the same fixture with all three inputs valid builds clean,
 #   (2) a missing INTERPRETER names the interpreter, mentions the script path
-#       it is exonerating, points at build.zig's `.islands`, and does NOT print
-#       the pre-fix raw `): FileNotFound` form,
+#       it is exonerating, names the fix (`--bun`, and where a bun comes from),
+#       and does NOT print the pre-fix raw `): FileNotFound` form,
 #   (3) a missing SCRIPT names the script and must NOT blame the interpreter,
 #   (4) a missing ISLAND SOURCE DIR names that dir and must NOT blame the
 #       interpreter.
@@ -128,8 +128,17 @@ fi
 # wrong inference the old message invited.
 grep -qF "$SIDECAR" "$WORK/nobun.log" \
   || { sed -n '1,30p' "$WORK/nobun.log"; fail "(2) the diagnostic does not mention the script path it is exonerating"; }
-grep -qF '.islands' "$WORK/nobun.log" \
-  || { sed -n '1,30p' "$WORK/nobun.log"; fail "(2) the diagnostic does not point at build.zig's .islands integration"; }
+# ...and it must name the FIX, not just the cause. This assertion used to
+# require the string `.islands` -- the consumer build API's island table -- which
+# was deleted along with the rest of that API; a message still pointing there
+# would send the reader to a `build.zig` no zigapagos project has. The fix is now
+# a flag on this binary, so that is what is pinned.
+grep -qF -- '--bun=' "$WORK/nobun.log" \
+  || { sed -n '1,30p' "$WORK/nobun.log"; fail "(2) the diagnostic does not name the --bun flag that overrides the search"; }
+if grep -qF 'build.zig' "$WORK/nobun.log"; then
+  sed -n '1,30p' "$WORK/nobun.log"
+  fail "(2) the diagnostic still points at build.zig, an integration this project no longer has"
+fi
 echo "PASS (2): a missing interpreter is attributed to the interpreter"
 
 # --- (3) missing SIDECAR SCRIPT ---------------------------------------------
