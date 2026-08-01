@@ -953,13 +953,13 @@ fn islandExtent(html: []const u8, tok: IslandStart) ?IslandExtent {
 /// bundle is emitted under (`/islands/<name>.js`) and the key the runtime-slice
 /// manifest lists its covered islands by.
 ///
-/// Byte-identical to `build/validate.zig`'s `islandName`, which is what names the
-/// bundle file the slice driver analyses; the two must agree or the join silently
-/// misses and every page falls back to the shared runtime.
+/// Byte-identical to `src/cli/release.zig`'s `bundleName`, which is what names
+/// the bundle file the slice driver analyses; the two must agree or the join
+/// silently misses and every page falls back to the shared runtime.
 ///
 /// Matching on the module NAME rather than the raw `src` string is deliberate: a
-/// layout may legitimately write `src="./components/Foo.island.tsx"` while
-/// `build.zig` declares `"components/Foo.island.tsx"`. Both name `Foo.island`.
+/// layout may legitimately write `src="./components/Foo.island.tsx"` while the
+/// build was told `--island=components/Foo.island.tsx`. Both name `Foo.island`.
 /// Contract 3: allocates nothing; the result is a slice of `src`.
 pub fn islandModuleName(src: []const u8) []const u8 {
     var name = src;
@@ -2192,10 +2192,10 @@ test "process injects the import map before any modulepreload links, only when i
 }
 
 test "islandModuleName is the slice manifest's join key for every spelling of src (#52)" {
-    // Byte-identical to build/validate.zig's `islandName`, which names the bundle
-    // file the slice driver reads — and therefore names the manifest entry. A
-    // layout may write `./components/Foo.island.tsx` where build.zig declared
-    // `components/Foo.island.tsx`; both must join.
+    // Byte-identical to src/cli/release.zig's `bundleName`, which names the
+    // bundle file the slice driver reads — and therefore names the manifest
+    // entry. A layout may write `./components/Foo.island.tsx` where the build
+    // was told `--island=components/Foo.island.tsx`; both must join.
     try std.testing.expectEqualStrings("Foo.island", islandModuleName("components/Foo.island.tsx"));
     try std.testing.expectEqualStrings("Foo.island", islandModuleName("./components/Foo.island.tsx"));
     try std.testing.expectEqualStrings("Foo.island", islandModuleName("Foo.island.tsx"));

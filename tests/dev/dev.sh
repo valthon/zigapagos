@@ -24,10 +24,11 @@
 #   (e) a second run REUSES the same data dir (sentinel survives, the server
 #       touches it again),
 #   (f) the default data dir is `.zigbase/` under the site root,
-#   (g) the real consumer surface: examples/tsx-site's `zig build dev` (the
-#       public zigapagos.dev() build API, nested `zig build` as the rebuild
-#       driver) boots, serves the islands page, rebuilds on a content edit,
-#       and tears down cleanly,
+#   (g) the real consumer surface: `zigapagos dev` over examples/tsx-site with
+#       that project's own build.sh as the rebuild command — four islands and
+#       five SPAs, not the toy fixture (a)-(f) use — boots, serves the islands
+#       page and a SPA shell, rebuilds on a content edit, and tears down
+#       cleanly,
 #   (h) [opt-in] the same loop against a REAL zigbase binary (REAL_ZIGBASE=…).
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -252,37 +253,37 @@ test -f "$SRC/.zigbase/stub-zigbase.touch" || fail "default data dir .zigbase/ n
 stop_dev "$DEV_PID"
 echo "PASS: default data dir is <site root>/.zigbase/"
 
-# --- (g) the real consumer surface: examples/tsx-site `zig build dev` ----------------
-# Validates the public zigapagos.dev() build API end to end: --site/-- watch
-# dirs derived from islands/spas, nested `zig build` as the rebuild driver.
-echo "running: zig build dev (tsx-site, stub zigbase on PATH; first build may take a while)..."
+# --- (g) the real consumer surface: `zigapagos dev` over examples/tsx-site ------------
+# (a)-(f) run against a three-page fixture. This runs the same loop against the
+# real example — four islands and five SPAs — with that project's own build.sh
+# after `--`, which is exactly what a user types. It is the only scenario that
+# proves the rebuild command and the served tree agree on a site big enough for
+# them to disagree.
+echo "running: zigapagos dev (tsx-site + its build.sh, stub zigbase on PATH)..."
 ( cd "$REPO/runtime" && mise exec -- bun install ) >/dev/null 2>&1 || fail "runtime bun install failed"
 ( cd "$SITE" && mise exec -- bun install ) >/dev/null 2>&1 || fail "consumer bun install failed"
-TSX_PID="$(launch_group "$SITE" "$WORK/tsx-dev.log" mise exec -- zig build dev)"
-# This is the slowest thing in the suite by a wide margin: a COLD nested `zig
-# build` of the whole example (five .spa.tsx entries plus islands, each bundled
-# through bun) against a fresh .zig-cache. 300s is comfortable on a warm dev
-# machine and is NOT enough on a CI runner building it for the first time — it
-# timed out here at exactly 300s with the build still making progress and no
-# error, which reads as a hang when it is only slow. Overridable so a
-# constrained runner can raise it without editing this file.
+# ZIGAPAGOS_BIN keeps build.sh from compiling a second binary; the dev loop
+# passes its own environment through to the rebuild command, so this reaches it.
+TSX_PID="$(launch_group "$SITE" "$WORK/tsx-dev.log" \
+  env "ZIGAPAGOS_BIN=$ZIGAPAGOS" "$ZIGAPAGOS" dev --site=zig-out/site -- bash build.sh)"
+# The first rebuild bundles five .spa.tsx entries and four islands through bun
+# from a cold `.zigapagos-cache`. Overridable so a constrained runner can raise
+# it without editing this file.
 poll "${ZIGAPAGOS_E2E_TSX_DEV_TIMEOUT:-900}" grep -q 'dev: ready' "$WORK/tsx-dev.log" \
-  || { tail -50 "$WORK/tsx-dev.log"; fail "tsx-site zig build dev never became ready"; }
+  || { tail -50 "$WORK/tsx-dev.log"; fail "tsx-site zigapagos dev never became ready"; }
 TSX_ORIGIN="$(origin_from_log "$WORK/tsx-dev.log")"
 curl -sf "$TSX_ORIGIN/" | grep -q 'data-z-island' || fail "tsx-site / missing islands SSR"
 curl -sf "$TSX_ORIGIN/app/" | grep -q 'id="z-spa-root"' || fail "tsx-site /app/ not a SPA shell"
-echo "PASS: zig build dev boots and serves the islands page + SPA shell"
+echo "PASS: zigapagos dev boots tsx-site and serves the islands page + SPA shell"
 
-# A content edit must flow through the nested `zig build` rebuild into the
-# served tree (slower than (c): a full zig-build graph re-walk, cached steps
-# skipped).
+# A content edit must flow through build.sh into the served tree.
 printf '\nDEVLOOP-TSX-MARKER\n' >> "$SITE/content/index.smd"
 poll 180 bash -c "curl -sf '$TSX_ORIGIN/' | grep -q DEVLOOP-TSX-MARKER" \
   || { tail -50 "$WORK/tsx-dev.log"; fail "tsx-site edit never reached the served output"; }
-echo "PASS: tsx-site edit rebuilt via the nested 'zig build' driver"
+echo "PASS: tsx-site edit rebuilt via its own build.sh"
 
 kill -TERM -- "-$TSX_PID" 2>/dev/null || true
-poll 15 bash -c "! kill -0 $TSX_PID 2>/dev/null" || fail "tsx-site zig build dev did not exit"
+poll 15 bash -c "! kill -0 $TSX_PID 2>/dev/null" || fail "tsx-site zigapagos dev did not exit"
 if curl -sf --max-time 2 -o /dev/null "$TSX_ORIGIN/"; then
   fail "tsx-site server still answering after teardown"
 fi
@@ -313,4 +314,4 @@ else
   echo "SKIP: real-zigbase scenario (set REAL_ZIGBASE=/path/to/zigbase to enable)"
 fi
 
-echo "PASS: dev loop (boot + readiness + rebuild-on-edit + persistent data dir + teardown + build API)"
+echo "PASS: dev loop (boot + readiness + rebuild-on-edit + persistent data dir + teardown + tsx-site)"

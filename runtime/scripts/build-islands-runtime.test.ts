@@ -44,9 +44,10 @@ async function run(name: string, bundles: Record<string, string>) {
   };
 }
 
-/** The shared runtime, built the same way build/bundles.zig builds it, so the
- *  size and marker comparisons below are against the real thing rather than a
- *  remembered number. */
+/** The shared runtime, built from the same entry and with the same minification
+ *  src/cli/release.zig's `bundleSharedRuntime` uses, so the size and marker
+ *  comparisons below are against the real thing rather than a remembered
+ *  number. */
 async function sharedRuntime(): Promise<string> {
   const res = await Bun.build({
     entrypoints: [join(SRC, "browser-entry.ts")],
@@ -154,7 +155,7 @@ describe("buildIslandsRuntime — the FALLBACK decision", () => {
 });
 
 describe("the reserved output name", () => {
-  test("bundleName matches build/validate.zig's islandName", () => {
+  test("bundleName matches src/islands/pass.zig's islandModuleName", () => {
     expect(bundleName("/cache/o/abc/Hero.island.js")).toBe("Hero.island");
     expect(bundleName("Hero.island.js")).toBe("Hero.island");
     expect(RUNTIME_BASENAME).toBe("_runtime");

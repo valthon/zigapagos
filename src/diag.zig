@@ -431,9 +431,8 @@ pub fn info(c: Code) Info {
             .summary = "a `$build.asset(...)` reference names an asset that wasn't declared",
             .explanation =
             \\The referenced name was not registered via a `--build-asset=`
-            \\flag at build time. Check the name against the build invocation
-            \\(`zig build`'s own `--build-asset` wiring, or a hand-written
-            \\`zigapagos release --build-asset=NAME ...`).
+            \\flag at build time. Check the name against your build invocation
+            \\(`zigapagos release --build-asset=NAME PATH ...`).
             ,
         },
         .ZP_BUILD_ASSET_NO_INSTALL_PATH => .{

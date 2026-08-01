@@ -52,7 +52,7 @@ pub const Kind = enum {
     page, // src/pages/*  -> content/*.smd
     layout, // src/layouts/* -> layouts/*.shtml
     component, // src/components/* -> components/*.island.tsx (island) or partial
-    config, // astro.config.* -> zigapagos.ziggy + build.zig
+    config, // astro.config.* -> zigapagos.ziggy + build.sh
     other,
 };
 
@@ -617,9 +617,9 @@ pub fn buildReport(gpa: Allocator, dir_path: []const u8, entries: []const Entry,
         \\
         \\## 1. Scaffold the target
         \\
-        \\- [ ] `zigapagos.ziggy` (begins with `Site {{`), `content/`, `layouts/`, `assets/`, `components/`, `build.zig`/`build.zig.zon`
+        \\- [ ] `zigapagos.ziggy` (begins with `Site {{`), `content/`, `layouts/`, `assets/`, `components/`, `build.sh`
         \\{s}
-    , .{ dir_path, if (has_config) "- [ ] Port `astro.config.*` → `zigapagos.ziggy` (site/host) + `build.zig` (islands)\n" else "" }) catch fatal.oom();
+    , .{ dir_path, if (has_config) "- [ ] Port `astro.config.*` → `zigapagos.ziggy` (site/host) + `build.sh` (islands)\n" else "" }) catch fatal.oom();
 
     buildWiringSection(w, entries, has_scaffold);
 
@@ -639,7 +639,7 @@ pub fn buildReport(gpa: Allocator, dir_path: []const u8, entries: []const Entry,
         \\
         \\Each component below is used at a call site with a `client:*` directive, so it
         \\is a real island: port it as `components/<Name>.island.tsx` importing from
-        \\`@z/runtime`, register it in `build.zig`, and replace `<Component client:… />`
+        \\`@z/runtime`, add an `--island=` line for it in `build.sh`, and replace `<Component client:… />`
         \\with `<island src="components/<Name>.island.tsx" client:… prop-NAME="$expr">`.
         \\Run `zigapagos migrate <astro-dir> --scaffold <out-dir>` to auto-port the imports.
         \\
@@ -663,16 +663,16 @@ pub fn buildReport(gpa: Allocator, dir_path: []const u8, entries: []const Entry,
     return aw.written();
 }
 
-/// Emit copy-paste-ready `build.zig` + `build.zig.zon`, with every detected island
-/// pre-wired into a single `zigapagos.website(.islands = …)` call.
+/// Emit a copy-paste-ready `build.sh`, with one `--island=` per detected island.
 fn buildWiringSection(w: anytype, entries: []const Entry, has_scaffold: bool) void {
     w.writeAll(
         \\
         \\## 1b. Build wiring (paste into the target)
         \\
-        \\One `zigapagos.website(.islands = …)` call builds Zigapagos from source with your islands
-        \\server-rendered via the Bun sidecar, bundles each to an ES module, and stages
-        \\the `@z/runtime` import map.
+        \\One `zigapagos release` invocation server-renders your islands via the Bun
+        \\sidecar, bundles each to an ES module, and stages the `@z/runtime` import
+        \\map. It needs `zigapagos` and `bun` — no Zig toolchain.
+        \\
         \\
     ) catch fatal.oom();
 
@@ -698,15 +698,19 @@ fn buildWiringSection(w: anytype, entries: []const Entry, has_scaffold: bool) vo
     }
 
     w.writeAll(
-        \\`build.zig`:
+        \\`build.sh`:
         \\
-        \\```zig
-        \\const std = @import("std");
-        \\const zigapagos = @import("zigapagos");
+        \\```sh
+        \\#!/usr/bin/env bash
+        \\set -euo pipefail
+        \\cd "$(dirname "$0")"
         \\
-        \\pub fn build(b: *std.Build) void {
-        \\    const site = zigapagos.website(b, .{
-        \\        .islands = &.{
+        \\bun install --frozen-lockfile 2>/dev/null || bun install
+        \\
+        \\exec zigapagos release \
+        \\  --force \
+        \\  --output=zig-out/site \
+        \\  --island-props-check=error \
         \\
     ) catch fatal.oom();
 
@@ -714,38 +718,19 @@ fn buildWiringSection(w: anytype, entries: []const Entry, has_scaffold: bool) vo
     for (entries) |e| {
         if (!e.is_island) continue;
         const name = detect.moduleName(e.path);
-        // `src` must equal the `<island src="...">` string used in your layouts.
+        // The value must equal the `<island src="...">` string used in your layouts.
         w.print(
-            "            .{{ .root = b.path(\"components/{s}.island.tsx\"), .src = \"components/{s}.island.tsx\" }},\n",
-            .{ name, name },
+            "  --island=components/{s}.island.tsx \\\n",
+            .{name},
         ) catch fatal.oom();
         any = true;
     }
     if (!any) w.writeAll(
-        "            // no islands detected; e.g. .{ .root = b.path(\"components/Hero.island.tsx\"), .src = \"components/Hero.island.tsx\" }\n",
+        "  # no islands detected; e.g. --island=components/Hero.island.tsx \\\n",
     ) catch fatal.oom();
 
     w.writeAll(
-        \\        },
-        \\        .output_path = "site",
-        \\    });
-        \\    b.getInstallStep().dependOn(&site.step);
-        \\}
-        \\```
-        \\
-        \\`build.zig.zon` (depend on Zigapagos under the name `zigapagos`):
-        \\
-        \\```zig
-        \\.{
-        \\    .name = .my_site,
-        \\    .version = "0.0.0",
-        \\    .fingerprint = 0x0, // run `zig build` once; it prints the value to use
-        \\    .minimum_zig_version = "0.16.0",
-        \\    .dependencies = .{
-        \\        .zigapagos = .{ .path = "../zigapagos" }, // or a git+https URL + .hash
-        \\    },
-        \\    .paths = .{"."},
-        \\}
+        \\  "$@"
         \\```
         \\
     ) catch fatal.oom();

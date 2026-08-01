@@ -23,8 +23,8 @@
 # The fixture declares a LAZY route on purpose. A no-lazy SPA bundles to a single
 # entry file, which would prove nothing about the part that made this hard: a
 # code-split build writes a DIRECTORY of content-hashed chunks whose names are
-# unknown until bun has run, and installing that directory is the whole reason
-# the CLI path could not do what `build/bundles.zig` does.
+# unknown until bun has run, and installing that directory is the part this path
+# once refused to do at all.
 #
 # There is deliberately NO `node_modules/@z/runtime` symlink here, unlike the
 # other tests/spa fixtures. That symlink is what a repo checkout has and an npm

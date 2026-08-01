@@ -36,7 +36,7 @@ pub const Event = union(enum) {
 /// Collapses a cascade of filesystem events into one `.change`.
 ///
 /// Editors, formatters and build tools do not write a file once: they write a
-/// temp file, rename it, touch the directory, and a `zig build` writing the
+/// temp file, rename it, touch the directory, and a rebuild writing the
 /// output tree can emit thousands of events in a burst. Rebuilding per event
 /// would thrash; `cascade_window_ms` is the quiet period after the LAST event
 /// before the cascade is committed and a single `.change` is published.

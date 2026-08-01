@@ -1414,8 +1414,8 @@ fn renderPage(
         // order silently shipped the literal `<island …></island>` element with no
         // SSR, no runtime script and exit code 0 whenever the sidecar was
         // unconfigured — and "unconfigured" includes the ordinary authoring
-        // mistake of adding an `<island>` to a layout without declaring it in
-        // build.zig's `.islands` (root.zig's spawn guard needs all three of
+        // mistake of adding an `<island>` to a layout without passing an
+        // `--island=` for it (root.zig's spawn guard needs all three of
         // bun_path/island_sidecar/island_src_dir, and quietly does nothing if any
         // is null). A page that asks for an island and gets an inert tag is a
         // build error, not a pass-through. Cost of the reordering: one memchr per
@@ -1440,7 +1440,7 @@ fn renderPage(
             if (!build.island_sidecar_optional) {
                 log.err(
                     "island rendering error on {s}: the page uses <island> but no island sidecar is configured" ++
-                        " — declare the island in build.zig's `.islands` (needs bun, the sidecar script," ++
+                        " — declare the island with `--island=<src>` (needs bun, the sidecar script," ++
                         " and the island source dir)",
                     .{page_path},
                 );

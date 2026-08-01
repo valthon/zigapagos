@@ -1,7 +1,7 @@
 //! Release-time SPA prerender pass.
 //!
-//! For each declared SPA (`build.spas`, threaded from `build.zig`'s
-//! `Options.spas`), this:
+//! For each declared SPA (`build.spas`, threaded from `zigapagos release
+//! --spa=<src>|<base>`), this:
 //!   1. Asks the render sidecar (`Sidecar.describe`) for the SPA's `spa`
 //!      metadata and its declared `routes`.
 //!   2. SSRs each route's loading skeleton via the sidecar (`Sidecar.render`
@@ -14,9 +14,8 @@
 //!      default; see `Site.deploy_target`).
 //!   4. Writes a single site-wide `404.html`, reusing the 404-owner SPA's
 //!      `/` shell HTML (captured in memory during the loop — no disk
-//!      read-back). The owner is the SPA named by `build.zig`'s
-//!      `Options.not_found` (threaded through `--spa-not-found=<name>`,
-//!      the 404 owner), defaulting to the FIRST declared SPA.
+//!      read-back). The owner is the SPA named by `--spa-not-found=<name>`,
+//!      defaulting to the FIRST declared SPA.
 const std = @import("std");
 const Build = @import("Build.zig");
 const root = @import("root.zig");
@@ -175,15 +174,11 @@ pub fn prerenderAll(
     // The universal 404.html reuses the 404-owner SPA's "/" shell HTML,
     // captured in memory while rendering that SPA's routes (documented v1
     // limitation: multi-SPA sites only get ONE 404 fallback). The owner is
-    // the SPA named by `--spa-not-found=<name>` — build.zig's
-    // `.not_found` option, already validated at configure time; re-checked
-    // here so a hand-written CLI invocation fails just as loudly — or the
-    // first declared SPA when no name was given (the historical default).
-    // `zigapagos release --spa=…` is a first-class entry point, not only
-    // `build.zig`'s callee, so the spec-level invariants `build.zig`'s
-    // `validateSpas` enforces at CONFIGURE time are re-checked here — the same
-    // principle as the `--spa-not-found` re-check just below, so a hand-written
-    // CLI invocation fails just as loudly. Two SPAs with overlapping bases
+    // the SPA named by `--spa-not-found=<name>`, or the first declared SPA
+    // when no name was given (the historical default).
+    //
+    // The spec-level invariants below are checked HERE, at the only place that
+    // sees the full declared set. Two SPAs with overlapping bases
     // write into one namespace (the second's shells AND its
     // routing-manifest.json silently overwrite the first's, since
     // `static_seen`/`out_path_seen` are per-SPA); two SPAs whose `spaName`
@@ -205,8 +200,8 @@ pub fn prerenderAll(
     const owner_idx = notFoundOwnerIndex(spa_specs, build.spa_not_found) orelse {
         fatal.msg(
             "error: --spa-not-found names '{s}' but no declared SPA has that " ++
-                "name — an SPA's name is its file basename sans .spa.tsx " ++
-                "(build.zig: `.not_found` must match one of `.spas`)\n",
+                "name — an SPA's name is its file basename sans .spa.tsx, " ++
+                "and must match one of the declared --spa entries\n",
             .{build.spa_not_found.?},
         );
     };
@@ -264,20 +259,18 @@ pub fn prerenderAll(
         // were already held to this rule (`validateConcretePath`); the declared
         // paths they come from were not.
         validateRoutePathsOrFatal(src, base, desc.routes);
-        // Declared-vs-exported base agreement: `spec.base` is the base
-        // restated in the consumer's `build.zig` (`Spa.base`), threaded
-        // through `--spa=<src>|<base>`; `base` (above) is derived from the
-        // module's own `export const spa.base` and is what ACTUALLY drives
-        // prerender output below. When a non-empty declared base was
-        // provided (an empty one means the `--spa=` value carried no '|' —
-        // e.g. a hand-written CLI invocation — so there's nothing to check
-        // against), the two must agree or the site's `build.zig` and the
-        // SPA's own source have drifted; fail loudly rather than silently
-        // prerendering under a base the site author didn't declare.
+        // Declared-vs-exported base agreement: `spec.base` is the base the
+        // author restated in `--spa=<src>|<base>`; `base` (above) is derived
+        // from the module's own `export const spa.base` and is what ACTUALLY
+        // drives prerender output below. When a non-empty declared base was
+        // provided (an empty one means the `--spa=` value carried no '|', so
+        // there's nothing to check against), the two must agree or the command
+        // line and the SPA's own source have drifted; fail loudly rather than
+        // silently prerendering under a base the author didn't declare.
         if (spec.base.len != 0) {
             const declared = std.mem.trimEnd(u8, spec.base, "/");
             if (!std.mem.eql(u8, declared, base)) fatal.msg(
-                "error: spa '{s}' declares base '{s}' in build.zig but exports " ++
+                "error: spa '{s}' was declared with base '{s}' but exports " ++
                     "spa.base '{s}' — the two must agree.\n",
                 .{ src, spec.base, if (base.len == 0) "/" else base },
             );
@@ -589,10 +582,8 @@ const SpecViolation = struct {
 };
 
 /// Scan declared SPA specs for the FIRST pair that cannot coexist, or null
-/// when they are all disjoint. Mirrors `build.zig`'s configure-time
-/// `validateSpas` (the two checks that survive into the CLI: base overlap and
-/// basename collision) so `zigapagos release --spa=…` rejects what `build.zig`
-/// rejects. A plain unit-testable helper — the caller adds the fatal message
+/// when they are all disjoint. Two checks: base overlap and basename
+/// collision. A plain unit-testable helper — the caller adds the fatal message
 /// (same split as `claimStaticUrl`/`findRedirectViolation`).
 ///
 /// Bases here are the DECLARED ones (`--spa=<src>|<base>`). A spec whose
@@ -934,8 +925,8 @@ fn fingerprintedHref(
 }
 
 /// Find a declared build asset whose `install_path` claims `rel_path`
-/// (leading-slash-insensitively — `build.zig` authors spell install paths
-/// both ways, and the installer trims the leading "/" before writing).
+/// (leading-slash-insensitively — authors spell install paths both ways, and
+/// the installer trims the leading "/" before writing).
 /// Returns a mutable pointer so the caller can rc the asset: build assets
 /// only install when referenced, and a `spa.head` href IS a reference.
 fn findBuildAssetByInstallPath(
@@ -1116,7 +1107,7 @@ fn writeFile(io: std.Io, out_dir: std.Io.Dir, rel_path: []const u8, contents: []
     }
 }
 
-/// "app/App.spa.tsx" -> "App". Mirrors `build.zig`'s `spaName`: strips a
+/// "app/App.spa.tsx" -> "App". Strips a
 /// trailing `.spa.tsx` off the basename, else falls back to stripping just
 /// the final extension. `pub` so callers outside this file derive the
 /// `/spa/<name>.js` bundle name identically.
@@ -2652,8 +2643,8 @@ test "planRoute's \"/\" route writes exactly the disk path the root-index fallba
 // `zigapagos release --spa=a/A.spa.tsx|/app --spa=b/B.spa.tsx|/app` reached
 // `prerenderAll` unchecked: `static_seen`/`out_path_seen` are per-SPA, so the
 // second SPA overwrote ALL of the first's shells and its routing-manifest.json.
-// build.zig's `validateSpas` catches this at configure time; the CLI is a
-// first-class entry point and must catch it too.
+// Nothing upstream of `zigapagos release` sees the full declared set, so this
+// is the only place the pair can be caught at all.
 test "findSpecViolation flags two SPAs mounted at the same base" {
     const specs = [_]root.SpaSpec{
         .{ .src = "a/A.spa.tsx", .base = "/app" },

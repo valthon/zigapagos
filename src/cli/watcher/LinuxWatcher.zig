@@ -29,7 +29,7 @@ const WatchEntry = struct {
 };
 
 /// Flags for the watcher's inotify instance. `IN_CLOEXEC` is load-bearing: the
-/// `zigapagos dev` loop spawns a `zig build` per rebuild plus a long-lived
+/// `zigapagos dev` loop spawns a rebuild command per change plus a long-lived
 /// zigbase, and without close-on-exec the inotify fd — and with it every watch
 /// descriptor the watcher owns — is inherited by all of them for the whole dev
 /// session.
@@ -542,7 +542,7 @@ pub fn inotify_rm_watch(inotify_fd: i32, wd: i32) void {
 test "dev watcher: the inotify instance is close-on-exec" {
     // The exact flags `init` passes to inotify_init1. Without IN_CLOEXEC the
     // notify fd (and every watch descriptor under it) survives execve, so every
-    // `zig build` the dev loop spawns — and the long-lived zigbase — inherits
+    // rebuild the dev loop spawns — and the long-lived zigbase — inherits
     // the watcher's descriptors for the whole session.
     const fd = try inotify_init1(notify_init_flags);
     defer _ = std.c.close(fd);

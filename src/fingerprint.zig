@@ -20,8 +20,8 @@
 //!    `linkImpl` (`$site.asset(…).link()`), `render/html.zig`'s `.site_asset`
 //!    arm (a SuperMD `![](…)` directive) and `spa.zig`'s `spa.head` hrefs —
 //!    all of which go through `fmtUrl` below.
-//!  * **Not build assets.** Their install paths are declared by the author in
-//!    `build.zig` (so the author can already hash there), and the generated
+//!  * **Not build assets.** Their install paths are declared by the author on
+//!    the command line (so the author can already hash there), and the generated
 //!    ones — `zigapagos-runtime.js`, `spa/<name>.js`, `islands/<name>.js` —
 //!    have their URLs baked into import maps, routing manifests and the
 //!    hydration bootstrap by literal path in a dozen places.

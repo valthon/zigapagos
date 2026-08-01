@@ -53,7 +53,7 @@ pub const Builtins = struct {
             .ret = .Asset,
         };
         pub const docs_description =
-            \\Retuns a build-time asset (i.e. an asset generated through your 'build.zig' file) by name.
+            \\Returns a build-time asset (one declared with `--build-asset=NAME PATH`) by name.
         ;
         pub const examples =
             \\<div :text="$build.asset('foo').bytes()"></div>

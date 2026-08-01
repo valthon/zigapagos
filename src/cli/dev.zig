@@ -37,7 +37,7 @@
 //! this loop (`reload.zig`): a tiny SSE server on its own port, plus a small
 //! `<script>` injected into every served `.html` after each build that opens
 //! an `EventSource` and reloads on a rebuild. The snippet is added only to the
-//! *installed* tree post-build, so `zig build`/`zigapagos release` output stays
+//! *installed* tree post-build, so `zigapagos release` output stays
 //! clean. Disable with `--no-live-reload` (release-fidelity testing). When a
 //! change is classified as island-only, the SSE channel broadcasts an island
 //! hot-swap instead of a full reload, and — because dev builds bundle islands
@@ -76,10 +76,8 @@ pub const default_data_dir = ".zigbase";
 /// Fast-refresh island bundles. The dev loop sets this in the rebuild
 /// command's environment (unless `--no-live-reload`, which is for
 /// release-fidelity testing) and the rebuild reads it: `zigapagos release`
-/// through `hotIslands` (release.zig, which owns the name) and a consumer's
-/// `zig build` at CONFIGURE time (`build/bundles.zig`, which cannot import
-/// either file and duplicates the literal — keep them in sync). Either way the
-/// island bundle driver gets `--hot`, so its components route through the hot
+/// through `hotIslands` (release.zig, which owns the name). The island bundle
+/// driver then gets `--hot`, so its components route through the hot
 /// registry and a hot-swap preserves plain `useState` state. A rebuild that
 /// does not inherit this environment never sees the variable, so plain release
 /// bundles stay byte-identical.
@@ -92,8 +90,8 @@ pub const default_zigbase_args: []const []const u8 =
     e2e.default_zigbase_args ++ &[_][]const u8{"--insecure-cookies"};
 
 pub const Command = struct {
-    /// The built site tree zigbase serves (`--site=DIR`, required; build.zig's
-    /// dev() supplies the install path).
+    /// The built site tree zigbase serves (`--site=DIR`; defaults to
+    /// `default_site`, matching `zigapagos release`'s own default output).
     site: []const u8,
     /// ZigBase data dir (`--data-dir=DIR`). PERSISTENT — never deleted by the
     /// dev loop. Relative paths resolve against the site root.
@@ -129,8 +127,7 @@ pub const Command = struct {
     reload_port: u16,
     /// Extra directories to watch (`--watch-dir=`, repeatable), resolved
     /// against the site root. Empty means "derive them from the island/SPA
-    /// sources found under the site root" (see `discoverWatchDirs`); build.zig's
-    /// dev() passes them explicitly.
+    /// sources found under the site root" (see `discoverWatchDirs`).
     watch_dirs: []const []const u8,
     /// The rebuild command (everything after `--`). Null until `defaultRebuildArgv`
     /// fills it in, which needs `io` and so cannot happen during `parse`.
@@ -307,7 +304,7 @@ pub fn dev(
     //     brand-new island) forces a full rebuild instead.
     // A change fully localizable to content pages and/or manifest-known island
     // sources is the incremental fast path; everything else falls back to the
-    // full `zig build`.
+    // rebuild.
     var content_roots: std.ArrayListUnmanaged(ContentRoot) = .empty;
     var other_roots: std.ArrayListUnmanaged([]const u8) = .empty;
     var island_roots: std.ArrayListUnmanaged(ContentRoot) = .empty;
@@ -449,14 +446,14 @@ pub fn dev(
     ) orelse std.math.maxInt(usize);
     Io.Dir.cwd().access(io, site_abs, .{}) catch fatal.msg(
         "error: dev: the build succeeded but '{s}' does not exist.\n" ++
-            "hint: --site must match the build's output path (build.zig's dev() derives it from Options.output_path)\n",
+            "hint: --site must match the rebuild command's output path\n",
         .{site_abs},
     );
 
     // Live-reload side channel, DEV-ONLY. Bring up the SSE server on
     // its own port and inject the reload snippet into the freshly-built tree.
-    // `zig build`/`zigapagos release` never run this, so release output stays
-    // clean; `--no-live-reload` skips the whole thing.
+    // `zigapagos release` never runs this, so release output stays clean;
+    // `--no-live-reload` skips the whole thing.
     var reload_server: ?*reload.Server = null;
     var reload_port: u16 = 0;
     if (cmd.live_reload) {
@@ -689,9 +686,8 @@ pub fn dev(
 /// ORPHANS zigbase, which keeps holding the serve port and the data dir — and
 /// the next `zigapagos dev` fails to bind. `e2e.Harness`'s "a terminal
 /// SIGINT/SIGTERM reaches zigbase too (same process group)" holds for an
-/// interactive Ctrl-C only: `kill <dev-pid>`, an IDE or CI runner signalling
-/// just its direct child, and `zig build dev` whose build runner is killed all
-/// signal this process alone.
+/// interactive Ctrl-C only: `kill <dev-pid>`, and an IDE, task runner or CI
+/// job that signals just its direct child, both signal this process alone.
 ///
 /// Windows has no POSIX signals, so there this is a no-op pair and the loop
 /// keeps its previous behaviour (Ctrl-C kills the whole console process group).
@@ -1009,7 +1005,7 @@ fn classifyChange(
     // entry, so the browsers can hot-swap the rebuilt modules in place instead
     // of a full reload. The served URL is `/islands/<name>.js` where <name> is
     // the entry basename with its final extension stripped — the same mapping
-    // as `build.zig`'s `islandName` / the SSR pass's module URL — and it must
+    // as `release.zig`'s `bundleName` / the SSR pass's module URL — and it must
     // carry the site's `url_path_prefix` exactly as the SSR pass's
     // `data-z-module` does (AUD-021), or the browser's mounted `rec.moduleUrl`
     // never matches and the hot-swap silently falls back to a full reload.
@@ -1061,8 +1057,8 @@ fn nextWalkEntry(
 }
 
 /// `components/B.island.tsx` → `B.island`: the changed file's module name —
-/// basename with only the FINAL extension stripped (matching `build.zig`'s
-/// `islandName`). Any import of the module must contain this substring
+/// basename with only the FINAL extension stripped (matching `release.zig`'s
+/// `bundleName`). Any import of the module must contain this substring
 /// (`./B.island`, `../c/B.island.tsx`, …), extension or not.
 fn moduleStem(path: []const u8) []const u8 {
     var name = path;
@@ -1712,7 +1708,7 @@ test "dev island manifest: unknown changed file forces a full rebuild" {
 }
 
 test "dev moduleStem strips the directory and only the FINAL extension" {
-    // Must match build.zig's islandName: /islands/<stem>.js is the served URL.
+    // Must match release.zig's bundleName: /islands/<stem>.js is the served URL.
     try std.testing.expectEqualStrings("B.island", moduleStem("components/B.island.tsx"));
     try std.testing.expectEqualStrings("Counter", moduleStem("components/Counter.tsx"));
     try std.testing.expectEqualStrings("deep", moduleStem("a/b/c/deep.jsx"));
@@ -1825,7 +1821,7 @@ test "dev watcher: the per-OS watcher is compiled into this test binary" {
     // `Watcher` is referenced only from `dev()`'s body, which no test calls, so
     // without this the watcher file is never analyzed here and its own test
     // blocks (e.g. LinuxWatcher's close-on-exec check, which exists because the
-    // dev loop spawns a `zig build` per rebuild) are silently absent from
+    // dev loop spawns a rebuild command per change) are silently absent from
     // `zig build test-dev`.
     //
     // The `comptime` condition is load-bearing, not decorative: the watchers'

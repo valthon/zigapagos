@@ -87,7 +87,7 @@ site_data: std.StringHashMapUnmanaged(context.Map.ZiggyMap) = .empty,
 data_arena: std.heap.ArenaAllocator.State = .{},
 mode: Mode,
 island_sidecar: ?islands.Sidecar = null,
-/// SPAs declared in `build.zig`'s `Options.spas`, set verbatim from
+/// SPAs declared with `--spa=<src>|<base>`, set verbatim from
 /// `root.Options.spas` in `Build.load`. Consumed by the release-time
 /// prerender pass (`src/spa.zig`'s `prerenderAll`).
 spas: []const root.SpaSpec = &.{},
@@ -263,7 +263,7 @@ pub fn deinit(b: *const Build, io: Io, gpa: Allocator) void {
 test "Build.island_sidecar defaults to null and deinit tolerates it" {
     // A compile-time contract: verify the field is present and null-initialized.
     // Runtime deinit correctness is proven by Task 7's e2e; the real GREEN signal
-    // here is a successful `zig build` with spawn wired through root.run.
+    // here is a successful site build with spawn wired through root.run.
     try std.testing.expect(@hasField(Build, "island_sidecar"));
     const def: Build = undefined;
     _ = def; // suppress unused-variable warning; field presence is the contract

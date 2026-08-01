@@ -103,8 +103,9 @@ pub const Site = struct {
     /// Deliberately NOT fingerprinted, so the escape hatches still work:
     /// `static_assets` entries (`favicon.ico`, `CNAME`, `robots.txt` — things
     /// something *outside* the build looks up at a fixed path), build assets
-    /// (their install path is yours to choose in `build.zig`), and page
-    /// assets (installed next to the page that owns them).
+    /// (their install path is yours to choose with `--install`/
+    /// `--install-always`), and page assets (installed next to the page that
+    /// owns them).
     ///
     /// Release (disk-mode) builds only. An in-memory build writes no output
     /// tree, so there is nothing to fingerprint.
@@ -572,7 +573,7 @@ pub const Config = union(enum) {
     }
 };
 
-// Mirrors closely the corresponding type in build.zig
+/// One `--build-asset=NAME PATH [--install=P | --install-always=P]` entry.
 pub const BuildAsset = struct {
     input_path: []const u8,
     install_path: ?[]const u8 = null,
@@ -580,9 +581,8 @@ pub const BuildAsset = struct {
     rc: std.atomic.Value(u32),
 };
 
-/// One `--spa=<src>|<base>` entry, as threaded from `build.zig`'s `Spa.src`/
-/// `Spa.base` through `zigapagos release`'s CLI args. `base` is the DECLARED base
-/// from the consumer's `build.zig` (used only for advisory purposes here);
+/// One `--spa=<src>|<base>` entry from `zigapagos release`'s CLI args. `base` is
+/// the base the author DECLARED (used only for advisory purposes here);
 /// `src/spa.zig`'s prerender pass treats the module's exported `spa.base` as
 /// authoritative and asserts the two agree, failing loudly on mismatch. `base`
 /// is `""` when the `--spa=` value carried no `|` (defensive fallback — the
@@ -591,16 +591,16 @@ pub const SpaSpec = struct {
     src: []const u8,
     base: []const u8,
     /// Path to the driver's `spa-chunks.json` for this SPA (entry name + the
-    /// lazy-route→chunk map), threaded via `zigapagos release --spa-chunks=<src>
-    /// <path>`. Null when no chunk map was provided (e.g. a hand-written CLI
-    /// invocation) — the prerender then emits no per-route chunk/preload.
+    /// lazy-route→chunk map), attached by `release.zig`'s `bundleSpas` after the
+    /// SPA's client bundle has been written. Null when nothing built that half —
+    /// the prerender then emits no per-route chunk/preload.
     chunks_json: ?[]const u8 = null,
-    /// Path to the driver's per-SPA runtime SLICE manifest (`build-spa-runtime.ts`),
-    /// threaded via `zigapagos release --spa-slice=<src> <path>`. Either
-    /// `{"runtime":"/spa/<name>-runtime.js","members":[…]}` (this SPA gets a
-    /// sliced runtime bundle) or `{"fallback":true}` (uncertain host usage → the
-    /// SPA uses the shared /zigapagos-runtime.js). Null for a hand-written CLI
-    /// invocation with no slicing — the prerender then uses the shared runtime.
+    /// Path to the per-SPA runtime SLICE manifest written by
+    /// `runtime/scripts/build-spa-runtime.ts` and attached by that same
+    /// `bundleSpas` pass. Either `{"runtime":"/spa/<name>-runtime.js","members":[…]}`
+    /// (this SPA gets a sliced runtime bundle) or `{"fallback":true}` (uncertain
+    /// host usage → the SPA uses the shared /zigapagos-runtime.js). Null when no
+    /// slicing ran — the prerender then uses the shared runtime.
     slice_json: ?[]const u8 = null,
 };
 
@@ -634,8 +634,8 @@ pub const Options = struct {
     /// runs) never sets it, so every island page keeps the shared runtime —
     /// which is also what island hot-swap requires.
     islands_slice_json: ?[]const u8 = null,
-    /// SPAs declared in `build.zig`'s `Options.spas`, threaded through by
-    /// `zigapagos release --spa=<src>|<base>` (one per SPA). Consumed by
+    /// SPAs declared by `zigapagos release --spa=<src>|<base>` (one per SPA).
+    /// Consumed by
     /// `src/spa.zig`'s release-time prerender pass.
     spas: []const SpaSpec = &.{},
     /// Which SPA's "/" shell backs the universal 404.html, named
@@ -685,9 +685,8 @@ pub const Options = struct {
     /// `zigapagos dev --allow-missing-pages`: `dev` never builds the site
     /// itself, it re-runs a rebuild command, so the flag belongs in THAT
     /// command — `zigapagos dev -- zigapagos release --output=public --force
-    /// --allow-missing-pages`, or `Options.allow_missing_pages` in
-    /// `build/api.zig` when the rebuild command is a project's `zig build`.
-    /// A flag on `dev` would have nothing to forward it to.
+    /// --allow-missing-pages`. A flag on `dev` would have nothing to forward
+    /// it to.
     allow_missing_pages: bool = false,
     /// `zigapagos release --summary` (issue #42): print an inventory of the
     /// files this build emitted, grouped by category, once every pass has run.
@@ -707,8 +706,8 @@ pub const Options = struct {
     /// worker.zig's renderPage treats "this page mounts an <island> but no
     /// sidecar is configured" as an authoring mistake and logs one error line
     /// PER island page -- correct for `release` and `dev`, where
-    /// an unconfigured sidecar really is a missing `.islands` declaration in
-    /// build.zig, and pure noise for a command that never asked for SSR
+    /// an unconfigured sidecar really is a missing `--island=` declaration,
+    /// and pure noise for a command that never asked for SSR
     /// (measured: 201 lines on a 201-page island fixture).
     ///
     /// When true, that branch stays silent and the raw `<island>` markup is
@@ -854,9 +853,9 @@ pub fn run(
         //
         // Deliberately INSIDE the `islands_slice_json != null` branch, matching
         // `src/spa.zig`. An invocation that was never told about slicing — a
-        // hand-written `zigapagos release`, or a ZIGAPAGOS_HOT_ISLANDS dev build,
-        // where `build/bundles.zig` skips the slicer entirely — has no basis for
-        // deleting a file it did not produce and knows nothing about. The cost of
+        // site with no islands, or a ZIGAPAGOS_HOT_ISLANDS dev build, where
+        // `sliceIslandsRuntime` is skipped — has no basis for deleting a file
+        // it did not produce and knows nothing about. The cost of
         // that choice is bounded and already-familiar: an unreferenced
         // `islands/_runtime.js` can linger in an output tree that a sliced build
         // wrote earlier, exactly as the shared runtime lingers unreferenced on a

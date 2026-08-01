@@ -48,8 +48,11 @@ export interface IslandsRuntimeArgs {
   runtimeStamp?: string;
 }
 
-/** Bundle basename with `.js` stripped — byte-identical to build/validate.zig's
- *  `islandName` and to src/islands/pass.zig's `islandModuleName`, which is what
+/** Bundle basename with `.js` stripped. Yields the same name that
+ *  src/cli/release.zig's `bundleName` and src/islands/pass.zig's
+ *  `islandModuleName` derive from the island's SOURCE path — all three drop the
+ *  directory and the FINAL extension only, so `Hero.island.tsx` and the
+ *  `Hero.island.js` built from it both give `Hero.island`. That agreement is what
  *  makes the manifest's `islands` list joinable against a page's islands. */
 export function bundleName(path: string): string {
   const base = basename(path);

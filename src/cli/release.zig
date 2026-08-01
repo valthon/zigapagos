@@ -41,9 +41,10 @@ pub fn release(
     applyDefaults(&cmd, rt_defaults);
 
     // Entries the user did not enumerate. Gated on `rt_defaults` — i.e. on this
-    // being the npm path — because that is exactly the case with no configure
-    // step to enumerate them, and because a `zig build` invocation passing an
-    // explicit (possibly empty) set must keep meaning what it says.
+    // being the npm path — because that is the one way of running the binary
+    // with no project-owned build script to enumerate them in, and because an
+    // invocation that DOES pass an explicit (possibly empty) set must keep
+    // meaning what it says.
     var discovered_islands: ?[]const []const u8 = null;
     defer if (discovered_islands) |d| {
         for (d) |p| gpa.free(p);
@@ -59,8 +60,7 @@ pub fn release(
     }
     // The same scan for `*.spa.tsx`. A SPA declared in source and not on the
     // command line is otherwise just absent from the output — no error, and
-    // nothing to notice — and `build.zig`'s `Spa` list is the enumeration this
-    // path has no equivalent of. The declared base is left empty, which
+    // nothing to notice. The declared base is left empty, which
     // `src/spa.zig` reads as "take it from the module's own `spa.base` and skip
     // the agreement check": there is no second place here for it to disagree
     // with, so restating it would only invent a way to be wrong.
@@ -80,12 +80,13 @@ pub fn release(
         }
     }
 
-    // SPAs whose CLIENT half this process has to build itself. Same condition,
-    // and same reason, as the discovery above: `rt_defaults` is set exactly when
-    // this binary was shipped with its runtime tree and no build graph, which is
-    // the one case where nobody else produced the bundle. Under `zig build` the
-    // specs arrive with `--spa-chunks`/`--spa-slice` already attached to bundles
-    // `build/bundles.zig` built, so this stays empty and that path is untouched.
+    // SPAs whose CLIENT half this process builds. Gated on `rt_defaults`
+    // because the SPA drivers (`bundle-standalone.ts`, `build-spa-runtime.ts`)
+    // are paths INTO the shipped runtime tree and there is nowhere else to get
+    // them: without it this process cannot bundle a SPA, only prerender one.
+    // That is what the `--spa=`-only fixtures under `tests/spa/` rely on — they
+    // assert on emitted shells and never load them in a browser, so paying for
+    // a client bundle would buy them nothing.
     const cli_spas: []root.SpaSpec = if (rt_defaults != null) cmd.spas else &.{};
 
     const cfg, const base_dir_path = root.Config.load(io, gpa);
@@ -113,7 +114,8 @@ pub fn release(
     // Incremental content re-render. `zigapagos dev` sets
     // `ZIGAPAGOS_CHANGED_FILES` (newline-separated base-relative content page
     // paths) when — and only when — every changed file is a content page; the
-    // env var rides through the intervening `zig build` into this process. When
+    // env var is inherited by the rebuild command and so reaches this process
+    // even when that command is a project script rather than this binary. When
     // present and non-empty it restricts the render + emit pass to just those
     // pages (see `root.Options.changed_files`). Absent/empty (every ordinary
     // release build, and the dev loop's full-rebuild fallback) = render the
@@ -172,6 +174,27 @@ pub fn release(
         return true;
     }
 
+    // Host config + strict-CSP artifacts, over the tree that was just written.
+    // Same gate as the bundling above and for the same reason: this reads the
+    // routing manifests the SPA prerender emitted, and hashes the inline
+    // importmap/bootstrap scripts an island page carries — a site with neither
+    // has nothing to translate.
+    //
+    // This runs AFTER `root.run` rather than as part of it because it is a pass
+    // over the FINISHED output tree: it globs `**/routing-manifest.json` and
+    // `**/*.html` under the output directory, which only exist once the render
+    // and install phases have written them.
+    if (rt_defaults) |rt| if (cmd.islands.len > 0 or cmd.spas.len > 0) {
+        runDriver(io, gpa, cmd.bun_path orelse "bun", ".", &.{
+            rt.host_config_emitter,
+            "--site",
+            cmd.output_dir_path orelse "public",
+        }, environ_map) catch |err| fatal.msg(
+            "error: emitting host config failed: {s}\n",
+            .{@errorName(err)},
+        );
+    };
+
     return false;
 }
 
@@ -179,15 +202,16 @@ pub fn release(
 /// set of changed content pages for an incremental rebuild. The
 /// value is a newline-separated list of base-relative source paths (e.g.
 /// `content/blog/foo.md`). It travels via the environment — not argv — because
-/// the dev loop's rebuild command is the project's own `zig build`, which owns
-/// the `zigapagos release` argv; the environment is the one channel that rides
-/// through untouched.
+/// the dev loop's rebuild command is overridable (anything after `--`, and a
+/// project's own `build.sh` is the expected value), and that command owns the
+/// `zigapagos release` argv it ultimately runs; the environment is the one
+/// channel that rides through it untouched.
 pub const changed_files_env = "ZIGAPAGOS_CHANGED_FILES";
 
 /// Environment variable `zigapagos dev` uses to ask this `release` process to
 /// write the dev-only island-usage manifest at the given absolute
-/// path (see `src/islands/manifest.zig`). Rides through the intervening
-/// `zig build` exactly like `changed_files_env`. Unset/empty — every ordinary
+/// path (see `src/islands/manifest.zig`). Rides through the rebuild command
+/// exactly like `changed_files_env`. Unset/empty — every ordinary
 /// release build — means no manifest is written or collected: zero effect on
 /// release output.
 pub const island_manifest_env = "ZIGAPAGOS_ISLAND_MANIFEST";
@@ -231,15 +255,11 @@ pub const Command = struct {
     bun_path: ?[]const u8,
     island_sidecar: ?[]const u8,
     island_src_dir: ?[]const u8,
-    /// `--island=SRC` (repeatable): an island entry this command must bundle
-    /// FOR THE BROWSER itself, rather than receive pre-bundled as a
-    /// `--build-asset`. Empty for every `build.zig`-driven invocation, where
-    /// `build/bundles.zig` runs the same driver as its own Run steps (so the
-    /// zig build cache tracks each bundle's TS import closure) and hands the
-    /// results over as build assets. Non-empty is the toolchain-free path —
-    /// an npm install has bun and this binary and no build graph at all — and
-    /// the two are mutually exclusive per asset name: colliding with a
-    /// `--build-asset` of the same name is a usage error, not a silent
+    /// `--island=SRC` (repeatable): an island entry this command bundles FOR
+    /// THE BROWSER itself. The alternative is handing the finished bundle over
+    /// as a `--build-asset`, which an external orchestrator can still do; the
+    /// two are mutually exclusive per asset name, and colliding with a
+    /// `--build-asset` of the same name is a usage error rather than a silent
     /// overwrite. See `bundleIslands`.
     islands: []const []const u8 = &.{},
     /// `--island-runtime-entry=PATH`: the shared client runtime's entry
@@ -247,9 +267,8 @@ pub const Command = struct {
     /// Only read when `islands` is non-empty.
     island_runtime_entry: ?[]const u8 = null,
     /// `--island-bundle-driver=PATH`: the Bun bundling driver
-    /// (`runtime/sidecar/bundle-island.ts`). The SAME driver `build/bundles.zig`
-    /// invokes, so a CLI-bundled island is byte-identical to a `zig build` one.
-    /// Only read when `islands` is non-empty.
+    /// (`runtime/sidecar/bundle-island.ts`). Only read when `islands` is
+    /// non-empty; defaulted from the shipped runtime tree otherwise.
     island_bundle_driver: ?[]const u8 = null,
     /// `--css-minify-driver=PATH`: the Bun script that minifies a single `.css`
     /// site asset during the release install phase. Null (the
@@ -258,22 +277,32 @@ pub const Command = struct {
     css_minify_driver: ?[]const u8 = null,
     island_props_check: @import("../islands/props_check.zig").Mode = .off,
     /// `--islands-slice=PATH`: the per-SITE islands runtime slice manifest
-    /// (`runtime/scripts/build-islands-runtime.ts`). Null (the default, and every
-    /// hand-written invocation) means no slice was built, so every island page
-    /// loads the shared `/zigapagos-runtime.js` exactly as before. Unlike
-    /// `--spa-slice` there is no per-deployable key, so this is a single `=`
-    /// token with no second argv word.
+    /// (`runtime/scripts/build-islands-runtime.ts`). Normally written by
+    /// `sliceIslandsRuntime` and attached here; the flag exists so a manifest
+    /// can be supplied directly. Null means no slice, so every island page
+    /// loads the shared `/zigapagos-runtime.js`.
     islands_slice: ?[]const u8 = null,
-    /// Declared native SPAs. MUTABLE, unlike the other list fields: on the
-    /// toolchain-free path `bundleSpas` builds each SPA's client half itself and
-    /// then attaches the `chunks_json`/`slice_json` the drivers just wrote, which
-    /// is the same information `zig build` supplies up front via `--spa-chunks`
-    /// and `--spa-slice`. Coerces to the `[]const SpaSpec` `root.Options` takes.
+    /// Declared native SPAs. MUTABLE, unlike the other list fields: `bundleSpas`
+    /// builds each SPA's client half and then attaches the `chunks_json` and
+    /// `slice_json` its drivers just wrote, which the prerender pass reads.
+    /// Coerces to the `[]const SpaSpec` `root.Options` takes.
     spas: []root.SpaSpec,
     /// `--spa-not-found=<name>`: the SPA whose "/" shell backs the
     /// universal 404.html, named by its `spaName(src)` basename. Null (the
     /// default) keeps the historical behavior: the FIRST declared SPA.
     spa_not_found: ?[]const u8 = null,
+    /// `--source-maps`: emit an external (linked) `.map` beside every minified
+    /// island, SPA and runtime bundle and stage it into the output next to its
+    /// script (`/islands/<Name>.js.map`, `/spa/<name>.js.map`,
+    /// `/zigapagos-runtime.js.map`, …). This is what makes CLIENT-side
+    /// symbolication work in production: the browser fetches `<script>.map` and
+    /// rewrites minified frames to their original source positions.
+    ///
+    /// Opt-in and OFF by default: maps expose your original (pre-minification)
+    /// sources to anyone who can reach the site, and many deployments prefer to
+    /// symbolicate SERVER-side from privately-retained maps. Off keeps the
+    /// output byte-identical to a maps-free build.
+    source_maps: bool = false,
     /// `--allow-missing-pages`: see `root.Options.allow_missing_pages` for why
     /// the tolerance is not mode-dependent. `dev` has no flag of its own for
     /// it -- put it in the rebuild command after `--`.
@@ -312,19 +341,9 @@ pub const Command = struct {
         var spas: std.ArrayListUnmanaged(root.SpaSpec) = .empty;
         var spa_not_found: ?[]const u8 = null;
         var allow_missing_pages = false;
+        var source_maps = false;
         var format: diag.Format = .text;
         var summary = false;
-        // src -> spa-chunks.json path. Collected separately because `--spa-chunks`
-        // args precede the `--spa=` args, so the specs don't exist yet; attached
-        // to the specs after the arg loop.
-        var spa_chunks: std.StringArrayHashMapUnmanaged([]const u8) = .empty;
-        // The map storage is scratch (keys/values are borrowed slices attached to
-        // the specs before return); free it on the way out.
-        defer spa_chunks.deinit(gpa);
-        // src -> per-SPA runtime slice-manifest path. Same late-attach reason as
-        // spa_chunks: `--spa-slice` args precede the `--spa=` args.
-        var spa_slices: std.StringArrayHashMapUnmanaged([]const u8) = .empty;
-        defer spa_slices.deinit(gpa);
 
         const eql = std.mem.eql;
         const startsWith = std.mem.startsWith;
@@ -370,13 +389,13 @@ pub const Command = struct {
                     fatal.msg("error: invalid --island-props-check value '{s}' (want off|warn|error)\n", .{v});
                 };
             } else if (startsWith(u8, arg, "--spa=")) {
-                // `<src>|<base>` — `base` is the DECLARED base restated from
-                // `build.zig`'s `Spa.base` (see `root.SpaSpec`); `src` never
-                // contains '|' (validated at configure time by
-                // `build.zig`'s `validateSpas`), so splitting on the FIRST
-                // '|' is unambiguous. No '|' at all (defensive: e.g. a
-                // hand-written `--spa=` invocation) yields an empty declared
-                // base, which `spa.zig` treats as "skip the agreement check".
+                // `<src>|<base>` — `base` is the base the author DECLARES for
+                // this SPA (see `root.SpaSpec`), checked at prerender time
+                // against the module's own exported `spa.base`. A path
+                // containing '|' is not a path anyone writes, so splitting on
+                // the FIRST '|' is unambiguous; no '|' at all yields an empty
+                // declared base, which `spa.zig` treats as "skip the agreement
+                // check" and take the module's own.
                 const v = arg["--spa=".len..];
                 if (std.mem.indexOfScalar(u8, v, '|')) |i| {
                     try spas.append(gpa, .{ .src = v[0..i], .base = v[i + 1 ..] });
@@ -389,24 +408,6 @@ pub const Command = struct {
                 // against the declared `--spa=` set at prerender time
                 // (`src/spa.zig`), where the full spec list is known.
                 spa_not_found = arg["--spa-not-found=".len..];
-            } else if (startsWith(u8, arg, "--spa-chunks=")) {
-                // `--spa-chunks=<src>` followed by the spa-chunks.json path.
-                const src = arg["--spa-chunks=".len..];
-                idx += 1;
-                if (idx >= args.len) fatal.msg(
-                    "error: missing chunks-json path for '--spa-chunks={s}'\n",
-                    .{src},
-                );
-                try spa_chunks.put(gpa, src, args[idx]);
-            } else if (startsWith(u8, arg, "--spa-slice=")) {
-                // `--spa-slice=<src>` followed by the slice-manifest json path.
-                const src = arg["--spa-slice=".len..];
-                idx += 1;
-                if (idx >= args.len) fatal.msg(
-                    "error: missing slice-manifest path for '--spa-slice={s}'\n",
-                    .{src},
-                );
-                try spa_slices.put(gpa, src, args[idx]);
             } else if (startsWith(u8, arg, "--build-asset=")) {
                 const name = arg["--build-asset=".len..];
 
@@ -451,6 +452,8 @@ pub const Command = struct {
                 allow_missing_pages = true;
             } else if (eql(u8, arg, "--summary")) {
                 summary = true;
+            } else if (eql(u8, arg, "--source-maps")) {
+                source_maps = true;
             } else if (startsWith(u8, arg, "--format=")) {
                 const v = arg["--format=".len..];
                 format = diag.parseFormat(v) orelse fatal.usageError(
@@ -460,13 +463,6 @@ pub const Command = struct {
             } else {
                 fatal.msg("error: unexpected cli argument '{s}'\n", .{arg});
             }
-        }
-
-        // Attach each SPA's chunk map (parsed separately since `--spa-chunks`
-        // precedes `--spa=`).
-        for (spas.items) |*sp| {
-            if (spa_chunks.get(sp.src)) |p| sp.chunks_json = p;
-            if (spa_slices.get(sp.src)) |p| sp.slice_json = p;
         }
 
         return .{
@@ -487,6 +483,7 @@ pub const Command = struct {
             .spa_not_found = spa_not_found,
             .allow_missing_pages = allow_missing_pages,
             .summary = summary,
+            .source_maps = source_maps,
             .format = format,
         };
     }
@@ -501,9 +498,7 @@ const help_message =
     \\  --bun=PATH            Path to the Bun executable (default: 'bun' on PATH)
     \\  --island-sidecar=PATH Path to the island render sidecar script
     \\  --island-src-dir=DIR  Island project root (cwd for the Bun sidecar)
-    \\  --island=SRC          Bundle this island for the browser (repeatable).
-    \\                        Omit under 'zig build', which bundles islands as
-    \\                        build-graph steps and passes --build-asset instead
+    \\  --island=SRC          Bundle this island for the browser (repeatable)
     \\  --island-runtime-entry=PATH  Entry for the shared /zigapagos-runtime.js
     \\  --island-bundle-driver=PATH  Bun script that bundles one island/entry
     \\  --css-minify-driver=PATH  Bun script that minifies .css site assets on
@@ -518,8 +513,9 @@ const help_message =
     \\  --spa-not-found=NAME  Which SPA's "/" shell backs the universal
     \\                        404.html, by its file basename sans .spa.tsx
     \\                        (default: the first --spa declared)
-    \\  --spa-chunks=SRC PATH Attach a SPA's spa-chunks.json (lazy-route map)
-    \\  --spa-slice=SRC PATH  Attach a SPA's per-deployable runtime slice manifest
+    \\  --source-maps         Emit a linked .map next to every island, SPA and
+    \\                        runtime bundle (off by default: maps expose your
+    \\                        original sources to anyone who can reach the site)
     \\  --allow-missing-pages Tolerate a dangling $link.page/$site.page reference
     \\                        to a page that doesn't exist YET (emits a real,
     \\                        would-be href + a build-log warning instead of
@@ -550,9 +546,10 @@ const help_message =
 /// npm's layout — including whether the platform package was hoisted — inside a
 /// binary that also ships outside npm.
 ///
-/// Unset for every other distribution (a `zig build` checkout passes the paths
-/// explicitly; a hand-built binary has no bundled runtime), where it must stay a
-/// no-op: absent, empty, or blank is treated as "no bundled runtime".
+/// Not required by any other distribution — a checkout either sets it to its own
+/// `runtime/` tree (`site/build.sh` does) or points the `--island-*` flags there
+/// one by one, and a hand-built binary has no bundled runtime at all — so it must
+/// stay a no-op when absent, empty, or blank: "no bundled runtime".
 pub const runtime_dir_env = "ZIGAPAGOS_RUNTIME_DIR";
 
 /// The paths `runtime_dir_env` implies. NO_SLOP.md §2.2a contract 2
@@ -561,10 +558,10 @@ pub const runtime_dir_env = "ZIGAPAGOS_RUNTIME_DIR";
 ///
 /// The island trio (`sidecar`, `runtime_entry`, `bundle_driver`) is also exposed
 /// as explicit `--island-*` flags, because a checkout legitimately points them at
-/// its own working tree. The SPA quintet below is NOT: those five are fixed parts
-/// of one runtime tree that the SPA drivers require together, nothing would be
-/// gained by letting them disagree, and `zig build` passes its own equivalents
-/// through the build graph rather than through this struct.
+/// its own working tree. Nothing below it is: those paths are fixed parts of one
+/// runtime tree that their drivers require together, nothing would be gained by
+/// letting them disagree, and a flag per file would be nine more ways to
+/// half-configure a build that has exactly one right answer.
 pub const RuntimeDefaults = struct {
     /// The SELF-CONTAINED sidecar entry, not `render.ts`: a consumer island
     /// imports `@z/runtime` by its bare name, which resolves to nothing in a
@@ -587,6 +584,19 @@ pub const RuntimeDefaults = struct {
     spa_entry: []const u8,
     host_module: []const u8,
     ssr_env_module: []const u8,
+    /// `runtime/scripts/build-islands-runtime.ts` — the per-SITE islands runtime
+    /// slicer, run over the BUILT island bundles once they all exist.
+    islands_runtime_driver: []const u8,
+    /// The three modules the islands slicer needs by path: the hydration
+    /// auto-init it always includes, and the two barrels it re-exports the
+    /// proven-needed union out of.
+    islands_module: []const u8,
+    index_module: []const u8,
+    jsx_module: []const u8,
+    /// `runtime/scripts/emit-host-config.ts` — translates each namespace's
+    /// routing manifest into host config and writes the site-wide CSP artifacts,
+    /// over the finished output tree.
+    host_config_emitter: []const u8,
 
     pub fn deinit(rd: *const RuntimeDefaults, gpa: Allocator) void {
         gpa.free(rd.sidecar);
@@ -597,6 +607,11 @@ pub const RuntimeDefaults = struct {
         gpa.free(rd.spa_entry);
         gpa.free(rd.host_module);
         gpa.free(rd.ssr_env_module);
+        gpa.free(rd.islands_runtime_driver);
+        gpa.free(rd.islands_module);
+        gpa.free(rd.index_module);
+        gpa.free(rd.jsx_module);
+        gpa.free(rd.host_config_emitter);
     }
 };
 
@@ -623,6 +638,16 @@ pub fn runtimeDefaults(gpa: Allocator, dir: []const u8) Allocator.Error!RuntimeD
     const host_module = try std.fs.path.join(gpa, &.{ dir, "src", "host.ts" });
     errdefer gpa.free(host_module);
     const ssr_env_module = try std.fs.path.join(gpa, &.{ dir, "src", "ssr-env.ts" });
+    errdefer gpa.free(ssr_env_module);
+    const islands_runtime_driver = try std.fs.path.join(gpa, &.{ dir, "scripts", "build-islands-runtime.ts" });
+    errdefer gpa.free(islands_runtime_driver);
+    const islands_module = try std.fs.path.join(gpa, &.{ dir, "src", "islands.ts" });
+    errdefer gpa.free(islands_module);
+    const index_module = try std.fs.path.join(gpa, &.{ dir, "src", "index.ts" });
+    errdefer gpa.free(index_module);
+    const jsx_module = try std.fs.path.join(gpa, &.{ dir, "src", "jsx-runtime.ts" });
+    errdefer gpa.free(jsx_module);
+    const host_config_emitter = try std.fs.path.join(gpa, &.{ dir, "scripts", "emit-host-config.ts" });
     return .{
         .sidecar = sidecar,
         .runtime_entry = runtime_entry,
@@ -632,13 +657,18 @@ pub fn runtimeDefaults(gpa: Allocator, dir: []const u8) Allocator.Error!RuntimeD
         .spa_entry = spa_entry,
         .host_module = host_module,
         .ssr_env_module = ssr_env_module,
+        .islands_runtime_driver = islands_runtime_driver,
+        .islands_module = islands_module,
+        .index_module = index_module,
+        .jsx_module = jsx_module,
+        .host_config_emitter = host_config_emitter,
     };
 }
 
-/// Fill in the island paths that a `zig build` invocation always passes
-/// explicitly and a toolchain-free one cannot know, WITHOUT ever overriding an
-/// explicit flag — so a checkout that points `--island-sidecar` at its own
-/// working tree keeps doing exactly that even with the variable set.
+/// Fill in the island paths that an invocation from a checkout can pass
+/// explicitly and an installed, toolchain-free one cannot know, WITHOUT ever
+/// overriding an explicit flag — so a checkout that points `--island-sidecar` at
+/// its own working tree keeps doing exactly that even with the variable set.
 ///
 /// `bun_path` and `island_src_dir` get defaults too, and deliberately not from
 /// `defaults`: "bun" (found on `PATH`, which is where `npm i -D bun` puts it for
@@ -659,9 +689,8 @@ fn applyDefaults(cmd: *Command, defaults: ?RuntimeDefaults) void {
 }
 
 /// Every file under `src_dir` whose basename ends in `suffix` (`.island.tsx` or
-/// `.spa.tsx`), as paths relative to it — the list a `build.zig` would have
-/// produced at configure time, recovered by scanning because a toolchain-free
-/// install has no configure step.
+/// `.spa.tsx`), as paths relative to it — the entry list an author did not
+/// enumerate on the command line, recovered by scanning.
 ///
 /// WHY THIS IS NOT OPTIONAL POLISH. For an island, the SSR pass and the client
 /// bundle come from different places and only the SSR half is automatic: a page
@@ -675,11 +704,8 @@ fn applyDefaults(cmd: *Command, defaults: ?RuntimeDefaults) void {
 /// is what keeps source and output in step without making the user enumerate
 /// them.
 ///
-/// Only ever called on the npm path (see the call sites' `rt_defaults` guard), so
-/// a `zig build` — where `build/bundles.zig` hands the bundles over as
-/// `--build-asset`/`--spa-chunks` and the entry lists are already exact — is
-/// untouched.
-///
+/// Only ever called when this binary ships its own runtime tree (see the call
+/// sites' `rt_defaults` guard), so an invocation that enumerates its entries is
 /// NO_SLOP.md §2.2a contract 2 (owned-result): the caller owns the slice and each
 /// path in it.
 pub fn discoverEntries(
@@ -736,9 +762,9 @@ fn containsComponent(path: []const u8, name: []const u8) bool {
 /// Where `--island=` bundles are staged. Project-local (not a temp dir) so a
 /// failed build leaves the bundles that were produced for inspection, and so
 /// two projects built concurrently cannot collide. Wiped at the start of every
-/// bundling run: a stale bundle from a PREVIOUS build must never reach the
-/// output tree, which is the failure mode `zig build` is immune to by
-/// construction (content-addressed cache) and this path is not.
+/// bundling run: it is a plain directory, not a cache keyed by its inputs, so
+/// nothing but the wipe stops a stale bundle from a PREVIOUS build — an island
+/// since renamed or deleted — from reaching the output tree.
 const bundle_cache_path = ".zigapagos-cache/bundles";
 
 /// Environment variable asking for fast-refresh island bundles; see
@@ -750,11 +776,8 @@ pub const hot_islands_env = "ZIGAPAGOS_HOT_ISLANDS";
 /// directory and the FINAL extension only: `components/Counter.island.tsx` ->
 /// `Counter.island`, so the URL is `/islands/Counter.island.js`.
 ///
-/// Duplicated from `build/validate.zig`'s `islandName` rather than shared: that
-/// file is part of the build-system surface `build.zig` exposes to a consumer's
-/// `build.zig`, and `src/` cannot import it (nor should the shipped binary
-/// depend on the build package). `src/islands/pass.zig`'s `islandModuleName`
-/// derives the same name for the URL it writes into `data-z-module`, and
+/// `src/islands/pass.zig`'s `islandModuleName` derives the same name for the URL
+/// it writes into `data-z-module`, and
 /// `test "parse: --island name matches the module URL pass.zig emits"` below
 /// pins the two against each other — a drift here is a 404 on every island.
 fn bundleName(src: []const u8) []const u8 {
@@ -769,9 +792,9 @@ fn bundleName(src: []const u8) []const u8 {
 /// The value is load-bearing, not hygiene: Bun picks the `jsx-runtime` vs
 /// `jsx-dev-runtime` import from its OWN `NODE_ENV` at transform time (a
 /// `--define` only rewrites code, it cannot change that choice), so without this
-/// a CLI-built bundle imports the dev JSX entry while a `zig build` one — where
-/// `build/bundles.zig` sets the same variable on every bundling Run step —
-/// imports the production one. Same bytes, same decision, either way.
+/// a bundle built from an interactive shell would import the dev JSX entry and
+/// one built from a CI job with NODE_ENV=production already set would import the
+/// production one. Same bytes either way.
 ///
 /// Contract 2 (owned-result): caller `deinit`s.
 fn prodEnv(
@@ -817,32 +840,25 @@ fn runDriver(
 
 /// Build the browser half of this site — the shared `/zigapagos-runtime.js`, one
 /// `/islands/<name>.js` per `--island=`, and one code-split `/spa/…` directory
-/// per CLI-built SPA — and register every artifact as an `install_always` build
-/// asset, exactly as `build/bundles.zig` does through the build graph.
+/// per declared SPA — and register every artifact as an `install_always` build
+/// asset.
 ///
 /// WHY THIS EXISTS AT ALL. A page with an island, or a SPA shell, needs two
 /// artifacts that come from different places: the SSR'd markup (this process, via
-/// the Bun sidecar) and the client bundle (Bun, via `bundle-island.ts`). Under
-/// `zig build` the second is a set of Run steps whose outputs arrive here as
-/// `--build-asset` / `--spa-chunks`, which is the right shape there — the zig
-/// cache tracks each bundle's TS import closure through a depfile and skips
-/// unchanged work. An npm install has bun and this binary and no build graph, so
-/// without this the SSR'd markup would ship pointing at a `/islands/<name>.js` or
-/// `/spa/<name>.js` that nothing ever wrote: output that renders correctly and
-/// then 404s on hydration, which is the worst of the available failure modes
-/// because it looks fine in the output tree.
+/// the Bun sidecar) and the client bundle (Bun, via `bundle-island.ts`). Nothing
+/// else produces the second, so without this the SSR'd markup would ship pointing
+/// at a `/islands/<name>.js` or `/spa/<name>.js` that nothing ever wrote: output
+/// that renders correctly and then 404s on hydration, which is the worst of the
+/// available failure modes because it looks fine in the output tree.
 ///
-/// The drivers, their flags and the install paths are the SAME as
-/// `build/bundles.zig`'s, so the two paths produce identical bytes. The bundling
-/// itself is not reimplemented anywhere: both paths shell out to the same two Bun
-/// drivers, and what differs is only how the outputs are handed to the installer
-/// (a build-graph `addInstallDirectory` there, `install_always` assets here — see
-/// `installBundleDir`). The ONE thing not reproduced here is the per-SITE islands
-/// runtime SLICE (`--islands-slice`), which needs a second pass over the built
-/// bundles; its absence is the documented no-slice default — every island page
-/// loads the full shared runtime — not a broken build. The per-SPA slice IS
-/// reproduced, because a SPA shell's import map names the sliced runtime by path
-/// and would 404 without it.
+/// The bundling itself is not reimplemented here: this shells out to the Bun
+/// drivers under `runtime/` and owns only the ORDER (shared runtime, islands, the
+/// islands slice over their built bundles, then each SPA and its own slice) and
+/// the registration of each output as an `install_always` asset — see
+/// `installBundleDir`. Both runtime slices are built: a SPA shell's import map
+/// names its sliced runtime by path, and an island page's names
+/// `/islands/_runtime.js` the same way, so a tree missing either does not merely
+/// ship a bigger runtime — it ships a page whose module specifiers 404.
 ///
 /// NO_SLOP.md §2.2a contract 4 (arena-scoped). Justification: every string it
 /// produces (asset names, absolute bundle paths, the chunk/slice manifest paths
@@ -883,8 +899,15 @@ fn bundleClient(
     defer env.deinit();
 
     try bundleSharedRuntime(io, arena, cmd, bun_path, src_dir, cache_abs, &env);
-    if (cmd.islands.len > 0)
-        try bundleIslands(io, arena, cmd, bun_path, src_dir, cache_abs, &env, hotIslands(environ_map));
+    if (cmd.islands.len > 0) {
+        const bundles = try bundleIslands(io, arena, cmd, bun_path, src_dir, cache_abs, &env, hotIslands(environ_map));
+        // The slicer needs four paths into the shipped runtime tree and has no
+        // flags of its own (see `RuntimeDefaults`), so a build with no runtime
+        // tree keeps the documented no-slice default: every island page loads
+        // the full shared runtime.
+        if (rt) |r| if (!hotIslands(environ_map))
+            try sliceIslandsRuntime(io, arena, cmd, r, bundles, bun_path, src_dir, cache_abs, &env);
+    }
     // `rt.?` is safe by construction: the caller only fills `spas` when
     // `rt_defaults` is non-null (see `cli_spas`), because the SPA drivers are
     // paths INTO the shipped runtime tree and there is nowhere else to get them.
@@ -896,8 +919,7 @@ fn bundleClient(
 /// is bundled in. This is the module an island page's import map points
 /// `@z/runtime` at, which is what makes the whole page share ONE Preact instance.
 ///
-/// Built whenever islands OR SPAs are present, matching
-/// `build/bundles.zig`'s `addSharedRuntimeAsset` and for the same reason: it is
+/// Built whenever islands OR SPAs are present: it is
 /// every SPA's fallback, loaded by any SPA whose runtime slice bails to
 /// `{"fallback":true}`, and that decision is only known once the slicer has run.
 ///
@@ -922,31 +944,47 @@ fn bundleSharedRuntime(
     );
     const rt_out = try std.fs.path.join(gpa, &.{ cache_abs, "zigapagos-runtime.js" });
     const rt_dep = try std.fs.path.join(gpa, &.{ cache_abs, "zigapagos-runtime.d" });
-    try runDriver(io, gpa, bun_path, src_dir, &.{
+    const rt_map = try std.fmt.allocPrint(gpa, "{s}.map", .{rt_out});
+    var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+    try argv.appendSlice(gpa, &.{
         driver,
         try std.fmt.allocPrint(gpa, "--entry={s}", .{runtime_entry}),
         try std.fmt.allocPrint(gpa, "--outfile={s}", .{rt_out}),
         try std.fmt.allocPrint(gpa, "--depfile={s}", .{rt_dep}),
         "--minify",
-    }, env);
+    });
+    // The driver writes `<mapfile>` and retargets the bundle's
+    // `sourceMappingURL` to its basename, so staging the map next to the
+    // runtime is all it takes for the browser to fetch it.
+    if (cmd.source_maps) try argv.appendSlice(gpa, &.{
+        try std.fmt.allocPrint(gpa, "--mapfile={s}", .{rt_map}),
+        "--sourcemap",
+    });
+    try runDriver(io, gpa, bun_path, src_dir, argv.items, env);
     try addBundleAsset(gpa, cmd, "zigapagos-runtime", rt_out, "zigapagos-runtime.js");
+    if (cmd.source_maps) try addBundleAsset(
+        gpa,
+        cmd,
+        "zigapagos-runtime-map",
+        rt_map,
+        "zigapagos-runtime.js.map",
+    );
 }
 
 /// True when the environment asks for fast-refresh island bundles.
 ///
 /// `zigapagos dev` sets ZIGAPAGOS_HOT_ISLANDS=1 in the rebuild command's
-/// environment (src/cli/dev.zig's `hot_islands_env`), and since `dev` now
-/// rebuilds through `zigapagos release` by default, THIS is the reader that
-/// makes island hot-swap work. `build/bundles.zig` reads the same variable for
-/// the `zig build` path and must keep the same spelling and the same
-/// truthiness rule — a bare `!= null` here would make `=0` mean "on" in one
-/// path and "off" in the other.
+/// environment (src/cli/dev.zig's `hot_islands_env`), and since `dev` rebuilds
+/// through `zigapagos release`, THIS is the reader that makes island hot-swap
+/// work. Note the truthiness rule: a bare `!= null` would make `=0` mean "on".
 fn hotIslands(environ_map: *const std.process.Environ.Map) bool {
     const v = environ_map.get(hot_islands_env) orelse return false;
     return v.len > 0 and !std.mem.eql(u8, v, "0");
 }
 
-/// One `/islands/<name>.js` per `--island=` entry.
+/// One `/islands/<name>.js` per `--island=` entry. Returns each BUILT bundle's
+/// absolute path in declaration order — the input `sliceIslandsRuntime` analyses,
+/// which is why the order is the command line's and not the filesystem's.
 /// Contract 4 (arena-scoped) — see `bundleClient`.
 fn bundleIslands(
     io: Io,
@@ -957,9 +995,10 @@ fn bundleIslands(
     cache_abs: []const u8,
     env: *const std.process.Environ.Map,
     hot: bool,
-) !void {
+) ![]const []const u8 {
     const gpa = arena.a;
     const driver = cmd.island_bundle_driver.?; // checked by bundleSharedRuntime
+    var built = try std.ArrayListUnmanaged([]const u8).initCapacity(gpa, cmd.islands.len);
     for (cmd.islands) |src| {
         const name = bundleName(src);
         const out = try std.fmt.allocPrint(gpa, "{s}/{s}.js", .{ cache_abs, name });
@@ -982,7 +1021,13 @@ fn bundleIslands(
         // a plain `zigapagos release`, which is what keeps release bundles
         // byte-identical to a hot-free build.
         if (hot) try argv.append(gpa, "--hot");
+        const map = try std.fmt.allocPrint(gpa, "{s}.map", .{out});
+        if (cmd.source_maps) try argv.appendSlice(gpa, &.{
+            try std.fmt.allocPrint(gpa, "--mapfile={s}", .{map}),
+            "--sourcemap",
+        });
         try runDriver(io, gpa, bun_path, src_dir, argv.items, env);
+        built.appendAssumeCapacity(out);
         try addBundleAsset(
             gpa,
             cmd,
@@ -990,7 +1035,74 @@ fn bundleIslands(
             out,
             try std.fmt.allocPrint(gpa, "islands/{s}.js", .{name}),
         );
+        if (cmd.source_maps) try addBundleAsset(
+            gpa,
+            cmd,
+            try std.fmt.allocPrint(gpa, "island_{s}_map", .{name}),
+            map,
+            try std.fmt.allocPrint(gpa, "islands/{s}.js.map", .{name}),
+        );
     }
+    return built.items;
+}
+
+/// The per-SITE islands runtime SLICE: a second pass over the bundles
+/// `bundleIslands` just wrote, unioning the named `@z/runtime` imports across the
+/// islands it can prove safe and emitting a runtime containing only that union
+/// plus the hydration auto-init and the JSX-transform names. The manifest names
+/// the islands it covers, and `--islands-slice` points a page's import map at the
+/// slice iff EVERY island on that page is covered.
+///
+/// This is a second pass and not a flag on the per-island bundle for the reason
+/// the slicer exists: the decision is a property of the whole SET of built
+/// bundles, so it cannot be made until the last one is on disk.
+///
+/// On the FALLBACK decision (no island provably safe) the driver writes a
+/// `{"fallback":true}` manifest and NO bundle, so `installBundleDir` installs
+/// nothing and every island page keeps the shared `/zigapagos-runtime.js`. The
+/// manifest is threaded through either way: it is also what PRUNES a stale
+/// `islands/_runtime.js` left by a previous sliced build into the same tree.
+///
+/// SKIPPED under `ZIGAPAGOS_HOT_ISLANDS` (the `zigapagos dev` loop), by the
+/// caller: `browser-entry.ts` publishes `window.__zigapagos_hmr` at module scope
+/// and a slice entry does not, so a sliced dev build would silently lose island
+/// hot-swap. Payload size is irrelevant on localhost.
+///
+/// Contract 4 (arena-scoped) — see `bundleClient`.
+fn sliceIslandsRuntime(
+    io: Io,
+    arena: RenderArena,
+    cmd: *Command,
+    rt: RuntimeDefaults,
+    bundles: []const []const u8,
+    bun_path: []const u8,
+    src_dir: []const u8,
+    cache_abs: []const u8,
+    env: *const std.process.Environ.Map,
+) !void {
+    const gpa = arena.a;
+    const outdir = try std.fmt.allocPrint(gpa, "{s}/islands-rt", .{cache_abs});
+    const manifest = try std.fmt.allocPrint(gpa, "{s}/islands-slice.json", .{cache_abs});
+
+    var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+    try argv.append(gpa, rt.islands_runtime_driver);
+    for (bundles) |b| try argv.append(gpa, try std.fmt.allocPrint(gpa, "--bundle={s}", .{b}));
+    try argv.appendSlice(gpa, &.{
+        try std.fmt.allocPrint(gpa, "--islands-module={s}", .{rt.islands_module}),
+        try std.fmt.allocPrint(gpa, "--index-module={s}", .{rt.index_module}),
+        try std.fmt.allocPrint(gpa, "--jsx-module={s}", .{rt.jsx_module}),
+        try std.fmt.allocPrint(gpa, "--outdir={s}", .{outdir}),
+        try std.fmt.allocPrint(gpa, "--manifest={s}", .{manifest}),
+        try std.fmt.allocPrint(gpa, "--depfile={s}/islands-rt.d", .{cache_abs}),
+        "--minify",
+    });
+    // Written into `outdir`, which is installed wholesale below, so the map
+    // lands at /islands/_runtime.js.map with no extra wiring.
+    if (cmd.source_maps) try argv.append(gpa, "--sourcemap");
+    try runDriver(io, gpa, bun_path, src_dir, argv.items, env);
+
+    try installBundleDir(io, arena, cmd, outdir, "islands_rt", "islands");
+    cmd.islands_slice = manifest;
 }
 
 /// The client half of every CLI-built SPA: the code-split bundle (entry chunk +
@@ -999,22 +1111,17 @@ fn bundleIslands(
 ///
 /// WHY A DIRECTORY IS THE HARD PART. A `.spa.tsx` client bundle is bun's
 /// code-splitting mode: `--outdir` plus a `spa-chunks.json` naming the entry and
-/// mapping each lazy route to its chunk. The chunk names are content-hashed, so
-/// `build/bundles.zig` — which has to declare its outputs at CONFIGURE time,
-/// before anything is built — cannot name them and installs the whole output
-/// directory with `addInstallDirectory` instead. Here the bundler has already RUN
-/// by the time the outputs are registered, so the names are simply known: the
-/// directory is enumerated and each file becomes an ordinary `install_always`
-/// asset (`installBundleDir`). That is why this needs no new "install a
-/// directory" concept in `root.zig`, and why the refusal this replaces — which
-/// cited "this CLI only knows how to register single-file assets" — was reasoning
-/// from the build graph's constraint rather than this one's.
+/// mapping each lazy route to its chunk. The chunk names are content-hashed and
+/// so unknowable in advance — but the bundler has already RUN by the time the
+/// outputs are registered here, so the names are simply read off the directory
+/// and each file becomes an ordinary `install_always` asset
+/// (`installBundleDir`). That is why this needs no "install a directory"
+/// concept in `root.zig`.
 ///
-/// The two manifests are attached to the specs afterwards, which is exactly what
-/// `--spa-chunks`/`--spa-slice` do under `zig build`; the prerender pass inside
-/// `root.run` then reads them for the per-route `modulepreload`, the manifest's
-/// `chunks` map and the shell's import map. Attaching them here, before
-/// `root.run`, is what keeps the pass order in `src/root.zig` untouched.
+/// The two manifests are attached to the specs afterwards; the prerender pass
+/// inside `root.run` then reads them for the per-route `modulepreload`, the
+/// manifest's `chunks` map and the shell's import map. Attaching them here,
+/// before `root.run`, is what keeps the pass order in `src/root.zig` untouched.
 ///
 /// Contract 4 (arena-scoped) — see `bundleClient`.
 fn bundleSpas(
@@ -1030,23 +1137,14 @@ fn bundleSpas(
 ) !void {
     const gpa = arena.a;
     for (spas) |*sp| {
-        // Both halves of the same decision made twice — the same usage error
-        // `addBundleAsset` reports for `--island=` plus a colliding
-        // `--build-asset`. Nothing on this path can have produced a chunks
-        // manifest, so a supplied one is a mistake worth naming rather than
-        // something to resolve by picking a winner silently.
-        if (sp.chunks_json != null or sp.slice_json != null) fatal.msg(
-            "error: --spa-chunks/--spa-slice were given for '{s}', but this build has no\n" ++
-                "  build graph that could have produced them; drop them and let the CLI bundle it\n",
-            .{sp.src},
-        );
         const name = spa_mod.spaName(sp.src);
 
         // 1. The code-split client bundle. `--external=@z/runtime` keeps the SPA
         // on the page's ONE Preact, exactly as an island bundle does.
         const outdir = try std.fmt.allocPrint(gpa, "{s}/spa-{s}", .{ cache_abs, name });
         const chunks_json = try std.fmt.allocPrint(gpa, "{s}/{s}-chunks.json", .{ cache_abs, name });
-        try runDriver(io, gpa, bun_path, src_dir, &.{
+        var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+        try argv.appendSlice(gpa, &.{
             rt.spa_bundle_driver,
             try std.fmt.allocPrint(gpa, "--entry={s}", .{sp.src}),
             try std.fmt.allocPrint(gpa, "--outdir={s}", .{outdir}),
@@ -1056,8 +1154,13 @@ fn bundleSpas(
             "--external=@z/runtime",
             "--external=@z/runtime/jsx-runtime",
             "--minify",
-        }, env);
-        try installBundleDir(io, arena, cmd, outdir, try std.fmt.allocPrint(gpa, "spa_{s}", .{name}));
+        });
+        // The entry and every code-split chunk get a linked `.map`, written
+        // into `outdir` — which `installBundleDir` stages wholesale, so they
+        // land at /spa/<name>.js.map (+ per-chunk maps) with no extra wiring.
+        if (cmd.source_maps) try argv.append(gpa, "--sourcemap");
+        try runDriver(io, gpa, bun_path, src_dir, argv.items, env);
+        try installBundleDir(io, arena, cmd, outdir, try std.fmt.allocPrint(gpa, "spa_{s}", .{name}), "spa");
         sp.chunks_json = chunks_json;
 
         // 2. The per-deployable runtime slice. On the SLICED decision this writes
@@ -1068,7 +1171,8 @@ fn bundleSpas(
         // normal, which is why the empty directory is not an error here.
         const rt_outdir = try std.fmt.allocPrint(gpa, "{s}/spa-rt-{s}", .{ cache_abs, name });
         const slice_json = try std.fmt.allocPrint(gpa, "{s}/{s}-slice.json", .{ cache_abs, name });
-        try runDriver(io, gpa, bun_path, src_dir, &.{
+        var rt_argv: std.ArrayListUnmanaged([]const u8) = .empty;
+        try rt_argv.appendSlice(gpa, &.{
             rt.spa_runtime_driver,
             try std.fmt.allocPrint(gpa, "--entry={s}", .{sp.src}),
             try std.fmt.allocPrint(gpa, "--spa-entry={s}", .{rt.spa_entry}),
@@ -1079,27 +1183,28 @@ fn bundleSpas(
             try std.fmt.allocPrint(gpa, "--manifest={s}", .{slice_json}),
             try std.fmt.allocPrint(gpa, "--depfile={s}/{s}-rt.d", .{ cache_abs, name }),
             "--minify",
-        }, env);
-        try installBundleDir(io, arena, cmd, rt_outdir, try std.fmt.allocPrint(gpa, "spa_rt_{s}", .{name}));
+        });
+        if (cmd.source_maps) try rt_argv.append(gpa, "--sourcemap");
+        try runDriver(io, gpa, bun_path, src_dir, rt_argv.items, env);
+        try installBundleDir(io, arena, cmd, rt_outdir, try std.fmt.allocPrint(gpa, "spa_rt_{s}", .{name}), "spa");
         sp.slice_json = slice_json;
     }
 }
 
 /// Register every FILE a driver wrote into `dir` as an `install_always` build
-/// asset under `spa/<basename>`, which is where `build/bundles.zig`'s
-/// `addInstallDirectory` puts the same directory. `key` namespaces the asset
-/// names so two SPAs cannot collide in the asset map even when they emit a chunk
+/// asset under `<prefix>/<basename>` — `spa/` for a SPA's chunks and its sliced
+/// runtime, `islands/` for the sliced islands runtime. `key` namespaces the asset
+/// names so two SPAs cannot collide in the asset map even if they emit a chunk
 /// of the same name (they then also install to the same path — content-hashed
-/// names mean equal names imply equal bytes, which is exactly what the build
-/// graph's two `addInstallDirectory` calls into one `spa/` already do).
+/// names mean equal names imply equal bytes).
 ///
-/// A missing or empty directory is not an error: the runtime slicer's FALLBACK
+/// A missing or empty directory is not an error: either runtime slicer's FALLBACK
 /// decision deliberately writes no bundle at all.
 ///
 /// Subdirectories are ignored rather than walked, because the drivers emit a flat
-/// directory (entry, chunks, `.map`s) — a nested file would be a shape neither
-/// this nor `addInstallDirectory`'s flat `/spa/` URL space has a place for, and
-/// silently flattening it would collide.
+/// directory (entry, chunks, `.map`s) — a nested file would be a shape the flat
+/// `/spa/` and `/islands/` URL spaces have no place for, and silently flattening
+/// it would collide.
 ///
 /// Contract 4 (arena-scoped) — see `bundleClient`.
 fn installBundleDir(
@@ -1108,6 +1213,7 @@ fn installBundleDir(
     cmd: *Command,
     dir: []const u8,
     key: []const u8,
+    prefix: []const u8,
 ) !void {
     const gpa = arena.a;
     var d = Io.Dir.cwd().openDir(io, dir, .{ .iterate = true }) catch return;
@@ -1120,13 +1226,13 @@ fn installBundleDir(
             cmd,
             try std.fmt.allocPrint(gpa, "{s}/{s}", .{ key, entry.name }),
             try std.fmt.allocPrint(gpa, "{s}/{s}", .{ dir, entry.name }),
-            try std.fmt.allocPrint(gpa, "spa/{s}", .{entry.name}),
+            try std.fmt.allocPrint(gpa, "{s}/{s}", .{ prefix, entry.name }),
         );
     }
 }
 
-/// Register one CLI-built bundle under the same asset name and install path
-/// `build/bundles.zig` uses. A name already present means the caller passed BOTH
+/// Register one built bundle as an `install_always` asset. A name already
+/// present means the caller passed BOTH
 /// `--island=` and a `--build-asset` for the same island — the two halves of the
 /// same decision made twice — which is a usage error rather than something to
 /// resolve by picking a winner silently.
@@ -1230,8 +1336,7 @@ test "parse recognizes --islands-slice" {
     const gpa = std.testing.allocator;
     var cmd = try Command.parse(gpa, &.{"--islands-slice=/cache/islands-slice.json"});
     defer cmd.deinit(gpa);
-    // Single `=` token: unlike --spa-slice there is no per-deployable key, so
-    // the path must NOT be read from a following argv word.
+    // Single `=` token — the path must NOT be read from a following argv word.
     try std.testing.expectEqualStrings("/cache/islands-slice.json", cmd.islands_slice.?);
 }
 
@@ -1271,20 +1376,6 @@ test "parse tolerates a --spa= value with no '|' (empty declared base)" {
     try std.testing.expectEqualStrings("", cmd.spas[0].base);
 }
 
-test "parse attaches --spa-chunks and --spa-slice to the matching spec" {
-    const gpa = std.testing.allocator;
-    // `--spa-chunks`/`--spa-slice` precede `--spa=` (mirrors build.zig arg order).
-    var cmd = try Command.parse(gpa, &.{
-        "--spa-chunks=app/App.spa.tsx", "/cache/App-chunks.json",
-        "--spa-slice=app/App.spa.tsx",  "/cache/App-slice.json",
-        "--spa=app/App.spa.tsx|/app",
-    });
-    defer cmd.deinit(gpa);
-    try std.testing.expectEqual(@as(usize, 1), cmd.spas.len);
-    try std.testing.expectEqualStrings("/cache/App-chunks.json", cmd.spas[0].chunks_json.?);
-    try std.testing.expectEqualStrings("/cache/App-slice.json", cmd.spas[0].slice_json.?);
-}
-
 test "parse recognizes --spa-not-found (and defaults it to null)" {
     const gpa = std.testing.allocator;
     var cmd = try Command.parse(gpa, &.{ "--spa=app/App.spa.tsx|/app", "--spa-not-found=App" });
@@ -1296,10 +1387,11 @@ test "parse recognizes --spa-not-found (and defaults it to null)" {
     try std.testing.expect(cmd_default.spa_not_found == null);
 }
 
-test "parse leaves slice_json null when no --spa-slice is given" {
+test "parse leaves chunks_json/slice_json null — only bundleSpas attaches them" {
     const gpa = std.testing.allocator;
     var cmd = try Command.parse(gpa, &.{"--spa=app/App.spa.tsx|/app"});
     defer cmd.deinit(gpa);
+    try std.testing.expect(cmd.spas[0].chunks_json == null);
     try std.testing.expect(cmd.spas[0].slice_json == null);
 }
 

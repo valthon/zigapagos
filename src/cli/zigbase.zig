@@ -2,7 +2,7 @@
 //! needs the production server (`zigapagos dev`, `zigapagos e2e`).
 //!
 //! Resolution order (`locate`):
-//!   1. an explicit path (CLI `--zigbase=`, build-side `E2eOptions.zigbase_path`),
+//!   1. an explicit path (`--zigbase=`),
 //!   2. `zigbase` on PATH,
 //!   3. the pinned release in the zigapagos cache (see `cachedPath`).
 //!
@@ -13,8 +13,8 @@
 //!   * `dev` calls it whenever `locate` comes up empty. It is the zero-config
 //!     entry point and cannot start without a server, so the fetch is the
 //!     default and `--no-download` opts out.
-//!   * `e2e` never calls it unless asked (`--download-zigbase` /
-//!     `E2eOptions.download_zigbase`). It runs in CI, where an unannounced
+//!   * `e2e` never calls it unless asked (`--download-zigbase`). It runs in
+//!     CI, where an unannounced
 //!     network fetch is a supply-chain surprise rather than a convenience.
 //!
 //! `missingMessage` is what a user sees when nothing resolved AND no download
@@ -158,7 +158,7 @@ pub fn releaseUrl(gpa: Allocator, file: []const u8) error{OutOfMemory}![]const u
 /// fatal with an actionable message.
 ///
 /// Called implicitly by `dev` when nothing resolves, and only on explicit
-/// request (`--download-zigbase` / `E2eOptions.download_zigbase`) by `e2e` —
+/// request (`--download-zigbase`) by `e2e` —
 /// see this file's module doc for why the two differ.
 pub fn download(
     io: Io,
@@ -284,11 +284,11 @@ pub fn missingMessage(
         \\     this along, so you are here only if you got zigapagos some other
         \\     way.) Or
         \\  2. point at a binary explicitly: --zigbase=/path/to/zigbase
-        \\     (from build.zig: E2eOptions/DevOptions .zigbase_path), or
+        \\     or
         \\  3. let zigapagos fetch the pinned release ({s}) for you: that is what
         \\     `zigapagos dev` does by default (you are seeing this because of
         \\     --no-download), and what `zigapagos e2e --download-zigbase` does on
-        \\     request (from build.zig: E2eOptions.download_zigbase = true). It
+        \\     request. It
         \\     downloads github.com/{s} release {s} into
         \\       {s}
         \\     after verifying it against the release's SHA256SUMS. (Placing the

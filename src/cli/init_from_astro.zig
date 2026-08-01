@@ -15,7 +15,6 @@ const usage_text =
     \\Options:
     \\  --from-astro DIR       Path to the Astro project (required)
     \\  -o, --out DIR          Output directory (default: ./<astro-basename>-tsx)
-    \\  --zigapagos-path PATH  Override the Zigapagos dependency path in build.zig.zon
     \\  --runtime-path PATH    Override the @z/runtime package path
     \\  --site-title STR       Site title to embed in zigapagos.ziggy (default: "<basename>")
     \\  --host-url URL         Canonical host URL for zigapagos.ziggy
@@ -29,7 +28,6 @@ const usage_text =
 pub const Options = struct {
     astro_dir: []const u8,
     out: ?[]const u8 = null,
-    zigapagos_path: ?[]const u8 = null,
     runtime_path: ?[]const u8 = null,
     site_title: ?[]const u8 = null,
     host_url: ?[]const u8 = null,
@@ -40,7 +38,6 @@ pub const Options = struct {
 pub fn parseArgs(args: []const []const u8) Options {
     var astro_dir: ?[]const u8 = null;
     var out: ?[]const u8 = null;
-    var zigapagos_path: ?[]const u8 = null;
     var runtime_path: ?[]const u8 = null;
     var site_title: ?[]const u8 = null;
     var host_url: ?[]const u8 = null;
@@ -60,10 +57,6 @@ pub fn parseArgs(args: []const []const u8) Options {
             i += 1;
             if (i >= args.len) fatal.msg("error: --out needs a directory path\n\n" ++ usage_text, .{});
             out = args[i];
-        } else if (std.mem.eql(u8, a, "--zigapagos-path")) {
-            i += 1;
-            if (i >= args.len) fatal.msg("error: --zigapagos-path needs a path\n\n" ++ usage_text, .{});
-            zigapagos_path = args[i];
         } else if (std.mem.eql(u8, a, "--runtime-path")) {
             i += 1;
             if (i >= args.len) fatal.msg("error: --runtime-path needs a path\n\n" ++ usage_text, .{});
@@ -92,7 +85,6 @@ pub fn parseArgs(args: []const []const u8) Options {
     return .{
         .astro_dir = astro_dir.?,
         .out = out,
-        .zigapagos_path = zigapagos_path,
         .runtime_path = runtime_path,
         .site_title = site_title,
         .host_url = host_url,
@@ -204,12 +196,14 @@ pub fn emitTsconfig() []const u8 {
     ;
 }
 
-/// Emit a `mise.toml` that pins Zig 0.16.0 and Bun 1.2.
+/// Emit a `mise.toml` that pins Bun 1.2.
+///
+/// No `zig` entry: a scaffolded project builds with the standalone `zigapagos`
+/// binary, and pinning a Zig toolchain it never invokes would say the opposite.
 /// This is a comptime constant — no allocation.
 pub fn emitMiseToml() []const u8 {
     return
     \\[tools]
-    \\zig = "0.16.0"
     \\bun = "1.2"
     \\
     ;
@@ -221,32 +215,9 @@ pub fn emitGitignore() []const u8 {
     return
     \\node_modules/
     \\zig-out/
-    \\.zig-cache/
+    \\.zigapagos-cache/
     \\
     ;
-}
-
-/// Emit a `build.zig.zon` with:
-///   - `.name = .<name>` (zon enum-literal identifier)
-///   - `.fingerprint = 0x0`  (forces first `zig build` to print the real value)
-///   - `.dependencies = .{ .zigapagos = .{ .path = "<zigapagos_path>" } }`
-///
-/// Pass `"TODO-SET-ZIGAPAGOS-PATH"` when the path is not yet known; the caller is
-/// responsible for resolving `Options.zigapagos_path ?? placeholder`.
-pub fn emitBuildZon(gpa: Allocator, name: []const u8, zigapagos_path: []const u8) []const u8 {
-    return std.fmt.allocPrint(gpa,
-        \\.{{
-        \\    .name = .{s},
-        \\    .version = "0.0.0",
-        \\    .fingerprint = 0x0,
-        \\    .minimum_zig_version = "0.16.0",
-        \\    .dependencies = .{{
-        \\        .zigapagos = .{{ .path = "{s}" }},
-        \\    }},
-        \\    .paths = .{{"."}},
-        \\}}
-        \\
-    , .{ name, zigapagos_path }) catch fatal.oom();
 }
 
 /// Derive a project name from the output directory path.
@@ -271,18 +242,17 @@ pub fn projectName(gpa: Allocator, out_dir_path: []const u8) []const u8 {
 // Island validation + build.zig emitter
 // ---------------------------------------------------------------------------
 
-/// Error set for `checkIslands`.  Mirrors the two panic conditions in
-/// `validateIslands` (root build.zig) that would blow up the consumer's first
-/// `zig build` configure step.
+/// Error set for `checkIslands`. Both cases produce output that is broken in a
+/// way the build itself cannot report, so they are rejected before anything is
+/// written.
 pub const IslandCheckError = error{ BadSrcChar, BasenameCollision };
 
-/// Validate the detected island set BEFORE writing build.zig.
+/// Validate the detected island set BEFORE writing build.sh.
 ///
-/// Two cases are rejected — both mirror `validateIslands` in the root
-/// `build.zig` which panics at the consumer's configure time on exactly these:
+/// Two cases are rejected:
 ///
 ///   • A `detect.moduleName` result that contains `"` or `\` would break the
-///     generated Zig string literal → `error.BadSrcChar`.
+///     generated shell word → `error.BadSrcChar`.
 ///   • Two islands whose basenames (`detect.moduleName`) collide → their
 ///     bundled .js files would silently overwrite each other at
 ///     `/islands/<name>.js` → `error.BasenameCollision`.
@@ -303,64 +273,69 @@ pub fn checkIslands(gpa: Allocator, islands: []const migrate.Entry) IslandCheckE
     }
 }
 
-/// Emit a `build.zig` wiring `zigapagos.website(.islands = …)` with one entry per
-/// detected island.  Matches the shape of `examples/tsx-site/build.zig` (the
-/// golden source of truth).
+/// Emit the project's `build.sh`: the one `zigapagos release` invocation that
+/// builds this site, with one `--island=` per detected island.
+///
+/// A SCRIPT, NOT A `build.zig`. `zigapagos` is a standalone executable and
+/// `zig build` builds zigapagos, not a website — a scaffolded project must not
+/// need a Zig toolchain, a package graph or a `.path` dependency to render its
+/// own content. The invocation is a file rather than a line in MIGRATION.md so
+/// that the project has ONE place its entries are declared, which the test
+/// scripts below call instead of restating the flags.
 ///
 /// The generated island `src` path is `components/<Name>.island.tsx` where
-/// `<Name>` is `detect.moduleName(e.path)` — byte-identical to the path that
-/// Task 6's layout emitter will write into the .shtml `<island src>` attribute,
-/// so the SSR props pipeline can match them.
+/// `<Name>` is `detect.moduleName(e.path)` — byte-identical to the path the
+/// layout emitter writes into the .shtml `<island src>` attribute, so the SSR
+/// props pipeline can match them.
 ///
-/// When `islands` is empty, emits an empty `&.{}` slice plus a `// TODO`
-/// comment; the resulting build.zig is valid Zig.
+/// Islands are enumerated rather than left to `zigapagos release`'s discovery
+/// scan even though the scan would find the same set: the importer already
+/// knows them exactly, and a listed entry is one an author can delete.
 ///
 /// OOM calls `fatal.oom()` (noreturn) — the function never returns an error.
-pub fn emitBuildZig(gpa: Allocator, islands: []const migrate.Entry) []const u8 {
+pub fn emitBuildSh(gpa: Allocator, islands: []const migrate.Entry) []const u8 {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
 
-    // Header: imports + function open.
     buf.appendSlice(gpa,
-        \\const std = @import("std");
-        \\const zigapagos = @import("zigapagos");
+        \\#!/usr/bin/env bash
+        \\# Build this site.
+        \\#
+        \\# `zigapagos` is a standalone executable: this needs the binary and bun,
+        \\# and no Zig toolchain. `npx zigapagos` provides both halves; set
+        \\# ZIGAPAGOS_BIN to use a binary you installed some other way.
+        \\set -euo pipefail
+        \\cd "$(dirname "$0")"
         \\
-        \\pub fn build(b: *std.Build) void {
+        \\ZIGAPAGOS="${ZIGAPAGOS_BIN:-zigapagos}"
+        \\
+        \\bun install --frozen-lockfile 2>/dev/null || bun install
+        \\
+        \\exec "$ZIGAPAGOS" release \
+        \\  --force \
+        \\  --output=zig-out/site \
+        \\  --island-props-check=error \
     ) catch fatal.oom();
 
-    // Island slice literal.
     if (islands.len == 0) {
-        buf.appendSlice(gpa, "\n    // TODO: no islands detected\n    const islands: []const zigapagos.Island = &.{};") catch fatal.oom();
+        buf.appendSlice(gpa, "\n  # No islands were detected. Add one --island=<path> line per island\n" ++
+            "  # component you write, so its browser bundle is built and installed.\n") catch fatal.oom();
     } else {
-        buf.appendSlice(gpa, "\n    const islands: []const zigapagos.Island = &.{\n") catch fatal.oom();
+        buf.appendSlice(gpa, "\n") catch fatal.oom();
         for (islands) |e| {
             const name = detect.moduleName(e.path);
             const line = std.fmt.allocPrint(
                 gpa,
-                "        .{{ .root = b.path(\"components/{s}.island.tsx\"), .src = \"components/{s}.island.tsx\" }},\n",
-                .{ name, name },
+                "  --island=components/{s}.island.tsx \\\n",
+                .{name},
             ) catch fatal.oom();
             defer gpa.free(line);
             buf.appendSlice(gpa, line) catch fatal.oom();
         }
-        buf.appendSlice(gpa, "    };") catch fatal.oom();
     }
 
-    // Body: zigapagos.website call + install step.
-    //
-    // No dev step is scaffolded: `zigapagos dev` is zero-config and does not
-    // need one. Emitting a build-graph wrapper here would teach a brand-new
-    // project that the dev loop is something you wire up.
-    buf.appendSlice(gpa,
-        \\
-        \\
-        \\    const site = zigapagos.website(b, .{
-        \\        .islands = islands,
-        \\        .output_path = "site",
-        \\        .force = true,
-        \\    });
-        \\    b.getInstallStep().dependOn(&site.step);
-        \\}
-    ) catch fatal.oom();
+    // Trailing "$@" so an author can pass one-off flags (--drafts, a different
+    // --output) without editing the file.
+    buf.appendSlice(gpa, "  \"$@\"\n") catch fatal.oom();
 
     return buf.toOwnedSlice(gpa) catch fatal.oom();
 }
@@ -525,7 +500,7 @@ pub fn emitContentStub(gpa: Allocator, name: []const u8, orig_astro_markup: []co
 ///     per island in `islands` (Name = detect.moduleName(e.path))
 ///   - `<div :html="$page.content()"></div>`
 ///
-/// The island `src` attribute is byte-identical to what `emitBuildZig` emits
+/// The island `src` attribute is byte-identical to what `emitBuildSh` emits
 /// (`components/<Name>.island.tsx`), so the SSR props pipeline can match them.
 ///
 /// OOM calls `fatal.oom()` (noreturn).
@@ -593,7 +568,7 @@ pub fn emitSsrSh() []const u8 {
     \\
     \\# (2) Build the site: zigapagos spawns the Bun sidecar with cwd = project root,
     \\# the island SSRs, and the HTML is written to zig-out/site/index.html.
-    \\mise exec -- zig build
+    \\bash build.sh
     \\
     \\# (3) Assert the island was SSR'd into the output HTML.
     \\OUT="zig-out/site/index.html"
@@ -751,8 +726,8 @@ pub fn run(io: Io, gpa: Allocator, args: []const []const u8) bool {
     }
 
     // When --no-islands, treat the island set as empty for ALL of
-    // emitBuildZig/emitLayoutStub/checkIslands/scaffoldIslands so that
-    // build.zig island entries, layout <island> tags, and scaffolded .tsx
+    // emitBuildSh/emitLayoutStub/checkIslands/scaffoldIslands so that
+    // build.sh --island= flags, layout <island> tags, and scaffolded .tsx
     // files all AGREE: with --no-islands, none of them reference any islands.
     const effective_islands: []const migrate.Entry = if (o.no_islands) &.{} else islands.items;
 
@@ -767,7 +742,7 @@ pub fn run(io: Io, gpa: Allocator, args: []const []const u8) bool {
                     .{},
                 ),
                 error.BadSrcChar => std.debug.print(
-                    "error: an island filename contains '\"' or '\\', which would break the generated build.zig.\n" ++
+                    "error: an island filename contains '\"' or '\\', which would break the generated build.sh.\n" ++
                         "  Rename the file to remove those characters and re-run.\n",
                     .{},
                 ),
@@ -825,7 +800,6 @@ pub fn run(io: Io, gpa: Allocator, args: []const []const u8) bool {
     // Resolve scaffold parameters: Options > parse > fallback.
     const host_url: []const u8 = o.host_url orelse parseAstroSite(config_src) orelse "https://example.com";
     const title: []const u8 = o.site_title orelse parseJsonName(pkg_src) orelse std.fs.path.basename(out_path);
-    const zigapagos_path: []const u8 = o.zigapagos_path orelse "TODO-SET-ZIGAPAGOS-PATH";
     const runtime_path: []const u8 = o.runtime_path orelse "TODO-SET-RUNTIME-PATH";
     const name: []const u8 = projectName(a, out_path);
 
@@ -835,8 +809,7 @@ pub fn run(io: Io, gpa: Allocator, args: []const []const u8) bool {
     trackOutcome(&written, writeFile(io, out_dir, "tsconfig.json", emitTsconfig(), o.force));
     trackOutcome(&written, writeFile(io, out_dir, "mise.toml", emitMiseToml(), o.force));
     trackOutcome(&written, writeFile(io, out_dir, ".gitignore", emitGitignore(), o.force));
-    trackOutcome(&written, writeFile(io, out_dir, "build.zig.zon", emitBuildZon(a, name, zigapagos_path), o.force));
-    trackOutcome(&written, writeFile(io, out_dir, "build.zig", emitBuildZig(a, effective_islands), o.force));
+    trackOutcome(&written, writeFile(io, out_dir, "build.sh", emitBuildSh(a, effective_islands), o.force));
     trackOutcome(&written, writeFile(io, out_dir, "zigapagos.ziggy", emitZigapagosZiggy(a, title, host_url), o.force));
     trackOutcome(&written, writeFile(io, out_dir, "assets/.gitkeep", "", o.force));
     trackOutcome(&written, writeFile(io, out_dir, "test/ssr.sh", emitSsrSh(), o.force));
@@ -863,21 +836,11 @@ pub fn run(io: Io, gpa: Allocator, args: []const []const u8) bool {
         .{ written, out_path },
     );
     std.debug.print(
-        "  Note: fingerprint = 0x0 in build.zig.zon — run `zig build` once to let Zig print the real value.\n",
-        .{},
-    );
-    if (o.zigapagos_path == null) std.debug.print(
-        "  TODO: set --zigapagos-path (written as TODO-SET-ZIGAPAGOS-PATH in build.zig.zon)\n",
-        .{},
+        "  Build it with: bash {s}/build.sh  (needs `zigapagos` and `bun`; no Zig toolchain)\n",
+        .{out_path},
     );
     if (o.runtime_path == null) std.debug.print(
         "  TODO: set --runtime-path (written as TODO-SET-RUNTIME-PATH in package.json)\n",
-        .{},
-    );
-    if (std.fs.path.isAbsolute(zigapagos_path)) std.debug.print(
-        "  Note: --zigapagos-path is absolute; Zig 0.16 requires a RELATIVE .path dependency in " ++
-            "build.zig.zon. Edit .zigapagos = .{{ .path = ... }} to a path relative to the project " ++
-            "before running `zig build`.\n",
         .{},
     );
     std.debug.print(
@@ -894,10 +857,9 @@ pub fn run(io: Io, gpa: Allocator, args: []const []const u8) bool {
 // ---------------------------------------------------------------------------
 
 test "parseArgs: --from-astro required, flags captured, default out" {
-    const o = parseArgs(&.{ "--from-astro", "site", "--out", "gen", "--zigapagos-path", "/z", "--site-title", "Hi", "--no-islands" });
+    const o = parseArgs(&.{ "--from-astro", "site", "--out", "gen", "--site-title", "Hi", "--no-islands" });
     try std.testing.expectEqualStrings("site", o.astro_dir);
     try std.testing.expectEqualStrings("gen", o.out.?);
-    try std.testing.expectEqualStrings("/z", o.zigapagos_path.?);
     try std.testing.expectEqualStrings("Hi", o.site_title.?);
     try std.testing.expect(o.no_islands);
     try std.testing.expect(!o.force);
@@ -922,15 +884,6 @@ test "emitPackageJson declares exactly one dep @z/runtime at the given path" {
     const deps = pj[std.mem.indexOf(u8, pj, "\"dependencies\"").?..];
     const obj = deps[std.mem.indexOf(u8, deps, "{").?..std.mem.indexOf(u8, deps, "}").?];
     try std.testing.expect(std.mem.indexOfScalar(u8, obj, ',') == null);
-}
-
-test "emitBuildZon uses the zigapagos path dep + fingerprint 0x0" {
-    const gpa = std.testing.allocator;
-    const zon = emitBuildZon(gpa, "mysite", "../zigapagos");
-    defer gpa.free(zon);
-    try std.testing.expect(std.mem.indexOf(u8, zon, ".zigapagos = .{ .path = \"../zigapagos\" }") != null);
-    try std.testing.expect(std.mem.indexOf(u8, zon, ".fingerprint = 0x0") != null);
-    try std.testing.expect(std.mem.indexOf(u8, zon, ".name = .mysite") != null);
 }
 
 test "writeFile non-clobber: second write produces .new" {
@@ -958,17 +911,19 @@ test "projectName: dashes->underscores, no leading digit, non-empty" {
     try std.testing.expectEqualStrings("foo_bar", n3);
 }
 
-test "emitBuildZig lists one island entry per detected island, src == components path" {
+test "emitBuildSh lists one --island= per detected island, src == components path" {
     const gpa = std.testing.allocator;
     const islands = [_]migrate.Entry{
         .{ .path = "src/components/Counter.jsx", .kind = .component, .is_island = true },
         .{ .path = "src/components/ContactForm.tsx", .kind = .component, .is_island = true },
     };
-    const bz = emitBuildZig(gpa, &islands);
-    defer gpa.free(bz);
-    try std.testing.expect(std.mem.indexOf(u8, bz, ".src = \"components/Counter.island.tsx\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, bz, "b.path(\"components/ContactForm.island.tsx\")") != null);
-    try std.testing.expect(std.mem.indexOf(u8, bz, "zigapagos.website(b") != null);
+    const sh = emitBuildSh(gpa, &islands);
+    defer gpa.free(sh);
+    try std.testing.expect(std.mem.indexOf(u8, sh, "--island=components/Counter.island.tsx") != null);
+    try std.testing.expect(std.mem.indexOf(u8, sh, "--island=components/ContactForm.island.tsx") != null);
+    try std.testing.expect(std.mem.indexOf(u8, sh, "release") != null);
+    // Nothing about a Zig build graph may reach a scaffolded project.
+    try std.testing.expect(std.mem.indexOf(u8, sh, "zig build") == null);
 }
 
 test "checkIslands rejects basename collision" {
@@ -1092,11 +1047,13 @@ test "emitSsrSh is de-repo'd (no ../../runtime, no git restore) and asserts on z
     try std.testing.expect(std.mem.indexOf(u8, sh, "data-z-island") != null);
 }
 
-test "emitSsrSh contains bun install, zig build, and @z/runtime external check" {
+test "emitSsrSh contains bun install, the build script, and an @z/runtime external check" {
     const sh = emitSsrSh();
     try std.testing.expect(std.mem.indexOf(u8, sh, "bun install") != null);
-    try std.testing.expect(std.mem.indexOf(u8, sh, "zig build") != null);
+    try std.testing.expect(std.mem.indexOf(u8, sh, "bash build.sh") != null);
     try std.testing.expect(std.mem.indexOf(u8, sh, "@z/runtime") != null);
+    // A scaffolded project must never need a Zig toolchain to render itself.
+    try std.testing.expect(std.mem.indexOf(u8, sh, "zig build") == null);
 }
 
 test "emitHydrateSh is de-repo'd and calls ssr.sh and playwright" {
@@ -1106,16 +1063,16 @@ test "emitHydrateSh is de-repo'd and calls ssr.sh and playwright" {
     try std.testing.expect(std.mem.indexOf(u8, sh, "hydrate_playwright.py") != null);
 }
 
-test "emitBuildZig with empty islands produces island-free build.zig (--no-islands contract)" {
+test "emitBuildSh with empty islands produces island-free build.sh (--no-islands contract)" {
     const gpa = std.testing.allocator;
-    const bz = emitBuildZig(gpa, &[_]migrate.Entry{});
-    defer gpa.free(bz);
-    // No .island.tsx path reference must appear in the generated build.zig.
-    try std.testing.expect(std.mem.indexOf(u8, bz, ".island.tsx") == null);
-    // The TODO comment must be present (empty islands slice path).
-    try std.testing.expect(std.mem.indexOf(u8, bz, "// TODO: no islands detected") != null);
-    // The file must still be a valid build.zig (zigapagos.website call present).
-    try std.testing.expect(std.mem.indexOf(u8, bz, "zigapagos.website(b") != null);
+    const sh = emitBuildSh(gpa, &[_]migrate.Entry{});
+    defer gpa.free(sh);
+    // No .island.tsx path reference must appear in the generated script.
+    try std.testing.expect(std.mem.indexOf(u8, sh, ".island.tsx") == null);
+    // ...but it must say how to add one, or an author has no way to find out.
+    try std.testing.expect(std.mem.indexOf(u8, sh, "No islands were detected") != null);
+    // The file must still be a runnable build (the release invocation survives).
+    try std.testing.expect(std.mem.indexOf(u8, sh, "release") != null);
 }
 
 test "emitLayoutStub with empty islands produces no <island> tags (--no-islands contract)" {

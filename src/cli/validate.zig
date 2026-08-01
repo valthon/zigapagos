@@ -237,7 +237,7 @@ const help_message =
     \\                         reference (same semantics as `zigapagos release`)
     \\  --build-asset=NAME PATH [--install=P | --install-always=P]
     \\                         Declare a build asset, exactly as `zigapagos
-    \\                         release` receives it from build.zig. Needed
+    \\                         release` takes it. Needed
     \\                         whenever content references $build.asset(...):
     \\                         membership is checked at analysis time, so
     \\                         omitting it reports a false "missing asset".

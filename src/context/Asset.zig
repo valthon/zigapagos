@@ -221,8 +221,8 @@ pub const Builtins = struct {
             \\    `content/post/bar.jpg` -> `public/post/bar.jpg`
             \\  `assets/foo/bar/baz.jpg` -> `public/foo/bar/baz.jpg`
             \\
-            \\Build assets will be installed under the path defined in
-            \\your `build.zig`.
+            \\Build assets will be installed under the path their
+            \\`--install`/`--install-always` names.
             \\
             \\The result is root-relative. Use `absLink()` instead for a
             \\URL that is consumed outside the page and therefore has to
