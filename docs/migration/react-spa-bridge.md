@@ -6,8 +6,8 @@ Port a React SPA (or islands) to zigapagos **import-by-import** instead of a big
 An opt-in npm package keeps its `import { ... } from "react"` lines and bundles against the
 **shared** Preact via `@z/runtime/compat`, so a half-ported app runs on one Preact instance.
 
-(This replaces the retired `spa-dereact-codemod` — there's no separate de-React repo; you port
-in place, one package at a time.)
+There is no de-React codemod and no separate tool to run: you port in place, one package at a
+time.
 
 ## The allowlist config — `z-runtime.config.json`
 
@@ -27,8 +27,7 @@ Islands/SPAs may import only `@z/runtime` (+ subpaths) and relative paths by def
 ```
 
 - `firstParty` — extra first-party scopes the import lint allows verbatim (exact string or a
-  regex fragment). (The old hardcoded `@your-org/shared-lite` allowance is gone — declare your own
-  scopes here.)
+  regex fragment). No scope is allowed by default; declare your own here.
 - `npmCompat` — npm packages you've vetted to run under `preact/compat`. Listing a package here
   lets the import lint accept it; the package bundles normally, but its `react`/`react-dom`
   imports resolve to the shared runtime (see below).
@@ -75,7 +74,7 @@ Semantics:
 
 ## Optional: tsconfig `paths` for TYPES
 
-Runtime resolution no longer needs tsconfig `paths` — the `resolve` defaults above cover SSR.
+Runtime resolution does not need tsconfig `paths` — the `resolve` defaults above cover SSR.
 To point `tsc` at the compat **types** for bare `react` imports, keep (or add) the mapping in
 your website `tsconfig.json`:
 

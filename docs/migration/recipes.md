@@ -420,7 +420,7 @@ A consumer project is a **Bun project** with `@z/runtime` as a path-dependency.
 ```sh
 exec zigapagos release \
   --force \
-  --output=zig-out/site \
+  --output=public \
   --island=components/Hero.island.tsx \
   --island=components/Promo.island.tsx \
   "$@"

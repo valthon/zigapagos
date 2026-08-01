@@ -663,10 +663,10 @@ what is new from what the port changed and removed.
   hashes are byte-exact) is the host's job. `style-src` still needs
   `unsafe-inline` for the framework's inline `style` attributes.
 - `host_url_override` on a locale is not supported by the live server.
-- **Binary releases are published from `v0.1.1` onward** (`SHA256SUMS`, an
-  `x86_64-linux-musl.tar.xz`, an `x86_64-macos.zip`) via GitHub Releases.
-  Earlier commits still need a source build.
-- Pre-1.0: APIs may change between minor versions.
+- **Binary releases** (`SHA256SUMS`, an `x86_64-linux-musl.tar.xz`, an
+  `x86_64-macos.zip`) are published via GitHub Releases.
+- Pre-1.0: APIs may change between minor versions. **Only the most recent
+  release is supported** — there are no backports.
 
 [Unreleased]: https://github.com/valthon/zigapagos/compare/v0.2.0...HEAD
 [0.2.0]: https://github.com/valthon/zigapagos/compare/v0.1.1...v0.2.0

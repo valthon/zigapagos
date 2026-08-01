@@ -55,7 +55,7 @@ cd "$(dirname "$0")"
 
 exec zigapagos release \
   --force \
-  --output=zig-out/site \
+  --output=public \
   --island=components/Counter.island.tsx \
   --spa='app/app.spa.tsx|/app' \
   --spa-not-found=app \

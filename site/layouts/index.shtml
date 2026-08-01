@@ -233,7 +233,7 @@ components/*.island.tsx ──►  Bun SSR  ───┤     + import map
         </p>
       </div>
       <div>
-        <pre class="pipeline"><code>zig-out/site/            &lt;- this site's real tree
+        <pre class="pipeline"><code>public/                  &lt;- the output tree
 ├── csp.nginx.conf       (written for every target)
 ├── csp.apache.conf
 ├── csp.zigbase.txt
