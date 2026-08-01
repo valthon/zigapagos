@@ -1823,7 +1823,7 @@ pub fn run(
     // of the problem can be solved with a hash map, while solving the
     // full version will require using a tree, and perhaps some clever scan
     // algorithm in the `zigapagos release` case.
-    // Alternatively, if this algo proves to be sufficiently more efficent
+    // Alternatively, if this algo proves to be sufficiently more efficient
     // than the tree case, we could default to this method and then only
     // switch to the more expensive approach if necessary.
     if (!parse_errors) {
