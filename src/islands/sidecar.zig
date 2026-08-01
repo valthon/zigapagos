@@ -78,7 +78,15 @@ pub const Sidecar = struct {
                 // exactly one question to answer -- is there a directory at
                 // `project_root`? -- and only the two answers that mean "no"
                 // may be turned into a claim about it.
-                var probe = std.Io.Dir.cwd().openDir(io, project_root, .{}) catch |probe_err| switch (probe_err) {
+                //
+                // `.iterate = false` is spelled out although it is also the
+                // `OpenOptions` default: it is the option this probe's whole
+                // permission story hangs on (see the note in the `else` arm,
+                // and the platform note in
+                // `tests/islands/sidecar-spawn-attribution.sh`). Leaving it
+                // implicit would put a claim about `O_PATH` in a comment whose
+                // premise lives in another repository's default value.
+                var probe = std.Io.Dir.cwd().openDir(io, project_root, .{ .iterate = false }) catch |probe_err| switch (probe_err) {
                     error.FileNotFound, error.NotDir => return error.ProjectRootNotFound,
                     // Every other probe failure -- `AccessDenied`, an fd
                     // quota, `SymLinkLoop` -- says nothing about whether the

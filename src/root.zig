@@ -799,11 +799,19 @@ pub fn run(
                     "  come from that Zig build integration.\n",
                 .{ bun, script },
             ),
+            // Says nothing about the interpreter, deliberately. `Sidecar.spawn`
+            // resolves the script BEFORE it spawns anything, so on this path
+            // `bun` was never executed and both inputs may well be missing.
+            // Exonerating one of them here would be #82's own defect —
+            // a confident claim about an input that was never checked — just
+            // pointed the other way. The interpreter case can afford the
+            // reverse sentence because it reaches its message only after the
+            // script has resolved.
             error.SidecarScriptNotFound => fatal.msg(
                 "error: island sidecar script not found: '{s}'\n" ++
-                    "  this is the `render.ts` supplied by build.zig's `.islands` integration; the\n" ++
-                    "  interpreter '{s}' was not the problem.\n",
-                .{ script, bun },
+                    "  this is the `render.ts` supplied by build.zig's `.islands` integration; point\n" ++
+                    "  `--island-sidecar` at it, or let build.zig's `.islands` wiring supply it.\n",
+                .{script},
             ),
             error.ProjectRootNotFound => fatal.msg(
                 "error: island source dir not found: '{s}'\n" ++
@@ -2876,27 +2884,39 @@ pub fn run(
     // non-zero exit *after* this returns — so a list printed here would name
     // files that were never written. Same fail-closed reasoning as
     // `reportPrunedSiteAssets` and `writeIslandManifest`.
+    //
+    // The refusal goes to STDOUT TOO, through this same writer, and that is the
+    // whole reason the branch is inside the `if (collect)` rather than around
+    // it. It began life as a `std.debug.print`, which always targets stderr:
+    // `--summary`'s output stream then depended on the build's OUTCOME, so
+    // `zigapagos release --summary >inventory.txt` silently produced an empty
+    // file on the one run where the reader most needs to know why. Whichever
+    // stream a flag answers on, it has to be the same one every time — a
+    // caller cannot redirect conditionally on a result it has not seen yet.
+    // The refusal deliberately does NOT start with `build summary: `, so a
+    // script grepping for the report's header still tells a refusal apart from
+    // an inventory that happens to be empty.
     if (collect) |sm| {
+        var out_buf: [8 * 1024]u8 = undefined;
+        // `writerStreaming`, not `writer`: the positional writer tracks its
+        // own file offset, which corrupts the output of `cmd >f 2>&1` where
+        // stderr has already advanced the shared one (issue #78).
+        var fw = std.Io.File.stdout().writerStreaming(io, &out_buf);
+        const w = &fw.interface;
         if (build.any_rendering_error.load(.acquire)) {
-            std.debug.print(
+            w.writeAll(
                 "summary: not printed — this build had rendering errors, so its output tree is incomplete\n",
-                .{},
-            );
+            ) catch |err| fatal.msg("error writing the build summary to stdout: {t}\n", .{err});
         } else {
-            var out_buf: [8 * 1024]u8 = undefined;
-            // `writerStreaming`, not `writer`: the positional writer tracks its
-            // own file offset, which corrupts the output of `cmd >f 2>&1` where
-            // stderr has already advanced the shared one (issue #78).
-            var fw = std.Io.File.stdout().writerStreaming(io, &out_buf);
             sm.render(
-                &fw.interface,
+                w,
                 options.mode.disk.output_dir_path orelse "public",
             ) catch |err| fatal.msg("error writing the build summary to stdout: {t}\n", .{err});
-            fw.interface.flush() catch |err| fatal.msg(
-                "error writing the build summary to stdout: {t}\n",
-                .{err},
-            );
         }
+        w.flush() catch |err| fatal.msg(
+            "error writing the build summary to stdout: {t}\n",
+            .{err},
+        );
     }
 
     return build;
