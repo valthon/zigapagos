@@ -1353,7 +1353,7 @@ pub const Builtins = struct {
             \\within the `if` block.
         ;
         pub const examples =
-            \\<div :if="$page.nextPage()">
+            \\<div :if="$page.nextPage?()">
             \\  <span :text="$if.title"></span>
             \\</div>
         ;
@@ -1395,7 +1395,7 @@ pub const Builtins = struct {
             \\Tries to return the page before the target one (sorted by date), to be used with an `if` attribute.
         ;
         pub const examples =
-            \\<div :if="$page.prevPage()"></div>
+            \\<div :if="$page.prevPage?()"></div>
         ;
 
         pub fn call(
@@ -1755,14 +1755,15 @@ pub const Builtins = struct {
     pub const hasContentSection = struct {
         pub const signature: Signature = .{
             .params = &.{.String},
-            .ret = .String,
+            .ret = .Bool,
         };
         pub const docs_description =
             \\Returns true if the page contains a content-section with the given id
         ;
         pub const examples =
-            \\<div :html="$page.hasContentSection('section-id')"></div>
-            \\<div :html="$page.hasContentSection('other-section')"></div>
+            \\<div :if="$page.hasContentSection('section-id')">
+            \\  <div :html="$page.contentSection('section-id')"></div>
+            \\</div>
         ;
         pub fn call(
             p: *const Page,
@@ -1975,7 +1976,7 @@ pub const ContentSection = struct {
                 \\this function returns the heading as simple text.           
             ;
             pub const examples =
-                \\<div :html="$loop.it.heading()"></div>
+                \\<ctx :if="$loop.it.heading?()"><span :text="$if"></span></ctx>
             ;
             pub fn call(
                 cs: ContentSection,
