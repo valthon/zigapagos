@@ -85,8 +85,23 @@ JSON
 # validates that --spa's base matches `export const spa.base`, so hardcoding
 # would turn a doc that changed its base into a confusing build failure instead
 # of a passing test.
-BASE="$(grep -oE 'base:[[:space:]]*"[^"]*"' "$WORK/app.spa.tsx" | head -1 | sed -E 's/.*"(.*)"/\1/')"
-[[ -n "$BASE" ]] || fail "the quickstart's 'export const spa' declares no base"
+#
+# ONE awk, not `grep | head | sed`. Under `set -euo pipefail` that pipeline
+# takes the whole script down the moment the snippet has no `base:`: grep exits
+# 1, pipefail hands that to the assignment, and `set -e` exits BEFORE the
+# diagnosis on the next line can say what was wrong -- the script would report
+# nothing at all for the one failure this reads the file to catch. (The same
+# pipeline can also SIGPIPE grep on the SUCCESS path, since `head -1` closes
+# early, which pipefail turns into exit 141.) awk exits 0 whether or not it
+# matched, so an absent base falls through to the message that names it.
+BASE="$(awk 'match($0, /base:[[:space:]]*"[^"]*"/) {
+             s = substr($0, RSTART, RLENGTH)
+             sub(/^base:[[:space:]]*"/, "", s)
+             sub(/"$/, "", s)
+             print s
+             exit
+           }' "$WORK/app.spa.tsx")"
+[[ -n "$BASE" ]] || fail "the quickstart's 'export const spa' declares no base -- the snippet must carry one, and the build checks --spa's base against it"
 
 # --- (3) build ---------------------------------------------------------------
 ( cd "$SITE" && "$ZIGAPAGOS" release "--output=$OUT" --force \

@@ -42,14 +42,49 @@ ACTIVE="$(awk '/^\[ACTIVE\]/{on=1;next} /^\[RETIRED\]/{on=0} on && NF && $0 !~ /
 # is prose, not code).
 ROWS=0
 while IFS= read -r line; do
+  # A '|' INSIDE a cell would split that cell in two, and several real messages
+  # have one: src/islands/pass.zig emits
+  # "unknown island directive 'client:{s}' (expected load|idle|visible|media|only)".
+  # Split naively, a row quoting that yields a fragment ending at "load", a CODE
+  # cell of "idle" and a FILE cell of "visible" -- three wrong diagnoses of one
+  # correct row.
+  #
+  # A markdown table has no quoting; its one escape is `\|`, which GitHub and
+  # cmark-gfm (which renders the site mirror) strip before the cell is read. So:
+  # protect the escaped form, split on what is left, restore it in the fields.
+  # A row may quote a piped message as long as it escapes it the way markdown
+  # requires anyway.
+  esc="${line//\\|/$'\001'}"
+
+  # An UNESCAPED pipe still mis-splits, and silently. Catch it by field count
+  # rather than by letting it through: `| a | b | c |` is exactly five
+  # '|'-separated awk fields (the empty ones outside the leading and trailing
+  # delimiters included), so anything else is a cell carrying a raw delimiter.
+  nf="$(printf '%s' "$esc" | awk -F'|' '{print NF}')"
+  [[ "$nf" -eq 5 ]] \
+    || fail "a table row splits into $nf '|'-separated fields, expected 5 -- a cell contains an unescaped '|'; write it as '\\|' (markdown's own escape, which is also what makes the row render): $line"
+
   # Strip the outer pipes, then split on '|'. Fields keep their backticks until
   # the sed below, so an accidentally unquoted cell fails loudly rather than
   # matching everything.
-  frag="$(printf '%s' "$line" | awk -F'|' '{print $2}' | sed -E 's/^[[:space:]]*`//; s/`[[:space:]]*$//')"
-  code="$(printf '%s' "$line" | awk -F'|' '{print $3}' | sed -E 's/^[[:space:]]*`?//; s/`?[[:space:]]*$//')"
-  file="$(printf '%s' "$line" | awk -F'|' '{print $4}' | sed -E 's/^[[:space:]]*`//; s/`[[:space:]]*$//')"
+  frag="$(printf '%s' "$esc" | awk -F'|' '{print $2}' | sed -E 's/^[[:space:]]*`//; s/`[[:space:]]*$//')"
+  code="$(printf '%s' "$esc" | awk -F'|' '{print $3}' | sed -E 's/^[[:space:]]*`?//; s/`?[[:space:]]*$//')"
+  file="$(printf '%s' "$esc" | awk -F'|' '{print $4}' | sed -E 's/^[[:space:]]*`//; s/`[[:space:]]*$//')"
+  frag="${frag//$'\001'/|}"
+  code="${code//$'\001'/|}"
+  file="${file//$'\001'/|}"
 
   [[ -n "$frag" ]] || fail "a table row has an empty message fragment: $line"
+  # A fragment may not begin or end with whitespace INSIDE its backticks. The
+  # sed above trims only what is outside them, so such a space is part of what
+  # gets grepped -- and it is invisible in review, survives no rewrap, and an
+  # editor that strips trailing space on save deletes it. The gate would then
+  # fail on a message nobody touched, pointing at the emit site rather than at
+  # the whitespace. Every message has an internal span with no edge space; use
+  # one.
+  case "$frag" in
+    ' '*|*' ') fail "row '$frag' has leading or trailing whitespace inside its backticks -- that space is part of the grepped fragment and is invisible in review, so a rewrap or an editor's trim breaks this gate on a message that did not change; quote a span with no edge whitespace" ;;
+  esac
   # A fragment may not contain a double quote. Not squeamishness: the emit sites
   # are Zig and TypeScript string literals, where an embedded quote is written
   # `\"`, so a fragment carrying a bare `"` can never match the source no matter
