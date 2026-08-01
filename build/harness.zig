@@ -86,7 +86,7 @@ pub fn e2e(
     });
 
     // The plain zigapagos binary suffices: `zigapagos e2e` only orchestrates
-    // (no SSR), so unlike website()/serve() no from-source island registry is
+    // (no SSR), so unlike website() no from-source island registry is
     // needed even for island/SPA sites.
     const run_zigapagos = switch (api.resolveZigapagos(project, opts)) {
         .source => project.addRunArtifact(zigapagos_dep.artifact("zigapagos")),
@@ -136,15 +136,22 @@ pub const DevOptions = struct {
     /// sessions (delete the directory for a fresh backend), so gitignore it.
     data_dir: ?[]const u8 = null,
     /// Explicit zigbase binary. null (the default) = `zigbase` on PATH, then
-    /// the pinned release in the zigapagos cache (`src/cli/zigbase.zig`).
-    /// Never downloaded behind your back; when nothing is found the step
-    /// fails with instructions (or downloads iff `download_zigbase`).
+    /// the pinned release in the zigapagos cache (`src/cli/zigbase.zig`), then
+    /// a download of that pinned release unless `no_download` says otherwise.
     zigbase_path: ?[]const u8 = null,
-    /// Opt-in: when the locator finds no zigbase anywhere, download the
-    /// pinned GitHub release into the zigapagos cache (SHA256-verified
-    /// against the release's published SHA256SUMS) and use it. Off by
-    /// default — nothing is ever fetched without this explicit opt-in.
-    download_zigbase: bool = false,
+    /// Fail instead of fetching: when the locator finds no zigbase in
+    /// `zigbase_path`, on `PATH` or in the cache, `zigapagos dev` downloads the
+    /// pinned GitHub release into the cache (SHA256-verified against the
+    /// release's published SHA256SUMS). Set this to get the instructions and a
+    /// non-zero exit instead — offline machines, and CI that pins its own
+    /// binary.
+    ///
+    /// Note the asymmetry with `E2eOptions.download_zigbase`, which is opt-IN.
+    /// It is deliberate and it mirrors the two commands: `dev` is an
+    /// interactive local loop where a missing dependency should resolve itself,
+    /// `e2e` runs unattended in CI where an unannounced network fetch is a
+    /// surprise rather than a convenience.
+    no_download: bool = false,
     /// Overrides the `zigbase serve` invocation template (the FULL argv,
     /// subcommand included; `{host}`/`{port}`/`{site}`/`{data}` substituted).
     /// The default is the shared e2e template plus `--insecure-cookies`
@@ -182,10 +189,9 @@ pub const DevOptions = struct {
 
 /// The zigbase-backed local dev loop: `zig build dev` builds the site's
 /// RELEASE output, serves it with the STOCK ZigBase binary (real same-origin
-/// `/api`, admin UI, `.spa`-marker fallback — production-faithful, no
-/// `--proxy` shims), watches the site's inputs (content/layouts/assets +
-/// island/SPA sources), and re-runs the build on change. Supersedes the
-/// deprecated `serve()` live server.
+/// `/api`, admin UI, `.spa`-marker fallback — production-faithful), watches the
+/// site's inputs (content/layouts/assets + island/SPA sources), and re-runs the
+/// build on change.
 ///
 /// ```zig
 /// // opts must carry the SAME output_path as your website() call: the dev
@@ -233,7 +239,7 @@ pub fn dev(
     run_zigapagos.addArg(project.fmt("--site={s}", .{full_output_path}));
     if (dev_opts.data_dir) |d| run_zigapagos.addArg(project.fmt("--data-dir={s}", .{d}));
     if (dev_opts.zigbase_path) |p| run_zigapagos.addArg(project.fmt("--zigbase={s}", .{p}));
-    if (dev_opts.download_zigbase) run_zigapagos.addArg("--download-zigbase");
+    if (dev_opts.no_download) run_zigapagos.addArg("--no-download");
     for (dev_opts.zigbase_args) |a| run_zigapagos.addArg(project.fmt("--zigbase-arg={s}", .{a}));
     run_zigapagos.addArg(project.fmt("--ready-path={s}", .{dev_opts.ready_path}));
     run_zigapagos.addArg(project.fmt("--timeout-ms={d}", .{dev_opts.timeout_ms}));
