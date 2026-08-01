@@ -2,9 +2,9 @@
  * TSX Site — design-system stylesheet
  * -----------------------------------------------------------------------------
  * A hand-authored, fully-commented stylesheet used to demonstrate the
- * release-time CSS minification pass. In a `zigapagos release`
- * build this file is piped through Bun's CSS minifier before it is staged into
- * the output tree; the in-memory live server (dev loop) serves it verbatim.
+ * release-time CSS minification pass. In a `zigapagos release` build with a
+ * `--css-minify-driver=` this file is piped through Bun's CSS minifier before
+ * it is staged into the output tree; without one it is staged verbatim.
  *
  * NOTE: the comments and generous whitespace here are intentional — they are
  * exactly the bytes minification strips.

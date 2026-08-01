@@ -14,8 +14,8 @@ trap 'git restore layouts/index.shtml 2>/dev/null || true' EXIT
 # Hero.island.tsx declares `export interface Props { headline: string }`.
 # Passing a number literal (5) triggers TS2322 ("Type 'number' is not
 # assignable to type 'string'"), which the props-check gate remaps to a
-# "props mismatch" diagnostic and fails the build (--island-props-check=error
-# is emitted by build.zig's website() for all zig build invocations).
+# "props mismatch" diagnostic and fails the build (build.sh passes
+# --island-props-check=error).
 perl -0pi -e \
   's{</body>}{<island src="components/Hero.island.tsx" client:load :props=\x27{ .headline = 5 }\x27></island>\n  </body>}' \
   layouts/index.shtml
@@ -26,13 +26,12 @@ grep -q '.headline = 5' layouts/index.shtml \
 
 # Capture both stdout and stderr; do NOT let a non-zero exit abort the script.
 set +e
-OUT="$(mise exec -- zig build 2>&1)"
+OUT="$(bash build.sh 2>&1)"
 CODE=$?
 set -e
 
 # Restore BEFORE asserting so the layout is clean regardless of what follows.
 git restore layouts/index.shtml
-git -C ../.. ls-files --deleted -z -- tests/ | xargs -0 -I{} git -C ../.. restore -- {}
 
 if [ "$CODE" -eq 0 ]; then
   echo "FAIL: build succeeded despite a type-wrong island prop"
@@ -49,8 +48,7 @@ echo "$OUT" | grep -q "Hero.island.tsx" \
 echo "PASS: bad props failed the build with the remapped diagnostic"
 
 # --- (B) POSITIVE: the unmodified good site must build clean under =error. ---
-mise exec -- zig build
-git -C ../.. ls-files --deleted -z -- tests/ | xargs -0 -I{} git -C ../.. restore -- {}
+bash build.sh
 
 test -f zig-out/site/index.html \
   || { echo "FAIL: good build produced no index.html"; exit 1; }

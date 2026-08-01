@@ -101,11 +101,12 @@ A minified production bundle produces stack frames like `app.js:12:4831` — the
 
    > **Serving the maps.** Client-side symbolication only lights up once the
    > release build **emits and serves** the `.js.map` files. Set
-   > `source_maps = true` in your `zigapagos.website(...)` options to emit a
+   > Pass `--source-maps` to `zigapagos release` to emit a
    > linked `.map` next to every minified island, SPA and runtime bundle
    > (`/islands/<Name>.js.map`, `/spa/<name>.js.map`, `/zigapagos-runtime.js.map`,
-   > …) and stage them into the release output; `zigapagos serve` serves them in
-   > dev too. It is **opt-in and off by default** — maps expose your original
+   > …) and stage them into the release output. `zigapagos dev` serves that same
+   > tree, so the maps are there in dev as well. It is **opt-in and off by
+   > default** — maps expose your original
    > (pre-minification) sources to anyone who can reach the site, so leave it off
    > and prefer the server-side path (raw frames + `release`) if you symbolicate
    > from privately-retained maps. Turning it off keeps the release bytes

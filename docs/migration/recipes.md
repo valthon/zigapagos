@@ -40,7 +40,7 @@ Place it in a layout with an `<island>` tag:
 <island src="components/Hero.island.tsx" client:load prop-headline="$page.title"></island>
 ```
 
-- **`src`** — path relative to the project root; matches the entry in `build.zig`.
+- **`src`** — path relative to the project root; matches the `--island=` entry in `build.sh`.
 - **`client:*`** — hydration timing: `load` | `idle` | `visible` | `media="(query)"` | `only`.
 - **`prop-NAME="$expr"`** — a SuperHTML/Scripty expression evaluated at build time.
   The result is JSON-serialised and passed to the component as the named prop.
@@ -415,19 +415,15 @@ A consumer project is a **Bun project** with `@z/runtime` as a path-dependency.
 }
 ```
 
-**`build.zig`** — register each island in `zigapagos.website(.islands)`:
+**`build.sh`** — one `--island=` per island:
 
-```zig
-const site = zigapagos.website(b, .{
-    .islands = &.{
-        .{ .root = b.path("components/Hero.island.tsx"),
-           .src  = "components/Hero.island.tsx" },
-        .{ .root = b.path("components/Promo.island.tsx"),
-           .src  = "components/Promo.island.tsx" },
-    },
-    .output_path = "site",
-    .force = true,
-});
+```sh
+exec zigapagos release \
+  --force \
+  --output=zig-out/site \
+  --island=components/Hero.island.tsx \
+  --island=components/Promo.island.tsx \
+  "$@"
 ```
 
 `src` is the string you write in `<island src="...">`. The build spawns the Bun
@@ -456,67 +452,45 @@ Bun is **build-time only**; production is nginx + static files + the API server.
 
 ---
 
-## Dev server (`zigapagos serve`) — live island preview
+## Dev loop (`zigapagos dev`) — live island preview
 
-> **Deprecated:** the bundled live server is superseded by the zigbase-backed dev loop —
-> `zigapagos.dev()` / `zig build dev` (see `docs/spa.md` § "Local Development") — which
-> serves the real release output with the stock ZigBase binary (real same-origin `/api`,
-> manual browser refresh instead of livereload). `zigapagos serve` remains functional for
-> now; removal is planned.
+`zigapagos dev` live-previews island sites: edit a `.island.tsx`, and the loop
+rebuilds the affected pages and swaps the island in the browser with its state
+intact.
 
-`zigapagos serve` live-previews island sites: edit a `.island.tsx`, and the dev server
-auto-rebundles and reloads the browser (Fork A — full-page reload).
+### Setup
 
-### Consumer setup
-
-Add a `serve` step to `build.zig` alongside `website`, passing the **same `.islands`
-list**:
-
-```zig
-const islands: []const zigapagos.Island = &.{
-    .{ .root = b.path("components/Hero.island.tsx"), .src = "components/Hero.island.tsx" },
-    // ... more islands ...
-};
-
-// Static build
-const site = zigapagos.website(b, .{ .islands = islands, .output_path = "site", .force = true });
-b.getInstallStep().dependOn(&site.step);
-
-// Dev server
-const serve_step = b.step("serve", "Start the Zigapagos development server");
-serve_step.dependOn(&zigapagos.serve(b, .{ .islands = islands }).step);
-```
-
-Then start the server:
+None. `zigapagos dev` is zero-config — run it in the site directory:
 
 ```bash
-zig build serve
-# or: mise exec -- zig build serve
+zigapagos dev
 ```
 
-Browse to `http://localhost:1990/`. Edit a `.island.tsx` → the server detects the
-change, rebundles the affected island (via a one-shot `bun build`), and broadcasts a
-full-reload to all connected browser tabs.
+It rebuilds with `zigapagos release --output=public --force`, discovering your
+`*.island.tsx` and `*.spa.tsx` entries itself, boots the stock ZigBase binary
+over the built tree (fetching the pinned release into its cache if you have not
+installed one), and watches your content, layout, asset and component
+directories. Browse to `http://127.0.0.1:1990/`.
+
+Every default is overridable — `--site=DIR` for a different output tree,
+`--port=N`, `--no-download` on an offline machine, or `-- CMD ARGS...` to
+substitute your own rebuild command. `zigapagos dev --help` lists them.
 
 ### What the dev bundle looks like
 
-The dev bundle is identical to the production bundle (`zigapagos.website()`) **minus
-`--minify`**. Both use:
+The dev bundle is the production bundle plus the fast-refresh transform, which is
+what makes the state-preserving hot-swap possible. Both use:
 
 - `--external=@z/runtime` — keeps the one shared Preact instance (import-map wired)
 - `NODE_ENV=production` — forces production JSX transforms (`jsx`/`jsxs`, not `jsxDEV`)
 - `--format=esm` — ES module output
 
 This means the one-Preact-instance invariant and hydration behaviour are identical
-in dev and prod; the only difference is bundle size.
+in dev and prod.
 
-### State-preserving hot-swap — use `zigapagos dev`
+### State-preserving hot-swap
 
-The deprecated `zig build serve` loop above (v1, Fork A) does a **full-page reload** on
-every island edit. State-preserving targeted swap — where only the changed island's DOM
-subtree is swapped without resetting unrelated component state — is **shipped** in the
-current `zigapagos dev` loop (Fork C): in-place island hot-swap plus fast refresh that
-preserves `useState`/`useReducer` state across an edit. See
+Only the changed island's DOM subtree is swapped; unrelated component state is not
+reset, and the changed component's own `useState`/`useReducer` state survives when
+its hook signature is unchanged. See
 [Dev hot-swap (HMR) and fast refresh](../islands.md#dev-hot-swap-hmr-and-fast-refresh).
-The full-reload limitation described here applies only to the deprecated `serve` path;
-prefer `zigapagos dev` for interactive editing.

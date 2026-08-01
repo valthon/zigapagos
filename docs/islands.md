@@ -6,6 +6,10 @@ Islands are `.island.tsx` files authored against `@z/runtime` (a vendored
 Preact build). SSR happens at build time via a Bun "render sidecar"; client
 hydration uses an import-map so the page shares **one** Preact instance.
 
+Islands are the point at which a build acquires external dependencies: Bun, and
+the `@z/runtime` tree the sidecar and bundlers are scripts inside. What supplies
+each, per install method, is [runtime dependencies](runtime-dependencies.md).
+
 ## File conventions
 
 - Place islands under the project's `components/` directory (or any path; the
@@ -342,13 +346,13 @@ and the check is skipped for that island (it is not a build error).
 
 | Value   | Behaviour |
 |---------|-----------|
-| `error` | Mismatches fail the build (default for `zig build`). |
+| `error` | Mismatches fail the build. |
 | `warn`  | Mismatches are logged but the build succeeds. |
-| `off`   | Check disabled entirely. |
+| `off`   | Check disabled entirely (the default). |
 
-`build.zig`'s `website()` helper emits `--island-props-check=error` for all
-release builds automatically. `zigapagos serve` defaults to `off` so the dev loop
-stays lenient.
+`zigapagos release` defaults to `off`, so every invocation that wants the gate —
+including the one `zigapagos dev` runs — opts in explicitly. Both projects in
+this repository pass `--island-props-check=error` from their `build.sh`.
 
 ## Module preloading
 
@@ -416,9 +420,8 @@ Two consequences worth knowing:
   sliced, so such a site ships one unreferenced bundle in its output tree. The
   slice decision is a build-time fact and the asset is declared at configure
   time. (The SPA slicer has the same wart.)
-- `zigapagos serve` and the `zigapagos dev` hot loop never slice. The live server
-  serves the shared runtime from its own cache dir, and a slice entry does not
-  call `installHmr()`, so slicing the dev build would silently disable island
+- The `zigapagos dev` hot loop never slices. A slice entry does not call
+  `installHmr()`, so slicing the dev build would silently disable island
   hot-swap. Payload size is not a dev-loop concern.
 
 ## Import guardrail
@@ -473,68 +476,48 @@ survives), and ultimately to a full reload — never a corrupt swap:
 
 **Dev-loop wiring.** `zigapagos dev` sets `ZIGAPAGOS_HOT_ISLANDS=1` in the
 rebuild command's environment for the whole session (skipped with
-`--no-live-reload`, which exists for release-fidelity testing); the consumer's
-`zig build` reads it at configure time (`build.zig`'s `addIslandAssets`) and
-passes `--hot` to the island bundle driver, so every dev island bundle routes
+`--no-live-reload`, which exists for release-fidelity testing); the rebuild —
+`zigapagos release` — reads it and passes `--hot` to the island bundle
+driver, so every dev island bundle routes
 through the registry from the first page load. When the dev loop's change
 classifier proves a rebuild was island-only (see the incremental re-SSR section
 below), it broadcasts the `{"kind":"island",…}` hot-swap message instead of a
 full reload — the swap preserves plain hook state end-to-end. Any other change
 (a content page, a layout, an unclassifiable edit) still full-reloads.
 
-Release bundles never contain the transform — `hot` is off by default and the
-environment variable never reaches a plain `zig build` / `zigapagos release`,
-so the release byte-parity gate is untouched. One known nit: a component
+Release bundles never contain the transform — `hot` is off by default and a
+plain `zigapagos release` never sees the environment variable, so the release
+byte-parity gate is untouched. One known nit: a component
 wrapped in `memo()` may show stale UI until its next state change after a
 preserving swap.
 
-## Incremental bundling
+## Bundling
 
 Each island and the shared runtime are bundled by `runtime/sidecar/bundle-island.ts`,
-a Bun build-time driver invoked via `build.zig`'s `addIslandAssets`. The driver emits a
-Make-style depfile alongside each bundle so Zig's `Run` cache knows exactly when to
-re-bundle.
+a Bun build-time driver `zigapagos release` invokes once per entry.
 
-**What the depfile tracks** (the island's true transitive closure):
+`@z/runtime` is declared `--external`, so the bundler never loads it: an island
+bundle imports the bare specifier and the page's import map resolves it to the
+one shared runtime. Inlining it would give the page a second Preact.
 
-- The island entry file itself
-- All relative imports and `@your-org/shared-lite` modules loaded transitively
-- The `tsconfig.json` (and its `extends` chain) found above the entry
-- `runtime/.version-stamp` — a short string written by `build.zig` and listed in
-  every bundle's depfile; bump the string to force-rebundle all islands and the
-  runtime in one stroke (use this when the `@z/runtime` external ABI or the Bun
-  version changes)
-
-`@z/runtime` is declared `--external` and is therefore never loaded by the bundler —
-it is not captured in the island depfile. It is tracked separately via the runtime
-bundle's own depfile plus the version stamp.
-
-**Why this matters — the correctness fix:** previously, each island was registered as
-a plain `addFileInput` pointing only at its entry file. Editing a transitive dep (a
-relative import or an `@your-org/shared-lite` module) left the island's declared cache
-inputs unchanged, so Zig considered it a cache hit and shipped the stale bundle.
-The depfile fixes this: the Zig `Run` cache now sees the full transitive closure and
-re-runs the driver whenever any file in it changes.
-
-**Dep-capture mechanism:** a `Bun.build` `onLoad` plugin is registered as a pure
-observer — it records every module path Bun loads and returns `undefined` so the
-file contents pass through unmodified. This works on Bun 1.2+. On Bun 1.3+ the
-`metafile.inputs` map is also populated; `bundleIsland` unions both sources so
-incrementality improves automatically on newer Bun versions without any code change.
-
-**First-build behaviour (cold cache):** on a fresh checkout the depfile does not yet
-exist, so Zig always runs the driver on build #1 and the depfile is written as part of
-that run. Incrementality kicks in from build #2 onward — this is standard
-compiler-depfile semantics (equivalent to `cc -MD`).
+Every bundle is minified, and every build re-runs every driver — `zigapagos
+release` wipes `.zigapagos-cache/bundles` on the way in, so a stale bundle from
+a previous build can never reach the output tree. There is no incremental
+bundling: a rebuild is the price of a build being reproducible from its inputs
+alone, and the drivers are fast enough that a site's own build work dominates.
+The drivers still write a Make-style depfile alongside each bundle (the island's
+true transitive closure — the entry, every relative import, the `tsconfig.json`
+above it), which an external orchestrator can read; nothing in zigapagos does.
 
 **Verification:**
 
 - `examples/tsx-site/test/parity-bundle.sh` — asserts the driver's output is
-  byte-identical to a raw `bun build` invocation (for both the Hero island and the
-  shared runtime), guarding against the `onLoad` observer accidentally mutating bytes.
-- `examples/tsx-site/test/incremental.sh` — injects a transitive dep into Hero,
-  builds twice with the dep changed between builds, and asserts the bundle hash
-  changes (H1 ≠ H2); a third no-op build asserts the hash is stable (H2 = H3).
+  byte-identical to a raw `bun build` invocation with the same flags (for both
+  the Hero island and the shared runtime), guarding against the dep-capture
+  `onLoad` observer accidentally mutating bytes.
+- `examples/tsx-site/test/rebundle.sh` — injects a transitive dep into Hero and
+  asserts an edit to it reaches the bundle (H1 ≠ H2), then that a rebuild with
+  nothing changed reproduces it byte for byte (H2 = H3).
 
 ## Dev-loop incremental re-SSR (`zigapagos dev`)
 
@@ -546,8 +529,8 @@ re-renders just those pages instead of the whole site.
 island-usage manifest, `<data-dir>/islands-manifest.json` (default
 `.zigbase/islands-manifest.json`), mapping each mounted island's `src` to the
 pages that mount it. The path travels via the `ZIGAPAGOS_ISLAND_MANIFEST`
-environment variable, which only the dev loop sets — a plain `zig build` or
-`zigapagos release` never writes (or reads) it, so release output is unaffected.
+environment variable, which only the dev loop sets — a plain `zigapagos
+release` never writes (or reads) it, so release output is unaffected.
 
 **The classifier.** When the watcher fires and the only changed files under the
 island/SPA `--watch-dir`s are known island sources, the dev loop resolves them

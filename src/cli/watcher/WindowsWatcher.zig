@@ -3,8 +3,8 @@ const WindowsWatcher = @This();
 const std = @import("std");
 const Io = std.Io;
 const windows = std.os.windows;
-const fatal = @import("../../../fatal.zig");
-const Debouncer = @import("../../serve.zig").Debouncer;
+const fatal = @import("../../fatal.zig");
+const Debouncer = @import("../watcher.zig").Debouncer;
 
 const log = std.log.scoped(.watcher);
 

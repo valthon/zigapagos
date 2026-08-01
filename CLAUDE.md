@@ -42,15 +42,25 @@ cd runtime && bun test         # TypeScript suite (685 tests)
 cd runtime && bun test src/router   # one file — filter is a PATH substring
 bash scripts/check-allocator-contracts.sh   # allocator-contract gate (see NO_SLOP.md §2.2a)
 bash scripts/check-allocator-contracts.test.sh   # the gate's own self-tests
-bash tests/serve/spa.sh                     # one shell e2e script
+bash tests/spa/prerender-order.sh           # one shell e2e script
+bash site/build.sh                          # build the marketing site
+bash examples/tsx-site/build.sh             # build the tsx example
 ```
 
+**`zig build` builds ZIGAPAGOS, never a website.** There is no consumer build API: a site is
+built by RUNNING the binary, and `site/build.sh` / `examples/tsx-site/build.sh` are the two
+worked invocations — one place each where that project's islands and SPAs are declared. Both
+honour `ZIGAPAGOS_BIN` and otherwise fall back to compiling `zig-out/bin/zigapagos` once.
+Both also export `ZIGAPAGOS_RUNTIME_DIR=<repo>/runtime`, which is where the sidecar, the
+bundlers and both runtime slicers come from; without it a `--spa` entry cannot be bundled at
+all (only prerendered).
+
 **`zig build test` does NOT run the unit tests.** It builds the three-root snapshot fixtures and
-diffs them. The Zig unit tests live in seventeen separate steps, and CI runs them explicitly:
+diffs them. The Zig unit tests live in sixteen separate steps, and CI runs them explicitly:
 
 ```sh
 zig build test-islands test-props test-migrate test-sidecar test-init \
-  test-release test-spa test-assets test-serve test-e2e test-dev \
+  test-release test-spa test-assets test-e2e test-dev \
   test-doctor test-slugs test-validate test-explain test-diag test-summary
 ```
 
@@ -66,7 +76,7 @@ there. A runtime `return error.SkipZigTest` does **not** help — Zig analyses t
 body regardless of runtime control flow — so prune the branch at comptime:
 `if (comptime !builtin.single_threaded) …`.
 
-**Shell e2e.** CI runs every `tests/*/*.sh` (currently 39). They are hermetic; `tests/serve/*`
+**Shell e2e.** CI runs every `tests/*/*.sh` (currently 46). They are hermetic; `tests/dev/*`
 boot real servers via a stub-zigbase binary and need `bun` on `PATH`. A new `tests/<area>/` is
 picked up by the glob automatically. `tests/branding.sh`, `tests/branding.test.sh` and
 `tests/confidentiality.sh` sit at `tests/` top level on purpose — they are cheap gates CI runs
@@ -79,7 +89,7 @@ as stale — so it is an exemption you have to justify, not a mute button.
 
 **A fresh git worktree needs `bun install` in `runtime/` before anything bun-dependent.** Without
 it `bun test` reports every file as failing (`0 pass / 54 fail`, an `ENOENT resolving 'typescript'`
-per file) and an `examples/tsx-site` build dies in the SPA-runtime step — both look like code
+per file) and `examples/tsx-site/build.sh` dies in the SPA-runtime step — both look like code
 breakage and are neither.
 
 **Formatting is gated, with no exceptions.** The whole first-party tree is `zig fmt`-clean and CI
@@ -90,9 +100,9 @@ git ls-files -z '*.zig' | xargs -0 -r zig fmt --check
 ```
 
 Run that before pushing. The file list comes from `git ls-files` rather than a directory walk on
-purpose: `zig-pkg/` and `examples/tsx-site/zig-pkg/` are **gitignored** trees of materialized
-third-party dependencies, so a path-based invocation passes on a clean checkout and then starts
-failing on vendored source as soon as anything populates them. Never reformat those.
+purpose: `zig-pkg/` is a **gitignored** tree of materialized third-party dependencies, so a
+path-based invocation passes on a clean checkout and then starts failing on vendored source as
+soon as anything populates it. Never reformat it.
 
 Note `zig fmt` rewrites manually column-aligned literals into one element per line; that is the
 canonical formatter's call, so take it rather than fighting it.
@@ -100,10 +110,14 @@ canonical formatter's call, so take it rather than fighting it.
 ## Architecture
 
 A permanent fork of [Zine](https://zine-ssg.io) (fork point `ca8f3e5`, upstream `496e42d`
-v0.11.2) that adds islands architecture and native SPAs. Upstream files are deliberately kept
-clean so release-tag syncs stay tractable — prefer fixing a problem in fork-added code over
-editing an inherited file. (Example: a request-path bound belongs in `src/cli/serve.zig`'s guard,
-not in the inherited `src/PathTable.zig`.)
+v0.11.2) that adds islands architecture and native SPAs. Upstream files are kept close to
+upstream where that costs nothing, because a release-tag sync is read by hand — but that is a
+mild preference, not a rule. **Fix the file that is actually wrong, inherited or not.** What is
+forbidden is paying daily complexity to avoid an inherited file: never add a generator, shim,
+wrapper or any other indirection whose purpose is to keep a diff out of upstream code. Syncs are
+infrequent and both histories get reviewed either way, so `git log` on the file is all the
+tractability the rare manual merge needs — note the sync cost once in the commit message,
+factually, and move on.
 
 ```
 content/*.smd ──► Zig core (SuperMD/SuperHTML) ──► page HTML ─┐
@@ -128,9 +142,9 @@ pages are emitted.
 
 Two constraints on any further reordering:
 
-- **Two early returns gate the tail of the function** — `mode == .memory` (the live server never
-  prerenders or installs) and `incremental` (dev's changed-files fast path re-emits only changed
-  pages). The prerender call sits *above* both, so it carries an explicit
+- **Two early returns gate the tail of the function** — `mode == .memory` (the in-memory builds
+  behind `validate`/`explain` never prerender or install) and `incremental` (dev's changed-files
+  fast path re-emits only changed pages). The prerender call sits *above* both, so it carries an explicit
   `if (build.mode == .disk and !incremental)` guard; anything else moved up must do the same.
 - **The asset-install phase must come last**: both the page pass and the SPA prerender bump
   refcounts on `install_always` assets (e.g. `spa/<name>.js`) that the install phase reads.
@@ -148,17 +162,20 @@ with a `data-z-props` JSON block, an import map, and one shared runtime script.
   `sidecar.zig` (Bun subprocess client), `render_arena.zig` (see below).
 - `src/spa.zig` — route skeletons, dynamic-route `_shell.html`, per-namespace routing manifests,
   site-wide `404.html`.
-- `src/cli/` — `serve.zig` (live server + `--proxy`), `dev.zig` (zigbase-backed dev loop),
-  `reload.zig` (SSE live reload), `migrate*.zig` / `init_from_astro.zig` (Astro importer).
+- `src/cli/` — `dev.zig` (the zigbase-backed dev loop), `watcher.zig` + `watcher/` (the per-OS
+  file watcher and its debouncer), `reload.zig` (SSE live reload), `zigbase.zig` (the ZigBase
+  locator/downloader), `migrate*.zig` / `init_from_astro.zig` (Astro importer).
 - `runtime/src/` — the **shipped** first-party `@z/runtime`: SPA router, island hydration, host
   bindings. Bugs here reach every visitor's browser.
 - `runtime/sidecar/` — **build-time** Bun SSR. The Zig↔Bun protocol is NDJSON over
   stdin/stdout, one request per line.
 - `runtime/scripts/` — codegen (`apigen`/`apiclient`), the host-config emitters
   (zigbase/nginx/apache), runtime slicing, parity harness.
-- `build.zig` is an 87-line table of contents; the real wiring is in `build/*.zig`
-  (`exe`, `deps`, `tests`, `harness`, `bundles`, `site`, `release`, `api`, `codegen`, `config`,
-  `validate`, `snapshot`, `docgen`).
+- `build.zig` is a table of contents; the real wiring is in `build/*.zig`
+  (`exe`, `deps`, `tests`, `release`, `codegen`, `config`, `snapshot`, `docgen`, `camera`).
+  It builds ZIGAPAGOS and nothing else: there is no consumer build API, and a website is
+  built by running the binary (`site/build.sh` and `examples/tsx-site/build.sh` are the
+  two worked invocations).
 
 The behaviour these subsystems are *supposed* to have is specified in `docs/islands.md`,
 `docs/spa.md`, `docs/assets.md`, `docs/cross-tier-codegen.md`, `docs/observability.md` and

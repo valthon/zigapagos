@@ -1,4 +1,4 @@
-// STUB "zigbase" for tests/serve/e2e.sh + tests/serve/dev.sh — NOT the real
+// STUB "zigbase" for tests/dev/e2e.sh + tests/dev/dev.sh — NOT the real
 // ZigBase binary.
 //
 // Mirrors the REAL `zigbase serve` CLI semantics (zigbase src/cli.zig

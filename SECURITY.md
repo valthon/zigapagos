@@ -1,6 +1,6 @@
 # Security policy
 
-Zigapagos is a build tool plus a development server. Nearly everything it does
+Zigapagos is a build tool plus a local dev loop. Nearly everything it does
 runs on a developer's own machine, over source that developer wrote. That makes
 its threat model narrow and worth stating explicitly, because a fair amount of
 what looks alarming in it is load-bearing behaviour rather than a defect — and
@@ -70,16 +70,22 @@ cloning an untrusted repository and building it is the same risk class as
 `npm install` on it, for the same reason. This is by design and cannot be fixed
 without deleting the feature.
 
-**2. The dev server is a development tool, not a production server.**
-`zigapagos` (no command) and `zigapagos dev` bind `localhost:1990` by default.
-They implement no authentication, no rate limiting, no TLS, and no hardening
-against a hostile client. `--host 0.0.0.0` will happily expose that to your
-network; on an untrusted network, don't. `--proxy PREFIX=UPSTREAM` exists
-precisely to forward matching requests to a backend you named, credentials
-included — that is the feature, and it is why the dev loop can exercise
-cookie-auth flows at all. Your built output is served in production by something
-else (a real host: ZigBase, nginx, Apache, a CDN), which is where production
-hardening belongs.
+**2. The dev loop is a development tool, not a production deployment.**
+`zigapagos dev` serves nothing itself: it builds the release tree and hands it
+to a **stock ZigBase binary** it locates or downloads (`--host`/`--port`,
+`127.0.0.1:1990` by default). ZigBase's own security posture is ZigBase's; a
+defect in how it serves files belongs in
+<https://github.com/valthon/zigbase>, not here. What zigapagos does own on the
+wire is one dev-only side channel: a Server-Sent-Events endpoint on its own port
+(`src/cli/reload.zig`, bound to the same `--host`) that broadcasts "reload" to
+browsers, plus the `<script>` it injects into the served copy of every page to
+listen for it. That channel has no authentication and no hardening against a
+hostile client, and `--host 0.0.0.0` exposes both it and ZigBase to your
+network; on an untrusted network, don't. It is also DEV-ONLY: the snippet is
+injected into the installed tree after each build and `zigapagos release` never
+runs that code, so release output never carries it. Your built output is served
+in production by something else (a real host: ZigBase, nginx, Apache, a CDN),
+which is where production hardening belongs.
 
 **3. The output is static files, plus your code.** What your islands and your
 SPA do in a visitor's browser is your code, running with whatever privileges
@@ -87,17 +93,17 @@ your host grants it.
 
 ### In scope — please do report these
 
-- **Escaping the site root.** Path traversal in the dev server's request
-  handling, or a `..` in a route, alias, or asset path that causes the build to
-  write outside the output directory.
+- **Escaping the site root.** A `..` in a route, alias, or asset path that
+  causes the build to write outside the output directory, or a route argument
+  that walks `zigapagos explain` out of the output tree.
 - **Memory-safety defects reachable from *content*.** Content is frequently less
   trusted than code — a docs site takes outside contributions. A crafted `.smd`,
   layout, frontmatter, or asset that causes an out-of-bounds access, a
   use-after-free, or unbounded allocation in the Zig core is a real bug, and the
   interesting one.
-- **The dev server serving files outside the output tree**, or `--proxy`
-  forwarding to an upstream other than the configured one (rule-parsing
-  confusion in `parseProxyRule`).
+- **The live-reload side channel doing more than reloading** — the injected
+  snippet or the SSE endpoint (`src/cli/reload.zig`) being made to execute
+  attacker-chosen code in the browser, or that snippet reaching release output.
 - **Injection into generated HTML from content-derived data.** Island props go
   into the page as a JSON `<script>` block; the escaping that keeps a `</script>`
   inside a prop from ending that block early lives in `src/islands/pass.zig`. A
@@ -112,13 +118,19 @@ your host grants it.
 
 Not vulnerabilities to report, but stated so nobody has to rediscover them:
 
-- **The `zigbase` download verifies integrity, not authenticity.**
-  `zigapagos e2e --download-zigbase` fetches a pinned release tarball and checks
-  it against the `SHA256SUMS` published *in that same release*, which catches a
-  corrupt or truncated download but not a compromised release. Nothing is ever
-  downloaded implicitly — the locator prefers `--zigbase=<path>`, then `zigbase`
-  on `PATH`, then the cache, and fails with instructions rather than fetching on
-  its own.
+- **The `zigbase` download verifies integrity, not authenticity.** The locator
+  prefers `--zigbase=<path>`, then `zigbase` on `PATH`, then the version pinned
+  in the zigapagos cache. When none of those resolve, it fetches that pinned
+  release tarball and checks it against the `SHA256SUMS` published *in that same
+  release* — which catches a corrupt or truncated download but not a compromised
+  release.
+- **`zigapagos dev` performs that fetch implicitly; `zigapagos e2e` does not.**
+  `dev` is an interactive local loop, so a missing zigbase resolves itself
+  rather than printing instructions; `--no-download` makes it fail instead, for
+  offline machines and for anywhere an unannounced network fetch is
+  unacceptable. `e2e` runs unattended in CI and keeps the opposite default: it
+  fetches only on an explicit `--download-zigbase`. No other subcommand
+  downloads anything.
 - **Strict CSP is supported, but the header is yours to deploy and keep in
   sync.** Hydration needs inline scripts (the import map; for SPAs a `mountSpa`
   bootstrap), so a `script-src` without `unsafe-inline` requires their hashes.
@@ -137,13 +149,14 @@ Not vulnerabilities to report, but stated so nobody has to rediscover them:
 
 - "The build runs code from the project I am building." By design — see
   boundary 1.
-- The dev server lacking TLS, authentication, or CSRF protection; or
+- The dev loop lacking TLS, authentication, or CSRF protection; or
   `--host 0.0.0.0` exposing it. See boundary 2.
 - Anything that requires the attacker to already have write access to the site
   source, the build machine, or the toolchain.
 - A build that exhausts memory or time on a pathological input you supplied
   yourself.
-- Missing security headers in dev-server responses. Your production host sets
-  those.
+- Missing security headers in the responses you get from `zigapagos dev`. Those
+  come from the ZigBase binary serving the tree, and your production host sets
+  its own.
 - Vulnerabilities in Zig, Bun, or a third-party dependency — report those to
   their maintainers. Do tell us if a pin here needs to move as a result.

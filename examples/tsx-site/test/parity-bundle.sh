@@ -16,9 +16,8 @@ cd "$REPO_ROOT/runtime" && mise exec -- bun install >/dev/null
 cd - >/dev/null
 mise exec -- bun install >/dev/null
 
-# ── 1. Build via driver (zig build) ───────────────────────────────────────────
-mise exec -- zig build
-git -C "$REPO_ROOT" ls-files --deleted -z -- tests/ | xargs -0 -I{} git -C "$REPO_ROOT" restore -- {}
+# ── 1. Build via driver (build.sh) ────────────────────────────────────────────
+bash build.sh
 
 DRIVER_HERO="zig-out/site/islands/Hero.island.js"
 DRIVER_RT="zig-out/site/zigapagos-runtime.js"
@@ -26,15 +25,20 @@ test -f "$DRIVER_HERO" || { echo "FAIL: driver hero bundle missing"; exit 1; }
 test -f "$DRIVER_RT"   || { echo "FAIL: driver runtime bundle missing"; exit 1; }
 
 # ── 2. Build via raw `bun build` (no plugin, pure CLI) ────────────────────────
-# Island: cwd = tsx-site (matches bun_isl.setCwd(website_root) in build.zig)
+# Island: cwd = tsx-site, matching the `--island-src-dir` the driver is spawned
+# with (src/cli/release.zig's `bundleIslands`), so the consumer tsconfig's
+# jsxImportSource drives the JSX transform in both invocations. NODE_ENV and
+# --minify are load-bearing: bun picks jsx-runtime vs jsx-dev-runtime from its
+# own NODE_ENV, and the driver minifies every island.
 NODE_ENV=production mise exec -- bun build \
   components/Hero.island.tsx \
   --external=@z/runtime --external=@z/runtime/jsx-runtime \
-  --format=esm \
+  --format=esm --minify \
   --outfile=/tmp/parity-plain-hero.js \
   >/dev/null
 
-# Runtime: cwd = repo root (bun_rt has no setCwd in build.zig → defaults to project root)
+# Runtime: the entry is an absolute path either way, so cwd cannot change the
+# bytes; repo root is used here only because that is where the source lives.
 (cd "$REPO_ROOT" && mise exec -- bun build \
   runtime/src/browser-entry.ts \
   --format=esm --minify \

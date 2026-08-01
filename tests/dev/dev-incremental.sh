@@ -4,7 +4,7 @@
 #
 # Drives a real `zigapagos dev` (rebuild command = a direct `zigapagos release`,
 # so no bun/zig-build toolchain is needed) with the hermetic stub "zigbase" on
-# PATH (see tests/serve/stub-zigbase.ts), against a site whose content and
+# PATH (see tests/dev/stub-zigbase.ts), against a site whose content and
 # assets dirs are SEPARATE.
 #
 # AUD-016: a content-page edit must trigger a FULL rebuild, not a single-page

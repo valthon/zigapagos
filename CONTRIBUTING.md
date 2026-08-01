@@ -18,16 +18,17 @@ for the sync policy (release tags only, never upstream main).
 The practical consequence for a contributor:
 
 - **Fork-owned surface — bring it here.** `src/islands/`, `src/spa.zig`,
-  `src/cli/serve.zig`, `src/cli/dev.zig`, `src/cli/reload.zig`,
+  `src/cli/dev.zig`, `src/cli/reload.zig`, `src/cli/watcher*.zig`,
   `src/cli/migrate*.zig`, `src/cli/init_from_astro.zig`, all of `runtime/`, and
   the `build/` wiring for those.
 - **Inherited core — consider upstream first.** The SuperHTML/SuperMD templating
   and content pipeline, the Ziggy frontmatter layer, the site graph. A fix there
   helps far more people upstream and comes back to us at the next release-tag
-  sync. Upstream files are also kept deliberately clean so those syncs stay
-  tractable, so a change to one needs a reason why it could not live in
-  fork-added code. (Concretely: a request-path bound belongs in
-  `src/cli/serve.zig`'s guard, not in the inherited `src/PathTable.zig`.)
+  sync. That is a routing preference, not a prohibition: fix the file that is
+  actually wrong, inherited or not, and say so in the commit message. What is
+  never acceptable is a generator, shim or wrapper added purely to keep a diff
+  out of an inherited file — the syncs are infrequent and reviewed by hand, so
+  that trade pays daily complexity for a rare manual merge.
 
 ## Prerequisites
 
@@ -50,7 +51,7 @@ are pure version skew, so check `zig version` before believing them. Do not add 
 repo-level `.tool-versions`: a second pin beside `mise.toml` can silently drift.
 
 CI runs ubuntu and macOS only. Windows is dropped because inherited upstream code
-(`src/cli/serve/watcher/WindowsWatcher.zig`, `src/wuffs.zig`) does not compile on
+(`src/cli/watcher/WindowsWatcher.zig`, `src/wuffs.zig`) does not compile on
 stable 0.16.0; it returns with the Zig 0.17 port.
 
 ## Build and test
@@ -66,7 +67,7 @@ separate steps**, and this is the command you actually want:
 
 ```sh
 zig build test-islands test-props test-migrate test-sidecar test-init \
-  test-release test-spa test-assets test-serve test-e2e test-dev \
+  test-release test-spa test-assets test-e2e test-dev \
   test-doctor test-slugs test-validate test-explain test-diag
 ```
 
@@ -125,7 +126,7 @@ git ls-files -z '*.zig' | xargs -0 -r zig fmt --check
 zig build test                                    # snapshot diff
 zig build check -Dsingle-threaded
 zig build test-islands test-props test-migrate test-sidecar test-init \
-  test-release test-spa test-assets test-serve test-e2e test-dev \
+  test-release test-spa test-assets test-e2e test-dev \
   test-doctor test-slugs test-validate test-explain test-diag
 zig build api-check                               # if contract/ or apigen.ts changed
 
@@ -143,7 +144,7 @@ Notes on the ones with sharp edges:
   moment a build populates them. Never reformat those. Also note `zig fmt`
   rewrites hand-column-aligned literals to one element per line; that is the
   canonical formatter's call — take it.
-- **The shell e2e are hermetic but not free.** `tests/serve/*` boot real servers
+- **The shell e2e are hermetic but not free.** `tests/dev/*` boot real servers
   against a stub `zigbase` and need `bun` on `PATH`. A new `tests/<area>/*.sh` is
   picked up by CI's glob automatically. `tests/branding.sh`,
   `tests/branding.test.sh` and `tests/confidentiality.sh` deliberately sit at the

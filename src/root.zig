@@ -103,14 +103,12 @@ pub const Site = struct {
     /// Deliberately NOT fingerprinted, so the escape hatches still work:
     /// `static_assets` entries (`favicon.ico`, `CNAME`, `robots.txt` — things
     /// something *outside* the build looks up at a fixed path), build assets
-    /// (their install path is yours to choose in `build.zig`), and page
-    /// assets (installed next to the page that owns them).
+    /// (their install path is yours to choose with `--install`/
+    /// `--install-always`), and page assets (installed next to the page that
+    /// owns them).
     ///
-    /// Release builds only. The in-memory live server — started by running
-    /// `zigapagos` with NO subcommand; `zigapagos serve` is an error that
-    /// points you at that, see `main.zig`'s `.serve` arm — always serves
-    /// verbatim names, mirroring how it also skips the CSS minify pass. Dev
-    /// serves what you wrote, release serves what you ship.
+    /// Release (disk-mode) builds only. An in-memory build writes no output
+    /// tree, so there is nothing to fingerprint.
     ///
     /// Off by default: turning it on changes every linked asset's URL, which
     /// is a deploy-visible change no site should get without asking.
@@ -575,7 +573,7 @@ pub const Config = union(enum) {
     }
 };
 
-// Mirrors closely the corresponding type in build.zig
+/// One `--build-asset=NAME PATH [--install=P | --install-always=P]` entry.
 pub const BuildAsset = struct {
     input_path: []const u8,
     install_path: ?[]const u8 = null,
@@ -583,9 +581,8 @@ pub const BuildAsset = struct {
     rc: std.atomic.Value(u32),
 };
 
-/// One `--spa=<src>|<base>` entry, as threaded from `build.zig`'s `Spa.src`/
-/// `Spa.base` through `zigapagos release`'s CLI args. `base` is the DECLARED base
-/// from the consumer's `build.zig` (used only for advisory purposes here);
+/// One `--spa=<src>|<base>` entry from `zigapagos release`'s CLI args. `base` is
+/// the base the author DECLARED (used only for advisory purposes here);
 /// `src/spa.zig`'s prerender pass treats the module's exported `spa.base` as
 /// authoritative and asserts the two agree, failing loudly on mismatch. `base`
 /// is `""` when the `--spa=` value carried no `|` (defensive fallback — the
@@ -594,16 +591,16 @@ pub const SpaSpec = struct {
     src: []const u8,
     base: []const u8,
     /// Path to the driver's `spa-chunks.json` for this SPA (entry name + the
-    /// lazy-route→chunk map), threaded via `zigapagos release --spa-chunks=<src>
-    /// <path>`. Null when no chunk map was provided (e.g. a hand-written CLI
-    /// invocation) — the prerender then emits no per-route chunk/preload.
+    /// lazy-route→chunk map), attached by `release.zig`'s `bundleSpas` after the
+    /// SPA's client bundle has been written. Null when nothing built that half —
+    /// the prerender then emits no per-route chunk/preload.
     chunks_json: ?[]const u8 = null,
-    /// Path to the driver's per-SPA runtime SLICE manifest (`build-spa-runtime.ts`),
-    /// threaded via `zigapagos release --spa-slice=<src> <path>`. Either
-    /// `{"runtime":"/spa/<name>-runtime.js","members":[…]}` (this SPA gets a
-    /// sliced runtime bundle) or `{"fallback":true}` (uncertain host usage → the
-    /// SPA uses the shared /zigapagos-runtime.js). Null for a hand-written CLI
-    /// invocation with no slicing — the prerender then uses the shared runtime.
+    /// Path to the per-SPA runtime SLICE manifest written by
+    /// `runtime/scripts/build-spa-runtime.ts` and attached by that same
+    /// `bundleSpas` pass. Either `{"runtime":"/spa/<name>-runtime.js","members":[…]}`
+    /// (this SPA gets a sliced runtime bundle) or `{"fallback":true}` (uncertain
+    /// host usage → the SPA uses the shared /zigapagos-runtime.js). Null when no
+    /// slicing ran — the prerender then uses the shared runtime.
     slice_json: ?[]const u8 = null,
 };
 
@@ -618,8 +615,8 @@ pub const Options = struct {
     /// Bun script that minifies each `.css` site asset during the disk-mode
     /// (release) install phase. When set (together with `bun_path`),
     /// `.css` assets from `assets_dir_path` are piped through it instead of being
-    /// copied verbatim. Null — the default, and always the case for the in-memory
-    /// live server — keeps the historical byte-for-byte copy, so the dev loop
+    /// copied verbatim. Null — the default, and what `zigapagos dev`'s own
+    /// rebuild command uses — keeps the byte-for-byte copy, so the dev loop
     /// serves readable, un-mangled CSS (mirroring Vite: minify on build, not dev).
     css_minify_driver: ?[]const u8 = null,
     island_props_check: @import("islands/props_check.zig").Mode = .off,
@@ -633,12 +630,12 @@ pub const Options = struct {
     /// shared runtime, the same PAGE OUTPUT a fallback manifest produces. It is
     /// not the same INVOCATION, though — a manifest-less run also skips the
     /// stale-slice prune below, deliberately; see the comment there.
-    /// `zigapagos serve` never sets it: the live server serves
-    /// `/zigapagos-runtime.js` from its own cache dir via a hard-coded route and
-    /// never bundles a slice.
+    /// A hand-written `zigapagos release` (including the one `zigapagos dev`
+    /// runs) never sets it, so every island page keeps the shared runtime —
+    /// which is also what island hot-swap requires.
     islands_slice_json: ?[]const u8 = null,
-    /// SPAs declared in `build.zig`'s `Options.spas`, threaded through by
-    /// `zigapagos release --spa=<src>|<base>` (one per SPA). Consumed by
+    /// SPAs declared by `zigapagos release --spa=<src>|<base>` (one per SPA).
+    /// Consumed by
     /// `src/spa.zig`'s release-time prerender pass.
     spas: []const SpaSpec = &.{},
     /// Which SPA's "/" shell backs the universal 404.html, named
@@ -655,7 +652,7 @@ pub const Options = struct {
     /// prerender + asset (re)install passes (nothing else changed). Empty (the
     /// default — every release build, and the dev loop's full-rebuild fallback)
     /// keeps the historical behavior: render + emit the whole site. Only the
-    /// disk (release) build consults this; the in-memory live server ignores it.
+    /// disk (release) build consults this; an in-memory build ignores it.
     /// `zigapagos release` populates it from the `ZIGAPAGOS_CHANGED_FILES`
     /// environment variable, which `zigapagos dev` sets when — and only when —
     /// every file that changed is a content page (see `src/cli/dev.zig`).
@@ -683,14 +680,13 @@ pub const Options = struct {
     /// warning is the visibility mechanism. See issue #27 / DX-8. Off by
     /// default: an unintentionally-dangling link should still fail the build.
     ///
-    /// Which CLI commands accept it: `zigapagos release` and the bundled live
-    /// server (no subcommand) parse `--allow-missing-pages` directly. There is
-    /// deliberately NO `zigapagos dev --allow-missing-pages`: `dev` never
-    /// builds the site itself, it re-runs the consumer's rebuild command
-    /// (default `zig build`), so the flag reaches a dev loop through that
-    /// project's `build.zig` — `Options.allow_missing_pages` in `build/api.zig`,
-    /// which `website()` forwards. A flag on `dev` would have nothing to
-    /// forward it to.
+    /// Which CLI commands accept it: `zigapagos release` parses
+    /// `--allow-missing-pages` directly. There is deliberately NO
+    /// `zigapagos dev --allow-missing-pages`: `dev` never builds the site
+    /// itself, it re-runs a rebuild command, so the flag belongs in THAT
+    /// command — `zigapagos dev -- zigapagos release --output=public --force
+    /// --allow-missing-pages`. A flag on `dev` would have nothing to forward
+    /// it to.
     allow_missing_pages: bool = false,
     /// `zigapagos release --summary` (issue #42): print an inventory of the
     /// files this build emitted, grouped by category, once every pass has run.
@@ -709,9 +705,9 @@ pub const Options = struct {
     /// the Bun toolchain, a build graph, or an output tree. Without this flag,
     /// worker.zig's renderPage treats "this page mounts an <island> but no
     /// sidecar is configured" as an authoring mistake and logs one error line
-    /// PER island page -- correct for `release`/`dev`/the live server, where
-    /// an unconfigured sidecar really is a missing `.islands` declaration in
-    /// build.zig, and pure noise for a command that never asked for SSR
+    /// PER island page -- correct for `release` and `dev`, where
+    /// an unconfigured sidecar really is a missing `--island=` declaration,
+    /// and pure noise for a command that never asked for SSR
     /// (measured: 201 lines on a 201-page island fixture).
     ///
     /// When true, that branch stays silent and the raw `<island>` markup is
@@ -720,8 +716,8 @@ pub const Options = struct {
     ///
     /// It suppresses a LOG LINE ONLY. It cannot mask a build failure: the
     /// error flag on that branch is already gated on `build.mode == .disk`,
-    /// and this option is asserted `.memory`-only in `run` below. `release`,
-    /// `dev` and the live server never set it.
+    /// and this option is asserted `.memory`-only in `run` below. `release`
+    /// and `dev` never set it.
     island_sidecar_optional: bool = false,
 
     pub const Mode = union(enum) {
@@ -786,17 +782,28 @@ pub fn run(
             // does the disambiguation; this is where the fix goes into words.
             //
             // The bar is worker.zig's no-sidecar-configured diagnostic: name the
-            // cause AND the fix. The fix here is deliberately not "install bun":
-            // for an npm-installed consumer (#81) bun alone does not enable
-            // islands, because the sidecar script and `@z/runtime` are supplied
-            // by the Zig build integration and `@z/runtime` is unpublished.
+            // cause AND the fix. All three messages used to end by pointing at
+            // `build.zig`'s `.islands` table -- the consumer build API, which no
+            // longer exists: a site is built by RUNNING this binary, and the
+            // three inputs come from `--bun` / `--island-sidecar` /
+            // `--island-src-dir` or from the runtime tree `ZIGAPAGOS_RUNTIME_DIR`
+            // points at. The interpreter message also carried a claim that is
+            // now simply false -- that bun alone cannot enable islands on a
+            // toolchain-free install (#81), because the sidecar and `@z/runtime`
+            // "come from that Zig build integration". `@z/runtime` is indeed
+            // unpublished, but `@zigapagos/cli` SHIPS those sources inside
+            // itself, so an npm install has both halves and an `npm i bun` on
+            // top of it is all that path can be missing. The install that bun
+            // alone does not rescue is the RELEASE ARCHIVE, which carries the
+            // binary and no runtime tree. docs/runtime-dependencies.md is the
+            // full account, and is gated against this file.
             error.InterpreterNotFound => fatal.msg(
                 "error: island sidecar interpreter not found: '{s}'\n" ++
                     "  the sidecar script '{s}' resolves — the missing thing is the interpreter itself.\n" ++
-                    "  islands are server-rendered by bun at build time, wired up by build.zig's `.islands`\n" ++
-                    "  (bun, the sidecar script, and the island source dir). Note that installing bun on its\n" ++
-                    "  own is not enough for a toolchain-free install: the sidecar script and `@z/runtime`\n" ++
-                    "  come from that Zig build integration.\n",
+                    "  islands are server-rendered by bun at build time: install bun and put it on PATH,\n" ++
+                    "  or pass --bun=PATH. An `npm i zigapagos` install carries its own bun; a binary from\n" ++
+                    "  the release archive carries neither bun nor the `@z/runtime` tree. See\n" ++
+                    "  docs/runtime-dependencies.md.\n",
                 .{ bun, script },
             ),
             // Says nothing about the interpreter, deliberately. `Sidecar.spawn`
@@ -809,15 +816,17 @@ pub fn run(
             // script has resolved.
             error.SidecarScriptNotFound => fatal.msg(
                 "error: island sidecar script not found: '{s}'\n" ++
-                    "  this is the `render.ts` supplied by build.zig's `.islands` integration; point\n" ++
-                    "  `--island-sidecar` at it, or let build.zig's `.islands` wiring supply it.\n",
+                    "  this is the render sidecar inside the `@z/runtime` tree; point --island-sidecar at\n" ++
+                    "  it, or set ZIGAPAGOS_RUNTIME_DIR to a runtime tree and let it default. That tree is\n" ++
+                    "  not on npm on its own: it comes from an `@zigapagos/cli` install or a checkout.\n" ++
+                    "  See docs/runtime-dependencies.md.\n",
                 .{script},
             ),
             error.ProjectRootNotFound => fatal.msg(
                 "error: island source dir not found: '{s}'\n" ++
                     "  the sidecar runs with that directory as its cwd, so bun resolves each island's\n" ++
-                    "  `@z/runtime` and JSX imports from the `node_modules` beneath it. Set it to the\n" ++
-                    "  site's project root in build.zig's `.islands`.\n",
+                    "  `@z/runtime` and JSX imports from the `node_modules` beneath it. Set it with\n" ++
+                    "  --island-src-dir=DIR; it defaults to the site root.\n",
                 .{root_dir},
             ),
             else => fatal.msg(
@@ -857,9 +866,9 @@ pub fn run(
         //
         // Deliberately INSIDE the `islands_slice_json != null` branch, matching
         // `src/spa.zig`. An invocation that was never told about slicing — a
-        // hand-written `zigapagos release`, or a ZIGAPAGOS_HOT_ISLANDS dev build,
-        // where `build/bundles.zig` skips the slicer entirely — has no basis for
-        // deleting a file it did not produce and knows nothing about. The cost of
+        // site with no islands, or a ZIGAPAGOS_HOT_ISLANDS dev build, where
+        // `sliceIslandsRuntime` is skipped — has no basis for deleting a file
+        // it did not produce and knows nothing about. The cost of
         // that choice is bounded and already-familiar: an unreferenced
         // `islands/_runtime.js` can linger in an output tree that a sliced build
         // wrote earlier, exactly as the shared runtime lingers unreferenced on a
@@ -979,12 +988,12 @@ pub fn run(
                     } else {
                         std.debug.print("error: static asset glob '{s}' matched no assets\n", .{path});
                     }
-                    // `build.mode == .memory` (the live server) never sees
-                    // diag.format == .json: main.zig gates its `--format=`
-                    // pre-scan to `zigapagos release`'s own arguments, and
-                    // serve.zig's parser rejects the flag outright. So this
-                    // block stays unconditional -- it is not part of the
-                    // text/json split above.
+                    // A `.memory` build never sees diag.format == .json:
+                    // main.zig gates its `--format=` pre-scan to `zigapagos
+                    // release`'s own arguments, and neither `validate` nor
+                    // `explain` accepts the flag. So this block stays
+                    // unconditional -- it is not part of the text/json split
+                    // above.
                     if (build.mode == .memory) {
                         try build.mode.memory.errors.append(gpa, .{
                             .ref = "",
@@ -1686,7 +1695,7 @@ pub fn run(
                         });
                     }
 
-                    // Only error-severity items enter the live server's build-error
+                    // Only error-severity items enter a memory build's build-error
                     // list (see PageAnalysisError.severity's doc comment): that list
                     // is the "the build failed" surface, and a warning like an
                     // unknown code-fence language must not flip it.
@@ -1812,9 +1821,9 @@ pub fn run(
     // that files always have an extension, reducing collision detection
     // to just detecting duplicate paths. This simplified version
     // of the problem can be solved with a hash map, while solving the
-    // full version will require using a tree for the live server
-    // and perhaps some clever scan algorithm in the `zigapagos release` case.
-    // Alternatively, if this algo proves to be sufficiently more efficent
+    // full version will require using a tree, and perhaps some clever scan
+    // algorithm in the `zigapagos release` case.
+    // Alternatively, if this algo proves to be sufficiently more efficient
     // than the tree case, we could default to this method and then only
     // switch to the more expensive approach if necessary.
     if (!parse_errors) {
@@ -2020,9 +2029,9 @@ pub fn run(
     // documented upstream behaviour and orphan directories are a legitimate
     // URL-shaping tool (tests/rendering/simple/content/nested/ uses one on
     // purpose). Deliberately NOT appended to `build.mode.memory.errors` either:
-    // that list is the live server's "the build failed" surface and makes every
-    // URL answer with a build-error page, so only error-severity diagnostics may
-    // enter it (the same rule PageAnalysisError.severity follows). Nothing here
+    // that list is a memory build's "the build failed" surface, so only
+    // error-severity diagnostics may enter it (the same rule
+    // PageAnalysisError.severity follows). Nothing here
     // touches `any_prerendering_error`, so a warning-only build stays exit 0.
     for (build.variants) |*v| {
         if (v.sectionless_dirs.items.len == 0) continue;
@@ -2533,7 +2542,7 @@ pub fn run(
     // left it.
     //
     // Guarded on `.disk and !incremental` because this used to sit below the
-    // `mode == .memory` and `incremental` early returns: the live server never
+    // `mode == .memory` and `incremental` early returns: a memory build never
     // prerenders, and an incremental rebuild re-emits only changed pages while
     // the previous full build's shells stay valid.
     //
@@ -3295,7 +3304,7 @@ fn installBuildAssets(
             // via `.bytes()`/`.size()`/… only). Referencing such an asset with
             // `.link()` reports a graceful page error but should never reach
             // here; skip defensively rather than unwrapping a null optional,
-            // mirroring the sibling install loops (spa.zig, serve.zig).
+            // mirroring the sibling install loop in spa.zig.
             const install_rel = std.mem.trimStart(u8, ba.install_path orelse continue, "/");
             if (collect) |sm| try sm.add(gpa, .build_asset, install_rel);
             _ = build.base_dir.updateFile(
@@ -3385,8 +3394,8 @@ fn writeIslandManifestFile(io: Io, path: []const u8, contents: []const u8) !void
 /// Whether a site asset should be minified rather than copied
 /// verbatim on install. True only for `.css` (case-insensitive) when both a
 /// Bun path and the CSS minify driver were threaded — i.e. a release build.
-/// The in-memory live server never sets `css_minify_driver`, so its CSS is
-/// always copied verbatim (readable dev output).
+/// A run without `css_minify_driver` copies CSS verbatim (readable dev
+/// output) -- which is what `zigapagos dev`'s default rebuild does.
 fn shouldMinifyCss(path: []const u8, options: Options) bool {
     if (options.bun_path == null or options.css_minify_driver == null) return false;
     return std.ascii.endsWithIgnoreCase(path, ".css");
@@ -3474,8 +3483,8 @@ test "assets: shouldMinifyCss gates on extension + release flags" {
         try std.testing.expect(!shouldMinifyCss("noext", o));
     }
 
-    // Dev loop: the in-memory live server never threads css_minify_driver, so
-    // CSS is copied verbatim (readable, un-mangled dev output).
+    // Dev loop: `zigapagos dev`'s default rebuild threads no css_minify_driver,
+    // so CSS is copied verbatim (readable, un-mangled dev output).
     {
         var o = base;
         o.bun_path = "bun";
@@ -3676,7 +3685,7 @@ fn printSuperMdErrors(
         if (build.mode == .memory) {
             // Unlike the `.duplicate_id` note above (a pre-existing gap this
             // change isn't retrofitting), the empty-page-path hint is added to
-            // BOTH output paths, so the live server's error overlay carries it too.
+            // BOTH output paths, so a memory build's error list carries it too.
             //
             // `note_segment` is one of two comptime string literals -- the hint
             // text is fixed (unlike NoteLine's dynamic PageAnalysisError notes

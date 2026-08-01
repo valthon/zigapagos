@@ -4,14 +4,15 @@
 # the served tree, keep the data dir PERSISTENT across sessions, tear down
 # with no orphans.
 #
-# Hermetic: uses tests/serve/stub-zigbase.ts (honoring the real `zigbase serve
+# Hermetic: uses tests/dev/stub-zigbase.ts (honoring the real `zigbase serve
 # --http-host … --http-port … --data-dir … --serve-static …` contract) placed
 # on PATH as `zigbase`, so no real ZigBase binary is needed. Set
 # REAL_ZIGBASE=/path/to/zigbase to ALSO run the boot + edit-rebuild scenario
 # against a real binary.
 #
 # Asserts:
-#   (a) missing --site fails fast with usage guidance,
+#   (a) zero-config: `zigapagos dev` with NO arguments builds, serves and
+#       defaults --site/--rebuild/watch-dirs correctly,
 #   (b) foot-gun guard: --site inside a watched dir is refused,
 #   (c) boot + readiness on a minimal site; a content edit triggers a rebuild
 #       that changes the SERVED output (polled, no server restart),
@@ -23,10 +24,11 @@
 #   (e) a second run REUSES the same data dir (sentinel survives, the server
 #       touches it again),
 #   (f) the default data dir is `.zigbase/` under the site root,
-#   (g) the real consumer surface: examples/tsx-site's `zig build dev` (the
-#       public zigapagos.dev() build API, nested `zig build` as the rebuild
-#       driver) boots, serves the islands page, rebuilds on a content edit,
-#       and tears down cleanly,
+#   (g) the real consumer surface: `zigapagos dev` over examples/tsx-site with
+#       that project's own build.sh as the rebuild command — four islands and
+#       five SPAs, not the toy fixture (a)-(f) use — boots, serves the islands
+#       page and a SPA shell, rebuilds on a content edit, and tears down
+#       cleanly,
 #   (h) [opt-in] the same loop against a REAL zigbase binary (REAL_ZIGBASE=…).
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -55,6 +57,12 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Ask for cores so a crash that prints no usable trace can still be read
+# post-mortem (see try_core_backtrace). Best-effort: a hard limit or a
+# core_pattern that pipes to a handler will defeat it, which is why the
+# reader is told what core_pattern says rather than left wondering.
+ulimit -c unlimited 2>/dev/null || true
+
 fail() { echo "FAIL: $*"; exit 1; }
 
 # Polls a command until it succeeds or the deadline (seconds) passes.
@@ -80,7 +88,7 @@ BIN="$WORK/bin"
 mkdir -p "$BIN"
 cat > "$BIN/zigbase" <<EOF
 #!/usr/bin/env bash
-# STUB zigbase for tests/serve/dev.sh — see tests/serve/stub-zigbase.ts
+# STUB zigbase for tests/dev/dev.sh — see tests/dev/stub-zigbase.ts
 exec bun "$HERE/stub-zigbase.ts" "\$@"
 EOF
 chmod +x "$BIN/zigbase"
@@ -128,8 +136,98 @@ origin_from_log() {
   grep -o 'serving at http://[0-9.]*:[0-9]*' "$1" | head -1 | sed 's/serving at //'
 }
 
-wait_ready() { # $1 = log
-  poll 60 grep -q 'dev: ready' "$1" || { cat "$1"; fail "dev never became ready"; }
+# Dumps a log for a reader who has only CI output. $2 settles first: a Zig panic
+# writes its header immediately and THEN opens its own executable to read DWARF
+# and unwind, which on a 400MB+ debug binary is not instant. Dumping the instant
+# the process disappears can therefore capture the header and miss the trace --
+# which is exactly what a CI crash on the zero-config leg produced.
+dump_log() { # $1 = log, $2 = settle seconds (optional)
+  [[ -n "${2:-}" ]] && sleep "$2"
+  echo "--- $1 ---"; cat "$1" 2>/dev/null; echo "--- end $1 ---"
+}
+
+# A Zig frame looks like `/path/file.zig:12:7: 0xdeadbeef in fn (file.zig)`.
+# The binary is built by plain `zig build` -- Debug, debug_info, not stripped
+# (build/config.zig leaves preferred_optimize_mode commented out) -- so a crash
+# that prints a signal header and NO frames is itself a finding, not something
+# to scroll past: it means the trace was lost or the unwind failed, and the next
+# reader should reach for the core rather than re-reading the log.
+has_zig_trace() { grep -qE '0x[0-9a-f]+ in ' "$1" 2>/dev/null; }
+
+# Best-effort backtrace from a core, for when in-process unwinding produced
+# nothing. Cores only land next to the process if core_pattern writes files at
+# all -- GitHub runners often pipe to a handler instead -- so this reports why
+# it found nothing rather than staying silent.
+try_core_backtrace() { # $1 = cwd the process ran in
+  local pat; pat=$(cat /proc/sys/kernel/core_pattern 2>/dev/null || echo "<unreadable>")
+  local core; core=$(ls -t "$1"/core* /tmp/core* 2>/dev/null | head -1)
+  if [[ -z "$core" ]]; then
+    echo "no core file found (kernel.core_pattern = $pat; ulimit -c = $(ulimit -c))"
+    return
+  fi
+  echo "core: $core"
+  if command -v gdb >/dev/null 2>&1; then
+    gdb -batch -ex 'thread apply all bt' "$ZIGAPAGOS" "$core" 2>&1 | tail -40
+  elif command -v lldb >/dev/null 2>&1; then
+    lldb -batch -o 'thread backtrace all' -c "$core" "$ZIGAPAGOS" 2>&1 | tail -40
+  else
+    echo "(no gdb/lldb to read it)"
+  fi
+}
+
+# $1 = log, $2 = pid (optional). With a pid, a dev that DIES is reported as a
+# death -- with its wait status -- instead of being polled at for the full 60s
+# and then called a timeout.
+#
+# The distinction is not cosmetic. A crashed dev and a slow dev produce the same
+# "never became ready" line, and the log of a process that died on its first
+# instruction is one line long, so the message is all the reader gets. That cost
+# a real diagnosis: a SIGILL on the zero-config leg read as a readiness timeout,
+# and the only clue that it was a crash at all was `Illegal instruction` sitting
+# in the dumped log, which is easy to skim past under a FAIL that says otherwise.
+#
+# `wait` reports the status of a child of THIS shell, so it works on the pid
+# launch_group returned even though that pid leads a process group.
+wait_ready() { # $1 = log, $2 = pid (optional)
+  local log=$1 pid=${2:-}
+  local start=$SECONDS
+  until grep -q 'dev: ready' "$log" 2>/dev/null; do
+    if [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then
+      local status=0
+      wait "$pid" 2>/dev/null || status=$?
+      dump_log "$log" 2
+      # 128+N is a signal death; name the signal, since SIGILL/SIGSEGV/SIGABRT
+      # mean a zigapagos bug while SIGKILL usually means the runner OOMed.
+      if (( status > 128 )); then
+        local signame; signame=SIG$(kill -l $((status - 128)) 2>/dev/null || echo "?($((status - 128)))")
+        if ! has_zig_trace "$log"; then
+          echo "NOTE: $signame with no Zig stack trace in the log. The binary is a"
+          echo "      Debug build with debug_info, so a trace was expected; its"
+          echo "      absence means the unwind failed or the trace was lost."
+          try_core_backtrace "$SRC"
+        fi
+        fail "dev DIED before becoming ready: killed by $signame (status $status) -- this is a crash, not a timeout"
+      fi
+      fail "dev DIED before becoming ready: exited $status -- this is a crash, not a timeout"
+    fi
+    # A CHILD can die without dev noticing. dev shells out for the rebuild --
+    # on the zero-config leg that is this same binary's `release` -- and if that
+    # child crashes, dev stays up and simply never reports ready, so the pid
+    # check above never fires and the 60s timeout blames the wrong process.
+    # A crash signature in the log is therefore worth failing on immediately,
+    # whatever the parent is doing: it is always a bug, and the wait is pure
+    # delay once it appears.
+    if grep -qE 'Illegal instruction|Segmentation fault|Bus error|thread [0-9]+ panic' "$log" 2>/dev/null; then
+      dump_log "$log" 2
+      echo "NOTE: dev itself is still alive, so the crash above is a process it"
+      echo "      SPAWNED -- on the zero-config leg the rebuild is this binary's"
+      echo "      own \`release\`. Look there, not at dev's startup."
+      has_zig_trace "$log" || try_core_backtrace "$SRC"
+      fail "a process dev spawned CRASHED before dev became ready -- see the signature above"
+    fi
+    (( SECONDS - start < 60 )) || { dump_log "$log"; fail "dev never became ready (60s timeout; process still alive)"; }
+    sleep 0.5
+  done
 }
 
 stop_dev() { # $1 = pid
@@ -141,13 +239,32 @@ serves() { # $1 = origin, $2 = marker
   curl -sf "$1/" | grep -q "$2"
 }
 
-# --- (a) missing --site fails fast --------------------------------------------------
-echo "running: zigapagos dev (no --site)..."
-if "$ZIGAPAGOS" dev > "$WORK/nosite.log" 2>&1; then
-  cat "$WORK/nosite.log"; fail "dev without --site should fail"
-fi
-grep -q -- "--site=<built site dir>" "$WORK/nosite.log" || { cat "$WORK/nosite.log"; fail "no-site failure lacks usage guidance"; }
-echo "PASS: missing --site fails fast with usage guidance"
+# --- (a) zero-config: NO arguments at all boots and serves ---------------------------
+# `--site` used to be REQUIRED, and `zigapagos dev` with no arguments fataled
+# with usage. Zero-config is the whole point of issue #56's dev change, so the
+# no-argument invocation is the scenario worth pinning: it must default the
+# output tree to `public/`, default the rebuild to this binary's own `release`,
+# discover its own watch dirs, and reach `dev: ready`.
+#
+# The stub zigbase is already on PATH (see above), so nothing is downloaded —
+# which is itself part of the contract: the implicit fetch only fires when the
+# locator comes up empty.
+echo "running: zigapagos dev (no arguments at all)..."
+ZC_LOG="$WORK/zeroconf.log"
+ZC_PID=$(launch_group "$SRC" "$ZC_LOG" "$ZIGAPAGOS" dev --port=0)
+wait_ready "$ZC_LOG" "$ZC_PID"
+ZC_ORIGIN=$(origin_from_log "$ZC_LOG")
+[[ -n "$ZC_ORIGIN" ]] || { cat "$ZC_LOG"; fail "zero-config dev printed no origin"; }
+serves "$ZC_ORIGIN" DEVLOOP-MARKER-V1 || { cat "$ZC_LOG"; fail "zero-config dev did not serve the built site"; }
+# The default output tree is `public/` under the site root -- release's own
+# default, so `dev` and a bare `release` agree on where the site lands.
+test -f "$SRC/public/index.html" || { cat "$ZC_LOG"; fail "zero-config dev did not build into <site root>/public/"; }
+# The default rebuild command is THIS binary by absolute path, not `zig build`.
+grep -q "dev: initial build: $ZIGAPAGOS release --output=public --force" "$ZC_LOG" \
+  || { cat "$ZC_LOG"; fail "zero-config dev did not default the rebuild to this binary's own release"; }
+stop_dev "$ZC_PID"
+rm -rf "$SRC/public"
+echo "PASS: zero-config 'zigapagos dev' (no arguments) builds, serves and defaults correctly"
 
 # --- (b) foot-gun guard: --site inside a watched dir ---------------------------------
 echo "running: zigapagos dev --site=<inside content/> (guard)..."
@@ -160,7 +277,7 @@ echo "PASS: --site inside a watched dir is refused (rebuild-loop guard)"
 # --- (c) boot + readiness + edit-triggered rebuild -----------------------------------
 echo "running: zigapagos dev (boot + edit -> rebuild)..."
 DEV_PID="$(start_dev "$WORK/dev1.log" --data-dir="$DATA")"
-wait_ready "$WORK/dev1.log"
+wait_ready "$WORK/dev1.log" "$DEV_PID"
 ORIGIN="$(origin_from_log "$WORK/dev1.log")"
 [[ -n "$ORIGIN" ]] || fail "could not parse the origin from the ready line"
 serves "$ORIGIN" "DEVLOOP-MARKER-V1" || fail "initial build not served at $ORIGIN"
@@ -215,7 +332,7 @@ echo "PASS: teardown (origin dead, no dev/zigbase/watcher orphans, data dir inta
 echo "running: zigapagos dev (second session, same --data-dir)..."
 sleep 1.1 # the stub's touch payload is a ms timestamp; make strictly-newer observable
 DEV_PID="$(start_dev "$WORK/dev2.log" --data-dir="$DATA")"
-wait_ready "$WORK/dev2.log"
+wait_ready "$WORK/dev2.log" "$DEV_PID"
 ORIGIN2="$(origin_from_log "$WORK/dev2.log")"
 serves "$ORIGIN2" "DEVLOOP-MARKER-V2" || fail "second session does not serve the tree"
 test -f "$DATA/devloop-sentinel" || fail "second session lost the data-dir sentinel (state not persistent)"
@@ -227,42 +344,42 @@ echo "PASS: persistent data dir reused across two dev sessions"
 # --- (f) default data dir is .zigbase/ under the site root ---------------------------
 echo "running: zigapagos dev (default --data-dir)..."
 DEV_PID="$(start_dev "$WORK/dev3.log")"
-wait_ready "$WORK/dev3.log"
+wait_ready "$WORK/dev3.log" "$DEV_PID"
 test -f "$SRC/.zigbase/stub-zigbase.touch" || fail "default data dir .zigbase/ not created at the site root"
 stop_dev "$DEV_PID"
 echo "PASS: default data dir is <site root>/.zigbase/"
 
-# --- (g) the real consumer surface: examples/tsx-site `zig build dev` ----------------
-# Validates the public zigapagos.dev() build API end to end: --site/-- watch
-# dirs derived from islands/spas, nested `zig build` as the rebuild driver.
-echo "running: zig build dev (tsx-site, stub zigbase on PATH; first build may take a while)..."
+# --- (g) the real consumer surface: `zigapagos dev` over examples/tsx-site ------------
+# (a)-(f) run against a three-page fixture. This runs the same loop against the
+# real example — four islands and five SPAs — with that project's own build.sh
+# after `--`, which is exactly what a user types. It is the only scenario that
+# proves the rebuild command and the served tree agree on a site big enough for
+# them to disagree.
+echo "running: zigapagos dev (tsx-site + its build.sh, stub zigbase on PATH)..."
 ( cd "$REPO/runtime" && mise exec -- bun install ) >/dev/null 2>&1 || fail "runtime bun install failed"
 ( cd "$SITE" && mise exec -- bun install ) >/dev/null 2>&1 || fail "consumer bun install failed"
-TSX_PID="$(launch_group "$SITE" "$WORK/tsx-dev.log" mise exec -- zig build dev)"
-# This is the slowest thing in the suite by a wide margin: a COLD nested `zig
-# build` of the whole example (five .spa.tsx entries plus islands, each bundled
-# through bun) against a fresh .zig-cache. 300s is comfortable on a warm dev
-# machine and is NOT enough on a CI runner building it for the first time — it
-# timed out here at exactly 300s with the build still making progress and no
-# error, which reads as a hang when it is only slow. Overridable so a
-# constrained runner can raise it without editing this file.
+# ZIGAPAGOS_BIN keeps build.sh from compiling a second binary; the dev loop
+# passes its own environment through to the rebuild command, so this reaches it.
+TSX_PID="$(launch_group "$SITE" "$WORK/tsx-dev.log" \
+  env "ZIGAPAGOS_BIN=$ZIGAPAGOS" "$ZIGAPAGOS" dev --site=zig-out/site -- bash build.sh)"
+# The first rebuild bundles five .spa.tsx entries and four islands through bun
+# from a cold `.zigapagos-cache`. Overridable so a constrained runner can raise
+# it without editing this file.
 poll "${ZIGAPAGOS_E2E_TSX_DEV_TIMEOUT:-900}" grep -q 'dev: ready' "$WORK/tsx-dev.log" \
-  || { tail -50 "$WORK/tsx-dev.log"; fail "tsx-site zig build dev never became ready"; }
+  || { tail -50 "$WORK/tsx-dev.log"; fail "tsx-site zigapagos dev never became ready"; }
 TSX_ORIGIN="$(origin_from_log "$WORK/tsx-dev.log")"
 curl -sf "$TSX_ORIGIN/" | grep -q 'data-z-island' || fail "tsx-site / missing islands SSR"
 curl -sf "$TSX_ORIGIN/app/" | grep -q 'id="z-spa-root"' || fail "tsx-site /app/ not a SPA shell"
-echo "PASS: zig build dev boots and serves the islands page + SPA shell"
+echo "PASS: zigapagos dev boots tsx-site and serves the islands page + SPA shell"
 
-# A content edit must flow through the nested `zig build` rebuild into the
-# served tree (slower than (c): a full zig-build graph re-walk, cached steps
-# skipped).
+# A content edit must flow through build.sh into the served tree.
 printf '\nDEVLOOP-TSX-MARKER\n' >> "$SITE/content/index.smd"
 poll 180 bash -c "curl -sf '$TSX_ORIGIN/' | grep -q DEVLOOP-TSX-MARKER" \
   || { tail -50 "$WORK/tsx-dev.log"; fail "tsx-site edit never reached the served output"; }
-echo "PASS: tsx-site edit rebuilt via the nested 'zig build' driver"
+echo "PASS: tsx-site edit rebuilt via its own build.sh"
 
 kill -TERM -- "-$TSX_PID" 2>/dev/null || true
-poll 15 bash -c "! kill -0 $TSX_PID 2>/dev/null" || fail "tsx-site zig build dev did not exit"
+poll 15 bash -c "! kill -0 $TSX_PID 2>/dev/null" || fail "tsx-site zigapagos dev did not exit"
 if curl -sf --max-time 2 -o /dev/null "$TSX_ORIGIN/"; then
   fail "tsx-site server still answering after teardown"
 fi
@@ -277,7 +394,7 @@ if [[ -n "${REAL_ZIGBASE:-}" && -x "${REAL_ZIGBASE:-}" ]]; then
   sed -i.bak 's/DEVLOOP-MARKER-V2/DEVLOOP-MARKER-V1/' "$SRC/content/index.smd" && rm -f "$SRC/content/index.smd.bak"
   RDATA="$WORK/real-data"
   DEV_PID="$(start_dev "$WORK/real.log" --data-dir="$RDATA" --zigbase="$REAL_ZIGBASE")"
-  wait_ready "$WORK/real.log"
+  wait_ready "$WORK/real.log" "$DEV_PID"
   RORIGIN="$(origin_from_log "$WORK/real.log")"
   serves "$RORIGIN" "DEVLOOP-MARKER-V1" || { tail -30 "$WORK/real.log"; fail "real zigbase does not serve the tree"; }
   curl -s "$RORIGIN/api/health" >/dev/null || true # API surface exists (same origin)
@@ -293,4 +410,4 @@ else
   echo "SKIP: real-zigbase scenario (set REAL_ZIGBASE=/path/to/zigbase to enable)"
 fi
 
-echo "PASS: dev loop (boot + readiness + rebuild-on-edit + persistent data dir + teardown + build API)"
+echo "PASS: dev loop (boot + readiness + rebuild-on-edit + persistent data dir + teardown + tsx-site)"

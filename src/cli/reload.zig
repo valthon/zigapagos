@@ -13,7 +13,7 @@
 //!
 //! DEV-ONLY: the snippet is injected by the dev loop into the *installed* tree
 //! post-build; a plain `zig build` / `zigapagos release` never runs this code,
-//! so release output is never touched (proven by tests/serve/dev.sh). SSE (not
+//! so release output is never touched (proven by tests/dev/dev.sh). SSE (not
 //! WebSocket) keeps the server tiny and the client a one-liner, and
 //! `EventSource` auto-reconnects — so the reconnect after the reload it just
 //! triggered is automatic, with no bookkeeping here.

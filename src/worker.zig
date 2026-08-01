@@ -1414,8 +1414,8 @@ fn renderPage(
         // order silently shipped the literal `<island …></island>` element with no
         // SSR, no runtime script and exit code 0 whenever the sidecar was
         // unconfigured — and "unconfigured" includes the ordinary authoring
-        // mistake of adding an `<island>` to a layout without declaring it in
-        // build.zig's `.islands` (root.zig's spawn guard needs all three of
+        // mistake of adding an `<island>` to a layout without passing an
+        // `--island=` for it (root.zig's spawn guard needs all three of
         // bun_path/island_sidecar/island_src_dir, and quietly does nothing if any
         // is null). A page that asks for an island and gets an inert tag is a
         // build error, not a pass-through. Cost of the reordering: one memchr per
@@ -1427,20 +1427,20 @@ fn renderPage(
         const sc: *@import("islands/sidecar.zig").Sidecar = if (build.island_sidecar) |*s| s else {
             // Mirrors the render-error policy below: a disk build is a
             // release/deploy, so fail rather than publish a page whose island
-            // never hydrates; dev serve keeps going so the author can see the
-            // page, with the cause logged at .err (the CLI's level).
+            // never hydrates; a memory build keeps going so the author can see
+            // the page, with the cause logged at .err (the CLI's level).
             //
             // `island_sidecar_optional` (validate/explain, see
             // root.Options.island_sidecar_optional): those commands
             // deliberately configure NO sidecar -- their whole point is
             // checking/reporting on a site without the Bun toolchain -- so "no
             // sidecar" is their normal state, not an authoring mistake.
-            // Suppress the log line for them; everything else (release, dev,
-            // the live server) keeps the diagnostic verbatim.
+            // Suppress the log line for them; everything else (release, dev)
+            // keeps the diagnostic verbatim.
             if (!build.island_sidecar_optional) {
                 log.err(
                     "island rendering error on {s}: the page uses <island> but no island sidecar is configured" ++
-                        " — declare the island in build.zig's `.islands` (needs bun, the sidecar script," ++
+                        " — declare the island with `--island=<src>` (needs bun, the sidecar script," ++
                         " and the island source dir)",
                     .{page_path},
                 );
@@ -1469,9 +1469,9 @@ fn renderPage(
         };
         // Render-error policy: a disk build is a release/deploy —
         // fail so broken output never ships (`process` returns the error, caught
-        // below → any_rendering_error). A memory build is dev serve — keep going
-        // with a visible per-island placeholder, so one broken island doesn't
-        // blank the whole page. Either way `islands.process` records each failing
+        // below → any_rendering_error). A memory build reports rather than
+        // ships — keep going with a visible per-island placeholder, so one
+        // broken island doesn't blank the whole page. Either way `islands.process` records each failing
         // island's structured detail (src, route, JS message, source-mapped
         // stack) into `render_errors`, which we log here with page context —
         // instead of the message + stack being swallowed at the Zig↔Bun boundary.

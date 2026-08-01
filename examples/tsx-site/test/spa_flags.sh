@@ -9,11 +9,10 @@
 # reconciles with real state) is spa_playwright.py's steps 2 and 5.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-trap 'git -C ../.. ls-files --deleted -z -- tests/ | xargs -0 -I{} git -C ../.. restore -- {}' EXIT
 
 (cd ../../runtime && mise exec -- bun install)
 mise exec -- bun install
-mise exec -- zig build
+bash build.sh
 
 OUT=zig-out/site
 SNAPSHOT='<script type="application/json" data-z-flags>{"flags":{"bookAsGuest":true,"promoBanner":false},"experiments":{}}</script>'

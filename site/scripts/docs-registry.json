@@ -56,6 +56,13 @@
     "description": "Every SuperHTML template construct in one page: the five colon directives, ctx/extend/super, and an explicit list of what does not exist."
   },
   {
+    "canonical": "docs/runtime-dependencies.md",
+    "mirror": "runtime-dependencies.smd",
+    "slug": "runtime-dependencies",
+    "title": "Runtime dependencies",
+    "description": "What the standalone binary needs at run time: which commands require Bun or ZigBase, how each is obtained, and what npm supplies that a release archive does not."
+  },
+  {
     "canonical": "docs/observability.md",
     "mirror": "observability.smd",
     "slug": "observability",

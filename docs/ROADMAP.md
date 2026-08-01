@@ -29,7 +29,7 @@ The **TSX island engine is built and merged to main**:
 - **Zig-WASM island path retired/deleted.** The old `render(*Z)` / WASM island
   path has been removed. Migration from React is now a near-mechanical import
   swap (see [astro-to-zigapagos.md](migration/astro-to-zigapagos.md)).
-- **Worked example**: `examples/tsx-site/` — `Hero.island.tsx`, layout, `build.zig`,
+- **Worked example**: `examples/tsx-site/` — `Hero.island.tsx`, layout, `build.sh`,
   `package.json`/`tsconfig.json`, SSR + hydration tests.
 
 ---
@@ -49,11 +49,11 @@ Acknowledgements](../README.md#acknowledgements); git remote name `upstream`). P
 - **Keep the seam narrow:** new features go in new files with guarded hooks.
   The upstream-touched surface is ~18 files; avoid growing it without need.
 - **Windows CI is suspended until the Zig 0.17 port.** Inherited upstream code
-  (`src/cli/serve/watcher/WindowsWatcher.zig`, `src/wuffs.zig`) does not compile
+  (`src/cli/watcher/WindowsWatcher.zig`, `src/wuffs.zig`) does not compile
   on stable Zig 0.16.0 (`std.os.windows` no longer exposes `OVERLAPPED` /
   `PAGE_READONLY`); the fix rides the upstream 0.17-dev branch. CI runs
   ubuntu + macos; re-add `windows-latest` with the 0.17 port.
-- **FreeBSD requires FreeBSD 15 or newer.** The dev-server / `serve` file
+- **FreeBSD requires FreeBSD 15 or newer.** The `zigapagos dev` file
   watcher on FreeBSD reuses the inotify-based `LinuxWatcher`; inotify entered the
   FreeBSD base system in 15. There is no native kqueue backend, so on FreeBSD
   < 15 live reload does not work (the inotify symbols are unresolved / fail at
@@ -85,7 +85,9 @@ a ZigBase backend — queued the migration backlog. Ordering for the migration p
 
 1. **Unblock the day-one dev loop:** `dev-server-api-proxy` (HIGH) — relative
    `/api/*` must reach a running backend before any gated flow can be exercised.
-   ✅ **shipped 2026-07-05** (`zigapagos serve --proxy`; see `docs/spa.md`).
+   ✅ **resolved 2026-08-01**: `zigapagos dev` serves the release tree with the
+   real ZigBase backend on the same origin, so `/api/*` reaches it directly and
+   no proxy layer is needed (issue #56).
 2. **Unblock a cookie-auth-gated app:** `spa-route-guards` (HIGH) +
    `nested-layout-routes` — no gated-content first-paint flash; shared chrome.
    Both ✅ **shipped 2026-07-06** (`RouteDef.guard` + `Router fallback`; `children` + `<Outlet/>` with per-scope guard cascade; see `docs/spa.md`).
@@ -98,7 +100,7 @@ a ZigBase backend — queued the migration backlog. Ordering for the migration p
 5. **Any time:** browser error relay, same-origin fetch defaults, live flags,
    router paper cuts, state-preserving reload. CSP-compatible emit is **shipped**:
    any site with islands or SPAs gets per-inline-script sha256 hashes written to
-   `csp.{nginx.conf,apache.conf,zigbase.txt}` (`build/site.zig`, `docs/spa.md`).
+   `csp.{nginx.conf,apache.conf,zigbase.txt}` (`zigapagos release`, `docs/spa.md`).
 
 **Cross-cutting — ZigBase integration seams.** Route guards, browser error relay,
 same-origin fetch defaults, live flags, and native codegen each have a backend

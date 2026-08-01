@@ -52,17 +52,21 @@ map. No island on the page? Zero JavaScript shipped.
   React → `@z/runtime` import swaps already applied. It converts no page, layout
   or config itself — the docs are written as a deterministic mapping spec so an
   AI agent can complete the migration unattended.
-- **Batteries-included dev server** — instant rebuilds with live reload over
-  SSE, an API reverse proxy (`--proxy`) for cookie-auth backends, and live
-  feature flags.
+- **Zero-config dev loop** — `zigapagos dev` rebuilds the site, serves the real
+  release tree with the stock ZigBase binary (same-origin API and admin UI, not
+  a proxy shim), and live-reloads the browser over SSE. Islands hot-swap with
+  their `useState` intact.
 - **A real templating stack, no JS required** — SuperHTML layouts and SuperMD
   content with build-time correctness checks, inherited from Zine.
-- **Fast native core** — the site graph, content pipeline, and dev server are
-  Zig; the only JS toolchain is Bun, used surgically for TSX.
+- **Fast native core** — the site graph and content pipeline are Zig; the only
+  JS toolchain is Bun, used surgically for TSX.
 
 ## Quickstart
 
 ### From source
+
+`zig build` builds ZIGAPAGOS. It does not build websites — the binary does that,
+and needs no Zig toolchain of its own.
 
 ```bash
 # toolchain (or install zig 0.16.0 + bun 1.2 yourself)
@@ -70,14 +74,14 @@ mise install
 
 zig build          # build the zigapagos binary
 zig-out/bin/zigapagos init   # scaffold a site
-zig-out/bin/zigapagos        # dev server at http://localhost:1990
+zig-out/bin/zigapagos dev    # dev loop at http://127.0.0.1:1990
 ```
 
 ### From npm, no toolchain
 
 ```bash
 npx zigapagos init                            # scaffold a content site
-npx zigapagos                                 # live server at http://localhost:1990
+npx zigapagos dev                             # dev loop at http://127.0.0.1:1990
 npx zigapagos release --output=public --force  # build it
 ```
 
@@ -86,14 +90,16 @@ either OS until a native aarch64 build lands, and `npm install` refuses those ho
 rather than substituting the x64 binary. `zigapagos` is an alias for the canonical
 [`@zigapagos/cli`](npm/README.md). This channel covers **everything**: content
 sites, the CLI tooling (`init`, `migrate`, `doctor`, `validate`, `explain`),
-**islands**, **native SPAs** and `zigapagos dev`, with no Zig toolchain and no
-`build.zig`. The package ships the `@z/runtime` sources and the Bun sidecar, and
-depends on `bun` and `@zigbase/server`, so `release` discovers your
-`*.island.tsx` / `*.spa.tsx` entries and bundles them itself.
+**islands**, **native SPAs** and `zigapagos dev`, with no Zig toolchain. The
+package ships the `@z/runtime` sources and the Bun sidecar, and depends on `bun`
+and `@zigbase/server`, so `release` discovers your `*.island.tsx` / `*.spa.tsx`
+entries and bundles them itself.
 
-What a Zig build still adds is caching, not capability: `build.zig` drives Bun
-through the build graph, so an unchanged bundle is skipped. See
-[npm/README.md](npm/README.md) for the full comparison and the install size.
+The [releases page](https://github.com/valthon/zigapagos/releases) gets you the
+binary and nothing else — no Bun, and no `@z/runtime` tree, which islands and
+SPAs need. [`docs/runtime-dependencies.md`](docs/runtime-dependencies.md) is the
+full account: what each command needs installed, how Bun and ZigBase are
+obtained, and what npm supplies that an archive does not.
 
 To add your first island, see [docs/islands.md](docs/islands.md). A complete
 worked example lives in [`examples/tsx-site/`](examples/tsx-site/) — islands,

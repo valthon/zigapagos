@@ -12,10 +12,10 @@
 //     e.g. admin-only host.loadScript on a public SPA — are DCE'd out. Writes a
 //     `{ "runtime": "/spa/<name>-runtime.js", "members": [...] }` slice manifest.
 //
-// The slice manifest is threaded to the release-time prerender (spa.zig via
-// `zigapagos release --spa-slice`), which points that SPA's shell import-map at the
-// per-SPA runtime (SLICED) or the shared one (FALLBACK). One runtime per page ⇒
-// one Preact, always.
+// `zigapagos release` runs this driver per SPA (release.zig's `bundleSpas`) and
+// hands the manifest it writes to the prerender pass as `SpaSpec.slice_json`,
+// which points that SPA's shell import-map at the per-SPA runtime (SLICED) or
+// the shared one (FALLBACK). One runtime per page ⇒ one Preact, always.
 import { resolve, dirname, isAbsolute } from "node:path";
 import { mkdirSync, readFileSync } from "node:fs";
 import type { BunPlugin } from "bun";

@@ -33,8 +33,8 @@ time by a Bun sidecar, and hydrated client-side via an import map.
 | `src/components/*.{astro,jsx,tsx}` | `components/*.island.tsx` (islands) or `layouts/templates/*.shtml` (static partials) | Interactive → TSX island; static-only → SuperHTML partial. |
 | `src/content/**` (content collections) | `content/**/*.smd` | Collections → content directories; see §11. |
 | `public/**` | `assets/**` (+ `static_assets` in config) | Static passthrough. |
-| `astro.config.mjs` | `zigapagos.ziggy` + `build.zig` | Config split: site config in Ziggy, build/islands in `build.zig`. |
-| `package.json` / `node_modules` (for the site) | `build.zig.zon` (for Zig deps); `package.json` with `@z/runtime` for islands | Bun manages island deps; `@z/runtime` is the only runtime dep. |
+| `astro.config.mjs` | `zigapagos.ziggy` + `build.sh` | Config split: site config in Ziggy, island/SPA entries on the `zigapagos release` command line. |
+| `package.json` / `node_modules` (for the site) | `package.json` with `@z/runtime` | Bun manages island deps; `@z/runtime` is the only runtime dep. There is no Zig-side dependency: `zigapagos` is a binary you run. |
 
 ## 2. Config: `astro.config.mjs` → `zigapagos.ziggy`
 
@@ -425,48 +425,33 @@ for the full rules (whitespace trimming, `slot="default"`, hydration mechanics).
 
 ## 10. Build wiring (replaces bundler config)
 
-Zigapagos builds islands via `zigapagos.website(.islands)` in `build.zig`. The build:
+One `zigapagos release` invocation builds the whole site. It:
 
 1. Spawns a **Bun sidecar** to SSR each island (produces the HTML fragment + `data-z-props` JSON injected into the page).
 2. **Bundles** each island to an ES module at `/islands/<Name>.island.js`, with `@z/runtime` kept external.
 3. Emits `/zigapagos-runtime.js` (the shared Preact bundle) and an **import map** wiring `"@z/runtime"` to it, ensuring one Preact instance.
 
-```zig
-// build.zig
-const std = @import("std");
-const zigapagos = @import("zigapagos");
+Put it in a `build.sh` so there is one place your entries are declared:
 
-pub fn build(b: *std.Build) void {
-    const site = zigapagos.website(b, .{
-        .islands = &.{
-            // `src` is the string in <island src="...">
-            .{ .root = b.path("components/Hero.island.tsx"),
-               .src  = "components/Hero.island.tsx" },
-            .{ .root = b.path("components/Promo.island.tsx"),
-               .src  = "components/Promo.island.tsx" },
-        },
-        .output_path = "site",
-    });
-    b.getInstallStep().dependOn(&site.step);
-}
+```sh
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")"
+
+bun install --frozen-lockfile 2>/dev/null || bun install
+
+exec zigapagos release \
+  --force \
+  --output=zig-out/site \
+  --island-props-check=error \
+  --island=components/Hero.island.tsx \
+  --island=components/Promo.island.tsx \
+  "$@"
 ```
 
-```zig
-// build.zig.zon — depend on Zigapagos under the name `zigapagos`.
-// PREFER a git+https URL with a hash: `.zon` forbids ABSOLUTE path deps, and a
-// RELATIVE path to an out-of-tree fork is fragile (it breaks if the site moves,
-// e.g. into a worktree at a different depth). Fetch it with
-// `zig fetch --save=zigapagos git+https://github.com/<you>/zigapagos#<commit>` to fill
-// in the hash:
-.dependencies = .{
-    .zigapagos = .{
-        .url = "git+https://github.com/<you>/zigapagos#<commit-sha>",
-        .hash = "...",   // written by `zig fetch --save`
-    },
-    // Or, for local development against a checkout, a relative path (no hash):
-    //   .zigapagos = .{ .path = "../zigapagos" },
-},
-```
+Each `--island=` value is the string you write in `<island src="...">`.
+`zigapagos init --from-astro` writes this file for you, with one line per
+detected island.
 
 The consumer project also needs a **Bun project** for the island deps:
 
@@ -487,17 +472,15 @@ The consumer project also needs a **Bun project** for the island deps:
 }
 ```
 
-Run `bun install` before `zig build` so the Bun sidecar can resolve `@z/runtime`.
-See `examples/tsx-site/` for a complete working project (`build.zig`, `package.json`,
+`build.sh` runs `bun install` first so the Bun sidecar can resolve `@z/runtime`.
+See `examples/tsx-site/` for a complete working project (`build.sh`, `package.json`,
 `tsconfig.json`, `components/Hero.island.tsx`, `layouts/index.shtml`, and the
 `test/ssr.sh` + `test/hydrate.sh` test scripts).
 
-> **Toolchain — pin Zig 0.16.0 in the site directory.** Zigapagos requires exactly
-> Zig **0.16.0**. If you manage Zig with [mise](https://mise.jdx.dev/), drop a
-> `mise.toml` with `[tools]\nzig = "0.16.0"` in the site dir and `mise trust` it.
-> **A parent `.mise.toml`/`mise.toml` higher up your tree can silently shadow this**
-> and select a different Zig, and the resulting failure is a wall of stdlib
-> API-mismatch errors that *looks like a fork bug* rather than a version mismatch.
+> **Toolchain — you need `zigapagos` and `bun`, and no Zig.** `zigapagos` is a
+> standalone executable: install it with `npx zigapagos` (which brings its
+> runtime tree and Bun with it) or download a precompiled binary from the
+> releases page. Nothing in a migrated project is compiled from Zig source.
 > If you see those, check `zig version` / `mise current` first.
 
 ## 11. Content collections & site-wide data
@@ -626,11 +609,10 @@ Flag these during migration; use the workaround:
 ## Migration procedure (for an agent)
 
 1. **Scaffold** the target: `zigapagos.ziggy` (§2), `content/`, `layouts/`, `assets/`,
-   `components/`, `build.zig`/`build.zig.zon`, `package.json`, `tsconfig.json`.
+   `components/`, `build.sh`, `package.json`, `tsconfig.json`.
 
    Run `zigapagos migrate <astro-dir>` to generate `MIGRATION.md`: a ready-to-follow
-   worklist with all islands detected and a copy-paste-ready `build.zig` wiring
-   block.
+   worklist with all islands detected.
 
    Example:
    ```
@@ -651,8 +633,8 @@ Flag these during migration; use the workaround:
    to `@z/runtime`, replace direct DOM/browser calls with `host.*`, remove npm deps
    not in the allowed set. See [recipes](recipes.md).
 5. **Props/directives/slots**: translate per §7–§9. Check the [gaps](#gaps-not-yet-supported).
-6. **Build wiring**: register each island in `build.zig` (§10). Run `bun install`
-   then `zig build`; fix SSR/TS diagnostics until clean.
+6. **Build wiring**: add one `--island=` per island to `build.sh` (§10). Run it;
+   fix SSR/TS diagnostics until clean.
 7. **Verify**: run the site and confirm each island SSRs correctly and hydrates.
 
 **Machine-readable diagnostics for step 6's fix loop (issue #46).** An agent

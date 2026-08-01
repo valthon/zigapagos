@@ -6,13 +6,15 @@
 #   plumbing-only-build — --no-islands build proves plumbing + content/layout stubs
 #                         correct; island FILES proven to exist by (A) tree assertions.
 #
-# Known issues handled here:
-#   • fingerprint = 0x0 in generated build.zig.zon — Zig 0.16 rejects 0x0 as a hard
-#     error but prints the real value in the message.  fix_fingerprint() reads that value,
-#     patches build.zig.zon, and retries.
-#   • Zig 0.16 requires .path deps in build.zig.zon to be RELATIVE paths; passing an
-#     absolute path via --zigapagos-path fails.  We create a symlink $GEN/repo -> $REPO so
-#     the relative paths "../repo" and "../repo/runtime" are always valid.
+# The generated project builds with the standalone binary and bun, through its
+# own scaffolded build.sh — no Zig toolchain, no package graph, no `.path`
+# dependency. `ZIGAPAGOS_BIN` points build.sh at the binary this repo just
+# built (the scaffold defaults to `zigapagos` on PATH, which is what an
+# `npx zigapagos` install provides), and `ZIGAPAGOS_RUNTIME_DIR` names the
+# runtime tree the sidecar and bundlers come out of (which the npm launcher sets
+# for a real install).
+#
+# Known issue handled here:
 #   • ContactForm.island.tsx imports ./Recaptcha.tsx — that file is not copied to the
 #     generated project (generator only copies explicit islands, not transitive deps).
 #     Full island build therefore fails; plumbing-only build is the fallback.
@@ -21,52 +23,23 @@ cd "$(git rev-parse --show-toplevel)"
 REPO="$(pwd)"
 GEN="$(mktemp -d)"; trap 'rm -rf "$GEN"' EXIT
 
-# Create a symlink so we can give the generator RELATIVE paths (Zig 0.16 requirement).
-# $GEN/repo -> $REPO  =>  ../repo (from $GEN/site/) is a valid relative dep path.
+# The @z/runtime dep in the generated package.json is a `file:` path, so it has
+# to be reachable from $GEN/site. $GEN/repo -> $REPO makes "../repo/runtime"
+# valid from anywhere under $GEN.
 ln -s "$REPO" "$GEN/repo"
-ZIGAPAGOS_PATH="../repo"    # relative from $GEN/site/ -> $GEN/repo -> $REPO
 RUNTIME_PATH="../repo/runtime"
 
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-# fix_fingerprint DIR
-# If DIR/build.zig.zon has .fingerprint = 0x0 (invalid in Zig 0.16), run zig build
-# once to extract the real fingerprint from the error, then patch the file.
-fix_fingerprint() {
-  local dir="$1"
-  local zon="$dir/build.zig.zon"
-  if ! grep -q 'fingerprint = 0x0' "$zon" 2>/dev/null; then
-    return 0  # nothing to fix
-  fi
-  local err fp
-  err=$(cd "$dir" && mise exec -- zig build 2>&1 || true)
-  fp=$(echo "$err" | sed -n 's/.*use this value: \(0x[0-9a-f][0-9a-f]*\).*/\1/p' | head -1)
-  if [ -z "$fp" ]; then
-    echo "    WARNING: could not extract real fingerprint; leaving 0x0"
-    return 0
-  fi
-  echo "    Fixing fingerprint: 0x0 -> $fp"
-  sed -i "s/\.fingerprint = 0x0/.fingerprint = $fp/" "$zon"
-}
-
-# run_zig_build DIR — fix fingerprint if needed, then run zig build (returns its exit code).
-run_zig_build() {
-  local dir="$1"
-  fix_fingerprint "$dir"
-  cd "$dir" && mise exec -- zig build
-}
-
-# ---------------------------------------------------------------------------
-# Step 1: Build zigapagos binary and restore snapshots
+# Step 1: Build the zigapagos binary
 # ---------------------------------------------------------------------------
 echo "==> Step 1: build zigapagos binary"
 mise exec -- zig build
-# Restore any snapshots deleted by the root zig build (snapshot footgun).
-git ls-files --deleted -z -- tests/ | xargs -0 -I{} git restore -- {}
 ZIGAPAGOS="$(realpath "$(find zig-out -name zigapagos -type f | head -1)")"
 echo "    zigapagos binary: $ZIGAPAGOS"
+
+# What a generated project needs at build time, and nothing else.
+export ZIGAPAGOS_BIN="$ZIGAPAGOS"
+export ZIGAPAGOS_RUNTIME_DIR="$REPO/runtime"
 
 # ---------------------------------------------------------------------------
 # Step 2: Generate consumer project from astro-sample (WITH islands)
@@ -74,7 +47,6 @@ echo "    zigapagos binary: $ZIGAPAGOS"
 echo "==> Step 2: generate consumer project from astro-sample"
 "$ZIGAPAGOS" init --from-astro "$REPO/tests/migrate/astro-sample" \
   --out "$GEN/site" \
-  --zigapagos-path "$ZIGAPAGOS_PATH" \
   --runtime-path "$RUNTIME_PATH" \
   --site-title "Gen Test" \
   --host-url "https://gen.test"
@@ -83,12 +55,20 @@ echo "==> Step 2: generate consumer project from astro-sample"
 # (A) Tree assertions: plumbing + islands + stubs all exist.
 # ---------------------------------------------------------------------------
 echo "==> Step 3: tree assertions (A)"
-for f in package.json tsconfig.json build.zig build.zig.zon zigapagos.ziggy mise.toml \
+for f in package.json tsconfig.json build.sh zigapagos.ziggy mise.toml \
          components/Counter.island.tsx components/ContactForm.island.tsx \
          layouts/index.shtml content/index.smd test/ssr.sh MIGRATION.md; do
   test -f "$GEN/site/$f" || { echo "FAIL: generated project missing $f"; exit 1; }
   echo "    OK: $f"
 done
+
+# Nothing that would drag a Zig toolchain into a scaffolded project.
+for f in build.zig build.zig.zon; do
+  test -e "$GEN/site/$f" && { echo "FAIL: generator emitted $f — a site is not built by a build graph"; exit 1; }
+done
+grep -q '^zig ' "$GEN/site/mise.toml" \
+  && { echo "FAIL: mise.toml pins a Zig toolchain the project never invokes"; exit 1; }
+echo "    OK: no build.zig / build.zig.zon / zig pin"
 
 grep -q 'jsxImportSource' "$GEN/site/tsconfig.json" \
   || { echo "FAIL: tsconfig missing jsxImportSource"; exit 1; }
@@ -100,9 +80,9 @@ echo "    OK: package.json has @z/runtime file: dep"
 
 grep -q 'components/Counter.island.tsx' "$GEN/site/layouts/index.shtml" \
   || { echo "FAIL: layout missing Counter island src"; exit 1; }
-grep -q 'components/Counter.island.tsx' "$GEN/site/build.zig" \
-  || { echo "FAIL: build.zig missing Counter island src"; exit 1; }
-echo "    OK: layout <island src> and build.zig island src are consistent"
+grep -q -- '--island=components/Counter.island.tsx' "$GEN/site/build.sh" \
+  || { echo "FAIL: build.sh missing Counter island entry"; exit 1; }
+echo "    OK: layout <island src> and build.sh --island= are consistent"
 
 echo "    PASS (A): all tree assertions passed"
 
@@ -114,7 +94,6 @@ echo "==> Step 3b: --force re-run overwrites island .tsx (no .new)"
 printf '\n// ZIGAPAGOS-FORCE-MARKER\n' >> "$GEN/site/components/Counter.island.tsx"
 "$ZIGAPAGOS" init --from-astro "$REPO/tests/migrate/astro-sample" \
   --out "$GEN/site" --force \
-  --zigapagos-path "$ZIGAPAGOS_PATH" \
   --runtime-path "$RUNTIME_PATH" \
   --site-title "Gen Test" \
   --host-url "https://gen.test"
@@ -134,12 +113,9 @@ echo "==> Step 4: install deps"
 cd "$REPO/runtime" && mise exec -- bun install --silent 2>/dev/null \
   || mise exec -- bun install
 
-# Generated project deps: creates the @z/runtime -> $GEN/repo/runtime symlink.
-cd "$GEN/site" && mise exec -- bun install
-
 echo "==> Step 5: build attempt — full island build (Counter + ContactForm)"
 BUILD_LEVEL=""
-if run_zig_build "$GEN/site" 2>&1; then
+if bash "$GEN/site/build.sh" 2>&1; then
   BUILD_LEVEL="full-island-build"
   echo "    Full island build SUCCEEDED."
 else
@@ -154,15 +130,12 @@ else
   GEN_NI="$GEN/site-noislands"
   "$ZIGAPAGOS" init --from-astro "$REPO/tests/migrate/astro-sample" \
     --out "$GEN_NI" \
-    --zigapagos-path "$ZIGAPAGOS_PATH" \
     --runtime-path "$RUNTIME_PATH" \
     --site-title "Gen Test" \
     --host-url "https://gen.test" \
     --no-islands
 
-  cd "$GEN_NI" && mise exec -- bun install
-
-  if run_zig_build "$GEN_NI" 2>&1; then
+  if bash "$GEN_NI/build.sh" 2>&1; then
     BUILD_LEVEL="plumbing-only-build"
     echo "    Plumbing-only build SUCCEEDED."
     test -f "$GEN_NI/zig-out/site/index.html" \
@@ -179,10 +152,6 @@ if [ "$BUILD_LEVEL" = "full-island-build" ]; then
     || { echo "FAIL: full island build did not emit zig-out/site/index.html"; exit 1; }
   echo "    OK: zig-out/site/index.html exists (full island build)"
 fi
-
-# Final snapshot restore.
-cd "$REPO"
-git ls-files --deleted -z -- tests/ | xargs -0 -I{} git restore -- {}
 
 echo ""
 echo "==> RESULTS"

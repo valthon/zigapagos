@@ -166,7 +166,7 @@ time:
 
 1. If a matching file exists in the assets dir, it is **staged
    automatically** — same mechanics as a `static_assets` entry, no extra
-   `build.zig`/`zigapagos.ziggy` wiring needed.
+   `zigapagos.ziggy` wiring needed.
 2. Otherwise, if a declared build asset installs that path (its
    `install_path` matches), the reference marks it for install.
 3. Otherwise the **build fails**, naming the SPA and the href — a renamed or
@@ -371,11 +371,10 @@ build never renders concrete IDs like `app/club/1.html` on its own. A route's
   concrete URL, or an entry that lands on a declared static route's URL, fail
   the build with a message naming the SPA, both route patterns, and the
   colliding URL — rather than silently writing the same output file twice.
-- **`zigapagos serve` renders the same per-entry pages release does:** each
-  `staticPaths` entry gets its own shell in dev too (not just the dynamic
-  pattern's `_shell.html`), kept in sync on every source-file change like
-  every other route's shell, and served ahead of the pattern fallback by the
-  dev router's exact-match tier — no separate dev-only behavior to remember.
+- **Dev and release are the same pages:** `zigapagos dev` serves the real
+  release tree, so each `staticPaths` entry has its own shell there too (not
+  just the dynamic pattern's `_shell.html`) — there is no dev-only routing
+  behavior to remember.
 
 ### 3. Renders skeletons
 For each route, the build SSRs the skeleton (loading state):
@@ -415,7 +414,7 @@ Each shell is a complete HTML document that:
   - **zigbase** → `<base>/.spa` (an empty marker file) + `<base>/zigbase.static_routes.zig` (an optional comptime snippet)
   - **nginx** → `<base>/nginx.nginx.conf`
   - **apache** → `<base>/apache.htaccess`
-- `/404.html` — the universal fallback: the 404-owner SPA's `/` shell (`not_found` in `build.zig`; defaults to the first declared SPA)
+- `/404.html` — the universal fallback: the 404-owner SPA's `/` shell (`--spa-not-found`; defaults to the first declared SPA)
 
 ## Hydration and Soft Navigation
 
@@ -866,8 +865,9 @@ guard: zbGuard<Customer>({ collection: "customers", redirect: "/login" })
   `{ token, record }` envelope — so the identity lands in
   [`useGuardData<T>()`](#guard-data-useguarddata) for the whole gated subtree.
 - The probe goes through `apiFetch` (same-origin `credentials: "include"` + the `zb_csrf`
-  CSRF echo on the POST), so it works identically behind `zigapagos serve --proxy` in dev
-  and on the ZigBase host in production, and it composes with the
+  CSRF echo on the POST), so it works identically under `zigapagos dev` — which
+  serves the release tree from the real ZigBase — and in production, and it
+  composes with the
   [session-expiry policy](#session-expiry-automatic-guard-re-run-on-401): a mid-session
   401 re-runs this guard, which then issues the redirect (the Router's in-flight
   suppression keeps the probe's own 401 from recursing).
@@ -967,39 +967,38 @@ non-`true` wins.
 > stick at the prerendered placeholder value. Rendering the param as **text** (`<span>{org}</span>`)
 > is safe (text children self-heal on hydrate). This mirrors the dynamic-leaf skeleton rule above.
 
-## Declaring an SPA in `build.zig`
+## Declaring an SPA
 
-An SPA is declared in the consumer's `build.zig` via a `zigapagos.Spa` entry in the website configuration:
+An SPA is declared on the `zigapagos release` command line:
 
-```zig
-var opts = try zigapagos.Options.init(b, .{ .site = site });
-try opts.spas.append(.{
-  .root = b.path("app/app.spa.tsx"),  // path to the .spa.tsx file
-  .src = "app/app.spa.tsx",           // relative from site root
-  .base = "/app",                     // URL base (MUST match export const spa.base)
-});
+```sh
+zigapagos release --spa='app/app.spa.tsx|/app'
 ```
 
-The `.base` in the struct **must** match the `base` exported from the `.spa.tsx` module. The build validates this match and fails loudly if they diverge.
+The value is `<src>|<base>`: the path to the `.spa.tsx` relative to the site
+root, and the URL base this SPA owns. The declared `base` **must** match the
+`base` exported from the module; the build validates the match and fails loudly
+if they diverge, which is the point of restating it — the command line cannot
+import TypeScript, so a wrong base would otherwise be discovered by a visitor.
 
-### Choosing the 404 owner (`not_found`)
+Omitting the `|<base>` half skips the agreement check and takes the module's
+own. An entry left off the command line entirely is discovered by a scan of the
+site root, so a `.spa.tsx` is never silently unbuilt — but declaring it is what
+buys the check.
+
+### Choosing the 404 owner (`--spa-not-found`)
 
 On a multi-SPA site, the universal `/404.html` reuses ONE SPA's `/` shell. By
-default that is the **first declared** SPA in `spas`. To make the choice
-explicit and order-independent, name the owner with `not_found`:
+default that is the **first declared** SPA. To make the choice explicit and
+order-independent, name the owner:
 
-```zig
-const site = zigapagos.website(b, .{
-    .spas = spas,
-    .not_found = "booking",  // which SPA's "/" shell backs 404.html
-});
+```sh
+zigapagos release --spa='app/booking.spa.tsx|/app' --spa-not-found=booking
 ```
 
 The name is the SPA's **file basename sans `.spa.tsx`** (the same name that
 keys `spa/<name>.js` — `"booking"` for `app/booking.spa.tsx`), not its `base`
-URL. A `not_found` that names no declared SPA is a configure-time error.
-`serve()` accepts (and validates) the option but has no `404.html` to own —
-the dev server serves per-namespace fallback shells and its own 404 page.
+URL. A `--spa-not-found` that names no declared SPA is a build error.
 
 ## Static Asset Minification (CSS)
 
@@ -1026,15 +1025,11 @@ The rendered result is unchanged.
 removed (no PurgeCSS-style dead-selector pruning); that would require scanning
 for used class names and is unsafe with dynamically-composed classes.
 
-**Release-only, mirroring Vite (minify on build, not dev).** Minification runs
-only in the **release** (disk-mode) build — `zigapagos release` / `zig build` /
-the `zigapagos dev` loop, which all serve the real release tree. The deprecated
-in-memory live server (`zigapagos serve`) copies CSS **verbatim**, so
-fast-iteration dev output stays readable and un-mangled. The gate is structural:
-`build.zig`'s `website()` threads `--bun=bun --css-minify-driver=…` into the
-`release` invocation; the live server never does, and the install phase that
-minifies is disk-mode-only. A hand-written `zigapagos release` without
-`--css-minify-driver` also copies verbatim (backward compatible).
+**Opt-in, and disk-mode only.** Minification runs only in the **release**
+(disk-mode) build, and only when asked: pass `--bun=bun
+--css-minify-driver=<runtime>/sidecar/minify-css.ts`. Without the driver, CSS is
+copied verbatim — which is what `zigapagos dev`'s own default rebuild does, so
+dev output stays readable and un-mangled.
 
 **Failure behavior.** A `.css` asset that Bun's parser rejects **fails the
 build** with an actionable error naming the file; Bun's own diagnostics reach
@@ -1166,7 +1161,7 @@ those built before this existed.
 ### Universal `404.html`
 **File:** `/404.html`
 
-A fallback for any unmatchedRoutes outside explicit base paths. This is the 404-owner SPA's shell — the SPA named by `build.zig`'s `not_found` option, or the first declared SPA by default (see [Choosing the 404 owner](#choosing-the-404-owner-not_found)); it ensures deep-link requests to SPAs don't 404 at the hosting layer. (Multi-SPA `404.html` covers only the owner's namespace; per-namespace catch-all is the real mechanism.)
+A fallback for any unmatchedRoutes outside explicit base paths. This is the 404-owner SPA's shell — the SPA named by `--spa-not-found`, or the first declared SPA by default (see [Choosing the 404 owner](#choosing-the-404-owner---spa-not-found)); it ensures deep-link requests to SPAs don't 404 at the hosting layer. (Multi-SPA `404.html` covers only the owner's namespace; per-namespace catch-all is the real mechanism.)
 
 Overriding this fallback from a content page requires the alias to be root-absolute (`"/404.html"`); a bare `"404.html"` lands inside the page's own output directory instead and now warns at build time.
 
@@ -1382,7 +1377,7 @@ Each `.spa.tsx` produces one JS bundle (`spa/<name>.js`). Internal `import()` or
 If the client must redirect for auth (e.g., a protected `/admin` page), the browser renders and displays the skeleton first, then fetches auth state, then redirects. This causes a brief flash of the skeleton. v2 will allow skipping the prerender for certain routes.
 
 ### Multi-SPA `404.html`
-If the site has multiple SPAs (e.g., `/app` and `/admin`), the universal `404.html` falls back to **one** SPA's shell — the one named by `build.zig`'s `not_found` option, or the first declared SPA by default. Per-namespace catch-all is a true mechanism (each SPA has its own pattern-matching in the routing manifest); `404.html` is only the last-resort global fallback. Plan accordingly if your hosting layer doesn't support per-directory `404.html` routing.
+If the site has multiple SPAs (e.g., `/app` and `/admin`), the universal `404.html` falls back to **one** SPA's shell — the one named by `--spa-not-found`, or the first declared SPA by default. Per-namespace catch-all is a true mechanism (each SPA has its own pattern-matching in the routing manifest); `404.html` is only the last-resort global fallback. Plan accordingly if your hosting layer doesn't support per-directory `404.html` routing.
 
 ## Testing
 
@@ -1508,7 +1503,7 @@ examples/tsx-site/
 │       ├── ClubSkeleton.tsx         # explicit skeleton component
 │       ├── NotFound.tsx
 │       └── index.ts                 # barrel export
-├── build.zig                        # declares .spa with zigapagos.Spa struct
+├── build.sh                         # the one `zigapagos release --spa=…` invocation
 ├── zigapagos.ziggy                 # sets deploy_target
 └── test/
     ├── spa.sh                       # artifact + content assertions
@@ -1518,7 +1513,7 @@ examples/tsx-site/
 ## Workflow
 
 1. **Author** the `.spa.tsx` module with `export const spa` and `export const routes`.
-2. **Declare** it in `build.zig` via a `zigapagos.Spa` entry; ensure `.base` matches.
+2. **Declare** it with `--spa='<src>|<base>'`; ensure the base matches the export.
 3. **Set `deploy_target`** in `zigapagos.ziggy` (default `"zigbase"`).
 4. **Run `zigapagos release`** to build: prerender shells, bundle, emit manifests and host configs.
 5. **Deploy** the `zig-out/site/` output:
@@ -1528,96 +1523,63 @@ examples/tsx-site/
    - If using **Apache**, place the emitted `.htaccess` in the SPA's base directory.
    - Ensure the universal `404.html` is configured as a fallback.
 
-## Local Development (`zig build dev`)
+## Local Development (`zigapagos dev`)
 
 The stock ZigBase binary is **the** server for local development — zigapagos does not
-bundle its own HTTP serving. The `dev()` build step is the supported dev loop:
+bundle its own HTTP serving. `zigapagos dev` is the supported dev loop, and it is
+zero-config:
 
-```zig
-// opts must carry the SAME output_path as your website() call (and website()
-// needs .force = true — the loop rebuilds into the same tree).
-const dev_step = b.step("dev", "Serve the site with ZigBase, rebuilding on change");
-dev_step.dependOn(&zigapagos.dev(b, .{ .output_path = "site" }, .{}).step);
+```sh
+zigapagos dev
 ```
 
-`zig build dev` then:
+`zigapagos dev` then:
 
-1. **builds the site's RELEASE output** (the same `zig build` install tree production
-   deploys — islands SSR'd, SPA shells prerendered, host-config emitted),
-2. **boots the stock `zigbase` binary over that tree** (located like the e2e harness:
-   `--zigbase=`/`DevOptions.zigbase_path` → PATH → the pinned release in the zigapagos
-   cache; never downloaded behind your back) and waits for readiness. You get the real
-   same-origin `/api`, the admin UI at `/_/`, and the `.spa`-marker fallback — **no
-   `--proxy` shims, no CORS, no code differences between dev and prod**. The default
-   invocation adds `--insecure-cookies` so ZigBase's Secure-flagged auth cookies
-   round-trip over plain `http://127.0.0.1`,
-3. **watches your inputs** — content/layouts/assets (from `zigapagos.ziggy`) plus the
-   island/SPA source directories (derived from `Options.islands`/`spas`; add more via
-   `DevOptions.extra_watch_dirs`) — and **re-runs `zig build` on change**. Rebuilds are
-   incremental where the build graph allows it: island/runtime/SPA bundle steps carry
-   depfiles and stay cached unless their TS sources changed; a content edit re-renders
-   the site without re-bundling anything,
-4. serves at a stable `http://127.0.0.1:1990/` by default (`DevOptions.host`/`port`;
-   `port = 0` picks a free port and prints it).
+1. **builds the site's RELEASE output** — by default `zigapagos release
+   --output=public --force`, run through this same binary by absolute path, with
+   `*.island.tsx` / `*.spa.tsx` entries discovered automatically. `--site=DIR`
+   changes the tree; `-- CMD ARGS…` substitutes your own rebuild command (a
+   project with a `build.sh` passes `bash build.sh`),
+2. **boots the stock `zigbase` binary over that tree** (`--zigbase=` → PATH → the
+   pinned release in the zigapagos cache → fetch that pinned release into the
+   cache, SHA256-verified; `--no-download` fails instead) and waits for
+   readiness. You get the real same-origin `/api`, the admin UI at `/_/`, and the
+   `.spa`-marker fallback — **no proxy shims, no CORS, no code differences
+   between dev and prod**. The default invocation adds `--insecure-cookies` so
+   ZigBase's Secure-flagged auth cookies round-trip over plain
+   `http://127.0.0.1`,
+3. **watches your inputs** — content/layouts/assets (from `zigapagos.ziggy`) plus
+   the directories holding your `*.island.tsx` / `*.spa.tsx` sources, discovered
+   the same way the rebuild discovers the entries themselves (`--watch-dir=DIR`,
+   repeatable, replaces the discovered set) — and **re-runs the rebuild on
+   change**. A content-page edit re-renders only the affected pages; an
+   island-source edit resolves through the dev island-usage manifest to the pages
+   that mount it; anything else is a full rebuild,
+4. serves at a stable `http://127.0.0.1:1990/` by default (`--host=`/`--port=`;
+   `--port=0` picks a free port and prints it).
 
 **The ZigBase data dir is persistent.** It defaults to `.zigbase/` under the site root —
 collections, auth state, and uploaded files **survive across dev sessions** (gitignore
-the directory; delete it for a fresh backend, or point `DevOptions.data_dir` elsewhere).
+the directory; delete it for a fresh backend, or point `--data-dir=` elsewhere).
 
-**No live reload.** ZigBase serves the release tree verbatim, and zigapagos does not
-inject reload scripts into release output — refresh the browser after the
-`dev: rebuild OK` line. (A dev-only reload hook in `@z/runtime` is a possible follow-up.)
+**Live reload is on by default.** ZigBase serves the release tree verbatim and
+zigapagos never touches release output, so reload runs as a dev-only side
+channel: a small SSE server on its own port plus a snippet injected into the
+*installed* tree after each build. An island-only change hot-swaps the island
+with its `useState` intact instead of reloading the page. `--no-live-reload`
+turns the whole thing off for release-fidelity testing.
 
 Notes:
 
 - The route TABLE is part of the build, so added/removed SPA routes flow through on the
-  next rebuild automatically (unlike the deprecated live server, which needed a restart).
+  next rebuild automatically.
 - Non-enumerated SPA deep links in dev use the `.spa` marker, which the host-config
   emitter plants for `deploy_target: "zigbase"` namespaces. If your production target is
   nginx/apache, enumerated shells still serve fine; wiring a dev-only
   `emit-host-config --target zigbase` pass into the rebuild is a follow-up.
-- Direct CLI form (what `dev()` drives): `zigapagos dev --site=DIR [options] --
-  REBUILD-CMD…` — see `zigapagos help`.
+- Full option list: `zigapagos dev --help`.
 
-## Developing Against a Backend (`--proxy`) — DEPRECATED live server
-
-> **Deprecated:** `zigapagos serve` (the bundled live server) and its `--proxy` flag are
-> superseded by `zig build dev` above, which serves the real backend on the same origin —
-> no proxying needed. The live server remains functional for now; removal is planned
-> once the dev loop covers the remaining workflows (e.g. instant reload).
-
-SPAs (and islands) call relative `/api/*`, which in production is routed to the backend on
-the same origin by ZigBase/nginx. In development, `zigapagos serve` is otherwise static-only, so
-point those calls at a running backend with the `--proxy` flag:
-
-```sh
-zigapagos serve --proxy /api=http://127.0.0.1:8090
-```
-
-Any request whose path matches the prefix (at a segment boundary — `/api` and `/api/...`
-match, `/apiary` does not) is forwarded to the upstream **on the dev server's own origin**;
-everything else is served static as usual. Because it is same-origin, relative `/api/*`
-calls behave exactly as behind ZigBase/nginx in prod — **no CORS, no absolute URLs, no
-code changes between dev and prod**. The flag is repeatable for multiple backends
-(`--proxy /api=... --proxy /auth=...`); the longest matching prefix wins.
-
-What is preserved end to end:
-
-- **Cookies** relay verbatim in both directions — a session/login flow completes in the
-  browser against the dev server, and the double-submit CSRF cookie round-trips (so
-  cookie-auth-gated apps are developable locally).
-- **Server-Sent Events** (`text/event-stream`) stream live — events reach the browser as
-  they arrive, not buffered until the connection closes (so an `EventSource` against a live
-  backend, e.g. live feature flags, works in dev).
-- The original **percent-encoded** request target is forwarded unchanged; `X-Forwarded-For`
-  / `-Proto` / `-Host` are added.
-
-v1 scope: `http://` upstreams only; no path rewriting (the full path is forwarded); a
-WebSocket upgrade returns `501` (SSE covers the live-flags need); an unreachable upstream
-returns `502`. Planned v2 follow-ups: config-file form, WebSocket upgrades, keep-alive
-pooling, TLS upstreams, and path rewrite.
-
-### Calling the backend — `apiFetch`
+## Calling the backend — `apiFetch`
 
 `@z/runtime` exports `apiFetch(input, init?)`, a thin `fetch` wrapper for SPAs and islands that
 bakes in the two things every ZigBase-backed call would otherwise repeat:
@@ -1643,10 +1605,11 @@ await apiFetch("/api/contact", { method: "POST", body: JSON.stringify(form) });
   [session-expiry policy](#session-expiry-automatic-guard-re-run-on-401) — the active route's
   guard re-runs once and its `{ redirect }` sends the visitor to login. The Response still
   reaches the caller unchanged.
-- Pairs with `zig build dev` (a real same-origin ZigBase in development) — or the
-  deprecated live server's `--proxy` flag: relative `/api/*` behaves the same in dev and prod.
+- Pairs with `zigapagos dev`, which serves the release tree from a real
+  same-origin ZigBase: relative `/api/*` behaves the same in dev and prod, with
+  no proxy layer, no CORS and no code differences between the two.
 
-### Error reporting — `initErrorRelay` + `ErrorBoundary`
+## Error reporting — `initErrorRelay` + `ErrorBoundary`
 
 No third-party error SDK needed. `initErrorRelay({ endpoint })` installs a first-party pipe
 that captures `window.onerror`, unhandled promise rejections, anything sent through
@@ -1673,53 +1636,44 @@ Each record carries `{ message, stack?, kind, pathname, ts, ...context() }`. Bat
 timer, when full, and on page unload (`keepalive`). Handlers never throw, so a reporting failure
 can't cascade into the app; `initErrorRelay` returns a teardown fn and is a no-op under SSR.
 
-## End-to-End Testing (`zig build e2e`)
+## End-to-End Testing (`zigapagos e2e`)
 
 Verifying an SPA against a real backend used to mean hand-rolling orchestration: build,
 boot the backend, start a static server, poll for readiness, hand the origin to a browser
-driver, tear everything down. The `e2e()` build step is that workflow as one supported
-step — and it is **production-faithful**: it serves the RELEASE output tree with the
-**stock ZigBase binary** (real same-origin API, real `.spa`-marker SPA fallback), not the
-dev server, so what the driver exercises is what production serves.
-
-```zig
-// build.zig — output_path must match your website() call: the harness
-// serves that installed tree.
-const e2e_step = b.step("e2e", "Run e2e tests against the served site");
-const e2e_run = zigapagos.e2e(b, .{ .output_path = "site" }, .{});
-e2e_step.dependOn(&e2e_run.step);
-```
+driver, tear everything down. `zigapagos e2e` is that workflow as one command — and it
+is **production-faithful**: it serves the RELEASE output tree with the **stock ZigBase
+binary** (real same-origin API, real `.spa`-marker SPA fallback), so what the driver
+exercises is what production serves.
 
 ```sh
-zig build e2e -- npx playwright test
+zigapagos release --output=zig-out/site --force --spa='app/app.spa.tsx|/app'
+zigapagos e2e --site=zig-out/site -- npx playwright test
 ```
 
-The step:
+The command:
 
-1. **builds + installs** the full release output (it depends on the install step, so the
-   SPA chunks and host-config artifacts — notably the `.spa` marker ZigBase reads — are
-   on disk);
+1. **serves the tree named by `--site`** — build it first, so the SPA chunks and
+   host-config artifacts (notably the `.spa` marker ZigBase reads) are on disk;
 2. **locates ZigBase** and boots `zigbase serve` over the tree on a **free port** (no
    collisions, parallel-safe);
 3. waits for **readiness = the first successful shell fetch** — `GET /` is polled until
    it returns 200, so drivers never hand-roll polling (override the probed path with
-   `ready_path` when `/` isn't a page your site serves, e.g. `.ready_path = "/app/"`);
+   `--ready-path=` when `/` isn't a page your site serves, e.g. `--ready-path=/app/`);
 4. runs the command after `--` with the origin exported as **`ZIGAPAGOS_ORIGIN`**
    (e.g. `http://127.0.0.1:49213`), its output streaming through live;
 5. **tears down and propagates**: ZigBase is killed and reaped on success, failure, or a
    terminal signal (it shares the process group) — no orphaned processes — and the
-   command's exit code becomes the step result, so a failing test suite fails
-   `zig build e2e`.
+   command's exit code becomes the exit code.
 
 Because the app runs behind a real ZigBase, its relative `/api/*` calls, cookies, and
 CSRF behave exactly as in prod — no proxies, no CORS, no code changes.
 
 ### Locating ZigBase (downloads only on explicit request)
 
-The harness resolves the binary in this order and **never downloads anything
+`zigapagos e2e` resolves the binary in this order and **never downloads anything
 implicitly**:
 
-1. an explicit path — `E2eOptions.zigbase_path` (CLI: `--zigbase=PATH`),
+1. an explicit path — `--zigbase=PATH`,
 2. `zigbase` on your PATH,
 3. the pinned release in the zigapagos cache:
    `~/.cache/zigapagos/zigbase/<pinned_version>/zigbase` (respects `XDG_CACHE_HOME`;
@@ -1727,16 +1681,16 @@ implicitly**:
    `src/cli/zigbase.zig` (currently `v0.12.0`, the latest release; the `.spa`-marker
    contract needs ≥ 0.10.0).
 
-When nothing is found, the step fails fast with these instructions — **unless** you
-opted in with `E2eOptions.download_zigbase = true` (CLI: `--download-zigbase`), in which
-case the harness fetches the pinned release tarball from
+When nothing is found, the command fails fast with these instructions — **unless** you
+opted in with `--download-zigbase`, in which
+case it fetches the pinned release tarball from
 `github.com/valthon/zigbase/releases/download/<pin>/zigbase-<ver>-<target>.tar.gz`,
 **verifies its SHA256 against the release's published SHA256SUMS**, and extracts the
 binary into the cache path above for every future run to find.
 
 ### The ZigBase invocation (verified; configurable for embedder builds)
 
-By default the harness runs the stock CLI, verified against the real parser
+By default it runs the stock CLI, verified against the real parser
 (zigbase `src/cli.zig`) and the release binary's own `zigbase serve --help`:
 
 ```
@@ -1748,18 +1702,19 @@ takes the next argv token as the value — it does no `=` splitting, and unknown
 rejected). `--serve-static` is present in the stock/release binary (its static-files mode
 is the default one). `{port}` (the free port), `{site}` (the installed output tree) and
 `{data}` are substituted at run time. The data dir defaults to a **fresh temp dir per
-run** (deleted on teardown, so runs are hermetic); point `E2eOptions.data_dir` at a
+run** (deleted on teardown, so runs are hermetic); point `--data-dir=` at a
 seeded directory to test against fixtures. If you run a custom ZigBase embedder build
 that spells its flags differently (or compiles static serving out), override the whole
-template — subcommand included, placeholders available — via `E2eOptions.zigbase_args`
-(CLI: repeatable `--zigbase-arg=`):
+template — subcommand included, placeholders available — with repeatable
+`--zigbase-arg=`:
 
-```zig
-.zigbase_args = &.{ "serve", "--listen", "127.0.0.1:{port}", "--static", "{site}" },
+```sh
+zigapagos e2e --site=zig-out/site \
+  --zigbase-arg=serve --zigbase-arg=--listen --zigbase-arg='127.0.0.1:{port}' \
+  --zigbase-arg=--static --zigbase-arg='{site}' -- npx playwright test
 ```
 
-`E2eOptions` also takes `default_cmd` (used when no `-- <cmd>` is given) and
-`timeout_ms` (readiness budget, default 120 s).
+`--timeout-ms=` sets the readiness budget (default 120 s).
 
 ### Drivers: read `ZIGAPAGOS_ORIGIN`
 
@@ -1788,26 +1743,26 @@ test("booking flow against the real backend", async ({ page }) => {
 
 The same shape works CLI-only: `zigapagos e2e --site=zig-out/site -- <cmd>` (plus
 `--data-dir=`, `--zigbase=`, `--zigbase-arg=`, `--ready-path=`, `--timeout-ms=`; see
-`zigapagos help`). `tests/serve/e2e.sh` exercises the whole contract end to end against
-a clearly-labeled stub server (`tests/serve/stub-zigbase.ts`) honoring the same
+`zigapagos help`). `tests/dev/e2e.sh` exercises the whole contract end to end against
+a clearly-labeled stub server (`tests/dev/stub-zigbase.ts`) honoring the same
 invocation, so it runs on machines without a real ZigBase.
 
 ## State-Preserving Dev Reload
 
-> Applies to the **deprecated** `zigapagos serve` live server only. `zig build dev`
-> (the zigbase-backed dev loop) has no reload client — you refresh manually, and a manual
-> refresh also fires no `zigapagos:beforereload`, so state restoration doesn't apply there.
+When a change cannot be localized to one island, `zigapagos dev`'s live-reload
+client does a full `location.reload()`. That already preserves the URL, so the
+**SPA route survives** (the router re-reads `location.pathname` on mount). What it
+loses is **in-memory component state** — a half-filled form, the current wizard
+step. `useRestorableState` restores that across the dev reload:
 
-When you edit a source file, `zigapagos serve`'s livereload client does a full `location.reload()`.
-That already preserves the URL, so the **SPA route survives** (the router re-reads
-`location.pathname` on mount). What it loses is **in-memory component state** — a half-filled
-form, the current wizard step. `useRestorableState` restores that across the dev reload:
+(A manual browser refresh fires no `zigapagos:beforereload`, so nothing is stashed
+and nothing is restored — this applies to reloads the dev loop drives.)
 
 ```tsx
 import { useRestorableState } from "@z/runtime";
 
 function Wizard() {
-  // Like useState, but the value survives a `zigapagos serve` reload.
+  // Like useState, but the value survives a dev-loop reload.
   const [name, setName] = useRestorableState<string>("wizard-name", "");
   const [step, setStep] = useRestorableState<number>("wizard-step", 1);
   return <input value={name} onInput={(e) => setName(e.currentTarget.value)} />;
@@ -1829,8 +1784,10 @@ a malformed blob or unavailable storage falls back to `initial`.
 For non-hook code, `onBeforeReload(cb)` is the lower-level primitive: it registers `cb` for the
 `zigapagos:beforereload` event and returns an unsubscribe (client-only; a no-op under SSR).
 
-True HMR (a targeted island/route swap that avoids the full reload entirely) is a separate,
-future step; this v1 makes the unavoidable full reload non-destructive.
+Island hot-swap (a targeted swap that avoids the full reload entirely) already
+covers island-only edits — see
+[Dev hot-swap (HMR) and fast refresh](islands.md#dev-hot-swap-hmr-and-fast-refresh).
+This hook covers the reloads that remain.
 
 ## Performance Notes
 
@@ -1842,7 +1799,7 @@ future step; this v1 makes the unavoidable full reload non-destructive.
 ## Troubleshooting
 
 - **No shells generated:** ensure the `.spa.tsx` exports are correctly named (`spa`, `routes`) and match the module's contract.
-- **Mismatch between declared and exported `base`:** the build validates and fails if `build.zig`'s `.base` differs from `export const spa.base`.
+- **Mismatch between declared and exported `base`:** the build validates and fails if `--spa=<src>|<base>`'s base differs from `export const spa.base`.
 - **Import lint failures:** SPA views can only import from `@z/runtime`, relative paths, web globals, and whatever the site's `z-runtime.config.json` opts into via `islandImports.firstParty`/`islandImports.npmCompat` — see [No-npm Guardrail](#no-npm-guardrail) above.
 - **Skeleton doesn't match shell:** the `isServer()` branch or `skeleton` component is rendered at build time; ensure it doesn't reference client-only data (e.g., `useLocation()`, fetch calls). Skeletons should be pure loading UI.
 - **Dynamic route gives 404:** ensure the route pattern in `routes` includes `:param` (e.g., `/club/:id`). If the pattern shell is not found, the server falls back to `/404.html`.

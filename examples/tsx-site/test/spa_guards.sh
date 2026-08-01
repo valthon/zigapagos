@@ -9,11 +9,10 @@
 # property; see test/spa_guards_playwright.py (run against this same zig-out/site).
 set -euo pipefail
 cd "$(dirname "$0")/.."
-trap 'git -C ../.. ls-files --deleted -z -- tests/ | xargs -0 -I{} git -C ../.. restore -- {}' EXIT
 
 (cd ../../runtime && mise exec -- bun install)
 mise exec -- bun install
-mise exec -- zig build
+bash build.sh
 
 OUT=zig-out/site
 

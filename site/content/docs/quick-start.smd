@@ -27,7 +27,18 @@ before believing them.
 zig build
 ```
 
-That produces `zig-out/bin/zigapagos`.
+That produces `zig-out/bin/zigapagos`. Building a site that has islands or SPAs
+also needs the checkout's runtime sources, which the binary finds through one
+environment variable:
+
+```sh
+export ZIGAPAGOS_RUNTIME_DIR="$PWD/runtime"
+```
+
+Leave it unset and a plain content site needs neither it nor Bun. `npx
+zigapagos` always sets it — which is why an npm install does need Bun, even for
+a site with no islands in it. The full rule, per command, is in
+[runtime dependencies]($link.page("docs/runtime-dependencies")).
 
 ## Generate a site
 
@@ -63,11 +74,16 @@ scaffold `init` writes reflects that.
 ## Run the development server
 
 ```sh
-../zig-out/bin/zigapagos
+../zig-out/bin/zigapagos dev
 ```
 
-The site rebuilds when you edit content, layouts, or assets, and the page in
-your browser refreshes itself.
+`dev` needs no arguments: it builds the site into `public/`, serves that tree at
+`http://127.0.0.1:1990` with ZigBase — downloading the pinned release the first
+time if you have none — and rebuilds when you edit content, layouts, or assets.
+The page in your browser refreshes itself.
+
+Run `zigapagos` with no command and you get the help menu, not a server; every
+command is explicit.
 
 ## Add an island
 
@@ -88,13 +104,15 @@ export default function Hello({ name }: Props) {
 }
 ```
 
-Declare it in `build.zig`:
+Declare it on the build command:
 
-```zig
-const islands: []const zigapagos.Island = &.{
-    .{ .root = b.path("components/Hello.island.tsx"), .src = "components/Hello.island.tsx" },
-};
+```sh
+../zig-out/bin/zigapagos release --island=components/Hello.island.tsx
 ```
+
+Once a project has more than one, keep that invocation in a `build.sh` so the
+entries are declared in one place — see
+[configuration]($link.page("docs/configuration")).
 
 And use it in a layout — **not** in a `.smd` file, which rejects raw HTML:
 

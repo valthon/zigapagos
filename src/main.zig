@@ -32,9 +32,6 @@ const Command = enum {
     version,
     @"-v",
     @"--version",
-    // Because other ssgs have them:
-    serve,
-    server,
     dev,
     develop,
 };
@@ -75,7 +72,7 @@ pub fn main(init: std.process.Init) u8 {
     // NDJSON `ZP_FATAL` complaining about a flag `dev` does not have, and
     // `zigapagos explain-code --format=json` would do the same. Neither command
     // documents the flag, so neither may switch the stream. src/root.zig's
-    // `.memory`-mode comment (the live server never emits JSON) rests on
+    // `.memory`-mode comment (a memory build never emits JSON) rests on
     // exactly this gate.
     if (args.len >= 2 and std.mem.eql(u8, args[1], "release")) {
         if (diag.scanArgv(args[2..])) |f| diag.format = f;
@@ -155,14 +152,17 @@ pub fn main(init: std.process.Init) u8 {
         }
     }
 
-    const cmd = blk: {
-        if (args.len >= 2) {
-            if (std.meta.stringToEnum(Command, args[1])) |cmd| {
-                break :blk cmd;
-            }
-        }
+    // `zigapagos` is a standalone binary with no default action: run bare it
+    // prints its help and succeeds (exit 0), which is what a user typing the
+    // name of an unfamiliar command expects and what `npx zigapagos` must do.
+    // An argument that is not a command is a mistake, so it gets a diagnostic
+    // and a NON-zero exit -- the two cases share a help menu but must not
+    // share an exit status, or a typo'd command in a script passes silently.
+    if (args.len < 2) fatal.help();
 
-        @import("cli/serve.zig").serve(io, gpa, args[1..], init.environ_map) catch fatal.oom();
+    const cmd = std.meta.stringToEnum(Command, args[1]) orelse {
+        std.debug.print("error: unknown command '{s}'\n\n", .{args[1]});
+        fatal.helpError();
     };
 
     const any_error = switch (cmd) {
@@ -179,14 +179,6 @@ pub fn main(init: std.process.Init) u8 {
         .dev, .develop => @import("cli/dev.zig").dev(io, gpa, args[2..], init.environ_map) catch fatal.oom(),
         .help, .@"-h", .@"--help" => fatal.help(),
         .version, .@"-v", .@"--version" => printVersion(),
-        .serve, .server => {
-            std.debug.print(
-                "error: run zigapagos without any subcommand to start the deprecated live server,\n" ++
-                    "or use 'zigapagos dev' to serve the release output with the stock ZigBase binary\n\n",
-                .{},
-            );
-            fatal.helpError();
-        },
     };
 
     return @intFromBool(any_error);
@@ -222,16 +214,6 @@ test "init-from-astro" {
 // unless something forces eager inclusion.
 test "spa" {
     _ = @import("spa.zig");
-}
-
-// Pull serve.zig into the test compilation unit for `zig build test-serve`.
-// serve.zig is only @import-ed from inside main()'s function body (the live
-// server entry point), so — same reason as release.zig / spa.zig above —
-// Zig's lazy analysis skips its test blocks unless something forces eager
-// inclusion. `test-serve` filters on "serve", which matches this anchor AND
-// the `test "serve --proxy …"` blocks in serve.zig.
-test "serve" {
-    _ = @import("cli/serve.zig");
 }
 
 // Pull e2e.zig AND zigbase.zig into the test compilation unit for

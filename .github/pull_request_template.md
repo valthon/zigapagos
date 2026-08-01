@@ -35,6 +35,6 @@ read it before requesting review, not after.
 - [ ] `zig build` and `zig build test` pass (and `zig build -Dsingle-threaded` still compiles).
 - [ ] `scripts/check-allocator-contracts.sh` passes.
 - [ ] `zig build api-check` passes if `contract/` or `runtime/scripts/apigen.ts` changed.
-- [ ] The targeted unit-test steps for the touched areas pass (`zig build test-islands | test-dev | test-serve | …`).
+- [ ] The targeted unit-test steps for the touched areas pass (`zig build test-islands | test-dev | test-release | …`).
 - [ ] `cd runtime && bun test` passes for any `runtime/` change.
-- [ ] The relevant `tests/serve/*.sh` e2e scripts pass for dev-loop/serve behavior changes.
+- [ ] The relevant `tests/dev/*.sh` e2e scripts pass for dev-loop behavior changes.

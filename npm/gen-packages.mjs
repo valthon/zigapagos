@@ -266,15 +266,14 @@ const REQUIREMENTS = `## Requirements
 - **Node.js >= 18** — runs the launcher; the binary itself is native.
 - One of the platforms in the table above.
 
-Nothing else. No Zig toolchain, no separately-installed Bun, no \`build.zig\`.
+Nothing else. No Zig toolchain, and no separately-installed Bun.
 
 ## What this package can build
 
 Everything, from \`npm i zigapagos\` alone:
 
 - the whole **content** pipeline — \`init\`, \`migrate\` (the Astro importer),
-  \`doctor\`, \`validate\`, \`explain\`, \`release\`, and the live server you get by
-  running \`zigapagos\` with no subcommand;
+  \`doctor\`, \`validate\`, \`explain\` and \`release\`;
 - **islands** (\`.island.tsx\`) — server-rendered through the bundled Bun sidecar
   and hydrated in the browser from a client bundle built by the same Bun;
 - **native SPAs** (\`.spa.tsx\`) — prerendered route skeletons plus a code-split
@@ -289,13 +288,11 @@ installed rather than asked for. The last three are OPTIONAL dependencies:
 \`--omit=optional\` still builds, it just loses \`dev\`'s server, and the SPA runtime
 slicer falls back to the shared runtime.
 
-The remaining differences from a Zig build are about CACHING, not capability.
-\`build.zig\` drives Bun through the build graph, so a depfile lets Zig skip an
-unchanged bundle; here every \`release\` rebundles from scratch. And the per-SITE
-islands runtime slice (which needs a second pass over the built bundles) is not
-computed, so island pages load the full shared \`/zigapagos-runtime.js\` instead of
-a trimmed one — the documented no-slice default. SPAs still get their own
-per-deployable slice.
+This is not a reduced build. There is no other kind: \`zigapagos release\` is
+what builds every zigapagos site, including this project's own, and it is this
+binary. Both runtime slices are computed — the per-SITE islands one and the
+per-deployable SPA one — and the host-config and strict-CSP artifacts are
+emitted with the rest of the tree.
 
 ### The size, and where it goes
 
@@ -335,9 +332,9 @@ npx zigapagos release --output=public --force
 \`\`\`
 
 The build finds your \`*.island.tsx\` entries by scanning the site root, so there is
-no list to keep up to date — under a Zig build \`build.zig\` enumerates them at
-configure time, and this is the toolchain-free equivalent. \`--island=SRC\`
-(repeatable) still overrides the scan when you want an exact set.
+no list to keep up to date. \`--island=SRC\` (repeatable) overrides the scan when
+you want an exact set — worth doing once a project is more than a few files: the
+scan's order follows the filesystem, and it does not skip a vendored tree.
 
 That scan is not a convenience. The two halves of an island come from different
 places — the SSR'd markup from the Bun sidecar, the client bundle from Bun — and
@@ -345,26 +342,26 @@ only the first is automatic. A page whose bundle was never built renders
 perfectly and then 404s on hydration, with nothing wrong-looking in the output
 tree, so the entries are discovered rather than left to be forgotten.
 
-Your components import \`@z/runtime\` by its bare name exactly as they do under a
-Zig build: the sidecar serves that specifier from the copy inside this package,
-and on the client an import map points it at the one shared
-\`/zigapagos-runtime.js\`, so the page still ends up with a single Preact instance.
+Your components import \`@z/runtime\` by its bare name: the sidecar serves that
+specifier from the copy inside this package, and on the client an import map
+points it at the one shared \`/zigapagos-runtime.js\`, so the page ends up with a
+single Preact instance.
 See [docs/islands.md](${HOMEPAGE}/blob/main/docs/islands.md).
 
-**One genuine gap:** \`--island-props-check\` (the \`tsc\` gate that typechecks island
-props against their \`Props\` interface) is \`off\` by default here, where a Zig build
-turns it on for you. Pass it yourself to opt in; the \`typescript\` this package
-already installs is the one \`bun x tsc\` will find.
+**Worth turning on:** \`--island-props-check=error\` (the \`tsc\` gate that typechecks
+island props against their \`Props\` interface) is \`off\` by default. Pass it to opt
+in; the \`typescript\` this package already installs is the one \`bun x tsc\` will
+find.
 
 ### Building a native SPA
 
 Also nothing special. Write a \`*.spa.tsx\` exporting \`spa\` and \`routes\` and run
 the same \`release\`: the scan that finds islands finds SPA entries too, and each
 one's \`spa.base\` decides where it mounts. \`--spa=SRC|BASE\` (repeatable) overrides
-the scan, and \`|BASE\` there is the restated base a Zig build checks against the
+the scan, and \`|BASE\` there is a base restated for the build to check against the
 module — omit it and the module is simply believed.
 
-Each SPA gets exactly what \`build.zig\` produces: prerendered route skeletons and
+Each SPA gets prerendered route skeletons and
 a \`_shell.html\` per dynamic pattern, a per-namespace \`routing-manifest.json\`, a
 code-split client bundle under \`/spa/\` (one entry chunk plus one content-hashed
 chunk per \`lazy(() => import(…))\`), a \`modulepreload\` for the chunk each route
@@ -374,8 +371,9 @@ slicer can prove which \`host.*\` members the SPA uses, the shared
 bundle, so a page carrying both a SPA and islands still has one Preact.
 
 See [docs/spa.md](${HOMEPAGE}/blob/main/docs/spa.md). The routing manifest is also
-what the host-config emitters read, so deploying behind zigbase, nginx or Apache
-works the same way it does under a Zig build.
+what the host-config emitters read, and \`release\` runs them, so the \`.spa\` marker
+(zigbase), \`nginx.nginx.conf\` or \`.htaccess\` your deploy needs is already in the
+output tree.
 
 ### \`zigapagos dev\`
 
@@ -552,8 +550,10 @@ strategy as \`esbuild\` — so an install downloads exactly one binary.
 
 \`\`\`sh
 npx @zigapagos/cli init      # scaffold a site
-npx @zigapagos/cli           # live server on http://localhost:1990
+npx @zigapagos/cli dev       # dev loop on http://127.0.0.1:1990
 \`\`\`
+
+Run bare it prints its help and exits: there is no default action.
 
 After \`npm install @zigapagos/cli\` the \`zigapagos\` binary is on \`PATH\` in npm
 scripts:
@@ -641,7 +641,7 @@ bin. Platform resolution, the binary, and the documentation all live there.
 
 \`\`\`sh
 npx zigapagos init      # scaffold a site
-npx zigapagos           # dev server on http://localhost:1990
+npx zigapagos dev       # dev loop on http://127.0.0.1:1990
 \`\`\`
 
 For programmatic use, depend on \`@zigapagos/cli\` directly — this package exports

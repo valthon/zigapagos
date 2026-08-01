@@ -24,8 +24,9 @@ with attribute-driven directives rather than a template language embedded in
 strings, which means an editor can check them as HTML. Layouts compose with
 `<extend template="base.shtml">` and `<super>`.
 
-**Components** live wherever you like as `.island.tsx`, and are declared in
-`build.zig`. They are ordinary TSX using the hooks exported by `@z/runtime`.
+**Components** live wherever you like as `.island.tsx`, and are declared with a
+`--island=` flag on the build command. They are ordinary TSX using the hooks
+exported by `@z/runtime`.
 
 ## How a build runs
 

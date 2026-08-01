@@ -671,7 +671,7 @@ const forbidden_shim = [_]struct { spec: []const u8, target: []const u8 }{
 /// `src/cli/migrate_detect.zig` is the ROOT source file of its own test module
 /// (`zig build test-migrate`), and Zig 0.16 refuses an import that escapes a
 /// module's directory — so it cannot reach `src/islands/render_arena.zig`.
-/// Adopting the type here needs a one-line build.zig change (pass the type as a
+/// Adopting the type here needs a one-line build/tests.zig change (pass the type as a
 /// module import to `migrate_tests`), which is deliberately not made here.
 pub fn analyze(gpa: Allocator, component: []const u8, src: []const u8) !PortReport {
     const imps = try extractImports(gpa, src);

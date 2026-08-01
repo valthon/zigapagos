@@ -15,12 +15,7 @@ mise exec -- bun install
 
 # (3) Build the site: zigapagos spawns the Bun sidecar with cwd = fixture root,
 # the island SSRs, and the HTML is written to zig-out/site/index.html.
-# Restore tests/ after build (build.zig footgun).
-mise exec -- zig build
-# The zigapagos root build.zig rm -rf's the committed tests/**/snapshot baselines
-# at configure time. Restore ONLY the files the build deleted (leave any local
-# modifications to tests/ untouched).
-git -C ../.. ls-files --deleted -z -- tests/ | xargs -0 -I{} git -C ../.. restore -- {}
+bash build.sh
 
 # (4) Assert the island was SSR'd into the output HTML.
 OUT="zig-out/site/index.html"

@@ -7,8 +7,8 @@ what name.
 This document covers **site assets** — files under `assets_dir_path`, reached
 from a template as `$site.asset('...')` and from content as
 `[]($image.siteAsset('...'))`. Page assets (files next to a content page,
-`$page.asset('...')`) and build assets (declared in your `build.zig`) are
-mentioned only where they differ.
+`$page.asset('...')`) and build assets (`zigapagos release --build-asset=NAME
+PATH`) are mentioned only where they differ.
 
 ## The lifecycle
 
@@ -134,26 +134,26 @@ because the extension is load-bearing downstream: a web server picks the
 - **`static_assets` entries.** They are installed unconditionally precisely
   because something outside the build fetches them at a fixed path; hashing
   `favicon.ico` or `CNAME` would break exactly the thing they exist for.
-- **Build assets.** Their install path is yours to choose in `build.zig`, and
-  the generated ones (`zigapagos-runtime.js`, `spa/<name>.js`,
-  `islands/<name>.js`) have their URLs baked into import maps, routing
-  manifests and the hydration bootstrap.
-- **Anything `build.zig` installs as a whole directory** — the sliced islands
+- **Build assets.** Their install path is yours to choose (`--install=` /
+  `--install-always=`), and the generated ones (`zigapagos-runtime.js`,
+  `spa/<name>.js`, `islands/<name>.js`) have their URLs baked into import maps,
+  routing manifests and the hydration bootstrap.
+- **The browser bundles zigapagos builds for itself** — the sliced islands
   runtime (`islands/_runtime.js`, #52) and the sliced SPA runtimes and lazy
-  chunks under `spa/`. These never enter `site_assets` at all: `zigapagos`
-  neither scans nor installs them, `addInstallDirectory` copies them after the
-  site is written, and their URLs are likewise baked into import maps. They are
-  therefore outside *both* halves of this document — not fingerprinted, and not
-  candidates for the pruned-asset report either.
+  chunks under `spa/`. These never enter `site_assets` at all: they are
+  registered as install-always build assets after the bundlers have run, and
+  their URLs are likewise baked into import maps. They are therefore outside
+  *both* halves of this document — not fingerprinted, and not candidates for
+  the pruned-asset report either.
 - **Page assets.** They are installed next to the page that owns them, and a
   page's own assets are invalidated by the same deploy that rewrites the page.
 
-### Release builds only
+### Where it applies
 
-The in-memory live server (`zigapagos` with no subcommand) always serves
-verbatim names, the same way it skips the CSS minify pass: dev serves what you
-wrote, release serves what you ship. `zigapagos release` — and therefore
-`zigapagos dev`, which drives a real release build — applies fingerprinting.
+Fingerprinting is a `zigapagos release` pass, so it applies wherever a release
+build does — including `zigapagos dev`, which serves the real release tree. The
+in-memory builds behind `zigapagos validate` and `zigapagos explain` write no
+output at all and so have nothing to fingerprint.
 
 ### Cost
 

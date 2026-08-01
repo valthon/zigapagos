@@ -20,8 +20,8 @@
 //!    `linkImpl` (`$site.asset(…).link()`), `render/html.zig`'s `.site_asset`
 //!    arm (a SuperMD `![](…)` directive) and `spa.zig`'s `spa.head` hrefs —
 //!    all of which go through `fmtUrl` below.
-//!  * **Not build assets.** Their install paths are declared by the author in
-//!    `build.zig` (so the author can already hash there), and the generated
+//!  * **Not build assets.** Their install paths are declared by the author on
+//!    the command line (so the author can already hash there), and the generated
 //!    ones — `zigapagos-runtime.js`, `spa/<name>.js`, `islands/<name>.js` —
 //!    have their URLs baked into import maps, routing manifests and the
 //!    hydration bootstrap by literal path in a dozen places.
@@ -55,8 +55,8 @@ pub const hash_len = 8;
 /// map is built in `root.zig` and freed in `Build.deinit`.
 ///
 /// An asset ABSENT from the map keeps its verbatim name — that covers the
-/// whole build when the feature is off, plus `static_assets` entries and the
-/// in-memory live server when it is on. Every consumer therefore has to treat
+/// whole build when the feature is off, plus `static_assets` entries and every
+/// in-memory build when it is on. Every consumer therefore has to treat
 /// "no entry" as "use the plain name", which is what `fmtUrl` does.
 pub const Map = std.AutoHashMapUnmanaged(PathName, []const u8);
 

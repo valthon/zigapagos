@@ -1,6 +1,5 @@
 node_modules/
 zig-out/
-.zig-cache/
 .zigapagos-cache/
 # ZigBase dev-loop data dir (persistent local backend state; see `zigapagos dev`)
 .zigbase/
@@ -15,6 +14,7 @@ content/docs/testing.smd
 content/docs/scripty.smd
 content/docs/build-errors.smd
 content/docs/superhtml.smd
+content/docs/runtime-dependencies.smd
 content/docs/observability.smd
 content/docs/migrate-from-astro.smd
 content/docs/migration-recipes.smd

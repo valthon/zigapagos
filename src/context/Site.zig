@@ -30,8 +30,8 @@ _meta: struct {
 },
 
 pub const docs_description =
-    \\The global site configuration. The fields come from the call to 
-    \\`website` in your `build.zig`.
+    \\The global site configuration. The fields come from your 
+    \\`zigapagos.ziggy`.
     \\ 
     \\ Gives you also access to assets and static assets from the directories 
     \\ defined in your site configuration.
@@ -41,10 +41,10 @@ pub const Dot = true;
 pub const PassByRef = true;
 pub const Fields = struct {
     pub const host_url =
-        \\The host URL, as defined in your `build.zig`.
+        \\The host URL, as defined in your `zigapagos.ziggy`.
     ;
     pub const title =
-        \\The website title, as defined in your `build.zig`.
+        \\The website title, as defined in your `zigapagos.ziggy`.
     ;
 };
 pub const Builtins = struct {
@@ -54,7 +54,7 @@ pub const Builtins = struct {
         };
         pub const docs_description =
             \\In a multilingual website, returns the locale of the current 
-            \\variant as defined in your `build.zig` file. 
+            \\variant as defined in your `zigapagos.ziggy`. 
         ;
         pub const examples =
             \\<html lang="$site.localeCode()"></html>
@@ -87,7 +87,7 @@ pub const Builtins = struct {
         };
         pub const docs_description =
             \\In a multilingual website, returns the locale name of the current 
-            \\variant as defined in your `build.zig` file. 
+            \\variant as defined in your `zigapagos.ziggy`. 
         ;
         pub const examples =
             \\<span :text="$site.localeName()"></span>

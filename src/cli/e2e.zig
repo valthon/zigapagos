@@ -2,8 +2,8 @@
 //!
 //! Production-faithful: the harness serves the RELEASE output tree with the
 //! STOCK ZigBase binary — a real same-origin API plus the `.spa`-marker SPA
-//! fallback (docs/spa.md, Tier 1) — instead of the dev server, so what the
-//! browser driver exercises is what production serves. Orchestration:
+//! fallback (docs/spa.md, Tier 1) — so what the browser driver exercises is
+//! what production serves. Orchestration:
 //!
 //!   1. locate zigbase (explicit → PATH → pinned cache; `zigbase.zig`),
 //!   2. pick a free port and set up the data dir (default: a fresh temp dir
@@ -32,8 +32,7 @@ const zigbase = @import("zigbase.zig");
 /// the stock/release binary because its comptime `static_mode` is `.default`
 /// (zigbase src/main.zig wires no override; cli's ParseOpts gates the flag on
 /// `static_mode == .default`); embedders who compile static serving out must
-/// override this template via `--zigbase-arg=` (build-side:
-/// `E2eOptions.zigbase_args` / `DevOptions.zigbase_args`). `{host}`,
+/// override this template via `--zigbase-arg=`. `{host}`,
 /// `{port}`, `{site}` and `{data}` are substituted (see `substituteArg`;
 /// e2e always substitutes `127.0.0.1` for `{host}` — its probe address is a
 /// loopback literal — while the dev loop substitutes its `--host=`).
@@ -126,12 +125,12 @@ pub const Command = struct {
         }
 
         if (site == null or site.?.len == 0) fatal.usageError(
-            "error: e2e needs --site=<built site dir> (build.zig's e2e() supplies it)\n" ++ usage,
+            "error: e2e needs --site=<built site dir>\n" ++ usage,
             .{},
         );
         if (argv.len == 0) fatal.usageError(
             "error: e2e mode needs a command to run after '--'\n" ++
-                "usage: zig build e2e -- npx playwright test\n" ++ usage,
+                "usage: zigapagos e2e --site=DIR -- npx playwright test\n" ++ usage,
             .{},
         );
 
@@ -228,8 +227,10 @@ pub fn e2e(
     for (cmd.argv) |a| std.debug.print(" {s}", .{a});
     std.debug.print("\n", .{});
 
-    // stdio inherit: the driver's output streams straight through the
-    // `zig build e2e` run step (which is stdio = .inherit).
+    // stdio inherit: the driver's output streams straight through this process
+    // to whatever ran `zigapagos e2e`, so a failing test's output lands in the
+    // terminal (or the CI log) unbuffered and in order rather than surfacing
+    // only if this process chose to re-print it.
     var child = std.process.spawn(io, .{
         .argv = cmd.argv,
         .environ_map = environ_map,
@@ -303,13 +304,13 @@ pub fn waitReady(h: *Harness, address: Io.net.IpAddress, ready_path: []const u8,
         if (passed >= timeout_ms) {
             if (last_status) |status| h.fail(
                 "'GET {s}' still answers {d} (want 200) after {d} ms\n" ++
-                    "hint: point --ready-path (E2eOptions.ready_path) at a page the site " ++
+                    "hint: point --ready-path at a page the site " ++
                     "actually serves, e.g. an SPA base like '/app/'",
                 .{ ready_path, status, timeout_ms },
             ) else h.fail(
                 "zigbase did not answer 'GET {s}' within {d} ms ({s})\n" ++
                     "hint: if your ZigBase spells its serve flags differently, override the " ++
-                    "invocation via E2eOptions.zigbase_args / --zigbase-arg=",
+                    "invocation via --zigbase-arg=",
                 .{
                     ready_path,
                     timeout_ms,
@@ -415,7 +416,7 @@ pub fn substituteArg(
 
 // --- unit tests (run via `zig build test-e2e`, filter "e2e") -------------------
 // fatal.usageError paths (missing --site, empty command, unknown arg) exit the
-// process and are exercised by tests/serve/e2e.sh instead.
+// process and are exercised by tests/dev/e2e.sh instead.
 
 test "e2e parse: site + '--' argv, with documented defaults" {
     const gpa = std.testing.allocator;

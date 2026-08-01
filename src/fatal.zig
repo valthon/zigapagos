@@ -60,16 +60,16 @@ pub fn file(path: []const u8, err: anyerror) noreturn {
 }
 
 const help_menu =
-    \\Usage: zigapagos [COMMAND] [OPTIONS]
+    \\Usage: zigapagos <COMMAND> [OPTIONS]
     \\
     \\Commands:
     \\  dev               Build the site, serve it with the STOCK ZigBase
     \\                    binary, and rebuild on source changes
+    \\  release           Create a release of a Zigapagos site
     \\  doctor [DIR]      Audit a BUILT site tree (default 'public') for
     \\                    root-relative social-meta URLs and dangling links
     \\  init              Initialize a Zigapagos site in the current directory
     \\  migrate <dir>     Scan an Astro project and write a MIGRATION.md worklist
-    \\  release           Create a release of a Zigapagos site
     \\  validate          Parse + analyze the site WITHOUT bundling islands,
     \\                    running Bun, or writing output (a fast subset of
     \\                    `release`'s checks; see `zigapagos validate --help`)
@@ -83,33 +83,31 @@ const help_menu =
     \\                    'release --format=json'
     \\  help              Show this menu and exit
     \\  version           Print the Zigapagos version and exit
-    \\  (no command)      Start the bundled live server
-    \\                    (DEPRECATED: use 'zigapagos dev'; removal planned)
     \\
     \\General Options:
     \\  --drafts          Enable draft pages
     \\  --allow-missing-pages  Tolerate a dangling $link.page/$site.page
     \\                    reference to a page that doesn't exist YET (emits its
     \\                    would-be href + a build-log warning instead of
-    \\                    failing the build). Accepted by 'release' and by the
-    \\                    live server; for 'dev', set it in your build.zig
-    \\                    (zigapagos.Options.allow_missing_pages) instead --
-    \\                    'dev' re-runs your rebuild command rather than
-    \\                    building the site itself
+    \\                    failing the build). Accepted by 'release'; for 'dev',
+    \\                    put it in the rebuild command after '--'
     \\  --help, -h        Print command specific usage and extra options
     \\
     \\Dev loop (zigapagos dev [OPTIONS] [-- REBUILD-CMD [ARGS...]]):
-    \\  Runs the rebuild command (default 'zig build'), boots the STOCK
-    \\  zigbase binary over the built site, watches the site's inputs, and
-    \\  re-runs the rebuild command on change. The browser live-reloads after
-    \\  each rebuild (on by default); pass --no-live-reload for
-    \\  release-fidelity bundles.
-    \\  --site=DIR        Built site tree to serve (required)
+    \\  Zero-config: with no options at all, rebuilds with
+    \\  'zigapagos release --output=public --force' (this same binary, by
+    \\  absolute path), boots the STOCK zigbase binary over the built tree,
+    \\  watches the site's content/layout/asset dirs plus the directories
+    \\  holding its *.island.tsx / *.spa.tsx sources, and re-runs the rebuild on
+    \\  change. The browser live-reloads after each rebuild; pass
+    \\  --no-live-reload for release-fidelity bundles.
+    \\  --site=DIR        Built site tree to serve (default 'public')
     \\  --data-dir=DIR    ZigBase data dir (default '.zigbase' at the site
     \\                    root; PERSISTENT across dev sessions — gitignore it)
-    \\  --zigbase=PATH    ZigBase binary (default: PATH, then the pinned cache)
-    \\  --download-zigbase  If none is found, fetch the pinned release into the
-    \\                      cache (SHA256-verified); never done without this flag
+    \\  --zigbase=PATH    ZigBase binary (default: PATH, then the pinned cache,
+    \\                    then fetch the pinned release into the cache)
+    \\  --no-download     Never fetch zigbase; fail with instructions instead
+    \\                    (offline/air-gapped machines, CI that pins its own)
     \\  --zigbase-arg=A   Override the serve invocation (repeatable; default:
     \\                    serve --http-host {{host}} --http-port {{port}}
     \\                          --data-dir {{data}} --serve-static {{site}}
@@ -121,12 +119,8 @@ const help_menu =
     \\  --debounce=MS     Quiet window before a rebuild (default 25)
     \\  --no-live-reload  Disable browser live reload (release-fidelity)
     \\  --reload-port=N   SSE reload-server port (default 0 = pick a free port)
-    \\  --watch-dir=DIR   Watch an extra directory (repeatable)
-    \\
-    \\Deprecated live server options (no command):
-    \\  --host HOST       Listening host (default 'localhost')
-    \\  --port PORT       Listening port (default 1990)
-    \\  --debounce <ms>   Rebuild delay after a file change (default 25)
+    \\  --watch-dir=DIR   Watch this directory instead of the discovered
+    \\                    island/SPA dirs (repeatable; any use replaces them)
     \\
     \\End-to-end testing (zigapagos e2e ... -- CMD [ARGS...]):
     \\  Boots the STOCK zigbase binary over the built site on a free port,

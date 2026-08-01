@@ -7,7 +7,7 @@
 # null if any is missing -- correct for a site that uses no islands. But
 # worker.zig used to treat a null sidecar as "pass the HTML through", testing for
 # `<island` only AFTER that bail. So the ordinary authoring mistake of adding an
-# `<island>` to a layout without declaring it in build.zig's `.islands` produced:
+# `<island>` to a layout without passing an `--island=` for it produced:
 #
 #   * a page containing the literal `<island ...></island>` element,
 #   * no SSR'd markup, no props block, no runtime <script>, and
@@ -88,8 +88,8 @@ echo "an <island> with no sidecar failed the build (exit $BAD_RC)"
 grep -q 'no island sidecar is configured' "$WORK/bad.log" \
   || { echo "--- build output ---"; sed -n '1,20p' "$WORK/bad.log"
        fail "the build failed but not with the island-sidecar diagnostic (some other error?)"; }
-grep -q '\.islands' "$WORK/bad.log" \
-  || fail "the diagnostic does not tell the author to declare the island in build.zig's .islands"
+grep -q -- '--island=' "$WORK/bad.log" \
+  || fail "the diagnostic does not tell the author to declare the island with --island="
 echo "diagnostic names the cause and the fix"
 
 # --- (3) the failure is attributed to a specific page -------------------------
