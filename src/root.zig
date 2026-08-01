@@ -773,11 +773,19 @@ pub fn run(
                     "  come from that Zig build integration.\n",
                 .{ bun, script },
             ),
+            // Says nothing about the interpreter, deliberately. `Sidecar.spawn`
+            // resolves the script BEFORE it spawns anything, so on this path
+            // `bun` was never executed and both inputs may well be missing.
+            // Exonerating one of them here would be #82's own defect —
+            // a confident claim about an input that was never checked — just
+            // pointed the other way. The interpreter case can afford the
+            // reverse sentence because it reaches its message only after the
+            // script has resolved.
             error.SidecarScriptNotFound => fatal.msg(
                 "error: island sidecar script not found: '{s}'\n" ++
-                    "  this is the `render.ts` supplied by build.zig's `.islands` integration; the\n" ++
-                    "  interpreter '{s}' was not the problem.\n",
-                .{ script, bun },
+                    "  this is the `render.ts` supplied by build.zig's `.islands` integration; point\n" ++
+                    "  `--island-sidecar` at it, or let build.zig's `.islands` wiring supply it.\n",
+                .{script},
             ),
             error.ProjectRootNotFound => fatal.msg(
                 "error: island source dir not found: '{s}'\n" ++
