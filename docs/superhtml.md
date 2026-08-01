@@ -19,7 +19,7 @@ The value of a directive is a Scripty expression — the `$`-prefixed expression
 language the whole template layer uses — evaluated against `$page`, `$site`, `$build` and the loop/branch
 variables described below.
 
-## The five `:` directives
+## The five `:` directives a Zigapagos template may use
 
 | Directive | On | Does |
 |-----------|----|------|
@@ -28,6 +28,20 @@ variables described below.
 | `:if="$expr"` | any element with an end tag | keeps or drops the element's **body** |
 | `:loop="$expr"` | any element with an end tag | repeats the element's **body** once per item |
 | `:props="{ … }"` | `<island>` only | the Ziggy props struct for an island — see the [islands page](islands.md) |
+
+**Two different fives, and they are not the same five.** SuperHTML's own
+`SpecialAttr` enum also has exactly five members — `:if`, `:loop`, `:text`,
+`:html` and `:else` — and that is the set its parser knows about. The list
+above is the set a Zigapagos template may actually *use*, which is that enum
+minus `:else` plus `:props`:
+
+- `:else` is in SuperHTML's enum but is parsed and then never evaluated, so
+  Zigapagos rejects it at build time — see
+  [`:else` does nothing](#else-does-nothing).
+- `:props` is not in SuperHTML's enum at all. To SuperHTML it is an ordinary
+  attribute; this fork's island pass (`src/islands/pass.zig`) reads it off
+  `<island>` elements, which is why it is `<island>`-only and why its value is
+  a Ziggy struct rather than a Scripty expression.
 
 `:text` and `:html` are mutually exclusive on one element, and both require the
 element to be empty — the directive *is* the body, so existing children would
@@ -232,13 +246,18 @@ so.
 Zigapagos lints for this and fails the build (`ZP_TEMPLATE_BAD_DIRECTIVE_ATTR`):
 
 ```
-layouts/index.shtml:7:8: error: unknown ':' directive attribute ':attr'
+layouts/index.shtml:7:4: error: unknown ':' directive attribute ':href'
     SuperHTML's only ':' directives are :if, :loop, :text, :html
     (plus :props on <island>). A dynamic attribute uses the BARE name
-    with a Scripty value: write attr="$expr", not :attr="$expr"
-    (the ':' form evaluates the value but keeps the ':attr' name, so the
-    real 'attr' attribute is never set).
+    with a Scripty value: write href="$expr", not :href="$expr"
+    (the ':' form evaluates the value but keeps the ':href' name, so the
+    real 'href' attribute is never set).
 ```
+
+Every mention of the attribute in that message is the name you actually wrote:
+`src/root.zig` formats the offending attribute (and its bare form) into the
+text, so the same mistake on `class` reports `:class` throughout. There is no
+generic `:attr` wording to grep for.
 
 `zigapagos explain-code ZP_TEMPLATE_BAD_DIRECTIVE_ATTR` prints the long form.
 
