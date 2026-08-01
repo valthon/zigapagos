@@ -1,10 +1,7 @@
 ---
 .title = "Tutorial",
 .description = "Build a small documentation site with a section, a shared layout, and two islands.",
-.date = @date("2026-07-27T00:00:00"),
-.author = "Zigapagos",
 .layout = "docs.shtml",
-.draft = false,
 .custom = { .slug = "tutorial" },
 ---
 

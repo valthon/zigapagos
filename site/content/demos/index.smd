@@ -1,10 +1,7 @@
 ---
 .title = "Demos",
 .description = "Live demonstrations: hydration directives, the Astro migration mapping, and a native SPA — all running on this site.",
-.date = @date("2026-07-27T00:00:00"),
-.author = "Zigapagos",
 .layout = "demos.shtml",
-.draft = false,
 ---
 
 Everything here is running, not recorded. This site is built with Zigapagos, so
