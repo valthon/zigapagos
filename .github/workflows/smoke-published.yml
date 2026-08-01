@@ -30,6 +30,17 @@
 # wuffs image path, all from the shipped binary. It needs no network and no
 # bun, because the init scaffold contains no islands and no SPA.
 #
+# The npm channel gets the same treatment, for the same reason and then one more.
+# `npm install zigapagos@<version>` is the install path most users actually take,
+# and it has failure modes the archives do not: the meta package resolves the
+# platform package through `optionalDependencies`, so a platform package that was
+# never published — or published for the wrong os/cpu — yields an install that
+# looks clean and has no binary in it. The extra reason is that publishing is now
+# authenticated by OIDC trusted publishing rather than a stored token, and the
+# ways that misconfigures (a package with no trusted publisher, an npm too old for
+# the mechanism) all present as *some packages published and some not*. A daily
+# install-and-run is what notices.
+#
 # Why schedule-only (no push / pull_request)
 # ------------------------------------------
 # It tests *published artifacts*, which have no relationship to the commit under
@@ -183,6 +194,14 @@ jobs:
       TAG: ${{ needs.resolve.outputs.tag }}
       ARCHIVE: ${{ matrix.archive }}
     steps:
+      # For the npm step at the end. Both runner images ship a node, but which one
+      # is an image property that changes under us; the archive checks below do not
+      # care and the npm one should not have to guess.
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
       - name: Download the published archive and SHA256SUMS
         env:
           GH_TOKEN: ${{ github.token }}
@@ -371,6 +390,74 @@ jobs:
             exit 1
           fi
           echo "PASS: shipped binary scaffolded and built a full site."
+
+      - name: "npm install of the published version runs the CLI"
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          proj="${RUNNER_TEMP}/npm-smoke"
+          rm -rf "$proj"
+          mkdir -p "$proj"
+          cd "$proj"
+          npm init -y >/dev/null
+
+          # `npm install` into a throwaway project rather than `npx`: this is the
+          # path that resolves `zigapagos` -> `@zigapagos/cli` -> the platform
+          # package for THIS os/cpu, which is the part of a publish that can be
+          # broken in a way `npm view` cannot see. (It also keeps
+          # tests/meta/ci-package-pins.sh happy, which rejects an unpinned package
+          # runner in a workflow — the version here is a variable, not a literal.)
+          #
+          # Retried like the release download above: a transient registry hiccup
+          # turning the daily run red teaches everyone to ignore it.
+          ok=0
+          for attempt in 1 2 3; do
+            if npm install --no-audit --no-fund "zigapagos@${version}"; then
+              ok=1
+              break
+            fi
+            echo "npm install attempt ${attempt} failed."
+            sleep $((attempt * 5))
+          done
+          if [ "$ok" -ne 1 ]; then
+            echo "::error::'npm install zigapagos@${version}' failed on ${{ matrix.label }}."
+            echo "Either the npm publish for ${TAG} did not happen or did not complete —"
+            echo "check the 'publish-npm' job of release.yml, which is gated on the"
+            echo "NPM_PUBLISH_ENABLED variable and authenticates via OIDC trusted"
+            echo "publishing (a package with no trusted publisher configured on"
+            echo "npmjs.com is rejected) — or this is a manual dispatch of a tag from"
+            echo "before npm distribution existed, which starts at v0.2.0."
+            exit 1
+          fi
+
+          # The binary lives inside the platform package; the launcher in the alias
+          # is what has to find and exec it. Running it is the whole assertion —
+          # `npm install` alone would exit 0 with an unusable tree.
+          bin="./node_modules/.bin/zigapagos"
+          if [ ! -x "$bin" ]; then
+            echo "::error::'npm install zigapagos@${version}' left no executable at ${bin}."
+            echo "The install resolved but shipped no runnable CLI."
+            ls -lR node_modules/.bin || true
+            exit 1
+          fi
+
+          # Only `version` here, not a full build: the archive steps above already
+          # ran init+release with the same bytes. What this adds is the resolution
+          # and the launcher, not another exercise of the renderer.
+          out="$("$bin" version 2>&1)" && status=0 || status=$?
+          echo "----- output (exit ${status}) -----"
+          printf '%s\n' "$out"
+          if [ "$status" -ne 0 ]; then
+            echo "::error::the npm-installed 'zigapagos version' exited ${status} on ${{ matrix.label }}."
+            exit 1
+          fi
+          if ! printf '%s' "$out" | grep -qF "$TAG"; then
+            echo "::error::the npm-installed CLI did not report '${TAG}'."
+            echo "npm is serving a binary built from something other than the tag whose"
+            echo "version it was published under."
+            exit 1
+          fi
+          echo "PASS: npm install zigapagos@${version} runs and reports ${TAG}."
 
       - name: Record result in the run summary
         if: always()
