@@ -198,9 +198,15 @@ pub const Builtins = struct {
     };
 
     pub const data = struct {
+        // `.ret = .Map` does not compile: `ScriptyParam.Map` is a union prong
+        // with a `Base` payload, not a bare tag. It went unnoticed because
+        // nothing analysed this signature -- Scripty's dispatch only ever calls
+        // `call`. The generated Scripty reference (src/docgen_reference.zig,
+        // issue #37) reads every `signature` in the tree, which is what turned
+        // it into a compile error.
         pub const signature: Signature = .{
             .params = &.{.String},
-            .ret = .Map,
+            .ret = .{ .Map = .any },
         };
         pub const docs_description =
             \\Returns a site-wide global data file as a Ziggy map.

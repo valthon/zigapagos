@@ -28,6 +28,34 @@
     "description": "Why Zigapagos ships no content-generator hook, and the four-piece recipe — registry, generator, gitignore, freshness gate — this site's own docs pages use instead."
   },
   {
+    "canonical": "docs/testing.md",
+    "mirror": "testing.smd",
+    "slug": "testing",
+    "title": "Testing a built site",
+    "description": "A sourceable assertion library for the built output tree, and the three wrong assertions it exists to prevent."
+  },
+  {
+    "canonical": "docs/scripty.md",
+    "mirror": "scripty.smd",
+    "slug": "scripty",
+    "title": "Scripty reference",
+    "description": "Generated from the source: every builtin on every Scripty type, plus the SuperMD content directives."
+  },
+  {
+    "canonical": "docs/build-errors.md",
+    "mirror": "build-errors.smd",
+    "slug": "build-errors",
+    "title": "Common build errors",
+    "description": "The errors a new project actually hits: the verbatim message, what causes it, and what to change."
+  },
+  {
+    "canonical": "docs/superhtml.md",
+    "mirror": "superhtml.smd",
+    "slug": "superhtml",
+    "title": "SuperHTML directives",
+    "description": "Every SuperHTML template construct in one page: the five colon directives, ctx/extend/super, and an explicit list of what does not exist."
+  },
+  {
     "canonical": "docs/observability.md",
     "mirror": "observability.smd",
     "slug": "observability",

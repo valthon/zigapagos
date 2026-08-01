@@ -11,6 +11,10 @@ content/docs/islands.smd
 content/docs/spa.smd
 content/docs/cross-tier-codegen.smd
 content/docs/generated-content.smd
+content/docs/testing.smd
+content/docs/scripty.smd
+content/docs/build-errors.smd
+content/docs/superhtml.smd
 content/docs/observability.smd
 content/docs/migrate-from-astro.smd
 content/docs/migration-recipes.smd

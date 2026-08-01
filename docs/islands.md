@@ -51,6 +51,89 @@ Ziggy struct literal (`:props`) or individually (`prop-NAME`):
 </island>
 ```
 
+## Hydration directives (`client:*`)
+
+The `client:` attribute on an `<island>` decides **when** the component mounts
+in the browser. There are exactly five of them, and `runtime/src/islands.ts`'s
+`schedule()` is the entire implementation: `initIslands()` selects every
+`[data-z-island][data-z-client]` root on the page and hands it to that switch.
+
+| Directive | Mounts | Mechanism | Server-rendered |
+|-----------|--------|-----------|-----------------|
+| `client:load` | when the page's islands initialise | direct call | yes |
+| `client:idle` | at the next idle period | `requestIdleCallback`, or `setTimeout(…, 1)` where that does not exist | yes |
+| `client:visible` | the first time the island intersects the viewport | `IntersectionObserver`, disconnected on that first intersection | yes |
+| `client:media="(query)"` | when the media query matches | `matchMedia`, plus a one-shot `change` listener | yes |
+| `client:only` | when the page's islands initialise | direct call | **no** |
+
+"When the page's islands initialise" is `DOMContentLoaded` if the document is
+still parsing, and a microtask otherwise. That is the entry condition for all
+five — `load` and `only` simply add no further gate on top of it.
+
+Every directive except `client:only` server-renders the component, so its markup
+is in the HTML before any JavaScript runs and is what a crawler — or a visitor
+whose JS never arrives — sees. The directive changes only when that markup
+becomes *interactive*.
+
+### `client:load`
+
+No gating: the dynamic import of the island module starts the moment
+`initIslands()` reaches the root. The right choice for anything above the fold
+that has to respond to the first click.
+
+### `client:idle`
+
+`schedule()` calls `requestIdleCallback(run)` where the browser has one and
+`setTimeout(run, 1)` where it does not. Two consequences worth knowing:
+
+- No `timeout` option is passed, so on a page that never goes idle the mount can
+  be deferred indefinitely. `client:idle` means "eventually, cheaply", not
+  "soon".
+- On an engine without `requestIdleCallback` the fallback fires after the
+  current task, which is far closer to `client:load` than to an idle callback.
+  Treat `idle` as a hint that degrades toward `load`, not as a guarantee of
+  deferral.
+
+### `client:visible`
+
+The island root itself is the observed element, with default
+`IntersectionObserver` options — no `root`, no `rootMargin`, threshold `0` — so
+it mounts as soon as one pixel of the wrapper enters the viewport. There is no
+prefetch margin: the module request starts *at* the intersection, not ahead of
+it.
+
+The observer is disconnected on the first intersecting entry, so the island
+mounts once. Scrolling it out of view and back does not re-enter the mount path,
+and never unmounts the component.
+
+### `client:media`
+
+The directive's value is the query, and it is required. It travels into the
+emitted HTML as `data-z-media`, and the runtime passes it to
+`window.matchMedia()`. If the query already matches at init, the island mounts
+immediately. If it does not, the runtime subscribes to the query's `change`
+event; on the first change where the query matches it removes its own listener
+and mounts. A change that leaves the query unmatched is ignored, and the
+subscription stays live.
+
+```html
+<island src="components/Sidebar.island.tsx" client:media="(min-width: 60rem)"
+        :props='{ .collapsed = false }'></island>
+```
+
+Two things this does *not* do. It never unmounts: a query that stops matching
+after the island has mounted leaves it mounted. And it has no server-side
+counterpart — the component is server-rendered for every visitor regardless of
+viewport, so `client:media` saves the hydration work, not the markup bytes.
+
+### `client:only`
+
+Mounts on the same schedule as `client:load` and is the one directive that ships
+no server-rendered markup: the wrapper `<div>` is emitted empty (or holding a
+`fallback` slot, below) and the component renders fresh in the browser. Reach
+for it when the component cannot be server-rendered at all — because it reads
+`window`, a canvas, or anything else that only exists in a browser.
+
 ### `client:only` fallback content
 
 `client:only` is the one directive that ships no server-rendered markup — the
@@ -99,6 +182,58 @@ fallback each on two nested `client:only` islands:
   </island>
 </island>
 ```
+
+### Omitting `client:` entirely
+
+An `<island>` with no `client:` attribute is **not** a server-only island. The
+pass still emits the wrapper with an empty `data-z-client=""` and a
+`data-z-module` URL, and `[data-z-client]` matches on attribute *presence*, so
+`initIslands()` still selects the root and `schedule()`'s `default:` branch
+mounts it immediately — the same timing as `client:load`.
+
+If what you want is markup with no client-side JavaScript at all, write it in
+the layout or in content rather than as an island.
+
+### What the build rejects
+
+`src/islands/pass.zig`'s `validateClientDirective` checks the directive at build
+time, because nothing downstream of it ever complains. `schedule()` has no error
+path: its `default:` branch mounts anything it does not recognise, and its
+`media` case defaults a missing query to one that matches everywhere. None of
+the mistakes below stops an island hydrating — each one *silently changes when*
+it hydrates, which is the only thing a directive is for. The page renders, the
+island wakes up, and the deferral you asked for is quietly gone.
+
+An unknown directive name — a typo like `client:visable`, or an Astro directive
+with no counterpart here. Unvalidated it would fall through to `schedule()`'s
+`default:` branch, so `client:visable` would mount on page init exactly like
+`client:load` rather than waiting for the viewport:
+
+```
+unknown island directive 'client:visable' (expected load|idle|visible|media|only)
+```
+
+`client:media` with no query, or an empty one (`client:media=""`). The runtime
+reads the query as `el.dataset.zMedia || "all"`, and `all` matches in every
+browser, so such an island would mount immediately for every visitor — again
+`client:load`, spelled at length:
+
+```
+'client:media' requires a media query value, e.g. client:media="(min-width: 600px)"
+```
+
+A value on any *non*-media directive. This is the Astro habit: over there
+`client:only="react"` names the framework to load. Here there is exactly one
+runtime, so the value is meaningless, and it is rejected rather than leaked out
+as a stray `data-z-media` attribute:
+
+```
+'client:only' takes no value (got "react"); Astro's client:only="framework" is just `client:only` here — there is one runtime
+```
+
+All five directives hydrate live, side by side, on the site's
+[directives demo](https://valthon.github.io/zigapagos/demos/directives/), and
+their scheduling is pinned by `runtime/test/island-directives.test.ts`.
 
 ## Islands in content (`.smd`)
 
