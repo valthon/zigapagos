@@ -23,19 +23,97 @@ pub const Sidecar = struct {
     ///
     /// `sidecar_script` is resolved to an absolute path before being passed to
     /// Bun so it can always be found regardless of the chosen cwd.
+    ///
+    /// **Which of the three inputs was missing is resolved HERE, not by the
+    /// caller** (issue #82). All three failures are ENOENT at the syscall
+    /// layer -- the script resolution below, the child's `chdir` to
+    /// `project_root`, and the `execve` of `bun_path` all come back as
+    /// `error.FileNotFound` -- so a caller that stringifies the raw errno can
+    /// only guess, and the guess it printed was the wrong one: a missing `bun`
+    /// surfaced as `FileNotFound` beside a `render.ts` path that resolves,
+    /// sending the reader to inspect the wrong file. Only this function still
+    /// knows the three paths apart, so it collapses the ambiguity into three
+    /// distinct errors and the caller writes three distinct messages:
+    ///
+    ///   * `error.SidecarScriptNotFound` -- `sidecar_script` does not exist;
+    ///   * `error.ProjectRootNotFound`   -- `project_root` does not exist;
+    ///   * `error.InterpreterNotFound`   -- `bun_path` could not be executed
+    ///     because it is not there (having ruled the other two out).
+    ///
+    /// Every other error -- both the spawn's own and the project-root probe's
+    /// -- is passed through unchanged. Narrowing matters as much as the
+    /// remapping does: an error this function cannot attribute must arrive at
+    /// the caller as itself, because a wrong attribution is the very defect
+    /// #82 is about.
     pub fn spawn(io: Io, bun_path: []const u8, sidecar_script: []const u8, project_root: []const u8) !Sidecar {
         // Resolve sidecar_script to absolute (requires the file to exist on disk).
         var abs_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-        const n = try std.Io.Dir.cwd().realPathFile(io, sidecar_script, &abs_buf);
+        const n = std.Io.Dir.cwd().realPathFile(io, sidecar_script, &abs_buf) catch |err| switch (err) {
+            // This call resolves ONLY the script, so its ENOENT is unambiguous.
+            error.FileNotFound => return error.SidecarScriptNotFound,
+            else => |e| return e,
+        };
         const abs_script = abs_buf[0..n];
 
-        const child = try std.process.spawn(io, .{
+        const child = std.process.spawn(io, .{
             .argv = &.{ bun_path, abs_script },
             .stdin = .pipe,
             .stdout = .pipe,
             // stderr inherits parent so Bun errors are visible in the build log.
             .cwd = .{ .path = project_root }, // Bun resolves island @z/runtime + JSX from here
-        });
+        }) catch |err| switch (err) {
+            // The forked child chdirs to `.cwd` and then execs `argv[0]`,
+            // reporting whichever failed over the same error pipe
+            // (std.Io.Threaded's `processSpawnPosix`), so this ENOENT is either
+            // the directory or the executable. Probe the directory to tell them
+            // apart -- one `openDir` on a path we are about to fail on, off any
+            // hot path -- and attribute the remainder to the interpreter, which
+            // is both the common case and the one the old message got wrong.
+            error.FileNotFound => {
+                // Reaching here means the child's chdir either SUCCEEDED or
+                // itself returned ENOENT: every other way chdir can fail has
+                // its own variant in `process.SpawnError` (`NotDir`,
+                // `AccessDenied`, `SymLinkLoop`, `NameTooLong`, ...) and would
+                // have been caught by the `else` arm below. So the probe has
+                // exactly one question to answer -- is there a directory at
+                // `project_root`? -- and only the two answers that mean "no"
+                // may be turned into a claim about it.
+                //
+                // `.iterate = false` is spelled out although it is also the
+                // `OpenOptions` default: it is the option this probe's whole
+                // permission story hangs on (see the note in the `else` arm,
+                // and the platform note in
+                // `tests/islands/sidecar-spawn-attribution.sh`). Leaving it
+                // implicit would put a claim about `O_PATH` in a comment whose
+                // premise lives in another repository's default value.
+                var probe = std.Io.Dir.cwd().openDir(io, project_root, .{ .iterate = false }) catch |probe_err| switch (probe_err) {
+                    error.FileNotFound, error.NotDir => return error.ProjectRootNotFound,
+                    // Every other probe failure -- `AccessDenied`, an fd
+                    // quota, `SymLinkLoop` -- says nothing about whether the
+                    // directory is there, so collapsing it into
+                    // `ProjectRootNotFound` would send the reader to inspect a
+                    // path that is very likely fine. That is #82's defect
+                    // wearing different clothes, so pass it through instead
+                    // and let root.zig's catch-all print the real errno.
+                    //
+                    // Only reachable where `openDir` demands more than the
+                    // child's `chdir` did. On Linux it demands less: `iterate`
+                    // is false, so `Io.Threaded` opens with `O_PATH |
+                    // O_DIRECTORY`, which needs search on the parents but
+                    // nothing on the target, while `chdir` needs search on the
+                    // target too. On macOS/BSD there is no `O_PATH`, so the
+                    // same call is a real `O_RDONLY` open and a search-only
+                    // (`0111`) project root denies it although `chdir` walked
+                    // into it happily -- the case the old blanket `catch`
+                    // reported as "island source dir not found" about a
+                    // directory that exists and works.
+                    else => |e| return e,
+                };
+                probe.close(io);
+                return error.InterpreterNotFound;
+            },
+            else => |e| return e,
+        };
         var self: Sidecar = .{ .io = io, .child = child };
         // Snapshot the process CWD once — it is fixed for the whole build, so
         // every relative island `src` resolves against the same base (AUD-026).
@@ -437,6 +515,50 @@ test "buildRenderRequest emits \"prefix\" only when url_prefix is non-empty" {
     );
 }
 
+test "spawn: a project-root probe failure that is not ENOENT is not reported as a missing project root" {
+    // `spawn` tells a missing cwd from a missing interpreter by probing the cwd
+    // with `openDir`, and the first cut of that probe mapped EVERY probe failure
+    // to `error.ProjectRootNotFound` -- so a project root that exists but merely
+    // could not be opened was reported as absent. That is the same defect #82
+    // fixed (a real errno pinned on the wrong one of three paths), reintroduced
+    // one layer down, which is why it gets its own pin.
+    //
+    // It gets that pin HERE, at the `Io` vtable, rather than in
+    // `tests/islands/sidecar-spawn-attribution.sh`, because on Linux no
+    // filesystem can produce the state under test. `Io.Threaded` opens with
+    // `O_PATH` when `iterate` is false, so the probe needs search on the parents
+    // and nothing at all on the target -- strictly weaker than the `chdir` the
+    // child already survived. Every permission failure is therefore reported by
+    // `std.process.spawn` itself and never reaches the probe (a `0000` cwd and
+    // an unsearchable parent both come back as `AccessDenied` from `spawn`). It
+    // is only reachable where there is no `O_PATH` and `openDir` is a real
+    // `O_RDONLY` open -- macOS/BSD, on a search-only `0111` directory. Swapping
+    // one vtable entry reproduces it on every platform instead.
+    const real = std.testing.io;
+    var vtable = real.vtable.*;
+    vtable.dirOpenDir = struct {
+        fn probeDenied(
+            _: ?*anyopaque,
+            _: std.Io.Dir,
+            _: []const u8,
+            _: std.Io.Dir.OpenOptions,
+        ) std.Io.Dir.OpenError!std.Io.Dir {
+            return error.AccessDenied;
+        }
+    }.probeDenied;
+    // Everything else -- crucially `processSpawn` and the `realPathFile` that
+    // resolves the script -- stays real, so this exercises the true spawn path.
+    const io: Io = .{ .userdata = real.userdata, .vtable = &vtable };
+
+    // `runtime/sidecar/render.ts` resolves and `runtime` exists (the suite runs
+    // with the repo root as cwd), so the only ENOENT the child can report is the
+    // interpreter's -- which is exactly what sends `spawn` to the probe.
+    try std.testing.expectError(
+        error.AccessDenied,
+        Sidecar.spawn(io, "/nonexistent/definitely-not-bun", "runtime/sidecar/render.ts", "runtime"),
+    );
+}
+
 test "sidecar renders a TSX island to SSR HTML over NDJSON" {
     // Requires `bun` on PATH (mise) and `runtime/`'s deps installed
     // (`cd runtime && bun install`). Skips cleanly if bun is absent.
@@ -446,7 +568,7 @@ test "sidecar renders a TSX island to SSR HTML over NDJSON" {
     const io = std.testing.io;
 
     var sidecar = Sidecar.spawn(io, "bun", "runtime/sidecar/render.ts", "runtime") catch |err| switch (err) {
-        error.FileNotFound, error.AccessDenied => return error.SkipZigTest, // bun not installed
+        error.InterpreterNotFound, error.AccessDenied => return error.SkipZigTest, // bun not installed
         else => return err,
     };
     defer sidecar.deinit();
@@ -580,7 +702,7 @@ test "concurrent renders against one Sidecar stay correct (mutex serializes)" {
     const io = std.testing.io;
 
     var sidecar = Sidecar.spawn(io, "bun", "runtime/sidecar/render.ts", "runtime") catch |err| switch (err) {
-        error.FileNotFound, error.AccessDenied => return error.SkipZigTest, // bun not installed
+        error.InterpreterNotFound, error.AccessDenied => return error.SkipZigTest, // bun not installed
         else => return err,
     };
     defer sidecar.deinit();
@@ -626,7 +748,7 @@ test "sidecar applies z-runtime.config.json resolve overrides (react -> compat +
         "runtime/sidecar/render.ts",
         "runtime/test/fixtures/resolve-site",
     ) catch |err| switch (err) {
-        error.FileNotFound, error.AccessDenied => return error.SkipZigTest, // bun not installed
+        error.InterpreterNotFound, error.AccessDenied => return error.SkipZigTest, // bun not installed
         else => return err,
     };
     defer sidecar.deinit();
@@ -661,7 +783,7 @@ test "sidecar resolves @z/site-data from the site's z-runtime.config.json data m
         "runtime/sidecar/render.ts",
         "runtime/test/fixtures/data-site",
     ) catch |err| switch (err) {
-        error.FileNotFound, error.AccessDenied => return error.SkipZigTest, // bun not installed
+        error.InterpreterNotFound, error.AccessDenied => return error.SkipZigTest, // bun not installed
         else => return err,
     };
     defer sidecar.deinit();
@@ -688,7 +810,7 @@ test "sidecar weaves slots into Panel island HTML" {
     const io = std.testing.io;
 
     var sidecar = Sidecar.spawn(io, "bun", "runtime/sidecar/render.ts", "runtime") catch |err| switch (err) {
-        error.FileNotFound, error.AccessDenied => return error.SkipZigTest, // bun not installed
+        error.InterpreterNotFound, error.AccessDenied => return error.SkipZigTest, // bun not installed
         else => return err,
     };
     defer sidecar.deinit();

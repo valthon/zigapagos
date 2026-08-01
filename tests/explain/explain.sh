@@ -137,17 +137,19 @@ OUT="$WORK/out"
   || { sed -n '1,60p' "$WORK/release.log"; fail "the fixture's 'zigapagos release' failed"; }
 
 # stdout and stderr are captured to SEPARATE files, not merged with 2>&1.
-# `explain`'s report goes through a buffered stdout Writer, flushed once at
-# the very end; the Debug-build banner (`main.zig`) goes to stderr via
-# unbuffered `std.debug.print`, immediately. When both are redirected to the
-# SAME file descriptor, each writer tracks its own file position
-# independently and the LATER flush (the report) overwrites the START of
-# whatever the earlier one already wrote -- a real, pre-existing corruption
-# (reproduced identically with `zigapagos doctor`, so it's not new to this
-# PR) that would silently break exact structured-content parsing (the
-# FORWARD/REVERSE emitted-paths checks below) if the two streams shared a
-# file. Tracked as issue #78; this helper is the workaround, not the fix.
-# `.log` is the two concatenated IN A DETERMINISTIC ORDER (this
+#
+# This USED to be a workaround: `explain`'s buffered stdout report, flushed
+# once at the end through a POSITIONAL writer, overwrote the start of whatever
+# the Debug-build banner had already written to stderr when both landed in one
+# file (issue #78). That is fixed -- the four CLI report writers construct
+# `writerStreaming` now, and tests/cli/merged-streams.sh pins that a merged
+# `>f 2>&1` capture keeps both streams intact byte for byte.
+#
+# The separation stays because it is the right TEST DESIGN, not because
+# merging is unsafe: the FORWARD/REVERSE checks below parse `explain`'s
+# structured stdout line by line, and they should read the report alone rather
+# than the report plus a banner and whatever diagnostics a future change adds
+# to stderr. `.log` is the two concatenated IN A DETERMINISTIC ORDER (this
 # script's own `cat`, not an OS-level write race) for the substring checks
 # that don't care which stream a message landed on.
 run() { # $1 = tag, remaining = explain args
