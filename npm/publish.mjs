@@ -14,8 +14,8 @@
 // PUBLISHING IS OPT-IN BY DESIGN. `node npm/publish.mjs` with no flags cannot
 // reach the registry, so neither a mistyped command nor an automated agent
 // running "the publish script" can ship a release. The workflow that does publish
-// is additionally gated on a repository variable AND an NPM_TOKEN secret — see
-// npm/README.md.
+// is additionally gated on a repository variable, and authenticates with npm OIDC
+// trusted publishing rather than a stored token — see npm/README.md.
 //
 // `--archives <dir>` extracts the binaries out of the release workflow's own
 // artifacts (`x86_64-linux-musl.tar.xz`, `x86_64-macos.zip`) rather than building

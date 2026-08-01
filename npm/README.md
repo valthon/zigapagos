@@ -155,17 +155,42 @@ three packages and runs the install e2e against the real ReleaseFast binary. Not
 is uploaded. That is the smoke test; a broken package is caught on the PR that broke
 it rather than on a tag that cannot be un-pushed.
 
-### Two gates stand between a tag and the registry
+### What stands between a tag and the registry
 
-1. The repository **variable** `NPM_PUBLISH_ENABLED` must be `true`. Absent (the
-   current state), the `publish-npm` job is skipped and a tag ships the GitHub
-   release exactly as it does today.
-2. The repository **secret** `NPM_TOKEN` must exist. If the variable is set and the
-   secret is not, the job fails immediately with an explanatory error rather than
-   attempting a publish.
+The repository **variable** `NPM_PUBLISH_ENABLED` must be `true`. Absent, the
+`publish-npm` job is skipped and a tag ships the GitHub release exactly as it would
+have anyway. It is a variable rather than a secret because `vars` is the only one of
+the two contexts a job-level `if` may read.
 
 `npm/publish.mjs` is also opt-in on its own: with no flags it assembles and verifies
 and touches no registry. Only `--publish` uploads.
+
+### Authentication: OIDC trusted publishing, not a token
+
+There is **no stored registry credential, and there should not be one.** Each package
+has a *trusted publisher* configured on npmjs.com naming the repository
+`valthon/zigapagos` and the workflow `release.yml`; the job runs with
+`id-token: write`, and npm exchanges the OIDC identity GitHub mints for that run for a
+short-lived publish token. Publish rights therefore belong to that one workflow in this
+one repository, rather than to a long-lived credential that anything able to read it
+could use.
+
+Three things follow from that, all of which look like bugs the first time:
+
+- **npm >= 11.5 is required.** Older npm does not know the mechanism exists, so it
+  falls back to looking for a stored credential and fails with a bare authentication
+  error. `node-version: 24` does not imply it — node 24.2.0 bundles npm 11.3.0 and
+  24.5.0 was the first with 11.5.1 — so the workflow installs a supporting npm and
+  asserts the version before uploading anything.
+- **A package with no trusted publisher is rejected** (403/404) even though the
+  workflow is configured correctly. Fix it on npmjs.com; nothing changes here.
+- **OIDC cannot bootstrap a name that has never been published**, which is why the
+  first publish below is a human with `npm login`. The same applies to any package
+  added later: publish it once by hand, then configure its trusted publisher.
+
+Renaming this workflow file, or moving the publish step into another workflow,
+invalidates every trusted publisher — they are configured against `release.yml` by
+name.
 
 ### First publish (a human, once)
 
@@ -198,5 +223,7 @@ be logged in.
    A scoped package's **first** publish is `restricted` unless told otherwise. Both
    the generated `publishConfig.access` and the explicit `--access public` the script
    passes cover that; if you publish by hand, pass it yourself.
-5. Then set `NPM_PUBLISH_ENABLED=true` and `NPM_TOKEN` in the repository settings, so
-   subsequent tags publish themselves.
+5. Then, on npmjs.com, configure a **trusted publisher** for each of the published
+   names (repository `valthon/zigapagos`, workflow `release.yml`), and set
+   `NPM_PUBLISH_ENABLED=true` in the repository's Actions variables — so subsequent
+   tags publish themselves with no credential stored anywhere.

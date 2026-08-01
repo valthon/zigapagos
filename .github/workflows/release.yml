@@ -283,16 +283,32 @@ jobs:
             dist/*
 
   publish-npm:
-    # THREE conditions, and each one is a separate deliberate act.
+    # TWO conditions, and each one is a separate deliberate act.
     #
     #   1. a v* tag push — a PR or dispatch run never reaches this job at all;
     #   2. the repository VARIABLE NPM_PUBLISH_ENABLED set to 'true'. Until someone
     #      sets it, this job is skipped and a tag ships exactly what it ships today.
     #      It is a variable and not a secret because `vars` is the only one of the
-    #      two contexts allowed in a job-level `if`;
-    #   3. the repository SECRET NPM_TOKEN, checked in the first step below. If the
-    #      variable is on and the secret is missing, this fails loudly rather than
-    #      half-publishing.
+    #      two contexts allowed in a job-level `if`.
+    #
+    # Neither condition involves a credential, because authentication is npm OIDC
+    # TRUSTED PUBLISHING. This job proves its identity with the `id-token: write`
+    # credential GitHub mints for the run, and the registry exchanges that for a
+    # short-lived publish token because each package has a trusted publisher
+    # configured on npmjs.com naming this repository and this workflow file. So
+    # the right to publish belongs to *this workflow*, not to a long-lived
+    # credential that anything able to read it could use, and there is nothing to
+    # rotate or leak.
+    #
+    # Consequences worth knowing before debugging a failure here:
+    #
+    #   - a package with no trusted publisher configured is rejected by the
+    #     registry (403/404). The fix is on npmjs.com; there is nothing to add to
+    #     this repository;
+    #   - OIDC cannot bootstrap a name that has never been published, so the FIRST
+    #     publish of any new package is still a human with `npm login` (npm/README.md);
+    #   - renaming this file, or moving the publish to another workflow, invalidates
+    #     every trusted publisher — they are configured against `release.yml` by name.
     #
     # `needs: npm-package` is load-bearing beyond ordering: nothing is uploaded
     # until the same tree has been packed, installed and run.
@@ -300,17 +316,64 @@ jobs:
     needs: [npm-package, publish]
     runs-on: ubuntu-latest
     permissions:
-      # npm --provenance signs the package against this workflow run.
+      # The OIDC identity npm exchanges for a publish token, and what
+      # `--provenance` signs the packages against.
       id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
+      # `registry-url` writes an .npmrc naming registry.npmjs.org explicitly. It is
+      # kept because that is the arrangement npm documents for trusted publishing,
+      # not because the default would be a different registry. Worth knowing when
+      # reading that file on a runner: it also contains an `_authToken` line
+      # interpolating an environment variable that nothing here sets. npm >= 11.5
+      # obtains its own short-lived token from the run's OIDC identity rather than
+      # reading a credential out of that file, so the placeholder stays empty.
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
           node-version: 24
           registry-url: 'https://registry.npmjs.org'
+
+      # OIDC trusted publishing is an npm >= 11.5 feature. An older npm does not
+      # fail cleanly on it — it has no idea the mechanism exists, so it looks for a
+      # stored credential, finds none, and reports a bare authentication error that
+      # names nothing about the real cause. Worse, it would report it partway
+      # through a dependency-ordered publish, with some packages already uploaded
+      # at a version that cannot be replaced.
+      #
+      # The version that matters is not implied by `node-version: 24`. setup-node
+      # resolves that to whatever the newest 24.x is WHEN THE JOB RUNS, and the npm
+      # each release bundles is a property of that release: node 24.2.0 ships npm
+      # 11.3.0, which is too old, and 24.5.0 was the first to ship 11.5.1. Newest
+      # 24.x is comfortably past that today, but "past it because the runner
+      # drifted far enough" is luck rather than a guarantee — and it is not a
+      # guarantee we want to re-earn on a tag. So install an npm that has the
+      # feature, then assert the result, before a single byte is uploaded.
+      #
+      # The range holds the MAJOR deliberately. `^11.5.0` on a runner that has
+      # started bundling npm 12 installs 11.x over it, which is the direction we
+      # want: a major version of the publishing tool should change on a commit that
+      # says so, not on the day GitHub refreshes an image, and it would change on a
+      # tag — the one run nobody gets to re-do.
+      - name: Ensure npm can do OIDC trusted publishing
+        run: |
+          set -euo pipefail
+          required=11.5.0
+          npm install --global "npm@^${required}"
+          have="$(npm --version)"
+          echo "npm ${have} (OIDC trusted publishing requires >= ${required})"
+          # `sort -V` orders version strings; if the older of the two is not the
+          # requirement, what is installed is older than the requirement. GNU
+          # coreutils, which this ubuntu-latest job has.
+          oldest="$(printf '%s\n%s\n' "$required" "$have" | sort -V | head -n1)"
+          if [ "$oldest" != "$required" ]; then
+            echo "::error::npm ${have} is too old for OIDC trusted publishing (needs >= ${required})."
+            echo "The publish itself would have failed as an unexplained authentication"
+            echo "error, after uploading some of the packages. Nothing was uploaded."
+            exit 1
+          fi
 
       # Re-asserted rather than inherited, for the same reason the GitHub-release
       # job re-asserts it: `needs` says the other jobs passed, not that this one
@@ -318,17 +381,6 @@ jobs:
       # mismatch here would publish a version the tag does not name.
       - name: Check tag against build.zig.zon
         run: scripts/assert-version.sh "$GITHUB_REF_NAME"
-
-      - name: Require an npm token
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::error::NPM_PUBLISH_ENABLED is set but the NPM_TOKEN secret is missing." \
-                 "Add it in Settings → Secrets and variables → Actions, or unset" \
-                 "NPM_PUBLISH_ENABLED. See npm/README.md."
-            exit 1
-          fi
 
       - name: Release target drift gate
         run: node npm/check-targets.mjs
@@ -353,6 +405,4 @@ jobs:
       # alias — publish.mjs enforces that order and skips any version already on
       # the registry, so a partially failed release is safe to re-run.
       - name: Publish to npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: node npm/publish.mjs --archives dist --publish --provenance

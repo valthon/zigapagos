@@ -365,8 +365,8 @@ queued for the next release, read `changelog.d/`.
 - `release.yml` gained an `npm-package` job that assembles and install-tests the
   packages from the archives the release already builds — on pull requests too, so
   a packaging defect is caught before a tag rather than by a published version that
-  cannot be replaced. Publishing is a separate job gated on a `v*` tag, the
-  `NPM_PUBLISH_ENABLED` repository variable and the `NPM_TOKEN` secret.
+  cannot be replaced. Publishing is a separate job gated on a `v*` tag and the
+  `NPM_PUBLISH_ENABLED` repository variable.
 
 ## [0.1.1] - 2026-07-28
 
