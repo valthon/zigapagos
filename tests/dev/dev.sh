@@ -130,8 +130,37 @@ origin_from_log() {
   grep -o 'serving at http://[0-9.]*:[0-9]*' "$1" | head -1 | sed 's/serving at //'
 }
 
-wait_ready() { # $1 = log
-  poll 60 grep -q 'dev: ready' "$1" || { cat "$1"; fail "dev never became ready"; }
+# $1 = log, $2 = pid (optional). With a pid, a dev that DIES is reported as a
+# death -- with its wait status -- instead of being polled at for the full 60s
+# and then called a timeout.
+#
+# The distinction is not cosmetic. A crashed dev and a slow dev produce the same
+# "never became ready" line, and the log of a process that died on its first
+# instruction is one line long, so the message is all the reader gets. That cost
+# a real diagnosis: a SIGILL on the zero-config leg read as a readiness timeout,
+# and the only clue that it was a crash at all was `Illegal instruction` sitting
+# in the dumped log, which is easy to skim past under a FAIL that says otherwise.
+#
+# `wait` reports the status of a child of THIS shell, so it works on the pid
+# launch_group returned even though that pid leads a process group.
+wait_ready() { # $1 = log, $2 = pid (optional)
+  local log=$1 pid=${2:-}
+  local start=$SECONDS
+  until grep -q 'dev: ready' "$log" 2>/dev/null; do
+    if [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then
+      local status=0
+      wait "$pid" 2>/dev/null || status=$?
+      echo "--- $log ---"; cat "$log"; echo "--- end $log ---"
+      # 128+N is a signal death; name the signal, since SIGILL/SIGSEGV/SIGABRT
+      # mean a zigapagos bug while SIGKILL usually means the runner OOMed.
+      if (( status > 128 )); then
+        fail "dev DIED before becoming ready: killed by SIG$(kill -l $((status - 128)) 2>/dev/null || echo "?($((status - 128)))") (status $status) -- this is a crash, not a timeout"
+      fi
+      fail "dev DIED before becoming ready: exited $status -- this is a crash, not a timeout"
+    fi
+    (( SECONDS - start < 60 )) || { echo "--- $log ---"; cat "$log"; echo "--- end $log ---"; fail "dev never became ready (60s timeout; process still alive)"; }
+    sleep 0.5
+  done
 }
 
 stop_dev() { # $1 = pid
@@ -156,7 +185,7 @@ serves() { # $1 = origin, $2 = marker
 echo "running: zigapagos dev (no arguments at all)..."
 ZC_LOG="$WORK/zeroconf.log"
 ZC_PID=$(launch_group "$SRC" "$ZC_LOG" "$ZIGAPAGOS" dev --port=0)
-wait_ready "$ZC_LOG"
+wait_ready "$ZC_LOG" "$ZC_PID"
 ZC_ORIGIN=$(origin_from_log "$ZC_LOG")
 [[ -n "$ZC_ORIGIN" ]] || { cat "$ZC_LOG"; fail "zero-config dev printed no origin"; }
 serves "$ZC_ORIGIN" DEVLOOP-MARKER-V1 || { cat "$ZC_LOG"; fail "zero-config dev did not serve the built site"; }
@@ -181,7 +210,7 @@ echo "PASS: --site inside a watched dir is refused (rebuild-loop guard)"
 # --- (c) boot + readiness + edit-triggered rebuild -----------------------------------
 echo "running: zigapagos dev (boot + edit -> rebuild)..."
 DEV_PID="$(start_dev "$WORK/dev1.log" --data-dir="$DATA")"
-wait_ready "$WORK/dev1.log"
+wait_ready "$WORK/dev1.log" "$DEV_PID"
 ORIGIN="$(origin_from_log "$WORK/dev1.log")"
 [[ -n "$ORIGIN" ]] || fail "could not parse the origin from the ready line"
 serves "$ORIGIN" "DEVLOOP-MARKER-V1" || fail "initial build not served at $ORIGIN"
@@ -236,7 +265,7 @@ echo "PASS: teardown (origin dead, no dev/zigbase/watcher orphans, data dir inta
 echo "running: zigapagos dev (second session, same --data-dir)..."
 sleep 1.1 # the stub's touch payload is a ms timestamp; make strictly-newer observable
 DEV_PID="$(start_dev "$WORK/dev2.log" --data-dir="$DATA")"
-wait_ready "$WORK/dev2.log"
+wait_ready "$WORK/dev2.log" "$DEV_PID"
 ORIGIN2="$(origin_from_log "$WORK/dev2.log")"
 serves "$ORIGIN2" "DEVLOOP-MARKER-V2" || fail "second session does not serve the tree"
 test -f "$DATA/devloop-sentinel" || fail "second session lost the data-dir sentinel (state not persistent)"
@@ -248,7 +277,7 @@ echo "PASS: persistent data dir reused across two dev sessions"
 # --- (f) default data dir is .zigbase/ under the site root ---------------------------
 echo "running: zigapagos dev (default --data-dir)..."
 DEV_PID="$(start_dev "$WORK/dev3.log")"
-wait_ready "$WORK/dev3.log"
+wait_ready "$WORK/dev3.log" "$DEV_PID"
 test -f "$SRC/.zigbase/stub-zigbase.touch" || fail "default data dir .zigbase/ not created at the site root"
 stop_dev "$DEV_PID"
 echo "PASS: default data dir is <site root>/.zigbase/"
@@ -298,7 +327,7 @@ if [[ -n "${REAL_ZIGBASE:-}" && -x "${REAL_ZIGBASE:-}" ]]; then
   sed -i.bak 's/DEVLOOP-MARKER-V2/DEVLOOP-MARKER-V1/' "$SRC/content/index.smd" && rm -f "$SRC/content/index.smd.bak"
   RDATA="$WORK/real-data"
   DEV_PID="$(start_dev "$WORK/real.log" --data-dir="$RDATA" --zigbase="$REAL_ZIGBASE")"
-  wait_ready "$WORK/real.log"
+  wait_ready "$WORK/real.log" "$DEV_PID"
   RORIGIN="$(origin_from_log "$WORK/real.log")"
   serves "$RORIGIN" "DEVLOOP-MARKER-V1" || { tail -30 "$WORK/real.log"; fail "real zigbase does not serve the tree"; }
   curl -s "$RORIGIN/api/health" >/dev/null || true # API surface exists (same origin)
