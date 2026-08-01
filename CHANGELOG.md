@@ -29,10 +29,14 @@ Two things to know before reading it:
     commits past it, and the abbreviated hash. This is deliberately *not* how
     `git describe` spells it. The height is moved into a `-dev.` pre-release, the
     hash into `+` build metadata, and describe's conventional `g` prefix is
-    dropped, so the whole string is semver and orders against the releases below.
-  - `unknown` — `git` is missing, or `git describe` failed because the checkout
-    is shallow and carries no tags. CI's own `build-binary` job is exactly that,
-    so the binary it uploads says `unknown` while a release build says the tag.
+    dropped, so everything after the leading `v` is a valid semver version and
+    orders against the releases below. The `v` is not part of that version number
+    — semver excludes it — it is carried over from the tag name, which describe
+    returns verbatim.
+  - `unknown` — `git` is missing, or `git describe` failed: nothing to describe
+    against, because the checkout is shallow, or because the tree is not a git
+    repository at all. CI's own `build-binary` job is the shallow case, so the
+    binary it uploads says `unknown` while a release build says the tag.
 
   `tests/npm/packaging.sh` pins the installed binary's output to that grammar and
   `tests/changelog/version-shape.sh` pins this list to it, so the tool and this
