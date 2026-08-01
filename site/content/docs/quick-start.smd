@@ -35,7 +35,10 @@ environment variable:
 export ZIGAPAGOS_RUNTIME_DIR="$PWD/runtime"
 ```
 
-`npx zigapagos` sets it for you; a plain content site needs neither it nor Bun.
+Leave it unset and a plain content site needs neither it nor Bun. `npx
+zigapagos` always sets it — which is why an npm install does need Bun, even for
+a site with no islands in it. The full rule, per command, is in
+[runtime dependencies]($link.page("docs/runtime-dependencies")).
 
 ## Generate a site
 

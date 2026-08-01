@@ -6,6 +6,10 @@ Islands are `.island.tsx` files authored against `@z/runtime` (a vendored
 Preact build). SSR happens at build time via a Bun "render sidecar"; client
 hydration uses an import-map so the page shares **one** Preact instance.
 
+Islands are the point at which a build acquires external dependencies: Bun, and
+the `@z/runtime` tree the sidecar and bundlers are scripts inside. What supplies
+each, per install method, is [runtime dependencies](runtime-dependencies.md).
+
 ## File conventions
 
 - Place islands under the project's `components/` directory (or any path; the

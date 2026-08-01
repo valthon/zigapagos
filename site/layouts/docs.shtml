@@ -138,6 +138,14 @@
             </ctx>
           </li>
           <li>
+            <ctx :if="$page.custom.get('slug').eql('runtime-dependencies')">
+              <a aria-current="page" href="$site.page('docs/runtime-dependencies').link()">Runtime dependencies</a>
+            </ctx>
+            <ctx :if="$page.custom.get('slug').eql('runtime-dependencies').not()">
+              <a href="$site.page('docs/runtime-dependencies').link()">Runtime dependencies</a>
+            </ctx>
+          </li>
+          <li>
             <ctx :if="$page.custom.get('slug').eql('observability')">
               <a aria-current="page" href="$site.page('docs/observability').link()">Observability</a>
             </ctx>

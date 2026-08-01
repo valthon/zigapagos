@@ -95,8 +95,11 @@ package ships the `@z/runtime` sources and the Bun sidecar, and depends on `bun`
 and `@zigbase/server`, so `release` discovers your `*.island.tsx` / `*.spa.tsx`
 entries and bundles them itself.
 
-Downloading a precompiled binary from the releases page gets you the same thing;
-see [npm/README.md](npm/README.md) for what npm adds and the install size.
+The [releases page](https://github.com/valthon/zigapagos/releases) gets you the
+binary and nothing else — no Bun, and no `@z/runtime` tree, which islands and
+SPAs need. [`docs/runtime-dependencies.md`](docs/runtime-dependencies.md) is the
+full account: what each command needs installed, how Bun and ZigBase are
+obtained, and what npm supplies that an archive does not.
 
 To add your first island, see [docs/islands.md](docs/islands.md). A complete
 worked example lives in [`examples/tsx-site/`](examples/tsx-site/) — islands,
