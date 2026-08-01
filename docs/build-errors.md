@@ -177,8 +177,10 @@ unknown island directive 'client:visable' (expected load|idle|visible|media|only
 ```
 
 **Cause.** A typo, or an Astro directive with no counterpart here. The build
-rejects it because the alternative is an island that renders and then silently
-never hydrates.
+rejects it because the runtime would not: `schedule()`'s `default:` branch
+mounts a directive it does not recognise, so `client:visable` would hydrate on
+page init exactly like `client:load`. You lose the deferral you asked for, and
+nothing looks broken.
 
 **Fix.** One of the five. Their semantics are on the
 [islands page](islands.md#hydration-directives-client).
