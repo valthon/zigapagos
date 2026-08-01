@@ -203,6 +203,40 @@ test("fence: a delimiter-shaped line whose info string holds a backtick is not a
   expect(out).toContain('$heading.id("real")');
 });
 
+test("fence language remap: an inherited Object property is a MISS, not a hit", () => {
+  // Issue #67. `fenceLangRemap` is an ordinary object literal, so its prototype
+  // is `Object.prototype`. A raw `remap[lang]` therefore resolves a fence
+  // tagged `constructor` to the `Object` constructor — truthy, so the miss
+  // check passes and the whole source text of a function is spliced into the
+  // fence's language slot. The build error that follows names the stringified
+  // function rather than the fence the author wrote.
+  //
+  // Every name below is a real `Object.prototype` member and every one of them
+  // corrupts the fence under a raw index; `constructor` is only the loudest.
+  for (const lang of ["constructor", "toString", "valueOf", "hasOwnProperty", "isPrototypeOf"]) {
+    const body = ["```" + lang, "sample", "```", ""].join("\n");
+    const out = transformBody(body, opts({ fenceLangRemap: {} }));
+    expect(out).toBe(body);
+  }
+});
+
+test("fence language remap: `__proto__` is a miss too", () => {
+  // Separate from the loop above because `__proto__` is an accessor rather than
+  // a plain inherited value: `remap["__proto__"]` yields `Object.prototype`
+  // itself, which stringifies to "[object Object]".
+  const body = ["```__proto__", "sample", "```", ""].join("\n");
+  const out = transformBody(body, opts({ fenceLangRemap: {} }));
+  expect(out).toBe(body);
+});
+
+test("fence language remap: an own property named `constructor` still maps", () => {
+  // The guard rejects INHERITED names, not the name itself — a caller that
+  // genuinely maps `constructor` must still be honoured.
+  const body = ["```constructor", "sample", "```", ""].join("\n");
+  const out = transformBody(body, opts({ fenceLangRemap: { constructor: "ts" } }));
+  expect(out.split("\n")[0]).toBe("```ts");
+});
+
 // ---------------------------------------------------------------------------
 // link rewriting
 // ---------------------------------------------------------------------------

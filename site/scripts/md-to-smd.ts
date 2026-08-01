@@ -231,7 +231,19 @@ function remapFenceLang(
 ): string {
   if (fence.info === "") return line;
   const lang = fence.info.split(/\s/)[0];
-  const mapped = remap[lang];
+  // `Object.hasOwn`, not a raw `remap[lang]`: `fenceLangRemap` is an ordinary
+  // object literal, so its prototype is `Object.prototype` and a fence tagged
+  // `constructor`, `toString`, `valueOf`, `hasOwnProperty` or `__proto__`
+  // resolves to an inherited member instead of missing. Every one of those is
+  // truthy, so the miss check below passed and the member was stringified into
+  // the fence's language slot — ```` ```constructor ```` came out as the source
+  // text of the `Object` constructor, spread over three lines (issue #67).
+  //
+  // The guard rather than a null-prototype copy of the table, because this
+  // module exists to be copied (see docs/generated-content.md) and the caller
+  // supplying that table is exactly the person who will not read this file: the
+  // option stays a plain `Record`, which is what they will naturally pass.
+  const mapped = Object.hasOwn(remap, lang) ? remap[lang] : undefined;
   if (!mapped) return line;
   // `info` is the line past the delimiter run, trimmed, so the language token
   // starts at that run's end plus whatever leading whitespace the trim ate.
