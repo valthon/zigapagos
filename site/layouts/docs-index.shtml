@@ -22,6 +22,9 @@
       <a class="card" href="$site.page('docs/spa').link()">
         <h3>Native SPAs</h3><p>One .spa.tsx to a client-routed app.</p>
       </a>
+      <a class="card" href="$site.page('docs/build-errors').link()">
+        <h3>Common build errors</h3><p>Message, cause, fix — for the first hour.</p>
+      </a>
       <a class="card" href="$site.page('docs/superhtml').link()">
         <h3>SuperHTML directives</h3><p>The template constructs, and what does not exist.</p>
       </a>

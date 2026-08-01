@@ -106,6 +106,14 @@
         <p class="docs-group">Reference</p>
         <ul>
           <li>
+            <ctx :if="$page.custom.get('slug').eql('build-errors')">
+              <a aria-current="page" href="$site.page('docs/build-errors').link()">Common build errors</a>
+            </ctx>
+            <ctx :if="$page.custom.get('slug').eql('build-errors').not()">
+              <a href="$site.page('docs/build-errors').link()">Common build errors</a>
+            </ctx>
+          </li>
+          <li>
             <ctx :if="$page.custom.get('slug').eql('superhtml')">
               <a aria-current="page" href="$site.page('docs/superhtml').link()">SuperHTML directives</a>
             </ctx>

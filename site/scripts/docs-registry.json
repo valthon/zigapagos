@@ -28,6 +28,13 @@
     "description": "Why Zigapagos ships no content-generator hook, and the four-piece recipe — registry, generator, gitignore, freshness gate — this site's own docs pages use instead."
   },
   {
+    "canonical": "docs/build-errors.md",
+    "mirror": "build-errors.smd",
+    "slug": "build-errors",
+    "title": "Common build errors",
+    "description": "The errors a new project actually hits: the verbatim message, what causes it, and what to change."
+  },
+  {
     "canonical": "docs/superhtml.md",
     "mirror": "superhtml.smd",
     "slug": "superhtml",
