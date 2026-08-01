@@ -57,6 +57,12 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Ask for cores so a crash that prints no usable trace can still be read
+# post-mortem (see try_core_backtrace). Best-effort: a hard limit or a
+# core_pattern that pipes to a handler will defeat it, which is why the
+# reader is told what core_pattern says rather than left wondering.
+ulimit -c unlimited 2>/dev/null || true
+
 fail() { echo "FAIL: $*"; exit 1; }
 
 # Polls a command until it succeeds or the deadline (seconds) passes.
@@ -130,6 +136,45 @@ origin_from_log() {
   grep -o 'serving at http://[0-9.]*:[0-9]*' "$1" | head -1 | sed 's/serving at //'
 }
 
+# Dumps a log for a reader who has only CI output. $2 settles first: a Zig panic
+# writes its header immediately and THEN opens its own executable to read DWARF
+# and unwind, which on a 400MB+ debug binary is not instant. Dumping the instant
+# the process disappears can therefore capture the header and miss the trace --
+# which is exactly what a CI crash on the zero-config leg produced.
+dump_log() { # $1 = log, $2 = settle seconds (optional)
+  [[ -n "${2:-}" ]] && sleep "$2"
+  echo "--- $1 ---"; cat "$1" 2>/dev/null; echo "--- end $1 ---"
+}
+
+# A Zig frame looks like `/path/file.zig:12:7: 0xdeadbeef in fn (file.zig)`.
+# The binary is built by plain `zig build` -- Debug, debug_info, not stripped
+# (build/config.zig leaves preferred_optimize_mode commented out) -- so a crash
+# that prints a signal header and NO frames is itself a finding, not something
+# to scroll past: it means the trace was lost or the unwind failed, and the next
+# reader should reach for the core rather than re-reading the log.
+has_zig_trace() { grep -qE '0x[0-9a-f]+ in ' "$1" 2>/dev/null; }
+
+# Best-effort backtrace from a core, for when in-process unwinding produced
+# nothing. Cores only land next to the process if core_pattern writes files at
+# all -- GitHub runners often pipe to a handler instead -- so this reports why
+# it found nothing rather than staying silent.
+try_core_backtrace() { # $1 = cwd the process ran in
+  local pat; pat=$(cat /proc/sys/kernel/core_pattern 2>/dev/null || echo "<unreadable>")
+  local core; core=$(ls -t "$1"/core* /tmp/core* 2>/dev/null | head -1)
+  if [[ -z "$core" ]]; then
+    echo "no core file found (kernel.core_pattern = $pat; ulimit -c = $(ulimit -c))"
+    return
+  fi
+  echo "core: $core"
+  if command -v gdb >/dev/null 2>&1; then
+    gdb -batch -ex 'thread apply all bt' "$ZIGAPAGOS" "$core" 2>&1 | tail -40
+  elif command -v lldb >/dev/null 2>&1; then
+    lldb -batch -o 'thread backtrace all' -c "$core" "$ZIGAPAGOS" 2>&1 | tail -40
+  else
+    echo "(no gdb/lldb to read it)"
+  fi
+}
+
 # $1 = log, $2 = pid (optional). With a pid, a dev that DIES is reported as a
 # death -- with its wait status -- instead of being polled at for the full 60s
 # and then called a timeout.
@@ -150,15 +195,22 @@ wait_ready() { # $1 = log, $2 = pid (optional)
     if [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then
       local status=0
       wait "$pid" 2>/dev/null || status=$?
-      echo "--- $log ---"; cat "$log"; echo "--- end $log ---"
+      dump_log "$log" 2
       # 128+N is a signal death; name the signal, since SIGILL/SIGSEGV/SIGABRT
       # mean a zigapagos bug while SIGKILL usually means the runner OOMed.
       if (( status > 128 )); then
-        fail "dev DIED before becoming ready: killed by SIG$(kill -l $((status - 128)) 2>/dev/null || echo "?($((status - 128)))") (status $status) -- this is a crash, not a timeout"
+        local signame; signame=SIG$(kill -l $((status - 128)) 2>/dev/null || echo "?($((status - 128)))")
+        if ! has_zig_trace "$log"; then
+          echo "NOTE: $signame with no Zig stack trace in the log. The binary is a"
+          echo "      Debug build with debug_info, so a trace was expected; its"
+          echo "      absence means the unwind failed or the trace was lost."
+          try_core_backtrace "$SRC"
+        fi
+        fail "dev DIED before becoming ready: killed by $signame (status $status) -- this is a crash, not a timeout"
       fi
       fail "dev DIED before becoming ready: exited $status -- this is a crash, not a timeout"
     fi
-    (( SECONDS - start < 60 )) || { echo "--- $log ---"; cat "$log"; echo "--- end $log ---"; fail "dev never became ready (60s timeout; process still alive)"; }
+    (( SECONDS - start < 60 )) || { dump_log "$log"; fail "dev never became ready (60s timeout; process still alive)"; }
     sleep 0.5
   done
 }
