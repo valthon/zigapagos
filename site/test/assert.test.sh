@@ -111,6 +111,24 @@ cat >"$OUT/docs/unprefixed/index.html" <<'HTML'
 <!DOCTYPE html><html><body><a href="/docs/islands">works locally, 404s in production</a></body></html>
 HTML
 
+# The prefix as a link in its own right: the three spellings of "home" that a
+# project-pages site emits, none of which is `$prefix/something`.
+mkdir -p "$OUT/docs/root-link"
+cat >"$OUT/docs/root-link/index.html" <<'HTML'
+<!DOCTYPE html><html><body>
+<a href="/myproj">home</a>
+<a href="/myproj/">home, with the slash</a>
+<a href="/myproj#top">home, anchored</a>
+</body></html>
+HTML
+
+# A prefix LOOKALIKE: /myprojx is a different site, and accepting it would mean
+# the prefix test had degraded into a substring match.
+mkdir -p "$OUT/docs/lookalike"
+cat >"$OUT/docs/lookalike/index.html" <<'HTML'
+<!DOCTYPE html><html><body><a href="/myprojx/docs/islands">not this site</a></body></html>
+HTML
+
 # --- assert_route_emitted -----------------------------------------------------
 expect 0 "route_emitted: a real page passes"                assert_route_emitted "$OUT" /docs/islands
 expect 1 "route_emitted: an EMPTY placeholder fails"        assert_route_emitted "$OUT" /docs/stub
@@ -145,6 +163,10 @@ expect 1 "links: an UNPREFIXED absolute link fails under a prefix" \
          assert_internal_links_resolve "$OUT" "$OUT/docs/unprefixed/index.html" /myproj
 expect 0 "links: the same page passes with no prefix declared" \
          assert_internal_links_resolve "$OUT" "$OUT/docs/unprefixed/index.html"
+expect 0 "links: a link to the project ROOT resolves (bare, slashed and anchored)" \
+         assert_internal_links_resolve "$OUT" "$OUT/docs/root-link/index.html" /myproj
+expect 1 "links: a prefix LOOKALIKE is still an unprefixed link" \
+         assert_internal_links_resolve "$OUT" "$OUT/docs/lookalike/index.html" /myproj
 expect 1 "links: missing file fails"                        assert_internal_links_resolve "$OUT" "$t/nope.html" /myproj
 
 # --- assert_island_ssr --------------------------------------------------------

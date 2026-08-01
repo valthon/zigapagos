@@ -68,6 +68,11 @@ prefix (a project-pages subpath such as `/myproj`), a root-absolute link that
 does *not* carry it fails too — that is the bug that only exists in production.
 External, `mailto:`, in-page anchors and relative links are skipped.
 
+The prefix is itself a link: `/myproj`, `/myproj/` and `/myproj#top` are the
+three spellings of "home" a project-pages site emits, and all three resolve to
+`<out>/index.html`. A fragment or query is removed before the prefix is
+checked, so an anchored link is not mistaken for an unprefixed one.
+
 ### `assert_island_ssr <file> <island-src>`
 
 The island with this `src` is on the page **and was server-rendered**: its

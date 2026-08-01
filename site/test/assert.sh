@@ -163,13 +163,19 @@ $(printf '%s\n' "$found" | sed 's/^/    /')"
 # External, `mailto:`, in-page anchors and relative links are skipped -- the
 # first three are not ours, and a relative link resolves against the emitted
 # directory rather than the tree root.
+#
+# The prefix itself is a link. `href="/myproj"` is how a site's own logo links
+# home, and it resolves to the same page `href="/myproj/"` does -- so both are
+# checked against `<out>/index.html`. Reporting the trailing-slash-less form as
+# an unprefixed link would be a wrong diagnosis of a correct link, and the
+# noisiest possible one: it is on every page of a project-pages site.
 assert_internal_links_resolve() {
     local out="$1" f="$2" prefix="${3:-}"
     [[ -d "$out" ]] || _za_fail "assert_internal_links_resolve: output directory does not exist: $out"
     _za_readable "$f" "assert_internal_links_resolve"
     prefix="${prefix%/}"
 
-    local href rel target failures=0
+    local href path rel target failures=0
     while IFS= read -r href; do
         case "$href" in
             http*|mailto:*|"#"*|"") continue ;;
@@ -178,9 +184,15 @@ assert_internal_links_resolve() {
             /*) : ;;
             *) continue ;;   # relative: resolves against the emitted directory
         esac
+        # Fragment and query come off BEFORE the prefix test, not after it:
+        # `/myproj#install` carries the prefix, and testing the raw href would
+        # call it unprefixed.
+        path="${href%%#*}"
+        path="${path%%\?*}"
         if [[ -n "$prefix" ]]; then
-            case "$href" in
-                "$prefix"/*) rel="${href#"$prefix"/}" ;;
+            case "$path" in
+                "$prefix") rel="" ;;   # the project root: <out>/index.html
+                "$prefix"/*) rel="${path#"$prefix"/}" ;;
                 *)
                     echo "  unprefixed absolute link: $href" >&2
                     failures=$((failures + 1))
@@ -188,10 +200,8 @@ assert_internal_links_resolve() {
                     ;;
             esac
         else
-            rel="${href#/}"
+            rel="${path#/}"
         fi
-        rel="${rel%%#*}"
-        rel="${rel%%\?*}"
         target="$out/$rel"
         if [[ -f "$target" || -f "${target%/}/index.html" ]]; then
             continue
