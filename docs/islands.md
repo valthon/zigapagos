@@ -197,19 +197,26 @@ the layout or in content rather than as an island.
 ### What the build rejects
 
 `src/islands/pass.zig`'s `validateClientDirective` checks the directive at build
-time, because every mistake it catches is otherwise a *silent* never-hydrates:
-the page renders, the island's SSR'd markup is there, and it simply never wakes
-up.
+time, because nothing downstream of it ever complains. `schedule()` has no error
+path: its `default:` branch mounts anything it does not recognise, and its
+`media` case defaults a missing query to one that matches everywhere. None of
+the mistakes below stops an island hydrating — each one *silently changes when*
+it hydrates, which is the only thing a directive is for. The page renders, the
+island wakes up, and the deferral you asked for is quietly gone.
 
 An unknown directive name — a typo like `client:visable`, or an Astro directive
-with no counterpart here:
+with no counterpart here. Unvalidated it would fall through to `schedule()`'s
+`default:` branch, so `client:visable` would mount on page init exactly like
+`client:load` rather than waiting for the viewport:
 
 ```
 unknown island directive 'client:visable' (expected load|idle|visible|media|only)
 ```
 
-`client:media` with no query, or an empty one (`client:media=""`), which would
-leave the runtime with nothing to match:
+`client:media` with no query, or an empty one (`client:media=""`). The runtime
+reads the query as `el.dataset.zMedia || "all"`, and `all` matches in every
+browser, so such an island would mount immediately for every visitor — again
+`client:load`, spelled at length:
 
 ```
 'client:media' requires a media query value, e.g. client:media="(min-width: 600px)"

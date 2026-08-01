@@ -48,11 +48,31 @@ beforeEach(() => {
   });
 });
 
+// `requestIdleCallback` and `IntersectionObserver` are the two globals happy-dom
+// does NOT supply, so the tests below define them and teardown used to just
+// `delete` them. That is only correct for as long as the harness supplies
+// neither: the day happy-dom ships either one, an unconditional `delete` would
+// strip it from the shared realm for every test file that runs after this one
+// — exactly the hazard the `matchMedia` capture above exists to avoid, in the
+// opposite direction. Capture the descriptor once (undefined when the harness
+// has no own property, which is today's case) and put back precisely that.
+// Descriptors rather than values, so a global the harness defines on the
+// PROTOTYPE is restored by deleting the own fake rather than by shadowing it
+// with a copy.
+const realIdleDesc = Object.getOwnPropertyDescriptor(window, "requestIdleCallback");
+const realIoWindowDesc = Object.getOwnPropertyDescriptor(window, "IntersectionObserver");
+const realIoGlobalDesc = Object.getOwnPropertyDescriptor(globalThis, "IntersectionObserver");
+
+function restoreGlobal(obj: object, key: string, desc?: PropertyDescriptor): void {
+  if (desc) Object.defineProperty(obj, key, desc);
+  else delete (obj as any)[key];
+}
+
 afterEach(() => {
   __setIslandImporter(undefined);
-  delete (window as any).requestIdleCallback;
-  delete (window as any).IntersectionObserver;
-  delete (globalThis as any).IntersectionObserver;
+  restoreGlobal(window, "requestIdleCallback", realIdleDesc);
+  restoreGlobal(window, "IntersectionObserver", realIoWindowDesc);
+  restoreGlobal(globalThis, "IntersectionObserver", realIoGlobalDesc);
   (window as any).matchMedia = realMatchMedia;
 });
 
@@ -116,14 +136,39 @@ test("client:idle defers to requestIdleCallback when the browser has one", () =>
   expect(imported).toEqual([MODULE_URL]);
 });
 
-test("client:idle falls back to a timer where requestIdleCallback is missing", async () => {
+test("client:idle falls back to a timer where requestIdleCallback is missing", () => {
   // Safari shipped no requestIdleCallback for years; the fallback is
   // `setTimeout(run, 1)`, i.e. "after the current task", not "when idle".
+  //
+  // The branch is chosen by `"requestIdleCallback" in window` and happy-dom
+  // supplies none. Asserted rather than assumed: a harness that started
+  // providing one would otherwise send this test down the OTHER branch, where it
+  // would still pass and stop testing the fallback at all.
   expect("requestIdleCallback" in window).toBe(false);
+
+  // The timer is captured, not awaited. Sleeping on a real one is both slower
+  // and weaker — a 20ms sleep cannot tell `setTimeout(run, 1)` from
+  // `setTimeout(run, 500)`, and that delay is precisely what the docs page
+  // claims. `schedule()` queues and returns, so exactly one timer is registered
+  // per island and the stub is restored before any assertion can throw past it.
+  const realSetTimeout = globalThis.setTimeout;
+  let queued: (() => void) | undefined;
+  let delay: unknown;
+  (globalThis as any).setTimeout = (cb: () => void, ms?: number) => {
+    queued = cb;
+    delay = ms;
+    return 0;
+  };
   island("idle");
-  initIslands();
-  expect(imported).toEqual([]); // still the same task
-  await new Promise((r) => setTimeout(r, 20));
+  try {
+    initIslands();
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+  }
+
+  expect(imported).toEqual([]); // still the same task — nothing ran inline
+  expect(delay).toBe(1);
+  queued!();
   expect(imported).toEqual([MODULE_URL]);
 });
 
@@ -218,12 +263,18 @@ test("client:media with no data-z-media falls back to the `all` query", () => {
   expect(imported).toEqual([MODULE_URL]);
 });
 
-// Runs last on purpose: the three tests above replace `window.matchMedia`, one
-// of them with a fake that reports `matches: true` for EVERY query. Bun shares
-// one happy-dom realm across the suite, so a fake that survives this file
-// decides what an unrelated test sees. This asserts the teardown actually put
-// the real implementation back, which `delete` cannot do for a method the DOM
-// harness supplies.
-test("the media fakes do not outlive their tests", () => {
+// Runs last on purpose: the tests above replace `window.matchMedia` — one of
+// them with a fake that reports `matches: true` for EVERY query -- and define
+// `requestIdleCallback` / `IntersectionObserver` on the shared realm. Bun shares
+// one happy-dom realm across the suite, so any of those surviving this file
+// decides what an unrelated test sees. This asserts the teardown left the realm
+// exactly as it found it: the real `matchMedia` back (which `delete` cannot do
+// for a method the harness supplies), and the two globals the harness does not
+// supply restored to their original descriptor — `undefined`, i.e. absent,
+// while that stays true of happy-dom, and whatever it supplies if it ever does.
+test("the directive fakes do not outlive their tests", () => {
   expect(window.matchMedia).toBe(realMatchMedia);
+  expect(Object.getOwnPropertyDescriptor(window, "requestIdleCallback")).toEqual(realIdleDesc);
+  expect(Object.getOwnPropertyDescriptor(window, "IntersectionObserver")).toEqual(realIoWindowDesc);
+  expect(Object.getOwnPropertyDescriptor(globalThis, "IntersectionObserver")).toEqual(realIoGlobalDesc);
 });
