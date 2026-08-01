@@ -19,7 +19,7 @@ REGISTRY=scripts/docs-registry.json
 MIRROR_DIR=content/docs
 BUILD_OUT=zig-out/site
 PAGE_PATH_PREFIX=docs          # a mirror with slug X is emitted at $BUILD_OUT/$PAGE_PATH_PREFIX/X/index.html
-BUILD_CMD=(zig build)          # bash array; invoked as "${BUILD_CMD[@]}"
+BUILD_CMD=(bash build.sh)      # bash array; invoked as "${BUILD_CMD[@]}"
 UNIT_TESTS=test/md-to-smd.test.ts
 
 # Pure-transform unit tests for the generic module the generator is built on

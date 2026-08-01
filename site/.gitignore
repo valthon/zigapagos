@@ -1,6 +1,5 @@
 node_modules/
 zig-out/
-.zig-cache/
 .zigapagos-cache/
 # ZigBase dev-loop data dir (persistent local backend state; see `zigapagos dev`)
 .zigbase/

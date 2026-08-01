@@ -2,13 +2,10 @@
 # site/test/build.sh — the site builds and is prefix-correct
 set -euo pipefail
 cd "$(dirname "$0")/.."
-bun install --frozen-lockfile 2>/dev/null || bun install
-# Mirrors are gitignored build artifacts, so a fresh clone has none. Generate
-# them here rather than assuming a prior step did: the docs sidebar links to
-# mirrored pages by name, and a missing mirror fails the build pointing at the
-# sidebar instead of at the real cause.
-bun run scripts/gen-docs-mirror.ts
-zig build
+# The canonical build: bun install, docs-mirror generation and the one
+# `zigapagos release` invocation, all in build.sh so this gate and CI cannot
+# drift apart on the flags.
+bash build.sh
 OUT=zig-out/site
 test -f "$OUT/index.html" || { echo "FAIL: no index.html"; exit 1; }
 grep -q '/zigapagos/zigapagos-runtime.js' "$OUT/index.html" || { echo "FAIL: runtime URL not prefixed"; exit 1; }
@@ -147,9 +144,8 @@ grep -q 'id="z-spa-root" data-z-spa data-z-prefix="/zigapagos"' "$OUT/demos/app/
   || { echo "FAIL: SPA shell carries no data-z-prefix for the client router"; exit 1; }
 
 # The host-config emitters under a url_path_prefix. This site is the only place
-# the whole chain runs for real (emit-host-config is a build.zig step, not part
-# of `zigapagos release`), and it is genuinely prefixed, so these are the
-# strongest assertions available for that half of the feature.
+# the whole chain runs for real against a genuinely prefixed deployment, so
+# these are the strongest assertions available for that half of the feature.
 #
 # The manifest carries the prefix as its OWN field and leaves route values
 # TREE-RELATIVE — the output tree has no /zigapagos directory, so a prefixed

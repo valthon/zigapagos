@@ -27,7 +27,15 @@ before believing them.
 zig build
 ```
 
-That produces `zig-out/bin/zigapagos`.
+That produces `zig-out/bin/zigapagos`. Building a site that has islands or SPAs
+also needs the checkout's runtime sources, which the binary finds through one
+environment variable:
+
+```sh
+export ZIGAPAGOS_RUNTIME_DIR="$PWD/runtime"
+```
+
+`npx zigapagos` sets it for you; a plain content site needs neither it nor Bun.
 
 ## Generate a site
 
@@ -93,13 +101,15 @@ export default function Hello({ name }: Props) {
 }
 ```
 
-Declare it in `build.zig`:
+Declare it on the build command:
 
-```zig
-const islands: []const zigapagos.Island = &.{
-    .{ .root = b.path("components/Hello.island.tsx"), .src = "components/Hello.island.tsx" },
-};
+```sh
+../zig-out/bin/zigapagos release --island=components/Hello.island.tsx
 ```
+
+Once a project has more than one, keep that invocation in a `build.sh` so the
+entries are declared in one place — see
+[configuration]($link.page("docs/configuration")).
 
 And use it in a layout — **not** in a `.smd` file, which rejects raw HTML:
 

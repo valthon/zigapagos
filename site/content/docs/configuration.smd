@@ -1,12 +1,13 @@
 ---
 .title = "Configuration",
-.description = "zigapagos.ziggy, the website() build options, and what each one changes.",
+.description = "zigapagos.ziggy, the build invocation, and what each option changes.",
 .layout = "docs.shtml",
 .custom = { .slug = "configuration" },
 ---
 
 A Zigapagos project is configured in two places: `zigapagos.ziggy` describes the
-site, and `build.zig` declares the islands and SPAs the build must compile.
+site, and the `zigapagos release` invocation that builds it declares the islands
+and SPAs to compile.
 
 ## zigapagos.ziggy
 
@@ -40,49 +41,44 @@ the project root.
 `nginx`, or `apache`. See [native SPAs]($link.page("docs/spa")) for what each
 one generates.
 
-## build.zig
+## The build invocation
 
-```zig
-const std = @import("std");
-const zigapagos = @import("zigapagos");
+`zigapagos` is a standalone executable, so a project's build is one command
+rather than a build graph — nothing here needs a Zig toolchain. Keep that command
+in a `build.sh` at the project root so the entries are declared in exactly one
+place; `zigapagos init --from-astro` scaffolds one for you.
 
-pub fn build(b: *std.Build) void {
-    const islands: []const zigapagos.Island = &.{
-        .{ .root = b.path("components/Counter.island.tsx"),
-           .src = "components/Counter.island.tsx" },
-    };
+```sh
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")"
 
-    const spas: []const zigapagos.Spa = &.{
-        .{ .root = b.path("app/app.spa.tsx"),
-           .src = "app/app.spa.tsx",
-           .base = "/app" },
-    };
-
-    const site = zigapagos.website(b, .{
-        .islands = islands,
-        .spas = spas,
-        .not_found = "app",
-        .output_path = "site",
-        .force = true,
-    });
-    b.getInstallStep().dependOn(&site.step);
-}
+exec zigapagos release \
+  --force \
+  --output=zig-out/site \
+  --island=components/Counter.island.tsx \
+  --spa='app/app.spa.tsx|/app' \
+  --spa-not-found=app \
+  "$@"
 ```
 
-`.root` is a build-graph path; `.src` is the same file as a string relative to
-the project root, and is what an `<island src="…">` attribute must match.
+`--island=SRC` names one island source as a path relative to the project root,
+and that path is what an `<island src="…">` attribute must match. Repeat the flag
+once per island.
 
-`.base` on an SPA **must** equal the `base` exported from the `.spa.tsx` module.
-The build validates the match and fails loudly if they diverge, because a
-mismatch produces an application whose router and whose prerendered shells
-disagree about where they live.
+`--spa=SRC|BASE` registers a native SPA. `BASE` **must** equal the `base`
+exported from the `.spa.tsx` module. The build validates the match and fails
+loudly if they diverge, because a mismatch produces an application whose router
+and whose prerendered shells disagree about where they live.
 
-`.not_found` names which SPA owns the site-wide `404.html`, by file basename
-without the `.spa.tsx` suffix. Set it explicitly when there is more than one SPA;
-otherwise declaration order decides, which is not a property you want a
+`--spa-not-found=NAME` names which SPA owns the site-wide `404.html`, by file
+basename without the `.spa.tsx` suffix. Set it explicitly when there is more than
+one SPA; otherwise declaration order decides, which is not a property you want a
 deployment to depend on.
 
-`.force = true` allows the build to overwrite an existing output tree.
+`--output=DIR` is the output tree (default `public/`), and `--force` lets the
+build overwrite one it did not create. Run `zigapagos release --help` for the
+rest.
 
 ## A note on failure and partial output
 

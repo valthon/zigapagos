@@ -6,15 +6,14 @@
 # one Preact (via test/spa_slice_playwright.py).
 set -euo pipefail
 cd "$(dirname "$0")/.."
-# The root build.zig rm -rf's committed tests/**/snapshot baselines at configure
-# time; restore whatever it deleted on the way out.
-trap 'git -C ../.. ls-files --deleted -z -- tests/ | xargs -0 -I{} git -C ../.. restore -- {}' EXIT
 
 (cd ../../runtime && mise exec -- bun install)
 mise exec -- bun install
-# Clean rebuild so the sliced runtimes reflect current source (no stale bundles).
-rm -rf .zig-cache zig-out
-mise exec -- zig build
+# Clean output tree: `--force` never prunes, and the SPA chunk names are
+# content-hashed, so a stale chunk from a previous build would otherwise sit
+# beside the current one and the SIZE assertions below could bill the wrong file.
+rm -rf zig-out
+bash build.sh
 
 S=zig-out/site
 SHARED="$S/zigapagos-runtime.js"

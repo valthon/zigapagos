@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-trap 'git -C ../.. ls-files --deleted -z -- tests/ | xargs -0 -I{} git -C ../.. restore -- {}' EXIT
 
 (cd ../../runtime && mise exec -- bun install)
 mise exec -- bun install
-mise exec -- zig build
+bash build.sh
 
 OUT=zig-out/site
 # static route shells
@@ -27,7 +26,7 @@ test -f "$OUT/app/club/2/index.html"   || { echo "FAIL: no prerendered club/2"; 
 test -f "$OUT/spa/app.js"              || { echo "FAIL: no spa/app.js"; exit 1; }
 test -f "$OUT/zigapagos-runtime.js"    || { echo "FAIL: no runtime bundle"; exit 1; }
 test -f "$OUT/404.html"                || { echo "FAIL: no 404.html"; exit 1; }
-# explicit 404 owner: build.zig declares `.not_found = "app"`, so
+# explicit 404 owner: build.sh passes `--spa-not-found=app`, so
 # the universal 404.html must be byte-identical to the app SPA's "/" shell —
 # NOT any of the slices/* SPAs' shells.
 cmp -s "$OUT/404.html" "$OUT/app/index.html" || { echo "FAIL: 404.html is not the app SPA's / shell"; exit 1; }

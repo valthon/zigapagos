@@ -5,9 +5,9 @@ cd "$(dirname "$0")/../../.."  # repo root
 
 ZIG="mise exec -- zig"
 
-# Build the CLI (suppress output; restore snapshot files deleted by configure step).
+# Build the CLI (suppress output). This is `zig build` building ZIGAPAGOS, not a
+# site: the subject here is the binary's own `migrate --doctor`.
 $ZIG build >/dev/null 2>&1 || true
-git ls-files --deleted -z -- tests/ | xargs -0 -I{} git restore -- {} 2>/dev/null || true
 
 BIN="zig-out/bin/zigapagos"
 
