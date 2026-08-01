@@ -27,7 +27,14 @@
 #   (7) the report is deterministic: two identical builds print byte-identical
 #       summaries (site and page assets are enumerated from hash maps, whose
 #       order varies between runs),
-#   (8) a build WITHOUT the flag prints no summary at all.
+#   (8) a build WITHOUT the flag prints no summary at all,
+#   (9) a build WITH rendering errors refuses on the SAME stream the report
+#       would have used. The refusal started life as a `std.debug.print`, which
+#       always targets stderr, so `--summary`'s stream depended on the build's
+#       OUTCOME: `zigapagos release --summary >inventory.txt` left an empty file
+#       on exactly the run where the reader needs to know why. A caller cannot
+#       redirect conditionally on a result it has not seen yet, so the stream
+#       has to be a property of the flag, not of the build.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 REPO="$(pwd)"
@@ -197,7 +204,12 @@ done
 echo "PASS (2): FORWARD -- every path the summary printed exists on disk"
 
 # --- (3) REVERSE: the printed set IS the output tree ------------------------
-( cd "$OUT" && find . -type f -printf '%P\n' | sort ) >"$WORK/tree.txt"
+# `find | sed`, not `find -printf '%P\n'`: `-printf` is a GNU extension and BSD
+# find (macOS) rejects it outright, so the whole REVERSE half of this test would
+# die on a contributor's mac rather than report anything. `sed 's|^\./||'`
+# reproduces `%P` exactly -- strip the starting point, which here is always the
+# literal `.` this subshell cd'd to.
+( cd "$OUT" && find . -type f | sed 's|^\./||' | sort ) >"$WORK/tree.txt"
 printf '%s\n' "${PRINTED[@]}" | sort -u >"$WORK/printed.txt"
 if ! diff -u "$WORK/tree.txt" "$WORK/printed.txt" >"$WORK/tree.diff"; then
   echo "--- diff (left: files on disk, right: paths the summary printed) ---"
@@ -292,5 +304,75 @@ grep -q 'build summary' "$WORK/plain.out" "$WORK/plain.err" \
   fail "(8) a build without --summary wrote to stdout"
 }
 echo "PASS (8): without the flag nothing is printed"
+
+# --- (9) a failed build refuses on stdout, not stderr ------------------------
+# A SEPARATE fixture, deliberately: the site above must keep building clean for
+# legs (1)-(8), and the error has to be a RENDERING error rather than an
+# analysis one -- `run` returns at `any_prerendering_error` long before the
+# summary block, so a bad `$link.page()` would prove nothing about this branch.
+# A page that mounts an `<island>` with no sidecar configured is the cheapest
+# render-time failure there is: `worker.zig` logs it, sets
+# `any_rendering_error`, and carries on, which is exactly the state the refusal
+# exists for.
+ERRSITE="$WORK/errsite"
+mkdir -p "$ERRSITE/content" "$ERRSITE/layouts/templates" "$ERRSITE/assets"
+cat >"$ERRSITE/zigapagos.ziggy" <<'EOF'
+Site {
+    .title = "Rendering-Error Fixture",
+    .host_url = "https://example.com",
+    .content_dir_path = "content",
+    .layouts_dir_path = "layouts",
+    .assets_dir_path = "assets",
+}
+EOF
+cat >"$ERRSITE/layouts/templates/base.shtml" <<'EOF'
+<!DOCTYPE html>
+<html><head><title :text="$site.title"></title></head>
+<body id="body"><super></body></html>
+EOF
+cat >"$ERRSITE/layouts/page.shtml" <<'EOF'
+<extend template="base.shtml">
+<body id="body">
+  <island src="Counter.island.tsx"></island>
+  <div :html="$page.content()"></div>
+</body>
+EOF
+cat >"$ERRSITE/content/index.smd" <<'EOF'
+---
+.title = "Home",
+.layout = "page.shtml",
+---
+Home.
+EOF
+set +e
+# No --bun / --island-sidecar / --island-src-dir: that is what makes the island
+# unrenderable.
+( cd "$ERRSITE" && "$ZIGAPAGOS" release "--output=$WORK/err-out" --force --summary \
+  ) >"$WORK/err.out" 2>"$WORK/err.err"
+ERR_RC=$?
+set -e
+[[ "$ERR_RC" -ne 0 ]] || {
+  echo "--- stderr ---"; sed -n '1,40p' "$WORK/err.err"
+  fail "(9) fixture assumption broken: the erroring build exited 0, so nothing was refused"
+}
+grep -q 'island rendering error' "$WORK/err.err" || {
+  echo "--- stderr ---"; sed -n '1,40p' "$WORK/err.err"
+  fail "(9) fixture assumption broken: the build failed for some reason other than the island render"
+}
+grep -q '^summary: not printed' "$WORK/err.out" || {
+  echo "--- stdout ($(wc -c <"$WORK/err.out") bytes) ---"; cat "$WORK/err.out"
+  echo "--- stderr ---"; sed -n '1,40p' "$WORK/err.err"
+  fail "(9) the refusal is not on stdout -- --summary's stream depends on the build's outcome"
+}
+grep -q 'summary: not printed' "$WORK/err.err" && {
+  echo "--- stderr ---"; sed -n '1,40p' "$WORK/err.err"
+  fail "(9) the refusal was ALSO written to stderr -- it must appear exactly once, on stdout"
+}
+# The refusal must not masquerade as a report: a script that greps the header to
+# find the inventory has to read a refusal as "no inventory", not "empty one".
+grep -q '^build summary: ' "$WORK/err.out" && {
+  cat "$WORK/err.out"; fail "(9) an incomplete output tree was inventoried anyway"
+}
+echo "PASS (9): a build with rendering errors refuses on stdout, the same stream the report uses"
 
 echo "PASS: --summary reports exactly the artifacts the build emitted"

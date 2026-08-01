@@ -78,11 +78,23 @@ pub const Summary = struct {
     /// reused on the next iteration or a slice out of a pass-scoped arena that
     /// is gone by the time the report prints.
     ///
-    /// The leading `/` is trimmed here rather than at nine call sites, because
-    /// the path formatters this reads from disagree about it (`PathName.fmt`
-    /// with a null prefix yields a leading slash; `worker.mainOutputPath` does
-    /// not) and a report that printed both spellings would defeat the exact
-    /// output-tree comparison in `tests/summary/summary.sh`.
+    /// The leading `/` is trimmed here rather than left to each call site.
+    /// None of the *formatters* the collection sites read from emit one —
+    /// not `worker.mainOutputPath`, not `fingerprint.fmtUrl`, and not
+    /// `PathName.fmt` with a null prefix (`PathName.Formatter.format` writes a
+    /// prefix only when there is one, and never a bare separator). What can
+    /// arrive root-absolute is the strings an AUTHOR writes: a build asset's
+    /// `install_path` from the consumer's `build.zig`, and a page's `aliases` /
+    /// `alternatives[].output` frontmatter, all of which accept a
+    /// root-relative `/foo` spelling. Every call site that writes such a path
+    /// to disk already has to strip it — `updateFile` needs a path relative to
+    /// the output dir, and `worker.suffixedOutputPath` hands back `suffix[1..]`
+    /// — so this trim is the belt to those braces rather than the only thing
+    /// doing the work. It stays here, once, because the alternative is nine
+    /// call sites each independently remembering: one that forgot would print a
+    /// spelling the emitted tree does not have, and the exact set comparison in
+    /// `tests/summary/summary.sh` would then fail on a cosmetic difference
+    /// instead of on a real one.
     pub fn add(
         s: *Summary,
         gpa: Allocator,
