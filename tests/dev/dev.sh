@@ -210,6 +210,21 @@ wait_ready() { # $1 = log, $2 = pid (optional)
       fi
       fail "dev DIED before becoming ready: exited $status -- this is a crash, not a timeout"
     fi
+    # A CHILD can die without dev noticing. dev shells out for the rebuild --
+    # on the zero-config leg that is this same binary's `release` -- and if that
+    # child crashes, dev stays up and simply never reports ready, so the pid
+    # check above never fires and the 60s timeout blames the wrong process.
+    # A crash signature in the log is therefore worth failing on immediately,
+    # whatever the parent is doing: it is always a bug, and the wait is pure
+    # delay once it appears.
+    if grep -qE 'Illegal instruction|Segmentation fault|Bus error|thread [0-9]+ panic' "$log" 2>/dev/null; then
+      dump_log "$log" 2
+      echo "NOTE: dev itself is still alive, so the crash above is a process it"
+      echo "      SPAWNED -- on the zero-config leg the rebuild is this binary's"
+      echo "      own \`release\`. Look there, not at dev's startup."
+      has_zig_trace "$log" || try_core_backtrace "$SRC"
+      fail "a process dev spawned CRASHED before dev became ready -- see the signature above"
+    fi
     (( SECONDS - start < 60 )) || { dump_log "$log"; fail "dev never became ready (60s timeout; process still alive)"; }
     sleep 0.5
   done
