@@ -259,6 +259,13 @@ a fragment is no longer present in the file that emits it, or if a code is not
 defect this page exists to prevent: an invented error message is worse than no
 page at all, because it sends a reader looking for something that never happens.
 
+A fragment must be the stable literal part of the message — never a span
+crossing a `{s}` placeholder, which is unfindable — must carry no `"` (source
+literals escape it as `\"`, so it could never match) and no edge whitespace
+inside its backticks (invisible in review, and an editor's trim would break the
+gate on a message nobody changed). A `|` is allowed but must be escaped `\|`,
+which is markdown's own escape and also what makes the row render as one cell.
+
 | Message fragment | Code | Emitted by |
 |------------------|------|------------|
 | `this page has no subpages (page is not a section)` | `ZP_LINK_NOT_A_SECTION` | `src/context/Page.zig` |
@@ -269,7 +276,8 @@ page at all, because it sends a reader looking for something that never happens.
 | `missing layout file` | `ZP_MISSING_LAYOUT` | `src/context/Page.zig` |
 | `unknown code-fence language` | `ZP_UNKNOWN_LANGUAGE` | `src/context/Page.zig` |
 | `unknown island directive` | `-` | `src/islands/pass.zig` |
+| `(expected load\|idle\|visible\|media\|only)` | `-` | `src/islands/pass.zig` |
 | `props mismatch on` | `-` | `src/islands/props_check.zig` |
 | `failed to spawn island sidecar` | `-` | `src/root.zig` |
 | `declares no skeleton` | `-` | `runtime/src/router.ts` |
-| ` route nor any dynamic route, so nothing ` | `-` | `src/spa.zig` |
+| `route nor any dynamic route, so nothing` | `-` | `src/spa.zig` |

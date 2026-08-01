@@ -351,7 +351,7 @@ with an `if` attribute. Use `$if` to access the unpacked value
 within the `if` block.
 
 ```superhtml
-<div :if="$page.nextPage()">
+<div :if="$page.nextPage?()">
   <span :text="$if.title"></span>
 </div>
 ```
@@ -361,7 +361,7 @@ within the `if` block.
 Tries to return the page before the target one (sorted by date), to be used with an `if` attribute.
 
 ```superhtml
-<div :if="$page.prevPage()"></div>
+<div :if="$page.prevPage?()"></div>
 ```
 
 #### `Page.hasNext() -> Bool`
@@ -437,13 +437,14 @@ Renders the specified \[content section]\(`$link.page('docs/supermd/scripty').re
 <div :html="$page.contentSection('other-section')"></div>
 ```
 
-#### `Page.hasContentSection(String) -> String`
+#### `Page.hasContentSection(String) -> Bool`
 
 Returns true if the page contains a content-section with the given id
 
 ```superhtml
-<div :html="$page.hasContentSection('section-id')"></div>
-<div :html="$page.hasContentSection('other-section')"></div>
+<div :if="$page.hasContentSection('section-id')">
+  <div :html="$page.contentSection('section-id')"></div>
+</div>
 ```
 
 #### `Page.contentSections() -> [ContentSection]`
@@ -565,7 +566,7 @@ If the section starts with a heading element,
 this function returns the heading as simple text.           
 
 ```superhtml
-<div :html="$loop.it.heading()"></div>
+<ctx :if="$loop.it.heading?()"><span :text="$if"></span></ctx>
 ```
 
 #### `ContentSection.html() -> String`
@@ -943,7 +944,7 @@ The argument specifies the language name.
 ```superhtml
 <pre>
   <code class="ziggy" 
-        :html="$page.custom.get('sample').syntaxHighLight('ziggy')"
+        :html="$page.custom.get('sample').syntaxHighlight('ziggy')"
   ></code>
 </pre>
 ```
