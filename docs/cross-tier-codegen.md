@@ -74,7 +74,7 @@ bun runtime/scripts/apigen.ts \
 | `--schema <f>` | (required) | Path to the OpenAPI JSON file |
 | `--out <dir>` | (required) | Directory to write generated files into |
 | `--validators=post` | `post` | Emit loud-fail `assertX()` shape-checkers for POST response schemas and call them before returning |
-| `--validators=all` | — | Same as `post` in v1 (GET validators are out of scope) |
+| `--validators=all` | — | Same as `post`; GET validators are out of scope |
 | `--validators=none` | — | No runtime shape-checkers; POST wrappers cast and return directly |
 
 ### Generated files
@@ -90,29 +90,48 @@ The client imports only `@z/runtime/host` and `./types.ts` — never bare
 
 ---
 
-## Build integration
+## Wiring it into your project
 
-### `zig build apigen` — regenerate
+Codegen is a **Bun script**, not a build step — your project needs no build
+graph and no Zig toolchain to run it. Two commands, which belong in your
+project's own scripts:
 
-Runs apigen from the project root, writing into `contract/generated/`.  Use
-this after editing `contract/zigbase.openapi.json`.
+### Regenerate
 
-```
-mise exec -- zig build apigen
-```
+Run apigen from the project root after editing
+`contract/zigbase.openapi.json`:
 
-### `zig build api-check` — drift gate
-
-Reruns apigen, stages the output with `git add contract/generated`, then runs
-`git diff --cached --exit-code contract/generated`.  Exits non-zero if the
-committed generated directory differs from a fresh regen.  Mirrors the
-`setupSnapshotTesting` pattern used elsewhere in the build.
-
-```
-mise exec -- zig build api-check
+```sh
+bun runtime/scripts/apigen.ts \
+  --schema contract/zigbase.openapi.json \
+  --out contract/generated
 ```
 
-Add `zig build api-check` to CI alongside the snapshot tests.
+Commit `contract/generated/`. The generated client is checked in on purpose:
+it is what the drift gate below compares against.
+
+### The drift gate
+
+Rerun apigen, then fail if the committed output no longer matches a fresh
+regeneration:
+
+```sh
+bun runtime/scripts/apigen.ts \
+  --schema contract/zigbase.openapi.json \
+  --out contract/generated
+git add contract/generated
+git diff --cached --exit-code contract/generated
+```
+
+Run that in CI. It exits non-zero the moment the committed generated directory
+and the contract disagree, which is the whole point — a stale client that still
+typechecks is the failure this catches.
+
+> **In this repository** the same two commands are wrapped as `zig build apigen`
+> and `zig build api-check` (see `build/codegen.zig`), because zigapagos's own
+> `contract/` tree is regenerated alongside its other build steps. That wrapper
+> is a contributor convenience and is not something a consumer project has or
+> needs.
 
 ---
 
@@ -155,7 +174,7 @@ cd contract && mise exec -- bun x tsc --noEmit -p tsconfig.json
 `contract/test/drift.sh` proves the gate is not vacuous.  It runs three cases:
 
 1. **Schema drift** — mutates `contract/zigbase.openapi.json` without
-   regenerating, then asserts `zig build api-check` exits non-zero.
+   regenerating, then asserts the drift gate exits non-zero.
 2. **Type divergence** — mutates the schema, regenerates, then asserts
    `tsc --noEmit` exits non-zero (generated `ResolvedState` ⊄ runtime
    `ResolvedState`).
@@ -205,8 +224,8 @@ its own output path (e.g. golfsim writes `clients/typescript/zbase.gen.ts`
 inside the backend tree).  We run it there and then vendor the result into the
 app's `out`.  A backend that accepts an app-tree `--out` can omit `producedPath`.
 
-All paths resolve against the process cwd (the repo root when `build.zig`
-invokes the dispatcher); absolute paths pass through.
+All paths resolve against the process cwd (your project root, where you run the
+dispatcher); absolute paths pass through.
 
 ### The dispatcher — `runtime/scripts/apiclient.ts`
 
@@ -214,29 +233,29 @@ invokes the dispatcher); absolute paths pass through.
 bun runtime/scripts/apiclient.ts <gen|check> [--config <path>]
 ```
 
-- **`gen`** (`zig build api-gen`) — runs `genClientCmd` in `genClientCwd`, then
+- **`gen`** — runs `genClientCmd` in `genClientCwd`, then
   vendors `producedPath → out`.  Requires the backend present (you can't refresh
   from an absent backend — that's a hard error, not the check-time fallback).
-- **`check`** (`zig build api-check`) — the drift gate.  Re-runs `genClientCmd`
+- **`check`** — the drift gate.  Re-runs `genClientCmd`
   and diffs the fresh output against the committed `out`.  A backend
   comptime-config change flips the `schema-hash` and produces a different
   client, so `check` **exits non-zero** and renders the diff.  The check is
   non-destructive: when the command writes `out` directly, the committed bytes
   are saved and restored around the regeneration.
 
-### Build integration
+### Wiring it up
 
-`build.zig` reads `mode` from `contract/codegen.config.json` **at configure
-time** and wires the matching `api-gen` / `api-check` steps.  When the config is
-absent or `openapi`, the exact `openapi` steps from earlier in this document are
-wired, byte-identical — `zigbase` mode is a separate branch, so the existing
-`openapi` path is never perturbed.  In `zigbase` mode both steps delegate to
-`apiclient.ts`.
+The dispatcher reads `mode` from `contract/codegen.config.json` itself, so the
+same two commands cover both modes — put them wherever your project keeps its
+scripts:
 
+```sh
+bun runtime/scripts/apiclient.ts gen     # refresh the vendored client from the backend
+bun runtime/scripts/apiclient.ts check   # fail if the vendored client drifts
 ```
-mise exec -- zig build api-gen     # refresh the vendored client from the backend
-mise exec -- zig build api-check   # fail if the vendored client drifts
-```
+
+In `openapi` mode (the default, and what you get when the config file is
+absent) these are equivalent to the apigen commands earlier in this document.
 
 ### Trust model
 
@@ -304,46 +323,3 @@ real `zig build gen-client` + committed `zbase.gen.ts`):
 3. With the backend path pointed at a non-existent dir, `api-check` logs the
    `WARNING` presence gate and passes on a present committed client, and hard-
    fails when it's missing.
-
----
-
-## Production output home
-
-For the pilot-site migration, the generated client lives at:
-
-```
-@your-org/shared-lite/api
-```
-
-This path is already on the allowlist in
-`runtime/scripts/lint-island-imports.ts` so islands may import it without
-triggering the no-npm guardrail.  The in-repo proof (`contract/generated/`)
-is a development artifact only.
-
----
-
-## v1 scope and gates
-
-**v1 hand-authors `contract/zigbase.openapi.json` in zigapagos (bootstrap
-artifact).**  The source-of-truth flips to a ZigBase `api-schema` emitter
-in a separate repo — that emitter is the external gating dependency (design
-Task 7); until it lands, bumping the contract is a reviewed zigapagos PR.
-
-**Porting the marketing flags/contact islands and the `useCustomer` store to
-the generated client is deferred to the pilot-site migration (design Task 5).**
-
-v1 toolchain summary:
-
-| Component | Status |
-|-----------|--------|
-| `contract/zigbase.openapi.json` — bootstrap artifact | ✅ committed |
-| `runtime/scripts/apigen.ts` — emitter | ✅ committed |
-| `contract/generated/{types,client,_assert}.ts` — output | ✅ committed |
-| `contract/tsconfig.json` — compile tripwire config | ✅ committed |
-| `zig build apigen` / `zig build api-check` — drift gate | ✅ wired |
-| POST response validators (`assertX`) | ✅ emitted |
-| `contract/test/drift.sh` — gate proof | ✅ committed |
-| ZigBase `api-schema` emitter (separate repo) | ✅ shipped (ZigBase `gen-client`) |
-| `zigbase` mode — config + `apiclient.ts` + `build.zig` branch | ✅ committed |
-| `zigbase`-mode drift gate proven vs ZigBase golfsim | ✅ validated |
-| Consumer port: marketing islands → generated client | ⏳ consumer migration |

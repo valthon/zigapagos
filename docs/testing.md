@@ -18,8 +18,8 @@ assertions that come up every time.
 set -euo pipefail
 . site/test/assert.sh
 
-OUT=zig-out/site
-zig build
+OUT=public
+bash build.sh
 
 assert_route_emitted          "$OUT" /docs/islands
 assert_element                "$OUT/index.html" link rel=icon

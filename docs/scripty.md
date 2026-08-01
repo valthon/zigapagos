@@ -2,12 +2,13 @@
 
 # Scripty reference
 
-**This page is generated.** Do not edit it: run `zig build docs-reference`.
-Every entry below is read out of the Zig source with `@typeInfo`, from the
-`signature`, `docs_description` and `examples` declarations the builtins
-already carry — so a builtin cannot be added, renamed or re-signatured
-without this page moving. `tests/meta/scripty-reference.sh` fails the build
-when the committed copy and a fresh generation disagree.
+**This page is generated from the source.** Every entry below is read out
+of the Zig source with `@typeInfo`, from the `signature`,
+`docs_description` and `examples` declarations the builtins already carry
+— so a builtin cannot be added, renamed or re-signatured without this page
+moving. (Contributors: regenerate with `zig build docs-reference`; do not
+hand-edit `docs/scripty.md`. `tests/meta/scripty-reference.sh` fails the
+build when the committed copy and a fresh generation disagree.)
 
 Scripty is the expression language in `$`-prefixed values. It appears in two
 places, and they have different vocabularies:
