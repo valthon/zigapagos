@@ -1,50 +1,40 @@
 ---
 .title = "Quick start",
-.description = "Install the toolchain, generate a site, and see it rebuild as you edit.",
+.description = "Install Zigapagos, generate a site, and see it rebuild as you edit.",
 .layout = "docs.shtml",
 .custom = { .slug = "quick-start" },
 ---
 
-## Install the toolchain
+## Install
 
-Zigapagos needs Zig 0.16 and Bun 1.2. The repository pins both with
-[mise](https://mise.jdx.dev/), so the shortest path is:
+`zigapagos` is a standalone executable. **You do not need a Zig toolchain to
+build a site** — nothing in a Zigapagos project is compiled from Zig source.
 
-```sh
-git clone https://github.com/valthon/zigapagos
-cd zigapagos
-mise install
-```
-
-If `zig` resolves to a different version, the build fails at *configure* time
-with a wall of dependency errors mentioning `std.Io.Dir` and `Child.StdIo`. They
-look like defects in the code and are pure version skew. Check `zig version`
-before believing them.
-
-## Build the binary
+The shortest path is npm, which brings everything a site can need in one
+install:
 
 ```sh
-zig build
+npx zigapagos init
 ```
 
-That produces `zig-out/bin/zigapagos`. Building a site that has islands or SPAs
-also needs the checkout's runtime sources, which the binary finds through one
-environment variable:
+That pulls `@zigapagos/cli`, which ships the binary, the `@z/runtime` sources,
+the Bun sidecar, and Bun and ZigBase as optional dependencies. It needs Node 18
+or newer to run the launcher, and covers everything: content sites, islands,
+native SPAs and the dev loop.
 
-```sh
-export ZIGAPAGOS_RUNTIME_DIR="$PWD/runtime"
-```
-
-Leave it unset and a plain content site needs neither it nor Bun. `npx
-zigapagos` always sets it — which is why an npm install does need Bun, even for
-a site with no islands in it. The full rule, per command, is in
+Prefer a bare binary? Download one from the
+[releases page](https://github.com/valthon/zigapagos/releases) — an x86_64 Linux
+(musl) or x86_64 macOS build — and put it on your `PATH`. That archive is
+**the binary and nothing else**, which is enough for a content-only site but not
+for islands or SPAs; those additionally need Bun and the `@z/runtime` tree, and
+the npm install is the way to get both. The full rule, per command, is in
 [runtime dependencies]($link.page("docs/runtime-dependencies")).
 
 ## Generate a site
 
 ```sh
 mkdir my-site && cd my-site
-../zig-out/bin/zigapagos init
+zigapagos init
 ```
 
 `init` writes a complete sample site: a homepage, an about page, a blog section,
@@ -74,7 +64,7 @@ scaffold `init` writes reflects that.
 ## Run the development server
 
 ```sh
-../zig-out/bin/zigapagos dev
+zigapagos dev
 ```
 
 `dev` needs no arguments: it builds the site into `public/`, serves that tree at
@@ -107,7 +97,7 @@ export default function Hello({ name }: Props) {
 Declare it on the build command:
 
 ```sh
-../zig-out/bin/zigapagos release --island=components/Hello.island.tsx
+zigapagos release --island=components/Hello.island.tsx
 ```
 
 Once a project has more than one, keep that invocation in a `build.sh` so the
