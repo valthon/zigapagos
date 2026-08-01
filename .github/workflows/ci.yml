@@ -22,7 +22,7 @@ permissions:
 # Measured on the last green main run (30256953045, ubuntu): 20m19s wall, of
 # which the single "Shell e2e" step was 16m06s — and inside that step two
 # scripts accounted for 15m of the 16m (tests/init/from-astro.sh 9m08s,
-# tests/serve/dev.sh 6m08s, because each one builds a whole CONSUMER project
+# tests/dev/dev.sh 6m08s, because each one builds a whole CONSUMER project
 # from scratch). Everything else in the job finished in ~4m10s but could not
 # report until the e2e step had drained.
 #
@@ -375,11 +375,11 @@ jobs:
       # exercised by these `test-*` steps, by the Bun suite below, and by the
       # hermetic tests/*/*.sh e2e (their own jobs now). None of it ran in CI
       # before AUD-019, so a PR breaking any of it merged green.
-      - name: Subsystem unit tests (islands, SPA, dev/serve, migrate, runtime sidecar)
+      - name: Subsystem unit tests (islands, SPA, dev, migrate, runtime sidecar)
         run: |
           zig build \
             test-islands test-props test-migrate test-sidecar test-init \
-            test-release test-spa test-assets test-serve test-e2e test-dev \
+            test-release test-spa test-assets test-e2e test-dev \
             test-doctor test-slugs test-validate test-explain test-diag
 
       - name: Runtime TypeScript tests (Bun)
@@ -712,9 +712,7 @@ jobs:
           # declares — so a plain static file server needs the build output
           # reachable AT that path for every /zigapagos/... reference in the HTML
           # (scripts, styles, the SPA's prerendered shells) to resolve the way
-          # Pages serves them. zigapagos's own dev server strips the prefix in
-          # code (src/cli/serve.zig), but that is the live in-memory mode, not
-          # this disk build — a symlink is the simplest way to preview disk
+          # Pages serves them. A symlink is the simplest way to preview disk
           # output under the path Pages puts it at.
           ln -s site zig-out/zigapagos
 
@@ -867,7 +865,7 @@ jobs:
   # API. Same reasoning as the importer job: one long serial script, one runner.
   #
   # That cold consumer build is now this job's second reason to exist: the
-  # eleven non-browser examples/tsx-site/test scripts each need one, and this is
+  # ten non-browser examples/tsx-site/test scripts each need one, and this is
   # the only job that has already paid for it. See the second step for the
   # measurement and for why they are named rather than globbed.
   e2e-dev-loop:
@@ -944,16 +942,16 @@ jobs:
         working-directory: runtime
         run: bun install --frozen-lockfile
 
-      - name: tests/serve/dev.sh
+      - name: tests/dev/dev.sh
         run: |
-          script=tests/serve/dev.sh
+          script=tests/dev/dev.sh
           if [[ ! -f "$script" ]]; then
             echo "::error::$script is gone — this job and e2e-rest's exclusion list must move together, or the script stops running entirely"
             exit 1
           fi
           bash "$script"
 
-      # The eleven non-browser scripts under examples/tsx-site/test/. Until now
+      # The ten non-browser scripts under examples/tsx-site/test/. Until now
       # NOTHING ran them — no workflow, no mise task, no hook — and that is not a
       # theoretical gap: spa.sh's nginx assertions had matched nothing since
       # nginxQuote() landed, and nobody could notice, because noticing requires
@@ -965,16 +963,14 @@ jobs:
       # zigapagos-as-a-dependency. e2e-dev-loop is the only job that already pays
       # for one — the step above drives examples/tsx-site's own `zig build dev`
       # — so here they land on a warm .zig-cache. In e2e-rest (`tests/*/*.sh`,
-      # which builds the REPO, not the example) the same eleven would first buy
+      # which builds the REPO, not the example) the same ten would first buy
       # a cold ~265s consumer build and make THAT job the run's critical path.
       #
-      # Measured on run 30313041568, the first run to include this step: 49s for
-      # all eleven, against 468s for the dev.sh step above them. Per script —
+      # Measured on run 30313041568, the first run to include this step: 49s of
+      # wall time for the step, against 468s for the dev.sh step above it. Per
+      # script —
       # ssr 4.2, parity 4.5, parity-bundle 3.2, incremental 9.3, props_check 6.2,
-      # doctor 1.6, spa 4.3, spa_flags 3.2, spa_guards 3.4, spa_nested 3.8,
-      # serve 5.3. Note serve.sh: tests/meta/unrun-scripts.txt clocked it at
-      # 76.1s, but that was a COLD measurement — behind dev.sh it is ~5s, which
-      # is the entire argument for this placement in one number.
+      # doctor 1.6, spa 4.3, spa_flags 3.2, spa_guards 3.4, spa_nested 3.8.
       #
       # The cost is real but small, and the margin is thinner than it looks. On
       # the five green runs before this one e2e-dev-loop was 342-528s against
@@ -1013,11 +1009,9 @@ jobs:
       # them as both CI-run and listed and fail by name. That accident ended when
       # the inventory went empty, which is exactly why the pin became a test.
       #
-      # Two ordering constraints, neither of them aesthetic: parity.sh invokes
-      # ssr.sh internally, so ssr.sh runs first and a shared failure is
-      # attributed to the cheaper script; and serve.sh is the only one that binds
-      # a fixed port (1990, because build.zig does not thread --port through), so
-      # it goes last where nothing follows it to collide.
+      # One ordering constraint, not aesthetic: parity.sh invokes ssr.sh
+      # internally, so ssr.sh runs first and a shared failure is attributed to
+      # the cheaper script.
       - name: examples/tsx-site e2e — SSR, parity, props, SPA prerender (non-browser)
         run: |
           scripts=(
@@ -1031,7 +1025,6 @@ jobs:
             examples/tsx-site/test/spa_flags.sh
             examples/tsx-site/test/spa_guards.sh
             examples/tsx-site/test/spa_nested.sh
-            examples/tsx-site/test/serve.sh
           )
           # A renamed or deleted script must fail loudly here, not vanish from
           # the suite. script-coverage.sh catches it too (the rename shows up as
@@ -1081,7 +1074,7 @@ jobs:
       # forget to list a newly added script and it still runs here. The only way
       # to lose coverage is to delete or rename one of these two, which the
       # existence check in the step below catches.
-      SHARDED_OUT: tests/init/from-astro.sh tests/serve/dev.sh
+      SHARDED_OUT: tests/init/from-astro.sh tests/dev/dev.sh
     steps:
       - uses: actions/checkout@v7
         with:

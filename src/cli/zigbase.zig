@@ -1,18 +1,25 @@
-//! ZigBase binary locator — a standalone module so every workflow that needs
-//! the production server can share it (the `zigapagos e2e` harness today; the
-//! zigbase-backed dev loop follow-up next).
+//! ZigBase binary locator — a standalone module shared by every workflow that
+//! needs the production server (`zigapagos dev`, `zigapagos e2e`).
 //!
 //! Resolution order (`locate`):
 //!   1. an explicit path (CLI `--zigbase=`, build-side `E2eOptions.zigbase_path`),
 //!   2. `zigbase` on PATH,
 //!   3. the pinned release in the zigapagos cache (see `cachedPath`).
 //!
-//! The locator NEVER downloads anything by itself. Fetching the pinned GitHub
-//! release into the cache is a separate, EXPLICITLY-requested step
-//! (`download`, triggered by `--download-zigbase` / `E2eOptions.download_zigbase`)
-//! and is SHA256-verified against the release's published SHA256SUMS. When
-//! nothing is found and no download was requested, `missingMessage` produces
-//! one clear, actionable failure.
+//! `locate` itself never downloads: fetching the pinned GitHub release into the
+//! cache is the separate `download` step, SHA256-verified against the release's
+//! published SHA256SUMS. WHO calls it differs by command, deliberately:
+//!
+//!   * `dev` calls it whenever `locate` comes up empty. It is the zero-config
+//!     entry point and cannot start without a server, so the fetch is the
+//!     default and `--no-download` opts out.
+//!   * `e2e` never calls it unless asked (`--download-zigbase` /
+//!     `E2eOptions.download_zigbase`). It runs in CI, where an unannounced
+//!     network fetch is a supply-chain surprise rather than a convenience.
+//!
+//! `missingMessage` is what a user sees when nothing resolved AND no download
+//! will be attempted — `dev --no-download`, `e2e` without the flag, or a
+//! platform the release channel publishes no asset for.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -144,12 +151,15 @@ pub fn releaseUrl(gpa: Allocator, file: []const u8) error{OutOfMemory}![]const u
     );
 }
 
-/// EXPLICITLY-requested download of the pinned release into the cache
-/// (`--download-zigbase` / `E2eOptions.download_zigbase` — never implicit):
-/// fetches the tarball + SHA256SUMS via curl, verifies the tarball's SHA256
-/// in-process against the published sums, extracts (tar --strip-components=1,
-/// so the binary lands exactly at `cachedPath`), and returns the binary path.
-/// All failures are fatal with an actionable message.
+/// Downloads the pinned release into the cache: fetches the tarball +
+/// SHA256SUMS via curl, verifies the tarball's SHA256 in-process against the
+/// published sums, extracts (tar --strip-components=1, so the binary lands
+/// exactly at `cachedPath`), and returns the binary path. All failures are
+/// fatal with an actionable message.
+///
+/// Called implicitly by `dev` when nothing resolves, and only on explicit
+/// request (`--download-zigbase` / `E2eOptions.download_zigbase`) by `e2e` —
+/// see this file's module doc for why the two differ.
 pub fn download(
     io: Io,
     gpa: Allocator,
@@ -257,8 +267,8 @@ pub fn missingMessage(
         \\error: zigbase binary not found
         \\
         \\This workflow serves the built site with the STOCK ZigBase binary
-        \\(production-faithful: real same-origin API + '.spa'-marker SPA fallback).
-        \\Nothing is ever downloaded without you asking. Pick one:
+        \\(production-faithful: real same-origin API + '.spa'-marker SPA fallback),
+        \\and this run will not fetch one for you. Pick one:
         \\
         \\  1. install zigbase on your PATH. In an npm project that is
         \\     `npm i -D @zigbase/server@{s}`, with no flag: npm puts
@@ -275,9 +285,11 @@ pub fn missingMessage(
         \\     way.) Or
         \\  2. point at a binary explicitly: --zigbase=/path/to/zigbase
         \\     (from build.zig: E2eOptions/DevOptions .zigbase_path), or
-        \\  3. let zigapagos fetch the pinned release ({s}) for you: re-run with
-        \\     --download-zigbase (from build.zig: E2eOptions/DevOptions
-        \\     .download_zigbase = true). It downloads github.com/{s} release {s} into
+        \\  3. let zigapagos fetch the pinned release ({s}) for you: that is what
+        \\     `zigapagos dev` does by default (you are seeing this because of
+        \\     --no-download), and what `zigapagos e2e --download-zigbase` does on
+        \\     request (from build.zig: E2eOptions.download_zigbase = true). It
+        \\     downloads github.com/{s} release {s} into
         \\       {s}
         \\     after verifying it against the release's SHA256SUMS. (Placing the
         \\     binary there yourself works too.)
@@ -312,7 +324,13 @@ test "e2e zigbase: empty environment yields null (and a message that still guide
     defer gpa.free(msg);
     try std.testing.expect(std.mem.indexOf(u8, msg, "zigbase binary not found") != null);
     try std.testing.expect(std.mem.indexOf(u8, msg, pinned_version) != null);
+    // Both escape hatches are named, because this one message is reached from
+    // BOTH commands and their download policies are opposites: `dev` fetches by
+    // default (so the reader got here via --no-download) while `e2e` fetches
+    // only on --download-zigbase. Naming just one leaves half the readers with
+    // advice that does not apply to the command they ran.
     try std.testing.expect(std.mem.indexOf(u8, msg, "--download-zigbase") != null);
+    try std.testing.expect(std.mem.indexOf(u8, msg, "--no-download") != null);
     // The npm route is a real answer to option 1, verified end to end: the
     // dependency's bin lands in node_modules/.bin, which `locate` scans, so `dev`
     // boots with no flag. It is named here because this message is where a user

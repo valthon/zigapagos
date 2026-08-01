@@ -2,8 +2,8 @@ const LinuxWatcher = @This();
 
 const std = @import("std");
 const Io = std.Io;
-const fatal = @import("../../../fatal.zig");
-const Debouncer = @import("../../serve.zig").Debouncer;
+const fatal = @import("../../fatal.zig");
+const Debouncer = @import("../watcher.zig").Debouncer;
 const Allocator = std.mem.Allocator;
 
 const log = std.log.scoped(.watcher);
@@ -32,8 +32,7 @@ const WatchEntry = struct {
 /// `zigapagos dev` loop spawns a `zig build` per rebuild plus a long-lived
 /// zigbase, and without close-on-exec the inotify fd — and with it every watch
 /// descriptor the watcher owns — is inherited by all of them for the whole dev
-/// session. The `dev` fork is what made this matter; the legacy live server
-/// spawned nothing.
+/// session.
 const notify_init_flags: u32 = std.os.linux.IN.CLOEXEC;
 
 pub fn init(
@@ -536,10 +535,11 @@ pub fn inotify_rm_watch(inotify_fd: i32, wd: i32) void {
     }
 }
 
-// --- unit tests (the name carries BOTH the "dev" and "serve" anchors so it
-// runs under `zig build test-dev` and `zig build test-serve`) ------------------
+// --- unit tests (the "dev" prefix is load-bearing: `test-dev`'s filter is a
+// compile-time substring, so a rename that drops it silently stops building
+// this block) ---------------------------------------------------------------
 
-test "dev/serve watcher: the inotify instance is close-on-exec" {
+test "dev watcher: the inotify instance is close-on-exec" {
     // The exact flags `init` passes to inotify_init1. Without IN_CLOEXEC the
     // notify fd (and every watch descriptor under it) survives execve, so every
     // `zig build` the dev loop spawns — and the long-lived zigbase — inherits

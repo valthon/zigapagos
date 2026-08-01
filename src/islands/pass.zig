@@ -107,7 +107,7 @@ pub const OnRenderError = enum {
     /// Propagate the error so the caller fails the build (release/deploy_target).
     fail,
     /// Emit a visible inline placeholder carrying the error and CONTINUE the
-    /// page render (dev serve) — a warning, not a hard failure.
+    /// page render (a memory build) — a warning, not a hard failure.
     placeholder,
 };
 
@@ -145,7 +145,7 @@ pub const ProcessOptions = struct {
 /// Prepend `/` + `prefix` to `url` (e.g. `prefixed(alloc, "zigapagos", "/foo.js")`
 /// -> `"/zigapagos/foo.js"`). `prefix` is trimmed of leading/trailing '/' first
 /// (the site's `url_path_prefix` legitimately permits a trailing slash — see
-/// `root.validatePath` — and `serve.zig` strips it the same way), so
+/// `root.validatePath`), so
 /// "zigapagos/", "/zigapagos", and "zigapagos" all join identically, and "/"
 /// normalizes to empty. An empty trimmed `prefix` yields `url`'s BYTES
 /// unchanged, which is what keeps the empty-prefix path byte-identical to the
@@ -234,7 +234,7 @@ pub const Result = struct {
 };
 
 /// Build a VISIBLE inline placeholder for an island whose SSR render threw —
-/// dev serve only (`OnRenderError.placeholder`). Shows the failing island's
+/// `OnRenderError.placeholder` only. Shows the failing island's
 /// `src` and the sidecar's JS message in place, so the author sees exactly what
 /// broke instead of the content being silently omitted. The full
 /// stack goes to the build log; the placeholder stays compact. Returns gpa-owned
@@ -631,8 +631,8 @@ fn rewrite(
                 switch (on_render_error) {
                     // release/deploy: fail the build (caller sets any_rendering_error).
                     .fail => return err,
-                    // dev serve: keep going with a visible placeholder so the
-                    // author sees the broken island instead of blank output.
+                    // report-don't-ship: keep going with a visible placeholder
+                    // so the author sees the broken island, not blank output.
                     .placeholder => break :blk try renderErrorPlaceholder(gpa, src, rerr),
                 }
             };
@@ -2379,9 +2379,9 @@ test "process with url_prefix trailing/leading slashes normalizes to the same ou
         ":props='{ .start = 2, .label = \"hi\" }'></island>" ++
         "</body></html>";
 
-    // "zigapagos/" (trailing slash, as validatePath permits and serve.zig strips
-    // defensively for the same field) must produce byte-identical output to the
-    // bare "zigapagos" prefix — not a malformed "//" join.
+    // "zigapagos/" (trailing slash, as validatePath permits) must produce
+    // byte-identical output to the bare "zigapagos" prefix — not a malformed
+    // "//" join.
     var stub_bare: StubRenderer = .{};
     const bare = try process(gpa, arena, input, "/", &stub_bare, .{ .url_prefix = "zigapagos" });
     defer gpa.free(bare.html);

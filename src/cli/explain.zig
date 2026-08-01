@@ -38,9 +38,6 @@ const Build = @import("../Build.zig");
 const islands = @import("../islands/pass.zig");
 const sidecar = @import("../islands/sidecar.zig");
 const RenderArena = @import("../islands/render_arena.zig").RenderArena;
-const serve = @import("serve.zig");
-const stripPathPrefix = serve.stripPathPrefix;
-const hasTraversalSegment = serve.Server.hasTraversalSegment;
 const Allocator = std.mem.Allocator;
 const BuildAsset = root.BuildAsset;
 const diag = @import("../diag.zig");
@@ -122,19 +119,18 @@ const Match = struct {
 };
 
 /// Resolves `route_in` (a request-style path, e.g. "/docs/overview/") to a
-/// page, mirroring `serve.zig`'s `handleRequest` resolution (its
-/// `url_path_prefix` strip, its append-`index.html`-on-trailing-slash, its
-/// per-variant `output_path_prefix` strip + `Variant.urls` lookup) minus the
-/// proxy/reload/site-asset/SPA-cache branches that don't apply to a memory
-/// build with no SPAs prerendered. Prints its own diagnostic and returns null
-/// on a miss (a usage-level malformed route is a hard `fatal.usageError`
-/// instead, matching `(H4)`: never `fatal.msg` -- that panics in Debug).
+/// page: strip the site's `url_path_prefix`, append `index.html` on a trailing
+/// slash, then per variant strip `output_path_prefix` and look the result up in
+/// `Variant.urls` -- the same derivation a static host performs on the emitted
+/// tree. Prints its own diagnostic and returns null on a miss (a usage-level
+/// malformed route is a hard `fatal.usageError` instead, matching `(H4)`: never
+/// `fatal.msg` -- that panics in Debug).
 ///
-/// One deliberate ADDITION over `serve.zig`: an extensionless route with NO
-/// trailing slash (e.g. `/docs/overview`, as typed on a command line) also
-/// gets a second attempt as a directory index (`/docs/overview/index.html`).
-/// `serve.zig` doesn't need this (a real browser navigates to an explicit
-/// URL); a CLI argument benefits from the convenience.
+/// One deliberate ADDITION over what a host does: an extensionless route with
+/// NO trailing slash (e.g. `/docs/overview`, as typed on a command line) also
+/// gets a second attempt as a directory index (`/docs/overview/index.html`). A
+/// browser navigates to an explicit URL; a CLI argument benefits from the
+/// convenience.
 ///
 /// NO_SLOP.md §2.2a contract 1 (self-freeing): the one scratch buffer
 /// `routeCandidates` writes into is freed before return, and the returned
@@ -188,6 +184,46 @@ fn resolveRoute(alloc: Allocator, build: *const Build, route_in: []const u8) !?M
     return null;
 }
 
+/// True if any path segment of `path` is exactly `.` or `..`. Split on both
+/// `/` and `\`: backslash isn't a separator on our Linux/macOS targets (it's
+/// a legal filename byte), but the file-system APIs on other platforms honor
+/// it, so a separator-correct guard rejects `..\` traversal defensively too.
+///
+/// `explain` takes a route from a command line and turns it into an output
+/// path, so an unguarded `..` would walk the resolver out of the output tree.
+/// Substring matches are deliberately allowed: `photo..jpg` and `x..y` are
+/// legitimate filenames, and rejecting them would be a false positive
+/// (AUD-014).
+fn hasTraversalSegment(path: []const u8) bool {
+    var it = std.mem.splitAny(u8, path, "/\\");
+    while (it.next()) |seg| {
+        if (std.mem.eql(u8, seg, "..") or std.mem.eql(u8, seg, ".")) return true;
+    }
+    return false;
+}
+
+/// Strips a leading `/` plus `prefix` from an origin-form `path`, at a SEGMENT
+/// boundary. Returns "" when `path` is exactly the prefix, otherwise a slice
+/// that starts with '/'. Returns null when `path` is NOT under `prefix`.
+///
+/// The point is the segment boundary. Slicing at the prefix's BYTE length —
+/// what this replaces — accepted "/docs../foo" for prefix "docs" and handed the
+/// caller "../foo", a traversal that `hasTraversalSegment` above had already
+/// cleared and does not re-run. An empty prefix matches everything and strips
+/// only the leading '/' (the single-variant case).
+fn stripPathPrefix(path: []const u8, prefix: []const u8) ?[]const u8 {
+    if (path.len == 0 or path[0] != '/') return null;
+    const body = path[1..];
+    if (!std.mem.startsWith(u8, body, prefix)) return null;
+
+    var len = prefix.len;
+    if (len > 0 and prefix[len - 1] == '/') len -= 1;
+    const rest = body[len..];
+    // The byte after the prefix must end the path or start a new segment.
+    if (len != 0 and rest.len != 0 and rest[0] != '/') return null;
+    return rest;
+}
+
 /// One output-relative path to try, plus the `ends_with_slash` flag
 /// `tryVariants` needs for its `output_path_prefix` offset.
 const Candidate = struct { path: []const u8, ends_with_slash: bool };
@@ -202,9 +238,8 @@ const Candidate = struct { path: []const u8, ends_with_slash: bool };
 ///                                  "/docs/overview/index.html"   (dir retry)
 ///   "/docs/overview/index.html" -> "/docs/overview/index.html"   (as given)
 ///
-/// The second candidate is `explain`'s one deliberate addition over
-/// `serve.zig`'s resolution: a browser navigates to an explicit URL, but a
-/// route typed on a command line is usually written without the trailing
+/// The second candidate exists because a browser navigates to an explicit URL
+/// but a route typed on a command line is usually written without the trailing
 /// slash, and answering "no route matches" to `/docs/overview` when
 /// `/docs/overview/` exists would be obtuse.
 ///
@@ -232,7 +267,7 @@ fn routeCandidates(scratch: []u8, route: []const u8, out: *[2]Candidate) usize {
     return 2;
 }
 
-/// The per-variant matching core, mirroring `serve.zig:handleRequest`'s loop
+/// The per-variant matching core, mirroring a static host's own lookup loop
 /// byte-for-byte (including the `@intFromBool` offset -- `PathName.get`
 /// normalizes a leading '/' away via `dirnamePosix`/`basenamePosix` in most
 /// shapes, but this is inherited resolution logic and copying it verbatim
@@ -249,7 +284,7 @@ fn tryVariants(build: *const Build, path: []const u8, path_ends_with_slash: bool
 }
 
 /// Prints the full report for a resolved route. Returns true when the
-/// resolved page is in an error state (mirrors `serve.zig:handleRequest`'s
+/// resolved page is in an error state (mirrors the release build's own
 /// per-page checks: `!_parse.active`, `_parse.status != .parsed`,
 /// `_analysis.frontmatter.items.len > 0`, `PageAnalysisError.anyError`,
 /// `_render.errors.len > 0`) -- the error IS the explanation, so everything
@@ -288,7 +323,7 @@ fn printReport(
     try w.print("route:  {s}\n", .{route_in});
     try w.print("source: {f}\n", .{page._scan.file.fmt(&v.string_table, &v.path_table, v.content_dir_path, "")});
 
-    // Page-state checks, mirroring serve.zig:handleRequest verbatim (see this
+    // Page-state checks, mirroring the release build's own policy (see this
     // function's doc comment). Structurally, most of these can only be false
     // by the time we're here (a `.memory` build's aggregate gate already
     // caught frontmatter/analysis errors ANYWHERE and aborted the whole
@@ -657,8 +692,7 @@ const help_message =
     \\Resolves one output ROUTE (e.g. '/docs/overview/') to its content
     \\source, layout chain, effective frontmatter, islands, page assets and
     \\EMITTED PATHS. Builds the whole site in memory to do it (the URL/link
-    \\tables must be whole anyway — the live server pays the same cost per
-    \\change).
+    \\tables must be whole anyway).
     \\
     \\CONTENT ROUTES ONLY: a memory build never prerenders SPAs, and this
     \\command passes no `--spa=` specs, so a client-routed SPA route is not
@@ -704,6 +738,59 @@ test "explain: parse recognizes --build-asset alongside the route" {
     defer cmd.deinit(gpa);
     try std.testing.expectEqualStrings("/", cmd.route);
     try std.testing.expectEqualStrings("assets/logo.svg", cmd.build_assets.get("logo").?.input_path);
+}
+
+// --- route path guards ---------------------------------------------------
+
+test "explain: hasTraversalSegment rejects . and .. path segments (AUD-013/014)" {
+    // Rejected: a `.`/`..` as a whole path segment, at any position.
+    try std.testing.expect(hasTraversalSegment("/islands/../../secret/foo.js"));
+    try std.testing.expect(hasTraversalSegment("/../etc/passwd"));
+    try std.testing.expect(hasTraversalSegment("/a/b/.."));
+    try std.testing.expect(hasTraversalSegment(".."));
+    try std.testing.expect(hasTraversalSegment("/a/./b")); // a `.` segment too
+    // Allowed: `..`/`.` as a SUBSTRING of a real segment is not traversal, so
+    // a legitimate filename must not be rejected (no false-positive rejection —
+    // AUD-014's `x..y`, `photo..jpg`).
+    try std.testing.expect(!hasTraversalSegment("/x..y"));
+    try std.testing.expect(!hasTraversalSegment("/img/photo..jpg"));
+    try std.testing.expect(!hasTraversalSegment("/islands/Counter.island.js"));
+    try std.testing.expect(!hasTraversalSegment("/"));
+    try std.testing.expect(!hasTraversalSegment("/a/b/c"));
+    // Backslash is also a segment separator for the guard: a `..`/`.` delimited
+    // by `\` (which the file-system APIs on non-POSIX platforms honor) must be
+    // rejected too, so the guard can't be bypassed with `\`.
+    try std.testing.expect(hasTraversalSegment("/islands\\..\\..\\secret.js"));
+    try std.testing.expect(hasTraversalSegment("\\..\\etc\\passwd"));
+    try std.testing.expect(hasTraversalSegment("/a/b\\.."));
+    // …but `..` as a substring of a real segment is still allowed with `\` too.
+    try std.testing.expect(!hasTraversalSegment("/img\\photo..jpg"));
+}
+
+test "explain: stripPathPrefix only strips at a segment boundary (AUDF: byte-offset rewrite)" {
+    // The old `path = path[1 + len ..]` sliced at the prefix's BYTE length, so
+    // "/docs../foo" (which has no exact ".." segment, hence passes the traversal
+    // guard) was rewritten to "../foo" — a traversal the guard never re-runs on.
+    try std.testing.expect(stripPathPrefix("/docs../foo", "docs") == null);
+    try std.testing.expect(stripPathPrefix("/docsy/foo", "docs") == null);
+    try std.testing.expect(stripPathPrefix("/docs.zip", "docs") == null);
+
+    // Real matches keep their exact previous result.
+    try std.testing.expectEqualStrings("/foo", stripPathPrefix("/docs/foo", "docs").?);
+    try std.testing.expectEqualStrings("", stripPathPrefix("/docs", "docs").?);
+    try std.testing.expectEqualStrings("/", stripPathPrefix("/docs/", "docs").?);
+    // A prefix written with a trailing slash strips the same way.
+    try std.testing.expectEqualStrings("/foo", stripPathPrefix("/docs/foo", "docs/").?);
+    try std.testing.expect(stripPathPrefix("/docs", "docs/") == null);
+    // Not under the prefix at all.
+    try std.testing.expect(stripPathPrefix("/other/foo", "docs") == null);
+    // Empty prefix (the single-variant case) matches everything and only strips
+    // the leading '/', exactly like the `path[1..]` it replaces.
+    try std.testing.expectEqualStrings("foo/bar", stripPathPrefix("/foo/bar", "").?);
+    try std.testing.expectEqualStrings("", stripPathPrefix("/", "").?);
+    // A target that is not origin-form has nothing to strip.
+    try std.testing.expect(stripPathPrefix("*", "docs") == null);
+    try std.testing.expect(stripPathPrefix("", "docs") == null);
 }
 
 // --- route normalization (cwd-independent, per (H6): `test-init` runs every

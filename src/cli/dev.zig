@@ -1,25 +1,30 @@
 //! `zigapagos dev` — the zigbase-backed local dev loop.
 //!
-//! Maintainer decision (2026-07-10): the STOCK ZigBase binary is THE server
-//! for local development — zigapagos does not bundle its own HTTP serving.
-//! Unlike the legacy live server (`src/cli/serve.zig`, deprecated), `dev`
-//! serves the site's real RELEASE output tree with the real backend on the
-//! same origin: what you develop against is what production serves (real
-//! `/api`, admin UI at `/_/`, `.spa`-marker fallback — no `--proxy` shims).
+//! The STOCK ZigBase binary is THE server for local development: zigapagos
+//! does no HTTP serving of its own. `dev` serves the site's real RELEASE
+//! output tree with the real backend on the same origin, so what you develop
+//! against is what production serves (real `/api`, admin UI at `/_/`,
+//! `.spa`-marker fallback).
+//!
+//! It is ZERO-CONFIG by design — `zigapagos dev` with no arguments has to work
+//! in a site directory that contains nothing but content, layouts and a
+//! `zigapagos.ziggy`. Every default below exists to make that true, and each
+//! one is still overridable by the corresponding flag.
 //!
 //! Orchestration:
 //!
-//!   1. run the rebuild command once (default `zig build`, i.e. the site's
-//!      full release pipeline — islands/SPA bundles stay cached by the zig
-//!      build system unless their sources changed),
-//!   2. locate zigbase (explicit path → PATH → pinned cache; `zigbase.zig`)
-//!      and boot it over the release tree (`e2e.zig`'s boot machinery: shared
-//!      invocation template, readiness probe, teardown-owning harness),
+//!   1. run the rebuild command once (default: THIS binary's own `release`,
+//!      resolved by absolute path — see `defaultRebuildArgv`),
+//!   2. locate zigbase (explicit path → PATH → pinned cache) and, when nothing
+//!      resolves, fetch the pinned release into the cache (`zigbase.zig`;
+//!      `--no-download` turns that off), then boot it over the release tree
+//!      (`e2e.zig`'s boot machinery: shared invocation template, readiness
+//!      probe, teardown-owning harness),
 //!   3. the data dir is PERSISTENT (default `.zigbase/` under the site root,
 //!      gitignore it): collections/auth state survive across dev sessions,
-//!   4. watch the site's inputs (same discovery as the live server: assets +
-//!      layouts + content (+ i18n/locales), plus `--watch-dir=` extras for
-//!      island/SPA sources) via the existing per-OS watcher + debouncer,
+//!   4. watch the site's inputs (assets + layouts + content (+ i18n/locales),
+//!      plus the island/SPA source dirs — discovered when no `--watch-dir=` is
+//!      given) via the per-OS watcher + debouncer,
 //!   5. on change, re-run the rebuild command into the served tree; a failing
 //!      rebuild keeps serving the last good tree and keeps watching. Changes
 //!      are classified: a pure content-page edit — or an island-source edit
@@ -48,20 +53,20 @@ const fatal = @import("../fatal.zig");
 const root = @import("../root.zig");
 const zigbase = @import("zigbase.zig");
 const e2e = @import("e2e.zig");
-const serve_cli = @import("serve.zig");
 const release_cli = @import("release.zig");
 const reload = @import("reload.zig");
 const islands_manifest = @import("../islands/manifest.zig");
 const RenderArena = @import("../islands/render_arena.zig").RenderArena;
 const Channel = @import("../channel.zig").Channel;
-const Debouncer = serve_cli.Debouncer;
-const ServeEvent = serve_cli.ServeEvent;
-const Watcher = serve_cli.Watcher;
+const watcher_mod = @import("watcher.zig");
+const Debouncer = watcher_mod.Debouncer;
+const Event = watcher_mod.Event;
+const Watcher = watcher_mod.Watcher;
 
-/// Default rebuild command: the site's own build (release output + island/SPA
-/// bundles + host-config emit). `build.zig`'s `dev()` passes an explicit
-/// `<zig-exe> build` instead so the loop works regardless of PATH.
-pub const default_rebuild_cmd: []const []const u8 = &.{ "zig", "build" };
+/// Default site tree: `zigapagos release`'s own default output directory, so
+/// `zigapagos dev` with no flags rebuilds and serves the same tree a bare
+/// `zigapagos release` writes. Overridable with `--site=DIR`.
+pub const default_site = "public";
 
 /// Default (PERSISTENT) ZigBase data dir, resolved under the site root (the
 /// directory containing zigapagos.ziggy). Collections/auth state persist
@@ -95,10 +100,12 @@ pub const Command = struct {
     data_dir: []const u8,
     /// Explicit binary (`--zigbase=PATH`); null = PATH, then the pinned cache.
     zigbase_path: ?[]const u8,
-    /// `--download-zigbase`: when the locator finds nothing, fetch the pinned
-    /// release into the cache (SHA256-verified) instead of failing. Explicit
-    /// opt-in — nothing is ever downloaded without it.
-    download_zigbase: bool,
+    /// `--no-download`: when the locator finds nothing, FAIL with instructions
+    /// instead of fetching the pinned release into the cache. The escape hatch
+    /// for offline/air-gapped machines and for CI that pins its own binary;
+    /// the default is to fetch, because a dev loop that stops to explain how
+    /// to install a server is not zero-config.
+    no_download: bool,
     /// Invocation template (`--zigbase-arg=`, repeatable; replaces the whole
     /// default template when at least one is given).
     zigbase_args: []const []const u8,
@@ -109,8 +116,7 @@ pub const Command = struct {
     /// Listen host (`--host=`, default 127.0.0.1). Must be an IP literal —
     /// the readiness probe connects to it directly (no DNS).
     host: []const u8,
-    /// Listen port (`--port=`, default 1990 like the legacy live server;
-    /// 0 = pick a free port).
+    /// Listen port (`--port=`, default 1990; 0 = pick a free port).
     port: u16,
     /// Watch-cascade quiet window in ms (`--debounce=`, default 25).
     debounce: u16,
@@ -122,25 +128,27 @@ pub const Command = struct {
     /// Ignored when `live_reload` is false.
     reload_port: u16,
     /// Extra directories to watch (`--watch-dir=`, repeatable), resolved
-    /// against the site root. build.zig's dev() derives these from island/SPA
-    /// source locations.
+    /// against the site root. Empty means "derive them from the island/SPA
+    /// sources found under the site root" (see `discoverWatchDirs`); build.zig's
+    /// dev() passes them explicitly.
     watch_dirs: []const []const u8,
-    /// The rebuild command (everything after `--`; default `zig build`).
-    rebuild_argv: []const []const u8,
+    /// The rebuild command (everything after `--`). Null until `defaultRebuildArgv`
+    /// fills it in, which needs `io` and so cannot happen during `parse`.
+    rebuild_argv: ?[]const []const u8,
 
     /// Frees what `parse` allocated (unit tests only; the dev loop runs until
     /// the process is killed).
     pub fn deinit(cmd: *const Command, gpa: Allocator) void {
         if (cmd.zigbase_args.ptr != default_zigbase_args.ptr) gpa.free(cmd.zigbase_args);
-        if (cmd.rebuild_argv.ptr != default_rebuild_cmd.ptr) gpa.free(cmd.rebuild_argv);
+        if (cmd.rebuild_argv) |argv| gpa.free(argv);
         gpa.free(cmd.watch_dirs);
     }
 
     pub fn parse(gpa: Allocator, args: []const []const u8) error{OutOfMemory}!Command {
-        var site: ?[]const u8 = null;
+        var site: []const u8 = default_site;
         var data_dir: []const u8 = default_data_dir;
         var zigbase_path: ?[]const u8 = null;
-        var download_zigbase = false;
+        var no_download = false;
         var zigbase_args: std.ArrayListUnmanaged([]const u8) = .empty;
         var ready_path: []const u8 = "/";
         var timeout_ms: u32 = 120_000;
@@ -150,13 +158,17 @@ pub const Command = struct {
         var live_reload = true;
         var reload_port: u16 = 0;
         var watch_dirs: std.ArrayListUnmanaged([]const u8) = .empty;
-        var rebuild_argv: []const []const u8 = default_rebuild_cmd;
+        var rebuild_argv: ?[]const []const u8 = null;
 
         var idx: usize = 0;
         while (idx < args.len) : (idx += 1) {
             const arg = args[idx];
             if (std.mem.startsWith(u8, arg, "--site=")) {
                 site = arg["--site=".len..];
+                if (site.len == 0) fatal.usageError(
+                    "error: --site must not be empty\n",
+                    .{},
+                );
             } else if (std.mem.startsWith(u8, arg, "--data-dir=")) {
                 data_dir = arg["--data-dir=".len..];
                 if (data_dir.len == 0) fatal.usageError(
@@ -165,8 +177,8 @@ pub const Command = struct {
                 );
             } else if (std.mem.startsWith(u8, arg, "--zigbase=")) {
                 zigbase_path = arg["--zigbase=".len..];
-            } else if (std.mem.eql(u8, arg, "--download-zigbase")) {
-                download_zigbase = true;
+            } else if (std.mem.eql(u8, arg, "--no-download")) {
+                no_download = true;
             } else if (std.mem.startsWith(u8, arg, "--zigbase-arg=")) {
                 try zigbase_args.append(gpa, arg["--zigbase-arg=".len..]);
             } else if (std.mem.startsWith(u8, arg, "--ready-path=")) {
@@ -221,16 +233,11 @@ pub const Command = struct {
             );
         }
 
-        if (site == null or site.?.len == 0) fatal.usageError(
-            "error: dev needs --site=<built site dir> (build.zig's dev() supplies it)\n" ++ usage,
-            .{},
-        );
-
         return .{
-            .site = site.?,
+            .site = site,
             .data_dir = data_dir,
             .zigbase_path = zigbase_path,
-            .download_zigbase = download_zigbase,
+            .no_download = no_download,
             .zigbase_args = if (zigbase_args.items.len > 0)
                 try zigbase_args.toOwnedSlice(gpa)
             else
@@ -248,12 +255,19 @@ pub const Command = struct {
     }
 
     const usage =
-        "usage: zigapagos dev --site=DIR [--data-dir=DIR] [--zigbase=PATH]\n" ++
-        "                     [--download-zigbase] [--zigbase-arg=ARG]...\n" ++
+        "usage: zigapagos dev [--site=DIR] [--data-dir=DIR] [--zigbase=PATH]\n" ++
+        "                     [--no-download] [--zigbase-arg=ARG]...\n" ++
         "                     [--host=IP] [--port=N] [--ready-path=/…]\n" ++
         "                     [--timeout-ms=N] [--debounce=MS]\n" ++
         "                     [--no-live-reload] [--reload-port=N]\n" ++
-        "                     [--watch-dir=DIR]... [-- REBUILD-CMD [ARGS...]]\n";
+        "                     [--watch-dir=DIR]... [-- REBUILD-CMD [ARGS...]]\n" ++
+        "\n" ++
+        "Every option has a working default: with no arguments, dev rebuilds\n" ++
+        "with 'zigapagos release --output=public --force', serves 'public' with\n" ++
+        "zigbase (downloading the pinned release only if none is on PATH, in\n" ++
+        "--zigbase= or already cached — pass --no-download to fail instead),\n" ++
+        "and watches the site's content/layout/asset dirs plus the directories\n" ++
+        "holding its *.island.tsx / *.spa.tsx sources.\n";
 };
 
 pub fn dev(
@@ -270,11 +284,11 @@ pub fn dev(
         fatal.helpError();
     }
 
-    var cmd: Command = try .parse(gpa, args);
+    const cmd: Command = try .parse(gpa, args);
 
-    // Input discovery: the same dirs the live server watches (assets, layouts,
-    // content, i18n + per-locale content), anchored at the site root — plus
-    // the caller's extra --watch-dir entries (island/SPA sources).
+    // Input discovery: assets, layouts, content and i18n + per-locale content,
+    // anchored at the site root — plus the island/SPA source dirs, either given
+    // as --watch-dir or discovered below.
     const cfg, const base_dir_path = root.Config.load(io, gpa);
     var dirs_to_watch: std.ArrayListUnmanaged([:0]const u8) = .empty;
 
@@ -286,7 +300,7 @@ pub fn dev(
     //   - `other_roots`: layouts, assets, and i18n — a change to ANY of these
     //     can affect arbitrarily many pages (a shared layout), so it forces a
     //     full rebuild.
-    //   - `island_roots`: the `--watch-dir` island/SPA source dirs.
+    //   - `island_roots`: the island/SPA source dirs.
     //     A changed file here is resolved through the dev island-usage manifest
     //     (written by every disk build) to the exact set of pages mounting it;
     //     any file the manifest doesn't know (a helper module, a SPA source, a
@@ -332,7 +346,21 @@ pub fn dev(
             }
         },
     }
-    for (cmd.watch_dirs) |d| {
+    // Zero-config island/SPA watching. With no explicit --watch-dir, derive the
+    // dirs from the entries `zigapagos release` will itself discover, so editing
+    // a component rebuilds without the user having to enumerate anything.
+    //
+    // The DERIVED dirs are the entries' PARENT directories, never the scan root
+    // ("." — see `discoverWatchDirs`): the output tree lives under the scan root,
+    // so watching it would make every rebuild retrigger the watcher forever. The
+    // output-tree-inside-a-watched-dir guard below is the backstop, but it
+    // FATALS, and turning `zigapagos dev` into an immediate error in the default
+    // layout is not an acceptable way to discover that.
+    const derived_watch_dirs: []const []const u8 = if (cmd.watch_dirs.len > 0)
+        cmd.watch_dirs
+    else
+        try discoverWatchDirs(io, gpa, base_dir_path);
+    for (derived_watch_dirs) |d| {
         try appendWatchDir(gpa, &dirs_to_watch, base_dir_path, d);
         try appendContentRoot(gpa, &island_roots, base_dir_path, d);
     }
@@ -387,52 +415,21 @@ pub fn dev(
     // release output (and no SSE channel exists to hot-swap through anyway).
     if (cmd.live_reload) environ_map.put(hot_islands_env, "1") catch fatal.oom();
 
-    // (1) Initial build. `zig build dev` reaches here with everything already
-    // compiled, so this is mostly cache hits + one site render; for direct CLI
-    // use it guarantees the tree exists before zigbase boots.
-    // `zig build` is the right default for a Zig-build project and cannot be the
-    // right one for a project that has no build.zig — which is exactly what an
-    // npm install produces. Left alone, that install's `dev` died on
-    // `failed to spawn 'zig': FileNotFound`, naming a toolchain the user was
-    // never told they needed and never asked for.
-    //
-    // So when the default is still in force and there is no build.zig beside the
-    // site, rebuild through THIS binary's own `release` instead — resolved by
-    // absolute path rather than by name, because the whole point is that we
-    // cannot assume anything useful is on PATH.
-    //
-    // Deliberately not a fallback after a failed spawn: choosing up front means
-    // the command is printed before it runs (below) and a genuine `zig build`
-    // failure in a Zig project is still reported as itself.
-    if (cmd.rebuild_argv.ptr == default_rebuild_cmd.ptr and
-        Io.Dir.cwd().access(io, "build.zig", .{}) == error.FileNotFound)
-    {
-        const self = std.process.executablePathAlloc(io, gpa) catch |err| fatal.msg(
-            "error: dev: no build.zig here and this executable's own path is " ++
-                "unavailable ({s}); pass an explicit rebuild command after `--`\n",
-            .{@errorName(err)},
-        );
-        // No `--island=` flags are needed: on this path `release` discovers the
-        // site's `*.island.tsx` entries itself (see release.zig's
-        // discoverEntries), which is what keeps the SSR'd markup and the client
-        // bundles in step without dev having to know the list.
-        cmd.rebuild_argv = try gpa.dupe([]const u8, &.{
-            self,
-            "release",
-            try std.fmt.allocPrint(gpa, "--output={s}", .{cmd.site}),
-            "--force",
-        });
-    }
+    // (1) Initial build, so the tree exists before zigbase boots.
+    // Held for the process lifetime: `dev` is noreturn, so there is nothing to
+    // free it back to (see `Argv`'s contract note).
+    const rebuild_argv: []const []const u8 = cmd.rebuild_argv orelse
+        (try defaultRebuildArgv(io, gpa, cmd.site)).items;
 
     std.debug.print("dev: initial build:", .{});
-    for (cmd.rebuild_argv) |a| std.debug.print(" {s}", .{a});
+    for (rebuild_argv) |a| std.debug.print(" {s}", .{a});
     std.debug.print("\n", .{});
     // Wall-clock mtime cutoff for change detection: captured BEFORE
     // a build so the next change sees every file edited after it started. The
     // initial build is always full (no `changed_files` env), which stages the
     // whole tree that later incremental rebuilds patch in place.
     var last_build_ns: i128 = @intCast(Io.Clock.real.now(io).nanoseconds);
-    if (!runRebuild(io, cmd.rebuild_argv, environ_map)) fatal.msg(
+    if (!runRebuild(io, rebuild_argv, environ_map)) fatal.msg(
         "error: dev: the initial build failed (see output above); fix it and rerun\n",
         .{},
     );
@@ -479,18 +476,29 @@ pub fn dev(
         reload_server = srv;
     }
 
-    // (2) Locate zigbase (explicit → PATH → pinned cache). When nothing is
-    // found, `--download-zigbase` — and only that explicit opt-in — fetches
-    // the pinned release into the cache (SHA256-verified); otherwise fail
-    // with instructions. No silent downloads — see zigbase.zig.
+    // (2) Locate zigbase (explicit → PATH → pinned cache) and, when nothing is
+    // found, fetch the pinned release into the cache (SHA256-verified).
+    //
+    // Fetching is the DEFAULT here, unlike `e2e`. `dev` is the zero-config
+    // entry point and its server is not optional: refusing to start until the
+    // user has installed a second binary they were never told about is the
+    // failure mode this default exists to remove. `--no-download` restores the
+    // strict behaviour for offline/air-gapped machines and for CI that pins
+    // its own binary; nothing is fetched when zigbase already resolves.
     const located: zigbase.Located = (try zigbase.locate(io, gpa, environ_map, cmd.zigbase_path)) orelse blk: {
-        if (cmd.download_zigbase) break :blk .{
+        if (cmd.no_download) {
+            const msg = try zigbase.missingMessage(gpa, environ_map);
+            std.debug.print("{s}", .{msg});
+            std.process.exit(1);
+        }
+        std.debug.print(
+            "dev: no zigbase found — fetching the pinned {s} release (pass --no-download to fail instead)\n",
+            .{zigbase.pinned_version},
+        );
+        break :blk .{
             .path = try zigbase.download(io, gpa, environ_map),
             .source = .cache,
         };
-        const msg = try zigbase.missingMessage(gpa, environ_map);
-        std.debug.print("{s}", .{msg});
-        std.process.exit(1);
     };
 
     // (3) Port (the persistent data dir was created before the initial build).
@@ -551,9 +559,9 @@ pub fn dev(
         std.debug.print("dev: no live reload (--no-live-reload): refresh the browser after a rebuild\n\n\n", .{});
     }
 
-    // (5) Watch + rebuild loop. Same watcher + debouncer the live server uses.
-    var buf: [64]ServeEvent = undefined;
-    var channel: Channel(ServeEvent) = .init(&buf);
+    // (5) Watch + rebuild loop.
+    var buf: [64]Event = undefined;
+    var channel: Channel(Event) = .init(&buf);
     var debouncer: Debouncer = .{
         .io = io,
         .cascade_window_ms = cmd.debounce,
@@ -577,9 +585,6 @@ pub fn dev(
         const event = channel.get(io) catch unreachable;
         switch (event) {
             .change => {},
-            // WebSocket events exist only for the legacy live server's reload
-            // channel; nothing produces them here.
-            .connect, .disconnect => continue,
         }
         // Collapse a burst that outran the debounce window into ONE rebuild.
         while ((channel.getOrNull(io) catch null) != null) {}
@@ -616,7 +621,7 @@ pub fn dev(
                 } else {
                     std.debug.print("dev: change detected, incremental rebuild of {d} pages...\n", .{inc.pages.len});
                 }
-                const ok = runRebuild(io, cmd.rebuild_argv, environ_map);
+                const ok = runRebuild(io, rebuild_argv, environ_map);
                 _ = environ_map.swapRemove(release_cli.changed_files_env);
                 break :blk ok;
             },
@@ -625,7 +630,7 @@ pub fn dev(
                 // the whole site. Ensure no stale incremental hint lingers.
                 _ = environ_map.swapRemove(release_cli.changed_files_env);
                 std.debug.print("dev: change detected, rebuilding...\n", .{});
-                break :blk runRebuild(io, cmd.rebuild_argv, environ_map);
+                break :blk runRebuild(io, rebuild_argv, environ_map);
             },
         };
 
@@ -1303,6 +1308,114 @@ fn dirHasChangeSince(io: Io, gpa: Allocator, dir_abs: []const u8, cutoff_ns: i12
     return walk_failed;
 }
 
+/// The rebuild command when the user gave none: THIS binary's own `release`,
+/// into `site`.
+///
+/// The executable is resolved by ABSOLUTE PATH rather than spawned as
+/// "zigapagos", because the whole point of a standalone binary is that nothing
+/// useful can be assumed to be on `PATH` — an npm install puts a shim in
+/// `node_modules/.bin`, and a user who downloaded a release tarball may not
+/// have put it anywhere at all.
+///
+/// No `--island=`/`--spa=` flags are needed: `release` discovers the site's
+/// `*.island.tsx` / `*.spa.tsx` entries itself (release.zig's
+/// `discoverEntries`), which is what keeps the SSR'd markup and the client
+/// bundles in step without dev having to know the list.
+///
+/// NO_SLOP.md §2.2a contract 2 (owned-result): the returned `Argv` owns its
+/// strings and the slice holding them, and the caller `deinit`s it. `dev()`
+/// holds it for the process lifetime and never does — it is `noreturn` and a
+/// `defer` there would never run — but the unit tests do, which is what keeps
+/// leak detection meaningful on this path.
+const Argv = struct {
+    items: []const []const u8,
+
+    fn deinit(a: Argv, gpa: Allocator) void {
+        for (a.items) |it| gpa.free(it);
+        gpa.free(a.items);
+    }
+};
+
+fn defaultRebuildArgv(
+    io: Io,
+    gpa: Allocator,
+    site: []const u8,
+) error{OutOfMemory}!Argv {
+    var items: std.ArrayListUnmanaged([]const u8) = .empty;
+    errdefer {
+        for (items.items) |it| gpa.free(it);
+        items.deinit(gpa);
+    }
+    {
+        // `executablePathAlloc` returns a SENTINEL slice (`[:0]u8`), whose
+        // allocation is one byte longer than its `.len`. Freeing it through a
+        // plain `[]const u8` therefore hands the allocator the wrong size —
+        // DebugAllocator reports "Allocation size N does not match free size
+        // N-1" — so the sentinel is dropped here, into an exactly-sized copy
+        // the rest of the list can be freed uniformly.
+        const self_z = std.process.executablePathAlloc(io, gpa) catch |err| fatal.msg(
+            "error: dev: this executable's own path is unavailable ({s}); pass an " ++
+                "explicit rebuild command after `--`\n",
+            .{@errorName(err)},
+        );
+        defer gpa.free(self_z);
+        try items.append(gpa, try gpa.dupe(u8, self_z));
+    }
+    try items.append(gpa, try gpa.dupe(u8, "release"));
+    try items.append(gpa, try std.fmt.allocPrint(gpa, "--output={s}", .{site}));
+    // `--force`: the output dir is rebuilt in place on every change, and the
+    // very first rebuild of an existing tree would otherwise refuse to touch a
+    // directory it did not create.
+    try items.append(gpa, try gpa.dupe(u8, "--force"));
+    return .{ .items = try items.toOwnedSlice(gpa) };
+}
+
+/// The island/SPA source directories to watch when the user gave no
+/// `--watch-dir`: the PARENT directory of every `*.island.tsx` / `*.spa.tsx`
+/// entry `zigapagos release` would discover, deduplicated and relative to the
+/// site root.
+///
+/// The scan root itself (".") is deliberately never returned. It is what
+/// `release` scans, but the built output tree lives under it, so watching it
+/// would make every rebuild retrigger the watcher — an infinite rebuild loop.
+/// An entry sitting directly at the site root therefore contributes nothing,
+/// which is the conservative failure: no watching, not a loop.
+///
+/// NO_SLOP.md §2.2a contract 1 (self-freeing): the discovered entry list is
+/// scratch, freed here; the returned slice and its strings are the only
+/// allocations that escape, and — like `defaultRebuildArgv`'s — the caller
+/// holds them for the process lifetime.
+fn discoverWatchDirs(
+    io: Io,
+    gpa: Allocator,
+    base_dir_path: []const u8,
+) error{OutOfMemory}![]const []const u8 {
+    var dirs: std.ArrayListUnmanaged([]const u8) = .empty;
+    errdefer {
+        for (dirs.items) |d| gpa.free(d);
+        dirs.deinit(gpa);
+    }
+    for ([_][]const u8{ ".island.tsx", ".spa.tsx" }) |suffix| {
+        const entries = release_cli.discoverEntries(io, gpa, base_dir_path, suffix) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+        };
+        defer {
+            for (entries) |e| gpa.free(e);
+            gpa.free(entries);
+        }
+        for (entries) |e| {
+            // `dirname` is null for a bare basename, i.e. an entry at the scan
+            // root — the one case that must NOT be watched (see above).
+            const parent = std.fs.path.dirname(e) orelse continue;
+            if (parent.len == 0 or std.mem.eql(u8, parent, ".")) continue;
+            for (dirs.items) |d| {
+                if (std.mem.eql(u8, d, parent)) break;
+            } else try dirs.append(gpa, try gpa.dupe(u8, parent));
+        }
+    }
+    return dirs.toOwnedSlice(gpa);
+}
+
 /// Appends `base/dir` (deduplicated) to the watch list. Null-terminated
 /// because the macOS watcher needs sentinel paths.
 fn appendWatchDir(
@@ -1364,17 +1477,21 @@ fn runRebuild(
 }
 
 // --- unit tests (run via `zig build test-dev`, filter "dev") -------------------
-// fatal.usageError paths (missing --site, unknown arg, bad values) exit the
-// process and are exercised by tests/serve/dev.sh instead.
+// fatal.usageError paths (unknown arg, bad values) exit the process and are
+// exercised by tests/dev/dev.sh instead.
 
-test "dev parse: --site only yields the documented defaults" {
+test "dev parse: NO arguments at all yields a runnable configuration" {
+    // The zero-config contract: `zigapagos dev` in a site directory must work
+    // with nothing supplied. Every field below is a default someone has to keep
+    // working, so they are pinned here rather than left implicit -- `--site`
+    // most of all, which used to be REQUIRED and fataled without it.
     const gpa = std.testing.allocator;
-    const cmd = try Command.parse(gpa, &.{"--site=/out/site"});
+    const cmd = try Command.parse(gpa, &.{});
     defer cmd.deinit(gpa);
-    try std.testing.expectEqualStrings("/out/site", cmd.site);
+    try std.testing.expectEqualStrings("public", cmd.site); // = release's own default output
     try std.testing.expectEqualStrings(default_data_dir, cmd.data_dir); // persistent default
     try std.testing.expect(cmd.zigbase_path == null); // default: PATH, then cache
-    try std.testing.expect(!cmd.download_zigbase); // default: never download
+    try std.testing.expect(!cmd.no_download); // default: fetch the pinned release
     try std.testing.expectEqual(default_zigbase_args.ptr, cmd.zigbase_args.ptr);
     try std.testing.expectEqualStrings("/", cmd.ready_path);
     try std.testing.expectEqual(@as(u32, 120_000), cmd.timeout_ms);
@@ -1383,8 +1500,19 @@ test "dev parse: --site only yields the documented defaults" {
     try std.testing.expectEqual(@as(u16, 25), cmd.debounce);
     try std.testing.expect(cmd.live_reload); // on by default
     try std.testing.expectEqual(@as(u16, 0), cmd.reload_port); // 0 = pick a free port
+    // Empty means "derive from the discovered island/SPA sources", not "watch
+    // nothing" -- see discoverWatchDirs.
     try std.testing.expectEqual(@as(usize, 0), cmd.watch_dirs.len);
-    try std.testing.expectEqual(default_rebuild_cmd.ptr, cmd.rebuild_argv.ptr);
+    // Null means "build the default argv", which needs `io` and so cannot
+    // happen in parse; see defaultRebuildArgv.
+    try std.testing.expect(cmd.rebuild_argv == null);
+}
+
+test "dev parse: --site overrides the default" {
+    const gpa = std.testing.allocator;
+    const cmd = try Command.parse(gpa, &.{"--site=/out/site"});
+    defer cmd.deinit(gpa);
+    try std.testing.expectEqualStrings("/out/site", cmd.site);
 }
 
 test "dev parse: every knob is threaded through" {
@@ -1393,7 +1521,7 @@ test "dev parse: every knob is threaded through" {
         "--site=zig-out/site",
         "--data-dir=.zb-dev",
         "--zigbase=/opt/zigbase",
-        "--download-zigbase",
+        "--no-download",
         "--zigbase-arg=serve",
         "--zigbase-arg=--http-port",
         "--zigbase-arg={port}",
@@ -1414,7 +1542,7 @@ test "dev parse: every knob is threaded through" {
     defer cmd.deinit(gpa);
     try std.testing.expectEqualStrings(".zb-dev", cmd.data_dir);
     try std.testing.expectEqualStrings("/opt/zigbase", cmd.zigbase_path.?);
-    try std.testing.expect(cmd.download_zigbase);
+    try std.testing.expect(cmd.no_download);
     // any --zigbase-arg replaces the WHOLE default template
     try std.testing.expectEqual(@as(usize, 3), cmd.zigbase_args.len);
     try std.testing.expectEqualStrings("serve", cmd.zigbase_args[0]);
@@ -1428,8 +1556,8 @@ test "dev parse: every knob is threaded through" {
     try std.testing.expectEqual(@as(u16, 1991), cmd.reload_port);
     try std.testing.expectEqual(@as(usize, 2), cmd.watch_dirs.len);
     try std.testing.expectEqualStrings("components", cmd.watch_dirs[0]);
-    try std.testing.expectEqual(@as(usize, 3), cmd.rebuild_argv.len);
-    try std.testing.expectEqualStrings("-Dfoo", cmd.rebuild_argv[2]);
+    try std.testing.expectEqual(@as(usize, 3), cmd.rebuild_argv.?.len);
+    try std.testing.expectEqualStrings("-Dfoo", cmd.rebuild_argv.?[2]);
 }
 
 test "dev parse: everything after '--' is the rebuild command verbatim" {
@@ -1437,15 +1565,31 @@ test "dev parse: everything after '--' is the rebuild command verbatim" {
     const cmd = try Command.parse(gpa, &.{ "--site=out", "--", "bash", "-c", "make site", "--site=x" });
     defer cmd.deinit(gpa);
     try std.testing.expectEqualStrings("out", cmd.site);
-    try std.testing.expectEqual(@as(usize, 4), cmd.rebuild_argv.len);
-    try std.testing.expectEqualStrings("--site=x", cmd.rebuild_argv[3]);
+    try std.testing.expectEqual(@as(usize, 4), cmd.rebuild_argv.?.len);
+    try std.testing.expectEqualStrings("--site=x", cmd.rebuild_argv.?[3]);
 }
 
 test "dev parse: a bare trailing '--' keeps the default rebuild command" {
     const gpa = std.testing.allocator;
     const cmd = try Command.parse(gpa, &.{ "--site=out", "--" });
     defer cmd.deinit(gpa);
-    try std.testing.expectEqual(default_rebuild_cmd.ptr, cmd.rebuild_argv.ptr);
+    try std.testing.expect(cmd.rebuild_argv == null);
+}
+
+test "dev rebuild default is this binary's own release into --site" {
+    // The default rebuild command must name THIS executable by absolute path,
+    // not "zigapagos" on PATH: an npm install exposes only a shim under
+    // node_modules/.bin, and a release-tarball user may have put the binary
+    // nowhere at all. Spawning by name worked in a dev checkout and nowhere
+    // else, which is the failure this pins.
+    const gpa = std.testing.allocator;
+    const argv = try defaultRebuildArgv(std.testing.io, gpa, "out/site");
+    defer argv.deinit(gpa);
+    try std.testing.expectEqual(@as(usize, 4), argv.items.len);
+    try std.testing.expect(std.fs.path.isAbsolute(argv.items[0]));
+    try std.testing.expectEqualStrings("release", argv.items[1]);
+    try std.testing.expectEqualStrings("--output=out/site", argv.items[2]);
+    try std.testing.expectEqualStrings("--force", argv.items[3]);
 }
 
 test "dev default zigbase template appends --insecure-cookies to the shared template" {

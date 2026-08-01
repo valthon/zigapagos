@@ -133,10 +133,9 @@ a complete phase — the whole prerender/analysis gate — not a sample.
    check-id namespace (`abs-url-meta`, `dangling-internal-link`, …);
    unifying the two namespaces (or leaving them separate but documenting
    both from one place) is a design decision, not a mechanical port.
-6. **`serve` / `dev`.** The consumer this issue is written for is an
-   unattended agent running `zigapagos release`. The live server's in-memory
-   error list (`build.mode.memory.errors`) is untouched — `--format=` is not
-   even a recognised flag there.
+6. **`dev`.** The consumer this issue is written for is an unattended agent
+   running `zigapagos release`. `dev` re-runs a rebuild command and reports
+   whatever that command printed; `--format=` is not a flag it recognises.
 7. **No generated code table on this page.** The table of every code (past
    the schema above) lives only in `zigapagos explain-code`'s output, not
    duplicated here by hand or by a docgen pass. `zigapagos explain-code` (no

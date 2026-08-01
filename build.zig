@@ -1,8 +1,8 @@
 //! Zigapagos's build script, in two halves.
 //!
 //! 1. The PUBLIC API a consumer's `build.zig` uses to build a site: the option
-//!    types (`build/api.zig`) plus `website`/`serve` (`build/site.zig`) and
-//!    `e2e`/`dev` (`build/harness.zig`). The four entry points are thin
+//!    types (`build/api.zig`) plus `website` (`build/site.zig`) and
+//!    `e2e`/`dev` (`build/harness.zig`). The three entry points are thin
 //!    wrappers here because `dependencyFromBuildZig` needs THIS file's type to
 //!    locate the zigapagos dependency in the consumer's package graph; the
 //!    implementations (and their full doc comments) live in those modules.
@@ -38,7 +38,6 @@ const tests = @import("build/tests.zig");
 pub const BuildAsset = api.BuildAsset;
 pub const Island = api.Island;
 pub const Spa = api.Spa;
-pub const Proxy = api.Proxy;
 pub const Options = api.Options;
 pub const E2eOptions = harness.E2eOptions;
 pub const DevOptions = harness.DevOptions;
@@ -46,12 +45,6 @@ pub const DevOptions = harness.DevOptions;
 /// Builds a Zigapagos website. See `build/site.zig` for the full docs.
 pub fn website(project: *std.Build, opts: Options) *std.Build.Step.Run {
     return site.website(@This(), project, opts);
-}
-
-/// DEPRECATED: prefer `dev()`. Serves a Zigapagos website via the bundled live
-/// server. See `build/site.zig` for the full docs.
-pub fn serve(project: *std.Build, opts: Options) *std.Build.Step.Run {
-    return site.serve(@This(), project, opts);
 }
 
 /// The supported SPA e2e workflow: serve the release tree with the stock

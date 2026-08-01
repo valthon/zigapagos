@@ -2,7 +2,7 @@ import { useRestorableState } from "@z/runtime";
 
 // A tiny multi-step form that exercises state-preserving dev reload: the text
 // field and the step counter both live in useRestorableState, so a full-page
-// `zigapagos serve` reload restores their in-memory state instead of wiping it. In
+// `zigapagos dev` reload restores their in-memory state instead of wiping it. In
 // production (no dev livereload client) the hook behaves exactly like useState.
 export default function Wizard() {
   const [name, setName] = useRestorableState<string>("wizard-name", "");

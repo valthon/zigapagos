@@ -63,11 +63,16 @@ scaffold `init` writes reflects that.
 ## Run the development server
 
 ```sh
-../zig-out/bin/zigapagos
+../zig-out/bin/zigapagos dev
 ```
 
-The site rebuilds when you edit content, layouts, or assets, and the page in
-your browser refreshes itself.
+`dev` needs no arguments: it builds the site into `public/`, serves that tree at
+`http://127.0.0.1:1990` with ZigBase — downloading the pinned release the first
+time if you have none — and rebuilds when you edit content, layouts, or assets.
+The page in your browser refreshes itself.
+
+Run `zigapagos` with no command and you get the help menu, not a server; every
+command is explicit.
 
 ## Add an island
 

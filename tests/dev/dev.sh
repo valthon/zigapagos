@@ -4,14 +4,15 @@
 # the served tree, keep the data dir PERSISTENT across sessions, tear down
 # with no orphans.
 #
-# Hermetic: uses tests/serve/stub-zigbase.ts (honoring the real `zigbase serve
+# Hermetic: uses tests/dev/stub-zigbase.ts (honoring the real `zigbase serve
 # --http-host … --http-port … --data-dir … --serve-static …` contract) placed
 # on PATH as `zigbase`, so no real ZigBase binary is needed. Set
 # REAL_ZIGBASE=/path/to/zigbase to ALSO run the boot + edit-rebuild scenario
 # against a real binary.
 #
 # Asserts:
-#   (a) missing --site fails fast with usage guidance,
+#   (a) zero-config: `zigapagos dev` with NO arguments builds, serves and
+#       defaults --site/--rebuild/watch-dirs correctly,
 #   (b) foot-gun guard: --site inside a watched dir is refused,
 #   (c) boot + readiness on a minimal site; a content edit triggers a rebuild
 #       that changes the SERVED output (polled, no server restart),
@@ -80,7 +81,7 @@ BIN="$WORK/bin"
 mkdir -p "$BIN"
 cat > "$BIN/zigbase" <<EOF
 #!/usr/bin/env bash
-# STUB zigbase for tests/serve/dev.sh — see tests/serve/stub-zigbase.ts
+# STUB zigbase for tests/dev/dev.sh — see tests/dev/stub-zigbase.ts
 exec bun "$HERE/stub-zigbase.ts" "\$@"
 EOF
 chmod +x "$BIN/zigbase"
@@ -141,13 +142,32 @@ serves() { # $1 = origin, $2 = marker
   curl -sf "$1/" | grep -q "$2"
 }
 
-# --- (a) missing --site fails fast --------------------------------------------------
-echo "running: zigapagos dev (no --site)..."
-if "$ZIGAPAGOS" dev > "$WORK/nosite.log" 2>&1; then
-  cat "$WORK/nosite.log"; fail "dev without --site should fail"
-fi
-grep -q -- "--site=<built site dir>" "$WORK/nosite.log" || { cat "$WORK/nosite.log"; fail "no-site failure lacks usage guidance"; }
-echo "PASS: missing --site fails fast with usage guidance"
+# --- (a) zero-config: NO arguments at all boots and serves ---------------------------
+# `--site` used to be REQUIRED, and `zigapagos dev` with no arguments fataled
+# with usage. Zero-config is the whole point of issue #56's dev change, so the
+# no-argument invocation is the scenario worth pinning: it must default the
+# output tree to `public/`, default the rebuild to this binary's own `release`,
+# discover its own watch dirs, and reach `dev: ready`.
+#
+# The stub zigbase is already on PATH (see above), so nothing is downloaded —
+# which is itself part of the contract: the implicit fetch only fires when the
+# locator comes up empty.
+echo "running: zigapagos dev (no arguments at all)..."
+ZC_LOG="$WORK/zeroconf.log"
+ZC_PID=$(launch_group "$SRC" "$ZC_LOG" "$ZIGAPAGOS" dev --port=0)
+wait_ready "$ZC_LOG"
+ZC_ORIGIN=$(origin_from_log "$ZC_LOG")
+[[ -n "$ZC_ORIGIN" ]] || { cat "$ZC_LOG"; fail "zero-config dev printed no origin"; }
+serves "$ZC_ORIGIN" DEVLOOP-MARKER-V1 || { cat "$ZC_LOG"; fail "zero-config dev did not serve the built site"; }
+# The default output tree is `public/` under the site root -- release's own
+# default, so `dev` and a bare `release` agree on where the site lands.
+test -f "$SRC/public/index.html" || { cat "$ZC_LOG"; fail "zero-config dev did not build into <site root>/public/"; }
+# The default rebuild command is THIS binary by absolute path, not `zig build`.
+grep -q "dev: initial build: $ZIGAPAGOS release --output=public --force" "$ZC_LOG" \
+  || { cat "$ZC_LOG"; fail "zero-config dev did not default the rebuild to this binary's own release"; }
+stop_dev "$ZC_PID"
+rm -rf "$SRC/public"
+echo "PASS: zero-config 'zigapagos dev' (no arguments) builds, serves and defaults correctly"
 
 # --- (b) foot-gun guard: --site inside a watched dir ---------------------------------
 echo "running: zigapagos dev --site=<inside content/> (guard)..."

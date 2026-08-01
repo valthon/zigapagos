@@ -202,6 +202,37 @@ test("platform table: a row per target, and every unsupported host named", () =>
   });
 });
 
+test("the quick-start never presents the bare command as a server", () => {
+  withGenerated((dir) => {
+    for (const readme of [readText(dir, "cli", "README.md"), readText(dir, "zigapagos", "README.md")]) {
+      // These two READMEs are the whole of what an `npx zigapagos` user reads on
+      // npmjs.com, and they are generated — so nothing else in the repo can keep
+      // them honest. The binary has no default action: run with no subcommand it
+      // prints its help and exits 0. A quick-start line like
+      // `npx zigapagos  # dev server on http://localhost:1990` therefore
+      // documents a command that does nothing the reader was promised, and the
+      // reader's next move is to file a bug.
+      //
+      // Matched on the invocation, not on the prose: a line that runs the bare
+      // command (no subcommand after it) and then mentions serving. Prose ABOUT
+      // the server elsewhere would be equally wrong, but this is the shape that
+      // regressed, and a broad /server/ ban would fail on the honest sentences
+      // that name `dev`'s server or a production host.
+      for (const line of readme.split("\n")) {
+        const bare = /^\s*(?:npx\s+)?(?:@zigapagos\/cli|zigapagos)\s*(?:#.*)?$/.test(line);
+        if (!bare) continue;
+        assert.doesNotMatch(
+          line,
+          /serv|:1990/i,
+          `the bare command starts no server; it prints help: ${line.trim()}`,
+        );
+      }
+      // The same claim in prose, in the one phrasing the capability list used.
+      assert.doesNotMatch(readme, /running `zigapagos` with no subcommand/);
+    }
+  });
+});
+
 test("a native darwin-arm64 target replaces its unsupported row and widens cpu", () => {
   const withArm = [
     ...TARGETS,

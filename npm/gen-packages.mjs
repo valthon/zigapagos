@@ -273,8 +273,7 @@ Nothing else. No Zig toolchain, no separately-installed Bun, no \`build.zig\`.
 Everything, from \`npm i zigapagos\` alone:
 
 - the whole **content** pipeline — \`init\`, \`migrate\` (the Astro importer),
-  \`doctor\`, \`validate\`, \`explain\`, \`release\`, and the live server you get by
-  running \`zigapagos\` with no subcommand;
+  \`doctor\`, \`validate\`, \`explain\` and \`release\`;
 - **islands** (\`.island.tsx\`) — server-rendered through the bundled Bun sidecar
   and hydrated in the browser from a client bundle built by the same Bun;
 - **native SPAs** (\`.spa.tsx\`) — prerendered route skeletons plus a code-split
@@ -552,8 +551,10 @@ strategy as \`esbuild\` — so an install downloads exactly one binary.
 
 \`\`\`sh
 npx @zigapagos/cli init      # scaffold a site
-npx @zigapagos/cli           # live server on http://localhost:1990
+npx @zigapagos/cli dev       # dev loop on http://127.0.0.1:1990
 \`\`\`
+
+Run bare it prints its help and exits: there is no default action.
 
 After \`npm install @zigapagos/cli\` the \`zigapagos\` binary is on \`PATH\` in npm
 scripts:
@@ -641,7 +642,7 @@ bin. Platform resolution, the binary, and the documentation all live there.
 
 \`\`\`sh
 npx zigapagos init      # scaffold a site
-npx zigapagos           # dev server on http://localhost:1990
+npx zigapagos dev       # dev loop on http://127.0.0.1:1990
 \`\`\`
 
 For programmatic use, depend on \`@zigapagos/cli\` directly — this package exports

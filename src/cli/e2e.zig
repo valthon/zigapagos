@@ -2,8 +2,8 @@
 //!
 //! Production-faithful: the harness serves the RELEASE output tree with the
 //! STOCK ZigBase binary — a real same-origin API plus the `.spa`-marker SPA
-//! fallback (docs/spa.md, Tier 1) — instead of the dev server, so what the
-//! browser driver exercises is what production serves. Orchestration:
+//! fallback (docs/spa.md, Tier 1) — so what the browser driver exercises is
+//! what production serves. Orchestration:
 //!
 //!   1. locate zigbase (explicit → PATH → pinned cache; `zigbase.zig`),
 //!   2. pick a free port and set up the data dir (default: a fresh temp dir
@@ -415,7 +415,7 @@ pub fn substituteArg(
 
 // --- unit tests (run via `zig build test-e2e`, filter "e2e") -------------------
 // fatal.usageError paths (missing --site, empty command, unknown arg) exit the
-// process and are exercised by tests/serve/e2e.sh instead.
+// process and are exercised by tests/dev/e2e.sh instead.
 
 test "e2e parse: site + '--' argv, with documented defaults" {
     const gpa = std.testing.allocator;

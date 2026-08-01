@@ -5,7 +5,7 @@
 # surface (examples/tsx-site's `e2e` step → the public `zigapagos.e2e()` build
 # API → the `zigapagos e2e` CLI).
 #
-# Hermetic: uses tests/serve/stub-zigbase.ts (a clearly-labeled stub honoring
+# Hermetic: uses tests/dev/stub-zigbase.ts (a clearly-labeled stub honoring
 # the VERIFIED `zigbase serve --http-host … --http-port … --data-dir …
 # --serve-static …` invocation contract, space-separated values like the real
 # parser) placed on PATH as `zigbase`, so no real ZigBase binary is needed.
@@ -78,7 +78,7 @@ BIN="$WORK/bin"
 mkdir -p "$BIN"
 cat > "$BIN/zigbase" <<EOF
 #!/usr/bin/env bash
-# STUB zigbase for tests/serve/e2e.sh — see tests/serve/stub-zigbase.ts
+# STUB zigbase for tests/dev/e2e.sh — see tests/dev/stub-zigbase.ts
 exec bun "$HERE/stub-zigbase.ts" "\$@"
 EOF
 chmod +x "$BIN/zigbase"

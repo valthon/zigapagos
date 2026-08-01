@@ -2,14 +2,14 @@ const MacosWatcher = @This();
 
 const std = @import("std");
 const Io = std.Io;
-const fatal = @import("../../../fatal.zig");
-const Debouncer = @import("../../serve.zig").Debouncer;
+const fatal = @import("../../fatal.zig");
+const Debouncer = @import("../watcher.zig").Debouncer;
 
 // const c = @cImport({
 //     @cInclude("CoreServices/CoreServices.h");
 // });
 // const c = @import("c");
-const c = @import("../../../hacks/CoreFoundation.h.zig");
+const c = @import("../../hacks/CoreFoundation.h.zig");
 
 const log = std.log.scoped(.watcher);
 

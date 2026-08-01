@@ -212,8 +212,8 @@ and the check is skipped for that island (it is not a build error).
 | `off`   | Check disabled entirely. |
 
 `build.zig`'s `website()` helper emits `--island-props-check=error` for all
-release builds automatically. `zigapagos serve` defaults to `off` so the dev loop
-stays lenient.
+release builds automatically. `zigapagos release` defaults to `off`, so a hand-
+written invocation (including the one `zigapagos dev` runs) opts in explicitly.
 
 ## Module preloading
 
@@ -281,9 +281,8 @@ Two consequences worth knowing:
   sliced, so such a site ships one unreferenced bundle in its output tree. The
   slice decision is a build-time fact and the asset is declared at configure
   time. (The SPA slicer has the same wart.)
-- `zigapagos serve` and the `zigapagos dev` hot loop never slice. The live server
-  serves the shared runtime from its own cache dir, and a slice entry does not
-  call `installHmr()`, so slicing the dev build would silently disable island
+- The `zigapagos dev` hot loop never slices. A slice entry does not call
+  `installHmr()`, so slicing the dev build would silently disable island
   hot-swap. Payload size is not a dev-loop concern.
 
 ## Import guardrail

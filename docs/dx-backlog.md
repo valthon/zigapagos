@@ -548,9 +548,9 @@ taking literally, and these three are what stand between it and that.
 ## Authoring ergonomics
 
 - **[#56] DX-37 · The recommended first command is one the binary calls deprecated.**
-  `zigapagos` with no subcommand is what `init` tells a new user to run, and
-  `main.zig` calls it "the deprecated live server". `dev` needs a ZigBase binary,
-  so it is not a drop-in.
+  ✅ **Shipped 2026-08-01.** The bundled server is gone; a bare `zigapagos` prints
+  its help, `init` points at `zigapagos dev`, and `dev` is zero-config — it
+  fetches the pinned ZigBase itself when none is installed.
 - **[#57] DX-38 · `init` scaffolds optional frontmatter as required.** `author`,
   `date` and `draft` all have defaults; every template writes them anyway, so
   every consumer copies fields that do nothing. This site's 404 page has an

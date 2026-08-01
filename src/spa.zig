@@ -648,207 +648,6 @@ fn chooseFallback(
     return null;
 }
 
-// --- Dev-server SPA prerender ----------------------------------------------
-// The live server (`src/cli/serve.zig`) synthesizes the same shells release
-// does, but in dev semantics: always the shared runtime (no per-deployable
-// slicing), no per-route chunk preload, and no routing-manifest/404 (the
-// router keeps the route table in memory instead). These entry points reuse
-// `prerenderAll`'s per-SPA machinery (`planRoute`/`renderShell`/`writeFile`)
-// rather than duplicating it.
-
-/// One prerendered route of a dev-served SPA: enough to dispatch a request to
-/// its shell file AND to re-render that shell on a source change.
-pub const ServeShell = struct {
-    /// SSR pathname handed to the sidecar (dynamic params replaced with "_"),
-    /// already carrying the site's `url_path_prefix` (issue #26) — so
-    /// `rerenderServe` needs no further prefixing to reproduce the exact
-    /// request `describeAndRenderServe` sent.
-    ssr_pathname: []const u8,
-    /// Shell file path, relative to the SPA serve cache dir (e.g.
-    /// "app/index.html", "app/club/_shell.html"). No leading slash.
-    out_path: []const u8,
-    /// Manifest-style static URL (trailing slash, e.g. "/app/booking/") for an
-    /// exact static route — null for a dynamic pattern's shell.
-    static_url: ?[]const u8,
-    /// Dynamic route pattern (e.g. "/app/club/:id") — null for a static route.
-    dynamic_pattern: ?[]const u8,
-};
-
-/// A dev-served SPA's routing table + everything needed to re-render its shells
-/// when a source file changes. Allocated from a process-lifetime arena by
-/// `describeAndRenderServe`; the router reads it without copying.
-pub const ServeSpa = struct {
-    src: []const u8,
-    /// URL namespace, trailing slash trimmed: "/app", or "" for a root-mounted
-    /// SPA (which then owns every path — matching release semantics).
-    base_url: []const u8,
-    title: []const u8,
-    noindex: bool,
-    head: ?[]const std.json.ArrayHashMap([]const u8),
-    /// Build-time flag defaults, snapshotted into every shell.
-    flags: ?std.json.ArrayHashMap(bool),
-    bundle_url: []const u8,
-    /// Normalized Router-base prefix ("" or "/myrepo", issue #26) — the same
-    /// value `describeAndRenderServe` baked into every shell's `data-z-prefix`
-    /// and sent to the sidecar as `"prefix"`. Stored so `rerenderServe` can
-    /// reproduce both without re-deriving it from config (dev serve has no
-    /// `Build`/`Config` in scope at re-render time — only this table).
-    url_prefix: []const u8,
-    shells: []const ServeShell,
-    /// Shell to serve for any in-namespace path that matches no static/dynamic
-    /// route (the "/" route's shell). Null when the SPA declares no "/" route.
-    fallback_rel: ?[]const u8,
-};
-
-/// Dev-server counterpart to `prerenderAll` for ONE SPA: `describe` it, then SSR
-/// + shell-render every route into `out_dir`. Dev semantics: always the shared
-/// runtime (`pass.shared_runtime_url`), no per-route chunk preload, and no
-/// routing-manifest/404 (the caller keeps the returned table in memory). The
-/// returned slices (and their strings) are allocated from `arena`, which must
-/// live for the whole dev session.
-///
-/// NO_SLOP.md §2.2a contract 4 (`RenderArena`): a `ServeSpa` is a graph — a
-/// `ServeShell` slice whose entries borrow `planRoute`'s strings, plus `head`/
-/// `flags` pointing into the leak-parsed `describe` response (1). Nothing here
-/// has a `deinit`, and the dev router reads it in place for the whole session, so
-/// per-field frees would be bookkeeping for allocations that never die early (2);
-/// the arena is the dev session (3).
-pub fn describeAndRenderServe(
-    io: std.Io,
-    arena: RenderArena,
-    sc: *sidecar.Sidecar,
-    src: []const u8,
-    out_dir: std.Io.Dir,
-    url_path_prefix: []const u8,
-) !ServeSpa {
-    const desc = try sc.describe(arena, src);
-    // Same declarative-redirect validation as release: dev serve
-    // rejects an unmatched/non-concrete redirect target identically.
-    validateRedirectsOrFatal(src, desc.routes);
-    const base = std.mem.trimEnd(u8, desc.spa.base orelse try defaultBase(arena.a, src), "/");
-    // Same `base`/route-path traversal + charset validation as release: dev
-    // serve writes the very same shells into its cache dir through the same
-    // `writeFile`, so a `..` segment escapes there too.
-    validateRoutePathsOrFatal(src, base, desc.routes);
-    const title = desc.spa.title orelse "App";
-    const noindex = desc.spa.noindex orelse true;
-    // Router-base prefix (issue #26) — see `prerenderAll`'s `norm_prefix` doc
-    // comment for the full rationale; dev serve needs the identical
-    // normalization so a prefixed dev session agrees with release
-    // byte-for-byte.
-    const norm_prefix = try pass.prefixed(arena.a, url_path_prefix, "");
-    const bundle_url = try pass.prefixed(arena.a, url_path_prefix, try std.fmt.allocPrint(arena.a, "/spa/{s}.js", .{spaName(src)}));
-    // AUDF-005's sibling defect in dev serve: the request handler hard-rejects
-    // any request outside the site's `url_path_prefix`
-    // (`sendOutsideOfPathPrefix`), so an unprefixed runtime URL baked into the
-    // shell 404s against the handler's own guard. Release already prefixes
-    // its runtime URL; dev serve did not.
-    const runtime_url = try pass.prefixed(arena.a, url_path_prefix, pass.shared_runtime_url);
-
-    var shells: std.ArrayList(ServeShell) = .empty;
-    var fallback_rel: ?[]const u8 = null;
-    // Per-SPA dedup/collision check, applied in dev serve too for
-    // parity: shares `claimStaticUrlOrFatal` with `prerenderAll` so a
-    // duplicate/colliding staticPaths entry fatals the same way in both.
-    var static_seen: StaticUrlSeen = .empty;
-    // Output-file collision check (see `claimOutPathOrFatal`), applied in dev
-    // serve too: `resolveSpaShell` dispatches on these very `out_path`s, so two
-    // routes collapsing onto one `_shell.html` misroutes here as well.
-    var out_path_seen: OutPathSeen = .empty;
-    for (desc.routes) |rt| {
-        const planned = try planRoute(arena, base, rt);
-        if (planned.static_url) |u| try claimStaticUrlOrFatal(arena.a, &static_seen, src, u, rt.path);
-        try claimOutPathOrFatal(arena.a, &out_path_seen, src, planned.out_path, rt.path);
-        // SSR the skeleton (props = {}, no slots) exactly like release. The
-        // pathname sent to the sidecar carries the prefix (issue #26); the
-        // unprefixed form is never sent, matching what a real browser would
-        // request under the prefix.
-        const prefixed_pathname = try pass.prefixed(arena.a, url_path_prefix, planned.ssr_pathname);
-        const skeleton = try renderSkeleton(sc, arena, src, prefixed_pathname, norm_prefix);
-        // chunk_url = null: dev skips the lazy-chunk modulepreload (a pure
-        // fetch optimization; the entry still dynamic-imports the chunk).
-        const html = try renderShell(arena.a, title, noindex, bundle_url, runtime_url, null, norm_prefix, desc.spa.head, desc.spa.flags, skeleton);
-        try writeFile(io, out_dir, planned.out_path, html);
-        try shells.append(arena.a, .{
-            .ssr_pathname = prefixed_pathname,
-            .out_path = planned.out_path,
-            .static_url = planned.static_url,
-            .dynamic_pattern = if (planned.dynamic) |d| d.pattern else null,
-        });
-        if (std.mem.eql(u8, rt.path, "/")) fallback_rel = planned.out_path;
-
-        // staticPaths (dev/release parity): render each enumerated
-        // concrete path as its own shell too, exactly like `prerenderAll`
-        // (same validate/plan/dedup steps, dev semantics only — shared
-        // runtime, no chunk preload). Appended to `shells` with its
-        // `static_url` set, so `resolveSpaShell`'s exact-match tier (in
-        // `src/cli/serve.zig`) picks it up ahead of the dynamic pattern's
-        // `_shell.html`, with no router changes needed. `rerenderServe`
-        // iterates `shells` generically, so these entries re-render on a
-        // source change like every other shell.
-        if (rt.staticPaths) |concrete_paths| {
-            for (concrete_paths) |cp| {
-                if (!validateConcretePath(cp)) fatal.msg(
-                    "error: spa '{s}' route '{s}' staticPaths produced an invalid concrete path '{s}'\n",
-                    .{ src, rt.path, cp },
-                );
-                const planned_c = try planRoute(arena, base, .{ .path = cp, .dynamic = false, .hasSkeleton = rt.hasSkeleton });
-                const u = planned_c.static_url.?;
-                try claimStaticUrlOrFatal(arena.a, &static_seen, src, u, rt.path);
-                try claimOutPathOrFatal(arena.a, &out_path_seen, src, planned_c.out_path, rt.path);
-                const prefixed_pathname_c = try pass.prefixed(arena.a, url_path_prefix, planned_c.ssr_pathname);
-                const skeleton_c = try renderSkeleton(sc, arena, src, prefixed_pathname_c, norm_prefix);
-                const html_c = try renderShell(arena.a, title, noindex, bundle_url, runtime_url, null, norm_prefix, desc.spa.head, desc.spa.flags, skeleton_c);
-                try writeFile(io, out_dir, planned_c.out_path, html_c);
-                try shells.append(arena.a, .{
-                    .ssr_pathname = prefixed_pathname_c,
-                    .out_path = planned_c.out_path,
-                    .static_url = u,
-                    .dynamic_pattern = null,
-                });
-            }
-        }
-    }
-    return .{
-        .src = try arena.a.dupe(u8, src),
-        .base_url = try arena.a.dupe(u8, base),
-        .title = title,
-        .noindex = noindex,
-        .head = desc.spa.head,
-        .flags = desc.spa.flags,
-        .bundle_url = bundle_url,
-        .url_prefix = norm_prefix,
-        .shells = try shells.toOwnedSlice(arena.a),
-        .fallback_rel = fallback_rel,
-    };
-}
-
-/// Re-render `spa`'s shells into `out_dir` after a source change (skeleton HTML
-/// may have changed). Route STRUCTURE is assumed stable — adding/removing a
-/// route needs a dev-server restart, mirroring the runtime bundle. `arena` is a
-/// caller-provided scratch arena freed after the call — contract 4 (§2.2a)
-/// because `renderSkeleton`'s result is a view into it, not an owned buffer.
-pub fn rerenderServe(
-    io: std.Io,
-    arena: RenderArena,
-    sc: *sidecar.Sidecar,
-    spa: *const ServeSpa,
-    out_dir: std.Io.Dir,
-) !void {
-    // `spa.url_prefix` is already normalized (`describeAndRenderServe` did
-    // that once); reapplying `pass.prefixed` to it is idempotent (it just
-    // trims the same leading/trailing "/" again), so the runtime URL stays
-    // prefixed exactly like the original render (issue #26 / AUDF-005 parity).
-    const runtime_url = try pass.prefixed(arena.a, spa.url_prefix, pass.shared_runtime_url);
-    for (spa.shells) |sh| {
-        // `sh.ssr_pathname` is already prefixed (stored that way by
-        // `describeAndRenderServe`), so no re-prefixing is needed here.
-        const skeleton = try renderSkeleton(sc, arena, spa.src, sh.ssr_pathname, spa.url_prefix);
-        const html = try renderShell(arena.a, spa.title, spa.noindex, spa.bundle_url, runtime_url, null, spa.url_prefix, spa.head, spa.flags, skeleton);
-        try writeFile(io, out_dir, sh.out_path, html);
-    }
-}
-
 /// Join a disk-relative mount prefix (never starting with "/"; "" means
 /// "output dir root") with a relative path, inserting a "/" separator only
 /// when the prefix is non-empty. Keeps on-disk output paths from ever
@@ -864,8 +663,8 @@ fn diskJoin(alloc: std.mem.Allocator, prefix: []const u8, rest: []const u8) ![]c
 /// NO_SLOP.md §2.2a contract 4 (`RenderArena`): a `PlannedRoute` is four or five
 /// separate string allocations with no `deinit`, and they are not independent —
 /// `out_path` is derived from `dir`, `static_url` is retained in the manifest's
-/// `static` array and in `chunk_entries`, and `ServeShell` borrows all of them
-/// (1). Freeing them one route at a time is impossible anyway: every field stays
+/// `static` array and in `chunk_entries` (1). Freeing them one route at a time
+/// is impossible anyway: every field stays
 /// live until the manifest is serialized at the end of the SPA's pass (2), which
 /// is exactly when the arena drops (3).
 fn planRoute(arena: RenderArena, base: []const u8, rt: sidecar.RouteMeta) !PlannedRoute {
@@ -1303,8 +1102,8 @@ fn writeFile(io: std.Io, out_dir: std.Io.Dir, rel_path: []const u8, contents: []
 
 /// "app/App.spa.tsx" -> "App". Mirrors `build.zig`'s `spaName`: strips a
 /// trailing `.spa.tsx` off the basename, else falls back to stripping just
-/// the final extension. `pub` so the dev server (`src/cli/serve.zig`) derives
-/// the `/spa/<name>.js` bundle name identically.
+/// the final extension. `pub` so callers outside this file derive the
+/// `/spa/<name>.js` bundle name identically.
 pub fn spaName(src: []const u8) []const u8 {
     const base = std.fs.path.basename(src);
     if (std.mem.endsWith(u8, base, ".spa.tsx")) {
@@ -1446,8 +1245,8 @@ fn validateRoutePath(path: []const u8) bool {
     return true;
 }
 
-/// A SPA's mount `base`, trailing-slash-trimmed as `prerenderAll` /
-/// `describeAndRenderServe` compute it: "" (root-mounted) or an absolute path
+/// A SPA's mount `base`, trailing-slash-trimmed as `prerenderAll` computes
+/// it: "" (root-mounted) or an absolute path
 /// of safe LITERAL segments. Unlike a route path, a base admits no `:param`/`*`
 /// — it is a fixed namespace, and `patternDir`/`joinUrl` copy it verbatim into
 /// both the URL and (via `disk_prefix`) the on-disk path, so `spa.base =
@@ -1464,10 +1263,7 @@ fn validateSpaBase(base: []const u8) bool {
 }
 
 /// `validateSpaBase` + `validateRoutePath` over one describe'd SPA, fataling
-/// with a site-author-actionable message naming the offending value. Shared by
-/// `prerenderAll` and `describeAndRenderServe` so release and dev serve reject
-/// the same tables (the dev server writes the same shells through the same
-/// `writeFile`).
+/// with a site-author-actionable message naming the offending value.
 fn validateRoutePathsOrFatal(src: []const u8, base: []const u8, routes: []const sidecar.RouteMeta) void {
     if (!validateSpaBase(base)) fatal.msg(
         "error: spa '{s}' exports an invalid spa.base '{s}' — a base must be '/' or an absolute " ++
@@ -1584,8 +1380,7 @@ fn findRedirectViolation(routes: []const sidecar.RouteMeta) ?RedirectViolation {
 }
 
 /// `findRedirectViolation`, fataling with a site-author-actionable message
-/// naming the SPA and the offending entry. Shared by `prerenderAll` and
-/// `describeAndRenderServe` so release and dev-serve reject the same tables.
+/// naming the SPA and the offending entry.
 fn validateRedirectsOrFatal(src: []const u8, routes: []const sidecar.RouteMeta) void {
     const v = findRedirectViolation(routes) orelse return;
     switch (v.reason) {
@@ -1645,10 +1440,8 @@ fn claimStaticUrl(alloc: std.mem.Allocator, seen: *StaticUrlSeen, url: []const u
 }
 
 /// `claimStaticUrl`, fataling with a site-author-actionable message on a
-/// collision. Shared by `prerenderAll` and `describeAndRenderServe` — both
-/// loops plan declared static routes and `staticPaths` concrete entries the
-/// same way, so both must reject the same duplicates/collisions — in release
-/// and, for parity, in dev serve.
+/// collision: declared static routes and `staticPaths` concrete entries are
+/// planned the same way, so both must reject the same duplicates/collisions.
 fn claimStaticUrlOrFatal(alloc: std.mem.Allocator, seen: *StaticUrlSeen, src: []const u8, url: []const u8, route_pattern: []const u8) !void {
     const collision = (try claimStaticUrl(alloc, seen, url, route_pattern)) orelse return;
     if (std.mem.eql(u8, collision.first_pattern, collision.second_pattern)) fatal.msg(

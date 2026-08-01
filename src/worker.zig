@@ -1427,16 +1427,16 @@ fn renderPage(
         const sc: *@import("islands/sidecar.zig").Sidecar = if (build.island_sidecar) |*s| s else {
             // Mirrors the render-error policy below: a disk build is a
             // release/deploy, so fail rather than publish a page whose island
-            // never hydrates; dev serve keeps going so the author can see the
-            // page, with the cause logged at .err (the CLI's level).
+            // never hydrates; a memory build keeps going so the author can see
+            // the page, with the cause logged at .err (the CLI's level).
             //
             // `island_sidecar_optional` (validate/explain, see
             // root.Options.island_sidecar_optional): those commands
             // deliberately configure NO sidecar -- their whole point is
             // checking/reporting on a site without the Bun toolchain -- so "no
             // sidecar" is their normal state, not an authoring mistake.
-            // Suppress the log line for them; everything else (release, dev,
-            // the live server) keeps the diagnostic verbatim.
+            // Suppress the log line for them; everything else (release, dev)
+            // keeps the diagnostic verbatim.
             if (!build.island_sidecar_optional) {
                 log.err(
                     "island rendering error on {s}: the page uses <island> but no island sidecar is configured" ++
@@ -1469,9 +1469,9 @@ fn renderPage(
         };
         // Render-error policy: a disk build is a release/deploy —
         // fail so broken output never ships (`process` returns the error, caught
-        // below → any_rendering_error). A memory build is dev serve — keep going
-        // with a visible per-island placeholder, so one broken island doesn't
-        // blank the whole page. Either way `islands.process` records each failing
+        // below → any_rendering_error). A memory build reports rather than
+        // ships — keep going with a visible per-island placeholder, so one
+        // broken island doesn't blank the whole page. Either way `islands.process` records each failing
         // island's structured detail (src, route, JS message, source-mapped
         // stack) into `render_errors`, which we log here with page context —
         // instead of the message + stack being swallowed at the Zig↔Bun boundary.

@@ -104,11 +104,8 @@ pub const Site = struct {
     /// (their install path is yours to choose in `build.zig`), and page
     /// assets (installed next to the page that owns them).
     ///
-    /// Release builds only. The in-memory live server — started by running
-    /// `zigapagos` with NO subcommand; `zigapagos serve` is an error that
-    /// points you at that, see `main.zig`'s `.serve` arm — always serves
-    /// verbatim names, mirroring how it also skips the CSS minify pass. Dev
-    /// serves what you wrote, release serves what you ship.
+    /// Release (disk-mode) builds only. An in-memory build writes no output
+    /// tree, so there is nothing to fingerprint.
     ///
     /// Off by default: turning it on changes every linked asset's URL, which
     /// is a deploy-visible change no site should get without asking.
@@ -616,8 +613,8 @@ pub const Options = struct {
     /// Bun script that minifies each `.css` site asset during the disk-mode
     /// (release) install phase. When set (together with `bun_path`),
     /// `.css` assets from `assets_dir_path` are piped through it instead of being
-    /// copied verbatim. Null — the default, and always the case for the in-memory
-    /// live server — keeps the historical byte-for-byte copy, so the dev loop
+    /// copied verbatim. Null — the default, and what `zigapagos dev`'s own
+    /// rebuild command uses — keeps the byte-for-byte copy, so the dev loop
     /// serves readable, un-mangled CSS (mirroring Vite: minify on build, not dev).
     css_minify_driver: ?[]const u8 = null,
     island_props_check: @import("islands/props_check.zig").Mode = .off,
@@ -631,9 +628,9 @@ pub const Options = struct {
     /// shared runtime, the same PAGE OUTPUT a fallback manifest produces. It is
     /// not the same INVOCATION, though — a manifest-less run also skips the
     /// stale-slice prune below, deliberately; see the comment there.
-    /// `zigapagos serve` never sets it: the live server serves
-    /// `/zigapagos-runtime.js` from its own cache dir via a hard-coded route and
-    /// never bundles a slice.
+    /// A hand-written `zigapagos release` (including the one `zigapagos dev`
+    /// runs) never sets it, so every island page keeps the shared runtime —
+    /// which is also what island hot-swap requires.
     islands_slice_json: ?[]const u8 = null,
     /// SPAs declared in `build.zig`'s `Options.spas`, threaded through by
     /// `zigapagos release --spa=<src>|<base>` (one per SPA). Consumed by
@@ -653,7 +650,7 @@ pub const Options = struct {
     /// prerender + asset (re)install passes (nothing else changed). Empty (the
     /// default — every release build, and the dev loop's full-rebuild fallback)
     /// keeps the historical behavior: render + emit the whole site. Only the
-    /// disk (release) build consults this; the in-memory live server ignores it.
+    /// disk (release) build consults this; an in-memory build ignores it.
     /// `zigapagos release` populates it from the `ZIGAPAGOS_CHANGED_FILES`
     /// environment variable, which `zigapagos dev` sets when — and only when —
     /// every file that changed is a content page (see `src/cli/dev.zig`).
@@ -681,14 +678,14 @@ pub const Options = struct {
     /// warning is the visibility mechanism. See issue #27 / DX-8. Off by
     /// default: an unintentionally-dangling link should still fail the build.
     ///
-    /// Which CLI commands accept it: `zigapagos release` and the bundled live
-    /// server (no subcommand) parse `--allow-missing-pages` directly. There is
-    /// deliberately NO `zigapagos dev --allow-missing-pages`: `dev` never
-    /// builds the site itself, it re-runs the consumer's rebuild command
-    /// (default `zig build`), so the flag reaches a dev loop through that
-    /// project's `build.zig` — `Options.allow_missing_pages` in `build/api.zig`,
-    /// which `website()` forwards. A flag on `dev` would have nothing to
-    /// forward it to.
+    /// Which CLI commands accept it: `zigapagos release` parses
+    /// `--allow-missing-pages` directly. There is deliberately NO
+    /// `zigapagos dev --allow-missing-pages`: `dev` never builds the site
+    /// itself, it re-runs a rebuild command, so the flag belongs in THAT
+    /// command — `zigapagos dev -- zigapagos release --output=public --force
+    /// --allow-missing-pages`, or `Options.allow_missing_pages` in
+    /// `build/api.zig` when the rebuild command is a project's `zig build`.
+    /// A flag on `dev` would have nothing to forward it to.
     allow_missing_pages: bool = false,
     /// The introspection commands (`zigapagos validate`, `zigapagos explain`)
     /// deliberately run a full in-memory build with NO island sidecar: their
@@ -696,7 +693,7 @@ pub const Options = struct {
     /// the Bun toolchain, a build graph, or an output tree. Without this flag,
     /// worker.zig's renderPage treats "this page mounts an <island> but no
     /// sidecar is configured" as an authoring mistake and logs one error line
-    /// PER island page -- correct for `release`/`dev`/the live server, where
+    /// PER island page -- correct for `release` and `dev`, where
     /// an unconfigured sidecar really is a missing `.islands` declaration in
     /// build.zig, and pure noise for a command that never asked for SSR
     /// (measured: 201 lines on a 201-page island fixture).
@@ -707,8 +704,8 @@ pub const Options = struct {
     ///
     /// It suppresses a LOG LINE ONLY. It cannot mask a build failure: the
     /// error flag on that branch is already gated on `build.mode == .disk`,
-    /// and this option is asserted `.memory`-only in `run` below. `release`,
-    /// `dev` and the live server never set it.
+    /// and this option is asserted `.memory`-only in `run` below. `release`
+    /// and `dev` never set it.
     island_sidecar_optional: bool = false,
 
     pub const Mode = union(enum) {
@@ -908,12 +905,12 @@ pub fn run(
                     } else {
                         std.debug.print("error: static asset glob '{s}' matched no assets\n", .{path});
                     }
-                    // `build.mode == .memory` (the live server) never sees
-                    // diag.format == .json: main.zig gates its `--format=`
-                    // pre-scan to `zigapagos release`'s own arguments, and
-                    // serve.zig's parser rejects the flag outright. So this
-                    // block stays unconditional -- it is not part of the
-                    // text/json split above.
+                    // A `.memory` build never sees diag.format == .json:
+                    // main.zig gates its `--format=` pre-scan to `zigapagos
+                    // release`'s own arguments, and neither `validate` nor
+                    // `explain` accepts the flag. So this block stays
+                    // unconditional -- it is not part of the text/json split
+                    // above.
                     if (build.mode == .memory) {
                         try build.mode.memory.errors.append(gpa, .{
                             .ref = "",
@@ -1615,7 +1612,7 @@ pub fn run(
                         });
                     }
 
-                    // Only error-severity items enter the live server's build-error
+                    // Only error-severity items enter a memory build's build-error
                     // list (see PageAnalysisError.severity's doc comment): that list
                     // is the "the build failed" surface, and a warning like an
                     // unknown code-fence language must not flip it.
@@ -1741,8 +1738,8 @@ pub fn run(
     // that files always have an extension, reducing collision detection
     // to just detecting duplicate paths. This simplified version
     // of the problem can be solved with a hash map, while solving the
-    // full version will require using a tree for the live server
-    // and perhaps some clever scan algorithm in the `zigapagos release` case.
+    // full version will require using a tree, and perhaps some clever scan
+    // algorithm in the `zigapagos release` case.
     // Alternatively, if this algo proves to be sufficiently more efficent
     // than the tree case, we could default to this method and then only
     // switch to the more expensive approach if necessary.
@@ -1949,9 +1946,9 @@ pub fn run(
     // documented upstream behaviour and orphan directories are a legitimate
     // URL-shaping tool (tests/rendering/simple/content/nested/ uses one on
     // purpose). Deliberately NOT appended to `build.mode.memory.errors` either:
-    // that list is the live server's "the build failed" surface and makes every
-    // URL answer with a build-error page, so only error-severity diagnostics may
-    // enter it (the same rule PageAnalysisError.severity follows). Nothing here
+    // that list is a memory build's "the build failed" surface, so only
+    // error-severity diagnostics may enter it (the same rule
+    // PageAnalysisError.severity follows). Nothing here
     // touches `any_prerendering_error`, so a warning-only build stays exit 0.
     for (build.variants) |*v| {
         if (v.sectionless_dirs.items.len == 0) continue;
@@ -2462,7 +2459,7 @@ pub fn run(
     // left it.
     //
     // Guarded on `.disk and !incremental` because this used to sit below the
-    // `mode == .memory` and `incremental` early returns: the live server never
+    // `mode == .memory` and `incremental` early returns: a memory build never
     // prerenders, and an incremental rebuild re-emits only changed pages while
     // the previous full build's shells stay valid.
     //
@@ -3108,7 +3105,7 @@ fn installBuildAssets(io: Io, build: *const Build) void {
             // via `.bytes()`/`.size()`/… only). Referencing such an asset with
             // `.link()` reports a graceful page error but should never reach
             // here; skip defensively rather than unwrapping a null optional,
-            // mirroring the sibling install loops (spa.zig, serve.zig).
+            // mirroring the sibling install loop in spa.zig.
             const install_rel = std.mem.trimStart(u8, ba.install_path orelse continue, "/");
             _ = build.base_dir.updateFile(
                 io,
@@ -3197,8 +3194,8 @@ fn writeIslandManifestFile(io: Io, path: []const u8, contents: []const u8) !void
 /// Whether a site asset should be minified rather than copied
 /// verbatim on install. True only for `.css` (case-insensitive) when both a
 /// Bun path and the CSS minify driver were threaded — i.e. a release build.
-/// The in-memory live server never sets `css_minify_driver`, so its CSS is
-/// always copied verbatim (readable dev output).
+/// A run without `css_minify_driver` copies CSS verbatim (readable dev
+/// output) -- which is what `zigapagos dev`'s default rebuild does.
 fn shouldMinifyCss(path: []const u8, options: Options) bool {
     if (options.bun_path == null or options.css_minify_driver == null) return false;
     return std.ascii.endsWithIgnoreCase(path, ".css");
@@ -3286,8 +3283,8 @@ test "assets: shouldMinifyCss gates on extension + release flags" {
         try std.testing.expect(!shouldMinifyCss("noext", o));
     }
 
-    // Dev loop: the in-memory live server never threads css_minify_driver, so
-    // CSS is copied verbatim (readable, un-mangled dev output).
+    // Dev loop: `zigapagos dev`'s default rebuild threads no css_minify_driver,
+    // so CSS is copied verbatim (readable, un-mangled dev output).
     {
         var o = base;
         o.bun_path = "bun";
@@ -3488,7 +3485,7 @@ fn printSuperMdErrors(
         if (build.mode == .memory) {
             // Unlike the `.duplicate_id` note above (a pre-existing gap this
             // change isn't retrofitting), the empty-page-path hint is added to
-            // BOTH output paths, so the live server's error overlay carries it too.
+            // BOTH output paths, so a memory build's error list carries it too.
             //
             // `note_segment` is one of two comptime string literals -- the hint
             // text is fixed (unlike NoteLine's dynamic PageAnalysisError notes

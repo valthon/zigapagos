@@ -91,12 +91,12 @@ const standalone: []const Standalone = &.{
 ///    fires before lazy analysis. Reusing the exe module (already wired with
 ///    every dep) sidesteps that.
 ///  * The file is only @import-ed from inside a function body (release.zig,
-///    spa.zig, serve.zig, e2e.zig, dev.zig are all imported from main()'s
-///    body), so it is not in the top-level import graph and its `test` blocks
-///    are invisible to Zig's lazy analysis. main.zig carries a top-level
-///    anchor per suite (`test "parse"`, `test "spa"`, `test "serve"`, …) that
-///    forces eager inclusion, and `filters` selects that anchor plus the real
-///    tests it pulls in.
+///    spa.zig, e2e.zig, dev.zig are all imported from main()'s body), so it is
+///    not in the top-level import graph and its `test` blocks are invisible to
+///    Zig's lazy analysis. main.zig carries a top-level anchor per suite
+///    (`test "parse"`, `test "spa"`, `test "dev"`, …) that forces eager
+///    inclusion, and `filters` selects that anchor plus the real tests it
+///    pulls in.
 ///
 /// In Zig 0.16, `filters` is a compile-time option — passed to the compiler as
 /// --test-filter, not to the test binary at runtime.
@@ -161,14 +161,6 @@ const exe_module: []const ExeModule = &.{
         .step_name = "test-assets",
         .description = "Run static-asset (minify/fingerprint/report) unit tests",
         .filters = &.{"assets:"},
-    },
-    // `serve` CLI parse tests — Command.parse must recognise the --proxy flag
-    // (+ helper unit tests for matchProxy / parseStatusLine). The "serve"
-    // filter matches main.zig's anchor and every `test "serve …"` block.
-    .{
-        .step_name = "test-serve",
-        .description = "Run serve CLI Command.parse + proxy unit tests",
-        .filters = &.{"serve"},
     },
     // `zigapagos e2e` CLI parse + zigbase-locator unit tests. The "e2e" filter
     // matches main.zig's anchor and every `test "e2e …"` block in e2e.zig and

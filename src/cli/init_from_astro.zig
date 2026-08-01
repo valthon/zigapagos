@@ -345,7 +345,11 @@ pub fn emitBuildZig(gpa: Allocator, islands: []const migrate.Entry) []const u8 {
         buf.appendSlice(gpa, "    };") catch fatal.oom();
     }
 
-    // Body: zigapagos.website call + install step + serve step.
+    // Body: zigapagos.website call + install step.
+    //
+    // No dev step is scaffolded: `zigapagos dev` is zero-config and does not
+    // need one. Emitting a build-graph wrapper here would teach a brand-new
+    // project that the dev loop is something you wire up.
     buf.appendSlice(gpa,
         \\
         \\
@@ -355,12 +359,6 @@ pub fn emitBuildZig(gpa: Allocator, islands: []const migrate.Entry) []const u8 {
         \\        .force = true,
         \\    });
         \\    b.getInstallStep().dependOn(&site.step);
-        \\
-        \\    const serve_step = b.step("serve", "Start the Zigapagos development server");
-        \\    const serve_run = zigapagos.serve(b, .{
-        \\        .islands = islands,
-        \\    });
-        \\    serve_step.dependOn(&serve_run.step);
         \\}
     ) catch fatal.oom();
 

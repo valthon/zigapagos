@@ -52,13 +52,14 @@ map. No island on the page? Zero JavaScript shipped.
   React → `@z/runtime` import swaps already applied. It converts no page, layout
   or config itself — the docs are written as a deterministic mapping spec so an
   AI agent can complete the migration unattended.
-- **Batteries-included dev server** — instant rebuilds with live reload over
-  SSE, an API reverse proxy (`--proxy`) for cookie-auth backends, and live
-  feature flags.
+- **Zero-config dev loop** — `zigapagos dev` rebuilds the site, serves the real
+  release tree with the stock ZigBase binary (same-origin API and admin UI, not
+  a proxy shim), and live-reloads the browser over SSE. Islands hot-swap with
+  their `useState` intact.
 - **A real templating stack, no JS required** — SuperHTML layouts and SuperMD
   content with build-time correctness checks, inherited from Zine.
-- **Fast native core** — the site graph, content pipeline, and dev server are
-  Zig; the only JS toolchain is Bun, used surgically for TSX.
+- **Fast native core** — the site graph and content pipeline are Zig; the only
+  JS toolchain is Bun, used surgically for TSX.
 
 ## Quickstart
 
@@ -70,14 +71,14 @@ mise install
 
 zig build          # build the zigapagos binary
 zig-out/bin/zigapagos init   # scaffold a site
-zig-out/bin/zigapagos        # dev server at http://localhost:1990
+zig-out/bin/zigapagos dev    # dev loop at http://127.0.0.1:1990
 ```
 
 ### From npm, no toolchain
 
 ```bash
 npx zigapagos init                            # scaffold a content site
-npx zigapagos                                 # live server at http://localhost:1990
+npx zigapagos dev                             # dev loop at http://127.0.0.1:1990
 npx zigapagos release --output=public --force  # build it
 ```
 

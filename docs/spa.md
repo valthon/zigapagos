@@ -287,11 +287,10 @@ build never renders concrete IDs like `app/club/1.html` on its own. A route's
   concrete URL, or an entry that lands on a declared static route's URL, fail
   the build with a message naming the SPA, both route patterns, and the
   colliding URL — rather than silently writing the same output file twice.
-- **`zigapagos serve` renders the same per-entry pages release does:** each
-  `staticPaths` entry gets its own shell in dev too (not just the dynamic
-  pattern's `_shell.html`), kept in sync on every source-file change like
-  every other route's shell, and served ahead of the pattern fallback by the
-  dev router's exact-match tier — no separate dev-only behavior to remember.
+- **Dev and release are the same pages:** `zigapagos dev` serves the real
+  release tree, so each `staticPaths` entry has its own shell there too (not
+  just the dynamic pattern's `_shell.html`) — there is no dev-only routing
+  behavior to remember.
 
 ### 3. Renders skeletons
 For each route, the build SSRs the skeleton (loading state):
@@ -782,8 +781,9 @@ guard: zbGuard<Customer>({ collection: "customers", redirect: "/login" })
   `{ token, record }` envelope — so the identity lands in
   [`useGuardData<T>()`](#guard-data-useguarddata) for the whole gated subtree.
 - The probe goes through `apiFetch` (same-origin `credentials: "include"` + the `zb_csrf`
-  CSRF echo on the POST), so it works identically behind `zigapagos serve --proxy` in dev
-  and on the ZigBase host in production, and it composes with the
+  CSRF echo on the POST), so it works identically under `zigapagos dev` — which
+  serves the release tree from the real ZigBase — and in production, and it
+  composes with the
   [session-expiry policy](#session-expiry-automatic-guard-re-run-on-401): a mid-session
   401 re-runs this guard, which then issues the redirect (the Router's in-flight
   suppression keeps the probe's own 401 from recursing).
@@ -914,8 +914,6 @@ const site = zigapagos.website(b, .{
 The name is the SPA's **file basename sans `.spa.tsx`** (the same name that
 keys `spa/<name>.js` — `"booking"` for `app/booking.spa.tsx`), not its `base`
 URL. A `not_found` that names no declared SPA is a configure-time error.
-`serve()` accepts (and validates) the option but has no `404.html` to own —
-the dev server serves per-namespace fallback shells and its own 404 page.
 
 ## Static Asset Minification (CSS)
 
@@ -942,15 +940,14 @@ The rendered result is unchanged.
 removed (no PurgeCSS-style dead-selector pruning); that would require scanning
 for used class names and is unsafe with dynamically-composed classes.
 
-**Release-only, mirroring Vite (minify on build, not dev).** Minification runs
-only in the **release** (disk-mode) build — `zigapagos release` / `zig build` /
-the `zigapagos dev` loop, which all serve the real release tree. The deprecated
-in-memory live server (`zigapagos serve`) copies CSS **verbatim**, so
-fast-iteration dev output stays readable and un-mangled. The gate is structural:
+**Opt-in, and disk-mode only.** Minification runs only in the **release**
+(disk-mode) build — `zigapagos release` / `zig build` / the `zigapagos dev`
+loop, which all serve the real release tree. The gate is structural:
 `build.zig`'s `website()` threads `--bun=bun --css-minify-driver=…` into the
-`release` invocation; the live server never does, and the install phase that
-minifies is disk-mode-only. A hand-written `zigapagos release` without
-`--css-minify-driver` also copies verbatim (backward compatible).
+`release` invocation, and the install phase that minifies is disk-mode-only. A
+hand-written `zigapagos release` without `--css-minify-driver` copies verbatim
+(backward compatible), which is what `zigapagos dev`'s own default rebuild does
+— dev output stays readable and un-mangled.
 
 **Failure behavior.** A `.css` asset that Bun's parser rejects **fails the
 build** with an actionable error naming the file; Bun's own diagnostics reach
@@ -1444,96 +1441,66 @@ examples/tsx-site/
    - If using **Apache**, place the emitted `.htaccess` in the SPA's base directory.
    - Ensure the universal `404.html` is configured as a fallback.
 
-## Local Development (`zig build dev`)
+## Local Development (`zigapagos dev`)
 
 The stock ZigBase binary is **the** server for local development — zigapagos does not
-bundle its own HTTP serving. The `dev()` build step is the supported dev loop:
+bundle its own HTTP serving. `zigapagos dev` is the supported dev loop, and it is
+zero-config:
 
-```zig
-// opts must carry the SAME output_path as your website() call (and website()
-// needs .force = true — the loop rebuilds into the same tree).
-const dev_step = b.step("dev", "Serve the site with ZigBase, rebuilding on change");
-dev_step.dependOn(&zigapagos.dev(b, .{ .output_path = "site" }, .{}).step);
+```sh
+zigapagos dev
 ```
 
-`zig build dev` then:
+(A `build.zig`-based project can drive the same loop through `zigapagos.dev(b, …)`,
+which supplies the options below explicitly rather than letting them default.)
 
-1. **builds the site's RELEASE output** (the same `zig build` install tree production
-   deploys — islands SSR'd, SPA shells prerendered, host-config emitted),
-2. **boots the stock `zigbase` binary over that tree** (located like the e2e harness:
-   `--zigbase=`/`DevOptions.zigbase_path` → PATH → the pinned release in the zigapagos
-   cache; never downloaded behind your back) and waits for readiness. You get the real
-   same-origin `/api`, the admin UI at `/_/`, and the `.spa`-marker fallback — **no
-   `--proxy` shims, no CORS, no code differences between dev and prod**. The default
-   invocation adds `--insecure-cookies` so ZigBase's Secure-flagged auth cookies
-   round-trip over plain `http://127.0.0.1`,
-3. **watches your inputs** — content/layouts/assets (from `zigapagos.ziggy`) plus the
-   island/SPA source directories (derived from `Options.islands`/`spas`; add more via
-   `DevOptions.extra_watch_dirs`) — and **re-runs `zig build` on change**. Rebuilds are
-   incremental where the build graph allows it: island/runtime/SPA bundle steps carry
-   depfiles and stay cached unless their TS sources changed; a content edit re-renders
-   the site without re-bundling anything,
-4. serves at a stable `http://127.0.0.1:1990/` by default (`DevOptions.host`/`port`;
-   `port = 0` picks a free port and prints it).
+`zigapagos dev` then:
+
+1. **builds the site's RELEASE output** — by default `zigapagos release
+   --output=public --force`, run through this same binary by absolute path, with
+   `*.island.tsx` / `*.spa.tsx` entries discovered automatically. `--site=DIR`
+   changes the tree; `-- CMD ARGS…` substitutes your own rebuild command (a
+   `build.zig` project passes `zig build`),
+2. **boots the stock `zigbase` binary over that tree** (`--zigbase=` → PATH → the
+   pinned release in the zigapagos cache → fetch that pinned release into the
+   cache, SHA256-verified; `--no-download` fails instead) and waits for
+   readiness. You get the real same-origin `/api`, the admin UI at `/_/`, and the
+   `.spa`-marker fallback — **no proxy shims, no CORS, no code differences
+   between dev and prod**. The default invocation adds `--insecure-cookies` so
+   ZigBase's Secure-flagged auth cookies round-trip over plain
+   `http://127.0.0.1`,
+3. **watches your inputs** — content/layouts/assets (from `zigapagos.ziggy`) plus
+   the directories holding your `*.island.tsx` / `*.spa.tsx` sources, discovered
+   the same way the rebuild discovers the entries themselves (`--watch-dir=DIR`,
+   repeatable, replaces the discovered set) — and **re-runs the rebuild on
+   change**. A content-page edit re-renders only the affected pages; an
+   island-source edit resolves through the dev island-usage manifest to the pages
+   that mount it; anything else is a full rebuild,
+4. serves at a stable `http://127.0.0.1:1990/` by default (`--host=`/`--port=`;
+   `--port=0` picks a free port and prints it).
 
 **The ZigBase data dir is persistent.** It defaults to `.zigbase/` under the site root —
 collections, auth state, and uploaded files **survive across dev sessions** (gitignore
 the directory; delete it for a fresh backend, or point `DevOptions.data_dir` elsewhere).
 
-**No live reload.** ZigBase serves the release tree verbatim, and zigapagos does not
-inject reload scripts into release output — refresh the browser after the
-`dev: rebuild OK` line. (A dev-only reload hook in `@z/runtime` is a possible follow-up.)
+**Live reload is on by default.** ZigBase serves the release tree verbatim and
+zigapagos never touches release output, so reload runs as a dev-only side
+channel: a small SSE server on its own port plus a snippet injected into the
+*installed* tree after each build. An island-only change hot-swaps the island
+with its `useState` intact instead of reloading the page. `--no-live-reload`
+turns the whole thing off for release-fidelity testing.
 
 Notes:
 
 - The route TABLE is part of the build, so added/removed SPA routes flow through on the
-  next rebuild automatically (unlike the deprecated live server, which needed a restart).
+  next rebuild automatically.
 - Non-enumerated SPA deep links in dev use the `.spa` marker, which the host-config
   emitter plants for `deploy_target: "zigbase"` namespaces. If your production target is
   nginx/apache, enumerated shells still serve fine; wiring a dev-only
   `emit-host-config --target zigbase` pass into the rebuild is a follow-up.
-- Direct CLI form (what `dev()` drives): `zigapagos dev --site=DIR [options] --
-  REBUILD-CMD…` — see `zigapagos help`.
+- Full option list: `zigapagos dev --help`.
 
-## Developing Against a Backend (`--proxy`) — DEPRECATED live server
-
-> **Deprecated:** `zigapagos serve` (the bundled live server) and its `--proxy` flag are
-> superseded by `zig build dev` above, which serves the real backend on the same origin —
-> no proxying needed. The live server remains functional for now; removal is planned
-> once the dev loop covers the remaining workflows (e.g. instant reload).
-
-SPAs (and islands) call relative `/api/*`, which in production is routed to the backend on
-the same origin by ZigBase/nginx. In development, `zigapagos serve` is otherwise static-only, so
-point those calls at a running backend with the `--proxy` flag:
-
-```sh
-zigapagos serve --proxy /api=http://127.0.0.1:8090
-```
-
-Any request whose path matches the prefix (at a segment boundary — `/api` and `/api/...`
-match, `/apiary` does not) is forwarded to the upstream **on the dev server's own origin**;
-everything else is served static as usual. Because it is same-origin, relative `/api/*`
-calls behave exactly as behind ZigBase/nginx in prod — **no CORS, no absolute URLs, no
-code changes between dev and prod**. The flag is repeatable for multiple backends
-(`--proxy /api=... --proxy /auth=...`); the longest matching prefix wins.
-
-What is preserved end to end:
-
-- **Cookies** relay verbatim in both directions — a session/login flow completes in the
-  browser against the dev server, and the double-submit CSRF cookie round-trips (so
-  cookie-auth-gated apps are developable locally).
-- **Server-Sent Events** (`text/event-stream`) stream live — events reach the browser as
-  they arrive, not buffered until the connection closes (so an `EventSource` against a live
-  backend, e.g. live feature flags, works in dev).
-- The original **percent-encoded** request target is forwarded unchanged; `X-Forwarded-For`
-  / `-Proto` / `-Host` are added.
-
-v1 scope: `http://` upstreams only; no path rewriting (the full path is forwarded); a
-WebSocket upgrade returns `501` (SSE covers the live-flags need); an unreachable upstream
-returns `502`. Planned v2 follow-ups: config-file form, WebSocket upgrades, keep-alive
-pooling, TLS upstreams, and path rewrite.
-
-### Calling the backend — `apiFetch`
+## Calling the backend — `apiFetch`
 
 `@z/runtime` exports `apiFetch(input, init?)`, a thin `fetch` wrapper for SPAs and islands that
 bakes in the two things every ZigBase-backed call would otherwise repeat:
@@ -1559,10 +1526,11 @@ await apiFetch("/api/contact", { method: "POST", body: JSON.stringify(form) });
   [session-expiry policy](#session-expiry-automatic-guard-re-run-on-401) — the active route's
   guard re-runs once and its `{ redirect }` sends the visitor to login. The Response still
   reaches the caller unchanged.
-- Pairs with `zig build dev` (a real same-origin ZigBase in development) — or the
-  deprecated live server's `--proxy` flag: relative `/api/*` behaves the same in dev and prod.
+- Pairs with `zigapagos dev`, which serves the release tree from a real
+  same-origin ZigBase: relative `/api/*` behaves the same in dev and prod, with
+  no proxy layer, no CORS and no code differences between the two.
 
-### Error reporting — `initErrorRelay` + `ErrorBoundary`
+## Error reporting — `initErrorRelay` + `ErrorBoundary`
 
 No third-party error SDK needed. `initErrorRelay({ endpoint })` installs a first-party pipe
 that captures `window.onerror`, unhandled promise rejections, anything sent through
@@ -1704,26 +1672,26 @@ test("booking flow against the real backend", async ({ page }) => {
 
 The same shape works CLI-only: `zigapagos e2e --site=zig-out/site -- <cmd>` (plus
 `--data-dir=`, `--zigbase=`, `--zigbase-arg=`, `--ready-path=`, `--timeout-ms=`; see
-`zigapagos help`). `tests/serve/e2e.sh` exercises the whole contract end to end against
-a clearly-labeled stub server (`tests/serve/stub-zigbase.ts`) honoring the same
+`zigapagos help`). `tests/dev/e2e.sh` exercises the whole contract end to end against
+a clearly-labeled stub server (`tests/dev/stub-zigbase.ts`) honoring the same
 invocation, so it runs on machines without a real ZigBase.
 
 ## State-Preserving Dev Reload
 
-> Applies to the **deprecated** `zigapagos serve` live server only. `zig build dev`
-> (the zigbase-backed dev loop) has no reload client — you refresh manually, and a manual
-> refresh also fires no `zigapagos:beforereload`, so state restoration doesn't apply there.
+When a change cannot be localized to one island, `zigapagos dev`'s live-reload
+client does a full `location.reload()`. That already preserves the URL, so the
+**SPA route survives** (the router re-reads `location.pathname` on mount). What it
+loses is **in-memory component state** — a half-filled form, the current wizard
+step. `useRestorableState` restores that across the dev reload:
 
-When you edit a source file, `zigapagos serve`'s livereload client does a full `location.reload()`.
-That already preserves the URL, so the **SPA route survives** (the router re-reads
-`location.pathname` on mount). What it loses is **in-memory component state** — a half-filled
-form, the current wizard step. `useRestorableState` restores that across the dev reload:
+(A manual browser refresh fires no `zigapagos:beforereload`, so nothing is stashed
+and nothing is restored — this applies to reloads the dev loop drives.)
 
 ```tsx
 import { useRestorableState } from "@z/runtime";
 
 function Wizard() {
-  // Like useState, but the value survives a `zigapagos serve` reload.
+  // Like useState, but the value survives a dev-loop reload.
   const [name, setName] = useRestorableState<string>("wizard-name", "");
   const [step, setStep] = useRestorableState<number>("wizard-step", 1);
   return <input value={name} onInput={(e) => setName(e.currentTarget.value)} />;
@@ -1745,8 +1713,10 @@ a malformed blob or unavailable storage falls back to `initial`.
 For non-hook code, `onBeforeReload(cb)` is the lower-level primitive: it registers `cb` for the
 `zigapagos:beforereload` event and returns an unsubscribe (client-only; a no-op under SSR).
 
-True HMR (a targeted island/route swap that avoids the full reload entirely) is a separate,
-future step; this v1 makes the unavoidable full reload non-destructive.
+Island hot-swap (a targeted swap that avoids the full reload entirely) already
+covers island-only edits — see
+[Dev hot-swap (HMR) and fast refresh](islands.md#dev-hot-swap-hmr-and-fast-refresh).
+This hook covers the reloads that remain.
 
 ## Performance Notes
 

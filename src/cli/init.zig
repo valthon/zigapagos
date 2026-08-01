@@ -159,7 +159,8 @@ pub fn init(io: Io, gpa: Allocator, args: []const []const u8) bool {
 
     std.debug.print(
         \\
-        \\Run `zigapagos` to run the Zigapagos development server.
+        \\Run `zigapagos dev` to build your site and serve it locally,
+        \\rebuilding as you edit.
         \\Run `zigapagos release` to build your website in 'public/'.
         \\Run `zigapagos help` for more commands and options.
         \\

@@ -1,9 +1,10 @@
 // ---------------------------------------------------------------------------
-// State-preserving dev reload — a prod-SAFE bridge over the dev server's
+// State-preserving dev reload — a prod-SAFE bridge over the dev loop's
 // full-page reload.
 //
-// `zigapagos serve` injects a livereload client (src/cli/serve/zigapagos-reload.js) that
-// calls location.reload() when a source file changes. That preserves the URL
+// `zigapagos dev` injects a live-reload snippet (src/cli/reload.zig) into the
+// served copy of every page; it calls location.reload() when a source file
+// changes and an island hot-swap cannot cover it. That preserves the URL
 // (so the SPA route survives) but wipes all in-memory component state — form
 // inputs, wizard steps, etc. Just before it reloads, the dev client dispatches
 // a `zigapagos:beforereload` window event; the helpers here listen for it and stash

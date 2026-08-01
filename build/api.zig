@@ -1,6 +1,6 @@
 //! The public build-time description of a Zigapagos website: the types a
-//! consumer's `build.zig` fills in and hands to `website()` / `serve()` /
-//! `e2e()` / `dev()` (see `build/site.zig` and `build/harness.zig`).
+//! consumer's `build.zig` fills in and hands to `website()` / `e2e()` /
+//! `dev()` (see `build/site.zig` and `build/harness.zig`).
 //!
 //! Everything here is re-exported from the root `build.zig`, so site authors
 //! write `zigapagos.Island`, not `zigapagos.api.Island`.
@@ -63,20 +63,6 @@ pub const Spa = struct {
     base: []const u8,
 };
 
-/// A dev-server reverse-proxy rule. Requests whose path matches `prefix` (at a
-/// segment boundary) are forwarded to `upstream`; everything else is served
-/// static as usual. Dev-only — `serve()` threads these through as
-/// `--proxy=<prefix>=<upstream>` and the live server (`src/cli/serve.zig`)
-/// streams the response back on the same origin (cookies + SSE included).
-///
-/// `prefix` is a URL path prefix and must start with `/` (e.g. `/api`).
-/// `upstream` is an `http://host[:port]` origin (https upstreams are v1 out of
-/// scope). Repeatable: overlapping rules resolve longest-prefix-wins.
-pub const Proxy = struct {
-    prefix: []const u8,
-    upstream: []const u8,
-};
-
 pub const Options = struct {
     /// The directory that contains 'zigapagos.ziggy'.
     /// Defaults to the directory where your 'build.zig' lives.
@@ -100,21 +86,14 @@ pub const Options = struct {
     /// `zigapagos == .source` (the default).
     spas: []const Spa = &.{},
 
-    /// Dev-server reverse-proxy rules. Only consulted by `serve()` (the live
-    /// server); `website()` ignores them (prod routing is the host's job —
-    /// nginx/ZigBase). Each rule is emitted as `--proxy=<prefix>=<upstream>`.
-    proxies: []const Proxy = &.{},
-
     /// Which SPA's "/" shell backs the universal `404.html`, named by the
     /// SPA's file basename sans `.spa.tsx` (the same name that keys
     /// `spa/<name>.js` — e.g. "booking" for `app/booking.spa.tsx`). Null (the
     /// default) keeps the historical behavior: the FIRST declared SPA in
     /// `spas`. Naming an SPA that is not declared in `spas` is a
     /// configure-time error, so the choice is explicit and order-independent
-    /// rather than silently tracking `spas` declaration order. Only
-    /// `website()` consults this (it owns the release-time `404.html`);
-    /// `serve()` validates the name but serves its own dev 404 page and
-    /// per-namespace fallback shells instead.
+    /// rather than silently tracking `spas` declaration order. `website()`
+    /// owns the release-time `404.html` this names.
     not_found: ?[]const u8 = null,
 
     /// Emit external (linked) source maps alongside every minified island, SPA
@@ -138,8 +117,7 @@ pub const Options = struct {
 
     /// Tolerate a `$link.page/sibling/sub` or `$site.page(...)` reference to a
     /// page that doesn't exist YET, instead of failing the build. Threaded to
-    /// `zigapagos` as `--allow-missing-pages`, uniformly for both `website()`
-    /// (release) and `serve()` (the deprecated live server) -- `dev()` needs
+    /// `zigapagos` as `--allow-missing-pages` by `website()` -- `dev()` needs
     /// no separate wiring, since it re-runs the consumer's own rebuild
     /// command, which goes through `website()`. A tolerated reference renders
     /// as a real, url_prefix-aware `href` (the URL the page will have once

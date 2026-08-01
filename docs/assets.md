@@ -148,12 +148,12 @@ because the extension is load-bearing downstream: a web server picks the
 - **Page assets.** They are installed next to the page that owns them, and a
   page's own assets are invalidated by the same deploy that rewrites the page.
 
-### Release builds only
+### Where it applies
 
-The in-memory live server (`zigapagos` with no subcommand) always serves
-verbatim names, the same way it skips the CSS minify pass: dev serves what you
-wrote, release serves what you ship. `zigapagos release` — and therefore
-`zigapagos dev`, which drives a real release build — applies fingerprinting.
+Fingerprinting is a `zigapagos release` pass, so it applies wherever a release
+build does — including `zigapagos dev`, which serves the real release tree. The
+in-memory builds behind `zigapagos validate` and `zigapagos explain` write no
+output at all and so have nothing to fingerprint.
 
 ### Cost
 

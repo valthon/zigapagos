@@ -55,8 +55,8 @@ pub const hash_len = 8;
 /// map is built in `root.zig` and freed in `Build.deinit`.
 ///
 /// An asset ABSENT from the map keeps its verbatim name — that covers the
-/// whole build when the feature is off, plus `static_assets` entries and the
-/// in-memory live server when it is on. Every consumer therefore has to treat
+/// whole build when the feature is off, plus `static_assets` entries and every
+/// in-memory build when it is on. Every consumer therefore has to treat
 /// "no entry" as "use the plain name", which is what `fmtUrl` does.
 pub const Map = std.AutoHashMapUnmanaged(PathName, []const u8);
 

@@ -58,8 +58,8 @@ pub fn validate(
     // and `root.run` is called with `&cfg` where `cfg` is a local in THIS
     // function's frame. A helper returning `{ cfg, build }` by value would
     // hand back a `Build` whose `cfg` pointer dangles into the returned
-    // temporary. `release.zig`, `debug.zig` and `serve.zig` all duplicate this
-    // same preamble for exactly this reason -- do not "simplify" it away.
+    // temporary. `release.zig`, `debug.zig` and `explain.zig` all duplicate
+    // this same preamble for exactly this reason -- do not "simplify" it away.
     const build = root.run(io, gpa, &cfg, .{
         .base_dir_path = base_dir_path,
         .build_assets = &cmd.build_assets,

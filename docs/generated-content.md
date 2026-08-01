@@ -218,12 +218,11 @@ forgetting to wire the second one up.
 
 ## The dev-loop caveat
 
-This is the honest limitation, not a footnote to skip. Both `zigapagos serve` and
-`zigapagos dev` watch the layouts, assets, content, data and island directories *under the
-site root*. A canonical source that lives outside that root — this repository's own `docs/*.md`
+This is the honest limitation, not a footnote to skip. `zigapagos dev` watches the
+layouts, assets, content, data and island directories *under the site root*. A canonical source that lives outside that root — this repository's own `docs/*.md`
 and root `CHANGELOG.md` are exactly this case — is not watched, so editing the canonical
 file does not trigger a rebuild on its own. The generator has to be re-run by hand (or from
-a separate watch process outside the site root) before the dev server picks up the change.
+a separate watch process outside the site root) before the dev loop picks up the change.
 A built-in `content_generators` hook would have to solve exactly this — watching arbitrary
 paths outside the site root and re-invoking a generator on change — to be worth having over
 the recipe on this page, and that is real, non-trivial scope that no config value shaped

@@ -275,8 +275,8 @@ pub const PageAnalysisError = struct {
     };
 
     // True when at least one item is error-severity. Fatal gates (root.zig's
-    // page-render loop and the `analysis_errors` flag, serve.zig's live-build
-    // gates) must call this instead of checking `.items.len > 0`, or a
+    // page-render loop and the `analysis_errors` flag) must call this instead
+    // of checking `.items.len > 0`, or a
     // warning-only page (e.g. an unknown code-fence language) would wrongly
     // block rendering / abort the build.
     pub fn anyError(items: []const PageAnalysisError) bool {
