@@ -77,6 +77,98 @@ function resolveRepoPath(path: string, canonicalDir: string): string {
   return stack.join("/");
 }
 
+/** One piece of a line, split at inline-code-span boundaries. */
+interface LineSegment {
+  /** The piece exactly as authored, a code span's own backtick delimiters
+   * included — so joining every `text` reconstructs the line byte for byte. */
+  text: string;
+  /** True for a code span, false for the prose between spans. */
+  code: boolean;
+  /** What a reader sees: a code span's content with its delimiters removed and
+   * CommonMark's flanking-space rule applied; `text` verbatim outside a span. */
+  content: string;
+}
+
+/**
+ * A code span's rendered content: delimiters dropped, and — per CommonMark —
+ * one leading and one trailing space removed when the remainder begins and
+ * ends with a space without being all spaces. That last rule is what makes
+ * ``` `` `b` `` ``` a span whose content is a backtick-flanked `b` rather than
+ * one padded with two spaces; those spaces are invisible to a reader and must
+ * be invisible to `slugifyHeading` too, since whitespace there becomes a
+ * hyphen apiece.
+ */
+function codeSpanContent(span: string, delim: number): string {
+  const inner = span.slice(delim, span.length - delim);
+  if (inner.startsWith(" ") && inner.endsWith(" ") && inner.trim() !== "") {
+    return inner.slice(1, -1);
+  }
+  return inner;
+}
+
+/**
+ * Split a line into alternating prose / inline-code-span pieces, per
+ * CommonMark's backtick-string rule: a run of N backticks opens a span that is
+ * closed by the next run of EXACTLY N, and a run with no such partner is
+ * literal text — scanning then resumes at the run after it, not at the end of
+ * the line.
+ *
+ * Both halves of that rule are load-bearing, and getting either wrong fails
+ * silently rather than loudly:
+ *
+ *   - Closing on the first run of length >= N ends a ``-delimited span at an
+ *     embedded lone backtick, so the tail of the author's code sample is read
+ *     as prose and gets rewritten.
+ *   - Treating an unmatched run as an opener switches every later
+ *     transformation on the line off — the fence tracker's inversion bug (see
+ *     `fenceDelimiter`) in miniature, one line wide.
+ *
+ * This knows nothing about fences and must not be asked to: only a line the
+ * fence tracker in `transformBody` has already classified as non-fenced ever
+ * reaches it.
+ */
+function splitCodeSpans(line: string): LineSegment[] {
+  const runs: Array<{ start: number; len: number }> = [];
+  for (let i = 0; i < line.length;) {
+    if (line[i] !== "`") {
+      i++;
+      continue;
+    }
+    let j = i;
+    while (j < line.length && line[j] === "`") j++;
+    runs.push({ start: i, len: j - i }); // maximal run: a backtick string
+    i = j;
+  }
+
+  const segments: LineSegment[] = [];
+  let cursor = 0; // first byte of `line` not yet emitted
+  for (let r = 0; r < runs.length; r++) {
+    const open = runs[r];
+    let close = -1;
+    for (let c = r + 1; c < runs.length; c++) {
+      if (runs[c].len === open.len) {
+        close = c;
+        break;
+      }
+    }
+    if (close < 0) continue; // unmatched: literal text, keep scanning
+    const end = runs[close].start + runs[close].len;
+    if (open.start > cursor) {
+      const text = line.slice(cursor, open.start);
+      segments.push({ text, code: false, content: text });
+    }
+    const text = line.slice(open.start, end);
+    segments.push({ text, code: true, content: codeSpanContent(text, open.len) });
+    cursor = end;
+    r = close; // the loop's r++ resumes at the run after the closer
+  }
+  if (cursor < line.length || segments.length === 0) {
+    const text = line.slice(cursor);
+    segments.push({ text, code: false, content: text });
+  }
+  return segments;
+}
+
 /**
  * GitHub-compatible heading slug. GitHub (and docs written against GitHub's
  * rendering) lowercases, strips inline emphasis markers, drops any character
@@ -86,10 +178,17 @@ function resolveRepoPath(path: string, canonicalDir: string): string {
  * has an em dash flanked by two spaces; removing just the dash leaves two
  * spaces, which become two hyphens ("calling-the-backend--apifetch"),
  * matching the double-hyphen anchor GitHub itself produces.
+ *
+ * Code spans are unwrapped through `splitCodeSpans` rather than a
+ * `/`([^`]*)`/g` sweep, because that pattern reads a ``-run as an empty span
+ * and so mis-parses every multi-backtick span: "`` `b` ``" came apart into two
+ * empty spans plus a bare `` `b` ``, leaving the padding spaces behind and
+ * slugging an extra hyphen into the anchor (issue #66).
  */
 export function slugifyHeading(raw: string): string {
-  const plain = raw
-    .replace(/`([^`]*)`/g, "$1")
+  const plain = splitCodeSpans(raw)
+    .map((seg) => seg.content)
+    .join("")
     .replace(/\*\*([^*]*)\*\*/g, "$1")
     .replace(/\*([^*]*)\*/g, "$1")
     .replace(/_([^_]*)_/g, "$1");
@@ -101,7 +200,8 @@ export function slugifyHeading(raw: string): string {
 }
 
 /**
- * Rewrite a single non-fenced line's link TARGETS, never link text. Every
+ * Rewrite one non-fenced, non-code-span STRETCH of a line's link TARGETS,
+ * never link text — `rewriteLinksOutsideCodeSpans` is what feeds it. Every
  * relative target is resolved against `canonicalPath`'s directory and looked
  * up in `published`: a hit becomes a `$link.page(...)` Scripty directive
  * (optionally `.ref(...)` for a `#anchor`), and anything else — whatever its
@@ -138,6 +238,29 @@ function rewriteLinksInLine(line: string, opts: TransformOptions): string {
     const base = path.endsWith("/") ? opts.githubTreeBase : opts.githubBlobBase;
     return `](${base}${repoPath}${anchor ? `#${anchor}` : ""})`;
   });
+}
+
+/**
+ * `rewriteLinksInLine` applied to the parts of a line that are NOT inside an
+ * inline code span.
+ *
+ * The fence tracker already keeps the link rewrite out of fenced blocks, on
+ * the grounds that a link-shaped string in a code sample is sample text rather
+ * than a link. An inline code span makes exactly the same claim in one line,
+ * and before this split both ways of getting it wrong were silent (issue #66):
+ * a published target inside a span became a `$link.page(...)` directive the
+ * author never wrote — so a reader copying the sample copied something wrong —
+ * and an unpublished one became a bare GitHub URL with no marker at all, plus
+ * a spurious `onOffsiteLink` report for a link that does not exist.
+ *
+ * Nothing downstream catches either: `site/test/docs-mirror.sh`'s
+ * rendered-HTML check strips `<pre>` and `<code>` before matching, precisely
+ * so that a page documenting these directives may legitimately show them.
+ */
+function rewriteLinksOutsideCodeSpans(line: string, opts: TransformOptions): string {
+  return splitCodeSpans(line)
+    .map((seg) => (seg.code ? seg.text : rewriteLinksInLine(seg.text, opts)))
+    .join("");
 }
 
 /**
@@ -337,7 +460,7 @@ export function transformBody(body: string, opts: TransformOptions): string {
       sawContent = true; // real content and no leading title — nothing to strip
     }
 
-    out.push(addHeadingId(rewriteLinksInLine(line, opts), headingIds));
+    out.push(addHeadingId(rewriteLinksOutsideCodeSpans(line, opts), headingIds));
   }
 
   return out.join("\n");

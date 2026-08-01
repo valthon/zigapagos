@@ -87,10 +87,11 @@ merely produces a wrong-looking page.
    a `$link.page(...)` directive (with `.ref("anchor")` appended for a `#anchor`); anything
    else degrades to an absolute URL pointing back at the source repository, so a link to a
    file that has no site page still goes somewhere real. This rewrite never touches text
-   inside a fenced code block — a link-shaped string in a code sample is sample text, not a
-   real link, and rewriting it would corrupt the sample. It is not aware of *inline* code
-   spans, though: a link-shaped string written between backticks in a paragraph is rewritten
-   like any other, so show that shape in a fenced block, the way this bullet does.
+   inside a code sample — neither a fenced block nor an *inline* code span — because a
+   link-shaped string in a sample is sample text, not a real link, and rewriting it would
+   corrupt the sample. Inline spans follow CommonMark's rule that a span opened with N
+   backticks closes on the next run of exactly N, so a sample that itself contains a
+   backtick is written by wrapping it in a longer run.
 
 3. **Every heading gets an explicit heading-id directive.** SuperMD does not auto-slugify
    headings into anchors the way GitHub does, so a same-page `#anchor` link — and these
