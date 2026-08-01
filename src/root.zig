@@ -751,8 +751,45 @@ pub fn run(
     // two facts meet — worker.zig's renderPage, which knows both that the
     // sidecar is null and that this page actually asked for an island.
     if (options.bun_path) |bun| if (options.island_sidecar) |script| if (options.island_src_dir) |root_dir| {
-        build.island_sidecar = islands.Sidecar.spawn(io, bun, script, root_dir) catch |err| {
-            fatal.msg("error: failed to spawn island sidecar ({s} {s}): {s}\n", .{ bun, script, @errorName(err) });
+        build.island_sidecar = islands.Sidecar.spawn(io, bun, script, root_dir) catch |err| switch (err) {
+            // The three ENOENT cases get three messages, each naming the input
+            // that is actually missing (issue #82). The old single catch-all
+            // stringified the raw errno beside the bun+script pair, so the
+            // overwhelmingly common failure -- no `bun` on PATH -- read as
+            // "render.ts is missing" about a path that resolves. `Sidecar.spawn`
+            // does the disambiguation; this is where the fix goes into words.
+            //
+            // The bar is worker.zig's no-sidecar-configured diagnostic: name the
+            // cause AND the fix. The fix here is deliberately not "install bun":
+            // for an npm-installed consumer (#81) bun alone does not enable
+            // islands, because the sidecar script and `@z/runtime` are supplied
+            // by the Zig build integration and `@z/runtime` is unpublished.
+            error.InterpreterNotFound => fatal.msg(
+                "error: island sidecar interpreter not found: '{s}'\n" ++
+                    "  the sidecar script '{s}' resolves — the missing thing is the interpreter itself.\n" ++
+                    "  islands are server-rendered by bun at build time, wired up by build.zig's `.islands`\n" ++
+                    "  (bun, the sidecar script, and the island source dir). Note that installing bun on its\n" ++
+                    "  own is not enough for a toolchain-free install: the sidecar script and `@z/runtime`\n" ++
+                    "  come from that Zig build integration.\n",
+                .{ bun, script },
+            ),
+            error.SidecarScriptNotFound => fatal.msg(
+                "error: island sidecar script not found: '{s}'\n" ++
+                    "  this is the `render.ts` supplied by build.zig's `.islands` integration; the\n" ++
+                    "  interpreter '{s}' was not the problem.\n",
+                .{ script, bun },
+            ),
+            error.ProjectRootNotFound => fatal.msg(
+                "error: island source dir not found: '{s}'\n" ++
+                    "  the sidecar runs with that directory as its cwd, so bun resolves each island's\n" ++
+                    "  `@z/runtime` and JSX imports from the `node_modules` beneath it. Set it to the\n" ++
+                    "  site's project root in build.zig's `.islands`.\n",
+                .{root_dir},
+            ),
+            else => fatal.msg(
+                "error: failed to spawn island sidecar ({s} {s}): {s}\n",
+                .{ bun, script, @errorName(err) },
+            ),
         };
     };
     build.island_props_check_mode = options.island_props_check;
