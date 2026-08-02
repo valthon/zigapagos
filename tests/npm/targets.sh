@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# The release target matrix must agree across its three declarations. This runs
+# The release target matrix must agree across its four declarations. This runs
 # npm/check-targets.mjs against the real repository (the gate), and then against
-# fixture trees where each of the three files is wrong in a different way (the
-# gate's own tests).
+# fixture trees where each file or the runner policy is wrong in a different way
+# (the gate's own tests).
 #
 # WHY THE SELF-TESTS. check-targets.mjs reads two files written in other
 # languages: a Zig array literal and a YAML matrix. Both parsers can stop matching
@@ -62,7 +62,8 @@ contains() {
   esac
 }
 
-# A fixture is a temp root holding the three files the gate reads.
+# A fixture is a temp root holding the three matrix files the gate reads; the
+# fourth declaration, nativeRunnerFor(), stays in the gate itself.
 fixture() {
   # Two statements, not one `local a= b=$a`: bash expands every argument of the
   # `local` builtin before running it, so the second would read an unset `name`
@@ -92,7 +93,7 @@ edit_json() {
 
 # --- 1. The real repository -------------------------------------------------
 # This is the gate itself, not a fixture: the tree as committed must agree.
-expect ok "the committed tree agrees across all three declarations" "$REPO"
+expect ok "the committed tree agrees across all four declarations" "$REPO"
 contains "the gate names each target it checked" "@zigapagos/cli-linux-x64"
 
 # --- 2. A target npm would publish that nothing builds ----------------------

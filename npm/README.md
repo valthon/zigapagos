@@ -49,12 +49,13 @@ ship depends on); `src/testing/` is kept, because it is a target of
 `runtime/package.json`'s `exports` map and that map is what makes the sidecar's
 `@z/runtime` self-reference resolve.
 
-## The target matrix lives in three places, and a gate keeps them equal
+## The target matrix has four declarations, and a gate keeps them aligned
 
 `build/release.zig` decides **what** ships. `.github/workflows/release.yml`'s matrix
 decides **where** each target is built and what its archive is called.
 `npm/cli/targets.json` decides what npm **publishes**. Adding a target means editing
-all three.
+all three files plus `nativeRunnerFor()` in `npm/check-targets.mjs`, which declares
+the native GitHub-hosted runner policy for each architecture/OS pair.
 
 `npm/check-targets.mjs` fails when they disagree, and derives the npm `key`/`os`/`cpu`
 and archive filename from the zig triple rather than trusting `targets.json`; it also

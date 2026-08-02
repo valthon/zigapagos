@@ -1,11 +1,12 @@
 #!/usr/bin/env node
-// Drift gate: the release target matrix exists in THREE places, and this asserts
-// they name the same set.
+// Drift gate: the release target matrix has FOUR declarations, and this asserts
+// they agree.
 //
 //   build/release.zig                the source of truth for WHAT is shipped
 //   npm/cli/targets.json             what the npm packages are generated for
 //   .github/workflows/release.yml    WHERE each target is built, and the archive
 //                                    name the npm job downloads
+//   nativeRunnerFor()                which runner is native for each arch/OS pair
 //
 // Why a gate rather than care: each disagreement is silent and each fails late.
 // A target in build/release.zig with no targets.json row is simply never
@@ -239,6 +240,6 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     process.exit(1);
   }
   const json = JSON.parse(readFileSync(join(root, "npm", "cli", "targets.json"), "utf8"));
-  console.log(`ok: ${json.length} release target(s) agree across all three declarations:`);
+  console.log(`ok: ${json.length} release target(s) agree across all four declarations:`);
   for (const t of json) console.log(`  ${t.zig} -> @zigapagos/cli-${t.key} (${t.archive})`);
 }
