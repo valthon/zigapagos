@@ -188,7 +188,11 @@ export function check(root) {
     const row = matrix.find((r) => r.target === t.zig);
     const [arch, os] = t.zig.split("-");
     const requiredRunner = NATIVE_RUNNER[`${arch}-${os}`];
-    if (row && requiredRunner && row.runner !== requiredRunner) {
+    if (row && !requiredRunner) {
+      problems.push(
+        `${t.zig}: no native runner policy for '${arch}-${os}'; add one to NATIVE_RUNNER`,
+      );
+    } else if (row && row.runner !== requiredRunner) {
       problems.push(
         `${t.zig}: release.yml runner='${row.runner ?? "<missing>"}' but native builds require '${requiredRunner}'`,
       );

@@ -82,11 +82,7 @@ pass "ZIGAPAGOS_RUNTIME_DIR is spelled the same on both sides"
 while read -r triple; do
   arch="${triple%%-*}"
   os_abi="${triple#*-}"
-  case "$arch" in
-    x86_64) grep -qF 'ZIG_ARCH="x86_64"' "$INSTALL" || fail "no installer arch mapping for '$triple'" ;;
-    aarch64) grep -qF 'ZIG_ARCH="aarch64"' "$INSTALL" || fail "no installer arch mapping for '$triple'" ;;
-    *) grep -qF "ZIG_ARCH=\"$arch\"" "$INSTALL" || fail "no installer arch mapping for '$triple'" ;;
-  esac
+  grep -qF "ZIG_ARCH=\"$arch\"" "$INSTALL" || fail "no installer arch mapping for '$triple'"
   grep -qF "TARGET=\"\$ZIG_ARCH-$os_abi\"" "$INSTALL" \
     || fail "install.sh cannot derive target '$triple'"
 done < <(node -e 'for (const t of require("./npm/cli/targets.json")) console.log(t.zig)')

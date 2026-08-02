@@ -7,9 +7,8 @@
   in `~/.local/bin`. No `sudo`, no edits to shell startup files, and nothing written until each
   download has been verified against the release's published SHA-256 sums. It is idempotent: a
   second run installs alongside the first and repoints the launcher. `--version`, `--prefix`,
-  `--bin-dir`, `--no-bun` and `--no-zigbase` cover the rest. arm64 and Windows hosts are refused
-  with the same wording the npm package uses, rather than being given an emulated build that
-  looks native.
+  `--bin-dir`, `--no-bun` and `--no-zigbase` cover the rest. Windows hosts are refused with the
+  same wording the npm package uses, rather than being given an emulated build that looks native.
 - A `runtime.tar.xz` release asset: the `@z/runtime` tree with its dependencies vendored. This is
   what makes an install outside npm able to render an island at all — the per-target archives
   carry the binary alone, and the sidecar, bundlers and slicers are scripts inside that tree. It

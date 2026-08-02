@@ -148,7 +148,36 @@ node -e '
 expect fail "release.zig target with no release.yml matrix row" "$root"
 contains "  ...names the workflow" "in build/release.zig but not in release.yml's build matrix"
 
-# --- 5. A hand-edited npm key that the triple does not imply ----------------
+# --- 6. A new platform without a native-runner policy -----------------------
+root="$(fixture unknown-runner-policy)"
+edit_json "$root" '
+  targets.push({ key: "freebsd-x64", zig: "x86_64-freebsd", os: "freebsd",
+                 cpu: "x64", archive: "x86_64-freebsd.tar.xz" });
+  return targets;'
+node -e '
+  const fs = require("node:fs");
+  const zigFile = process.argv[1] + "/build/release.zig";
+  const zigBefore = fs.readFileSync(zigFile, "utf8");
+  const zig = zigBefore.replace(
+    /(^\s*\.\{\s*\.cpu_arch\s*=\s*\.x86_64,\s*\.os_tag\s*=\s*\.linux,\s*\.abi\s*=\s*\.musl\s*\},\s*$)/m,
+    "$1\n        .{ .cpu_arch = .x86_64, .os_tag = .freebsd },",
+  );
+  if (zig === zigBefore) throw new Error("fixture did not find a release target insertion point");
+  fs.writeFileSync(zigFile, zig);
+
+  const yamlFile = process.argv[1] + "/.github/workflows/release.yml";
+  const yamlBefore = fs.readFileSync(yamlFile, "utf8");
+  const yaml = yamlBefore.replace(
+    /(^\s*- target:\s*x86_64-linux-musl\s*$\n^\s*runner:\s*ubuntu-latest\s*$\n^\s*archive:\s*x86_64-linux-musl\.tar\.xz\s*$)/m,
+    "$1\n          - target: x86_64-freebsd\n            runner: freebsd-latest\n            archive: x86_64-freebsd.tar.xz",
+  );
+  if (yaml === yamlBefore) throw new Error("fixture did not find a workflow insertion point");
+  fs.writeFileSync(yamlFile, yaml);
+' "$root"
+expect fail "new platform with no native-runner policy" "$root"
+contains "  ...requires an explicit policy entry" "x86_64-freebsd: no native runner policy for 'x86_64-freebsd'; add one to NATIVE_RUNNER"
+
+# --- 7. A hand-edited npm key that the triple does not imply ----------------
 root="$(fixture wrong-key)"
 edit_json "$root" '
   targets.find((t) => t.zig === "x86_64-linux-musl").key = "linux-arm64";
@@ -156,7 +185,7 @@ edit_json "$root" '
 expect fail "targets.json key disagreeing with its own zig triple" "$root"
 contains "  ...shows both the value and the derivation" "derives key='linux-x64'"
 
-# --- 6. An archive name the release does not produce ------------------------
+# --- 8. An archive name the release does not produce ------------------------
 root="$(fixture wrong-archive)"
 edit_json "$root" '
   targets.find((t) => t.zig === "x86_64-macos").archive = "x86_64-macos.tar.xz";
@@ -164,7 +193,7 @@ edit_json "$root" '
 expect fail "targets.json archive with the wrong format for its os" "$root"
 contains "  ...names the derived archive" "derives archive='x86_64-macos.zip'"
 
-# --- 7. Two targets claiming the same npm package ---------------------------
+# --- 9. Two targets claiming the same npm package ---------------------------
 root="$(fixture duplicate-key)"
 edit_json "$root" '
   targets[1].key = targets[0].key;
@@ -172,7 +201,7 @@ edit_json "$root" '
 expect fail "two targets sharing one npm key" "$root"
 contains "  ...names the duplicate" "duplicate key"
 
-# --- 8. The parsers must never silently match nothing -----------------------
+# --- 10. The parsers must never silently match nothing ----------------------
 root="$(fixture renamed-zig-decl)"
 node -e '
   const fs = require("node:fs");

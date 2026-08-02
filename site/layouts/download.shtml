@@ -76,8 +76,8 @@ npx zigapagos release --output=public --force  # build it</code></pre>
       macOS, including Apple Silicon. Both the installer and
       <code>npm install</code> select the matching native architecture rather than
       substituting an emulated binary. Windows remains unsupported: two inherited
-      source files do not compile
-      on stable Zig 0.16, and support returns with the Zig 0.17 port. See the
+      source files do not compile on stable Zig 0.16, and support returns with the
+      Zig 0.17 port. See the
       <a href="$site.page('docs/roadmap').link()">roadmap</a>.
     </p>
 
