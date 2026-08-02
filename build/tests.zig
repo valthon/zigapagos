@@ -146,6 +146,13 @@ const exe_module: []const ExeModule = &.{
         .description = "Run release CLI Command.parse + entry-discovery unit tests",
         .filters = &.{ "parse", "discoverEntries", "containsComponent" },
     },
+    // `zigapagos debug` Command.parse allocation-failure coverage. The filter
+    // matches both main.zig's anchor and debug.zig's test.
+    .{
+        .step_name = "test-debug",
+        .description = "Run debug CLI Command.parse unit tests",
+        .filters = &.{"debug:"},
+    },
     // SPA prerender helper unit tests (path/manifest/shell helpers in
     // src/spa.zig: spaName, defaultBase, substituteParams, joinUrl,
     // patternDir, planRoute, diskJoin, renderManifest, renderShell).

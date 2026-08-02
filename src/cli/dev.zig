@@ -156,6 +156,9 @@ pub const Command = struct {
         var reload_port: u16 = 0;
         var watch_dirs: std.ArrayListUnmanaged([]const u8) = .empty;
         var rebuild_argv: ?[]const []const u8 = null;
+        errdefer zigbase_args.deinit(gpa);
+        errdefer watch_dirs.deinit(gpa);
+        errdefer if (rebuild_argv) |argv| gpa.free(argv);
 
         var idx: usize = 0;
         while (idx < args.len) : (idx += 1) {
@@ -230,15 +233,21 @@ pub const Command = struct {
             );
         }
 
+        const owned_zigbase_args = if (zigbase_args.items.len > 0)
+            try zigbase_args.toOwnedSlice(gpa)
+        else
+            default_zigbase_args;
+        errdefer if (owned_zigbase_args.ptr != default_zigbase_args.ptr)
+            gpa.free(owned_zigbase_args);
+        const owned_watch_dirs = try watch_dirs.toOwnedSlice(gpa);
+        errdefer gpa.free(owned_watch_dirs);
+
         return .{
             .site = site,
             .data_dir = data_dir,
             .zigbase_path = zigbase_path,
             .no_download = no_download,
-            .zigbase_args = if (zigbase_args.items.len > 0)
-                try zigbase_args.toOwnedSlice(gpa)
-            else
-                default_zigbase_args,
+            .zigbase_args = owned_zigbase_args,
             .ready_path = ready_path,
             .timeout_ms = timeout_ms,
             .host = host,
@@ -246,7 +255,7 @@ pub const Command = struct {
             .debounce = debounce,
             .live_reload = live_reload,
             .reload_port = reload_port,
-            .watch_dirs = try watch_dirs.toOwnedSlice(gpa),
+            .watch_dirs = owned_watch_dirs,
             .rebuild_argv = rebuild_argv,
         };
     }
@@ -1525,6 +1534,24 @@ test "dev parse: NO arguments at all yields a runnable configuration" {
     // Null means "build the default argv", which needs `io` and so cannot
     // happen in parse; see defaultRebuildArgv.
     try std.testing.expect(cmd.rebuild_argv == null);
+}
+
+test "dev parse: allocation failures free partial command state" {
+    const Check = struct {
+        fn run(gpa: Allocator) !void {
+            const cmd = try Command.parse(gpa, &.{
+                "--zigbase-arg=serve",
+                "--zigbase-arg=--port={port}",
+                "--watch-dir=components",
+                "--watch-dir=apps",
+                "--",
+                "zigapagos",
+                "release",
+            });
+            defer cmd.deinit(gpa);
+        }
+    };
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, Check.run, .{});
 }
 
 test "dev parse: --site overrides the default" {

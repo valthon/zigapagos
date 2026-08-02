@@ -135,6 +135,7 @@ pub const Command = struct {
 
     pub fn parse(gpa: Allocator, args: []const []const u8) !Command {
         var build_assets: std.StringArrayHashMapUnmanaged(BuildAsset) = .empty;
+        errdefer build_assets.deinit(gpa);
         var drafts = false;
         var allow_missing_pages = false;
 
@@ -265,6 +266,29 @@ test "validate: parse accepts --drafts and --allow-missing-pages" {
     defer cmd_default.deinit(gpa);
     try std.testing.expect(!cmd_default.drafts);
     try std.testing.expect(!cmd_default.allow_missing_pages);
+}
+
+test "validate: parse frees partial build-asset map on allocation failure" {
+    const Check = struct {
+        fn run(gpa: Allocator) !void {
+            var cmd = try Command.parse(gpa, &.{
+                "--build-asset=a", "a.txt",
+                "--build-asset=b", "b.txt",
+                "--build-asset=c", "c.txt",
+                "--build-asset=d", "d.txt",
+                "--build-asset=e", "e.txt",
+                "--build-asset=f", "f.txt",
+                "--build-asset=g", "g.txt",
+                "--build-asset=h", "h.txt",
+                "--build-asset=i", "i.txt",
+                "--build-asset=j", "j.txt",
+                "--build-asset=k", "k.txt",
+                "--build-asset=l", "l.txt",
+            });
+            defer cmd.deinit(gpa);
+        }
+    };
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, Check.run, .{});
 }
 
 test "validate: parse recognizes the --build-asset grammar (with and without --install)" {

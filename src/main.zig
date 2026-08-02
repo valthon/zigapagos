@@ -198,6 +198,10 @@ test "parse" {
     _ = @import("cli/release.zig");
 }
 
+test "debug: cli" {
+    _ = @import("cli/debug.zig");
+}
+
 // Pull init_from_astro.zig into the test compilation unit for `zig build test-init`.
 // Its @import("../fatal.zig") crosses the src/cli/ module boundary, so it
 // cannot be compiled as a standalone root module in Zig 0.16.  Using the

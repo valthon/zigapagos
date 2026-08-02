@@ -88,6 +88,8 @@ pub const Command = struct {
         var ready_path: []const u8 = "/";
         var timeout_ms: u32 = 120_000;
         var argv: []const []const u8 = &.{};
+        errdefer zigbase_args.deinit(gpa);
+        errdefer if (argv.len != 0) gpa.free(argv);
 
         var idx: usize = 0;
         while (idx < args.len) : (idx += 1) {
@@ -134,15 +136,19 @@ pub const Command = struct {
             .{},
         );
 
+        const owned_zigbase_args = if (zigbase_args.items.len > 0)
+            try zigbase_args.toOwnedSlice(gpa)
+        else
+            default_zigbase_args;
+        errdefer if (owned_zigbase_args.ptr != default_zigbase_args.ptr)
+            gpa.free(owned_zigbase_args);
+
         return .{
             .site = site.?,
             .data_dir = data_dir,
             .zigbase_path = zigbase_path,
             .download_zigbase = download_zigbase,
-            .zigbase_args = if (zigbase_args.items.len > 0)
-                try zigbase_args.toOwnedSlice(gpa)
-            else
-                default_zigbase_args,
+            .zigbase_args = owned_zigbase_args,
             .ready_path = ready_path,
             .timeout_ms = timeout_ms,
             .argv = argv,
@@ -432,6 +438,23 @@ test "e2e parse: site + '--' argv, with documented defaults" {
     try std.testing.expectEqual(@as(usize, 3), cmd.argv.len);
     try std.testing.expectEqualStrings("npx", cmd.argv[0]);
     try std.testing.expectEqualStrings("test", cmd.argv[2]);
+}
+
+test "e2e parse: allocation failures free partial command state" {
+    const Check = struct {
+        fn run(gpa: Allocator) !void {
+            const cmd = try Command.parse(gpa, &.{
+                "--site=public",
+                "--zigbase-arg=serve",
+                "--zigbase-arg=--port={port}",
+                "--",
+                "bun",
+                "test",
+            });
+            defer cmd.deinit(gpa);
+        }
+    };
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, Check.run, .{});
 }
 
 test "e2e parse: every knob is threaded through" {
