@@ -4,6 +4,10 @@ zig-out/
 # ZigBase dev-loop data dir (persistent local backend state; see `zigapagos dev`)
 .zigbase/
 
+# Copied from the repository-root install.sh by build.sh — never commit. Edit the
+# canonical script; this mirror is what gets served at /install.sh.
+assets/install.sh
+
 # Generated from canonical docs by scripts/gen-docs-mirror.ts — never commit.
 # Edit the canonical file (docs/*.md, docs/migration/*.md, CHANGELOG.md).
 content/docs/islands.smd

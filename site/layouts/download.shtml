@@ -6,48 +6,80 @@
     <p class="lede">
       Zigapagos is a single standalone executable. <strong>Building a site needs
       no Zig toolchain</strong> — nothing in a Zigapagos project is compiled from
-      Zig source. The binary shells out to Bun only when your project has islands
-      or SPAs to render.
+      Zig source. One command installs the binary and everything it shells out
+      to.
+    </p>
+
+    <h2>Install</h2>
+    <pre><code>curl -fsSL https://valthon.github.io/zigapagos/install.sh | sh</code></pre>
+    <p>
+      The recommended install. It brings the <code>zigapagos</code> binary, the
+      <code>@z/runtime</code> tree it renders islands and SPAs through, and — only
+      if you don't already have them — Bun and ZigBase: everything islands, native
+      SPAs and <code>zigapagos dev</code> need. Everything lands under
+      <code>~/.local/share/zigapagos</code> with a launcher in
+      <code>~/.local/bin</code>: no <code>sudo</code>, no edits to your shell
+      startup files, and nothing written until each download has been checked
+      against the release's published SHA-256 sums.
+    </p>
+    <p>
+      Re-running it installs a new version alongside the old one and repoints the
+      launcher. To uninstall, remove those two paths. Read the script before you
+      pipe it anywhere — it is
+      <a href="https://github.com/valthon/zigapagos/blob/main/install.sh">one file</a>.
+    </p>
+    <pre><code>curl -fsSL https://valthon.github.io/zigapagos/install.sh | sh -s -- --help</code></pre>
+    <p>
+      <code>--version</code> installs a specific release, <code>--prefix</code> and
+      <code>--bin-dir</code> move where things go, and <code>--no-bun</code> /
+      <code>--no-zigbase</code> leave those two to you.
     </p>
 
     <h2>npm</h2>
     <p>
-      The recommended install. One command brings the binary, the
-      <code>@z/runtime</code> sources and the Bun sidecar, plus Bun and ZigBase
-      as optional dependencies — everything islands, native SPAs and
-      <code>zigapagos dev</code> need.
+      The same complete install, if you would rather have it in a project's
+      <code>node_modules</code> than on your machine. This one needs Node 18 or
+      newer; the shell installer needs no Node at all.
     </p>
     <pre><code>npx zigapagos init                             # scaffold a site
 npx zigapagos dev                              # dev loop at http://127.0.0.1:1990
 npx zigapagos release --output=public --force  # build it</code></pre>
     <p>
       <code>zigapagos</code> is an alias for the canonical
-      <code>@zigapagos/cli</code>. The launcher needs Node 18 or newer.
+      <code>@zigapagos/cli</code>, which ships the <code>@z/runtime</code> sources
+      and the Bun sidecar and declares Bun and ZigBase as optional dependencies.
     </p>
 
     <h2>Release binaries</h2>
     <p>
       Tagged builds — a statically-linked x86_64 Linux binary (musl), an x86_64
-      macOS binary, and a checksum file — are published on
+      macOS binary, a <code>runtime.tar.xz</code> and a checksum file — are
+      published on
       <a href="https://github.com/valthon/zigapagos/releases">the releases page</a>.
     </p>
     <p>
-      An archive contains <strong>the binary and nothing else</strong>. That is
-      enough for a content-only site, and enough for <code>zigapagos dev</code>
-      (which fetches ZigBase itself). It is <em>not</em> enough for islands or
-      SPAs: those also need Bun and the <code>@z/runtime</code> tree, which is
-      what the npm package supplies. See
+      A per-target archive contains <strong>the binary and nothing else</strong>.
+      That is enough for a content-only site, and enough for
+      <code>zigapagos dev</code> (which fetches ZigBase itself). It is <em>not</em>
+      enough for islands or SPAs: those also need Bun, and the
+      <code>@z/runtime</code> tree out of <code>runtime.tar.xz</code> with
+      <code>ZIGAPAGOS_RUNTIME_DIR</code> pointed at it. Placing those pieces by
+      hand is exactly what the installer above does for you, so this route is for
+      people who want to place them themselves. See
       <a href="$site.page('docs/runtime-dependencies').link()">runtime dependencies</a>
       for the per-command rule.
     </p>
 
     <h2>Platforms</h2>
     <p>
-      x86_64 Linux and macOS are built and tested in CI. arm64 is not yet
-      supported on either OS — <code>npm install</code> refuses those hosts
-      rather than substituting the x64 binary. Windows is unsupported: two
-      inherited source files do not compile on stable Zig 0.16, and support
-      returns with the Zig 0.17 port. See the
+      x86_64 Linux and macOS are built and tested in CI. arm64 — including Apple
+      Silicon — is not yet supported on either OS: <code>zig translate-c</code>
+      crashes on a C dependency for every aarch64 target on released Zig 0.16, so
+      no aarch64 binary is built. Both the installer and <code>npm install</code>
+      refuse an arm64 host rather than substituting the x64 binary, because an
+      emulated build that looks native is worse than a clear refusal. Windows is
+      unsupported for a separate reason: two inherited source files do not compile
+      on stable Zig 0.16, and support returns with the Zig 0.17 port. See the
       <a href="$site.page('docs/roadmap').link()">roadmap</a>.
     </p>
 

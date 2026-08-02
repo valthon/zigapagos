@@ -30,6 +30,10 @@
 #      one row a reader acts on before discovering otherwise.
 #   6. Every CLI flag the page names still exists. A page naming a flag the
 #      binary rejects is worse than silence.
+#   7. The installer column of the distribution table is not fiction. The page
+#      now tells a reader that `install.sh` supplies the runtime tree, Bun and
+#      ZigBase; if the script or the asset it unpacks stops existing, that is a
+#      column instructing someone to run a command that cannot work.
 #
 # Pure grep/awk over tracked text: no toolchain, no build, no network,
 # sub-second. Picked up by CI's `tests/*/*.sh` glob like everything else here.
@@ -147,6 +151,30 @@ done <<'FLAGS'
 --no-download src/cli/dev.zig
 --download-zigbase src/cli/e2e.zig
 FLAGS
+
+# ── 7. The installer column describes something that exists ─────────────────
+# The page's distribution table is the part a reader ACTS on, and its newest
+# column tells them one command gets them everything. Three things have to be
+# true for that: the script exists, it is what the page tells them to run, and
+# the payload it needs is published. tests/install/pins.sh checks the script's
+# own constants; this checks the page against the script.
+INSTALLER=install.sh
+if [ ! -f "$INSTALLER" ]; then
+  bad "$INSTALLER is gone, but $DOC's distribution table has an install.sh column"
+else
+  grep -qF 'install.sh | sh' "$DOC" ||
+    bad "$DOC no longer shows the curl|sh command — drop the install.sh column if that is deliberate"
+  grep -qF 'runtime.tar.xz' "$INSTALLER" ||
+    bad "$INSTALLER no longer fetches runtime.tar.xz, but $DOC says it supplies the runtime tree"
+  grep -qF 'runtime.tar.xz' "$DOC" ||
+    bad "$DOC stopped naming the runtime.tar.xz asset the archive row points a reader at"
+  # The two flags the page promises. A reader on an air-gapped box or with their
+  # own toolchain is told these exist.
+  for flag in --no-bun --no-zigbase; do
+    grep -qF -- "$flag" "$DOC" || bad "$DOC no longer mentions $flag"
+    grep -qF -- "$flag)" "$INSTALLER" || bad "$INSTALLER no longer parses $flag, but $DOC names it"
+  done
+fi
 
 [ "$fail" -eq 0 ] || exit 1
 echo "PASS: ${#DOCUMENTED[@]} commands documented, zigbase pin $PIN, $ENVVAR"
