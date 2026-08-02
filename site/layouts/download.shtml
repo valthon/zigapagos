@@ -72,14 +72,12 @@ npx zigapagos release --output=public --force  # build it</code></pre>
 
     <h2>Platforms</h2>
     <p>
-      x86_64 Linux and macOS are built and tested in CI. arm64 — including Apple
-      Silicon — is not yet supported on either OS: <code>zig translate-c</code>
-      crashes on a C dependency for every aarch64 target on released Zig 0.16, so
-      no aarch64 binary is built. Both the installer and <code>npm install</code>
-      refuse an arm64 host rather than substituting the x64 binary, because an
-      emulated build that looks native is worse than a clear refusal. Windows is
-      unsupported for a separate reason: two inherited source files do not compile
-      on stable Zig 0.16, and support returns with the Zig 0.17 port. See the
+      Native x86_64 and arm64 releases are built and tested in CI for Linux and
+      macOS, including Apple Silicon. Both the installer and
+      <code>npm install</code> select the matching native architecture rather than
+      substituting an emulated binary. Windows remains unsupported: two inherited
+      source files do not compile on stable Zig 0.16, and support returns with the
+      Zig 0.17 port. See the
       <a href="$site.page('docs/roadmap').link()">roadmap</a>.
     </p>
 

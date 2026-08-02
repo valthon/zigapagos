@@ -7,10 +7,24 @@
     "archive": "x86_64-macos.zip"
   },
   {
+    "key": "darwin-arm64",
+    "zig": "aarch64-macos",
+    "os": "darwin",
+    "cpu": "arm64",
+    "archive": "aarch64-macos.zip"
+  },
+  {
     "key": "linux-x64",
     "zig": "x86_64-linux-musl",
     "os": "linux",
     "cpu": "x64",
     "archive": "x86_64-linux-musl.tar.xz"
+  },
+  {
+    "key": "linux-arm64",
+    "zig": "aarch64-linux-musl",
+    "os": "linux",
+    "cpu": "arm64",
+    "archive": "aarch64-linux-musl.tar.xz"
   }
 ]

@@ -87,10 +87,8 @@ node "$PKG/npm/check-toolchain.mjs" --root "$PKG" >/dev/null \
 echo "ok: dependency ranges agree with runtime/package.json, zigbase.zig and mise.toml"
 
 # The package directory for THIS host. Computed through the resolver rather than
-# assumed, so a host with no release target SKIPs below instead of failing on a
-# package that was never built. That includes Apple Silicon with a native node —
-# arm64 is not a release target. (A node running under Rosetta reports
-# darwin-x64 and would run the x64 packages; neither case is special-cased here.)
+# assumed, so a host outside the release matrix skips below instead of failing on
+# a package that was never built.
 if ! KEY="$(node -e 'process.stdout.write(require(process.argv[1]).resolveTarget().key)' \
       "$PKG/npm/cli/index.js" 2>/dev/null)"; then
   echo "SKIP: $(node -p 'process.platform + "-" + process.arch') has no release target," \
@@ -457,32 +455,20 @@ expect_run "an unsupported platform is reported as such" 1 \
            Object.defineProperty(process,"arch",{value:"x64"});
            require(process.argv[1]).binaryPath()' "$CLI_MOD"
 
-# --- 6b. Both arm64 hosts are refused, identically ---------------------------
-# There is no aarch64 release build and no architecture substitution for either
-# host: darwin-arm64 must fail exactly as linux-arm64 does. Asserted on both, with
-# one shared needle, because the two share one reason string in index.js — and
-# `resolveTarget()` is checked as well as `binaryPath()`, since resolving to a
-# package for another arch would otherwise look like success right up to the exec.
+# --- 6b. Both arm64 hosts resolve to native packages -------------------------
+# These packages are not installed in this x64 fixture, but resolution itself
+# must name each native package rather than refusing it or substituting x64.
 for host in linux darwin; do
-  expect_run "$host-arm64 is refused with the reason, not just the fact" 1 \
-    "no aarch64 release build exists yet" \
+  expect_run "$host-arm64 resolves to its native package" 0 \
+    "@zigapagos/cli-$host-arm64" \
     node -e 'Object.defineProperty(process,"platform",{value:process.argv[2]});
              Object.defineProperty(process,"arch",{value:"arm64"});
-             require(process.argv[1]).binaryPath()' "$CLI_MOD" "$host"
-
-  expect_run "$host-arm64 resolves to no package at all" 1 \
-    "unsupported platform '$host-arm64'" \
-    node -e 'Object.defineProperty(process,"platform",{value:process.argv[2]});
-             Object.defineProperty(process,"arch",{value:"arm64"});
-             console.log(JSON.stringify(require(process.argv[1]).resolveTarget()))' \
+             console.log(require(process.argv[1]).resolveTarget().pkg)' \
     "$CLI_MOD" "$host"
 done
 
-# ...and the same failure through the LAUNCHER, which is the path `npx zigapagos`
-# takes. `--require` rather than an inline flip: the launcher is a script, so the
-# host has to be changed before it is loaded. It must report the platform, exit 1,
-# and say nothing about running an x64 binary — the substitution this channel used
-# to do, whose absence is the point of the two cases above.
+# `binaryPath()` should now report only that this deliberately host-only fixture
+# did not install the otherwise-supported ARM package.
 cat > "$WORK/as-darwin-arm64.js" <<'PRELOAD'
 Object.defineProperty(process, "platform", { value: "darwin" });
 Object.defineProperty(process, "arch", { value: "arm64" });
@@ -494,17 +480,13 @@ arm_launch="$(node --require "$WORK/as-darwin-arm64.js" "$CLI_MOD/bin/zigapagos.
   printf '%s\n' "$arm_launch"
   fail "the launcher exited $arm_rc on darwin-arm64, expected 1"
 }
-printf '%s\n' "$arm_launch" | grep -qF "unsupported platform 'darwin-arm64'" \
-  || { printf '%s\n' "$arm_launch"; fail "the launcher did not name the unsupported platform"; }
-if printf '%s\n' "$arm_launch" | grep -qiE "rosetta|x64 binary"; then
-  printf '%s\n' "$arm_launch"
-  fail "the launcher still offers an x86_64 binary on arm64"
-fi
-echo "ok: the launcher fails on darwin-arm64 without offering the x64 binary"
+printf '%s\n' "$arm_launch" | grep -qF "@zigapagos/cli-darwin-arm64' package is not installed" \
+  || { printf '%s\n' "$arm_launch"; fail "the launcher did not request the native arm64 package"; }
+echo "ok: the launcher requests the native darwin-arm64 package"
 
 # The install-time half of the same refusal: npm reads `os`/`cpu` off the launcher
-# packages, so an arm64 host gets EBADPLATFORM instead of an install that resolves
-# and contains no binary. Asserted on the INSTALLED manifest — npm only enforces
+# packages, so a host outside the matrix gets EBADPLATFORM instead of an install
+# that resolves and contains no binary. Asserted on the INSTALLED manifest — npm only enforces
 # what is inside the published tarball. (The enforcement itself cannot be tested
 # here: npm has no flag to pretend the host is another platform, and this runs on
 # an x64 runner.)

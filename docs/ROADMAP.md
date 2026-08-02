@@ -36,9 +36,8 @@ Policy:
   stable Zig 0.16.0 (`std.os.windows` does not expose `OVERLAPPED` /
   `PAGE_READONLY`); the fix rides the upstream 0.17-dev branch. CI runs ubuntu +
   macOS; `windows-latest` returns with the port.
-- **arm64 is unsupported** on Linux and macOS until a native aarch64 build
-  lands. `npm install` refuses those hosts rather than substituting the x64
-  binary.
+- **arm64 is supported** on Linux and macOS with native release archives, npm
+  platform packages, and the shell installer.
 - **FreeBSD requires 15 or newer** for live reload. The `zigapagos dev` file
   watcher on FreeBSD reuses the inotify-based `LinuxWatcher`; inotify entered
   the FreeBSD base system in 15. There is no native kqueue backend, so on
@@ -55,7 +54,7 @@ Policy:
   bootstrap OpenAPI path in real consumer projects.
 - **Router and DX paper cuts** — browser error relay, same-origin fetch
   defaults, live feature flags, state-preserving reload.
-- **Windows and aarch64 builds**, both gated on the Zig 0.17 port above.
+- **Windows builds**, gated on the Zig 0.17 port above.
 
 **ZigBase integration seams.** Route guards, browser error relay, same-origin
 fetch defaults, live flags, and native codegen each have a backend half, tracked

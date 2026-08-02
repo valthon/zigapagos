@@ -176,20 +176,17 @@ jobs:
           - label: x86_64-linux
             runner: ubuntu-latest
             archive: x86_64-linux-musl.tar.xz
+          - label: aarch64-linux
+            runner: ubuntu-24.04-arm
+            archive: aarch64-linux-musl.tar.xz
           - label: x86_64-macos
-            # We publish x86_64-macos ONLY — build/release.zig has no aarch64
-            # target, because `zig translate-c` SIGSEGVs on wuffs-v0.4.c under
-            # released Zig 0.16.0 — so the runner has to be an Intel image.
-            # macos-latest/macos-15/macos-26 are all arm64 and would exec the
-            # binary under Rosetta (or not at all), testing something other than
-            # what we ship. macos-15-intel is a GA x64 image; the old macos-13
-            # Intel image was fully retired on 2025-12-04. macos-15-intel is the
-            # LAST Intel macOS image GitHub will offer and retires around
-            # Aug 2027 (actions/runner-images#13045) — by then either the
-            # aarch64 target is unblocked by the Zig 0.17 port (docs/ROADMAP.md)
-            # and this row becomes arm64, or macOS coverage here ends with it.
+            # macos-latest/15/26 are arm64. The Intel image exercises the x64
+            # artifact natively; macos-latest would only prove Rosetta works.
             runner: macos-15-intel
             archive: x86_64-macos.zip
+          - label: aarch64-macos
+            runner: macos-latest
+            archive: aarch64-macos.zip
     env:
       TAG: ${{ needs.resolve.outputs.tag }}
       ARCHIVE: ${{ matrix.archive }}

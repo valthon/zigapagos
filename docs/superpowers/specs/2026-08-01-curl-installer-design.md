@@ -114,6 +114,10 @@ not the GitHub API. The API rate-limits unauthenticated callers to 60/hour per
 IP, which for a `curl | sh` behind a corporate NAT is an install that fails for
 reasons the user cannot see. `--version vX.Y.Z` / `ZIGAPAGOS_VERSION` overrides.
 
+> **Historical note:** The arm64 refusal below was superseded by PR #120, which
+> added native Linux arm64 and Apple Silicon release artifacts and installer
+> selection. The text is retained as the design rationale at the time.
+
 **Host detection.** `uname -s`/`uname -m` map to `x86_64-macos` or
 `x86_64-linux-musl`. Every other host is **refused**, reusing the wording
 `npm/cli/index.js` already prints:
@@ -227,8 +231,8 @@ Every regression test is verified to fail without the change it pins.
 
 ## Out of scope
 
-- **arm64 support.** It is a `build/release.zig` matrix problem gated on the Zig
-  0.17 port, not an installer problem.
+- **arm64 support.** Superseded by PR #120; retained here as the original scope
+  boundary for this historical design.
 - **Windows.** Same.
 - **An uninstaller.** Removing `~/.local/bin/zigapagos` and the data directory is
   two `rm`s, and documenting them is cheaper than shipping and testing a script.

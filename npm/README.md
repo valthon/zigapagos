@@ -49,56 +49,30 @@ ship depends on); `src/testing/` is kept, because it is a target of
 `runtime/package.json`'s `exports` map and that map is what makes the sidecar's
 `@z/runtime` self-reference resolve.
 
-## The target matrix lives in three places, and a gate keeps them equal
+## The target matrix has four declarations, and a gate keeps them aligned
 
 `build/release.zig` decides **what** ships. `.github/workflows/release.yml`'s matrix
 decides **where** each target is built and what its archive is called.
 `npm/cli/targets.json` decides what npm **publishes**. Adding a target means editing
-all three.
+all three files plus `nativeRunnerFor()` in `npm/check-targets.mjs`, which declares
+the native GitHub-hosted runner policy for each architecture/OS pair.
 
 `npm/check-targets.mjs` fails when they disagree, and derives the npm `key`/`os`/`cpu`
-and the archive filename from the zig triple rather than trusting `targets.json` — so
-a hand-edited row cannot invent a mapping. It runs in CI through
-`tests/npm/targets.sh` (which also self-tests each failure mode) and again in the
-release workflow before anything is packed.
+and archive filename from the zig triple rather than trusting `targets.json`; it also
+derives the required native runner from the triple and checks the workflow row. Thus a
+hand-edited row cannot invent a mapping or assign an ARM target to an x64 runner. It
+runs in CI through `tests/npm/targets.sh` (which also self-tests each failure mode)
+and again in the release workflow before anything is packed.
 
-Today's matrix is two targets, `x86_64-macos` and `x86_64-linux-musl`, because those
-are the two that build on released Zig 0.16.0 — see the comment in
-`build/release.zig` for why each of the other six is out and what has to be fixed
-first.
+The generated platform table also drops a fallback “not supported yet” row as soon
+as a native target claims the same key. `npm/gen-packages.test.mjs` pins that
+deduplication, so adding support cannot leave contradictory native and unsupported
+rows in the docs.
 
-## arm64 is a hard failure, on both operating systems
-
-There is no aarch64 release build, and an arm64 host therefore gets **no package**
-— not the x86_64 one. Apple Silicon could run the x64 binary under Rosetta 2, and
-an earlier revision of this channel mapped `darwin-arm64` onto `darwin-x64` for
-exactly that reason; it was removed deliberately. Substituting an architecture is
-invisible: the build is slower, anything the binary shells out to sees a different
-`process.arch`, and nothing in the output distinguishes an emulated build from a
-native one. A build tool that quietly changes what it is cannot be debugged from
-its output, so the package refuses the host and names the reason instead.
-
-Both arm64 hosts are refused through one code path and one string
-(`AARCH64_REASON` in `cli/index.js`), and the refusal happens twice, deliberately:
-
-- at **install** time — the two launcher packages declare the `os`/`cpu` union of the
-  platform packages, so `npm install` on arm64 fails with `EBADPLATFORM` instead of
-  installing a launcher whose every platform package npm silently skipped;
-- at **run** time — `resolveTarget()` throws for anyone who installed past that
-  (`--force`), naming the missing aarch64 build and pointing at the from-source
-  path.
-
-One fact, so nobody re-derives it as a bug report: a `node` process running under
-Rosetta reports `darwin-x64` and therefore resolves the x64 package and works. That
-is a property of the host, not a supported configuration, and nothing here looks
-for it.
-
-**When native arm64 lands**: add `aarch64-macos` to `build/release.zig`, the
-workflow matrix and `targets.json`, and delete the `darwin-arm64` row from
-`FALLBACK_ROWS` and its entry in `UNSUPPORTED_REASON`. The generated platform table
-drops a fallback row automatically once a native target for its key exists —
-`npm/gen-packages.test.mjs` pins that — so a half-done removal shows up as a
-contradiction between the code and the docs rather than as stale prose.
+Today's matrix contains native x64 and arm64 targets for both macOS and Linux.
+Each platform package declares its exact `os` and `cpu`, so npm selects the
+native binary without cross-architecture substitution. Windows remains a hard
+failure and points users to WSL2.
 
 ## The dependency ranges are derived, and a second gate keeps them derived
 

@@ -51,12 +51,8 @@ jobs:
     # macOS-only breakage cannot be distinguished from a Linux one in the log,
     # the targets are serialised, and any target that needs a native host to
     # build at all is unreachable by construction. Splitting them makes the
-    # runner a per-target property — which is the prerequisite for testing the
-    # hypothesis that aarch64-macos, whose `zig translate-c` SIGSEGV on
-    # wuffs-v0.4.c is what keeps it out of build/release.zig, does not crash when
-    # the build is native rather than a cross-compile. It is NOT re-added here:
-    # nothing has verified it, and see build/release.zig on why an unbuildable
-    # target is worse than an absent one.
+    # runner a per-target property and lets every archive be built and tested on
+    # its native architecture.
     #
     # The target list itself lives in build/release.zig. A row here that names a
     # triple that list does not have fails at configure time with the valid
@@ -70,9 +66,18 @@ jobs:
           - target: x86_64-linux-musl
             runner: ubuntu-latest
             archive: x86_64-linux-musl.tar.xz
+          - target: aarch64-linux-musl
+            runner: ubuntu-24.04-arm
+            archive: aarch64-linux-musl.tar.xz
           - target: x86_64-macos
-            runner: macos-latest
+            # macos-latest/15/26 are arm64. Keep x64 native on the last Intel
+            # image (retiring around Aug 2027; actions/runner-images#13045), so
+            # this validates the shipped binary rather than Rosetta.
+            runner: macos-15-intel
             archive: x86_64-macos.zip
+          - target: aarch64-macos
+            runner: macos-latest
+            archive: aarch64-macos.zip
     runs-on: ${{ matrix.runner }}
     steps:
       # fetch-depth: 0 is load-bearing, not caution. build/config.zig derives the
@@ -111,6 +116,110 @@ jobs:
 
       - name: Setup toolchain (zig + bun via mise)
         uses: jdx/mise-action@v4
+
+      # Both translate-c pins normally resolve from Codeberg (one directly, one
+      # through SuperMD), but Codeberg capability discovery has failed
+      # persistently from GitHub-hosted runners (tracked in #121). The official
+      # ziglang/translate-c GitHub archive contains the identical commits. Zig
+      # caches by content hash, so warming those hashes lets the unchanged graph
+      # resolve without contacting Codeberg.
+      #
+      # Remove only this step when #121 confirms Codeberg is reachable from
+      # hosted runners again, or when neither resolved pin uses Codeberg. Pin
+      # changes still fail closed, although when Codeberg is unavailable the
+      # later fetch retry may report its general dependency-fetch diagnostic
+      # before the resolved-graph check can name an obsolete warmed hash.
+      - name: Warm translate-c cache from the official GitHub archive
+        shell: bash
+        run: |
+          fetch_exact() {
+            local url="$1"
+            local expected="$2"
+            local actual=""
+            local attempt
+            for attempt in 1 2 3; do
+              if actual="$(zig fetch "$url")" && [ "$actual" = "$expected" ]; then
+                return 0
+              fi
+              if [ -n "${actual:-}" ] && [ "$actual" != "$expected" ]; then
+                echo "::error::translate-c content hash mismatch: expected $expected, got $actual"
+                return 1
+              fi
+              if [ "$attempt" -eq 3 ]; then
+                echo "::error::failed to fetch $expected after ${attempt} attempts"
+                return 1
+              fi
+              sleep $((attempt * 10))
+            done
+          }
+
+          derive_pin() {
+            node - "$1" "$2" <<'NODE'
+          const [file, dependency] = process.argv.slice(2);
+          const src = require("node:fs").readFileSync(file, "utf8");
+          const escaped = dependency.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const block = src.match(new RegExp(`\\.${escaped}\\s*=\\s*\\.\\{([\\s\\S]*?)\\n\\s*\\},`));
+          const url = block?.[1].match(/\.url\s*=\s*"([^"]+)"/)?.[1];
+          const hash = block?.[1].match(/\.hash\s*=\s*"([^"]+)"/)?.[1];
+          if (!url || !hash) throw new Error(`could not derive ${dependency} pin from ${file}`);
+          process.stdout.write(`${url}\t${hash}`);
+          NODE
+          }
+
+          root_pin="$(derive_pin build.zig.zon translate_c)"
+          IFS=$'\t' read -r root_url root_hash <<< "$root_pin"
+          root_mirror_url="${root_url/codeberg.org/github.com}"
+
+          # SuperMD itself is hosted on GitHub, so resolve that exact root pin
+          # first and read its translate_c dependency instead of copying it here.
+          supermd_pin="$(derive_pin build.zig.zon supermd)"
+          IFS=$'\t' read -r supermd_url supermd_hash <<< "$supermd_pin"
+          fetch_exact "$supermd_url" "$supermd_hash"
+
+          transitive_pin="$(derive_pin "zig-pkg/$supermd_hash/build.zig.zon" translate_c)"
+          IFS=$'\t' read -r transitive_url transitive_hash <<< "$transitive_pin"
+          transitive_mirror_url="${transitive_url/codeberg.org/github.com}"
+
+          fetch_exact "$root_mirror_url" "$root_hash"
+          fetch_exact "$transitive_mirror_url" "$transitive_hash"
+
+          printf 'WARMED_TRANSLATE_C_HASHES=%s %s\n' "$root_hash" "$transitive_hash" >> "$GITHUB_ENV"
+
+      - name: Fetch dependencies
+        shell: bash
+        run: |
+          # Retry only dependency resolution. Compilation below runs once, so a
+          # deterministic source error fails immediately rather than rebuilding.
+          for attempt in 1 2 3; do
+            if zig build --fetch; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::dependency fetch failed after ${attempt} attempts"
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
+
+          # WARMED_TRANSLATE_C_HASHES is supplied only by the temporary mirror
+          # step. If that step is removed under #121, dependency fetching and
+          # retries remain intact and this loop naturally has nothing to check.
+          for expected in ${WARMED_TRANSLATE_C_HASHES:-}; do
+            found=0
+            grep -qF ".hash = \"$expected\"" build.zig.zon && found=1
+            if [ "$found" -eq 0 ]; then
+              while IFS= read -r zon; do
+                if grep -qF ".hash = \"$expected\"" "$zon"; then
+                  found=1
+                  break
+                fi
+              done < <(find zig-pkg -type f -name build.zig.zon)
+            fi
+            if [ "$found" -eq 0 ]; then
+              echo "::error::warmed translate-c hash is absent from the resolved dependency graph: $expected"
+              exit 1
+            fi
+          done
 
       - name: Build ${{ matrix.target }}
         run: zig build release -Drelease-target=${{ matrix.target }}

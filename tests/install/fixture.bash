@@ -28,9 +28,13 @@ fixture_sha256() {
 # rather than passed in so a test cannot accidentally build a fixture for the
 # wrong platform and then "pass" by never reaching the extraction.
 fixture_target() {
+  case "$(uname -m)" in
+    arm64|aarch64) fixture_arch=aarch64 ;;
+    *) fixture_arch=x86_64 ;;
+  esac
   case "$(uname -s)" in
-    Darwin) echo "x86_64-macos" ;;
-    *) echo "x86_64-linux-musl" ;;
+    Darwin) echo "$fixture_arch-macos" ;;
+    *) echo "$fixture_arch-linux-musl" ;;
   esac
 }
 
@@ -83,15 +87,17 @@ fixture_release() { # DIR TAG [BINARY]
 # test does not have to know whether the runner has AVX2.
 fixture_bun() { # DIR
   local dir="$1"
-  local ver tag os
+  local ver tag os arch
   ver="$(fixture_pin BUN_VERSION)"
   tag="bun-v$ver"
   case "$(uname -s)" in Darwin) os=darwin ;; *) os=linux ;; esac
+  case "$(uname -m)" in arm64|aarch64) arch=aarch64 ;; *) arch=x64 ;; esac
   mkdir -p "$dir/$tag"
 
   local stage variant name
   for variant in "" "-baseline"; do
-    name="bun-$os-x64$variant"
+    [ "$arch" = x64 ] || [ -z "$variant" ] || continue
+    name="bun-$os-$arch$variant"
     stage="$(mktemp -d)"
     mkdir -p "$stage/$name"
     # A stub, not a real Bun: what is under test is that the installer places the

@@ -69,8 +69,6 @@ pub fn addZigapagosExe(zb: *std.Build, cfg: ZigapagosExeConfig) *std.Build.Step.
         .optimize = optimize,
     });
 
-    const wuffs = zb.dependency("wuffs", mode);
-
     switch (target.result.os.tag) {
         else => @panic("target must be added to build.zig"),
         .linux => {},
@@ -96,35 +94,50 @@ pub fn addZigapagosExe(zb: *std.Build, cfg: ZigapagosExeConfig) *std.Build.Step.
     zigapagos_exe.root_module.addImport("tracy", tracy.module("tracy"));
     zigapagos_exe.root_module.addImport("mime", mime.module("mime"));
 
-    // wuffs wiring here (impl + an arch/os-specific translated-header shim) is
-    // the LOCAL/dev path and only covers the host arch/os combos with a shim in
-    // src/hacks/ (aarch64|x86 × macos|linux, plus x86-windows). `release.zig`
-    // deliberately does NOT reuse `addZigapagosExe`: it cross-compiles a wider matrix
-    // (incl. freebsd and aarch64-windows, which have no shim and would @panic
-    // below) and instead imports the upstream `wuffs.module("wuffs")` directly.
-    // Keep the two paths in sync by hand if these imports change.
-    zigapagos_exe.root_module.addImport("_wuffs", wuffs.module("impl"));
-    zigapagos_exe.root_module.addImport("wuffs", zb.createModule(.{
+    addWuffsImports(zb, zigapagos_exe.root_module, target, optimize);
+
+    return zigapagos_exe;
+}
+
+/// Wire the Wuffs C implementation together with the checked-in translated
+/// header for `target`. Released Zig 0.16.0 crashes while translating Wuffs for
+/// aarch64, so local and release builds must share these pretranslated modules
+/// rather than letting either path invoke translate-c implicitly.
+pub fn addWuffsImports(
+    zb: *std.Build,
+    module: *std.Build.Module,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+) void {
+    const wuffs = zb.dependency("wuffs", .{ .target = target, .optimize = optimize });
+
+    module.addImport("_wuffs", wuffs.module("impl"));
+    module.addImport("wuffs", zb.createModule(.{
         .root_source_file = switch (target.result.cpu.arch.family()) {
             .aarch64 => switch (target.result.os.tag) {
                 .macos => zb.path("src/hacks/wuffs-temp-aarch64-macos.h.zig"),
                 .linux => zb.path("src/hacks/wuffs-temp-aarch64-linux.h.zig"),
-                else => @panic("unsupported"),
+                else => noWuffsShim(target),
             },
             .x86 => switch (target.result.os.tag) {
                 .macos => zb.path("src/hacks/wuffs-temp-x86-macos.h.zig"),
                 .linux => zb.path("src/hacks/wuffs-temp-x86-linux.h.zig"),
                 .windows => zb.path("src/hacks/wuffs-temp-x86-windows.h.zig"),
-                else => @panic("unsupported"),
+                else => noWuffsShim(target),
             },
-            else => @panic("unsupported"),
+            else => noWuffsShim(target),
         },
 
         .target = target,
         .optimize = optimize,
     }));
+}
 
-    return zigapagos_exe;
+fn noWuffsShim(target: std.Build.ResolvedTarget) noreturn {
+    std.debug.panic(
+        "no checked-in wuffs shim for {s}-{s}; add one under src/hacks/",
+        .{ @tagName(target.result.cpu.arch), @tagName(target.result.os.tag) },
+    );
 }
 
 /// Registers the `check` step and installs the executable.

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# install.sh's failure modes: the hosts it refuses, the tools it requires, and the
-# arguments it rejects.
+# install.sh's host mapping and failure modes: accepted targets, refused hosts,
+# required tools, and rejected arguments.
 #
 # WHY THESE ARE TESTED AT ALL. Every one of them is a path a developer never walks
 # — you do not run the installer on an unsupported architecture, and your machine
@@ -15,9 +15,8 @@
 #   `command -v` searches directories and controlling the whole search path is
 #   the only reliable way to hide a single tool.
 #
-# No downloads: every case here fails before the first fetch, which is itself part
-# of what is being asserted — a host that cannot proceed should learn that before
-# ~30 MB of transfer, not after.
+# Accepted-host cases reach a deliberately missing fixture download; refusal and
+# preflight cases fail before the first fetch.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 REPO="$PWD"
@@ -68,11 +67,13 @@ run_expect_fail() {
 
 FULL="$WORK/path-full"
 make_path "$FULL"
+mkdir -p "$WORK/nowhere/v0.0.0"
+: > "$WORK/nowhere/v0.0.0/SHA256SUMS"
 
-# --- refused hosts -----------------------------------------------------------
-# A stub uname, so the refusals can be exercised from any runner. The reasons are
-# quoted from npm/cli/index.js; tests/install/pins.sh is what keeps the two
-# spellings from drifting apart.
+# --- host mapping ------------------------------------------------------------
+# A stub uname exercises ARM target selection from any runner. The fixture URL
+# deliberately does not exist: reaching the correctly named download proves the
+# host was accepted and mapped without needing a foreign executable.
 stub_uname() { # DIR  SYSNAME  MACHINE
   local dir="$1"
   # `rm` first: make_path already symlinked the real uname in here, and a
@@ -89,13 +90,13 @@ EOF
   chmod +x "$dir/uname"
 }
 
-for host in "Linux aarch64" "Darwin arm64"; do
-  # shellcheck disable=SC2086 # the split into two words is the point
-  set -- $host
+for row in "Linux aarch64 aarch64-linux-musl.tar.xz" "Darwin arm64 aarch64-macos.zip"; do
+  # shellcheck disable=SC2086 # splitting the row into three fields is the point
+  set -- $row
   dir="$WORK/path-$1-$2"
   make_path "$dir"
   stub_uname "$dir" "$1" "$2"
-  run_expect_fail "aarch64 refused ($1/$2)" "no aarch64 release build exists yet" "$dir"
+  run_expect_fail "aarch64 target selected ($1/$2)" "download failed: file://$WORK/nowhere/v0.0.0/$3" "$dir"
 done
 
 dir="$WORK/path-windows"

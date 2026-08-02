@@ -43,13 +43,7 @@ const UPSTREAM_ATTRIBUTION = "forked from [Zine](https://zine-ssg.io)"; // brand
 // appears in targets.json, so adding a native build cannot leave a stale "not
 // supported" row behind.
 //
-// Both aarch64 rows carry the SAME note, because both hosts get the same
-// treatment: no package, and the resolver in cli/index.js refuses them by name
-// with the reason. There is no cross-architecture substitution for either.
-const AARCH64_NOTE = "not supported yet — no aarch64 release build";
 const FALLBACK_ROWS = [
-  { key: "darwin-arm64", label: "macOS arm64 (Apple Silicon)", note: AARCH64_NOTE },
-  { key: "linux-arm64", label: "Linux arm64", note: AARCH64_NOTE },
   { key: "win32-x64", label: "Windows x64", note: "not supported yet — use WSL2" },
 ];
 
@@ -504,7 +498,7 @@ export function genPackages({ version, targets, npmDir, dependencies, optionalTo
     description:
       "Zigapagos — a static site generator with islands and native SPAs. " +
       "Official prebuilt binary distribution.",
-    // See launcherPlatform: this is what makes npm refuse an arm64 host at
+    // See launcherPlatform: npm refuses hosts outside the release matrix at
     // install time instead of installing a launcher with no binary behind it.
     ...platform,
     bin: { zigapagos: "bin/zigapagos.js" },
@@ -582,11 +576,8 @@ The platform packages install automatically — do not depend on them directly.
 A host with no package of its own is refused, not served a binary for another
 architecture: \`npm install\` fails with \`EBADPLATFORM\` (this package declares the
 \`os\`/\`cpu\` its platform packages cover), and if you install past that,
-\`binaryPath()\` throws naming the reason. **arm64 is not supported on either
-macOS or Linux** — there is no aarch64 release build yet, because \`zig
-translate-c\` currently SIGSEGVs on a C dependency for every aarch64 target on
-released Zig 0.16.0. Build [from source](${HOMEPAGE}#from-source) (zig 0.16.0 +
-bun 1.2) meanwhile.
+\`binaryPath()\` throws naming the reason. Linux and macOS are supported natively
+on both x64 and arm64.
 
 ${REQUIREMENTS}
 ## License

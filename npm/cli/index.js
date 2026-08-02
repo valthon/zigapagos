@@ -19,34 +19,20 @@ const targets = require("./targets.json");
 const PKG = "@zigapagos/cli";
 const SUPPORTED = Object.fromEntries(targets.map((t) => [t.key, `${PKG}-${t.key}`]));
 
-// Named reasons for the platforms a user is most likely to be standing on when
-// this throws. Without these the error says only that the platform is missing,
-// which reads as an oversight rather than a known, documented gap.
-//
-// BOTH aarch64 hosts share one reason, and there is deliberately no
-// architecture substitution for either: an arm64 host resolves to no package at
-// all. Silently loading the x86_64 binary on Apple Silicon would make an
-// emulated build indistinguishable from a native one — a slower build, a
-// different `process.arch` inside any tool the binary shells out to, and no
-// signal in the output — so the package refuses the host and says why instead.
-const AARCH64_REASON =
-  "no aarch64 release build exists yet (`zig translate-c` SIGSEGVs on the wuffs " +
-  "dependency for every aarch64 target on released Zig 0.16.0, so build/release.zig " +
-  "ships x86_64 only). Build from source (zig 0.16.0 + bun 1.2) meanwhile";
+// Named reasons for common unsupported platforms make a deliberate gap read as
+// such instead of looking like an omitted matrix row.
 const WINDOWS_REASON =
   "Windows is not supported yet (upstream's WindowsWatcher.zig/wuffs.zig do not compile " +
   "on released Zig 0.16.0). Use WSL2 meanwhile";
 const UNSUPPORTED_REASON = {
-  "darwin-arm64": AARCH64_REASON,
-  "linux-arm64": AARCH64_REASON,
   "win32-x64": WINDOWS_REASON,
   "win32-arm64": WINDOWS_REASON,
 };
 
 /**
  * Resolve the host to a release target.
- * @returns {{key: string, pkg: string}} the platform package to load. Always the
- * host's own `<platform>-<arch>`: there is no cross-architecture mapping.
+ * @returns {{key: string, pkg: string}} the platform package to load. Always
+ * the host's own `<platform>-<arch>`: there is no cross-architecture mapping.
  * @throws if this host has no release target.
  */
 function resolveTarget() {

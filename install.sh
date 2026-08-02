@@ -99,32 +99,23 @@ while [ $# -gt 0 ]; do
 done
 
 # --- host --------------------------------------------------------------------
-# The refusals below are quoted from npm/cli/index.js on purpose. Both channels
-# reject the same hosts for the same reasons, and a user who hits the wall should
-# get the same sentence whichever way they tried to install — otherwise "which
-# install method did you use?" becomes a debugging question.
-AARCH64_REASON="no aarch64 release build exists yet (\`zig translate-c\` SIGSEGVs on the
-wuffs dependency for every aarch64 target on released Zig 0.16.0, so
-build/release.zig ships x86_64 only). Build from source (zig 0.16.0 + bun 1.2)
-meanwhile: https://github.com/$REPO#from-source"
-
 uname_s="$(uname -s)"
 uname_m="$(uname -m)"
 
 case "$uname_m" in
-  x86_64|amd64) ;;
-  arm64|aarch64) fail "unsupported architecture '$uname_m' — $AARCH64_REASON" ;;
-  *) fail "unsupported architecture '$uname_m'. Prebuilt: x86_64 on Linux and macOS." ;;
+  x86_64|amd64) ZIG_ARCH="x86_64"; BUN_ARCH="x64" ;;
+  arm64|aarch64) ZIG_ARCH="aarch64"; BUN_ARCH="aarch64" ;;
+  *) fail "unsupported architecture '$uname_m'. Prebuilt: x86_64 and arm64 on Linux and macOS." ;;
 esac
 
 case "$uname_s" in
   Linux)
-    TARGET="x86_64-linux-musl"
+    TARGET="$ZIG_ARCH-linux-musl"
     ARCHIVE="$TARGET.tar.xz"
     BUN_OS="linux"
     ;;
   Darwin)
-    TARGET="x86_64-macos"
+    TARGET="$ZIG_ARCH-macos"
     ARCHIVE="$TARGET.zip"
     BUN_OS="darwin"
     ;;
@@ -136,12 +127,6 @@ compile on released Zig 0.16.0). Use WSL2 meanwhile."
     fail "unsupported OS '$uname_s'. Prebuilt: Linux and macOS."
     ;;
 esac
-
-# There is deliberately no architecture substitution above. Running the x86_64
-# build on an arm64 host under emulation would work often enough to be tempting
-# and would make an emulated build indistinguishable from a native one: slower,
-# with a different architecture reported inside every tool the binary shells out
-# to, and nothing in the output to say so.
 
 # --- preflight ---------------------------------------------------------------
 # Up front, before ~30 MB of downloads, so a host missing `unzip` learns that in
@@ -296,17 +281,19 @@ mv "$STAGE" "$VERSION_DIR"
 # version and toolchain, and replacing it — or shadowing it — is not this
 # script's business.
 if [ "$WANT_BUN" -eq 1 ] && ! have bun; then
-  # Bun publishes a `-baseline` build for CPUs without AVX2, and the default
+  # Bun publishes a `-baseline` x64 build for CPUs without AVX2, and the default
   # build crashes with SIGILL on them rather than reporting anything useful. Bun's
   # own installer makes the same distinction; skipping it would make this script
   # break on exactly the older hardware most likely to be someone's only machine.
   BUN_VARIANT=""
-  if [ "$BUN_OS" = "linux" ]; then
-    grep -qw avx2 /proc/cpuinfo 2>/dev/null || BUN_VARIANT="-baseline"
-  else
-    sysctl -n machdep.cpu.leaf7_features 2>/dev/null | grep -q AVX2 || BUN_VARIANT="-baseline"
+  if [ "$BUN_ARCH" = "x64" ]; then
+    if [ "$BUN_OS" = "linux" ]; then
+      grep -qw avx2 /proc/cpuinfo 2>/dev/null || BUN_VARIANT="-baseline"
+    else
+      sysctl -n machdep.cpu.leaf7_features 2>/dev/null | grep -q AVX2 || BUN_VARIANT="-baseline"
+    fi
   fi
-  BUN_ASSET="bun-$BUN_OS-x64$BUN_VARIANT.zip"
+  BUN_ASSET="bun-$BUN_OS-$BUN_ARCH$BUN_VARIANT.zip"
   BUN_TAG="bun-v$BUN_VERSION"
   say "installing bun $BUN_VERSION (none found on PATH)"
   # No `have unzip` guard here: the preflight already refused to start an install
@@ -318,11 +305,11 @@ if [ "$WANT_BUN" -eq 1 ] && ! have bun; then
   fetch "$BUN_BASE_URL/$BUN_TAG/SHASUMS256.txt" "$TMP/SHASUMS256.txt"
   verify "$TMP/$BUN_ASSET" "$BUN_ASSET" "$TMP/SHASUMS256.txt"
   unzip -q -o "$TMP/$BUN_ASSET" -d "$TMP/bun"
-  # The zip wraps the binary in a `bun-<os>-x64[-baseline]/` directory.
-  [ -f "$TMP/bun/bun-$BUN_OS-x64$BUN_VARIANT/bun" ] ||
+  # The zip wraps the binary in a directory named after the asset.
+  [ -f "$TMP/bun/bun-$BUN_OS-$BUN_ARCH$BUN_VARIANT/bun" ] ||
     fail "'$BUN_ASSET' did not contain a 'bun' binary."
   mkdir -p "$VERSION_DIR/bun"
-  mv "$TMP/bun/bun-$BUN_OS-x64$BUN_VARIANT/bun" "$VERSION_DIR/bun/bun"
+  mv "$TMP/bun/bun-$BUN_OS-$BUN_ARCH$BUN_VARIANT/bun" "$VERSION_DIR/bun/bun"
   chmod +x "$VERSION_DIR/bun/bun"
 fi
 

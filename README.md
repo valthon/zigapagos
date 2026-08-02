@@ -86,12 +86,9 @@ repoints the launcher; to uninstall, remove those two paths.
 leave those to you. It is [one file](install.sh) — read it before you pipe it
 anywhere.
 
-**x86_64 Linux and macOS only.** arm64 (including Apple Silicon) has no release
-build yet: `zig translate-c` crashes on a C dependency for every aarch64 target
-on released Zig 0.16.0. Both the installer and `npm install` refuse an arm64 host
-rather than substituting the x86_64 binary, because an emulated build that looks
-native is worse than a clear refusal — build from source meanwhile. Windows needs
-WSL2.
+Prebuilt releases support x86_64 and arm64 on Linux and macOS, including Apple
+Silicon. Each host gets a native binary; neither installer substitutes an
+emulated build. Windows needs WSL2.
 
 ### From npm
 
