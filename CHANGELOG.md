@@ -51,6 +51,276 @@ requests each adding their own fragment merge cleanly, whereas two pull requests
 each appending a bullet to this block collide on the same lines. To see what is
 queued for the next release, read `changelog.d/`.
 
+## [0.3.0] - 2026-08-02
+
+### Added
+
+- Publish native arm64 release archives for Linux and macOS, with matching npm
+  packages and shell-installer support. Apple Silicon and Linux arm64 installs
+  now receive binaries built and exercised on their native runner architecture.
+- `zigapagos release --summary`: after a build, print on stdout an inventory of the files it
+  emitted, grouped by category — pages, page aliases and alternatives, page assets, site
+  assets, build assets, SPA shells, SPA routing manifests and the SPA 404 fallback. Every entry
+  is recorded where the file is written, and `tests/summary/summary.sh` compares the printed set
+  against the emitted tree, so the report cannot describe a tree the build did not produce. A
+  build with rendering errors prints a one-line refusal instead of an inventory — on stdout too,
+  so `--summary >file` answers on the same stream whatever the build's outcome.
+- A shell installer, `curl -fsSL https://valthon.github.io/zigapagos/install.sh | sh`, now the
+  headline install method on the README and the download page. It installs a **complete**
+  zigapagos — the binary, the `@z/runtime` tree it renders islands and SPAs through, and Bun and
+  ZigBase when the host has neither — under `~/.local/share/zigapagos`, with a generated launcher
+  in `~/.local/bin`. No `sudo`, no edits to shell startup files, and nothing written until each
+  download has been verified against the release's published SHA-256 sums. It is idempotent: a
+  second run installs alongside the first and repoints the launcher. `--version`, `--prefix`,
+  `--bin-dir`, `--no-bun` and `--no-zigbase` cover the rest. Windows hosts are refused with the
+  same wording the npm package uses, rather than being given an emulated build that looks native.
+- A `runtime.tar.xz` release asset: the `@z/runtime` tree with its dependencies vendored. This is
+  what makes an install outside npm able to render an island at all — the per-target archives
+  carry the binary alone, and the sidecar, bundlers and slicers are scripts inside that tree. It
+  is staged by the same code that stages npm's copy (`npm/stage-runtime.mjs`), so the two
+  channels ship the same files by construction.
+- **`zigapagos release` builds the per-site islands runtime slice.** The second
+  pass over the built island bundles (`/islands/_runtime.js`) used to run only
+  as a build-graph step, so a toolchain-free build silently shipped the full
+  shared runtime to every island page.
+- **`zigapagos release` emits host config and the strict-CSP artifacts.** The
+  per-namespace server config (`.spa` marker + `zigbase.static_routes.zig`,
+  `nginx.nginx.conf`, `.htaccess`) and the site-wide `csp.{nginx.conf,apache.conf,zigbase.txt}`
+  are written over the finished output tree. Every npm-path build until now
+  shipped a tree with neither, which loses SPA deep-link fallback and serves a
+  CSP that blocks the site's own inline import map.
+- `zigapagos release --source-maps`, replacing `Options.source_maps`. Still
+  opt-in and off by default.
+- **`docs/runtime-dependencies.md`** — what the standalone binary needs at run
+  time, stated once instead of inferred. A table covering every command and the
+  external programs it requires; when `zigapagos release` actually needs Bun
+  (the condition is the *configuration*, not whether the site has islands — with
+  `ZIGAPAGOS_RUNTIME_DIR` set, a site with none still spawns the sidecar); how
+  the pinned ZigBase is resolved, cached and fetched, including the `curl` and
+  `tar` the fetch shells out to; and what each distribution supplies. Notably:
+  a release archive carries the binary alone, so islands and SPAs built from one
+  need an `@z/runtime` tree pointed at by `ZIGAPAGOS_RUNTIME_DIR` — `@z/runtime`
+  is `private: true` and cannot be installed from npm on its own.
+- `tests/meta/runtime-deps-doc.sh` checks that page against the sources every
+  claim came from: the command table against `src/main.zig`'s `Command` enum,
+  the ZigBase pin and cache path against `src/cli/zigbase.zig`, the environment
+  variable against `src/cli/release.zig`, `@z/runtime`'s privacy against
+  `runtime/package.json`, the binary-only release archive against
+  `build/release.zig`, and every flag the page names against the file that
+  parses it.
+
+### Changed
+
+- Build the x86_64 macOS archive natively on `macos-15-intel` instead of
+  cross-compiling it on an arm64 `macos-latest` runner.
+- Release and development builds now share the checked-in Wuffs translation
+  shims instead of release builds invoking `zig translate-c`. This removes a
+  hand-maintained divergence and avoids the Zig 0.16 translation crash that
+  blocked native arm64 artifacts.
+- `docs/runtime-dependencies.md`'s distribution table gains an `install.sh` column, and its
+  gate (`tests/meta/runtime-deps-doc.sh`) gains a rule that fails the build if that column
+  ever describes a script or an asset that no longer exists.
+- `zigapagos init` now scaffolds only the frontmatter a page needs. `.author`
+  and `.draft` are gone from every template and `.date` remains only on the blog
+  posts and devlog years whose listing layouts render one — `.title` and
+  `.layout` are the only required fields, and the scaffold no longer models the
+  optional ones as obligatory. The sample homepage and the quick start now say
+  which fields have defaults.
+- `zigapagos migrate --help` now states outright that the command converts
+  nothing: it reads the Astro project, writes a `MIGRATION.md` worklist, and
+  the port itself is manual — `--scaffold` being the one exception, and only
+  for islands. The README bullet and the site's overview page said or implied
+  otherwise.
+- **`zigapagos dev` is zero-config.** Run it in a site directory with no
+  arguments and it works:
+  - `--site` defaults to `public`, the same directory a bare `zigapagos release`
+    writes to;
+  - the rebuild command defaults to *this binary's* own `release`, resolved by
+    absolute path rather than by name on `PATH`, so an npm install and a
+    downloaded release tarball both work (it was `zig build`, which named a
+    toolchain a standalone user never installed);
+  - the island/SPA source directories to watch are derived from the entries
+    `release` discovers, so a component edit rebuilds without `--watch-dir`;
+  - a missing `zigbase` is fetched from the pinned release into the cache
+    (SHA256-verified) instead of failing with instructions. `--no-download`
+    restores the previous behaviour for offline machines and for CI that pins
+    its own binary. `zigapagos e2e` is unchanged: it still fetches only on
+    `--download-zigbase`, because an unannounced network fetch in CI is a
+    surprise rather than a convenience.
+- `zigapagos init` now points a new site at `zigapagos dev` rather than at the
+  bare command.
+
+### Removed
+
+- **The bundled live server is gone**, along with its `--proxy` reverse-proxy
+  mode, the `serve` and `server` subcommands, and the bare-command entry point
+  that started it (issue #56). `zigapagos` is a standalone executable, and a
+  standalone executable has no default action: run bare it now prints its help
+  and exits 0, which is what `npx zigapagos` does too. An argument that names no
+  command prints the same menu and exits non-zero.
+- **The consumer zig-build API is gone.** `zigapagos.website()`, `zigapagos.e2e()`
+  and `zigapagos.dev()`, the option types (`Options`, `Island`, `Spa`,
+  `BuildAsset`, `E2eOptions`, `DevOptions`) and the whole `build/` half that
+  served them no longer exist. A site is built by RUNNING the `zigapagos`
+  binary; `zig build` builds zigapagos itself and nothing else. Nothing in a
+  zigapagos project needs a Zig toolchain, a `build.zig`, a `build.zig.zon` or a
+  `.path` dependency on this repository any more.
+
+  The replacements, all of which already existed:
+
+  | was | now |
+  |---|---|
+  | `zigapagos.website(b, .{ .islands = …, .spas = … })` | `zigapagos release --island=SRC --spa='SRC\|BASE'` |
+  | `zigapagos.e2e(b, opts, .{})` + `zig build e2e -- CMD` | `zigapagos e2e --site=DIR -- CMD` |
+  | `zigapagos.dev(b, opts, .{})` + `zig build dev` | `zigapagos dev` |
+  | `Options.source_maps = true` | `zigapagos release --source-maps` |
+  | `Options.not_found` | `--spa-not-found=NAME` |
+  | `Options.build_assets` | `--build-asset=NAME PATH [--install=P \| --install-always=P]` |
+
+- `zigapagos release --spa-chunks=` and `--spa-slice=` are removed. They existed
+  to hand `release` bundles the build graph had already produced; it now builds
+  them itself.
+- `zigapagos init --from-astro --zigapagos-path` is removed with the
+  `build.zig.zon` it filled in. The importer scaffolds a `build.sh` instead.
+
+### Fixed
+
+- `zigapagos release` now honours `ZIGAPAGOS_HOT_ISLANDS`, passing `--hot` to
+  the island bundle driver when it is set. Nothing on the `release` path read
+  the variable `zigapagos dev` sets, so a dev rebuild produced non-hot island
+  bundles and an island hot-swap silently reset every `useState` instead of
+  preserving it.
+- A CLI report no longer overwrites the command's own stderr when both streams are redirected
+  to one file (`cmd >f 2>&1`). `explain`, `doctor`, `validate` and `migrate --doctor` built
+  their buffered stdout writers with `Io.File.writer`, which writes positionally from an offset
+  of its own, so the end-of-command flush landed on top of bytes stderr had already committed —
+  silently corrupting the merged output. They now use `writerStreaming`.
+- **Island bundles are minified.** The build graph passed `--minify` to the
+  shared runtime, both runtime slicers and every SPA bundle, and to islands
+  alone did not. The four islands on this project's own marketing site shrink
+  from 4113 to 2094 bytes.
+- **The island-sidecar spawn diagnostics no longer send you to a `build.zig`
+  that does not exist.** All three ENOENT messages ended by pointing at the
+  consumer build API's `.islands` table, which is gone; they now name the flag
+  that actually configures each input (`--bun`, `--island-sidecar`,
+  `--island-src-dir`) and `ZIGAPAGOS_RUNTIME_DIR`. The interpreter message also
+  claimed bun alone cannot enable islands on a toolchain-free install "because
+  the sidecar script and `@z/runtime` come from that Zig build integration" —
+  false for the npm path, which ships both, and true only of a release archive.
+- **The README no longer claims a release archive "gets you the same thing" as
+  the npm channel.** It does not: the archive is the binary alone, so it has
+  neither Bun nor the `@z/runtime` tree that islands and SPAs need. The
+  quick-start's "a plain content site needs neither it nor Bun" was ambiguous
+  in the same direction — setting `ZIGAPAGOS_RUNTIME_DIR` is exactly what makes
+  a content-only build require Bun, and `npx zigapagos` always sets it.
+- A failed island-sidecar spawn now names the input that is actually missing. A `bun` that is
+  not on `PATH` previously produced `failed to spawn island sidecar (bun …/render.ts):
+  FileNotFound`, which reads as "render.ts is missing" about a path that resolves; the
+  interpreter, the sidecar script and the island source dir are now reported separately, each
+  with the fix for that specific case.
+- The changelog's own description of what `zigapagos version` prints. It documented
+  `git describe`'s raw `v0.1.1-<n>-g<sha>` spelling, which `build/config.zig` never
+  emits — it reformats that into a `v`-prefixed semver version
+  (`v0.2.0-dev.7+e1d7033`) — and the paragraph is published as the site's changelog
+  page. All three shapes the binary can actually print are now listed, and
+  `tests/changelog/version-shape.sh` fails the build if the list and the emitter
+  disagree.
+- `zigapagos dev` no longer risks a crash or invalid free when overlapping watched
+  directories refer to the same path with different spellings. Allocation failures and
+  malformed input also fail cleanly instead of leaking or indexing out of bounds.
+
+### Known limitations
+
+- With `auto_heading_ids` on, a same-page reference through the `$link.ref('slug')` Scripty
+  directive still fails with `unknown ref` — SuperMD's own `invalid_ref` check runs inside
+  `Ast.init`, before ids can be injected. Plain Markdown links (`[t](#slug)`,
+  `[t](/other#slug)`) are validated later and work fine; `$link.unsafeRef('slug')` is the
+  workaround for the Scripty-directive case.
+- A content-authored `<z-island>` only accepts static props (`:props` Ziggy
+  literals and literal `prop-NAME="value"` attributes). `prop-NAME="$page.*"`
+  Scripty expressions do **not** resolve in content — Scripty is evaluated by
+  SuperHTML at layout render time, and an `=html` fence's body is emitted
+  verbatim, never run through SuperHTML's template evaluator. A page-bound
+  prop still needs a layout.
+- **No Windows support** until the Zig 0.17 port. Inherited upstream code
+  (`src/cli/watcher/WindowsWatcher.zig`, `src/wuffs.zig`) does not compile on
+  stable Zig 0.16.0 — `os.windows` has neither `OVERLAPPED` nor `PAGE_READONLY`
+  there — and the fix rides upstream's 0.17-dev branch.
+- **No FreeBSD binary**, and a source build does not substitute for one: the
+  watcher-selection logic compiles the inotify-based `LinuxWatcher` on FreeBSD,
+  whose `inotify_init1`/`inotify_add_watch`/`inotify_rm_watch` that target does
+  not have, and there is no checked-in Wuffs shim for it under `src/hacks/`.
+  Both blockers are recorded against the shipped matrix in `build/release.zig`,
+  which is the list to re-add the target to once they are fixed.
+- **Strict CSP requires deploying the emitted header.** The build writes the
+  hash-strict policy, but serving it (and re-serving it after a rebuild, since the
+  hashes are byte-exact) is the host's job. `style-src` still needs
+  `unsafe-inline` for the framework's inline `style` attributes.
+- **A per-locale `host_url_override` cannot be exercised locally.** `zigapagos dev`
+  points ZigBase at one built tree and serves it verbatim on one origin, so a
+  multi-host locale set builds correctly but can only be checked as deployed. The
+  emitted output is unaffected; this is a preview limitation, not a build one.
+- **Prebuilt binaries cover four Unix targets**: `x86_64-linux-musl`,
+  `aarch64-linux-musl`, `x86_64-macos` and `aarch64-macos`, each built on its own
+  native runner, with `runtime.tar.xz` and `SHA256SUMS` beside them. arm64 archives
+  start at this release — earlier tags are x64-only, and `v0.1.0` predates prebuilt
+  binaries entirely. Any other host still needs a source build.
+- Pre-1.0: APIs may change between minor versions.
+
+### Internal
+
+- CI now builds its reusable `zigapagos` binary for the architecture's baseline CPU instead
+  of the build runner's native CPU. A runner with AVX-512 produced an artifact whose
+  `compiler_rt.memcpy` executed AVX-512 unconditionally on unrelated downstream runners;
+  hosts without that feature raised SIGILL, and a signal on a render worker could leave the
+  main thread waiting forever. The artifact gate now rejects host-width YMM/ZMM memcpy code.
+- Contributors blocked by a Codeberg outage can run `scripts/rescue-codeberg.sh` to
+  verify and warm the exact pinned `translate-c` packages from GitHub before retrying
+  their normal build.
+- `site/scripts/md-to-smd.ts` no longer rewrites link targets inside **inline** code spans.
+  It already left fenced blocks alone, but a link-shaped string between backticks in a
+  paragraph was rewritten like a real link — silently, in both directions: a published
+  target became a `$link.page(...)` directive the author never wrote, and an unpublished one
+  became a bare GitHub URL with no marker at all. The second row was live on this site's own
+  changelog page, where a sentence about the `![](…)` content directives published a link to
+  `https://github.com/valthon/zigapagos/blob/main/…`. Spans are now split per CommonMark (a
+  run of N backticks closes on the next run of exactly N) and only the prose between them is
+  rewritten; `slugifyHeading` unwraps spans the same way, so a multi-backtick span in a
+  heading no longer leaves its padding spaces behind as an extra hyphen in the anchor (#66).
+- A fence language is looked up in `fenceLangRemap` with `Object.hasOwn` rather than a raw
+  index, so a fence tagged `constructor`, `toString`, `valueOf`, `hasOwnProperty` or
+  `__proto__` is a miss instead of resolving through `Object.prototype` and splicing a
+  stringified function into the mirror's language slot. The module is documented as
+  copy-me code taking a caller-supplied table, and the caller supplying it is exactly the
+  person who cannot see the lookup (#67).
+- npm publishing authenticates with **OIDC trusted publishing** instead of a stored
+  registry credential. Each package names `valthon/zigapagos` + `release.yml` as its
+  trusted publisher on npmjs.com, and the `publish-npm` job exchanges the OIDC identity
+  GitHub mints for the run for a short-lived registry token — so the right to publish
+  belongs to that one workflow rather than to a credential anything able to read it
+  could use. The job's guard that *failed* when `NPM_PUBLISH_ENABLED` was set but no
+  stored credential was configured went with it; against a repository that deliberately
+  has none, that guard would have failed the next tag. The `NPM_PUBLISH_ENABLED` arming
+  switch is unchanged.
+- The publish job installs and asserts `npm >= 11.5` before uploading anything. OIDC
+  trusted publishing is an npm 11.5 feature and `node-version: 24` does not imply it —
+  node 24.2.0 bundles npm 11.3.0, and 24.5.0 was the first with 11.5.1 — so an older
+  npm would have failed as a bare authentication error partway through a
+  dependency-ordered publish.
+- `tests/meta/npm-oidc.sh` pins the publishing job's shape: `publish-npm` must keep
+  `id-token: write` — without it GitHub mints no identity and OIDC has nothing to
+  exchange — and both gating conditions. The job runs only on a `v*` tag, so without a
+  gate these are properties nothing tests until a release.
+- The published-release smoke workflow now also installs `zigapagos@<version>` from npm
+  on each platform and runs it. The archives it already checked cannot show a platform
+  package that was never published, or an `optionalDependencies` resolution that yields
+  an install with no binary in it.
+- Release CI now warms the exact pinned `translate-c` packages from Zig's official
+  GitHub archive before resolving the dependency graph. This avoids persistent
+  Codeberg protocol failures on GitHub-hosted runners; content hashes and a
+  resolved-graph gate ensure the mirror cannot silently supply different or stale
+  dependency bytes. Only dependency fetching is retried, while compilation runs once.
+
 ## [0.2.0] - 2026-07-30
 
 ### Added
@@ -668,7 +938,8 @@ what is new from what the port changed and removed.
 - Pre-1.0: APIs may change between minor versions. **Only the most recent
   release is supported** — there are no backports.
 
-[Unreleased]: https://github.com/valthon/zigapagos/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/valthon/zigapagos/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/valthon/zigapagos/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/valthon/zigapagos/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/valthon/zigapagos/compare/22ea4a0...v0.1.1
 [0.1.0]: https://github.com/valthon/zigapagos/compare/496e42d...22ea4a0
