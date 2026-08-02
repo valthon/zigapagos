@@ -61,6 +61,20 @@ zig build                                      # → zig-out/bin/zigapagos
 cd runtime && bun install --frozen-lockfile     # ONCE per fresh clone/worktree
 ```
 
+If a fresh dependency fetch fails while contacting Codeberg, run:
+
+```sh
+bash scripts/rescue-codeberg.sh
+zig build
+```
+
+The rescue script is an outage-only escape hatch. It derives the exact direct
+and SuperMD-transitive `translate-c` pins from the checked-in dependency graph,
+warms those content hashes from the `translate-c` GitHub mirror, verifies the
+resolved graph, and changes no manifest. A hash mismatch or an unexpected
+source fails closed. Once it succeeds, retry the build command that originally
+failed; normal development does not require the script.
+
 **Trap 1: `zig build test` does not run the unit tests.** It builds the
 three-root snapshot fixtures and diffs them. The Zig unit tests live in **sixteen
 separate steps**, and this is the command you actually want:
