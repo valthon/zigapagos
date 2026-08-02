@@ -118,7 +118,24 @@ jobs:
         uses: jdx/mise-action@v4
 
       - name: Build ${{ matrix.target }}
-        run: zig build release -Drelease-target=${{ matrix.target }}
+        # Zig fetches git-backed package dependencies during this step. Codeberg
+        # occasionally terminates capability discovery with ProtocolError; the
+        # package cache keeps completed downloads, so a bounded retry resumes
+        # rather than making one transient request fail an otherwise valid
+        # release. Real build failures still fail after the same three attempts.
+        run: |
+          for attempt in 1 2 3; do
+            if zig build release -Drelease-target=${{ matrix.target }}; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::build failed after ${attempt} attempts"
+              exit 1
+            fi
+            delay=$((attempt * 10))
+            echo "::warning::build attempt ${attempt} failed; retrying in ${delay}s"
+            sleep "$delay"
+          done
 
       # `-Drelease-target` selects exactly one row of the matrix in
       # build/release.zig, so exactly one archive must appear. Asserting the
