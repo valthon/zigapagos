@@ -77,24 +77,15 @@ grep -rq 'ZIGAPAGOS_RUNTIME_DIR' src/cli/release.zig \
 pass "ZIGAPAGOS_RUNTIME_DIR is spelled the same on both sides"
 
 # --- target triples ----------------------------------------------------------
-# npm/cli/targets.json is the npm side's copy of build/release.zig's matrix, and
-# npm/check-targets.mjs already gates it against that matrix. Chaining to it here
-# means install.sh is transitively gated against build/release.zig without this
-# file having to parse Zig.
-while read -r triple; do
-  grep -q "TARGET=\"$triple\"" "$INSTALL" \
-    || fail "release target '$triple' has no branch in install.sh"
-done < <(node -e '
-  for (const t of require("./npm/cli/targets.json")) console.log(t.zig);
-')
-TARGET_COUNT="$(grep -c 'TARGET="' "$INSTALL")"
-# `process.stdout.write`, not `console.log`: console.log runs a number through
-# util.inspect, which ANSI-colours it when node thinks colour is wanted — and a
-# yellow "2" is not equal to the string "2".
+# The installer derives the same four triples as targets.json from one arch and
+# one OS branch, avoiding four hand-maintained literals.
+for mapping in 'x86_64|amd64) ZIG_ARCH="x86_64"' 'arm64|aarch64) ZIG_ARCH="aarch64"' \
+               'TARGET="$ZIG_ARCH-linux-musl"' 'TARGET="$ZIG_ARCH-macos"'; do
+  grep -qF "$mapping" "$INSTALL" || fail "install.sh is missing target mapping: $mapping"
+done
 JSON_COUNT="$(node -e 'process.stdout.write(String(require("./npm/cli/targets.json").length))')"
-[ "$TARGET_COUNT" = "$JSON_COUNT" ] \
-  || fail "install.sh has $TARGET_COUNT targets, the release matrix has $JSON_COUNT"
-pass "install.sh's targets are exactly the release matrix's ($JSON_COUNT)"
+[ "$JSON_COUNT" = 4 ] || fail "expected four Linux/macOS architecture targets, got $JSON_COUNT"
+pass "install.sh derives all four targets in the release matrix"
 
 # And the archive names, which install.sh builds rather than lists.
 while read -r archive; do
@@ -142,14 +133,12 @@ grep -qE '"typescript@[0-9]' runtime/bun.lock \
 pass "the runtime asset pins typescript from runtime/bun.lock, not from a range"
 
 # --- refusal wording ---------------------------------------------------------
-# npm and the installer refuse the same hosts. They must give the same reason,
-# because "which install method did you use?" is not a question a user should have
-# to answer to get the same explanation.
-for fragment in "no aarch64 release build exists yet" "Windows is not supported yet"; do
+# npm and the installer still refuse Windows with the same explanation.
+for fragment in "Windows is not supported yet"; do
   grep -qF "$fragment" "$INSTALL" || fail "install.sh no longer says '$fragment'"
   grep -qF "$fragment" npm/cli/index.js || fail "npm/cli/index.js no longer says '$fragment'"
 done
-pass "the aarch64 and Windows refusals are worded the same as npm's"
+pass "the Windows refusal is worded the same as npm's"
 
 # --- the repository ----------------------------------------------------------
 [ "$(pin REPO)" = "valthon/zigapagos" ] || fail "install.sh's REPO is not valthon/zigapagos"

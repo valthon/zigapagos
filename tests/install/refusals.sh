@@ -69,10 +69,10 @@ run_expect_fail() {
 FULL="$WORK/path-full"
 make_path "$FULL"
 
-# --- refused hosts -----------------------------------------------------------
-# A stub uname, so the refusals can be exercised from any runner. The reasons are
-# quoted from npm/cli/index.js; tests/install/pins.sh is what keeps the two
-# spellings from drifting apart.
+# --- host mapping ------------------------------------------------------------
+# A stub uname exercises ARM target selection from any runner. The fixture URL
+# deliberately does not exist: reaching the correctly named download proves the
+# host was accepted and mapped without needing a foreign executable.
 stub_uname() { # DIR  SYSNAME  MACHINE
   local dir="$1"
   # `rm` first: make_path already symlinked the real uname in here, and a
@@ -89,13 +89,13 @@ EOF
   chmod +x "$dir/uname"
 }
 
-for host in "Linux aarch64" "Darwin arm64"; do
+for row in "Linux aarch64 aarch64-linux-musl" "Darwin arm64 aarch64-macos"; do
   # shellcheck disable=SC2086 # the split into two words is the point
-  set -- $host
+  set -- $row
   dir="$WORK/path-$1-$2"
   make_path "$dir"
   stub_uname "$dir" "$1" "$2"
-  run_expect_fail "aarch64 refused ($1/$2)" "no aarch64 release build exists yet" "$dir"
+  run_expect_fail "aarch64 target selected ($1/$2)" "($3)" "$dir"
 done
 
 dir="$WORK/path-windows"

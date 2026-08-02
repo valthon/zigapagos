@@ -97,10 +97,15 @@ contains "the gate names each target it checked" "@zigapagos/cli-linux-x64"
 
 # --- 2. A target npm would publish that nothing builds ----------------------
 root="$(fixture publish-unbuilt)"
-edit_json "$root" '
-  targets.push({ key: "linux-arm64", zig: "aarch64-linux-musl", os: "linux",
-                 cpu: "arm64", archive: "aarch64-linux-musl.tar.xz" });
-  return targets;'
+node -e '
+  const fs = require("node:fs");
+  const f = process.argv[1] + "/build/release.zig";
+  const src = fs.readFileSync(f, "utf8").replace(
+    "        .{ .cpu_arch = .aarch64, .os_tag = .linux, .abi = .musl },\n",
+    "",
+  );
+  fs.writeFileSync(f, src);
+' "$root"
 expect fail "targets.json row with no build/release.zig entry" "$root"
 contains "  ...names the target and both files" "aarch64-linux-musl: in npm/cli/targets.json but not in build/release.zig"
 
@@ -118,7 +123,7 @@ node -e '
   const fs = require("node:fs");
   const f = process.argv[1] + "/.github/workflows/release.yml";
   const yml = fs.readFileSync(f, "utf8").replace(
-    /          - target: x86_64-macos\n            runner: macos-latest\n            archive: x86_64-macos\.zip\n/,
+    /          - target: x86_64-macos\n            runner: macos-15-intel\n            archive: x86_64-macos\.zip\n/,
     "",
   );
   fs.writeFileSync(f, yml);

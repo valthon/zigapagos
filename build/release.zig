@@ -6,6 +6,7 @@ const Io = std.Io;
 
 const config = @import("config.zig");
 const deps = @import("deps.zig");
+const exe = @import("exe.zig");
 
 /// Registers the `release` step. A release is only buildable from a tagged
 /// checkout whose tag matches the zon package version; every other case
@@ -50,15 +51,10 @@ fn addTargets(
     /// so the release workflow can give each target its own runner.
     only: ?[]const u8,
 ) void {
-    // The shipped matrix is deliberately the two targets that actually build on
-    // released Zig 0.16.0. Building the historical eight-target matrix at
-    // `v0.1.0` produced exactly one archive; the other seven failed for four
-    // independent reasons, each of which has to be fixed before its targets can
-    // come back:
+    // The shipped matrix is the four Unix targets backed by checked-in Wuffs
+    // translation shims. Building the historical eight-target matrix at v0.1.0
+    // exposed the remaining platform blockers:
     //
-    //   - all four aarch64 targets: `zig translate-c` dies with SIGSEGV on
-    //     wuffs-v0.4.c. A compiler crash, not a defect here — it is expected to
-    //     go with the Zig 0.17 port (see docs/ROADMAP.md fork policy).
     //   - x86_64-windows: `os.windows` has no `OVERLAPPED` (WindowsWatcher.zig)
     //     or `PAGE_READONLY` (src/wuffs.zig). Same stable-0.16.0 breakage that
     //     already keeps Windows out of CI, so it returns with that port too.
@@ -77,7 +73,9 @@ fn addTargets(
     // silently building nothing, so the two lists cannot drift apart unnoticed.
     const targets: []const std.Target.Query = &.{
         .{ .cpu_arch = .x86_64, .os_tag = .macos },
+        .{ .cpu_arch = .aarch64, .os_tag = .macos },
         .{ .cpu_arch = .x86_64, .os_tag = .linux, .abi = .musl },
+        .{ .cpu_arch = .aarch64, .os_tag = .linux, .abi = .musl },
     };
 
     if (only) |triple| {
@@ -105,14 +103,10 @@ fn addTargets(
         "releases",
     })) catch unreachable;
 
-    // NOTE: this intentionally does NOT call `addZigapagosExe`. Release links the
-    // upstream `wuffs.module("wuffs")` directly rather than the dev
-    // `_wuffs`(impl)+shim wiring, because the full matrix above is meant to grow
-    // back to targets (freebsd, aarch64-windows) that `addZigapagosExe`'s local
-    // wuffs shim switch doesn't cover — it would @panic on them. Keep the split
-    // even while the matrix is reduced, so restoring a target stays a one-line
-    // change here. The non-wuffs imports below mirror `addZigapagosExe`; keep
-    // them in sync.
+    // Release needs different options and archive steps, so it constructs its
+    // own executable. Keep the non-Wuffs imports in sync with addZigapagosExe;
+    // Wuffs itself shares addWuffsImports so release and local builds cannot
+    // accidentally take different translation paths.
     for (targets) |t| {
         if (only) |triple| {
             if (!std.mem.eql(u8, triple, t.zigTriple(b.allocator) catch unreachable)) continue;
@@ -130,11 +124,6 @@ fn addTargets(
         });
 
         const ts = syntax.builder.dependency("tree_sitter", .{
-            .target = target,
-            .optimize = optimize,
-        });
-
-        const wuffs = b.dependency("wuffs", .{
             .target = target,
             .optimize = optimize,
         });
@@ -179,7 +168,7 @@ fn addTargets(
         zigapagos_exe_release.root_module.addImport("treez", treez);
         zigapagos_exe_release.root_module.addImport("tracy", tracy.module("tracy"));
         zigapagos_exe_release.root_module.addImport("mime", mime.module("mime"));
-        zigapagos_exe_release.root_module.addImport("wuffs", wuffs.module("wuffs"));
+        exe.addWuffsImports(b, zigapagos_exe_release.root_module, target, optimize);
 
         switch (target.result.os.tag) {
             else => @panic("target must be added to build.zig"),

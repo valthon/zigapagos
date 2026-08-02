@@ -51,12 +51,8 @@ jobs:
     # macOS-only breakage cannot be distinguished from a Linux one in the log,
     # the targets are serialised, and any target that needs a native host to
     # build at all is unreachable by construction. Splitting them makes the
-    # runner a per-target property — which is the prerequisite for testing the
-    # hypothesis that aarch64-macos, whose `zig translate-c` SIGSEGV on
-    # wuffs-v0.4.c is what keeps it out of build/release.zig, does not crash when
-    # the build is native rather than a cross-compile. It is NOT re-added here:
-    # nothing has verified it, and see build/release.zig on why an unbuildable
-    # target is worse than an absent one.
+    # runner a per-target property and lets every archive be built and tested on
+    # its native architecture.
     #
     # The target list itself lives in build/release.zig. A row here that names a
     # triple that list does not have fails at configure time with the valid
@@ -70,9 +66,15 @@ jobs:
           - target: x86_64-linux-musl
             runner: ubuntu-latest
             archive: x86_64-linux-musl.tar.xz
+          - target: aarch64-linux-musl
+            runner: ubuntu-24.04-arm
+            archive: aarch64-linux-musl.tar.xz
           - target: x86_64-macos
-            runner: macos-latest
+            runner: macos-15-intel
             archive: x86_64-macos.zip
+          - target: aarch64-macos
+            runner: macos-latest
+            archive: aarch64-macos.zip
     runs-on: ${{ matrix.runner }}
     steps:
       # fetch-depth: 0 is load-bearing, not caution. build/config.zig derives the

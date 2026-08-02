@@ -37,11 +37,25 @@ const TARGETS = [
     archive: "x86_64-macos.zip",
   },
   {
+    key: "darwin-arm64",
+    zig: "aarch64-macos",
+    os: "darwin",
+    cpu: "arm64",
+    archive: "aarch64-macos.zip",
+  },
+  {
     key: "linux-x64",
     zig: "x86_64-linux-musl",
     os: "linux",
     cpu: "x64",
     archive: "x86_64-linux-musl.tar.xz",
+  },
+  {
+    key: "linux-arm64",
+    zig: "aarch64-linux-musl",
+    os: "linux",
+    cpu: "arm64",
+    archive: "aarch64-linux-musl.tar.xz",
   },
 ];
 
@@ -113,7 +127,9 @@ test("@zigapagos/cli: bin, main, files, and one exact-pinned optionalDependency 
     // package per target, plus exactly the external tools, and nothing else.
     assert.deepEqual(cli.optionalDependencies, {
       "@zigapagos/cli-darwin-x64": "9.9.9",
+      "@zigapagos/cli-darwin-arm64": "9.9.9",
       "@zigapagos/cli-linux-x64": "9.9.9",
+      "@zigapagos/cli-linux-arm64": "9.9.9",
       ...OPTIONAL_TOOLS,
     });
     // The runtime sources this package ships import these by bare name, so they
@@ -128,11 +144,10 @@ test("@zigapagos/cli: bin, main, files, and one exact-pinned optionalDependency 
     // Preact while shipping nothing that imports it fails at the sidecar spawn
     // in a consumer's build rather than here.
     assert.ok(cli.files.includes("runtime"), "files should include the runtime tree");
-    // The union of the platform packages'. Without these npm installs this
-    // package happily on arm64 — every optionalDependency skipped, no binary in
-    // the tree — and the first failure is at build time.
+    // The union of the platform packages prevents npm from installing the
+    // launcher where every optional dependency would be skipped.
     assert.deepEqual(cli.os, ["darwin", "linux"]);
-    assert.deepEqual(cli.cpu, ["x64"]);
+    assert.deepEqual(cli.cpu, ["arm64", "x64"]);
     // index.js does `require("./targets.json")`, so shipping it is not optional.
     for (const f of ["bin", "index.js", "targets.json", "README.md"]) {
       assert.ok(cli.files.includes(f), `files should include ${f}`);
@@ -155,7 +170,7 @@ test("zigapagos alias: bin, exact dependency on @zigapagos/cli, no resolver of i
     // Repeated from @zigapagos/cli so that `npm install zigapagos` on an
     // unsupported host names the package the user actually typed.
     assert.deepEqual(alias.os, ["darwin", "linux"]);
-    assert.deepEqual(alias.cpu, ["x64"]);
+    assert.deepEqual(alias.cpu, ["arm64", "x64"]);
     assert.deepEqual(alias.files, ["bin", "README.md"]);
     assert.equal(alias.main, undefined);
   });
@@ -164,7 +179,14 @@ test("zigapagos alias: bin, exact dependency on @zigapagos/cli, no resolver of i
 test("all three packages carry the same version", () => {
   withGenerated((dir) => {
     const versions = new Set(
-      ["cli", "zigapagos", "cli-darwin-x64", "cli-linux-x64"].map(
+      [
+        "cli",
+        "zigapagos",
+        "cli-darwin-x64",
+        "cli-darwin-arm64",
+        "cli-linux-x64",
+        "cli-linux-arm64",
+      ].map(
         (d) => readJson(dir, d, "package.json").version,
       ),
     );
@@ -175,9 +197,10 @@ test("all three packages carry the same version", () => {
 test("one directory per target and no others", () => {
   withGenerated((dir) => {
     readJson(dir, "cli-darwin-x64", "package.json");
+    readJson(dir, "cli-darwin-arm64", "package.json");
     readJson(dir, "cli-linux-x64", "package.json");
-    assert.throws(() => readJson(dir, "cli-darwin-arm64", "package.json"));
-    assert.throws(() => readJson(dir, "cli-linux-arm64", "package.json"));
+    readJson(dir, "cli-linux-arm64", "package.json");
+    assert.throws(() => readJson(dir, "cli-win32-x64", "package.json"));
   });
 });
 
@@ -188,11 +211,9 @@ test("platform table: a row per target, and every unsupported host named", () =>
       // leaves the native/unsupported column meaning nothing.
       assert.match(readme, /\| Host \| Package \| Status \|/);
       assert.match(readme, /macOS x64.*@zigapagos\/cli-darwin-x64.*native/);
+      assert.match(readme, /macOS arm64.*@zigapagos\/cli-darwin-arm64.*native/);
       assert.match(readme, /Linux x64.*@zigapagos\/cli-linux-x64.*native/);
-      // Both arm64 hosts, with no package and the same status: an unsupported
-      // host is refused, never served a binary for another architecture.
-      assert.match(readme, /Apple Silicon.*\| — \|.*not supported yet/);
-      assert.match(readme, /Linux arm64.*\| — \|.*not supported yet/);
+      assert.match(readme, /Linux arm64.*@zigapagos\/cli-linux-arm64.*native/);
       assert.match(readme, /Windows x64.*\| — \|.*not supported yet/);
       // The architecture substitution this channel used to do is gone from the
       // published docs as well as from the code; a table row promising it is how
@@ -233,30 +254,17 @@ test("the quick-start never presents the bare command as a server", () => {
   });
 });
 
-test("a native darwin-arm64 target replaces its unsupported row and widens cpu", () => {
-  const withArm = [
-    ...TARGETS,
-    {
-      key: "darwin-arm64",
-      zig: "aarch64-macos",
-      os: "darwin",
-      cpu: "arm64",
-      archive: "aarch64-macos.zip",
-    },
-  ];
+test("removing a native target does not leave a stale fallback row", () => {
+  const withoutDarwinArm = TARGETS.filter((target) => target.key !== "darwin-arm64");
   withGenerated((dir) => {
     const readme = readText(dir, "cli", "README.md");
-    assert.match(readme, /macOS arm64.*@zigapagos\/cli-darwin-arm64.*native/);
-    assert.doesNotMatch(readme, /Apple Silicon.*not supported yet/);
-    // Still stated for the host that has no build: adding one target must not
-    // quietly imply the other arch is covered.
-    assert.match(readme, /Linux arm64.*not supported yet/);
+    assert.doesNotMatch(readme, /Apple Silicon/);
+    assert.match(readme, /Linux arm64.*@zigapagos\/cli-linux-arm64.*native/);
     const cli = readJson(dir, "cli", "package.json");
-    assert.equal(cli.optionalDependencies["@zigapagos/cli-darwin-arm64"], "9.9.9");
-    // The launcher's os/cpu is derived, not written down: a new target widens it.
+    assert.equal(cli.optionalDependencies["@zigapagos/cli-darwin-arm64"], undefined);
     assert.deepEqual(cli.cpu, ["arm64", "x64"]);
     assert.deepEqual(readJson(dir, "zigapagos", "package.json").cpu, ["arm64", "x64"]);
-  }, withArm);
+  }, withoutDarwinArm);
 });
 
 test("both published READMEs say an npm install builds islands, SPAs and dev", () => {
@@ -435,10 +443,17 @@ test("targetsFromReleaseZig derives zig triples, with and without an abi", () =>
   const src = `
     const targets: []const std.Target.Query = &.{
         .{ .cpu_arch = .x86_64, .os_tag = .macos },
+        .{ .cpu_arch = .aarch64, .os_tag = .macos },
         .{ .cpu_arch = .x86_64, .os_tag = .linux, .abi = .musl },
+        .{ .cpu_arch = .aarch64, .os_tag = .linux, .abi = .musl },
     };
   `;
-  assert.deepEqual(targetsFromReleaseZig(src), ["x86_64-macos", "x86_64-linux-musl"]);
+  assert.deepEqual(targetsFromReleaseZig(src), [
+    "x86_64-macos",
+    "aarch64-macos",
+    "x86_64-linux-musl",
+    "aarch64-linux-musl",
+  ]);
 });
 
 test("targetsFromReleaseZig throws when the declaration is gone (never silently empty)", () => {
@@ -456,15 +471,23 @@ test("matrixFromReleaseYaml reads target/runner/archive rows", () => {
     "          - target: x86_64-linux-musl",
     "            runner: ubuntu-latest",
     "            archive: x86_64-linux-musl.tar.xz",
+    "          - target: aarch64-linux-musl",
+    "            runner: ubuntu-24.04-arm",
+    "            archive: aarch64-linux-musl.tar.xz",
     "          - target: x86_64-macos",
-    "            runner: macos-latest",
+    "            runner: macos-15-intel",
     "            archive: x86_64-macos.zip",
+    "          - target: aarch64-macos",
+    "            runner: macos-latest",
+    "            archive: aarch64-macos.zip",
     "",
     "    runs-on: ${{ matrix.runner }}",
   ].join("\n");
   assert.deepEqual(matrixFromReleaseYaml(yml), [
     { target: "x86_64-linux-musl", runner: "ubuntu-latest", archive: "x86_64-linux-musl.tar.xz" },
-    { target: "x86_64-macos", runner: "macos-latest", archive: "x86_64-macos.zip" },
+    { target: "aarch64-linux-musl", runner: "ubuntu-24.04-arm", archive: "aarch64-linux-musl.tar.xz" },
+    { target: "x86_64-macos", runner: "macos-15-intel", archive: "x86_64-macos.zip" },
+    { target: "aarch64-macos", runner: "macos-latest", archive: "aarch64-macos.zip" },
   ]);
 });
 
