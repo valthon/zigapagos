@@ -91,6 +91,16 @@ expect_success() {
   fi
 }
 
+expect_log_line() {
+  local name="$1" needle="$2" file="$3"
+  if grep -qF "$needle" "$file"; then
+    echo "ok   — $name"
+  else
+    echo "FAIL — $name" >&2
+    failures=$((failures + 1))
+  fi
+}
+
 make_fixture "$TMP/success"
 expect_success "derives and warms both exact mirror pins" "$TMP/success"
 if grep -qF 'fetch git+https://codeberg.org/' "$TMP/success/zig.log"; then
@@ -99,8 +109,14 @@ if grep -qF 'fetch git+https://codeberg.org/' "$TMP/success/zig.log"; then
 else
   echo "ok   — rescue never contacts Codeberg"
 fi
-grep -qF 'fetch git+https://github.com/ziglang/translate-c#root-commit' "$TMP/success/zig.log"
-grep -qF 'fetch git+https://github.com/ziglang/translate-c?ref=zig-0.16.x#transitive-commit' "$TMP/success/zig.log"
+expect_log_line \
+  "root translate-c pin uses the GitHub mirror" \
+  'fetch git+https://github.com/ziglang/translate-c#root-commit' \
+  "$TMP/success/zig.log"
+expect_log_line \
+  "transitive translate-c pin uses the GitHub mirror" \
+  'fetch git+https://github.com/ziglang/translate-c?ref=zig-0.16.x#transitive-commit' \
+  "$TMP/success/zig.log"
 
 make_fixture "$TMP/warm-only"
 : > "$TMP/warm-only/github-env"
