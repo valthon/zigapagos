@@ -102,6 +102,12 @@ pub fn Table(E: type, Size: type) type {
         ) !Element {
             try st.elements.ensureUnusedCapacity(gpa, elements.len + 1);
 
+            // Keep every fallible check before getOrPut: a newly-created map
+            // entry must never escape with an uninitialized key.
+            const new_off: Element = @enumFromInt(
+                std.math.cast(Size, st.elements.items.len) orelse return error.OutOfMemory,
+            );
+
             const gop = try st.element_map.getOrPutContextAdapted(
                 gpa,
                 std.mem.sliceAsBytes(elements),
@@ -109,8 +115,6 @@ pub fn Table(E: type, Size: type) type {
                 @as(Element.MapContext, .{ .elements = st.elements.items }),
             );
             if (gop.found_existing) return gop.key_ptr.*;
-
-            const new_off: Element = @enumFromInt(st.elements.items.len);
 
             st.elements.appendSliceAssumeCapacity(elements);
             st.elements.appendAssumeCapacity(0);

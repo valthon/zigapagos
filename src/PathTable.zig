@@ -165,6 +165,9 @@ pub fn internPathWithName(
     // If the path is new, we then adjust len to "append" the new data.
     try pt.path_components.ensureUnusedCapacity(gpa, component_count + path_prefix.len); // we do not store an extra index for the null terminator because the name component will be used to store it instead.
     const old_len = pt.path_components.items.len;
+    const new_off: Path = @enumFromInt(
+        std.math.cast(u32, old_len) orelse return error.OutOfMemory,
+    );
     const components = pt.path_components.items[old_len..].ptr[0 .. component_count + path_prefix.len];
 
     @memcpy(components.ptr, path_prefix);
@@ -184,7 +187,6 @@ pub fn internPathWithName(
     pt.path_components.items.len += path_components.len;
     pt.path_components.appendAssumeCapacity(@enumFromInt(0));
 
-    const new_off: Path = @enumFromInt(old_len);
     gop.key_ptr.* = new_off;
 
     return .{ .path = new_off, .name = name };
@@ -212,6 +214,9 @@ pub fn internPath(
     // If the path is new, we then adjust len to "append" the new data.
     try pt.path_components.ensureUnusedCapacity(gpa, component_count + 1);
     const old_len = pt.path_components.items.len;
+    const new_off: Path = @enumFromInt(
+        std.math.cast(u32, old_len) orelse return error.OutOfMemory,
+    );
     const components = pt.path_components.items[old_len..].ptr[0..component_count];
     for (components) |*cmp| cmp.* = try string_table.intern(gpa, it.next().?);
 
@@ -226,13 +231,21 @@ pub fn internPath(
     pt.path_components.items.len += component_count;
     pt.path_components.appendAssumeCapacity(@enumFromInt(0));
 
-    const new_off: Path = @enumFromInt(old_len);
     gop.key_ptr.* = new_off;
 
     return new_off;
 }
 
 pub fn intern(pt: *PathTable, gpa: Allocator, components: []const String) !Path {
+    // Reserve before getOrPut for the same reason as StringTable.intern: once
+    // getOrPut creates an entry, no later fallible operation may leave its key
+    // value uninitialized.
+    try pt.path_components.ensureUnusedCapacity(gpa, components.len + 1);
+
+    const new_off: Path = @enumFromInt(
+        std.math.cast(u32, pt.path_components.items.len) orelse return error.OutOfMemory,
+    );
+
     const gop = try pt.path_map.getOrPutContextAdapted(
         gpa,
         mem.sliceAsBytes(components),
@@ -240,9 +253,6 @@ pub fn intern(pt: *PathTable, gpa: Allocator, components: []const String) !Path 
         @as(Path.MapContext, .{ .components = pt.path_components.items }),
     );
     if (gop.found_existing) return gop.key_ptr.*;
-
-    try pt.path_components.ensureUnusedCapacity(gpa, components.len + 1);
-    const new_off: Path = @enumFromInt(pt.path_components.items.len);
 
     pt.path_components.appendSliceAssumeCapacity(components);
     pt.path_components.appendAssumeCapacity(@enumFromInt(0));
@@ -269,6 +279,12 @@ pub fn internExtend(
     for (components, new[0..components_len]) |c, *n| n.* = c;
     new[components_len] = new_component;
 
+    // As in every other intern path, reject an unrepresentable offset before
+    // getOrPut can create an entry whose key has not been initialized.
+    const new_off: Path = @enumFromInt(
+        std.math.cast(u32, pt.path_components.items.len) orelse return error.OutOfMemory,
+    );
+
     const gop = try pt.path_map.getOrPutContextAdapted(
         gpa,
         mem.sliceAsBytes(new),
@@ -276,8 +292,6 @@ pub fn internExtend(
         @as(Path.MapContext, .{ .components = pt.path_components.items }),
     );
     if (gop.found_existing) return gop.key_ptr.*;
-
-    const new_off: Path = @enumFromInt(pt.path_components.items.len);
 
     pt.path_components.items.len += new.len;
     pt.path_components.appendAssumeCapacity(@enumFromInt(0));
@@ -448,6 +462,19 @@ test PathTable {
     const p3 = try path_table.internPath(gpa, &string_table, s3);
     try std.testing.expectEqual(p3, path_table.getPathNoName(&string_table, &.{}, s3));
     try std.testing.expectEqual(p2, p3);
+}
+
+test "PathTable OOM cannot leave an uninitialized map entry" {
+    var failing: std.testing.FailingAllocator = .init(std.testing.allocator, .{
+        .fail_index = 1,
+    });
+    const gpa = failing.allocator();
+    var path_table: PathTable = .empty;
+    defer path_table.deinit(gpa);
+
+    const component: String = @enumFromInt(1);
+    try std.testing.expectError(error.OutOfMemory, path_table.intern(gpa, &.{component}));
+    try std.testing.expectEqual(null, path_table.get(&.{component}));
 }
 
 // test StringTableHashMap {

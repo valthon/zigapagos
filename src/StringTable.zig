@@ -33,6 +33,11 @@ pub fn intern(
     gpa: Allocator,
     bytes: []const u8,
 ) !String {
+    // Reserve the byte storage before inserting into the map. If this growth
+    // were attempted after getOrPut, an OOM would leave a newly-created map
+    // entry whose key pointer had never been initialized.
+    try st.string_bytes.ensureUnusedCapacity(gpa, bytes.len + 1);
+
     const gop = try st.string_map.getOrPutContextAdapted(
         gpa,
         @as([]const u8, bytes),
@@ -41,8 +46,9 @@ pub fn intern(
     );
     if (gop.found_existing) return gop.key_ptr.*;
 
-    try st.string_bytes.ensureUnusedCapacity(gpa, bytes.len + 1);
-    const new_off: String = @enumFromInt(st.string_bytes.items.len);
+    const new_off: String = @enumFromInt(
+        std.math.cast(u32, st.string_bytes.items.len) orelse return error.OutOfMemory,
+    );
 
     st.string_bytes.appendSliceAssumeCapacity(bytes);
     st.string_bytes.appendAssumeCapacity(0);
@@ -126,6 +132,21 @@ test StringTable {
     try std.testing.expectEqual(null, string_table.get("strawberry"));
     try std.testing.expectEqual(null, string_table.get("coconut"));
     try std.testing.expectEqual(null, string_table.get("lemon"));
+}
+
+test "StringTable OOM cannot leave an uninitialized map entry" {
+    var failing: std.testing.FailingAllocator = .init(std.testing.allocator, .{
+        // The first allocation reserves element bytes; the second grows the
+        // map. Reversing those operations leaves a corrupt entry when this
+        // allocation is forced to fail.
+        .fail_index = 1,
+    });
+    const gpa = failing.allocator();
+    var string_table: StringTable = .empty;
+    defer string_table.deinit(gpa);
+
+    try std.testing.expectError(error.OutOfMemory, string_table.intern(gpa, "banana"));
+    try std.testing.expectEqual(null, string_table.get("banana"));
 }
 
 test HashMap {
