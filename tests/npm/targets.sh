@@ -100,10 +100,12 @@ root="$(fixture publish-unbuilt)"
 node -e '
   const fs = require("node:fs");
   const f = process.argv[1] + "/build/release.zig";
-  const src = fs.readFileSync(f, "utf8").replace(
-    "        .{ .cpu_arch = .aarch64, .os_tag = .linux, .abi = .musl },\n",
+  const before = fs.readFileSync(f, "utf8");
+  const src = before.replace(
+    /^\s*\.\{\s*\.cpu_arch\s*=\s*\.aarch64,\s*\.os_tag\s*=\s*\.linux,\s*\.abi\s*=\s*\.musl\s*\},\s*$/m,
     "",
   );
+  if (src === before) throw new Error("fixture did not find aarch64-linux-musl target");
   fs.writeFileSync(f, src);
 ' "$root"
 expect fail "targets.json row with no build/release.zig entry" "$root"
@@ -115,17 +117,32 @@ edit_json "$root" 'return targets.filter((t) => t.zig !== "x86_64-macos");'
 expect fail "build/release.zig target with no targets.json row" "$root"
 contains "  ...names the missing npm side" "x86_64-macos: in build/release.zig but not in npm/cli/targets.json"
 
-# --- 4. A target with nowhere to build --------------------------------------
+# --- 4. A target assigned to a runner of the wrong architecture -------------
+root="$(fixture wrong-runner)"
+node -e '
+  const fs = require("node:fs");
+  const f = process.argv[1] + "/.github/workflows/release.yml";
+  const before = fs.readFileSync(f, "utf8");
+  const src = before.replace(/(target:\s*aarch64-linux-musl\s*\n\s*runner:)\s*\S+/, "$1 ubuntu-latest");
+  if (src === before) throw new Error("fixture did not find the aarch64 Linux runner");
+  fs.writeFileSync(f, src);
+' "$root"
+expect fail "release target assigned to a runner of the wrong architecture" "$root"
+contains "  ...names the target and required runner" "aarch64-linux-musl: release.yml runner='ubuntu-latest' but native builds require 'ubuntu-24.04-arm'"
+
+# --- 5. A target with nowhere to build --------------------------------------
 # The reverse direction (a matrix row naming an absent triple) is already caught
 # by build/release.zig's -Drelease-target guard; this is the half that was not.
 root="$(fixture no-runner)"
 node -e '
   const fs = require("node:fs");
   const f = process.argv[1] + "/.github/workflows/release.yml";
-  const yml = fs.readFileSync(f, "utf8").replace(
-    /          - target: x86_64-macos\n            runner: macos-15-intel\n            archive: x86_64-macos\.zip\n/,
+  const before = fs.readFileSync(f, "utf8");
+  const yml = before.replace(
+    /^\s*- target:\s*x86_64-macos\s*$[\s\S]*?^\s*archive:\s*x86_64-macos\.zip\s*$\n/m,
     "",
   );
+  if (yml === before) throw new Error("fixture did not find x86_64-macos matrix row");
   fs.writeFileSync(f, yml);
 ' "$root"
 expect fail "release.zig target with no release.yml matrix row" "$root"

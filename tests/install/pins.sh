@@ -77,15 +77,20 @@ grep -rq 'ZIGAPAGOS_RUNTIME_DIR' src/cli/release.zig \
 pass "ZIGAPAGOS_RUNTIME_DIR is spelled the same on both sides"
 
 # --- target triples ----------------------------------------------------------
-# The installer derives the same four triples as targets.json from one arch and
-# one OS branch, avoiding four hand-maintained literals.
-for mapping in 'x86_64|amd64) ZIG_ARCH="x86_64"' 'arm64|aarch64) ZIG_ARCH="aarch64"' \
-               'TARGET="$ZIG_ARCH-linux-musl"' 'TARGET="$ZIG_ARCH-macos"'; do
-  grep -qF "$mapping" "$INSTALL" || fail "install.sh is missing target mapping: $mapping"
-done
-JSON_COUNT="$(node -e 'process.stdout.write(String(require("./npm/cli/targets.json").length))')"
-[ "$JSON_COUNT" = 4 ] || fail "expected four Linux/macOS architecture targets, got $JSON_COUNT"
-pass "install.sh derives all four targets in the release matrix"
+# Derive every required arch and OS suffix from targets.json. This deliberately
+# has no target count: adding a supported target extends the gate automatically.
+while read -r triple; do
+  arch="${triple%%-*}"
+  os_abi="${triple#*-}"
+  case "$arch" in
+    x86_64) grep -qF 'ZIG_ARCH="x86_64"' "$INSTALL" || fail "no installer arch mapping for '$triple'" ;;
+    aarch64) grep -qF 'ZIG_ARCH="aarch64"' "$INSTALL" || fail "no installer arch mapping for '$triple'" ;;
+    *) grep -qF "ZIG_ARCH=\"$arch\"" "$INSTALL" || fail "no installer arch mapping for '$triple'" ;;
+  esac
+  grep -qF "TARGET=\"\$ZIG_ARCH-$os_abi\"" "$INSTALL" \
+    || fail "install.sh cannot derive target '$triple'"
+done < <(node -e 'for (const t of require("./npm/cli/targets.json")) console.log(t.zig)')
+pass "install.sh can derive every target in the release matrix"
 
 # And the archive names, which install.sh builds rather than lists.
 while read -r archive; do

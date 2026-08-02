@@ -254,17 +254,26 @@ test("the quick-start never presents the bare command as a server", () => {
   });
 });
 
-test("removing a native target does not leave a stale fallback row", () => {
-  const withoutDarwinArm = TARGETS.filter((target) => target.key !== "darwin-arm64");
+test("a native target suppresses the matching fallback row", () => {
+  const withWindows = [
+    ...TARGETS,
+    {
+      key: "win32-x64",
+      zig: "x86_64-windows-gnu",
+      os: "win32",
+      cpu: "x64",
+      archive: "x86_64-windows-gnu.zip",
+    },
+  ];
   withGenerated((dir) => {
     const readme = readText(dir, "cli", "README.md");
-    assert.doesNotMatch(readme, /Apple Silicon/);
-    assert.match(readme, /Linux arm64.*@zigapagos\/cli-linux-arm64.*native/);
+    assert.match(readme, /Windows x64.*@zigapagos\/cli-win32-x64.*native/);
+    assert.doesNotMatch(readme, /Windows x64.*not supported yet/);
     const cli = readJson(dir, "cli", "package.json");
-    assert.equal(cli.optionalDependencies["@zigapagos/cli-darwin-arm64"], undefined);
-    assert.deepEqual(cli.cpu, ["arm64", "x64"]);
-    assert.deepEqual(readJson(dir, "zigapagos", "package.json").cpu, ["arm64", "x64"]);
-  }, withoutDarwinArm);
+    assert.equal(cli.optionalDependencies["@zigapagos/cli-win32-x64"], "9.9.9");
+    assert.deepEqual(cli.os, ["darwin", "linux", "win32"]);
+    assert.deepEqual(readJson(dir, "zigapagos", "package.json").os, ["darwin", "linux", "win32"]);
+  }, withWindows);
 });
 
 test("both published READMEs say an npm install builds islands, SPAs and dev", () => {

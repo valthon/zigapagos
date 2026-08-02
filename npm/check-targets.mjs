@@ -36,6 +36,12 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 // to the release matrix must land here deliberately.
 const NPM_ARCH = { x86_64: "x64", aarch64: "arm64" };
 const NPM_OS = { linux: "linux", macos: "darwin", windows: "win32", freebsd: "freebsd" };
+const NATIVE_RUNNER = {
+  "x86_64-linux": "ubuntu-latest",
+  "aarch64-linux": "ubuntu-24.04-arm",
+  "x86_64-macos": "macos-15-intel",
+  "aarch64-macos": "macos-latest",
+};
 
 /**
  * The `targets` literal in build/release.zig, as zig triples.
@@ -180,6 +186,13 @@ export function check(root) {
     // the matrix row named. A mismatch here is a download that succeeds and then
     // finds no file.
     const row = matrix.find((r) => r.target === t.zig);
+    const [arch, os] = t.zig.split("-");
+    const requiredRunner = NATIVE_RUNNER[`${arch}-${os}`];
+    if (row && requiredRunner && row.runner !== requiredRunner) {
+      problems.push(
+        `${t.zig}: release.yml runner='${row.runner ?? "<missing>"}' but native builds require '${requiredRunner}'`,
+      );
+    }
     if (row && row.archive && row.archive !== t.archive) {
       problems.push(
         `${t.zig}: release.yml archive='${row.archive}' but targets.json archive='${t.archive}'`,

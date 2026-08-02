@@ -31,13 +31,13 @@ const UNSUPPORTED_REASON = {
 
 /**
  * Resolve the host to a release target.
- * @returns {{key: string, pkg: string}} the platform package to load. Always the
+ * @returns {{key: string, pkg: string, cpu: string}} the platform package to load. Always the
  * host's own `<platform>-<arch>`: there is no cross-architecture mapping.
  * @throws if this host has no release target.
  */
 function resolveTarget() {
   const key = `${process.platform}-${process.arch}`;
-  if (SUPPORTED[key]) return { key, pkg: SUPPORTED[key] };
+  if (SUPPORTED[key]) return { key, pkg: SUPPORTED[key], cpu: process.arch };
   const reason = UNSUPPORTED_REASON[key];
   throw new Error(
     `${PKG}: unsupported platform '${key}'` +

@@ -37,7 +37,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 REPO="$(pwd)"
-ZIGAPAGOS="$REPO/zig-out/bin/zigapagos"
+ZIGAPAGOS="${ZIGAPAGOS:-$REPO/zig-out/bin/zigapagos}"
 
 if [[ ! -x "$ZIGAPAGOS" ]]; then
   echo "building zigapagos (zig-out/bin/zigapagos missing)..."

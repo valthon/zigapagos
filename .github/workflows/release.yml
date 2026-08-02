@@ -70,6 +70,9 @@ jobs:
             runner: ubuntu-24.04-arm
             archive: aarch64-linux-musl.tar.xz
           - target: x86_64-macos
+            # macos-latest/15/26 are arm64. Keep x64 native on the last Intel
+            # image (retiring around Aug 2027; actions/runner-images#13045), so
+            # this validates the shipped binary rather than Rosetta.
             runner: macos-15-intel
             archive: x86_64-macos.zip
           - target: aarch64-macos

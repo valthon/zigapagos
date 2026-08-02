@@ -460,14 +460,15 @@ expect_run "an unsupported platform is reported as such" 1 \
 # must name each native package rather than refusing it or substituting x64.
 for host in linux darwin; do
   expect_run "$host-arm64 resolves to its native package" 0 \
-    "@zigapagos/cli-$host-arm64" \
+    "@zigapagos/cli-$host-arm64 arm64" \
     node -e 'Object.defineProperty(process,"platform",{value:process.argv[2]});
              Object.defineProperty(process,"arch",{value:"arm64"});
-             console.log(JSON.stringify(require(process.argv[1]).resolveTarget()))' \
+             const target=require(process.argv[1]).resolveTarget();
+             console.log(`${target.pkg} ${target.cpu}`)' \
     "$CLI_MOD" "$host"
 done
 
-# `binaryPath()` should now report only that this deliberately x64-only fixture
+# `binaryPath()` should now report only that this deliberately host-only fixture
 # did not install the otherwise-supported ARM package.
 cat > "$WORK/as-darwin-arm64.js" <<'PRELOAD'
 Object.defineProperty(process, "platform", { value: "darwin" });

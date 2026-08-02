@@ -18,7 +18,7 @@
 // trusted publishing rather than a stored token — see npm/README.md.
 //
 // `--archives <dir>` extracts the binaries out of the release workflow's own
-// target archives named in `cli/targets.json` rather than building
+// artifacts (the archives named in `cli/targets.json`) rather than building
 // anything. That is deliberate: the bytes on npm must be the bytes in the GitHub
 // release, and a rebuild — even from the same commit — is a second chance to be
 // different.

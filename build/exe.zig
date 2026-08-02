@@ -117,20 +117,27 @@ pub fn addWuffsImports(
             .aarch64 => switch (target.result.os.tag) {
                 .macos => zb.path("src/hacks/wuffs-temp-aarch64-macos.h.zig"),
                 .linux => zb.path("src/hacks/wuffs-temp-aarch64-linux.h.zig"),
-                else => @panic("unsupported"),
+                else => noWuffsShim(target),
             },
             .x86 => switch (target.result.os.tag) {
                 .macos => zb.path("src/hacks/wuffs-temp-x86-macos.h.zig"),
                 .linux => zb.path("src/hacks/wuffs-temp-x86-linux.h.zig"),
                 .windows => zb.path("src/hacks/wuffs-temp-x86-windows.h.zig"),
-                else => @panic("unsupported"),
+                else => noWuffsShim(target),
             },
-            else => @panic("unsupported"),
+            else => noWuffsShim(target),
         },
 
         .target = target,
         .optimize = optimize,
     }));
+}
+
+fn noWuffsShim(target: std.Build.ResolvedTarget) noreturn {
+    std.debug.panic(
+        "no checked-in wuffs shim for {s}-{s}; add one under src/hacks/",
+        .{ @tagName(target.result.cpu.arch), @tagName(target.result.os.tag) },
+    );
 }
 
 /// Registers the `check` step and installs the executable.

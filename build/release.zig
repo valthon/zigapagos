@@ -59,7 +59,8 @@ fn addTargets(
     //     or `PAGE_READONLY` (src/wuffs.zig). Same stable-0.16.0 breakage that
     //     already keeps Windows out of CI, so it returns with that port too.
     //   - x86_64-freebsd: links LinuxWatcher's `inotify_init1`/`inotify_add_watch`/
-    //     `inotify_rm_watch`, which do not exist there. Note this is a watcher
+    //     `inotify_rm_watch`, which do not exist there, and has no checked-in
+    //     Wuffs shim under src/hacks/. Note this is a watcher
     //     *selection* bug — FreeBSD must not compile LinuxWatcher at all —
     //     so the commented-out `linkSystemLibrary("inotify")` below would not
     //     have fixed it.
