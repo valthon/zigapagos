@@ -53,15 +53,18 @@ pub fn init(
         .debouncer = debouncer,
         .iocp_port = windows.INVALID_HANDLE_VALUE,
         .entries = std.AutoHashMap(CompletionKey, WatchEntry).init(gpa),
-        .read_buffer = undefined,
+        .read_buffer = &.{},
     };
     errdefer {
+        if (watcher.read_buffer.len != 0) gpa.free(watcher.read_buffer);
         var iter = watcher.entries.valueIterator();
         while (iter.next()) |entry| {
             windows.CloseHandle(entry.dir_handle);
             gpa.free(entry.dir_path);
         }
         watcher.entries.deinit();
+        if (watcher.iocp_port != windows.INVALID_HANDLE_VALUE)
+            windows.CloseHandle(watcher.iocp_port);
     }
 
     // Doubles as the number of WatchEntries
@@ -69,9 +72,12 @@ pub fn init(
 
     for (dir_paths) |path| {
         const in_path = try gpa.dupeZ(u8, path);
+        errdefer gpa.free(in_path);
+        const entry = try addPath(in_path, comp_key, &watcher.iocp_port);
+        errdefer windows.CloseHandle(entry.dir_handle);
         try watcher.entries.putNoClobber(
             comp_key,
-            try addPath(in_path, comp_key, &watcher.iocp_port),
+            entry,
         );
         comp_key += 1;
     }
@@ -127,6 +133,7 @@ fn addPath(
         );
         return error.InvalidHandle;
     }
+    errdefer windows.CloseHandle(dir_handle);
 
     if (port.* == windows.INVALID_HANDLE_VALUE) {
         port.* = try windows.CreateIoCompletionPort(dir_handle, null, key, 0);

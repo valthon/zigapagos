@@ -327,18 +327,21 @@ pub const Command = struct {
     pub fn parse(gpa: Allocator, args: []const []const u8) !Command {
         var output_dir_path: ?[]const u8 = null;
         var build_assets: std.StringArrayHashMapUnmanaged(BuildAsset) = .empty;
+        errdefer build_assets.deinit(gpa);
         var drafts = false;
         var force = false;
         var bun_path: ?[]const u8 = null;
         var island_sidecar: ?[]const u8 = null;
         var island_src_dir: ?[]const u8 = null;
         var islands: std.ArrayListUnmanaged([]const u8) = .empty;
+        errdefer islands.deinit(gpa);
         var island_runtime_entry: ?[]const u8 = null;
         var island_bundle_driver: ?[]const u8 = null;
         var css_minify_driver: ?[]const u8 = null;
         var island_props_check: @import("../islands/props_check.zig").Mode = .off;
         var islands_slice: ?[]const u8 = null;
         var spas: std.ArrayListUnmanaged(root.SpaSpec) = .empty;
+        errdefer spas.deinit(gpa);
         var spa_not_found: ?[]const u8 = null;
         var allow_missing_pages = false;
         var source_maps = false;
@@ -465,6 +468,11 @@ pub const Command = struct {
             }
         }
 
+        const owned_islands = try islands.toOwnedSlice(gpa);
+        errdefer gpa.free(owned_islands);
+        const owned_spas = try spas.toOwnedSlice(gpa);
+        errdefer gpa.free(owned_spas);
+
         return .{
             .output_dir_path = output_dir_path,
             .build_assets = build_assets,
@@ -473,13 +481,13 @@ pub const Command = struct {
             .bun_path = bun_path,
             .island_sidecar = island_sidecar,
             .island_src_dir = island_src_dir,
-            .islands = try islands.toOwnedSlice(gpa),
+            .islands = owned_islands,
             .island_runtime_entry = island_runtime_entry,
             .island_bundle_driver = island_bundle_driver,
             .css_minify_driver = css_minify_driver,
             .island_props_check = island_props_check,
             .islands_slice = islands_slice,
-            .spas = try spas.toOwnedSlice(gpa),
+            .spas = owned_spas,
             .spa_not_found = spa_not_found,
             .allow_missing_pages = allow_missing_pages,
             .summary = summary,
@@ -1319,6 +1327,21 @@ test "parse recognizes the island sidecar args" {
     try std.testing.expectEqualStrings("/usr/bin/bun", cmd.bun_path.?);
     try std.testing.expectEqualStrings("runtime/sidecar/render.ts", cmd.island_sidecar.?);
     try std.testing.expectEqualStrings(".", cmd.island_src_dir.?);
+}
+
+test "parse frees partial release command state on allocation failure" {
+    const Check = struct {
+        fn run(gpa: Allocator) !void {
+            var cmd = try Command.parse(gpa, &.{
+                "--build-asset=a",                  "a.txt",                            "--install=a.txt",
+                "--build-asset=b",                  "b.txt",                            "--install=b.txt",
+                "--island=components/A.island.tsx", "--island=components/B.island.tsx", "--spa=apps/A.spa.tsx|/a",
+                "--spa=apps/B.spa.tsx|/b",
+            });
+            defer cmd.deinit(gpa);
+        }
+    };
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, Check.run, .{});
 }
 
 test "parse recognizes --css-minify-driver (and defaults it to null)" {

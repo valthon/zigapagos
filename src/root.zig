@@ -3784,8 +3784,13 @@ pub fn join(allocator: std.mem.Allocator, paths: []const []const u8, separator: 
             if (this_path.len == 0) continue;
             const prev_sep = prev_path[prev_path.len - 1] == separator;
             const this_sep = this_path[0] == separator;
-            sum += @intFromBool(!prev_sep and !this_sep);
-            sum += if (prev_sep and this_sep) this_path.len - 1 else this_path.len;
+            sum = std.math.add(usize, sum, @intFromBool(!prev_sep and !this_sep)) catch
+                return error.OutOfMemory;
+            sum = std.math.add(
+                usize,
+                sum,
+                if (prev_sep and this_sep) this_path.len - 1 else this_path.len,
+            ) catch return error.OutOfMemory;
             prev_path = this_path;
         }
 

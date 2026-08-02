@@ -739,8 +739,8 @@ fn normalizeLexical(buf: []u8, path: []const u8) NormalizeError![]const u8 {
             buf[out] = '/';
             out += 1;
         }
-        if (out + seg.len > buf.len) return error.TooLong;
-        @memcpy(buf[out .. out + seg.len], seg);
+        if (seg.len > buf.len - out) return error.TooLong;
+        @memcpy(buf[out..][0..seg.len], seg);
         out += seg.len;
     }
     return buf[0..out];

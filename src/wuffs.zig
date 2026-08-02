@@ -24,7 +24,7 @@ const win = if (builtin.os.tag != .windows) void else struct {
         dwMaximumSizeHigh: windows.DWORD,
         dwMaximumSizeLow: windows.DWORD,
         lpName: ?windows.LPCSTR,
-    ) callconv(.winapi) windows.HANDLE;
+    ) callconv(.winapi) ?windows.HANDLE;
 
     //LPVOID MapViewOfFile(
     //  [in] HANDLE hFileMappingObject,
@@ -39,7 +39,7 @@ const win = if (builtin.os.tag != .windows) void else struct {
         dwFileOffsetHigh: windows.DWORD,
         dwFileOffsetLow: windows.DWORD,
         dwNumberOfBytesToMap: windows.SIZE_T,
-    ) callconv(.winapi) [*]u8;
+    ) callconv(.winapi) ?[*]u8;
 
     //BOOL UnmapViewOfFile(
     //  [in] LPCVOID lpBaseAddress
@@ -87,7 +87,6 @@ pub fn setImageSize(
 
         const ptr = switch (builtin.target.os.tag) {
             .windows => winblk: {
-                //TODO: how do we detect failures here?
                 file_mapping = win.CreateFileMappingA(
                     image.handle,
                     null,
@@ -95,9 +94,16 @@ pub fn setImageSize(
                     0,
                     0,
                     null,
-                );
+                ) orelse {
+                    log.debug("CreateFileMapping of '{s}' failed", .{image_path});
+                    return;
+                };
 
-                const ptr = win.MapViewOfFile(file_mapping, 1 << 2, 0, 0, 0);
+                const ptr = win.MapViewOfFile(file_mapping, 1 << 2, 0, 0, 0) orelse {
+                    windows.CloseHandle(file_mapping);
+                    log.debug("MapViewOfFile of '{s}' failed", .{image_path});
+                    return;
+                };
                 break :winblk ptr;
             },
             else => std.posix.mmap(

@@ -16,13 +16,13 @@ const log = std.log.scoped(.watcher);
 io: Io,
 gpa: std.mem.Allocator,
 debouncer: *Debouncer,
-dir_paths: []const []const u8,
+dir_paths: []const [:0]const u8,
 
 pub fn init(
     io: Io,
     gpa: std.mem.Allocator,
     debouncer: *Debouncer,
-    dir_paths: []const []const u8,
+    dir_paths: []const [:0]const u8,
 ) MacosWatcher {
     return .{
         .io = io,
@@ -62,6 +62,7 @@ pub fn listen(watcher: *MacosWatcher) void {
             .{str},
         );
     }
+    defer for (macos_paths) |path| c.CFRelease(path);
 
     const paths_to_watch: c.CFArrayRef = c.CFArrayCreate(
         null,
@@ -111,9 +112,12 @@ pub fn macosCallback(
     _ = eventIds;
     _ = eventFlags;
     _ = streamRef;
-    const watcher: *MacosWatcher = @ptrCast(@alignCast(clientCallBackInfo));
+    const info = clientCallBackInfo orelse return;
+    const watcher: *MacosWatcher = @ptrCast(@alignCast(info));
 
-    const paths: [*][*:0]u8 = @ptrCast(@alignCast(eventPaths));
+    if (numEvents == 0) return;
+    const raw_paths = eventPaths orelse return;
+    const paths: [*][*:0]u8 = @ptrCast(@alignCast(raw_paths));
     for (paths[0..numEvents]) |p| {
         const path = std.mem.span(p);
         log.debug("Changed: {s}\n", .{path});

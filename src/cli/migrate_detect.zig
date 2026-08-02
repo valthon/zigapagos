@@ -203,6 +203,13 @@ pub fn findPropsSpan(src: []const u8) ?[]const u8 {
 /// (brace/paren/angle-depth aware).
 fn parsePropsBlock(gpa: Allocator, block: []const u8) ![]PropField {
     var fields: std.ArrayListUnmanaged(PropField) = .empty;
+    errdefer {
+        for (fields.items) |field| {
+            gpa.free(field.name);
+            gpa.free(field.ts_type);
+        }
+        fields.deinit(gpa);
+    }
     var it = TopLevelFieldIterator{ .src = block };
     while (it.next()) |raw_entry| {
         const entry = std.mem.trim(u8, raw_entry, " \t\r\n");
@@ -218,10 +225,11 @@ fn parsePropsBlock(gpa: Allocator, block: []const u8) ![]PropField {
         if (std.mem.indexOf(u8, type_str, "//")) |ci| type_str = type_str[0..ci];
         type_str = std.mem.trim(u8, type_str, " \t\r\n,");
         if (type_str.len == 0) continue;
-        try fields.append(gpa, .{
-            .name = try gpa.dupe(u8, name),
-            .ts_type = try gpa.dupe(u8, type_str),
-        });
+        const name_copy = try gpa.dupe(u8, name);
+        errdefer gpa.free(name_copy);
+        const type_copy = try gpa.dupe(u8, type_str);
+        errdefer gpa.free(type_copy);
+        try fields.append(gpa, .{ .name = name_copy, .ts_type = type_copy });
     }
     return fields.toOwnedSlice(gpa);
 }
@@ -299,6 +307,10 @@ fn parseDestructuring(gpa: Allocator, src: []const u8) ![]PropField {
     const cb = std.mem.indexOfScalarPos(u8, src, ob, '}') orelse return &.{};
     const inner = src[ob + 1 .. cb];
     var fields: std.ArrayListUnmanaged(PropField) = .empty;
+    errdefer {
+        for (fields.items) |field| gpa.free(field.name);
+        fields.deinit(gpa);
+    }
     var it = std.mem.splitScalar(u8, inner, ',');
     while (it.next()) |raw| {
         var name = std.mem.trim(u8, raw, " \t\r\n");
@@ -306,10 +318,9 @@ fn parseDestructuring(gpa: Allocator, src: []const u8) ![]PropField {
         if (std.mem.indexOfScalar(u8, name, ':')) |ci| name = name[0..ci];
         name = std.mem.trim(u8, name, " \t");
         if (!isIdent(name)) continue;
-        try fields.append(gpa, .{
-            .name = try gpa.dupe(u8, name),
-            .ts_type = "",
-        });
+        const name_copy = try gpa.dupe(u8, name);
+        errdefer gpa.free(name_copy);
+        try fields.append(gpa, .{ .name = name_copy, .ts_type = "" });
     }
     return fields.toOwnedSlice(gpa);
 }
@@ -375,6 +386,10 @@ fn parseQuotedAt(src: []const u8, pos: usize) ?struct { text: []const u8, end: u
 /// heap-allocated. Free with `freeImports`.
 pub fn extractImports(gpa: Allocator, src: []const u8) ![]ImportStmt {
     var stmts: std.ArrayListUnmanaged(ImportStmt) = .empty;
+    errdefer {
+        for (stmts.items) |stmt| gpa.free(stmt.names);
+        stmts.deinit(gpa);
+    }
     var i: usize = 0;
 
     while (i < src.len) {
@@ -526,6 +541,7 @@ pub fn extractImports(gpa: Allocator, src: []const u8) ![]ImportStmt {
 
         // Parse named identifiers from the brace content (if any).
         var names: std.ArrayListUnmanaged([]const u8) = .empty;
+        errdefer names.deinit(gpa);
         if (brace_content) |bc| {
             var it = std.mem.splitScalar(u8, bc, ',');
             while (it.next()) |raw| {
@@ -541,9 +557,11 @@ pub fn extractImports(gpa: Allocator, src: []const u8) ![]ImportStmt {
             }
         }
 
+        const owned_names = try names.toOwnedSlice(gpa);
+        errdefer gpa.free(owned_names);
         try stmts.append(gpa, .{
             .specifier = pq.text,
-            .names = try names.toOwnedSlice(gpa),
+            .names = owned_names,
         });
     }
 
@@ -1047,6 +1065,39 @@ pub fn freeImports(gpa: Allocator, imps: []ImportStmt) void {
         gpa.free(imp.names); // free the per-statement names sub-array
     }
     gpa.free(imps);
+}
+
+const AllocationFailureChecks = struct {
+    fn inferPropsCheck(gpa: Allocator) !void {
+        const props = try inferProps(gpa,
+            \\interface Props {
+            \\  title: string;
+            \\  count: number;
+            \\  options: { active: boolean; label: string };
+            \\}
+        );
+        defer freeProps(gpa, props);
+    }
+
+    fn destructuringCheck(gpa: Allocator) !void {
+        const props = try inferProps(gpa, "const { title, count, options } = Astro.props;");
+        defer freeProps(gpa, props);
+    }
+
+    fn importsCheck(gpa: Allocator) !void {
+        const imports = try extractImports(gpa,
+            \\import React, { useState, useEffect } from "react";
+            \\import { signal, computed, effect } from "@z/runtime";
+            \\import "./styles.css";
+        );
+        defer freeImports(gpa, imports);
+    }
+};
+
+test "allocator failures: owned migrate parser results leak nothing" {
+    try testing.checkAllAllocationFailures(testing.allocator, AllocationFailureChecks.inferPropsCheck, .{});
+    try testing.checkAllAllocationFailures(testing.allocator, AllocationFailureChecks.destructuringCheck, .{});
+    try testing.checkAllAllocationFailures(testing.allocator, AllocationFailureChecks.importsCheck, .{});
 }
 
 test "classifyImport: migrate scaffolder classes (base arms mirror lint BASE_ALLOW)" {

@@ -157,6 +157,7 @@ pub const Command = struct {
 
     pub fn parse(gpa: Allocator, args: []const []const u8) !Command {
         var build_assets: std.StringArrayHashMapUnmanaged(BuildAsset) = .empty;
+        errdefer build_assets.deinit(gpa);
         var drafts = false;
         var ids = false;
 
@@ -221,6 +222,45 @@ pub const Command = struct {
         };
     }
 };
+
+test "debug: parse allocation failures free partial command state" {
+    const Check = struct {
+        fn run(gpa: Allocator) !void {
+            const cmd = try Command.parse(gpa, &.{
+                "--build-asset=app",
+                "components/app.tsx",
+                "--install-always=spa/app.js",
+                "--build-asset=admin",
+                "components/admin.tsx",
+                "--install=spa/admin.js",
+                "--build-asset=docs",
+                "components/docs.tsx",
+                "--build-asset=billing",
+                "components/billing.tsx",
+                "--build-asset=reports",
+                "components/reports.tsx",
+                "--build-asset=settings",
+                "components/settings.tsx",
+                "--build-asset=profile",
+                "components/profile.tsx",
+                "--build-asset=search",
+                "components/search.tsx",
+                "--build-asset=help",
+                "components/help.tsx",
+                "--build-asset=legal",
+                "components/legal.tsx",
+                "--build-asset=status",
+                "components/status.tsx",
+                "--build-asset=contact",
+                "components/contact.tsx",
+                "--drafts",
+                "--ids",
+            });
+            defer cmd.deinit(gpa);
+        }
+    };
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, Check.run, .{});
+}
 
 const help_message =
     \\Usage: zigapagos debug [OPTIONS]

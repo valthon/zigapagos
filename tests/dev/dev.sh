@@ -13,7 +13,8 @@
 # Asserts:
 #   (a) zero-config: `zigapagos dev` with NO arguments builds, serves and
 #       defaults --site/--rebuild/watch-dirs correctly,
-#   (b) foot-gun guard: --site inside a watched dir is refused,
+#   (b) aliased overlapping watch roots boot without crashing, and the foot-gun
+#       guard refuses --site inside a watched dir,
 #   (c) boot + readiness on a minimal site; a content edit triggers a rebuild
 #       that changes the SERVED output (polled, no server restart),
 #   (c2) live-reload: the served HTML carries the dev-only reload
@@ -266,6 +267,21 @@ stop_dev "$ZC_PID"
 rm -rf "$SRC/public"
 echo "PASS: zero-config 'zigapagos dev' (no arguments) builds, serves and defaults correctly"
 
+# A nested root registered before an aliased ancestor makes inotify return an
+# existing watch descriptor whose stored path uses the first spelling. This
+# used to unwrap a missing parent from the second walk and panic at startup.
+mkdir -p "$SRC/x/y"
+echo "running: zigapagos dev (aliased overlapping watch roots)..."
+ALIAS_LOG="$WORK/alias.log"
+ALIAS_PID="$(start_dev "$ALIAS_LOG" --watch-dir=x/y --watch-dir=./x)"
+wait_ready "$ALIAS_LOG" "$ALIAS_PID"
+# Readiness is logged before Watcher.init. Require the later watching banner so
+# a watcher panic cannot look like a successful start followed by clean stop.
+poll 20 grep -q 'dev: watching' "$ALIAS_LOG" \
+  || { dump_log "$ALIAS_LOG" 2; fail "watcher never started with aliased overlapping roots"; }
+stop_dev "$ALIAS_PID"
+echo "PASS: aliased overlapping watch roots boot without crashing"
+
 # --- (b) foot-gun guard: --site inside a watched dir ---------------------------------
 echo "running: zigapagos dev --site=<inside content/> (guard)..."
 if ( cd "$SRC" && "$ZIGAPAGOS" dev --site="$SRC/content/out" -- true ) > "$WORK/guard.log" 2>&1; then
@@ -379,11 +395,10 @@ poll 180 bash -c "curl -sf '$TSX_ORIGIN/' | grep -q DEVLOOP-TSX-MARKER" \
 echo "PASS: tsx-site edit rebuilt via its own build.sh"
 
 kill -TERM -- "-$TSX_PID" 2>/dev/null || true
-poll 15 bash -c "! kill -0 $TSX_PID 2>/dev/null" || fail "tsx-site zigapagos dev did not exit"
+poll 15 bash -c "! kill -0 -- -$TSX_PID 2>/dev/null" || fail "tsx-site dev process group did not exit"
 if curl -sf --max-time 2 -o /dev/null "$TSX_ORIGIN/"; then
   fail "tsx-site server still answering after teardown"
 fi
-pgrep -f "stub-zigbase.ts" >/dev/null && fail "stub zigbase left behind after tsx-site run"
 git -C "$REPO" checkout -- examples/tsx-site/content
 restore_snapshots
 echo "PASS: tsx-site teardown clean"
