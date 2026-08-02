@@ -117,6 +117,39 @@ jobs:
       - name: Setup toolchain (zig + bun via mise)
         uses: jdx/mise-action@v4
 
+      # Both pins normally resolve from Codeberg (one directly, one through
+      # SuperMD), but Codeberg capability discovery has failed persistently from
+      # GitHub-hosted runners. The official ziglang/translate-c GitHub archive
+      # contains the identical commits. Zig caches by the declared content hash,
+      # so warming those exact hashes here lets the unchanged dependency graph
+      # resolve without contacting Codeberg. Assert the hashes: a moved tag or
+      # non-identical mirror must fail instead of poisoning the cache.
+      - name: Warm translate-c cache from the official GitHub archive
+        shell: bash
+        run: |
+          fetch_exact() {
+            url="$1"
+            expected="$2"
+            for attempt in 1 2 3; do
+              if actual="$(zig fetch "$url")" && [ "$actual" = "$expected" ]; then
+                return 0
+              fi
+              if [ -n "${actual:-}" ] && [ "$actual" != "$expected" ]; then
+                echo "::error::translate-c content hash mismatch: expected $expected, got $actual"
+                return 1
+              fi
+              [ "$attempt" -lt 3 ] || return 1
+              sleep $((attempt * 10))
+            done
+          }
+
+          fetch_exact \
+            'git+https://github.com/ziglang/translate-c#7a1a9fdc4ab00835748a6657ecbb835e3d5d45f7' \
+            'translate_c-0.0.0-Q_BUWvP1BgCjAk6PWv5286tOlvzD9-X-NkuTzh0KxY0Q'
+          fetch_exact \
+            'git+https://github.com/ziglang/translate-c#42f630117deffd5318b4a6ceffbd366dd0af8cee' \
+            'translate_c-1.0.0-Q_BUWo75BgBmrtWsRz9QVUZlzvsSUUe_IIXD9vmWguhX'
+
       - name: Build ${{ matrix.target }}
         # Zig fetches git-backed package dependencies during this step. Codeberg
         # occasionally terminates capability discovery with ProtocolError; the
