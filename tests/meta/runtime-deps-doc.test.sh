@@ -97,6 +97,19 @@ zip.addDirectoryArg(exe.getEmittedBin());
 tar.addArg("zigapagos");
 EOF
 
+  # Enough of an installer for rule 7: the asset it fetches and the two flags the
+  # page promises. The real script's own constants are checked by
+  # tests/install/pins.sh — what this fixture stands in for is the page's claim
+  # that a script exists and does those things.
+  cat >| "$d/install.sh" <<'EOF'
+#!/bin/sh
+fetch "$ASSET_URL/runtime.tar.xz" "$TMP/runtime.tar.xz"
+case "$1" in
+  --no-bun) WANT_BUN=0 ;;
+  --no-zigbase) WANT_ZIGBASE=0 ;;
+esac
+EOF
+
   doc <<'EOF'
 | Command | Bun | ZigBase |
 | --- | --- | --- |
@@ -111,6 +124,9 @@ Pinned v9.9.9, cached at zigapagos/zigbase/v9.9.9/zigbase, or from
 
 Flags: --bun= --css-minify-driver= --island-props-check= --island-sidecar=
 --island-src-dir= --zigbase= --no-download --download-zigbase
+
+Install with `curl -fsSL https://example.invalid/install.sh | sh`, which unpacks
+runtime.tar.xz. Pass --no-bun or --no-zigbase to skip those.
 EOF
 }
 
@@ -219,6 +235,32 @@ check "a flag the page names but dev no longer parses is caught" 1 "no longer pa
 newcase
 sed_i 's/--download-zigbase//' "$d/docs/runtime-dependencies.md"
 check "a flag silently dropped from the page is caught" 1 "no longer mentions --download-zigbase"
+
+# ── 7. The installer column describes something that exists ────────────────
+
+newcase
+rm "$d/install.sh"
+check "a deleted installer under a page that advertises one is caught" 1 "install.sh is gone"
+
+newcase
+sed_i '/install.sh | sh/d' "$d/docs/runtime-dependencies.md"
+check "a page that stopped showing the curl command is caught" 1 "no longer shows the curl|sh command"
+
+newcase
+sed_i 's/runtime\.tar\.xz//g' "$d/install.sh"
+check "an installer that stopped fetching the runtime asset is caught" 1 "no longer fetches runtime.tar.xz"
+
+newcase
+sed_i 's/runtime\.tar\.xz//g' "$d/docs/runtime-dependencies.md"
+check "a page that stopped naming the runtime asset is caught" 1 "stopped naming the runtime.tar.xz asset"
+
+newcase
+sed_i 's/--no-zigbase)//' "$d/install.sh"
+check "a flag the page promises but the installer dropped is caught" 1 "no longer parses --no-zigbase"
+
+newcase
+sed_i 's/--no-bun//g' "$d/docs/runtime-dependencies.md"
+check "an installer flag silently dropped from the page is caught" 1 "no longer mentions --no-bun"
 
 # ── Anti-vacuity ────────────────────────────────────────────────────────────
 # The two ways this gate could pass forever while checking nothing.

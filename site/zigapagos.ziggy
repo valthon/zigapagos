@@ -6,10 +6,16 @@ Site {
     .layouts_dir_path = "layouts",
     .assets_dir_path = "assets",
     .deploy_target = "zigbase",
-    // og.svg is the hand-authored source for the rasterised og:image
-    // (og.png, referenced from base.shtml's og:image tag) and isn't linked
-    // from any page itself, so the reference-counted asset installer would
-    // otherwise prune it. List it explicitly so the source stays published
-    // for direct linking.
-    .static_assets = ["og.svg"],
+    // Assets nothing on the site LINKS to, and which the reference-counted
+    // installer would therefore prune. Listed explicitly so they stay published.
+    //
+    //   og.svg      the hand-authored source for the rasterised og:image
+    //               (og.png, referenced from base.shtml's og:image tag).
+    //   install.sh  the curl installer. The download page shows the command in a
+    //               code block — text, not a link — so nothing counts a reference
+    //               to it, and the one URL the README and the front page tell
+    //               people to pipe into their shell would 404. It is a gitignored
+    //               mirror of the repository-root install.sh, copied in by
+    //               build.sh; see the note there.
+    .static_assets = ["og.svg", "install.sh"],
 }

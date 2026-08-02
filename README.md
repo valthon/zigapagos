@@ -66,27 +66,62 @@ map. No island on the page? Zero JavaScript shipped.
 **Building a site needs no Zig toolchain.** `zigapagos` is a standalone
 executable; nothing in a Zigapagos project is compiled from Zig source.
 
+```sh
+curl -fsSL https://valthon.github.io/zigapagos/install.sh | sh
+
+zigapagos init   # scaffold a site
+zigapagos dev    # dev loop at http://127.0.0.1:1990
+```
+
+That one command installs the `zigapagos` binary, the `@z/runtime` tree it renders
+islands and SPAs through, and — only if you don't already have them — Bun and
+ZigBase. Everything goes under `~/.local/share/zigapagos` with a launcher in
+`~/.local/bin`: no `sudo`, no edits to your shell startup files, and nothing is
+written until each download has been verified against the release's published
+SHA-256 sums. Re-running installs a new version alongside the old one and
+repoints the launcher; to uninstall, remove those two paths.
+
+`| sh -s -- --help` lists the options: `--version` for a specific release,
+`--prefix` / `--bin-dir` to move where things go, `--no-bun` / `--no-zigbase` to
+leave those to you. It is [one file](install.sh) — read it before you pipe it
+anywhere.
+
+**x86_64 Linux and macOS only.** arm64 (including Apple Silicon) has no release
+build yet: `zig translate-c` crashes on a C dependency for every aarch64 target
+on released Zig 0.16.0. Both the installer and `npm install` refuse an arm64 host
+rather than substituting the x86_64 binary, because an emulated build that looks
+native is worse than a clear refusal — build from source meanwhile. Windows needs
+WSL2.
+
+### From npm
+
 ```bash
 npx zigapagos init                             # scaffold a content site
 npx zigapagos dev                              # dev loop at http://127.0.0.1:1990
 npx zigapagos release --output=public --force  # build it
 ```
 
-A prebuilt binary for macOS x64 and Linux x64 — arm64 is **not** supported on
-either OS until a native aarch64 build lands, and `npm install` refuses those hosts
-rather than substituting the x64 binary. `zigapagos` is an alias for the canonical
-[`@zigapagos/cli`](npm/README.md). This channel covers **everything**: content
+The same complete install, if you would rather have it in a project's
+`node_modules` than on your machine — this one needs Node.js 18+, which the shell
+installer does not. `zigapagos` is an alias for the canonical
+[`@zigapagos/cli`](npm/README.md). Either channel covers **everything**: content
 sites, the CLI tooling (`init`, `migrate`, `doctor`, `validate`, `explain`),
-**islands**, **native SPAs** and `zigapagos dev`, with no Zig toolchain. The
-package ships the `@z/runtime` sources and the Bun sidecar, and depends on `bun`
-and `@zigbase/server`, so `release` discovers your `*.island.tsx` / `*.spa.tsx`
+**islands**, **native SPAs** and `zigapagos dev`. The package ships the
+`@z/runtime` sources and the Bun sidecar, and depends on `bun` and
+`@zigbase/server`, so `release` discovers your `*.island.tsx` / `*.spa.tsx`
 entries and bundles them itself.
 
-The [releases page](https://github.com/valthon/zigapagos/releases) gets you the
-binary and nothing else — no Bun, and no `@z/runtime` tree, which islands and
-SPAs need. [`docs/runtime-dependencies.md`](docs/runtime-dependencies.md) is the
-full account: what each command needs installed, how Bun and ZigBase are
-obtained, and what npm supplies that an archive does not.
+### From the releases page
+
+Each release publishes the two per-target archives, a `runtime.tar.xz`, and a
+`SHA256SUMS`. The per-target archives contain the **binary alone**: islands and
+SPAs additionally need the `@z/runtime` tree out of `runtime.tar.xz`, with
+`ZIGAPAGOS_RUNTIME_DIR` pointed at it. Doing that by hand is exactly what
+`install.sh` does for you, so this route is for people who want to place the
+pieces themselves.
+[`docs/runtime-dependencies.md`](docs/runtime-dependencies.md) is the full
+account: what each command needs installed, how Bun and ZigBase are obtained, and
+what each channel supplies.
 
 To add your first island, see [docs/islands.md](docs/islands.md). A complete
 worked example lives in [`examples/tsx-site/`](examples/tsx-site/) — islands,

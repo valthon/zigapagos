@@ -146,6 +146,52 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # --- the runtime asset ------------------------------------------------------
+  # `runtime.tar.xz`: the @z/runtime tree with its node_modules vendored, which is
+  # what install.sh unpacks alongside the binary. Without it a curl install has no
+  # sidecar, no bundlers and no slicers, and cannot render an island — the
+  # per-target archives carry the binary alone, deliberately (see
+  # docs/runtime-dependencies.md).
+  #
+  # Its own job, not a step inside `build`: the payload is identical for every
+  # target, so building it once is both cheaper and the only way to guarantee the
+  # two platforms ship the same bytes. It needs bun (to resolve the dependencies)
+  # and node (npm/stage-runtime.mjs owns which files go in), and neither is a
+  # cross-compilation concern.
+  #
+  # Runs on EVERY trigger, including pull requests, for the same reason the npm
+  # job does: a packing mistake discovered at tag time is a mistake discovered too
+  # late.
+  runtime-asset:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Setup toolchain (zig + bun via mise)
+        uses: jdx/mise-action@v4
+
+      - name: Pack the runtime asset
+        run: bash scripts/pack-runtime.sh dist
+
+      # NOT named `release-*`: the `build` matrix uses that prefix and both the npm
+      # job and the publish job download `release-*` with `merge-multiple`. A
+      # runtime asset that matched would land in the npm job's `--archives` input
+      # depending only on which job finished first. `publish` downloads this one by
+      # name, so what it checksums is deterministic.
+      - name: Upload runtime.tar.xz
+        uses: actions/upload-artifact@v7
+        with:
+          name: runtime-asset
+          path: dist/runtime.tar.xz
+          if-no-files-found: error
+          retention-days: 1
+
   # --- npm distribution -------------------------------------------------------
   # Assemble the three npm packages from the archives `build` just produced, pack
   # them, and install-test them. Runs on EVERY trigger, including pull requests:
@@ -221,7 +267,10 @@ jobs:
   publish:
     # Tag pushes only: a PR or dispatch run stops after `build`.
     if: github.event_name == 'push'
-    needs: build
+    # `runtime-asset` is a hard dependency, not an ordering preference: a release
+    # published without it is a release whose advertised install method 404s
+    # halfway through, on every host, until the next tag.
+    needs: [build, runtime-asset]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -241,6 +290,15 @@ jobs:
         with:
           pattern: release-*
           merge-multiple: true
+          path: dist
+
+      # Into the same directory, so it is checksummed with everything else and
+      # uploaded by the same `dist/*`. install.sh verifies it against the very
+      # SHA256SUMS the next step writes.
+      - name: Download the runtime asset
+        uses: actions/download-artifact@v8
+        with:
+          name: runtime-asset
           path: dist
 
       - name: Checksum the archives

@@ -29,6 +29,15 @@ bun install --frozen-lockfile 2>/dev/null || bun install
 # sidebar instead of at the real cause.
 bun run scripts/gen-docs-mirror.ts
 
+# The curl installer is served from this site — `curl -fsSL
+# https://valthon.github.io/zigapagos/install.sh | sh` is the headline install
+# command in the README and on the download page. The canonical script is at the
+# repository root; this is a gitignored mirror of it, on the same reasoning as the
+# docs mirrors above. A committed second copy under site/assets/ would be a copy
+# that can drift from the one users are told to pipe into their shell, and the
+# drift would be invisible until someone ran the stale one.
+cp "$REPO/install.sh" assets/install.sh
+
 # The runtime tree this build's sidecar, bundlers and slicers come out of. Set
 # for a checkout the same way the npm launcher sets it for an install: the SPA
 # and slice drivers are paths INTO that tree and have no flags of their own.

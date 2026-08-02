@@ -23,10 +23,11 @@
 // release, and a rebuild — even from the same commit — is a second chance to be
 // different.
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { genPackages, toolchainDeps, versionFromBuildZon } from "./gen-packages.mjs";
+import { stageRuntime } from "./stage-runtime.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..");
@@ -67,52 +68,11 @@ console.log(`generated manifests for ${ORDER.length} packages`);
 // second copy in the tree is a copy that can drift from the runtime/ the test
 // suite actually exercises.
 //
-// What is excluded is excluded on purpose, not to save bytes:
-//   - `test/`, `*.test.ts` — the bun-test suite and its fixtures. Those fixtures
-//     import `react`, `@acme/greeting` and `my-store`, none of which are
-//     dependencies of anything we ship; packing them would put unresolvable bare
-//     imports inside the tarball and invite exactly the "why does this package
-//     need React?" question, with no upside.
-//   - `node_modules/` — resolved by the consumer's own install from the
-//     `dependencies` this package declares.
-// `src/testing/` IS shipped, though nothing reaches it at build time: it is a
-// target of runtime/package.json's `exports` map, and that map is load-bearing
-// here — the sidecar resolves `@z/runtime` through package SELF-REFERENCE, which
-// requires the shipped subtree to keep its package.json intact and its export
-// targets present.
-const RUNTIME_SRC = join(REPO_ROOT, "runtime");
-const RUNTIME_DEST = join(HERE, "cli", "runtime");
-rmSync(RUNTIME_DEST, { recursive: true, force: true });
-for (const entry of ["package.json", "src", "sidecar", "scripts"]) {
-  cpSync(join(RUNTIME_SRC, entry), join(RUNTIME_DEST, entry), {
-    recursive: true,
-    filter: (src) => {
-      const rel = src.slice(RUNTIME_SRC.length + 1);
-      if (rel.endsWith(".test.ts")) return false;
-      return !rel.split(/[\\/]/).includes("node_modules");
-    },
-  });
-}
-// The files the binary is pointed at BY NAME (npm/cli/bin/zigapagos.js ->
-// ZIGAPAGOS_RUNTIME_DIR -> src/cli/release.zig's runtimeDefaults). A copy that
-// silently missed one would publish a package whose islands fail at spawn, or
-// whose SPA build dies in the bundler, so assert them here rather than discover
-// it in a consumer's build log. Keep this list in lockstep with
-// `runtimeDefaults` — every path it joins is one row here.
-for (const rel of [
-  "sidecar/standalone.ts",
-  "sidecar/bundle-island.ts",
-  "src/browser-entry.ts",
-  "sidecar/bundle-standalone.ts",
-  "scripts/build-spa-runtime.ts",
-  "src/spa-entry.ts",
-  "src/host.ts",
-  "src/ssr-env.ts",
-]) {
-  if (!existsSync(join(RUNTIME_DEST, rel))) {
-    throw new Error(`publish: runtime/${rel} did not make it into the staged tree`);
-  }
-}
+// The rules — which entries, which exclusions, which files must survive — live in
+// stage-runtime.mjs, because the release's `runtime.tar.xz` asset stages the same
+// tree for the curl installer. The two channels must ship identical trees, and
+// two lists that have to agree eventually do not.
+stageRuntime(REPO_ROOT, join(HERE, "cli", "runtime"));
 console.log(`staged runtime/ -> cli/runtime (sources for the Bun sidecar and island bundler)`);
 
 // --- 2. Binaries ------------------------------------------------------------
