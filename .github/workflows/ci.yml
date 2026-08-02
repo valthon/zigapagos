@@ -152,7 +152,13 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ${{ github.workspace }}/.zig-global-cache
-          key: zig-build-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-${{ hashFiles('build.zig', 'build.zig.zon', 'build/**', 'src/**') }}
+          # `baseline` salts this producer's exact key because native and
+          # portable objects have different target feature sets. It stays after
+          # the shared OS/version prefix so downstream compile jobs can restore
+          # this content-addressed cache through their existing fallback key.
+          # Without the salt an exact hit on the old native key makes the save
+          # below skip forever, rebuilding the corrected objects on every run.
+          key: zig-build-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-baseline-${{ hashFiles('build.zig', 'build.zig.zon', 'build/**', 'src/**') }}
           restore-keys: |
             zig-build-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-
             zig-pkg-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-
@@ -193,8 +199,37 @@ jobs:
       # If a ReleaseFast artifact is ever needed in CI, it belongs in a separate
       # job that nothing blocks on; `zig build release` (build/release.zig) is
       # already ReleaseFast for published binaries regardless.
+      #
+      # This binary crosses a machine boundary: every downstream job downloads
+      # and runs it on a different hosted runner. `standardTargetOptions` uses
+      # the build host's native CPU when no CPU is named. On run 30703761029 the
+      # builder had AVX-512, so compiler_rt emitted an unconditional zmm memcpy;
+      # a consumer runner without AVX-512 hit SIGILL at 0x99ad43b. Because that
+      # happened on a render worker, the main thread could then wait forever for
+      # the job it never finished -- issue #112's "crash" and "hang" were the
+      # same machine-specific artifact. A reusable artifact must target the
+      # architecture baseline, just like build/release.zig's explicit triples.
       - name: Build zigapagos
-        run: zig build
+        run: zig build -Dcpu=baseline
+
+      # Pin the actual failure mode as well as the command-line intent above.
+      # `-Dcpu=baseline` makes compiler_rt's hot memcpy use x86-64 baseline SSE;
+      # a removed/misspelled flag would put the builder's AVX2/AVX-512 width
+      # straight back into this function. Linux is the platform that failed and
+      # provides GNU objdump; the same build flag is still passed on macOS.
+      - name: CPU portability gate (reusable Linux artifact)
+        if: runner.os == 'Linux'
+        run: |
+          objdump -d --disassemble=compiler_rt.memcpy.memcpyFast zig-out/bin/zigapagos > /tmp/zigapagos-memcpy.dis
+          grep -q '<compiler_rt.memcpy.memcpyFast>:' /tmp/zigapagos-memcpy.dis || {
+            echo '::error::could not inspect compiler_rt.memcpy.memcpyFast; update the portability gate for this Zig version'
+            exit 1
+          }
+          if grep -Eq '%(ymm|zmm)' /tmp/zigapagos-memcpy.dis; then
+            echo '::error::reusable zigapagos artifact contains a host-width compiler_rt memcpy'
+            sed -n '1,220p' /tmp/zigapagos-memcpy.dis
+            exit 1
+          fi
 
       - name: Save Zig cache (now carrying compiled objects)
         if: steps.zig-cache.outputs.cache-hit != 'true'
