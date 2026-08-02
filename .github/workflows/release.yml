@@ -117,17 +117,18 @@ jobs:
       - name: Setup toolchain (zig + bun via mise)
         uses: jdx/mise-action@v4
 
-      # Both pins normally resolve from Codeberg (one directly, one through
-      # SuperMD), but Codeberg capability discovery has failed persistently from
-      # GitHub-hosted runners (tracked in #121). The official
+      # Both translate-c pins normally resolve from Codeberg (one directly, one
+      # through SuperMD), but Codeberg capability discovery has failed
+      # persistently from GitHub-hosted runners (tracked in #121). The official
       # ziglang/translate-c GitHub archive contains the identical commits. Zig
       # caches by content hash, so warming those hashes lets the unchanged graph
       # resolve without contacting Codeberg.
       #
-      # Remove this step when #121 confirms Codeberg is reachable from hosted
-      # runners again, or when neither resolved pin uses Codeberg. The resolved-
-      # graph checks below make a future pin bump fail here rather than silently
-      # leaving this workaround warm an obsolete package.
+      # Remove only this step when #121 confirms Codeberg is reachable from
+      # hosted runners again, or when neither resolved pin uses Codeberg. Pin
+      # changes still fail closed, although when Codeberg is unavailable the
+      # later fetch retry may report its general dependency-fetch diagnostic
+      # before the resolved-graph check can name an obsolete warmed hash.
       - name: Warm translate-c cache from the official GitHub archive
         shell: bash
         run: |
@@ -152,25 +153,41 @@ jobs:
             done
           }
 
-          root_pin="$(node - <<'NODE'
-          const src = require("node:fs").readFileSync("build.zig.zon", "utf8");
-          const block = src.match(/\.translate_c\s*=\s*\.\{([\s\S]*?)\n\s*\},/);
+          derive_pin() {
+            node - "$1" "$2" <<'NODE'
+          const [file, dependency] = process.argv.slice(2);
+          const src = require("node:fs").readFileSync(file, "utf8");
+          const escaped = dependency.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const block = src.match(new RegExp(`\\.${escaped}\\s*=\\s*\\.\\{([\\s\\S]*?)\\n\\s*\\},`));
           const url = block?.[1].match(/\.url\s*=\s*"([^"]+)"/)?.[1];
           const hash = block?.[1].match(/\.hash\s*=\s*"([^"]+)"/)?.[1];
-          if (!url || !hash) throw new Error("could not derive root translate_c pin");
-          process.stdout.write(`${url.replace("codeberg.org", "github.com")}\t${hash}`);
+          if (!url || !hash) throw new Error(`could not derive ${dependency} pin from ${file}`);
+          process.stdout.write(`${url}\t${hash}`);
           NODE
-          )"
-          IFS=$'\t' read -r root_mirror_url root_hash <<< "$root_pin"
+          }
 
-          # SuperMD's transitive pin. Unlike the root pin it cannot be read until
-          # SuperMD is resolved, so the graph assertion below is its drift gate.
-          supermd_url='git+https://github.com/ziglang/translate-c#42f630117deffd5318b4a6ceffbd366dd0af8cee'
-          supermd_hash='translate_c-1.0.0-Q_BUWo75BgBmrtWsRz9QVUZlzvsSUUe_IIXD9vmWguhX'
+          root_pin="$(derive_pin build.zig.zon translate_c)"
+          IFS=$'\t' read -r root_url root_hash <<< "$root_pin"
+          root_mirror_url="${root_url/codeberg.org/github.com}"
 
-          fetch_exact "$root_mirror_url" "$root_hash"
+          # SuperMD itself is hosted on GitHub, so resolve that exact root pin
+          # first and read its translate_c dependency instead of copying it here.
+          supermd_pin="$(derive_pin build.zig.zon supermd)"
+          IFS=$'\t' read -r supermd_url supermd_hash <<< "$supermd_pin"
           fetch_exact "$supermd_url" "$supermd_hash"
 
+          transitive_pin="$(derive_pin "zig-pkg/$supermd_hash/build.zig.zon" translate_c)"
+          IFS=$'\t' read -r transitive_url transitive_hash <<< "$transitive_pin"
+          transitive_mirror_url="${transitive_url/codeberg.org/github.com}"
+
+          fetch_exact "$root_mirror_url" "$root_hash"
+          fetch_exact "$transitive_mirror_url" "$transitive_hash"
+
+          printf 'WARMED_TRANSLATE_C_HASHES=%s %s\n' "$root_hash" "$transitive_hash" >> "$GITHUB_ENV"
+
+      - name: Fetch dependencies
+        shell: bash
+        run: |
           # Retry only dependency resolution. Compilation below runs once, so a
           # deterministic source error fails immediately rather than rebuilding.
           for attempt in 1 2 3; do
@@ -184,7 +201,10 @@ jobs:
             sleep $((attempt * 10))
           done
 
-          for expected in "$root_hash" "$supermd_hash"; do
+          # WARMED_TRANSLATE_C_HASHES is supplied only by the temporary mirror
+          # step. If that step is removed under #121, dependency fetching and
+          # retries remain intact and this loop naturally has nothing to check.
+          for expected in ${WARMED_TRANSLATE_C_HASHES:-}; do
             found=0
             grep -qF ".hash = \"$expected\"" build.zig.zon && found=1
             if [ "$found" -eq 0 ]; then
