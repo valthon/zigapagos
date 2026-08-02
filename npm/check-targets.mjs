@@ -17,8 +17,9 @@
 // which is the fourth combination and the only one that was already covered.
 //
 // Everything except the triple list is DERIVED here rather than trusted: the npm
-// key/os/cpu and the archive filename all follow from the zig triple, so a
-// hand-edited targets.json cannot quietly invent `linux-arm64 -> x86_64-macos`.
+// key/os/cpu, archive filename, and native runner all follow from the zig triple,
+// so a hand-edited row cannot quietly invent `linux-arm64 -> x86_64-macos` or
+// assign an ARM target to an x64 runner.
 //
 //   node npm/check-targets.mjs [--root <dir>]
 //
@@ -36,12 +37,19 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 // to the release matrix must land here deliberately.
 const NPM_ARCH = { x86_64: "x64", aarch64: "arm64" };
 const NPM_OS = { linux: "linux", macos: "darwin", windows: "win32", freebsd: "freebsd" };
-const NATIVE_RUNNER = {
-  "x86_64-linux": "ubuntu-latest",
-  "aarch64-linux": "ubuntu-24.04-arm",
-  "x86_64-macos": "macos-15-intel",
-  "aarch64-macos": "macos-latest",
-};
+
+/** The GitHub-hosted runner implied by a target's native arch and OS. */
+function nativeRunnerFor(arch, os) {
+  if (os === "linux") {
+    if (arch === "x86_64") return "ubuntu-latest";
+    if (arch === "aarch64") return "ubuntu-24.04-arm";
+  }
+  if (os === "macos") {
+    if (arch === "x86_64") return "macos-15-intel";
+    if (arch === "aarch64") return "macos-latest";
+  }
+  return undefined;
+}
 
 /**
  * The `targets` literal in build/release.zig, as zig triples.
@@ -187,10 +195,10 @@ export function check(root) {
     // finds no file.
     const row = matrix.find((r) => r.target === t.zig);
     const [arch, os] = t.zig.split("-");
-    const requiredRunner = NATIVE_RUNNER[`${arch}-${os}`];
+    const requiredRunner = nativeRunnerFor(arch, os);
     if (row && !requiredRunner) {
       problems.push(
-        `${t.zig}: no native runner policy for '${arch}-${os}'; add one to NATIVE_RUNNER`,
+        `${t.zig}: no native GitHub-hosted runner policy for '${arch}-${os}' in nativeRunnerFor()`,
       );
     } else if (row && row.runner !== requiredRunner) {
       problems.push(
@@ -220,12 +228,13 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     process.exit(1);
   }
   if (problems.length > 0) {
-    console.error("FAIL: release target matrix disagrees across its three declarations:");
+    console.error("FAIL: release target configuration is invalid:");
     for (const p of problems) console.error(`  - ${p}`);
     console.error(
-      "\nFix by editing build/release.zig (what ships), npm/cli/targets.json (what npm\n" +
-        "publishes) and .github/workflows/release.yml's matrix (where each is built)\n" +
-        "together. A target belongs in all three or none.",
+      "\nFix each problem at the source it names. A target belongs in build/release.zig\n" +
+        "(what ships), npm/cli/targets.json (what npm publishes), and release.yml's\n" +
+        "matrix (where it is built), while its runner must match the native arch/OS\n" +
+        "policy derived by nativeRunnerFor() in this gate.",
     );
     process.exit(1);
   }

@@ -57,10 +57,16 @@ decides **where** each target is built and what its archive is called.
 all three.
 
 `npm/check-targets.mjs` fails when they disagree, and derives the npm `key`/`os`/`cpu`
-and the archive filename from the zig triple rather than trusting `targets.json` — so
-a hand-edited row cannot invent a mapping. It runs in CI through
-`tests/npm/targets.sh` (which also self-tests each failure mode) and again in the
-release workflow before anything is packed.
+and archive filename from the zig triple rather than trusting `targets.json`; it also
+derives the required native runner from the triple and checks the workflow row. Thus a
+hand-edited row cannot invent a mapping or assign an ARM target to an x64 runner. It
+runs in CI through `tests/npm/targets.sh` (which also self-tests each failure mode)
+and again in the release workflow before anything is packed.
+
+The generated platform table also drops a fallback “not supported yet” row as soon
+as a native target claims the same key. `npm/gen-packages.test.mjs` pins that
+deduplication, so adding support cannot leave contradictory native and unsupported
+rows in the docs.
 
 Today's matrix contains native x64 and arm64 targets for both macOS and Linux.
 Each platform package declares its exact `os` and `cpu`, so npm selects the

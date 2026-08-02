@@ -37,7 +37,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 REPO="$(pwd)"
-if [[ -n "${ZIGAPAGOS_BIN+x}" ]]; then
+if [[ -n "${ZIGAPAGOS_BIN:+x}" ]]; then
   ZIGAPAGOS="$ZIGAPAGOS_BIN"
   [[ -x "$ZIGAPAGOS" ]] || {
     echo "FAIL: ZIGAPAGOS_BIN is not executable: $ZIGAPAGOS"
@@ -45,11 +45,10 @@ if [[ -n "${ZIGAPAGOS_BIN+x}" ]]; then
   }
 else
   ZIGAPAGOS="$REPO/zig-out/bin/zigapagos"
-fi
-
-if [[ -z "${ZIGAPAGOS_BIN+x}" && ! -x "$ZIGAPAGOS" ]]; then
-  echo "building zigapagos (zig-out/bin/zigapagos missing)..."
-  mise exec -- zig build || { echo "FAIL: zig build failed"; exit 1; }
+  if [[ ! -x "$ZIGAPAGOS" ]]; then
+    echo "building zigapagos (zig-out/bin/zigapagos missing)..."
+    mise exec -- zig build || { echo "FAIL: zig build failed"; exit 1; }
+  fi
 fi
 
 fail() { echo "FAIL: $*"; exit 1; }

@@ -49,7 +49,7 @@ expect() {
 }
 
 # The message matters as much as the exit code: this gate fires during a release
-# and whoever reads it has to know which of the three files to edit.
+# and whoever reads it has to know which declaration or derived policy to edit.
 contains() {
   local name="$1" needle="$2"
   case "$out" in
@@ -175,7 +175,9 @@ node -e '
   fs.writeFileSync(yamlFile, yaml);
 ' "$root"
 expect fail "new platform with no native-runner policy" "$root"
-contains "  ...requires an explicit policy entry" "x86_64-freebsd: no native runner policy for 'x86_64-freebsd'; add one to NATIVE_RUNNER"
+contains "  ...requires an explicit policy entry" "x86_64-freebsd: no native GitHub-hosted runner policy for 'x86_64-freebsd' in nativeRunnerFor()"
+contains "  ...frames policy failures accurately" "FAIL: release target configuration is invalid:"
+contains "  ...names the policy source in the remediation" "policy derived by nativeRunnerFor() in this gate"
 
 # --- 7. A hand-edited npm key that the triple does not imply ----------------
 root="$(fixture wrong-key)"
