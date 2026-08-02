@@ -123,7 +123,7 @@ body {
   color: var(--color-accent); margin: 0 0 var(--space-2);
 }
 .section-note { color: var(--color-muted); font-size: var(--text-sm); max-width: 62ch; }
-.section-note a, .section a { color: var(--color-accent); }
+.section-note a:not(.btn), .section a:not(.btn) { color: var(--color-accent); }
 
 .cta-row { display: flex; gap: var(--space-3); flex-wrap: wrap; margin: 0 0 var(--space-6); }
 .btn {
