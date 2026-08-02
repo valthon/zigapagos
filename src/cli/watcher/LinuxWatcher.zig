@@ -69,6 +69,9 @@ fn addChild(
     if (!children.found_existing) {
         children.value_ptr.* = .empty;
     }
+    for (children.value_ptr.items) |existing| {
+        if (existing == child) return;
+    }
     try children.value_ptr.append(gpa, child);
 }
 
@@ -126,7 +129,7 @@ fn addTree(
     var lookup = std.StringHashMap(std.posix.fd_t).init(gpa);
     defer lookup.deinit();
 
-    try lookup.put(root_dir_path, parent_fd);
+    try lookup.put(watcher.watch_fds.get(parent_fd).?.dir_path, parent_fd);
 
     var it = try root_dir.walk(gpa);
     while (try it.next(watcher.io)) |entry| switch (entry.kind) {
@@ -136,12 +139,21 @@ fn addTree(
                 root_dir_path,
                 entry.path,
             });
+            defer gpa.free(dir_path);
             const dir_fd = try watcher.addDir(dir_path);
-            const p_dir = std.fs.path.dirname(dir_path).?;
-            const p_fd = lookup.get(p_dir).?;
+            const stored_path = watcher.watch_fds.get(dir_fd).?.dir_path;
+            const p_dir = std.fs.path.dirname(stored_path).?;
+            // `stored_path` keeps the spelling from the first root that
+            // registered this directory. If this walk reached the same watch
+            // through an alias, its parent belongs to that earlier walk and
+            // cannot be found in this walk's path lookup.
+            const p_fd = lookup.get(p_dir) orelse {
+                try lookup.put(stored_path, dir_fd);
+                continue;
+            };
 
             try watcher.addChild(p_fd, dir_fd);
-            try lookup.put(dir_path, dir_fd);
+            try lookup.put(stored_path, dir_fd);
         },
     };
 
@@ -164,9 +176,17 @@ fn addDir(
         dir_path,
         mask,
     );
+    // inotify returns the existing descriptor when overlapping configured
+    // roots lead us to register the same directory twice. Keep the original
+    // owned path/name instead of replacing the map value and leaking it.
+    if (watcher.watch_fds.contains(watch_fd)) return watch_fd;
+    errdefer inotify_rm_watch(watcher.notify_fd, watch_fd);
+    const path_copy = try gpa.dupe(u8, dir_path);
+    errdefer gpa.free(path_copy);
     const name_copy = try gpa.dupe(u8, std.fs.path.basename(dir_path));
+    errdefer gpa.free(name_copy);
     try watcher.watch_fds.put(gpa, watch_fd, .{
-        .dir_path = dir_path,
+        .dir_path = path_copy,
         .name = name_copy,
     });
     log.debug("added {s} -> {}", .{ dir_path, watch_fd });
@@ -183,6 +203,7 @@ fn rmWatch(
         for (entry.value_ptr.items) |child_fd| {
             watcher.rmWatch(child_fd);
         }
+        entry.value_ptr.deinit(watcher.gpa);
         watcher.children_fds.removeByPtr(entry.key_ptr);
     }
     inotify_rm_watch(watcher.notify_fd, fd);
@@ -222,8 +243,8 @@ fn moveDirEnd(
         const moved_fd = entry.value;
 
         var watch_entry = watcher.watch_fds.getEntry(moved_fd).?.value_ptr;
-        gpa.free(watch_entry.name);
         const name_copy = try gpa.dupe(u8, name);
+        gpa.free(watch_entry.name);
         watch_entry.name = name_copy;
 
         try watcher.updateDirPath(moved_fd, parent.dir_path);
@@ -231,6 +252,7 @@ fn moveDirEnd(
         return moved_fd;
     } else { // unknown cookie - move from the outside
         const dir_path = try std.fs.path.join(gpa, &.{ parent.dir_path, name });
+        defer gpa.free(dir_path);
         const moved_fd = try watcher.addTree(dir_path);
         try watcher.addChild(to_fd, moved_fd);
         return moved_fd;
@@ -245,8 +267,8 @@ fn updateDirPath(
 ) !void {
     const gpa = watcher.gpa;
     var data = watcher.watch_fds.getEntry(fd).?.value_ptr;
-    gpa.free(data.dir_path);
     const dir_path = try std.fs.path.join(gpa, &.{ parent_dir, data.name });
+    gpa.free(data.dir_path);
     data.dir_path = dir_path;
 
     if (watcher.children_fds.getEntry(fd)) |entry| {
@@ -292,6 +314,8 @@ fn dropWatch(
 
     if (watcher.children_fds.fetchRemove(fd)) |entry| {
         log.warn("Stopping watch for {d} that has known children: {any}", .{ fd, entry.value });
+        var children = entry.value;
+        children.deinit(gpa);
     }
 }
 
@@ -323,8 +347,20 @@ pub fn listen(watcher: *LinuxWatcher) !void {
 
         var event_data: []u8 = buffer[0..len];
         while (event_data.len > 0) {
+            if (event_data.len < event_size) {
+                watcher.debouncer.newEvent();
+                break;
+            }
             const event: *Event = @ptrCast(@alignCast(event_data[0..event_size]));
-            event_data = event_data[event_size + event.len ..];
+            const record_len = std.math.add(usize, event_size, event.len) catch {
+                watcher.debouncer.newEvent();
+                break;
+            };
+            if (record_len > event_data.len) {
+                watcher.debouncer.newEvent();
+                break;
+            }
+            event_data = event_data[record_len..];
 
             // Queue overflow arrives with wd == -1, which is never a valid
             // watch descriptor. Signal a rebuild and skip the map lookup.
@@ -357,6 +393,7 @@ pub fn listen(watcher: *LinuxWatcher) !void {
                         parent.dir_path,
                         dir_name,
                     });
+                    defer gpa.free(dir_path);
 
                     log.debug("ISDIR CREATE {s}", .{dir_path});
 
