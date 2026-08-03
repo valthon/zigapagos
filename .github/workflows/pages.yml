@@ -64,7 +64,7 @@ jobs:
       # (`env`, `export_path`) are no-ops for a mise.toml that declares only
       # [tools].
       - name: Setup toolchain (zig + bun via mise)
-        uses: jdx/mise-action@v4
+        uses: jdx/mise-action@v4.2.3
 
       # The site build bundles the shipped runtime by invoking
       # runtime/sidecar/bundle-island.ts on runtime/src/browser-entry.ts. Bun
@@ -90,7 +90,7 @@ jobs:
       # that path falls through to a source build, exactly as before.
       - name: Download the zigapagos CI built for this commit
         if: github.event_name != 'workflow_dispatch'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: zigapagos-${{ runner.os }}
           path: ${{ github.workspace }}/prebuilt

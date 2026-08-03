@@ -135,7 +135,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup toolchain (mise — zig 0.16.0 + bun 1.2)
-        uses: jdx/mise-action@v4
+        uses: jdx/mise-action@v4.2.3
         with:
           cache: true
 
