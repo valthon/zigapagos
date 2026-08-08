@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Toolchain
 
-`mise.toml` pins **zig 0.16.0** and **bun 1.2**; `build.zig.zon` sets
+`mise.toml` pins **zig 0.16.0** and **bun 1.3.14**; `build.zig.zon` sets
 `.minimum_zig_version = "0.16.0"`. Your shell is expected to resolve those — the commands below are
 written bare.
 

@@ -31,10 +31,12 @@ set -eu
 # because a pin that drifts here installs a different toolchain than every other
 # channel and nothing else in the build would notice.
 REPO="valthon/zigapagos"
-# An exact version, where mise.toml pins the range `bun = "1.2"`. A range is not
-# a download URL, and resolving one would mean asking a registry at install time
-# for a version this release was never tested against.
-BUN_VERSION="1.2.23"
+# An exact version, matching mise.toml's `bun = "1.3.14"`. mise moved from a
+# range to an exact pin when bun 1.3 landed — a floating minor was how a silent
+# bundler change (content-hash drift) could arrive mid-release — so this is now
+# equality with mise.toml rather than a member of its range, and
+# tests/install/pins.sh holds the two together either way.
+BUN_VERSION="1.3.14"
 # Mirrors `pinned_version` in src/cli/zigbase.zig — the binary looks for exactly
 # this version in exactly the path below, so a different one here would be
 # downloaded and then ignored.

@@ -181,7 +181,14 @@ expect fail "renamed pinned_version in src/cli/zigbase.zig" "$root"
 contains "  ...says the gate is now checking nothing" "this gate is now checking nothing"
 
 root="$(fixture no-bun-pin)"
-sub "$root" mise.toml 'bun = "1.2"' '# bun pin removed'
+# The pin line is derived from the fixture rather than restated: a literal here
+# (this used to say `bun = "1.2"`) breaks fixture setup on every bun bump while
+# asserting nothing about the gate. The emptiness check keeps the anti-vacuity
+# that `sub`'s not-found throw provided — an empty needle would make `sub`
+# prepend instead of replace, silently leaving the pin in place.
+bun_pin_line="$(grep '^bun = ' "$root/mise.toml" || true)"
+[ -n "$bun_pin_line" ] || { echo "FAIL: fixture setup: no 'bun = ' line in mise.toml"; exit 1; }
+sub "$root" mise.toml "$bun_pin_line" '# bun pin removed'
 expect fail "mise.toml with no bun pin" "$root"
 contains "  ...names mise.toml" "could not read the bun pin from mise.toml"
 
