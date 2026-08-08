@@ -24,7 +24,9 @@ zigapagos release --format=xml
 # error: invalid --format value 'xml' (want text|json)
 ```
 
-`--format` is accepted by `release` only. It is not a flag `dev` recognises:
+`--format` is accepted by `release` and `validate` (same stream, same schema —
+`validate` covers the release build's pre-SSR subset, see `zigapagos validate
+--help` for exactly what that excludes). It is not a flag `dev` recognises:
 `dev` re-runs a rebuild command and reports whatever that command printed.
 
 ## Wire schema

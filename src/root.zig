@@ -988,12 +988,16 @@ pub fn run(
                     } else {
                         std.debug.print("error: static asset glob '{s}' matched no assets\n", .{path});
                     }
-                    // A `.memory` build never sees diag.format == .json:
-                    // main.zig gates its `--format=` pre-scan to `zigapagos
-                    // release`'s own arguments, and neither `validate` nor
-                    // `explain` accepts the flag. So this block stays
-                    // unconditional -- it is not part of the text/json split
-                    // above.
+                    // A `.memory` build CAN now see diag.format == .json:
+                    // `zigapagos validate` is a `.memory`-mode command and,
+                    // as of issue #131 item 1, accepts `--format=json` (only
+                    // `explain` still does not). This block stays
+                    // unconditional regardless -- it is not part of the
+                    // text/json split above -- because `build.mode.memory.
+                    // errors` is write-only: appended here, walked by
+                    // `Build.deinit`'s teardown, and never read by anything
+                    // that would print or emit it. Populating it in json mode
+                    // costs an allocation and nothing else.
                     if (build.mode == .memory) {
                         try build.mode.memory.errors.append(gpa, .{
                             .ref = "",

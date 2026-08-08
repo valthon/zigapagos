@@ -26,6 +26,7 @@
 const std = @import("std");
 const Io = std.Io;
 const builtin = @import("builtin");
+const diag = @import("../diag.zig");
 const fatal = @import("../fatal.zig");
 const root = @import("../root.zig");
 const worker = @import("../worker.zig");
@@ -47,6 +48,12 @@ pub fn validate(
 ) bool {
     var cmd: Command = Command.parse(gpa, args) catch fatal.oom();
     defer cmd.deinit(gpa);
+
+    // Authoritative assignment: main.zig's scanArgv already set diag.format
+    // before std.Progress and the banners (the pre-scan is a stderr-
+    // suppression optimisation); this re-affirms it and owns the error
+    // message for a bad value. Same split as release.zig.
+    diag.format = cmd.format;
 
     const cfg, const base_dir_path = root.Config.load(io, gpa);
 
@@ -73,7 +80,9 @@ pub fn validate(
     const failed = build.any_prerendering_error or build.any_rendering_error.load(.acquire);
 
     if (failed) {
-        std.debug.print("validate: FAILED — see the diagnostics above\n", .{});
+        if (diag.format == .text) {
+            std.debug.print("validate: FAILED — see the diagnostics above\n", .{});
+        }
         return true;
     }
 
@@ -124,6 +133,7 @@ pub const Command = struct {
     build_assets: std.StringArrayHashMapUnmanaged(BuildAsset),
     drafts: bool,
     allow_missing_pages: bool,
+    format: diag.Format,
 
     /// NO_SLOP.md §2.2a contract 2 (owned-result): `build_assets` is a graph
     /// (each value's `.ref`/paths are borrowed from `args`, but the map's own
@@ -138,6 +148,7 @@ pub const Command = struct {
         errdefer build_assets.deinit(gpa);
         var drafts = false;
         var allow_missing_pages = false;
+        var format: diag.Format = .text;
 
         const eql = std.mem.eql;
         const startsWith = std.mem.startsWith;
@@ -193,6 +204,12 @@ pub const Command = struct {
                 drafts = true;
             } else if (eql(u8, arg, "--allow-missing-pages")) {
                 allow_missing_pages = true;
+            } else if (startsWith(u8, arg, "--format=")) {
+                const v = arg["--format=".len..];
+                format = diag.parseFormat(v) orelse fatal.usageError(
+                    "error: invalid --format value '{s}' (want text|json)\n",
+                    .{v},
+                );
             } else {
                 fatal.usageError("error: unexpected cli argument '{s}'\n", .{arg});
             }
@@ -202,6 +219,7 @@ pub const Command = struct {
             .build_assets = build_assets,
             .drafts = drafts,
             .allow_missing_pages = allow_missing_pages,
+            .format = format,
         };
     }
 };
@@ -236,6 +254,10 @@ const help_message =
     \\  --drafts               Include draft pages
     \\  --allow-missing-pages  Tolerate a dangling $link.page/$site.page
     \\                         reference (same semantics as `zigapagos release`)
+    \\  --format=FORMAT        text (default) | json — emit diagnostics as
+    \\                         NDJSON on stderr, same stream and schema as
+    \\                         `zigapagos release --format=json` (see
+    \\                         docs/diagnostics.md)
     \\  --build-asset=NAME PATH [--install=P | --install-always=P]
     \\                         Declare a build asset, exactly as `zigapagos
     \\                         release` takes it. Needed
@@ -315,4 +337,15 @@ test "validate: parse recognizes the --build-asset grammar (with and without --i
     defer cmd3.deinit(gpa);
     const asset3 = cmd3.build_assets.get("logo").?;
     try std.testing.expect(asset3.install_path == null);
+}
+
+test "validate: parse recognizes --format=json (and defaults to text)" {
+    const gpa = std.testing.allocator;
+    var cmd = try Command.parse(gpa, &.{"--format=json"});
+    defer cmd.deinit(gpa);
+    try std.testing.expectEqual(diag.Format.json, cmd.format);
+
+    var cmd_default = try Command.parse(gpa, &.{});
+    defer cmd_default.deinit(gpa);
+    try std.testing.expectEqual(diag.Format.text, cmd_default.format);
 }
