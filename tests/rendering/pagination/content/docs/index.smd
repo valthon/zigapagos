@@ -1,0 +1,8 @@
+---
+.title = "Docs",
+.layout = "list.shtml",
+.pagination = { .page_size = 2, .url_style = "page_html" },
+---
+# Docs
+
+3 posts, page_size=2, url_style=page_html: 2 pages.

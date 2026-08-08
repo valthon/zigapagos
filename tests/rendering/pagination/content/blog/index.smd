@@ -1,0 +1,8 @@
+---
+.title = "Blog",
+.layout = "list.shtml",
+.pagination = { .page_size = 2 },
+---
+# Blog
+
+5 posts, page_size=2, default url_style (page_dir): 3 pages.

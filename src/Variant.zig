@@ -76,7 +76,7 @@ pub const SectionlessDir = struct {
 };
 
 /// Tells you where to look when figuring out what an output URL maps to.
-pub const ResourceKind = enum { page_main, page_alias, page_alternative, page_asset };
+pub const ResourceKind = enum { page_main, page_alias, page_alternative, page_asset, page_pagination };
 pub const LocationHint = struct {
     id: u32, // index into pages
     kind: union(ResourceKind) {
@@ -85,6 +85,7 @@ pub const LocationHint = struct {
         page_alternative: []const u8,
         // for page assets, 'id' is the page that owns the asset
         page_asset: std.atomic.Value(u32), // reference counting
+        page_pagination: u32, // page number (>= 2)
     },
     pub fn fmt(
         lh: LocationHint,
@@ -117,6 +118,9 @@ pub const LocationHint = struct {
                 },
                 .page_asset => {
                     try w.writeAll(" (page asset)");
+                },
+                .page_pagination => |n| {
+                    try w.print(" (pagination page {d})", .{n});
                 },
             }
         }
@@ -384,6 +388,7 @@ pub fn scanContentDir(
             // the empty arena is harmless if this page is parsed.
             index_page._parse.arena = .{};
             index_page._render = .{};
+            index_page._pagination = null;
             index_page._scan = .{
                 .file = .{
                     .path = content_sub_path,
@@ -505,6 +510,7 @@ pub fn scanContentDir(
             // over an unparsed placeholder.
             p._parse.arena = .{};
             p._render = .{};
+            p._pagination = null;
             p._scan = .{
                 .file = .{
                     .path = content_sub_path,
@@ -641,6 +647,44 @@ pub fn scanContentDir(
         .i18n_arena = i18n_arena.state,
     };
 }
+
+/// Build the Variant.urls key for pagination page `n` of `page` — the same
+/// shape the scan uses for main outputs (`.path = dir, .name = file`), so
+/// pagination pages collide honestly with real pages and assets. Interns
+/// into the variant's tables; main-thread only (the tables are not locked).
+///
+/// NO_SLOP.md §2.2a contract 1: allocations land in the interning tables,
+/// which own them; nothing escapes to the caller to free.
+pub fn paginationPathName(
+    v: *Variant,
+    gpa: Allocator,
+    page: *const Page,
+    style: context.Page.Pagination.UrlStyle,
+    n: u32,
+) !PathName {
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    switch (style) {
+        .page_dir, .plain_dir => {
+            const dir = std.fmt.bufPrint(&buf, "{f}{s}{d}", .{
+                page._scan.url.fmt(&v.string_table, &v.path_table, null, true),
+                if (style == .page_dir) "page/" else "",
+                n,
+            }) catch return error.NameTooLong;
+            return .{
+                .path = try v.path_table.internPath(gpa, &v.string_table, dir),
+                .name = try v.string_table.intern(gpa, "index.html"),
+            };
+        },
+        .page_html => {
+            const name = std.fmt.bufPrint(&buf, "page-{d}.html", .{n}) catch return error.NameTooLong;
+            return .{
+                .path = page._scan.url,
+                .name = try v.string_table.intern(gpa, name),
+            };
+        },
+    }
+}
+
 
 pub fn installAssets(
     v: *const Variant,

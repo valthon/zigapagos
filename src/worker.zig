@@ -1233,7 +1233,90 @@ pub fn suffixedOutputPath(
     return std.fmt.allocPrint(alloc, "{f}{s}", .{ urlFmt(cfg, variant, page), suffix });
 }
 
-pub const RenderJobKind = union(enum) { main, alternative: u32 };
+/// The page-dir-relative suffix of pagination page `n` (n >= 2) under the
+/// given URL style. Page 1 has no suffix: it IS the section's main output.
+///
+/// NO_SLOP.md §2.2a contract 1 (self-freeing): one allocation, escapes as
+/// the return.
+pub fn paginationSuffix(
+    alloc: Allocator,
+    style: Page.Pagination.UrlStyle,
+    n: u32,
+) ![]const u8 {
+    assert(n >= 2);
+    return switch (style) {
+        .page_dir => std.fmt.allocPrint(alloc, "page/{d}/index.html", .{n}),
+        .plain_dir => std.fmt.allocPrint(alloc, "{d}/index.html", .{n}),
+        .page_html => std.fmt.allocPrint(alloc, "page-{d}.html", .{n}),
+    };
+}
+
+/// The URL-pathname suffix for pagination page `n` — what the BROWSER's
+/// window.location.pathname is for that page, passed to the island SSR pass
+/// so `z.host.pathname()` agrees with it (see runtime/src/ssr-env.ts's
+/// documented contract for that value). This differs from `paginationSuffix`
+/// (the on-disk file suffix) only for the directory styles: a directory's
+/// pathname has no `index.html` component, so it ends in `/` instead.
+///
+/// NO_SLOP.md §2.2a contract 1 (self-freeing). Delegates to
+/// `Page.Pagination.UrlStyle.writePathnameTail`, the single formula also
+/// used by `Paginator.printPageUrl` for link generation — H7 (issues
+/// #45/#47): a link's href and the file it points at must agree, so they
+/// cannot be two independently-maintained switch statements.
+pub fn paginationPathnameTail(
+    alloc: Allocator,
+    style: Page.Pagination.UrlStyle,
+    n: u32,
+) ![]const u8 {
+    // toOwnedSlice, not .written() (same reasoning as missingPageUrl's doc
+    // comment above): .written() can return a slice shorter than the
+    // backing allocation, which the regression test below cannot `free`
+    // under std.testing.allocator's exact-size tracking.
+    var aw: Writer.Allocating = .init(alloc);
+    try style.writePathnameTail(&aw.writer, n);
+    return aw.toOwnedSlice();
+}
+
+/// Output path of pagination page `n` of a section index, relative to the
+/// output directory — the fifth path helper beside `mainOutputPath` and
+/// friends, extracted for the same H7 reason (issues #45/#47): `explain`,
+/// `--summary`, the emit path, and the prune must share ONE formula.
+///
+/// NO_SLOP.md §2.2a contract 1 (self-freeing): the suffix is an internal
+/// scratch allocation freed here; only the joined path escapes.
+pub fn paginationOutputPath(
+    alloc: Allocator,
+    cfg: *const root.Config,
+    variant: *const Variant,
+    page: *const Page,
+    style: Page.Pagination.UrlStyle,
+    n: u32,
+) ![]const u8 {
+    const suffix = try paginationSuffix(alloc, style, n);
+    defer alloc.free(suffix);
+    return std.fmt.allocPrint(alloc, "{f}{s}", .{ urlFmt(cfg, variant, page), suffix });
+}
+
+/// The page-dir-relative DIRECTORY that pagination page `n` occupies, for the
+/// stale-page prune: deleting `page/3/index.html` alone leaves an empty dir
+/// behind, so dir styles prune the directory. `.page_html` emits a bare file
+/// and returns null — the caller deletes `paginationSuffix` instead.
+///
+/// NO_SLOP.md §2.2a contract 1 (self-freeing).
+pub fn paginationPruneDir(
+    alloc: Allocator,
+    style: Page.Pagination.UrlStyle,
+    n: u32,
+) !?[]const u8 {
+    assert(n >= 2);
+    return switch (style) {
+        .page_dir => try std.fmt.allocPrint(alloc, "page/{d}", .{n}),
+        .plain_dir => try std.fmt.allocPrint(alloc, "{d}", .{n}),
+        .page_html => null,
+    };
+}
+
+pub const RenderJobKind = union(enum) { main, alternative: u32, pagination: u32 };
 const SuperVM = superhtml.VM(context.Value);
 fn renderPage(
     io: Io,
@@ -1278,6 +1361,7 @@ fn renderPage(
                 alt_name,
             });
         },
+        .pagination => |n| try std.fmt.allocPrint(arena.a, "{s} (page {d})", .{ page_path, n }),
     };
 
     const p = progress.start(progress_name, 0);
@@ -1302,6 +1386,18 @@ fn renderPage(
             .build = build,
             .sites = sites,
         },
+        ._pagination = switch (kind) {
+            .alternative => null,
+            .main, .pagination => if (page._pagination) |plan| .{
+                .current = switch (kind) {
+                    .pagination => |n| n,
+                    else => 1,
+                },
+                .total_pages = plan.total_pages,
+                .page_size = page.pagination.?.page_size,
+                .total_items = plan.active_count,
+            } else null,
+        },
     };
 
     ctx.build.generated = .initNow(io);
@@ -1309,6 +1405,7 @@ fn renderPage(
     const layout_path = switch (kind) {
         .main => page.layout,
         .alternative => |idx| page.alternatives[idx].layout,
+        .pagination => page.layout,
     };
 
     const layout_pn = PathName.get(&build.st, &build.pt, layout_path).?;
@@ -1350,6 +1447,7 @@ fn renderPage(
                 switch (kind) {
                     .main => page._render.errors = errs,
                     .alternative => |aidx| page._render.alternatives[aidx].errors = errs,
+                    .pagination => |n| page._render.pagination[n - 2].errors = errs,
                 }
             }
             return;
@@ -1458,12 +1556,26 @@ fn renderPage(
         // The page's URL path (leading slash; trailing slash; "" → "/"), passed to
         // the island SSR pass so `z.host.pathname()` matches the client's
         // window.location. Mirrors the canonical-URL formatting used for output dirs.
-        const island_pathname = switch (build.cfg.*) {
+        const island_pathname_base = switch (build.cfg.*) {
             .Site => try std.fmt.allocPrint(arena.a, "/{f}", .{
                 page._scan.url.fmt(&variant.string_table, &variant.path_table, null, true),
             }),
             .Multilingual => try std.fmt.allocPrint(arena.a, "/{f}", .{
                 page._scan.url.fmt(&variant.string_table, &variant.path_table, variant.output_path_prefix, true),
+            }),
+        };
+        // A .pagination job's browser URL is NOT `island_pathname_base` — that's
+        // the section index's own URL (page 1). The browser loads page N at
+        // base + the per-url_style tail (e.g. "page/2/"), so an island calling
+        // `z.host.pathname()` on page 2+ must see that, or it mismatches
+        // window.location at hydration. `.alternative` is untouched: it renders
+        // a distinct artifact (e.g. an RSS feed) at its own declared output, not
+        // a paginated view of this page's URL.
+        const island_pathname = switch (kind) {
+            .main, .alternative => island_pathname_base,
+            .pagination => |n| try std.fmt.allocPrint(arena.a, "{s}{s}", .{
+                island_pathname_base,
+                try paginationPathnameTail(arena.a, page.pagination.?.url_style, n),
             }),
         };
         // Prefix emitted island asset URLs (runtime + island module scripts) with
@@ -1651,6 +1763,13 @@ fn renderPage(
                     gpa.dupe(u8, rendered_html) catch fatal.oom();
                 page._render.alternatives[aidx].errors = "";
             },
+            .pagination => |n| {
+                page._render.pagination[n - 2].out = if (rendered_html_is_gpa_owned)
+                    rendered_html
+                else
+                    gpa.dupe(u8, rendered_html) catch fatal.oom();
+                page._render.pagination[n - 2].errors = "";
+            },
         },
         .disk => |disk| {
             // Free the gpa-owned island-pass output once we're done writing.
@@ -1720,6 +1839,15 @@ fn renderPage(
                         .{},
                     ) catch |err| fatal.file(out_path, err);
                 },
+
+                .pagination => |n| blk: {
+                    const style = page.pagination.?.url_style;
+                    const out_path = try paginationOutputPath(arena.a, build.cfg, variant, page, style, n);
+                    if (std.fs.path.dirnamePosix(out_path)) |path| {
+                        disk.output_dir.createDirPath(io, path) catch |err| fatal.dir(path, err);
+                    }
+                    break :blk disk.output_dir.createFile(io, out_path, .{}) catch |err| fatal.file(out_path, err);
+                },
             };
             defer out_raw.close(io);
 
@@ -1752,4 +1880,45 @@ pub fn languageExists(language: ?[]const u8) bool {
     }
 
     return true;
+}
+
+test "pagination: suffix formats per url_style" {
+    const t = std.testing;
+    const cases = .{
+        .{ Page.Pagination.UrlStyle.page_dir, 2, "page/2/index.html" },
+        .{ Page.Pagination.UrlStyle.plain_dir, 2, "2/index.html" },
+        .{ Page.Pagination.UrlStyle.page_html, 2, "page-2.html" },
+        .{ Page.Pagination.UrlStyle.page_dir, 10, "page/10/index.html" },
+    };
+    inline for (cases) |c| {
+        const got = try paginationSuffix(t.allocator, c[0], c[1]);
+        defer t.allocator.free(got);
+        try t.expectEqualStrings(c[2], got);
+    }
+}
+
+test "pagination: pathname tail formats per url_style" {
+    const t = std.testing;
+    const cases = .{
+        .{ Page.Pagination.UrlStyle.page_dir, 2, "page/2/" },
+        .{ Page.Pagination.UrlStyle.plain_dir, 2, "2/" },
+        .{ Page.Pagination.UrlStyle.page_html, 2, "page-2.html" },
+        .{ Page.Pagination.UrlStyle.page_dir, 10, "page/10/" },
+    };
+    inline for (cases) |c| {
+        const got = try paginationPathnameTail(t.allocator, c[0], c[1]);
+        defer t.allocator.free(got);
+        try t.expectEqualStrings(c[2], got);
+    }
+}
+
+test "pagination: prune dir is the page directory for dir styles, null for html" {
+    const t = std.testing;
+    const d = (try paginationPruneDir(t.allocator, .page_dir, 3)).?;
+    defer t.allocator.free(d);
+    try t.expectEqualStrings("page/3", d);
+    const p = (try paginationPruneDir(t.allocator, .plain_dir, 3)).?;
+    defer t.allocator.free(p);
+    try t.expectEqualStrings("3", p);
+    try t.expectEqual(@as(?[]const u8, null), try paginationPruneDir(t.allocator, .page_html, 3));
 }

@@ -501,6 +501,7 @@ fn printReport(
     {
         var has_main = false;
         var alias_count: usize = 0;
+        var pagination_count: usize = 0;
         var alt_names: std.ArrayListUnmanaged([]const u8) = .empty;
         defer alt_names.deinit(alloc);
         var it2 = v.urls.iterator();
@@ -511,6 +512,7 @@ fn printReport(
                 .page_alias => alias_count += 1,
                 .page_alternative => |name| try alt_names.append(alloc, name),
                 .page_asset => {},
+                .page_pagination => pagination_count += 1,
             }
         }
 
@@ -553,6 +555,21 @@ fn printReport(
             const p = try worker.suffixedOutputPath(alloc, build.cfg, v, page, alt.output);
             defer alloc.free(p);
             try w.print("  {s}   page alternative '{s}'\n", .{ p, alt.name });
+        }
+        if (page._pagination) |plan| {
+            const style = page.pagination.?.url_style;
+            var n: u32 = 2;
+            while (n <= plan.total_pages) : (n += 1) {
+                const p2 = try worker.paginationOutputPath(alloc, build.cfg, v, page, style, n);
+                defer alloc.free(p2);
+                try w.print("  {s}   pagination page {d}\n", .{ p2, n });
+            }
+            if (plan.total_pages - 1 != pagination_count) {
+                try w.print(
+                    "  (note: {d} pagination hint(s) registered in Variant.urls but expected {d} for the plan's {d} page(s) — please report this)\n",
+                    .{ pagination_count, plan.total_pages - 1, plan.total_pages },
+                );
+            }
         }
     }
 

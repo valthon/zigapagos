@@ -1241,6 +1241,69 @@ pub fn run(
         }
     }
 
+    // Pagination planning: page counts need parsed frontmatter (page_size)
+    // and the DRAFT-FILTERED subpage count, both final only here — after
+    // parse + sortPages — while Variant.urls capacity was reserved at scan
+    // time. Register the extra outputs now, before the collision gate at the
+    // error-gate below and before any render job is queued, so a pagination
+    // URL colliding with a real page (e.g. a subpage literally named "2"
+    // under .plain_dir) aborts the build like any other collision.
+    for (build.variants) |*v| {
+        for (v.sections.items[1..]) |*s| {
+            const index_page = &v.pages.items[s.index];
+            if (!index_page._parse.active) continue;
+            if (index_page._parse.status != .parsed) continue;
+            const settings = index_page.pagination orelse continue;
+            // page_size == 0 is a frontmatter analysis error (reported with a
+            // source span); planning anything from it would divide by zero.
+            if (settings.page_size == 0) continue;
+
+            var active_count: u32 = 0;
+            for (s.pages.items) |pidx| {
+                if (v.pages.items[pidx]._parse.active) active_count += 1;
+            }
+            const total_pages: u32 = @max(
+                1,
+                std.math.divCeil(u32, active_count, settings.page_size) catch unreachable,
+            );
+            index_page._pagination = .{
+                .total_pages = total_pages,
+                .active_count = active_count,
+            };
+            if (total_pages < 2) continue;
+
+            try v.urls.ensureUnusedCapacity(gpa, total_pages - 1);
+            var n: u32 = 2;
+            while (n <= total_pages) : (n += 1) {
+                const pn = v.paginationPathName(gpa, index_page, settings.url_style, n) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    // A URL too long to format cannot be built; name the
+                    // offending page rather than propagating past `run`'s
+                    // narrow error set.
+                    error.NameTooLong => fatal.msg(
+                        "error: '{f}': pagination page {d}'s URL is too long to build\n",
+                        .{
+                            index_page._scan.file.fmt(&v.string_table, &v.path_table, null, ""),
+                            n,
+                        },
+                    ),
+                };
+                const lh: Variant.LocationHint = .{
+                    .id = index_page._scan.page_id,
+                    .kind = .{ .page_pagination = n },
+                };
+                const gop = v.urls.getOrPutAssumeCapacity(pn);
+                if (gop.found_existing) {
+                    try v.collisions.append(gpa, .{
+                        .url = pn,
+                        .loc = lh,
+                        .previous = gop.value_ptr.*,
+                    });
+                } else gop.value_ptr.* = lh;
+            }
+        }
+    }
+
     var parse_errors = false;
     var pages_to_analyze: usize = 0;
     var progress_page_analyze = progress.start("Analyze pages", 0);
@@ -2643,10 +2706,17 @@ pub fn run(
                 // element unconditionally even in .disk mode (where the worker
                 // writes straight to disk and never populates these). AUD-004.
                 for (alts) |*a| a.* = .{ .out = "", .errors = "" };
+                const pag_count: u32 = if (p._pagination) |plan| plan.total_pages - 1 else 0;
+                const pags = try gpa.alloc(
+                    @typeInfo(@TypeOf(p._render.pagination)).pointer.child,
+                    pag_count,
+                );
+                for (pags) |*x| x.* = .{ .out = "", .errors = "" };
                 p._render = .{
                     .out = "",
                     .errors = "",
                     .alternatives = alts,
+                    .pagination = pags,
                 };
 
                 worker.addJob(io, .{
@@ -2667,6 +2737,22 @@ pub fn run(
                             .sites = &sites,
                             .page = p,
                             .kind = .{ .alternative = @intCast(aidx) },
+                        },
+                    });
+                }
+
+                // Pagination page jobs. Queued in the SAME loop body as .main, so the
+                // dev incremental fast path (the changed_set filter above) re-queues
+                // them automatically whenever the index page itself re-renders.
+                var pag_n: u32 = 2;
+                while (pag_n <= pag_count + 1) : (pag_n += 1) {
+                    worker.addJob(io, .{
+                        .page_render = .{
+                            .progress = progress_page_render,
+                            .build = &build,
+                            .sites = &sites,
+                            .page = p,
+                            .kind = .{ .pagination = pag_n },
                         },
                     });
                 }
@@ -2699,6 +2785,15 @@ pub fn run(
                         defer gpa.free(alt_path);
                         try sm.add(gpa, .page_alternative, alt_path);
                     }
+                    if (p._pagination) |plan| {
+                        const style = p.pagination.?.url_style;
+                        var n: u32 = 2;
+                        while (n <= plan.total_pages) : (n += 1) {
+                            const pag_path = try worker.paginationOutputPath(gpa, build.cfg, v, p, style, n);
+                            defer gpa.free(pag_path);
+                            try sm.add(gpa, .page_pagination, pag_path);
+                        }
+                    }
                 }
             }
         }
@@ -2707,6 +2802,7 @@ pub fn run(
         worker.wait(); // pages done rendering
         progress_page_render.end();
     }
+
 
     // Build-time typed props contract: all pages rendered, so the collector
     // holds every resolved (src, props) pair. Run the single tsc gate now.

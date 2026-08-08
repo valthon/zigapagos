@@ -1,0 +1,6 @@
+---
+.title = "Post",
+.layout = "index.shtml",
+.pagination = { .page_size = 0 },
+---
+# post

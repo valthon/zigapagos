@@ -1,0 +1,6 @@
+---
+.title = "D1",
+.date = @date("2024-04-01T00:00:00"),
+.layout = "post.shtml",
+---
+# D1

@@ -1,0 +1,8 @@
+---
+.title = "News",
+.layout = "list.shtml",
+.pagination = { .page_size = 2, .url_style = "plain_dir" },
+---
+# News
+
+3 posts, page_size=2, url_style=plain_dir: 2 pages.

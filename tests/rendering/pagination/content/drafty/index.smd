@@ -1,0 +1,11 @@
+---
+.title = "Drafty",
+.layout = "list.shtml",
+.pagination = { .page_size = 2 },
+---
+# Drafty
+
+3 active posts + 1 draft, page_size=2: 2 pages. The draft is excluded from
+the count and the windows in this root's build (no --drafts). The sibling
+fixture at tests/drafts/pagination builds the same content WITH --drafts,
+where the draft becomes active and the arithmetic becomes 4 items / 2 pages.

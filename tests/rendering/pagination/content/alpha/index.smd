@@ -1,0 +1,13 @@
+---
+.title = "Alpha",
+.layout = "alpha-list.shtml",
+.pagination = { .page_size = 2 },
+---
+# Alpha
+
+Pins subpagesAlphabetic()'s window-then-sort order: date order (newest
+first) is D, C, B, A, so the date-order window is [D, C] / [B, A], and
+each window is then alpha-sorted to [C, D] / [A, B]. A sort-then-window
+regression would instead compute the full alpha order [A, B, C, D] first
+and window THAT, producing [A, B] / [C, D] -- a full swap of both pages,
+not a subtle reordering, so it fails loudly.

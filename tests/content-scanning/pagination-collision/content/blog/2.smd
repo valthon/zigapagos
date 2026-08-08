@@ -1,0 +1,8 @@
+---
+.title = "Literally Two",
+.layout = "index.shtml",
+---
+# post named 2
+
+Its main output, blog/2/index.html, collides with pagination page 2 of
+content/blog/index.smd under .plain_dir.

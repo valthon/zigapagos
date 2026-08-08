@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>Pagination Test Website</title>
+  </head>
+  <body>
+    <h1>Blog</h1>
+    <ul>
+      <li>Post 1</li>
+    </ul>
+    
+      
+        <p>
+          Page <span>3</span> of <span>3</span>
+          (<span>5</span> items, <span>2</span>/page)
+        </p>
+        
+          <a href="/blog/page/2/">newer</a>
+        
+        
+        <a href="/blog/">first</a>
+        <!-- Pins the p == ctx.page guard: while THIS page renders a
+             pagination window, another section's subpages() must stay
+             full, never windowed by this render's pagination state. -->
+        
+          <ul id="other-section-subpages">
+            <li>N3</li>
+          
+            <li>N2</li>
+          
+            <li>N1</li>
+          </ul>
+        
+      
+    
+  </body>
+</html>

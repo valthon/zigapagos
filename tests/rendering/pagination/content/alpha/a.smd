@@ -1,0 +1,8 @@
+---
+.title = "A",
+.date = @date("2024-07-01T00:00:00"),
+.layout = "post.shtml",
+---
+# A
+
+Oldest by date, first alphabetically.
