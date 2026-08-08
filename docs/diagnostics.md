@@ -24,10 +24,12 @@ zigapagos release --format=xml
 # error: invalid --format value 'xml' (want text|json)
 ```
 
-`--format` is accepted by `release` and `validate` (same stream, same schema —
-`validate` covers the release build's pre-SSR subset, see `zigapagos validate
---help` for exactly what that excludes). It is not a flag `dev` recognises:
-`dev` re-runs a rebuild command and reports whatever that command printed.
+`--format` is accepted by `release` and `validate` (build diagnostics), plus
+`doctor` (its own finding stream on stdout — see below). `release` and
+`validate` share one stream and schema — `validate` covers the release
+build's pre-SSR subset, see `zigapagos validate --help` for exactly what that
+excludes. It is not a flag `dev` recognises: `dev` re-runs a rebuild command
+and reports whatever that command printed.
 
 ## Wire schema
 
@@ -133,7 +135,14 @@ Config-validation failures (bad `host_url`, bad `deploy_target`, …) do reach t
 stream, as `ZP_FATAL` rather than under named codes of their own.
 
 `zigapagos doctor` has its own stable check-id namespace (`abs-url-meta`,
-`dangling-internal-link`, …) and does not emit this stream.
+`dangling-internal-link`, …) and does not emit this stream. It has its own
+`--format=json`: one NDJSON object per finding on **stdout** (doctor's report
+stream), shaped `{"check","severity","file","message"}` with `severity` one of
+`"error"`/`"warning"`, followed by exactly one summary object
+`{"errors","warnings","files","skipped"}` as the last line. `check` follows the
+same stability rule as `code` here: stable once shipped; `message` is prose and
+is not. Doctor fatals (a bad `DIR`) do emit on this page's stderr stream, as
+`ZP_FATAL`.
 
 SuperMD errors carry **one** code, `ZP_SUPERMD`, not one per error kind.
 SuperMD's error *tags* (`scripty`, `html`, `duplicate_id`, …) come from the
