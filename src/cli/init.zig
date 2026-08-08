@@ -21,6 +21,14 @@ pub fn init(io: Io, gpa: Allocator, args: []const []const u8) bool {
     const File = struct { path: []const u8, src: []const u8 };
     const files = [_]File{
         .{
+            .path = "AGENTS.md",
+            .src = @embedFile("init/AGENTS.md"),
+        },
+        .{
+            .path = "CLAUDE.md",
+            .src = @embedFile("init/CLAUDE.md"),
+        },
+        .{
             .path = "zigapagos.ziggy",
             .src = @embedFile("init/zigapagos.ziggy"),
         },
