@@ -26,27 +26,40 @@ struct Frontmatter {
     ///rendering the content using a different layout. 
     ///Useful for creating RSS feeds, for example.
     alternatives: ?[Alternative],
-    ///Ignore other markdown files in this directory and 
-    ///any sub-directory. Can only be meaningfully set to 
+    ///Ignore other markdown files in this directory and
+    ///any sub-directory. Can only be meaningfully set to
     ///true for 'index.smd' pages.
     skip_subdirs: ?bool,
-    ///User-defined properties that you can then reference 
-    ///in templates. 
+    ///Translation key used to map this page with
+    ///corresponding localized variants.
+    translation_key: ?bytes,
+    ///User-defined properties that you can then reference
+    ///in templates.
     custom: ?map[any],
+    ///Opt-in pagination for a section index page.
+    pagination: ?Pagination,
 }
 
 struct Alternative {
-    ///Path to a layout file inside of the configured 
+    ///Path to a layout file inside of the configured
     ///layouts directory.
     layout: bytes,
-    ///Output path, relative to the current directory. 
-    ///Use an absolute path to refer to the website's root 
+    ///Output path, relative to the current directory.
+    ///Use an absolute path to refer to the website's root
     ///directory.
     output: bytes,
-    ///Useful when generating `<link rel="alternate">` 
-    ///elements.
-    title: ?bytes,
-    ///Useful when generating `<link rel="alternate">` 
+    ///A name that can be used to fetch this alternative
+    ///version of the page.
+    name: bytes,
+    ///Useful when generating `<link rel="alternate">`
     ///elements.
     type: ?bytes,
+}
+
+struct Pagination {
+    ///How many subpages each pagination window holds.
+    page_size: int,
+    ///URL shape of page 2 and beyond: "page_dir",
+    ///"plain_dir", or "page_html".
+    url_style: ?bytes,
 }

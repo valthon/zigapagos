@@ -38,6 +38,21 @@ pub const ImportStmt = struct {
     names: []const []const u8,
 };
 
+/// Astro's `getStaticPaths({ paginate })` result: a `src/pages/**/[page].astro`
+/// or `[...page].astro` route whose frontmatter fence calls `paginate()`.
+/// `section` slices the caller's `path` argument (NOT `src`) — see
+/// `detectPaginate`.
+pub const PaginateSpec = struct {
+    /// Slice of the caller's `path` (NOT owned): the section dir relative to
+    /// src/pages/, "" for a root-level paginated route.
+    section: []const u8,
+    route_form: enum { numbered, rest },
+    page_size: u32,
+    /// False when paginate() was found but pageSize wasn't an integer
+    /// literal — the caller flags it for review and uses the default 10.
+    page_size_is_literal: bool,
+};
+
 // ---------------------------------------------------------------------------
 // Island detection
 // ---------------------------------------------------------------------------
@@ -67,6 +82,84 @@ pub fn collectClientUsages(
         if (set.contains(name)) continue;
         try set.put(gpa, try gpa.dupe(u8, name), {});
     }
+}
+
+/// Detect Astro's paginate() pattern: a src/pages/**/[page].astro or
+/// [...page].astro whose frontmatter fence calls paginate() inside
+/// getStaticPaths. Astro requires the dynamic segment be named `page`
+/// for paginate(), so the basename check is exact, not heuristic.
+/// Returns slices of `path`; nothing is allocated or owned.
+pub fn detectPaginate(path: []const u8, src: []const u8) ?PaginateSpec {
+    const pages_prefix = "src/pages/";
+    if (!std.mem.startsWith(u8, path, pages_prefix)) return null;
+    const rel = path[pages_prefix.len..];
+    const basename = if (std.mem.lastIndexOfScalar(u8, rel, '/')) |i| rel[i + 1 ..] else rel;
+    const route_form: @FieldType(PaginateSpec, "route_form") =
+        if (std.mem.eql(u8, basename, "[...page].astro")) .rest else if (std.mem.eql(u8, basename, "[page].astro")) .numbered else return null;
+    const section = if (std.mem.lastIndexOfScalar(u8, rel, '/')) |i| rel[0..i] else "";
+
+    // Scope to the leading frontmatter fence: nothing in the template body
+    // counts. The fence is `---\n ... \n---`.
+    const fence = frontmatterFence(src) orelse return null;
+    if (std.mem.indexOf(u8, fence, "getStaticPaths") == null) return null;
+    const paginate_idx = std.mem.indexOf(u8, fence, "paginate(") orelse return null;
+
+    // `pageSize` must be searched from the `paginate(` call onward, not the
+    // whole fence: a fence can carry earlier text that also contains the
+    // literal word "pageSize" (a comment, an unrelated destructure, a stale
+    // TODO) ahead of the real call, and a whole-fence search would silently
+    // take THAT occurrence instead of the one inside `paginate(...)`.
+    var page_size: u32 = 10; // Astro's documented default
+    var literal = true;
+    if (std.mem.indexOf(u8, fence[paginate_idx..], "pageSize")) |rel_i| {
+        var j = paginate_idx + rel_i + "pageSize".len;
+        while (j < fence.len and (fence[j] == ':' or fence[j] == ' ' or fence[j] == '\t')) j += 1;
+        var k = j;
+        while (k < fence.len and std.ascii.isDigit(fence[k])) k += 1;
+        if (k > j) {
+            page_size = std.fmt.parseInt(u32, fence[j..k], 10) catch blk: {
+                literal = false;
+                break :blk 10;
+            };
+        } else literal = false;
+    }
+    return .{
+        .section = section,
+        .route_form = route_form,
+        .page_size = page_size,
+        .page_size_is_literal = literal,
+    };
+}
+
+/// Render the standard "delete the route file, add `.pagination`" migration
+/// sentence for a detected `paginate()` route to `w`. Shared verbatim between
+/// the migrate worklist (`migrate.zig`'s `section`) and the port doctor's
+/// human report, so the two prescriptions can't drift apart. `.url_style` is
+/// always suggested as `"plain_dir"`: it is the shape that matches Astro's
+/// `[...page].astro` behaviour exactly, and the numbered-form caveat below
+/// covers the one place `[page].astro` differs (page 1's URL).
+pub fn paginateNote(w: anytype, spec: PaginateSpec) !void {
+    try w.print(
+        "uses `paginate()`: delete the route file and add `.pagination = {{ .page_size = {d}, .url_style = \"plain_dir\" }}` to `content/{s}{s}index.smd` (mapping reference §11).",
+        .{ spec.page_size, spec.section, if (spec.section.len == 0) "" else "/" },
+    );
+    if (spec.route_form == .numbered) {
+        try w.writeAll(" Numbered form: page 1 moves from `/1` to the section URL; add `.aliases = [\"1/index.html\"]` if the old URL must keep working.");
+    }
+    if (!spec.page_size_is_literal) {
+        try w.writeAll(" NOTE: pageSize was not an integer literal — 10 assumed; verify.");
+    }
+}
+
+/// The text between the leading `---` fence pair, or null when the file
+/// has no complete fence. New helper: nothing in this module scoped to
+/// the fence before.
+fn frontmatterFence(src: []const u8) ?[]const u8 {
+    const trimmed_start = std.mem.indexOf(u8, src, "---") orelse return null;
+    if (trimmed_start != 0 and !std.mem.eql(u8, std.mem.trimStart(u8, src[0..trimmed_start], " \t\r\n"), "")) return null;
+    const body_start = trimmed_start + 3;
+    const rel_end = std.mem.indexOf(u8, src[body_start..], "\n---") orelse return null;
+    return src[body_start .. body_start + rel_end];
 }
 
 /// Given a position known to be inside an opening tag (at/after the tag name),
@@ -595,9 +688,13 @@ pub const capabilities_section =
     \\      the scoped DOM enhancer (`host.enhance.setText` / `setHtml` /
     \\      `setStyle` / `addClass` / `removeClass` / `toggleClass`),
     \\      third-party widgets (`host.loadScript(url)` / `host.getValue(id)`),
-    \\      feature flags (`useFlag(name)` / `<FeatureFlag name>`), and A/B
-    \\      experiments (`useVariant(name)` / `<Experiment name variant>`).
-    \\- [ ] Gaps (use workarounds): dynamic routes `[slug]`, stores beyond
+    \\      feature flags (`useFlag(name)` / `<FeatureFlag name>`), A/B
+    \\      experiments (`useVariant(name)` / `<Experiment name variant>`), and
+    \\      paginated sections (Astro `paginate()` → `.pagination` on a section
+    \\      index).
+    \\- [ ] Gaps (use workarounds): dynamic routes `[slug]` (but `[page]`/
+    \\      `[...page]` paginated routes are native — see the mapping
+    \\      reference §11), stores beyond
     \\      i64/string, streaming (incremental) fetch bodies, `window.location`
     \\      beyond the path (query/hash), client-side routing / History API,
     \\      arbitrary cross-root `document.querySelector` DOM access (coordinate
@@ -623,6 +720,11 @@ pub const PortReport = struct {
     host_needs: []HostNeed,
     imports: []ImportFinding,
     shared: []SharedMap,
+    /// Set by `migrate.zig`'s `doctor` from `detectPaginate(path, src)` — not
+    /// by `analyze` itself, since `analyze` only ever sees the stripped
+    /// module name (`islandModuleName`), not the `src/pages/...` path
+    /// `detectPaginate` needs to compute `.section`.
+    paginate: ?PaginateSpec = null,
     pub fn violations(self: PortReport) usize {
         var n: usize = 0;
         for (self.imports) |im| if (im.class == .forbidden_npm) {
@@ -783,6 +885,13 @@ pub fn renderDoctorHuman(w: anytype, rep: PortReport) !void {
         try w.print("- [ ] {s}  → {s}\n", .{ sm.symbol, sm.target });
     }
 
+    if (rep.paginate) |spec| {
+        try w.writeAll("\n## Pagination (`paginate()` detected)\n\n");
+        try w.writeAll("- [ ] ");
+        try paginateNote(w, spec);
+        try w.writeAll("\n");
+    }
+
     const n = rep.violations();
     try w.print("\n{d} guardrail violation(s). See docs/migration/recipes.md (no-npm-guardrail).\n", .{n});
 }
@@ -854,6 +963,22 @@ pub fn renderDoctorJson(w: anytype, rep: PortReport) !void {
     }
     try w.writeAll("  ],\n");
 
+    // paginate: null, or the detected spec.
+    try w.writeAll("  \"paginate\": ");
+    if (rep.paginate) |spec| {
+        try w.writeAll("{\"section\": ");
+        try writeJsonString(w, spec.section);
+        try w.writeAll(", \"routeForm\": ");
+        try writeJsonString(w, @tagName(spec.route_form));
+        try w.print(", \"pageSize\": {d}, \"pageSizeIsLiteral\": {s}}}", .{
+            spec.page_size,
+            if (spec.page_size_is_literal) "true" else "false",
+        });
+    } else {
+        try w.writeAll("null");
+    }
+    try w.writeAll(",\n");
+
     try w.print("  \"guardrailViolations\": {d}\n", .{rep.violations()});
     try w.writeAll("}\n");
 }
@@ -907,7 +1032,7 @@ test "capabilities section: shipped host bindings are listed Supported, not as g
     // NOT appear under Gaps (the F3 contradiction the migrate tool used to emit).
     const shipped = [_][]const u8{
         "matchMedia",  "onScroll",   "host.portal",  "loadScript",
-        "fetchShared", "useVariant", "host.cookies",
+        "fetchShared", "useVariant", "host.cookies", "pagination",
     };
     for (shipped) |cap| {
         try testing.expect(std.mem.indexOf(u8, supported, cap) != null);
@@ -1299,6 +1424,23 @@ test "renderDoctorHuman: checklist contains hooks, host needs, imports, violatio
     try testing.expect(std.mem.indexOf(u8, out, "1 guardrail violation") != null);
 }
 
+test "renderDoctorHuman: pagination line appears when detectPaginate fires (same sentence as the worklist)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var rep = try analyze(a, "page", "export default function X(){}");
+    rep.paginate = detectPaginate(
+        "src/pages/blog/[page].astro",
+        "---\nexport async function getStaticPaths({ paginate }) {\n  return paginate([], { pageSize: 4 });\n}\n---\n",
+    );
+    var aw: std.Io.Writer.Allocating = .init(a);
+    try renderDoctorHuman(&aw.writer, rep);
+    const out = aw.written();
+    try testing.expect(std.mem.indexOf(u8, out, "## Pagination") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "delete the route file") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "content/blog/index.smd") != null);
+}
+
 test "renderDoctorJson: valid-ish JSON with escaped strings + violation count" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -1362,4 +1504,98 @@ test "renderDoctorHuman propagates a write failure instead of emitting a truncat
 test "writeJsonString propagates a write failure" {
     var fw: std.Io.Writer = .failing;
     try testing.expectError(error.WriteFailed, writeJsonString(&fw, "abc"));
+}
+
+// --- paginate() detection ---------------------------------------------------
+
+test "paginate: detects rest and numbered forms with pageSize" {
+    const src =
+        \\---
+        \\import { getCollection } from "astro:content";
+        \\export async function getStaticPaths({ paginate }) {
+        \\  const posts = await getCollection("blog");
+        \\  return paginate(posts, { pageSize: 10 });
+        \\}
+        \\const { page } = Astro.props;
+        \\---
+        \\<ul>{page.data.map((p) => <li>{p.data.title}</li>)}</ul>
+    ;
+    const rest = detectPaginate("src/pages/blog/[...page].astro", src).?;
+    try testing.expectEqualStrings("blog", rest.section);
+    try testing.expectEqual(.rest, rest.route_form);
+    try testing.expectEqual(@as(u32, 10), rest.page_size);
+    try testing.expect(rest.page_size_is_literal);
+
+    const numbered = detectPaginate("src/pages/blog/[page].astro", src).?;
+    try testing.expectEqual(.numbered, numbered.route_form);
+}
+
+test "paginate: nested section, defaulted and non-literal pageSize" {
+    const no_size =
+        \\---
+        \\export function getStaticPaths({ paginate }) {
+        \\  return paginate(items);
+        \\}
+        \\---
+    ;
+    const spec = detectPaginate("src/pages/a/b/[page].astro", no_size).?;
+    try testing.expectEqualStrings("a/b", spec.section);
+    try testing.expectEqual(@as(u32, 10), spec.page_size); // Astro's default
+    try testing.expect(spec.page_size_is_literal); // absent == known default
+
+    const computed =
+        \\---
+        \\export function getStaticPaths({ paginate }) {
+        \\  return paginate(items, { pageSize: SIZE });
+        \\}
+        \\---
+    ;
+    const spec2 = detectPaginate("src/pages/a/[page].astro", computed).?;
+    try testing.expectEqual(@as(u32, 10), spec2.page_size);
+    try testing.expect(!spec2.page_size_is_literal);
+}
+
+// Finding 2 (issue #127 tasks 8+9 combined review, fix round 2): `pageSize`
+// was searched across the WHOLE fence, so a textual `pageSize` occurrence
+// BEFORE the real `paginate()` call (here, a comment) won silently instead
+// of the one actually passed to `paginate()`. Verified to fail without the
+// fix: reverting the `paginate_idx`-scoped search back to scanning `fence`
+// from the start makes `page_size` come out 99, not 20.
+test "paginate: pageSize is read from the paginate() call, not an earlier textual match" {
+    const src =
+        \\---
+        \\// pageSize: 99
+        \\export function getStaticPaths({ paginate }) {
+        \\  return paginate(posts, { pageSize: 20 });
+        \\}
+        \\---
+    ;
+    const spec = detectPaginate("src/pages/blog/[page].astro", src).?;
+    try testing.expectEqual(@as(u32, 20), spec.page_size);
+    try testing.expect(spec.page_size_is_literal);
+}
+
+test "paginate: non-matches return null" {
+    const paginate_src =
+        \\---
+        \\export function getStaticPaths({ paginate }) { return paginate(x); }
+        \\---
+    ;
+    // Wrong basename: paginate() requires the param be named `page`.
+    try testing.expectEqual(null, detectPaginate("src/pages/blog/[slug].astro", paginate_src));
+    // Right basename, no paginate in the fence.
+    try testing.expectEqual(null, detectPaginate("src/pages/blog/[page].astro",
+        \\---
+        \\export function getStaticPaths() { return []; }
+        \\---
+    ));
+    // paginate mentioned only in the BODY, not the fence.
+    try testing.expectEqual(null, detectPaginate("src/pages/blog/[page].astro",
+        \\---
+        \\const x = 1;
+        \\---
+        \\<p>call paginate() yourself</p>
+    ));
+    // Not under src/pages/.
+    try testing.expectEqual(null, detectPaginate("src/components/[page].astro", paginate_src));
 }

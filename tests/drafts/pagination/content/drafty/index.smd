@@ -1,0 +1,12 @@
+---
+.title = "Drafty",
+.layout = "list.shtml",
+.pagination = { .page_size = 2 },
+---
+# Drafty
+
+Same content as tests/rendering/pagination/content/drafty, but this root
+builds with --drafts (see build/snapshot.zig's tests/drafts pass), so the
+draft becomes active: 4 active posts, page_size=2, 2 full pages, and the
+draft appears inside a window. Pins that pagination counts active
+subpages, not Section.pages' raw length.

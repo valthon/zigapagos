@@ -31,10 +31,25 @@ _meta: struct {
     sites: *const std.StringArrayHashMapUnmanaged(Site),
 },
 
+/// Per-RENDER pagination state — lives here and not on Page because the
+/// same *Page is read concurrently by its .main job and every
+/// .alternative/.pagination job on other worker threads. Root is a stack
+/// local built fresh per job in renderPage, so this is naturally per-job.
+/// Set only for .main/.pagination renders of a paginated section index;
+/// null for alternatives (RSS must see the full list) and everything else.
+_pagination: ?PaginationState = null,
+
 // Globals specific to SuperHTML
 ctx: Ctx(Value) = .{},
 loop: ?*Iterator = null,
 @"if": ?*const Optional = null,
+
+pub const PaginationState = struct {
+    current: usize, // 1-based
+    total_pages: usize,
+    page_size: usize,
+    total_items: usize,
+};
 
 pub fn printLinkPrefix(
     ctx: *const Root,

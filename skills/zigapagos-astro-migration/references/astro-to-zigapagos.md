@@ -82,12 +82,13 @@ caught rather than silently dropped.)
 
 Both are file-based and 1:1:
 
-| Astro | Zigapagos |
-|---|---|
-| `src/pages/index.astro` → `/` | `content/index.smd` → `/` |
-| `src/pages/about.astro` → `/about` | `content/about.smd` → `/about/` |
-| `src/pages/blog/index.astro` | `content/blog/index.smd` (a section index) |
+| Astro | Zigapagos | Notes |
+|---|---|---|
+| `src/pages/index.astro` → `/` | `content/index.smd` → `/` | |
+| `src/pages/about.astro` → `/about` | `content/about.smd` → `/about/` | |
+| `src/pages/blog/index.astro` | `content/blog/index.smd` (a section index) | |
 | `src/pages/blog/[slug].astro` (dynamic) | one `content/blog/<slug>.smd` per entry | Zigapagos has no dynamic-route params; generate one `.smd` per item, or use a section + page assets — or use a `.spa.tsx` dynamic route with `staticPaths` (§13). |
+| `src/pages/blog/[page].astro` / `[...page].astro` + `paginate()` | `.pagination = { .page_size = N }` on `content/blog/index.smd` | Native pagination (§11). Delete the route file; the section index renders once per window. |
 
 ## 4. Pages & frontmatter
 
@@ -494,6 +495,42 @@ See `examples/tsx-site/` for a complete working project (`build.sh`, `package.js
 | `getCollection("blog")` | `$page.subpages()` from the section index |
 | collection `schema` (zod) | Ziggy frontmatter (typed) + `frontmatter.ziggy-schema` |
 
+### Pagination (`paginate()` → `.pagination`)
+
+| Astro | Zigapagos |
+|---|---|
+| `paginate(posts, { pageSize: 10 })` | `.pagination = { .page_size = 10 }` on the section's `index.smd` |
+| `page.data` | `$page.subpages()` (windowed automatically on a paginated render) |
+| `page.currentPage` | `$page.pagination?()` → `.current` |
+| `page.lastPage` | `.total` |
+| `page.size` | `.page_size` |
+| `page.total` | `.total_items` |
+| `page.url.prev` / `page.url.next` | `.prevLink?()` / `.nextLink?()` |
+| `page.url.first` / `page.url.last` | `pageLink(1)` / `pageLink($ctx.pg.total)` |
+| `page.start` / `page.end` | no equivalent (compute from `.current` and `.page_size` if needed) |
+
+- URL shape is `.url_style`: `page_dir` (`/blog/page/2/`, the default), `plain_dir`
+  (`/blog/2/` — Astro's rest-parameter shape), `page_html` (`/blog/page-2.html`).
+- Astro's two filename forms differ: `[...page].astro` puts page 1 at `/blog/`
+  (exact parity with `plain_dir`); `[page].astro` puts page 1 at `/blog/1` —
+  in Zigapagos page 1 is ALWAYS the section URL, so add
+  `.aliases = ["1/index.html"]` if the old `/blog/1/` URL must keep working.
+- Astro never emits `/page/2/` — that expectation comes from Hugo/Jekyll;
+  `page_dir` provides it natively.
+- Astro 7.1's `format()` option exists to patch pagination URLs for hosts
+  without rewrite rules; Zigapagos emits directory-style outputs everywhere,
+  so there is no equivalent to need — `page_html` covers the no-rewrites host.
+
+```superhtml
+<ul :loop="$page.subpages()"><li :text="$loop.it.title"></li></ul>
+<ctx :if="$page.pagination?()">
+  <ctx pg="$if">
+    <ctx :if="$ctx.pg.prevLink?()"><a href="$if">Newer</a></ctx>
+    <ctx :if="$ctx.pg.nextLink?()"><a href="$if">Older</a></ctx>
+  </ctx>
+</ctx>
+```
+
 ### Site-wide shared data (the "content database" singleton)
 
 Many Astro sites are **content-DB-driven**: one singleton (e.g.
@@ -579,9 +616,11 @@ Full reference: [docs/spa.md](../spa.md).
 Flag these during migration; use the workaround:
 
 - **Dynamic routes (`[slug]`) in static content** — the content layer has no
-  `getStaticPaths`; generate one `.smd` per entry. For app-like pages, a
-  `.spa.tsx` dynamic route (`/club/:id`) with a `staticPaths` hook prerenders
-  one real page per enumerated entry (see [SPA mode](#13-spa-mode-client-routed-apps)).
+  general `getStaticPaths`; generate one `.smd` per entry. Paginated routes
+  (`[page]`/`[...page]` + `paginate()`) are the exception: they map to native
+  `.pagination` (§11). For app-like pages, a `.spa.tsx` dynamic route
+  (`/club/:id`) with a `staticPaths` hook prerenders one real page per
+  enumerated entry (see [SPA mode](#13-spa-mode-client-routed-apps)).
 - **`client:only="framework"`** — there is one runtime, so the framework
   argument is meaningless; write plain `client:only`. A value on any
   directive other than `client:media` fails the build with a clear error.

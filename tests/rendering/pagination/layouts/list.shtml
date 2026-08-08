@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title :text="$site.title"></title>
+  </head>
+  <body>
+    <h1 :text="$page.title"></h1>
+    <ul :loop="$page.subpages()">
+      <li :text="$loop.it.title"></li>
+    </ul>
+    <ctx :if="$page.pagination?()">
+      <ctx pg="$if">
+        <p>
+          Page <span :text="$ctx.pg.current"></span> of <span :text="$ctx.pg.total"></span>
+          (<span :text="$ctx.pg.total_items"></span> items, <span :text="$ctx.pg.page_size"></span>/page)
+        </p>
+        <ctx :if="$ctx.pg.prevLink?()">
+          <a href="$if">newer</a>
+        </ctx>
+        <ctx :if="$ctx.pg.nextLink?()">
+          <a href="$if">older</a>
+        </ctx>
+        <a href="$ctx.pg.pageLink(1)">first</a>
+        <!-- Pins the p == ctx.page guard: while THIS page renders a
+             pagination window, another section's subpages() must stay
+             full, never windowed by this render's pagination state. -->
+        <ctx other="$site.page('news')">
+          <ul id="other-section-subpages" :loop="$ctx.other.subpages()">
+            <li :text="$loop.it.title"></li>
+          </ul>
+        </ctx>
+      </ctx>
+    </ctx>
+  </body>
+</html>

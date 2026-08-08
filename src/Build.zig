@@ -95,6 +95,22 @@ spas: []const root.SpaSpec = &.{},
 /// its `spaName(src)` basename; set verbatim from `root.Options.spa_not_found`
 /// in `Build.load`. Null = the first declared SPA (historical default).
 spa_not_found: ?[]const u8 = null,
+/// Every file path `spa.zig`'s `prerenderAll` wrote to disk this build,
+/// relative to the output dir (no leading slash -- the same string shape as
+/// `worker.paginationOutputPath` and friends): route shells, `staticPaths`
+/// concrete pages, each SPA's `routing-manifest.json`, and the site-wide
+/// `404.html`. Populated UNCONDITIONALLY by `prerenderAll` (NOT gated on
+/// `--summary`'s `collect`, unlike the `Summary.Category.spa_shell` records),
+/// because `root.zig`'s stale-pagination prune needs it on every disk build,
+/// not just a `--summary` one: an SPA's prerendered output is not a `Page`
+/// and is therefore never in any `Variant.urls` -- the prune's other
+/// skip-list -- so without this set the prune could delete a real SPA output
+/// that happens to sit at a pagination-shaped path (e.g. a `staticPaths`
+/// entry "2" under a base whose sibling section still uses `.page_dir`
+/// pagination, probed by the prune's non-current-style sweep). gpa-owned
+/// keys (route/manifest paths are allocated from `prerenderAll`'s per-SPA
+/// arena, which is gone by the time the prune runs); freed in `deinit`.
+spa_out_paths: std.StringHashMapUnmanaged(void) = .empty,
 /// Build-time props-contract check. `island_props_checks` is
 /// appended to (mutex-guarded) during the render phase and consumed once after
 /// it, in root.run. gpa-owned dups; freed in deinit.
@@ -258,6 +274,16 @@ pub fn deinit(b: *const Build, io: Io, gpa: Allocator) void {
     // the per-job arena (see MissingPage.Warnings' doc comment).
     b.missing_page_warnings.deinit();
     gpa.destroy(b.missing_page_warnings);
+
+    // spa_out_paths (see its doc comment): every key is a gpa dupe made by
+    // spa.zig's recordSpaOutPath, mirroring missing_page_warnings' seen set
+    // just above.
+    {
+        var it = b.spa_out_paths.keyIterator();
+        while (it.next()) |key| gpa.free(key.*);
+        var m = b.spa_out_paths;
+        m.deinit(gpa);
+    }
 }
 
 test "Build.island_sidecar defaults to null and deinit tolerates it" {

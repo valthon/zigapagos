@@ -272,6 +272,8 @@ which is markdown's own escape and also what makes the row render as one cell.
 | `unknown page` | `ZP_UNKNOWN_PAGE` | `src/context/Page.zig` |
 | `unknown ref` | `ZP_UNKNOWN_REF` | `src/context/Page.zig` |
 | `missing layout file` | `ZP_MISSING_LAYOUT` | `src/context/Page.zig` |
+| `pagination page_size must be at least 1` | `ZP_INVALID_PAGINATION_SIZE` | `src/context/Page.zig` |
+| `is only valid on a section index page` | `ZP_PAGINATION_NOT_SECTION` | `src/context/Page.zig` |
 | `unknown code-fence language` | `ZP_UNKNOWN_LANGUAGE` | `src/context/Page.zig` |
 | `unknown island directive` | `-` | `src/islands/pass.zig` |
 | `(expected load\|idle\|visible\|media\|only)` | `-` | `src/islands/pass.zig` |

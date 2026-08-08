@@ -1,0 +1,51 @@
+*-----------------------------------------------*
+|  WARNING: THIS IS A DEBUG BUILD OF ZIGAPAGOS  |
+|-----------------------------------------------|
+| Debug builds enable expensive sanity checks   |
+| that reduce performance.                      |
+|                                               |
+| To create a release build, run:               |
+|                                               |
+|           zig build --release=fast            |
+|                                               |
+| If you're investigating a bug in Zigapagos,   |
+| then a debug build might turn confusing       |
+| behavior into a crash.                        |
+|                                               |
+| To disable all forms of concurrency, you can  |
+| add the following flag to your build command: |
+|                                               |
+|              -Dsingle-threaded                |
+|                                               |
+*-----------------------------------------------*
+
+blog/2/index.html: error: output url collision detected
+   between  blog/2.smd (main output)
+   and      blog/index.smd (pagination page 2)
+
+----------------------------
+       -- VARIANT --
+----------------------------
+.id = 0,
+.content_dir_path = content
+
+  ------- SECTION -------
+.index = 1,
+.section_path = content/,
+.pages = [
+    content/blog/index.smd
+],
+
+
+  ------- SECTION -------
+.index = 2,
+.section_path = content/blog/,
+.pages = [
+    content/blog/beta.smd
+    content/blog/alpha.smd
+    content/blog/2.smd
+],
+
+
+
+ ----- EXIT CODE: 1 -----

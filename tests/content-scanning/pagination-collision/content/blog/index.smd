@@ -1,0 +1,6 @@
+---
+.title = "Blog",
+.layout = "index.shtml",
+.pagination = { .page_size = 1, .url_style = "plain_dir" },
+---
+# blog

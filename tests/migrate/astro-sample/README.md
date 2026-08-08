@@ -13,6 +13,9 @@ Astro site hits and that earlier versions of the tool got wrong:
   it). Its `onChange` callback must never be emitted as an island prop.
 - **`ContactForm`**'s props include a scalar, an **object** (`ThemeConfig` →
   struct stub) and a **callback** (`onSuccess` → skipped with a note).
+- **`src/pages/blog/[page].astro`** calls `paginate()` from `getStaticPaths` →
+  a **worklist conversion instruction** (delete the route file, add
+  `.pagination` to `content/blog/index.smd`), not an island or a partial.
 
 Run it:
 

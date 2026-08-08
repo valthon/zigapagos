@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>Pagination Test Website</title>
+  </head>
+  <body>
+    <h1>Alpha</h1>
+    <!-- subpagesAlphabetic(), not subpages(): windowing must apply on
+         DATE order first, THEN the window gets alpha-sorted -- never sort
+         the whole section alphabetically and window that (see the fixture
+         content: date order and alpha order are deliberately reversed, so
+         a sort-then-window regression swaps page 1 and page 2 entirely). -->
+    <ul>
+      <li>A</li>
+    
+      <li>B</li>
+    </ul>
+    
+      
+        <p>
+          Page <span>2</span> of <span>2</span>
+          (<span>4</span> items, <span>2</span>/page)
+        </p>
+        
+          <a href="/alpha/">newer</a>
+        
+        
+        <a href="/alpha/">first</a>
+        
+          <ul id="other-section-subpages">
+            <li>N3</li>
+          
+            <li>N2</li>
+          
+            <li>N1</li>
+          </ul>
+        
+      
+    
+  </body>
+</html>

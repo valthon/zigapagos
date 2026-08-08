@@ -482,6 +482,7 @@ pub fn prerenderAll(
             const skeleton = try renderSkeleton(sc, arena, src, prefixed_pathname, norm_prefix);
             const html = try renderShell(arena.a, title, noindex, bundle_url, runtime_url, chunk_url, norm_prefix, head_for_shell, desc.spa.flags, skeleton);
             try writeFile(io, out_dir, planned.out_path, html);
+            try recordSpaOutPath(build, gpa, planned.out_path);
             if (collect) |sm| try sm.add(gpa, .spa_shell, planned.out_path);
             if (planned.static_url) |u| {
                 try static_urls.append(arena.a, u);
@@ -515,6 +516,7 @@ pub fn prerenderAll(
                     const skeleton_c = try renderSkeleton(sc, arena, src, prefixed_pathname_c, norm_prefix);
                     const html_c = try renderShell(arena.a, title, noindex, bundle_url, runtime_url, chunk_url, norm_prefix, head_for_shell, desc.spa.flags, skeleton_c);
                     try writeFile(io, out_dir, planned_c.out_path, html_c);
+                    try recordSpaOutPath(build, gpa, planned_c.out_path);
                     if (collect) |sm| try sm.add(gpa, .spa_shell, planned_c.out_path);
                     try static_urls.append(arena.a, u);
                     // A lazy pattern route's chunk backs its concrete pages too.
@@ -538,6 +540,7 @@ pub fn prerenderAll(
         const manifest = try renderManifest(arena.a, url_base, static_urls.items, dynamics.items, chunk_entries.items, fallback, bundle_url, deploy_target, norm_prefix);
         const manifest_path = try diskJoin(arena.a, disk_prefix, "routing-manifest.json");
         try writeFile(io, out_dir, manifest_path, manifest);
+        try recordSpaOutPath(build, gpa, manifest_path);
         if (collect) |sm| try sm.add(gpa, .spa_manifest, manifest_path);
     }
 
@@ -546,6 +549,7 @@ pub fn prerenderAll(
     if (owner_root_shell) |shell| {
         defer gpa.free(shell);
         try writeFile(io, out_dir, "404.html", shell);
+        try recordSpaOutPath(build, gpa, "404.html");
         if (collect) |sm| try sm.add(gpa, .spa_fallback, "404.html");
     } else {
         std.log.warn(
@@ -1090,6 +1094,29 @@ fn renderManifest(
     try std.json.Stringify.value(bundle, .{}, w);
     try w.writeAll("}");
     return aw.toOwnedSlice();
+}
+
+/// Records `rel_path` into `build.spa_out_paths` (see that field's doc
+/// comment) -- the stale-pagination prune's SPA skip-list. Called
+/// UNCONDITIONALLY at every `writeFile` site in this pass, unlike the
+/// `collect`-gated `Summary.add` calls beside them: the prune needs this on
+/// every disk build, not just a `--summary` one.
+///
+/// Dedups before duping: `prerenderAll` runs single-threaded (no worker
+/// jobs), and `claimOutPathOrFatal` already fatals on an out-path collision
+/// WITHIN one SPA, so a repeat here can only mean two DIFFERENT SPAs
+/// (already rejected by `findSpecViolation`'s base-overlap check) or the
+/// literal "404.html" constant recurring — either way, skipping a
+/// known-present key avoids leaking a duplicate owned copy of it.
+///
+/// NO_SLOP.md §2.2a contract 1 (self-freeing): the one allocation it makes
+/// (the key's gpa dupe) is handed to the map, which owns it from here;
+/// nothing escapes to the caller.
+fn recordSpaOutPath(build: *Build, gpa: std.mem.Allocator, rel_path: []const u8) !void {
+    if (build.spa_out_paths.contains(rel_path)) return;
+    const owned = try gpa.dupe(u8, rel_path);
+    errdefer gpa.free(owned);
+    try build.spa_out_paths.put(gpa, owned, {});
 }
 
 fn writeFile(io: std.Io, out_dir: std.Io.Dir, rel_path: []const u8, contents: []const u8) !void {

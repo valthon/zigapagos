@@ -67,6 +67,12 @@ pub const Entry = struct {
     is_island: bool = false,
     /// A page/layout/component whose source references a `client:*` directive.
     uses_islands: bool = false,
+    /// For `kind == .page`: set when this is a `src/pages/**/[page].astro` or
+    /// `[...page].astro` route whose frontmatter calls `paginate()`.
+    /// `PaginateSpec.section` slices THIS entry's own `path` field (not the
+    /// scanned file content, which `scanFile` frees before returning) — so it
+    /// needs no separate free in `freeScanResult`; freeing `path` covers it.
+    paginate: ?detect.PaginateSpec = null,
 };
 
 pub const ScanResult = struct {
@@ -217,7 +223,15 @@ fn scanDir(
         if (entry.name.len == 0 or entry.name[0] == '.') continue;
         const child = std.fs.path.join(gpa, &.{ rel, entry.name }) catch fatal.oom();
         switch (entry.kind) {
-            .directory => scanDir(io, gpa, base, child, kind, out, island_names),
+            // `scanFile` takes ownership of `child` (stored verbatim as
+            // `Entry.path`, freed by `freeScanResult`). A directory has no
+            // such sink — `scanDir` only ever uses `child` as the `rel` for
+            // its own recursive walk — so it must free it once that walk
+            // returns, or every directory level leaks one join() alloc.
+            .directory => {
+                scanDir(io, gpa, base, child, kind, out, island_names);
+                gpa.free(child);
+            },
             else => scanFile(io, gpa, base, child, kind, out, island_names),
         }
     }
@@ -246,7 +260,8 @@ fn scanFile(
     // Any source file may host a `<Component client:*>` call site.
     detect.collectClientUsages(gpa, content, island_names) catch fatal.oom();
     const uses = std.mem.indexOf(u8, content, "client:") != null;
-    out.append(gpa, .{ .path = path, .kind = kind, .uses_islands = uses }) catch fatal.oom();
+    const paginate = if (kind == .page) detect.detectPaginate(path, content) else null;
+    out.append(gpa, .{ .path = path, .kind = kind, .uses_islands = uses, .paginate = paginate }) catch fatal.oom();
 }
 
 fn fileExists(io: Io, base: Io.Dir, path: []const u8) bool {
@@ -605,6 +620,14 @@ pub fn scaffoldIslands(io: Io, gpa: Allocator, astro_root: Io.Dir, scaffold_dir:
     );
 }
 
+/// Render the full MIGRATION.md worklist. NO_SLOP.md §2.2a contract 2
+/// (owned-result): the returned slice is gpa-owned — the caller frees it.
+/// Must return `aw.toOwnedSlice()`, not `aw.written()`: `written()` is a
+/// `buffer[0..end]` VIEW into `Allocating`'s internal buffer, which can be
+/// larger than `end` after growth — `gpa.free()`ing that shorter view
+/// mismatches the allocator's tracked allocation size and panics ("Invalid
+/// free") under the debug allocator. No caller freed this before the
+/// pagination worklist test did, so the mismatch went unnoticed.
 pub fn buildReport(gpa: Allocator, dir_path: []const u8, entries: []const Entry, has_config: bool, has_scaffold: bool) []const u8 {
     var aw: std.Io.Writer.Allocating = .init(gpa);
     const w = &aw.writer;
@@ -660,7 +683,7 @@ pub fn buildReport(gpa: Allocator, dir_path: []const u8, entries: []const Entry,
         // guard so it can't re-list a shipped capability as a gap (the F3 bug).
     ++ detect.capabilities_section) catch fatal.oom();
 
-    return aw.written();
+    return aw.toOwnedSlice() catch fatal.oom();
 }
 
 /// Emit a copy-paste-ready `build.sh`, with one `--island=` per detected island.
@@ -741,6 +764,13 @@ fn section(w: anytype, entries: []const Entry, kind: Kind, title: []const u8) vo
     var any = false;
     for (entries) |e| {
         if (e.kind == kind) {
+            if (e.paginate) |spec| {
+                w.print("- [ ] `{s}` — ", .{e.path}) catch fatal.oom();
+                detect.paginateNote(w, spec) catch fatal.oom();
+                w.writeAll("\n") catch fatal.oom();
+                any = true;
+                continue;
+            }
             const note = if (e.uses_islands) "  — contains `client:` usage; translate the island sites" else "";
             w.print("- [ ] `{s}`{s}\n", .{ e.path, note }) catch fatal.oom();
             any = true;
@@ -795,7 +825,10 @@ fn doctor(io: Io, gpa: Allocator, path: []const u8, json: bool) bool {
         fatal.file(path, err);
     defer gpa.free(src);
     if (src.len == 0) fatal.msg("island source is empty, nothing to analyse: {s}\n", .{path});
-    const rep = detect.analyze(gpa, islandModuleName(path), src) catch fatal.oom();
+    var rep = detect.analyze(gpa, islandModuleName(path), src) catch fatal.oom();
+    // Pagination detection needs the real `src/pages/...` path (component is
+    // just the module name), so it's wired here rather than inside analyze().
+    rep.paginate = detect.detectPaginate(path, src);
 
     const f = Io.File.stdout();
     // Give the writer a real buffer: unbuffered, each of the renderers' ~40
@@ -1060,6 +1093,58 @@ test "scaffoldIslands real-port path rewrites React imports and frees its scratc
     try std.testing.expect(std.mem.indexOf(u8, out, "import { useState } from \"@z/runtime\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "NO-NPM-GUARDRAIL") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "react-google-recaptcha") != null);
+}
+
+test "paginate: scan flags a paginated route and buildReport prescribes the conversion" {
+    const testing_io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(testing_io, "src/pages/blog");
+    {
+        const f = try tmp.dir.createFile(testing_io, "src/pages/blog/[page].astro", .{});
+        defer f.close(testing_io);
+        var w = f.writer(testing_io, &.{});
+        try w.interface.writeAll(
+            \\---
+            \\import { getCollection } from "astro:content";
+            \\export async function getStaticPaths({ paginate }) {
+            \\  const posts = await getCollection("blog");
+            \\  return paginate(posts, { pageSize: 4 });
+            \\}
+            \\const { page } = Astro.props;
+            \\---
+            \\<ul></ul>
+            \\
+        );
+    }
+
+    var res = scan(testing_io, gpa, tmp.dir);
+    defer freeScanResult(gpa, &res);
+
+    var found = false;
+    for (res.entries) |e| {
+        if (!std.mem.eql(u8, e.path, "src/pages/blog/[page].astro")) continue;
+        found = true;
+        const spec = e.paginate orelse return error.TestUnexpectedResult;
+        try std.testing.expectEqualStrings("blog", spec.section);
+        try std.testing.expectEqual(@as(u32, 4), spec.page_size);
+        try std.testing.expectEqual(true, spec.page_size_is_literal);
+    }
+    try std.testing.expect(found);
+
+    const report = buildReport(gpa, "astro-sample", res.entries, res.has_config, false);
+    defer gpa.free(report);
+
+    try std.testing.expect(std.mem.indexOf(u8, report, "`src/pages/blog/[page].astro`") != null);
+    try std.testing.expect(std.mem.indexOf(u8, report, "delete the route file") != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        report,
+        ".pagination = { .page_size = 4, .url_style = \"plain_dir\" }",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(u8, report, "content/blog/index.smd") != null);
 }
 
 test "usage says outright that migrate converts nothing" {

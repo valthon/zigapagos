@@ -1,0 +1,12 @@
+---
+.title = "Plain",
+.layout = "list.shtml",
+---
+# Plain
+
+No `.pagination` field: pins $page.pagination?()'s null branch on the
+SAME shared list.shtml used by the paginated sections (a shared layout
+must branch cleanly on both sides), and pins subpages() staying
+un-windowed when ctx._pagination is null altogether -- all 3 posts must
+appear, and the pagination `<p>`/prev/next/first block must be entirely
+absent.

@@ -1,0 +1,7 @@
+---
+.title = "Home",
+.layout = "root.shtml",
+---
+# Home
+
+Root index for the pagination rendering fixture.

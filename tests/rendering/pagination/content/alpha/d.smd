@@ -1,0 +1,8 @@
+---
+.title = "D",
+.date = @date("2024-07-04T00:00:00"),
+.layout = "post.shtml",
+---
+# D
+
+Newest by date, last alphabetically.

@@ -1,0 +1,45 @@
+*-----------------------------------------------*
+|  WARNING: THIS IS A DEBUG BUILD OF ZIGAPAGOS  |
+|-----------------------------------------------|
+| Debug builds enable expensive sanity checks   |
+| that reduce performance.                      |
+|                                               |
+| To create a release build, run:               |
+|                                               |
+|           zig build --release=fast            |
+|                                               |
+| If you're investigating a bug in Zigapagos,   |
+| then a debug build might turn confusing       |
+| behavior into a crash.                        |
+|                                               |
+| To disable all forms of concurrency, you can  |
+| add the following flag to your build command: |
+|                                               |
+|              -Dsingle-threaded                |
+|                                               |
+*-----------------------------------------------*
+
+content/post.smd:4:15: error: pagination page_size must be at least 1
+|    .pagination = { .page_size = 0 },
+|                  ^^^^^^^^^^^^^^^^^^
+
+content/post.smd:4:15: error: 'pagination' is only valid on a section index page
+|    .pagination = { .page_size = 0 },
+|                  ^^^^^^^^^^^^^^^^^^
+
+----------------------------
+       -- VARIANT --
+----------------------------
+.id = 0,
+.content_dir_path = content
+
+  ------- SECTION -------
+.index = 1,
+.section_path = content/,
+.pages = [
+    content/post.smd
+],
+
+
+
+ ----- EXIT CODE: 1 -----

@@ -217,6 +217,7 @@ Fields:
 - `skip_subdirs` : Bool — Skips any other potential content present in the subdir of the page, as set in the SuperMD frontmatter. Can only be set to true on section pages (i.e. `index.smd` pages).
 - `translation_key` : ?String — Translation key used to map this page with corresponding localized variants, as set in the SuperMD frontmatter. See the docs on i18n for more info.
 - `custom` : Value — A Ziggy map where you can define custom properties for the page, as set in the SuperMD frontmatter.
+- `pagination` : ?Pagination — Pagination settings of this section index, as set in the SuperMD frontmatter (null when not paginated). `.pagination = { .page_size = 10 }` makes the build render this index once per window of 10 active subpages. Use `$page.pagination?()` for the per-render state (current page, total pages, prev/next links).
 
 #### `Page.isCurrent() -> Bool`
 
@@ -354,6 +355,19 @@ within the `if` block.
 ```superhtml
 <div :if="$page.nextPage?()">
   <span :text="$if.title"></span>
+</div>
+```
+
+#### `Page.pagination?() -> ?Paginator`
+
+Returns the pagination state when the current render is a
+window of THIS page's section (the page sets `.pagination`
+in its frontmatter), null otherwise — so shared layouts can
+branch with an `if` attribute.
+
+```superhtml
+<div :if="$page.pagination?()">
+  <span :text="$if.current"></span> / <span :text="$if.total"></span>
 </div>
 ```
 
@@ -541,6 +555,67 @@ Returns the URL of the target alternative.
 
 ```superhtml
 $page.alternative("rss").link()
+```
+
+### Pagination
+
+Pagination settings of a section index page,
+as set in the SuperMD frontmatter.
+
+Fields:
+
+- `page_size` : u32 — How many subpages each pagination window holds.
+- `url_style` : UrlStyle — URL shape of page 2 and beyond: `page_dir` (`blog/page/2/`), `plain_dir` (`blog/2/`), or `page_html` (`blog/page-2.html`). Page 1 is always the section's own URL.
+
+### Paginator
+
+The pagination state of the section-index render in progress:
+which window this output is, out of how many. Obtained from
+`$page.pagination?()`.
+
+Fields:
+
+- `current` : Int — The current page number, 1-based.
+- `total` : Int — How many pages this section paginates into.
+- `page_size` : Int — How many subpages each window holds (`pagination.page_size`).
+- `total_items` : Int — Total active subpages across all windows.
+
+#### `Paginator.prevLink?() -> ?String`
+
+URL of the previous pagination page, or null on page 1.
+From page 2 this is the section's own URL.
+
+```superhtml
+<ctx :if="$page.pagination?()">
+  <ctx pg="$if">
+    <ctx :if="$ctx.pg.prevLink?()"><a href="$if">Newer</a></ctx>
+  </ctx>
+</ctx>
+```
+
+#### `Paginator.nextLink?() -> ?String`
+
+URL of the next pagination page, or null on the last page.
+
+```superhtml
+<ctx :if="$page.pagination?()">
+  <ctx pg="$if">
+    <ctx :if="$ctx.pg.nextLink?()"><a href="$if">Older</a></ctx>
+  </ctx>
+</ctx>
+```
+
+#### `Paginator.pageLink(Int) -> String`
+
+URL of pagination page `n` (1-based). Page 1 is the
+section's canonical URL. Errors when `n` is out of range.
+
+```superhtml
+<ctx :if="$page.pagination?()">
+  <ctx pg="$if">
+    <a href="$ctx.pg.pageLink(1)">1</a>
+  </ctx>
+</ctx>
 ```
 
 ### ContentSection
