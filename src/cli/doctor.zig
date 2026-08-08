@@ -59,11 +59,22 @@ pub fn doctor(io: Io, gpa: Allocator, args: []const []const u8) bool {
             // A walk error yields a PARTIAL file list. Reporting whatever we
             // saw as "clean" would be worse than reporting nothing — same
             // reasoning as the zero-`.html`-files rule below: a gate that
-            // audited only part of the tree must not report success.
-            std.debug.print(
-                "doctor: could not finish scanning '{s}': {t}\n",
-                .{ cmd.dir, err },
-            );
+            // audited only part of the tree must not report success. In json
+            // mode this is a fatal like any other and must ride the NDJSON
+            // stderr stream as ZP_FATAL — prose here would corrupt the one
+            // stream the mode promises is machine-readable. Not routed
+            // through fatal.msg: that would change TEXT mode too (a Debug
+            // build panics there), and text mode is a frozen contract.
+            switch (diag.format) {
+                .json => diag.emitFatal(
+                    "doctor: could not finish scanning '{s}': {t}",
+                    .{ cmd.dir, err },
+                ),
+                .text => std.debug.print(
+                    "doctor: could not finish scanning '{s}': {t}\n",
+                    .{ cmd.dir, err },
+                ),
+            }
             return true;
         }) |entry| {
             if (entry.kind != .file) continue;

@@ -85,6 +85,22 @@ bun run "$WORK/check.mjs" list "$WORK/p1.err" ZP_FATAL ZP_SUPERMD ZP_URL_COLLISI
   || fail "listing JSON assertions failed"
 echo "ok"
 
+echo "=== Phase 1b: a repeated --format flag honors the LAST value, banner-free ==="
+# The command parsers keep the LAST --format= value, so the pre-scan in
+# main.zig must agree -- if it stopped at the FIRST flag it would resolve
+# 'text' here, print the Debug banner onto stderr, and then the parser would
+# switch to json: a corrupted NDJSON stream. The single-line assertion is the
+# discriminator (the binary under test is a Debug build, so the banner WOULD
+# appear as extra stderr lines).
+set +e
+"$ZIGAPAGOS" explain-code --format=text --format=json ZP_FATAL >"$WORK/p1b.out" 2>"$WORK/p1b.err"
+RC=$?
+set -e
+[[ "$RC" -eq 0 ]] || { cat "$WORK/p1b.err"; fail "repeated --format flags exited $RC, want 0"; }
+bun run "$WORK/check.mjs" one "$WORK/p1b.err" ZP_FATAL \
+  || fail "repeated --format flags: stderr was not exactly one NDJSON entry (pre-scan disagreed with the parser and leaked the banner)"
+echo "ok"
+
 echo "=== Phase 2: unknown code in json mode is a ZP_FATAL NDJSON usage error ==="
 set +e
 "$ZIGAPAGOS" explain-code --format=json ZP_NOT_A_REAL_CODE >"$WORK/p2.out" 2>"$WORK/p2.err"

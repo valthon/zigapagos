@@ -121,4 +121,28 @@ grep -q '"code":"ZP_FATAL"' "$WORK/p3.err" \
   || { cat "$WORK/p3.err"; fail "missing-dir fatal did not emit ZP_FATAL NDJSON (diag.format not set before the fatal path)"; }
 echo "ok"
 
+echo "=== Phase 4: a mid-walk failure in json mode is ZP_FATAL NDJSON, not prose ==="
+# An unreadable subdirectory makes walker.next fail after the walk has begun --
+# the one failure path that used to print prose ("doctor: could not finish
+# scanning ...") straight onto the NDJSON stderr stream. Needs a non-root user:
+# root ignores mode 000 and the walk would succeed, silently voiding the phase.
+[[ "$EUID" -ne 0 ]] || fail "this phase needs a non-root user (root can read a mode-000 dir, so the walk failure never happens)"
+DENY="$WORK/deny"
+mkdir -p "$DENY/public/locked"
+printf '<!DOCTYPE html><html><head><title>x</title></head><body>ok</body></html>\n' > "$DENY/public/index.html"
+chmod 000 "$DENY/public/locked"
+set +e
+( cd "$DENY" && "$ZIGAPAGOS" doctor public --format=json ) >"$WORK/p4.out" 2>"$WORK/p4.err"
+RC=$?
+set -e
+chmod 755 "$DENY/public/locked"   # so the EXIT trap's rm -rf can clean up
+[[ "$RC" -ne 0 ]] || { cat "$WORK/p4.err"; fail "doctor on a tree with an unreadable subdir exited 0"; }
+grep -q '"code":"ZP_FATAL"' "$WORK/p4.err" \
+  || { cat "$WORK/p4.err"; fail "walk failure did not emit ZP_FATAL NDJSON on stderr"; }
+grep -q 'could not finish scanning' "$WORK/p4.err" \
+  || { cat "$WORK/p4.err"; fail "walk-failure diagnostic lost its message"; }
+! grep -q '^doctor: could not finish scanning' "$WORK/p4.err" \
+  || { cat "$WORK/p4.err"; fail "walk failure printed PROSE onto the json stderr stream"; }
+echo "ok"
+
 echo "PASS: tests/doctor/format-json.sh"
