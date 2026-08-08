@@ -88,10 +88,11 @@ fetch_exact() {
   done
 }
 
-root_pin="$(derive_pin build.zig.zon translate_c)"
-IFS=$'\t' read -r root_url root_hash <<< "$root_pin"
-root_mirror_url="$(translate_c_mirror "$root_url")"
-
+# The one remaining translate-c pin is SuperMD's transitive one. The root
+# manifest used to carry a direct translate_c entry too (inherited from
+# upstream's LSP build, consumed by nothing), and this script warmed both;
+# when that entry was deleted, deriving it here became the only reader left.
+#
 # SuperMD is itself on GitHub. Fetch its exact root pin first, then derive its
 # transitive translate-c pin from the materialized manifest rather than copying
 # a URL or hash into this script.
@@ -108,12 +109,11 @@ transitive_pin="$(derive_pin "$supermd_zon" translate_c)"
 IFS=$'\t' read -r transitive_url transitive_hash <<< "$transitive_pin"
 transitive_mirror_url="$(translate_c_mirror "$transitive_url")"
 
-echo "warming exact translate-c packages from GitHub..."
-fetch_exact "$root_mirror_url" "$root_hash"
+echo "warming exact translate-c package from GitHub..."
 fetch_exact "$transitive_mirror_url" "$transitive_hash"
 
 if [ -n "$warm_only_env" ]; then
-  printf 'WARMED_TRANSLATE_C_HASHES=%s %s\n' "$root_hash" "$transitive_hash" >> "$warm_only_env"
+  printf 'WARMED_TRANSLATE_C_HASHES=%s\n' "$transitive_hash" >> "$warm_only_env"
   exit 0
 fi
 
@@ -129,7 +129,7 @@ for attempt in 1 2 3; do
   sleep "$retry_delay"
 done
 
-for expected in "$root_hash" "$transitive_hash"; do
+for expected in "$transitive_hash"; do
   found=0
   grep -qF ".hash = \"$expected\"" build.zig.zon && found=1
   if [ "$found" -eq 0 ]; then

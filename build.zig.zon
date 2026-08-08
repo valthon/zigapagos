@@ -4,10 +4,6 @@
     .fingerprint = 0xdd20b203a298a456,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
-        .lsp_kit = .{
-            .url = "git+https://github.com/zigtools/lsp-kit#ec325a3c33d1da7708cf513355208f74d9560580",
-            .hash = "lsp_kit-0.1.0-bi_PL_kyDACVTEhLaMq2-PJx0MocqRyjXDAN0ybMUyQQ",
-        },
         .scripty = .{
             .url = "git+https://github.com/kristoff-it/scripty#9c1e5903acd2a591f87f577b2ea08895e7168b9d",
             .hash = "scripty-0.1.0-LKK5OzcUAQDVndpJNPAm4eC_-G0HaXUdQejzb9X6C2vq",
@@ -38,8 +34,8 @@
             .hash = "zeit-0.6.0-5I6bk3K6AgCFnc_9CN7KJjaeNJz1VuwP4DA7Gs9vgxuz",
         },
         .flow_syntax = .{
-            .url = "git+https://github.com/neurocyte/flow-syntax#28d643c3fd8455faab0ea12383da9d6ddcbe9cb0",
-            .hash = "flow_syntax-0.7.2-X8jOoeFgAQBquxUXx-h5g_xXQzcNAOtyz3M4fVUwgrOd",
+            .url = "git+https://github.com/neurocyte/flow-syntax?ref=zig-0.16#6d1772a8d51729ad0488fc4d556ec7f87168bfdb",
+            .hash = "flow_syntax-0.7.2-X8jOoYiMAQAaepRcrHQMb57tdPzzGt14ydaJbSNuWYTn",
         },
         .ziggy = .{
             .url = "git+https://github.com/kristoff-it/ziggy?ref=old#0fdd57cbb052e7aa5930b3ed960ea3450f9dc2b0",
@@ -48,10 +44,6 @@
         .supermd = .{
             .url = "git+https://github.com/kristoff-it/supermd#4132146450f1ecbaa3fbd75cfeabccd754d6e716",
             .hash = "supermd-0.1.0-3Mco3CiXWABRpK_kiTdTuVJ7eZOm102_E8j5C6qyRh_2",
-        },
-        .translate_c = .{
-            .url = "git+https://codeberg.org/ziglang/translate-c#7a1a9fdc4ab00835748a6657ecbb835e3d5d45f7",
-            .hash = "translate_c-0.0.0-Q_BUWvP1BgCjAk6PWv5286tOlvzD9-X-NkuTzh0KxY0Q",
         },
     },
     .paths = .{"."},

@@ -91,7 +91,7 @@ Three further pieces of `release` are Bun-driven and each is opt-in:
 ### How Bun is obtained
 
 Any Bun on `PATH` works; `--bun=PATH` overrides the search. The repository pins
-`bun = "1.2"` in `mise.toml`, and that pin is what the npm package's `bun`
+`bun = "1.3.14"` in `mise.toml`, and that pin is what the npm package's `bun`
 dependency range is derived from.
 
 - `npm i zigapagos` installs Bun as an optional dependency, and the launcher

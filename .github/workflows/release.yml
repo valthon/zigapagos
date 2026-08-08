@@ -117,15 +117,16 @@ jobs:
       - name: Setup toolchain (zig + bun via mise)
         uses: jdx/mise-action@v4
 
-      # Both translate-c pins normally resolve from Codeberg (one directly, one
-      # through SuperMD), but Codeberg capability discovery has failed
-      # persistently from GitHub-hosted runners (tracked in #121). The official
+      # The one translate-c pin left — SuperMD's transitive one (the root
+      # manifest's unconsumed direct entry was deleted) — normally resolves from
+      # Codeberg, but Codeberg capability discovery has failed persistently from
+      # GitHub-hosted runners (tracked in #121). The official
       # ziglang/translate-c GitHub archive contains the identical commits. Zig
-      # caches by content hash, so warming those hashes lets the unchanged graph
+      # caches by content hash, so warming that hash lets the unchanged graph
       # resolve without contacting Codeberg.
       #
       # Remove only this step when #121 confirms Codeberg is reachable from
-      # hosted runners again, or when neither resolved pin uses Codeberg. Pin
+      # hosted runners again, or when no resolved pin uses Codeberg. Pin
       # changes still fail closed, although when Codeberg is unavailable the
       # later fetch retry may report its general dependency-fetch diagnostic
       # before the resolved-graph check can name an obsolete warmed hash.
@@ -226,7 +227,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 24
 
@@ -267,7 +268,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 24
 
@@ -442,11 +443,13 @@ jobs:
       # kept because that is the arrangement npm documents for trusted publishing,
       # not because the default would be a different registry. Worth knowing when
       # reading that file on a runner: it also contains an `_authToken` line
-      # interpolating an environment variable that nothing here sets. npm >= 11.5
-      # obtains its own short-lived token from the run's OIDC identity rather than
-      # reading a credential out of that file, so the placeholder stays empty.
+      # interpolating `NODE_AUTH_TOKEN`, which nothing sets — setup-node v7 removed
+      # the dummy export older majors wrote precisely because it could shadow OIDC
+      # (actions/setup-node#1551). npm >= 11.5 obtains its own short-lived token
+      # from the run's OIDC identity rather than reading a credential out of that
+      # file, so the interpolation resolves to nothing and is never consulted.
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 24
           registry-url: 'https://registry.npmjs.org'

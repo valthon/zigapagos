@@ -599,7 +599,7 @@ test("zigbaseDepFromZig tracks pinned_version, on the scoped package", () => {
 });
 
 test("bunDepFromMise turns the mise pin into a caret range", () => {
-  assert.deepEqual(bunDepFromMise(REPO_ROOT), { bun: "^1.2" });
+  assert.deepEqual(bunDepFromMise(REPO_ROOT), { bun: "^1.3.14" });
 });
 
 test("each derivation throws rather than returning empty when its source changes", () => {

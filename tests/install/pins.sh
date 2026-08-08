@@ -28,10 +28,11 @@ INSTALL=install.sh
 pin() { sed -n "s/^$1=\"\\(.*\\)\"$/\\1/p" "$INSTALL" | head -1; }
 
 # --- bun ---------------------------------------------------------------------
-# mise.toml pins a RANGE (`bun = "1.2"`); install.sh needs an exact version,
-# because a range is not a download URL. So the assertion is containment, not
-# equality: the exact version must be inside the range the rest of the repository
-# was built and tested against.
+# install.sh needs an exact version, because a range is not a download URL.
+# mise.toml currently pins an exact version too (`bun = "1.3.14"`), but it has
+# pinned a range before (`bun = "1.2"`), so the assertion stays containment
+# rather than equality: the exact version must be inside whatever the rest of
+# the repository was built and tested against.
 BUN_PIN="$(pin BUN_VERSION)"
 [ -n "$BUN_PIN" ] || fail "could not read BUN_VERSION out of install.sh"
 MISE_BUN="$(sed -n 's/^[[:space:]]*bun[[:space:]]*=[[:space:]]*"\([0-9.]*\)".*/\1/p' mise.toml | head -1)"
