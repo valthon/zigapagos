@@ -78,6 +78,15 @@ updates:
       # unmatched updates "are updated in individual pull requests" — reintroducing exactly the
       # per-action PR spam this group was created to stop.
       #
+      # ONE OBSERVED EXCEPTION to "patch releases are invisible": jdx/mise-action. Unlike the
+      # actions/* family it has no releases named after bare majors, so Dependabot compares
+      # `@v4` (read as version 4) against its newest concrete tag and proposes a patch pin —
+      # PR #125 proposed 4 -> 4.2.3 at a moment when the moving v4 tag already pointed past
+      # it, at 4.2.4. Accepting such a PR is a downgrade in disguise: it pins a stale patch
+      # AND drops us off the moving tag that delivers fixes with no PR at all (v4.2.1 broke
+      # mise PATH propagation into jobs; v4.2.3 fixed it; `@v4` riders never noticed). The
+      # ignore below mutes exactly that proposal shape while leaving majors visible.
+      #
       # Blanket-ignoring majors here would be worse still. The two most recent action bumps in
       # this repo were both majors — actions/checkout v4 → v7 and jdx/mise-action v2 → v4 — and
       # both were wanted: together they cleared a Node-20 runtime deprecation that would
@@ -86,6 +95,13 @@ updates:
       actions:
         patterns:
           - "*"
+    ignore:
+      # See the "ONE OBSERVED EXCEPTION" note above. `ignore[].update-types` takes the long
+      # spelling (header comment); majors are deliberately NOT ignored — they are the signal.
+      - dependency-name: "jdx/mise-action"
+        update-types:
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
 
   # runtime/ is the shipped @z/runtime package. Its bun.lock is the text format Dependabot
   # requires — it does not read the legacy binary bun.lockb — and mise.toml pins bun 1.3.14, above
