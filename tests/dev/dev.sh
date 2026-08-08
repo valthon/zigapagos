@@ -32,6 +32,7 @@
 #       cleanly,
 #   (h) [opt-in] the same loop against a REAL zigbase binary (REAL_ZIGBASE=…).
 set -euo pipefail
+export ZIGAPAGOS_DEV_BACKGROUND=0 # keep dev foreground: this harness manages the process itself
 cd "$(dirname "$0")"
 HERE="$(pwd)"
 REPO="$(cd ../.. && pwd)"

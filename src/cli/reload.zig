@@ -58,13 +58,22 @@ const snippet_fmt =
     "}})();" ++
     "</script>";
 
-/// SSE broadcast server. One instance per dev session: `start` spawns the
-/// accept thread (which spawns one thread per connection); `notify` wakes every
-/// connected browser. Threads live for the whole dev session — no teardown.
+/// SSE broadcast server. One instance per dev session: `start` binds the
+/// listening socket SYNCHRONOUSLY (see its own doc comment — this is also
+/// now the control plane the session lockfile advertises) then spawns the
+/// accept thread (which spawns one thread per connection); `notify` wakes
+/// every connected browser. Threads live for the whole dev session — no
+/// teardown.
 pub const Server = struct {
     io: Io,
     gpa: Allocator,
     address: Io.net.IpAddress,
+
+    /// The bound listening socket, set by `start()` before it spawns the
+    /// accept thread. `null` only before `start()` runs (or if it never
+    /// runs at all, as in the unit tests below that exercise `reserveSlot`/
+    /// `releaseSlot` directly without a real listener).
+    listener: ?Io.net.Server = null,
 
     /// Live SSE connections, each pinned to its own thread parked forever in
     /// `handle`. Bounded by `max_connections`: the endpoint answers
@@ -86,6 +95,24 @@ pub const Server = struct {
     /// Persists until the next `notify*` replaces it (so every waiter that wakes
     /// on one generation reads the same value).
     payload: ?[]u8 = null,
+
+    /// --- status endpoint state (GET /_zigapagos/status) -------------------
+    /// Identity, set once by the dev loop before requests can care (guarded
+    /// by `mutex` anyway; the slices are session-lifetime, owned by dev.zig).
+    status_pid: i64 = 0,
+    status_url: []const u8 = "",
+    status_started_at: []const u8 = "",
+    /// Monotonic completed-build counter — the agent primitive: edit, poll
+    /// until this bumps, then branch on `build_status`.
+    build_generation: u64 = 0,
+    build_status: BuildStatus = .building,
+    build_duration_ms: u64 = 0,
+    /// Bounded tail of the last FAILED rebuild's output, gpa-owned.
+    build_error: ?[]u8 = null,
+
+    pub const BuildStatus = enum { building, ok, failed };
+    /// Upper bound on the stored error tail (and thus on the endpoint body).
+    pub const max_error_tail: usize = 2048;
 
     /// Hard cap on simultaneously-served `EventSource` streams. One dev browser
     /// needs one; a few tabs plus a stale window need a handful. 32 leaves ample
@@ -112,10 +139,36 @@ pub const Server = struct {
         _ = s.connections.fetchSub(1, .monotonic);
     }
 
-    /// Spawns the (detached) accept thread. Returns once it is listening-or-
-    /// failed; a bind failure is reported on the thread, not fatal to the loop.
-    pub fn start(s: *Server) std.Thread.SpawnError!void {
-        const t = try std.Thread.spawn(.{}, accept, .{s});
+    /// Bind the listening socket SYNCHRONOUSLY, then spawn a detached thread
+    /// that owns `accept`. Returns once the socket is bound-or-failed: a bind
+    /// failure (almost always `AddressInUse`, another process squatting on
+    /// `--reload-port`) is now something the CALLER sees and can act on.
+    ///
+    /// This used to bind inside the detached thread (`accept`, below), so a
+    /// bind failure only ever reached a `std.debug.print` from a background
+    /// thread dev.zig had no way to observe — the dev loop went on to write
+    /// `dev.json` and advertise a control server that was never actually
+    /// listening (PR #140 round 2: P2b). That was a reasonable trade when
+    /// this server was purely a live-reload nicety (`--no-live-reload`
+    /// covered "I don't want it"), but it is now also the CONTROL PLANE the
+    /// lockfile advertises (`/_zigapagos/status`, every `dev
+    /// stop|status|logs` control verb) — a dead control plane silently
+    /// published as live is worse than a loud startup failure. `dev.zig`
+    /// already `fatal.msg`s on `start()` returning an error; moving the bind
+    /// here makes that fatal actually fire, and fire BEFORE `dev.json` is
+    /// ever written.
+    pub fn start(s: *Server) (Io.net.IpAddress.ListenError || std.Thread.SpawnError)!void {
+        // Assign BEFORE spawning: `accept` (below) reads `s.listener` from a
+        // different thread the instant it starts running, so the field must
+        // already hold the bound socket before that thread can possibly
+        // observe it — spawning first would race a thread that starts faster
+        // than this assignment against `s.listener.?` still being null.
+        s.listener = try s.address.listen(s.io, .{ .reuse_address = true });
+        const t = std.Thread.spawn(.{}, accept, .{s}) catch |err| {
+            s.listener.?.deinit(s.io);
+            s.listener = null;
+            return err;
+        };
         t.detach();
     }
 
@@ -151,14 +204,77 @@ pub const Server = struct {
         s.cond.broadcast(s.io);
     }
 
-    fn accept(s: *Server) void {
-        var srv = s.address.listen(s.io, .{ .reuse_address = true }) catch |err| {
-            std.debug.print(
-                "dev: live-reload: unable to bind the reload port ({any}): {s} — reload disabled\n",
-                .{ s.address, @errorName(err) },
-            );
-            return;
+    pub const status_path = "/_zigapagos/status";
+
+    pub fn setIdentity(s: *Server, pid: i64, url: []const u8, started_at: []const u8) void {
+        s.mutex.lock(s.io) catch return;
+        defer s.mutex.unlock(s.io);
+        s.status_pid = pid;
+        s.status_url = url;
+        s.status_started_at = started_at;
+    }
+
+    pub fn setBuilding(s: *Server) void {
+        s.mutex.lock(s.io) catch return;
+        defer s.mutex.unlock(s.io);
+        s.build_status = .building;
+    }
+
+    /// Records a completed rebuild and bumps the generation (ok AND failed
+    /// builds both count — an agent polling for its edit needs the bump either
+    /// way, and then branches on `status`). Dupes (a bounded prefix of) the
+    /// tail; OOM degrades to "no tail", never drops the result itself.
+    pub fn setBuildFinished(s: *Server, ok: bool, duration_ms: u64, error_tail: ?[]const u8) void {
+        s.mutex.lock(s.io) catch return;
+        defer s.mutex.unlock(s.io);
+        s.build_generation += 1;
+        s.build_status = if (ok) .ok else .failed;
+        s.build_duration_ms = duration_ms;
+        // The server never deinits (session-lifetime, memory: dropped on process
+        // exit), so this replace-on-next-finish is the only free path for a
+        // stored tail — that is acceptable here, it is not a per-request leak.
+        if (s.build_error) |old| {
+            s.gpa.free(old);
+            s.build_error = null;
+        }
+        if (!ok) if (error_tail) |tail| {
+            const bounded = tail[tail.len -| max_error_tail..];
+            s.build_error = s.gpa.dupe(u8, bounded) catch null;
         };
+    }
+
+    /// The status endpoint body. Contract 1 (self-freeing): caller frees the
+    /// returned JSON; the snapshot copies are scratch.
+    fn renderStatusJson(s: *Server, gpa: Allocator) ![]u8 {
+        var aw: std.Io.Writer.Allocating = .init(gpa);
+        errdefer aw.deinit();
+        {
+            s.mutex.lock(s.io) catch return error.Canceled;
+            defer s.mutex.unlock(s.io);
+            try std.json.Stringify.value(.{
+                .ok = true,
+                .pid = s.status_pid,
+                .url = s.status_url,
+                .started_at = s.status_started_at,
+                .build = .{
+                    .generation = s.build_generation,
+                    .status = @tagName(s.build_status),
+                    .duration_ms = s.build_duration_ms,
+                    .@"error" = s.build_error,
+                },
+            }, .{}, &aw.writer);
+        }
+        return aw.toOwnedSlice();
+    }
+
+    fn accept(s: *Server) void {
+        // The socket is already bound by `start()` (synchronously, before
+        // this thread was even spawned) — this function only ever runs the
+        // accept loop over it now, never the bind itself. A local copy (not
+        // a pointer into `s.listener`) so `deinit` below leaves the struct
+        // field alone — nothing else ever reads it after `start()` hands
+        // this thread the (only) copy that matters.
+        var srv = s.listener.?;
         defer srv.deinit(s.io);
 
         while (true) {
@@ -205,6 +321,20 @@ pub const Server = struct {
 
         // One request per connection is all EventSource makes (a single GET).
         var req = http.receiveHead() catch return;
+
+        // The control server serves two things on this one port: the status
+        // endpoint (a normal request/response) and, on every other path, the
+        // SSE reload stream (EventSource never sets a path we care about).
+        if (std.mem.startsWith(u8, req.head.target, status_path)) {
+            const json = s.renderStatusJson(s.gpa) catch return;
+            defer s.gpa.free(json);
+            req.respond(json, .{ .extra_headers = &.{
+                .{ .name = "content-type", .value = "application/json" },
+                .{ .name = "access-control-allow-origin", .value = "*" },
+                .{ .name = "cache-control", .value = "no-cache" },
+            } }) catch return;
+            return;
+        }
 
         var resp_buf: [1024]u8 = undefined;
         var body = req.respondStreaming(&resp_buf, .{
@@ -522,6 +652,58 @@ test "dev live-reload: the SSE server refuses connections past the cap" {
     s.releaseSlot();
     try std.testing.expect(s.reserveSlot());
     try std.testing.expect(!s.reserveSlot());
+}
+
+test "dev live-reload: status json reflects identity and build state" {
+    const gpa = std.testing.allocator;
+    var s: Server = .init(std.testing.io, gpa, undefined);
+    s.setIdentity(4242, "http://127.0.0.1:1990/", "2026-08-07T12:34:56Z");
+
+    // Before any build result: generation 0, building.
+    {
+        const json = try s.renderStatusJson(gpa);
+        defer gpa.free(json);
+        try std.testing.expectEqualStrings(
+            "{\"ok\":true,\"pid\":4242,\"url\":\"http://127.0.0.1:1990/\"," ++
+                "\"started_at\":\"2026-08-07T12:34:56Z\",\"build\":{\"generation\":0," ++
+                "\"status\":\"building\",\"duration_ms\":0,\"error\":null}}",
+            json,
+        );
+    }
+
+    // A finished build bumps the generation and records the result.
+    s.setBuildFinished(true, 412, null);
+    {
+        const json = try s.renderStatusJson(gpa);
+        defer gpa.free(json);
+        try std.testing.expect(std.mem.indexOf(u8, json, "\"generation\":1") != null);
+        try std.testing.expect(std.mem.indexOf(u8, json, "\"status\":\"ok\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, json, "\"duration_ms\":412") != null);
+    }
+
+    // A failed build carries a bounded, JSON-escaped error tail.
+    s.setBuilding();
+    s.setBuildFinished(false, 99, "boom: \"quoted\"\nline2");
+    {
+        const json = try s.renderStatusJson(gpa);
+        defer gpa.free(json);
+        try std.testing.expect(std.mem.indexOf(u8, json, "\"generation\":2") != null);
+        try std.testing.expect(std.mem.indexOf(u8, json, "\"status\":\"failed\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, json, "\\\"quoted\\\"") != null);
+    }
+    // Free the duped error tail the server owns.
+    s.setBuildFinished(true, 1, null);
+}
+
+test "dev live-reload: status error tail is bounded" {
+    const gpa = std.testing.allocator;
+    var s: Server = .init(std.testing.io, gpa, undefined);
+    const big = "x" ** (Server.max_error_tail + 500);
+    s.setBuildFinished(false, 1, big);
+    const json = try s.renderStatusJson(gpa);
+    defer gpa.free(json);
+    try std.testing.expect(json.len < Server.max_error_tail + 512);
+    s.setBuildFinished(true, 1, null);
 }
 
 test "dev live-reload: closing tags are matched case-insensitively" {

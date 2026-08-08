@@ -55,6 +55,8 @@ const zigbase = @import("zigbase.zig");
 const e2e = @import("e2e.zig");
 const release_cli = @import("release.zig");
 const reload = @import("reload.zig");
+const dev_lockfile = @import("dev_lockfile.zig");
+const dev_control = @import("dev_control.zig");
 const islands_manifest = @import("../islands/manifest.zig");
 const RenderArena = @import("../islands/render_arena.zig").RenderArena;
 const Channel = @import("../channel.zig").Channel;
@@ -132,6 +134,15 @@ pub const Command = struct {
     /// The rebuild command (everything after `--`). Null until `defaultRebuildArgv`
     /// fills it in, which needs `io` and so cannot happen during `parse`.
     rebuild_argv: ?[]const []const u8,
+    /// `--background`: detach the dev loop and return control to the caller
+    /// once the server is ready (see dev_control.zig). Also implied by agent
+    /// auto-detection (`ZIGAPAGOS_DEV_BACKGROUND` overrides).
+    background: bool,
+    /// `--force`: stop an already-running session for this project first.
+    force: bool,
+    /// `--ignore-lock`: run untracked — no lock taken, no lockfile written,
+    /// no duplicate check. For deliberately running a second instance.
+    ignore_lock: bool,
 
     /// Frees what `parse` allocated (unit tests only; the dev loop runs until
     /// the process is killed).
@@ -156,6 +167,9 @@ pub const Command = struct {
         var reload_port: u16 = 0;
         var watch_dirs: std.ArrayListUnmanaged([]const u8) = .empty;
         var rebuild_argv: ?[]const []const u8 = null;
+        var background = false;
+        var force = false;
+        var ignore_lock = false;
         errdefer zigbase_args.deinit(gpa);
         errdefer watch_dirs.deinit(gpa);
         errdefer if (rebuild_argv) |argv| gpa.free(argv);
@@ -209,6 +223,12 @@ pub const Command = struct {
                 );
             } else if (std.mem.eql(u8, arg, "--no-live-reload")) {
                 live_reload = false;
+            } else if (std.mem.eql(u8, arg, "--background")) {
+                background = true;
+            } else if (std.mem.eql(u8, arg, "--force")) {
+                force = true;
+            } else if (std.mem.eql(u8, arg, "--ignore-lock")) {
+                ignore_lock = true;
             } else if (std.mem.startsWith(u8, arg, "--reload-port=")) {
                 const v = arg["--reload-port=".len..];
                 reload_port = std.fmt.parseInt(u16, v, 10) catch |err| fatal.usageError(
@@ -242,6 +262,22 @@ pub const Command = struct {
         const owned_watch_dirs = try watch_dirs.toOwnedSlice(gpa);
         errdefer gpa.free(owned_watch_dirs);
 
+        // --ignore-lock means "untracked instance"; --background needs the
+        // lockfile as its readiness handshake and --force needs it to find
+        // the instance to stop. Both combinations are contradictions, not
+        // no-ops — refuse them loudly (Astro shipped this same pair of
+        // conflicts as a 7.1 follow-up; we start with them).
+        if (ignore_lock and background) fatal.usageError(
+            "error: --ignore-lock cannot be combined with --background " ++
+                "(a background session needs the lockfile to report readiness)\n",
+            .{},
+        );
+        if (ignore_lock and force) fatal.usageError(
+            "error: --ignore-lock cannot be combined with --force " ++
+                "(--force stops the tracked instance; --ignore-lock runs untracked)\n",
+            .{},
+        );
+
         return .{
             .site = site,
             .data_dir = data_dir,
@@ -257,6 +293,9 @@ pub const Command = struct {
             .reload_port = reload_port,
             .watch_dirs = owned_watch_dirs,
             .rebuild_argv = rebuild_argv,
+            .background = background,
+            .force = force,
+            .ignore_lock = ignore_lock,
         };
     }
 
@@ -266,6 +305,7 @@ pub const Command = struct {
         "                     [--host=IP] [--port=N] [--ready-path=/…]\n" ++
         "                     [--timeout-ms=N] [--debounce=MS]\n" ++
         "                     [--no-live-reload] [--reload-port=N]\n" ++
+        "                     [--background] [--force] [--ignore-lock]\n" ++
         "                     [--watch-dir=DIR]... [-- REBUILD-CMD [ARGS...]]\n" ++
         "\n" ++
         "Every option has a working default: with no arguments, dev rebuilds\n" ++
@@ -282,6 +322,13 @@ pub fn dev(
     args: []const []const u8,
     environ_map: *std.process.Environ.Map,
 ) error{OutOfMemory}!noreturn {
+    // Control verbs are thread-free and must stay usable (and compiled)
+    // under -Dsingle-threaded, so they dispatch before the gate below.
+    if (args.len > 0) {
+        if (std.meta.stringToEnum(dev_control.Verb, args[0])) |verb|
+            return dev_control.run(io, gpa, verb, args[1..], environ_map);
+    }
+
     if (builtin.single_threaded) {
         std.debug.print(
             "error: single-threaded zigapagos does not support the dev loop (the file watcher needs threads), sorry\n\n",
@@ -291,6 +338,56 @@ pub fn dev(
     }
 
     const cmd: Command = try .parse(gpa, args);
+
+    // `--background`: re-exec detached and return control once the readiness
+    // handshake (dev.json bearing the child's pid) appears — see
+    // dev_control.background(). `is_bg_child` distinguishes the two
+    // processes: the PARENT (background_child_env unset) hands off to
+    // dev_control.background() and never reaches the loop below; the CHILD
+    // (background_child_env set by the parent's spawn) falls through and
+    // runs the plain foreground path — this same flag also marks the
+    // lockfile's `background` field once the loop reaches its own write,
+    // below.
+    const is_bg_child = environ_map.get(dev_control.background_child_env) != null;
+
+    // Auto-background decision: the precedence itself (explicit --background
+    // > ZIGAPAGOS_DEV_BACKGROUND opt-out > agent detection, gated by
+    // is_bg_child/--ignore-lock) lives in `decideBackground` — a pure,
+    // thread-free function pinned by its own precedence test in
+    // dev_control.zig — so it stays testable without a real process tree.
+    // This call site's only jobs are: print the attribution line (exactly
+    // when detection is what decided it) and act on the verdict.
+    const decision = dev_control.decideBackground(cmd.background, is_bg_child, cmd.ignore_lock, environ_map);
+    if (decision.detected_provider) |provider| {
+        std.debug.print(
+            "dev: agent environment detected ({s}) — starting in the background " ++
+                "(set {s}=0 to disable)\n",
+            .{ provider, dev_control.background_optout_env },
+        );
+    }
+
+    if (decision.background) {
+        // Deliberately re-checked here even though the gate above already
+        // covers every path that reaches this point today (it runs
+        // unconditionally before `parse`, for every non-control-verb
+        // invocation). This copy is the dispatch block's OWN local
+        // invariant: dev_control.background() is a thread-free spawn-and-
+        // wait, so it must never depend on a gate that lives above it for
+        // correctness. Without it, a future reorder of the outer gate (e.g.
+        // moving it below `parse` so a bad `--port` reports its usage error
+        // before the generic single-threaded rejection) would silently let a
+        // single-threaded parent spawn a child that dies at ITS OWN gate —
+        // reported as a confusing "exited before becoming ready" instead of
+        // the parent refusing up front.
+        if (builtin.single_threaded) {
+            std.debug.print(
+                "error: single-threaded zigapagos does not support the dev loop (the file watcher needs threads), sorry\n\n",
+                .{},
+            );
+            fatal.helpError();
+        }
+        return dev_control.background(io, gpa, cmd, args, environ_map);
+    }
 
     // The first `dev:` line -- not the process's first output, which may be
     // main.zig's Debug/tracy/tsan banners. It comes after parse, matching
@@ -426,6 +523,54 @@ pub fn dev(
         .{ data_dir_abs, @errorName(err) },
     );
 
+    // The session lock, held (as an flock) for the whole process lifetime.
+    // Taken BEFORE any server starts — duplicate prevention has to win the
+    // race, not report it (watchman's lock-before-fork lesson).
+    var session_lock: ?dev_lockfile.Lock = null;
+    if (!cmd.ignore_lock) {
+        session_lock = try dev_lockfile.acquire(io, data_dir_abs, gpa);
+        if (session_lock == null and cmd.force) {
+            switch (dev_control.stopInstance(io, gpa, data_dir_abs)) {
+                .stopped, .none => {},
+                // The flock is held by a session still starting (between its
+                // own `acquire` and `waitReady`) — stopInstance could not
+                // even determine its pid, so nothing was stopped. Retrying
+                // `acquire` would just fail again and fall into the generic
+                // "already running" fatal below, which is TRUE but not the
+                // truthful reason; report the real one instead.
+                .starting => fatal.msg("error: dev: " ++ dev_control.stop_starting_detail, .{}),
+            }
+            session_lock = try dev_lockfile.acquire(io, data_dir_abs, gpa);
+        }
+        if (session_lock == null) {
+            var arena_state = std.heap.ArenaAllocator.init(gpa);
+            defer arena_state.deinit();
+            const existing = dev_lockfile.read(arena_state.allocator(), io, data_dir_abs);
+            fatal.msg(
+                "error: dev: a dev server is already running for this project{s}{s}\n" ++
+                    "hint: 'zigapagos dev stop' stops it; --force replaces it; " ++
+                    "--ignore-lock runs a second, untracked instance\n",
+                .{
+                    if (existing != null) " at " else "",
+                    if (existing) |lf| lf.url else "",
+                },
+            );
+        }
+        // A stale-but-unheld lockfile (a kill -9'd session) parses fine while
+        // the flock was acquirable: we now own the session, so stale facts
+        // must not linger for a status/stop racing our startup window.
+        var arena_state = std.heap.ArenaAllocator.init(gpa);
+        defer arena_state.deinit();
+        if (dev_lockfile.read(arena_state.allocator(), io, data_dir_abs) != null)
+            dev_control.sweepOrphan(io, gpa, data_dir_abs);
+    } else {
+        std.debug.print(
+            "dev: --ignore-lock — this instance is untracked ('dev stop|status|logs' will not see it)\n",
+            .{},
+        );
+    }
+    _ = &session_lock; // held for the process lifetime; released by process exit
+
     // Dev-only island-usage manifest, kept in the persistent
     // (unwatched) data dir. Set once for the whole session: EVERY disk build
     // (initial, full, incremental) refreshes it, and classifyChange reads it
@@ -458,7 +603,7 @@ pub fn dev(
     // initial build is always full (no `changed_files` env), which stages the
     // whole tree that later incremental rebuilds patch in place.
     var last_build_ns: i128 = @intCast(Io.Clock.real.now(io).nanoseconds);
-    if (!runRebuild(io, rebuild_argv, environ_map)) fatal.msg(
+    if (!runRebuild(io, gpa, rebuild_argv, environ_map, null).ok) fatal.msg(
         "error: dev: the initial build failed (see output above); fix it and rerun\n",
         .{},
     );
@@ -486,24 +631,28 @@ pub fn dev(
     // its own port and inject the reload snippet into the freshly-built tree.
     // `zigapagos release` never runs this, so release output stays clean;
     // `--no-live-reload` skips the whole thing.
-    var reload_server: ?*reload.Server = null;
-    var reload_port: u16 = 0;
-    if (cmd.live_reload) {
-        reload_port = if (cmd.reload_port == 0) e2e.pickFreePort(io) else cmd.reload_port;
-        const reload_addr = Io.net.IpAddress.parse(cmd.host, reload_port) catch fatal.msg(
-            "error: dev: --host must be an IP literal for the live-reload server (got '{s}')\n",
-            .{cmd.host},
-        );
-        const srv = gpa.create(reload.Server) catch fatal.oom();
-        srv.* = .init(io, gpa, reload_addr);
-        srv.start() catch |err| fatal.msg(
-            "error: dev: unable to start the live-reload server: {s}\n",
-            .{@errorName(err)},
-        );
-        // Initial build re-emitted the whole tree: inject everything (null).
-        reload.injectTree(io, gpa, site_abs, reload_port, null);
-        reload_server = srv;
-    }
+    // The control server: SSE live-reload on `/` plus the build-aware status
+    // endpoint. ALWAYS started — background sessions without a health
+    // endpoint are half a feature — while --no-live-reload now only disables
+    // snippet injection and reload events, not the server.
+    const reload_port: u16 = if (cmd.reload_port == 0) e2e.pickFreePort(io) else cmd.reload_port;
+    const reload_addr = Io.net.IpAddress.parse(cmd.host, reload_port) catch fatal.msg(
+        "error: dev: --host must be an IP literal for the control server (got '{s}')\n",
+        .{cmd.host},
+    );
+    const reload_server: *reload.Server = gpa.create(reload.Server) catch fatal.oom();
+    reload_server.* = .init(io, gpa, reload_addr);
+    // reload_server.start() now binds synchronously (PR #140 round 2: P2b),
+    // so a bind failure lands HERE, before dev.json is ever written — not as
+    // a background-thread log line the lockfile's readers would never see.
+    reload_server.start() catch |err| fatal.msg(
+        "error: dev: unable to start the control server on {s}:{d} ({s}) — " ++
+            "is something else already listening there? pass --reload-port=N " ++
+            "to pick a different port\n",
+        .{ cmd.host, reload_port, @errorName(err) },
+    );
+    reload_server.setBuildFinished(true, 0, null); // the initial build (gen 1)
+    if (cmd.live_reload) reload.injectTree(io, gpa, site_abs, reload_port, null);
 
     // (2) Locate zigbase (explicit → PATH → pinned cache) and, when nothing is
     // found, fetch the pinned release into the cache (SHA256-verified).
@@ -573,13 +722,39 @@ pub fn dev(
 
     e2e.waitReady(&harness, address, cmd.ready_path, cmd.timeout_ms);
 
+    const self_pid: i64 = @intCast(std.c.getpid());
+    const url = std.fmt.allocPrint(gpa, "http://{s}:{d}/", .{ cmd.host, port }) catch fatal.oom();
+    const started_at = blk: {
+        const buf = gpa.create([20]u8) catch fatal.oom();
+        const secs: u64 = @intCast(@divTrunc(Io.Clock.real.now(io).nanoseconds, std.time.ns_per_s));
+        break :blk dev_lockfile.formatIso(buf, secs);
+    };
+    reload_server.setIdentity(self_pid, url, started_at);
+
+    if (!cmd.ignore_lock) {
+        dev_lockfile.write(io, gpa, data_dir_abs, .{
+            .pid = self_pid,
+            .zigbase_pid = if (harness.server.id) |id| @intCast(id) else 0,
+            .host = cmd.host,
+            .port = port,
+            .url = url,
+            .control_port = reload_port,
+            .data_dir = data_dir_abs,
+            .background = is_bg_child,
+            .started_at = started_at,
+        }) catch |err| std.debug.print(
+            "dev: warning: could not write the lockfile ({s}) — 'dev stop|status|logs' will not see this session\n",
+            .{@errorName(err)},
+        );
+    }
+
     std.debug.print(
         \\
         \\dev: ready — serving at http://{s}:{d}{s}
         \\dev: zigbase data dir: {s} (persistent — collections/auth state survive dev sessions)
         \\
     , .{ cmd.host, port, cmd.ready_path, data_dir_abs });
-    if (reload_server != null) {
+    if (cmd.live_reload) {
         std.debug.print(
             "dev: live-reload: http://{s}:{d} (SSE) — pages auto-reload on rebuild\n\n\n",
             .{ cmd.host, reload_port },
@@ -587,8 +762,13 @@ pub fn dev(
     } else {
         std.debug.print("dev: no live reload (--no-live-reload): refresh the browser after a rebuild\n\n\n", .{});
     }
+    std.debug.print("dev: control: http://{s}:{d}{s}\n", .{ cmd.host, reload_port, reload.Server.status_path });
 
     // (5) Watch + rebuild loop.
+    // Loop rebuilds capture stdout+stderr here instead of streaming, so the
+    // status endpoint can carry a failure's tail; the initial build above
+    // still streams (capture_path = null).
+    const capture_path = std.fs.path.join(gpa, &.{ data_dir_abs, "last-build.log" }) catch fatal.oom();
     var buf: [64]Event = undefined;
     var channel: Channel(Event) = .init(&buf);
     var debouncer: Debouncer = .{
@@ -640,7 +820,8 @@ pub fn dev(
         // release` (via `ZIGAPAGOS_CHANGED_FILES`, which rides through the
         // intervening `zig build`), so it re-renders + re-emits ONLY them.
         // Always cleared afterwards so a later full rebuild never inherits it.
-        const rebuild_ok = switch (change) {
+        reload_server.setBuilding();
+        const rebuild: RebuildResult = switch (change) {
             .incremental => |inc| blk: {
                 const joined = std.mem.join(gpa, "\n", inc.pages) catch fatal.oom();
                 defer gpa.free(joined);
@@ -650,21 +831,24 @@ pub fn dev(
                 } else {
                     std.debug.print("dev: change detected, incremental rebuild of {d} pages...\n", .{inc.pages.len});
                 }
-                const ok = runRebuild(io, rebuild_argv, environ_map);
+                const r = runRebuild(io, gpa, rebuild_argv, environ_map, capture_path);
                 _ = environ_map.swapRemove(release_cli.changed_files_env);
-                break :blk ok;
+                break :blk r;
             },
             .full => blk: {
                 // A shared input changed (or a change we can't localize): rebuild
                 // the whole site. Ensure no stale incremental hint lingers.
                 _ = environ_map.swapRemove(release_cli.changed_files_env);
                 std.debug.print("dev: change detected, rebuilding...\n", .{});
-                break :blk runRebuild(io, rebuild_argv, environ_map);
+                break :blk runRebuild(io, gpa, rebuild_argv, environ_map, capture_path);
             },
         };
+        reload_server.setBuildFinished(rebuild.ok, rebuild.duration_ms, rebuild.error_tail);
+        if (rebuild.error_tail) |t| gpa.free(t);
 
-        if (rebuild_ok) {
-            if (reload_server) |srv| {
+        if (rebuild.ok) {
+            if (cmd.live_reload) {
+                const srv = reload_server;
                 // Re-inject (the rebuild rewrote the tree from clean HTML), then
                 // notify every connected browser.
                 //
@@ -1472,41 +1656,120 @@ fn pathIsInside(dir: []const u8, path: []const u8) bool {
     return dir[dir.len - 1] == std.fs.path.sep or path[dir.len] == std.fs.path.sep;
 }
 
-/// Runs the rebuild command to completion with output streaming through.
-/// Returns true when it exits 0.
+pub const RebuildResult = struct { ok: bool, duration_ms: u64, error_tail: ?[]u8 = null };
+
+/// Runs the rebuild command to completion. With `capture_path` null the
+/// child inherits stdio (output streams live — used for the initial build).
+/// With a path, stdout+stderr are captured to that file, dumped to our
+/// stderr afterwards (so the log reads the same), and on failure the tail
+/// rides back for the status endpoint. Contract 1 (self-freeing) apart from
+/// the returned tail, which the caller owns.
 fn runRebuild(
     io: Io,
+    gpa: Allocator,
     argv: []const []const u8,
     environ_map: *std.process.Environ.Map,
-) bool {
+    capture_path: ?[]const u8,
+) RebuildResult {
     const start_ms = Io.Clock.awake.now(io).toMilliseconds();
+    const fail: RebuildResult = .{ .ok = false, .duration_ms = 0 };
+
+    const capture_file: ?Io.File = if (capture_path) |p|
+        Io.Dir.cwd().createFile(io, p, .{ .truncate = true }) catch |err| blk: {
+            // Falls through to INHERITED stdio below (the child's output
+            // still reaches the terminal/log live) — but the replay block
+            // further down must not treat this the same as a real capture:
+            // it is gated on `captured`, not `capture_path != null`, for
+            // exactly this reason.
+            std.debug.print(
+                "dev: could not open the rebuild capture file ({s}: {s}) — " ++
+                    "output streams uncaptured; status will carry no error tail\n",
+                .{ p, @errorName(err) },
+            );
+            break :blk null;
+        }
+    else
+        null;
+    const captured = capture_file != null;
+
     var child = std.process.spawn(io, .{
         .argv = argv,
         .environ_map = environ_map,
+        .stdout = if (capture_file) |f| .{ .file = f } else .inherit,
+        .stderr = if (capture_file) |f| .{ .file = f } else .inherit,
     }) catch |err| {
         std.debug.print("dev: failed to spawn '{s}': {s}\n", .{ argv[0], @errorName(err) });
-        return false;
+        if (capture_file) |f| f.close(io);
+        return fail;
     };
     const term = child.wait(io) catch |err| {
         std.debug.print("dev: failed to wait for '{s}': {s}\n", .{ argv[0], @errorName(err) });
-        return false;
+        if (capture_file) |f| f.close(io);
+        return fail;
     };
-    const took_ms = Io.Clock.awake.now(io).toMilliseconds() - start_ms;
-    switch (term) {
-        .exited => |code| {
-            std.debug.print("dev: build finished in {d} ms (exit code {d})\n", .{ took_ms, code });
-            return code == 0;
-        },
-        else => {
-            std.debug.print("dev: build terminated abnormally ({s})\n", .{@tagName(term)});
-            return false;
-        },
+    if (capture_file) |f| f.close(io);
+    const took_ms: u64 = @intCast(Io.Clock.awake.now(io).toMilliseconds() - start_ms);
+
+    const ok = switch (term) {
+        .exited => |code| code == 0,
+        else => false,
+    };
+
+    // Replay the captured output so the dev log reads exactly as it did when
+    // the child inherited stderr, then keep a bounded tail for the status
+    // endpoint when the build failed. Gated on `captured`, NOT on
+    // `capture_path != null`: when `createFile` above failed, the child ran
+    // with stdio INHERITED (its output already streamed live), and
+    // `capture_path` still names whatever `last-build.log` happens to be on
+    // disk from a PREVIOUS build. Keying on `capture_path != null` alone
+    // would replay that stale file here and, on a failed build, derive a
+    // WRONG error tail from someone else's failure — one that then reaches
+    // the status endpoint as if it were this build's own.
+    var error_tail: ?[]u8 = null;
+    if (captured) {
+        const p = capture_path.?;
+        if (Io.Dir.cwd().readFileAlloc(io, p, gpa, .limited(4 * 1024 * 1024)) catch null) |out| {
+            defer gpa.free(out);
+            if (out.len > 0) std.debug.print("{s}", .{out});
+            if (!ok) error_tail = gpa.dupe(u8, out[out.len -| 2048..]) catch null;
+        }
     }
+
+    switch (term) {
+        .exited => |code| std.debug.print(
+            "dev: build finished in {d} ms (exit code {d})\n",
+            .{ took_ms, code },
+        ),
+        else => std.debug.print("dev: build terminated abnormally ({s})\n", .{@tagName(term)}),
+    }
+    return .{ .ok = ok, .duration_ms = took_ms, .error_tail = error_tail };
 }
 
 // --- unit tests (run via `zig build test-dev`, filter "dev") -------------------
 // fatal.usageError paths (unknown arg, bad values) exit the process and are
 // exercised by tests/dev/dev.sh instead.
+
+test "dev parse: background/force/ignore-lock flags default off and parse on" {
+    const gpa = std.testing.allocator;
+    {
+        const cmd = try Command.parse(gpa, &.{});
+        defer cmd.deinit(gpa);
+        try std.testing.expect(!cmd.background);
+        try std.testing.expect(!cmd.force);
+        try std.testing.expect(!cmd.ignore_lock);
+    }
+    {
+        const cmd = try Command.parse(gpa, &.{ "--background", "--force" });
+        defer cmd.deinit(gpa);
+        try std.testing.expect(cmd.background);
+        try std.testing.expect(cmd.force);
+    }
+    {
+        const cmd = try Command.parse(gpa, &.{"--ignore-lock"});
+        defer cmd.deinit(gpa);
+        try std.testing.expect(cmd.ignore_lock);
+    }
+}
 
 test "dev parse: NO arguments at all yields a runnable configuration" {
     // The zero-config contract: `zigapagos dev` in a site directory must work
@@ -1998,4 +2261,92 @@ test "dev island manifest: version mismatch is treated as no manifest" {
         error.UnsupportedManifestVersion,
         islands_manifest.parse(arena, "{\"version\":2,\"islands\":{}}"),
     );
+}
+
+test "dev rebuild result carries duration and failure tail" {
+    if (comptime builtin.single_threaded) return; // spawn paths untested here anyway
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const capture = try tmp.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(capture);
+    const capture_path = try std.fs.path.join(gpa, &.{ capture, "last-build.log" });
+    defer gpa.free(capture_path);
+
+    var environ: std.process.Environ.Map = .init(gpa);
+    defer environ.deinit();
+
+    // A failing command yields ok=false and the tail of its output.
+    const bad = runRebuild(io, gpa, &.{ "/bin/sh", "-c", "echo doomed >&2; exit 3" }, &environ, capture_path);
+    defer if (bad.error_tail) |t| gpa.free(t);
+    try std.testing.expect(!bad.ok);
+    try std.testing.expect(bad.error_tail != null);
+    try std.testing.expect(std.mem.indexOf(u8, bad.error_tail.?, "doomed") != null);
+
+    // A succeeding command yields ok=true and no tail.
+    const good = runRebuild(io, gpa, &.{ "/bin/sh", "-c", "exit 0" }, &environ, capture_path);
+    try std.testing.expect(good.ok);
+    try std.testing.expect(good.error_tail == null);
+}
+
+test "dev rebuild: a stale capture file is never replayed when the capture cannot be (re)created" {
+    // POSIX-only repro (chmod-based): the capture file is locked read-only
+    // AND its directory is locked non-writable, so `createFile` fails
+    // regardless of whether the platform's implementation truncates the
+    // existing inode in place or unlinks-and-recreates it. Windows has no
+    // equivalent permission model here, so this pins the fix on the
+    // platforms it is reachable on — matching the module's other POSIX-only
+    // tests.
+    if (comptime builtin.os.tag == .windows) return;
+    if (comptime builtin.single_threaded) return; // spawn paths untested here anyway
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var capdir = try tmp.dir.createDirPathOpen(io, "capdir", .{ .open_options = .{ .iterate = true } });
+    defer capdir.close(io);
+
+    // Pre-seed a stale capture from a "previous build" — this string must
+    // never resurface in the result below.
+    const stale_marker = "STALE OUTPUT FROM A PREVIOUS FAILED BUILD -- must not resurface";
+    try capdir.writeFile(io, .{ .sub_path = "last-build.log", .data = stale_marker });
+
+    // Lock the file read-only (blocks an in-place O_TRUNC open) and the
+    // directory non-writable (blocks an unlink+recreate fallback).
+    {
+        var f = try capdir.openFile(io, "last-build.log", .{ .mode = .read_write });
+        defer f.close(io);
+        try f.setPermissions(io, .fromMode(0o444));
+    }
+    try capdir.setPermissions(io, .fromMode(0o555));
+    defer capdir.setPermissions(io, .fromMode(0o755)) catch {};
+
+    const dir_abs = try capdir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(dir_abs);
+    const capture_path = try std.fs.path.join(gpa, &.{ dir_abs, "last-build.log" });
+    defer gpa.free(capture_path);
+
+    // Verify the fixture actually reproduces the failure this test relies
+    // on — otherwise a permission-model quirk would make the assertion
+    // below pass vacuously.
+    try std.testing.expectError(
+        error.AccessDenied,
+        capdir.createFile(io, "last-build.log", .{}),
+    );
+
+    var environ: std.process.Environ.Map = .init(gpa);
+    defer environ.deinit();
+
+    // A FAILING command whose real output never touches the stale marker.
+    // Pre-fix, the replay block keyed on `capture_path != null` alone, so it
+    // read the stale file straight off disk and manufactured an error_tail
+    // from a PREVIOUS build's failure even though THIS child's stdio was
+    // inherited (streamed live) because the capture file could not be
+    // recreated.
+    const result = runRebuild(io, gpa, &.{ "/bin/sh", "-c", "echo doomed >&2; exit 3" }, &environ, capture_path);
+    defer if (result.error_tail) |t| gpa.free(t);
+    try std.testing.expect(!result.ok);
+    try std.testing.expect(result.error_tail == null);
 }
