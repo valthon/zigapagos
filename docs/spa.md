@@ -1211,6 +1211,52 @@ default-src 'self'; script-src 'self' 'sha256-…' 'sha256-…'; style-src 'self
 Verified end-to-end: a strict-CSP vhost serves a hydrated SPA (+ an island page) with **zero
 CSP violations** in real Chrome (`examples/tsx-site/test/spa_csp_playwright.py`).
 
+### Cache-Control
+
+`emit-host-config.ts` also writes a ready-to-merge Cache-Control policy at the site root,
+following the exact same pattern as the CSP artifacts above:
+
+- `cache.nginx.conf` — a `map $uri $zigapagos_cache_control { … }` (composes with any
+  `location` layout — a regex `location` would outrank the per-namespace prefix `location`
+  blocks `nginx.nginx.conf` emits and can swallow an SPA deep-link miss).
+- `cache.apache.conf` — `<FilesMatch>` + `Header set Cache-Control` stanzas for
+  `<docroot>/.htaccess` or a `<Directory>` block.
+- `cache.zigbase.txt` — advisory notes only: ZigBase has no per-path header config, so this
+  lists the ideal policy for an operator fronting it with a CDN/reverse proxy, and warns
+  against pointing the one *global* knob (`ZIGBASE_STATIC_CACHE_CONTROL`) at the immutable
+  value below (it would cache a stale SPA shell across deploys).
+
+Two header values. `no-cache` is the **baseline** — everything gets it unless a rule names
+it immutable, so nothing the build emits can ship header-less:
+
+- `public, max-age=31536000, immutable` — for [fingerprinted site assets](assets.md#content-hashed-filenames)
+  (`<stem>.<8 hex>[.<ext>]`, matched by name shape) and this build's content-hashed **SPA
+  lazy-route chunks** (the exact chunk URLs in each namespace's `routing-manifest.json`
+  `chunks` map — see [Code Splitting](#code-splitting-lazy-routes) below).
+- `no-cache` — everything else. That is `*.html` and `*/routing-manifest.json`, and just as
+  importantly every **stable path**: `/spa/<name>.js`, `/spa/<name>-runtime.js`,
+  `/islands/*.js`, `/zigapagos-runtime.js` and any un-fingerprinted asset all keep the same
+  URL across deploys while their content changes. Leaving those without a header hands them
+  to heuristic (or CDN-default) caching, which is how a visitor ends up running a stale
+  bundle against freshly-revalidated HTML. `no-cache` still permits a 304, so the cost is one
+  conditional request — turn on [`asset_fingerprint`](assets.md#content-hashed-filenames) to
+  move your assets onto the immutable rule instead.
+
+Stable-path rules always win over immutable ones, so a hypothetical fingerprint-shaped
+`.html` still revalidates: nginx's map is first-regex-wins and lists the stable rules first;
+Apache is last-`Header set`-wins and lists them last (with the catch-all baseline first, so
+the immutable stanzas override it).
+
+Two documented gaps, both safe — they fall back to the revalidating baseline, never to an
+*incorrect* header:
+
+- **Shared (non-lazy-route) split chunks and `.map` sourcemaps** are not tracked per-route by
+  the manifests, so they are not exact-listed as immutable.
+- **The fingerprint pattern is a name-shape heuristic**, not proof `asset_fingerprint` is
+  actually on — the emitter runs over a finished output tree with no access to the site
+  config. A non-fingerprinting site with a coincidentally `.<8-hex>[.ext]`-shaped filename
+  would be marked immutable too; both generated artifacts say so and how to drop the line.
+
 ## Code Splitting (lazy routes)
 
 One bundle per SPA means a heavy view (a rich editor, a dashboard) sits in the initial bundle

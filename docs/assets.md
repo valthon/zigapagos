@@ -122,7 +122,9 @@ assets/fonts/inter.woff2 -> /fonts/inter.5e6f7a8b.woff2
 Every reference resolves to the hashed name automatically — `.link()`,
 `.absLink()`, the content directives, and `spa.head` hrefs. You do not spell
 the hash anywhere. A changed file is a changed URL, so the whole asset tree can
-be served `Cache-Control: public, max-age=31536000, immutable`.
+be served `Cache-Control: public, max-age=31536000, immutable`. `zigapagos release`
+already writes that policy for you — see the [Cache-Control](spa.md#cache-control)
+section for the emitted `cache.{nginx,apache,zigbase}` artifacts.
 
 The name is `<stem>.<8 hex>.<ext>`. The hash sits **before** the extension
 because the extension is load-bearing downstream: a web server picks the

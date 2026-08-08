@@ -174,11 +174,11 @@ pub fn release(
         return true;
     }
 
-    // Host config + strict-CSP artifacts, over the tree that was just written.
-    // Same gate as the bundling above and for the same reason: this reads the
-    // routing manifests the SPA prerender emitted, and hashes the inline
-    // importmap/bootstrap scripts an island page carries — a site with neither
-    // has nothing to translate.
+    // Host config + strict-CSP + Cache-Control artifacts, over the tree that
+    // was just written. Same gate as the bundling above and for the same
+    // reason: this reads the routing manifests the SPA prerender emitted, and
+    // hashes the inline importmap/bootstrap scripts an island page carries —
+    // a site with neither has nothing to translate.
     //
     // This runs AFTER `root.run` rather than as part of it because it is a pass
     // over the FINISHED output tree: it globs `**/routing-manifest.json` and
@@ -602,8 +602,8 @@ pub const RuntimeDefaults = struct {
     index_module: []const u8,
     jsx_module: []const u8,
     /// `runtime/scripts/emit-host-config.ts` — translates each namespace's
-    /// routing manifest into host config and writes the site-wide CSP artifacts,
-    /// over the finished output tree.
+    /// routing manifest into host config and writes the site-wide CSP and
+    /// Cache-Control artifacts, over the finished output tree.
     host_config_emitter: []const u8,
 
     pub fn deinit(rd: *const RuntimeDefaults, gpa: Allocator) void {

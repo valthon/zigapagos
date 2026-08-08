@@ -167,8 +167,9 @@ while IFS= read -r url; do
   [[ -f "$OUT/${url#/}" ]] || fail "the page references '$url' but $OUT${url} does not exist"
 done < <(grep -o '"/[^"]*\.js"' "$PAGE" | tr -d '"' | sort -u)
 
-# --- 2. Host config + strict-CSP artifacts ----------------------------------
-for f in csp.nginx.conf csp.apache.conf csp.zigbase.txt; do
+# --- 2. Host config + strict-CSP + Cache-Control artifacts ------------------
+for f in csp.nginx.conf csp.apache.conf csp.zigbase.txt \
+         cache.nginx.conf cache.apache.conf cache.zigbase.txt; do
   [[ -f "$OUT/$f" ]] || fail "$f was not emitted — nothing ran the host-config emitter"
 done
 # The CSP is only worth anything if it actually allowlists the inline scripts
@@ -176,6 +177,24 @@ done
 # three files.
 grep -q "sha256-" "$OUT/csp.nginx.conf" \
   || fail "csp.nginx.conf carries no inline-script hash — it was emitted over a tree with no pages"
+
+# Same presence-and-agreement stance for Cache-Control: assert the two header
+# VALUES actually appear, not just the file.
+grep -q "max-age=31536000, immutable" "$OUT/cache.nginx.conf" \
+  || fail "cache.nginx.conf carries no immutable Cache-Control value"
+grep -q "no-cache" "$OUT/cache.nginx.conf" \
+  || fail "cache.nginx.conf carries no no-cache Cache-Control value"
+# THE tree this test builds has no fingerprinted asset and no lazy chunk, so
+# every JS file in it (/spa/app.js, /spa/app-runtime.js, /islands/*.js,
+# /zigapagos-runtime.js) is at a stable path matched by NO named rule. The
+# policy is only worth deploying if those still get a header — otherwise a
+# returning visitor can run a stale bundle against freshly-revalidated HTML.
+grep -q 'default "no-cache";' "$OUT/cache.nginx.conf" \
+  || fail "cache.nginx.conf has no revalidating baseline — stable-path bundles would ship header-less"
+grep -q '<FilesMatch "\.">' "$OUT/cache.apache.conf" \
+  || fail "cache.apache.conf has no catch-all baseline stanza"
+[[ -f "$OUT/spa/app.js" ]] \
+  || fail "expected a stable-path SPA bundle at /spa/app.js for the baseline assertion above to be about something"
 
 # The zigbase default target, beside the SPA's routing manifest.
 [[ -f "$OUT/app/routing-manifest.json" ]] || fail "no routing-manifest.json for the SPA"
