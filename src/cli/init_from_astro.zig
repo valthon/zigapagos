@@ -490,6 +490,36 @@ pub fn emitContentStub(gpa: Allocator, name: []const u8, orig_astro_markup: []co
     , .{safe_name}) catch fatal.oom();
 }
 
+/// A section-index stub for a detected Astro paginate() route — the same
+/// stub emitContentStub writes, plus the .pagination line. Both Astro
+/// filename forms map to .url_style = "plain_dir" (the rest form is exact
+/// URL parity; the numbered form differs only at page 1, which Zigapagos
+/// always puts at the section URL — MIGRATION.md carries the aliases note
+/// via detect.paginateNote).
+///
+/// NO_SLOP.md §2.2a contract 1 (self-freeing).
+pub fn emitSectionIndexStub(
+    gpa: Allocator,
+    name: []const u8,
+    spec: detect.PaginateSpec,
+) []const u8 {
+    const safe_name = escapeZiggyStr(gpa, name);
+    defer gpa.free(safe_name);
+    return std.fmt.allocPrint(gpa,
+        \\---
+        \\.title = "{s}",
+        \\.date = @date("1970-01-01T00:00:00"),
+        \\.layout = "index.shtml",
+        \\.draft = false,
+        \\.pagination = {{ .page_size = {d}, .url_style = "plain_dir" }},
+        \\---
+        \\
+        \\TODO: port the paginated listing from the original Astro route
+        \\(the layout's `$page.subpages()` loop is windowed automatically).
+        \\
+    , .{ safe_name, spec.page_size }) catch fatal.oom();
+}
+
 /// Emit a `layouts/<name>.shtml` stub.
 ///
 /// Generates a minimal valid SuperHTML document matching the golden
@@ -818,6 +848,16 @@ pub fn run(io: Io, gpa: Allocator, args: []const []const u8) bool {
     trackOutcome(&written, writeFile(io, out_dir, "content/index.smd", emitContentStub(a, title, ""), o.force));
     trackOutcome(&written, writeFile(io, out_dir, "layouts/index.shtml", emitLayoutStub(a, "index", effective_islands), o.force));
 
+    // Convert detected paginate() routes: the first per-section files the
+    // importer emits. Non-clobber semantics come from writeFile (.new on
+    // collision), same as every other scaffolded file.
+    for (res.entries) |e| {
+        const spec = e.paginate orelse continue;
+        if (spec.section.len == 0) continue; // root paginate: content/index.smd already written; MIGRATION.md carries the instruction
+        const rel = std.fmt.allocPrint(a, "content/{s}/index.smd", .{spec.section}) catch fatal.oom();
+        trackOutcome(&written, writeFile(io, out_dir, rel, emitSectionIndexStub(a, spec.section, spec), o.force));
+    }
+
     // Scaffold island TSX stubs into <out>/components (unless --no-islands).
     if (!o.no_islands) {
         const components_path = std.fs.path.join(a, &.{ out_path, "components" }) catch fatal.oom();
@@ -1037,6 +1077,20 @@ test "emitContentStub escapes double-quotes in title to produce well-formed Zigg
     // Raw unescaped inner quote must NOT appear (would break the Ziggy string).
     // We check by verifying the title value is not the broken form.
     try std.testing.expect(std.mem.indexOf(u8, c, ".title = \"My \"X\" Site\"") == null);
+}
+
+test "paginate: emitSectionIndexStub carries the pagination frontmatter" {
+    const spec: detect.PaginateSpec = .{
+        .section = "blog",
+        .route_form = .rest,
+        .page_size = 4,
+        .page_size_is_literal = true,
+    };
+    const out = emitSectionIndexStub(std.testing.allocator, "blog", spec);
+    defer std.testing.allocator.free(out);
+    try std.testing.expect(std.mem.indexOf(u8, out, ".pagination = { .page_size = 4, .url_style = \"plain_dir\" },") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, ".layout = \"index.shtml\",") != null);
+    try std.testing.expect(std.mem.startsWith(u8, out, "---\n"));
 }
 
 test "emitSsrSh is de-repo'd (no ../../runtime, no git restore) and asserts on zig-out/site" {

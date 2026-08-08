@@ -70,6 +70,19 @@ grep -q '^zig ' "$GEN/site/mise.toml" \
   && { echo "FAIL: mise.toml pins a Zig toolchain the project never invokes"; exit 1; }
 echo "    OK: no build.zig / build.zig.zon / zig pin"
 
+# The astro-sample fixture's src/pages/blog/[page].astro calls paginate() with
+# pageSize: 4 — the importer must convert it to a section index stub carrying
+# the detected .pagination frontmatter, plus a MIGRATION.md worklist entry.
+test -f "$GEN/site/content/blog/index.smd" \
+  || { echo "FAIL: generated project missing content/blog/index.smd (paginate() route)"; exit 1; }
+grep -q '.pagination = { .page_size = 4, .url_style = "plain_dir" },' "$GEN/site/content/blog/index.smd" \
+  || { echo "FAIL: content/blog/index.smd missing detected .pagination frontmatter"; exit 1; }
+echo "    OK: content/blog/index.smd carries .pagination frontmatter"
+
+grep -q 'paginate()' "$GEN/site/MIGRATION.md" \
+  || { echo "FAIL: MIGRATION.md missing the paginate() worklist instruction"; exit 1; }
+echo "    OK: MIGRATION.md carries the paginate() worklist instruction"
+
 grep -q 'jsxImportSource' "$GEN/site/tsconfig.json" \
   || { echo "FAIL: tsconfig missing jsxImportSource"; exit 1; }
 echo "    OK: tsconfig has jsxImportSource"
