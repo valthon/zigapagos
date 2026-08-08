@@ -492,9 +492,13 @@ its own; add the guard yourself:
 
 **Interplay with [scroll restoration](#utilities):** the scroll-to-top (push)
 or restore (pop) adjustment runs *inside* the transition, after the flip's
-render commits and before the browser captures the new state — so the
-snapshot the browser animates to already has its final scroll position, not
-a flash of the old one settling into place.
+render commits and before the browser captures the new state — so the first
+scroll attempt is always in the snapshot the browser animates to. One caveat
+on pop: when the saved position isn't reachable yet because guarded or lazy
+content is still mounting, restoration retries over subsequent frames (the
+same race documented for plain scroll restoration), and those later
+adjustments land after the snapshot — the transition animates to the closest
+reachable position and the retries settle the rest without animation.
 
 **The escape hatch:** `setViewTransitions(on)` — the same setter `mountSpa`
 calls internally from `spa.viewTransitions` — is exported for a hand-mounted
