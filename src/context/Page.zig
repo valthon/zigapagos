@@ -39,6 +39,7 @@ pub const ziggy_options = struct {
         ._parse,
         ._analysis,
         ._render,
+        ._pagination,
     };
 };
 
@@ -57,6 +58,11 @@ alternatives: []const Alternative = &.{},
 skip_subdirs: bool = false,
 translation_key: ?[]const u8 = null,
 custom: ziggy.dynamic.Value = .{ .kv = .{} },
+/// Opt-in pagination for a section index: the page pass renders this index
+/// once per window of `page_size` active subpages. Only meaningful on an
+/// `index.smd` (validated in analyzeFrontmatter). See docs/superpowers/specs/
+/// 2026-08-07-pagination-design.md.
+pagination: ?Pagination = null,
 
 /// Only present in debug builds to catch programming errors
 /// in the processing pipeline.
@@ -125,7 +131,20 @@ _render: struct {
         out: []const u8 = "",
         errors: []const u8 = "",
     } = &.{},
+    pagination: []struct {
+        out: []const u8 = "",
+        errors: []const u8 = "",
+    } = &.{},
 } = .{},
+
+/// Set by root.zig's pagination planning pass (main thread, after
+/// Section.sortPages) for an active section index with `.pagination`.
+/// null everywhere else. Counts are ACTIVE subpages — `Section.pages`
+/// includes drafts, so `s.pages.items.len` is the wrong number.
+_pagination: ?struct {
+    total_pages: u32,
+    active_count: u32,
+} = null,
 
 pub const PageAnalysisError = struct {
     node: supermd.Node,
@@ -322,6 +341,8 @@ pub const FrontmatterAnalysisError = union(enum) {
             layout,
         },
     },
+    pagination_size,
+    pagination_not_section,
 
     pub fn title(err: @This()) []const u8 {
         return switch (err) {
@@ -332,6 +353,8 @@ pub const FrontmatterAnalysisError = union(enum) {
                 .path => "invalid path in alternatives",
                 .layout => "invalid layout in alternatives",
             },
+            .pagination_size => "pagination page_size must be at least 1",
+            .pagination_not_section => "'pagination' is only valid on a section index page",
         };
     }
 
@@ -346,6 +369,8 @@ pub const FrontmatterAnalysisError = union(enum) {
                 .path => .ZP_INVALID_ALTERNATIVE_PATH,
                 .layout => .ZP_INVALID_ALTERNATIVE_LAYOUT,
             },
+            .pagination_size => .ZP_INVALID_PAGINATION_SIZE,
+            .pagination_not_section => .ZP_PAGINATION_NOT_SECTION,
         };
     }
 
@@ -410,6 +435,19 @@ pub const FrontmatterAnalysisError = union(enum) {
                     }
                 }
             },
+            .pagination_size, .pagination_not_section => {
+                assert(ast.nodes[2].tag == .@"struct" or
+                    ast.nodes[2].tag == .braceless_struct);
+                var current = ast.nodes[3];
+                while (true) : (current = ast.nodes[current.next_id]) {
+                    assert(current.tag == .struct_field);
+
+                    const identifier = ast.nodes[current.first_child_id];
+                    if (std.mem.eql(u8, "pagination", identifier.loc.src(src))) {
+                        return ast.nodes[identifier.next_id].loc;
+                    }
+                }
+            },
         }
 
         // Failing to find the source location of a reported error is a
@@ -429,6 +467,11 @@ pub fn deinit(p: *const Page, gpa: Allocator) void {
         gpa.free(alt.errors);
     }
     gpa.free(p._render.alternatives);
+    for (p._render.pagination) |pg| {
+        gpa.free(pg.out);
+        gpa.free(pg.errors);
+    }
+    gpa.free(p._render.pagination);
     gpa.free(p._render.out);
     gpa.free(p._render.errors);
 }
@@ -565,6 +608,51 @@ pub const Translation = struct {
     md_rel_path: []const u8,
 };
 
+pub const Pagination = struct {
+    page_size: u32,
+    url_style: UrlStyle = .page_dir,
+
+    pub const UrlStyle = enum {
+        page_dir,
+        plain_dir,
+        page_html,
+
+        /// Writes the URL/pathname tail for pagination page `n` (n >= 2)
+        /// under this style directly to `w`. Page 1 has no tail: it IS the
+        /// section's main URL/output. The single formula behind both link
+        /// generation (`Paginator.printPageUrl`) and the on-disk browser
+        /// pathname (`worker.paginationPathnameTail`) — H7 (issues #45/#47):
+        /// link text and path must come from ONE formula, not parallel
+        /// copies that can drift.
+        pub fn writePathnameTail(style: UrlStyle, w: *Writer, n: u32) error{OutOfMemory}!void {
+            assert(n >= 2);
+            switch (style) {
+                .page_dir => w.print("page/{d}/", .{n}) catch return error.OutOfMemory,
+                .plain_dir => w.print("{d}/", .{n}) catch return error.OutOfMemory,
+                .page_html => w.print("page-{d}.html", .{n}) catch return error.OutOfMemory,
+            }
+        }
+    };
+
+    pub const Dot = true;
+
+    pub const docs_description =
+        \\Pagination settings of a section index page,
+        \\as set in the SuperMD frontmatter.
+    ;
+    pub const Fields = struct {
+        pub const page_size =
+            \\How many subpages each pagination window holds.
+        ;
+        pub const url_style =
+            \\URL shape of page 2 and beyond: `page_dir` (`blog/page/2/`),
+            \\`plain_dir` (`blog/2/`), or `page_html` (`blog/page-2.html`).
+            \\Page 1 is always the section's own URL.
+        ;
+    };
+    pub const Builtins = struct {};
+};
+
 pub const Alternative = struct {
     name: []const u8,
     layout: []const u8,
@@ -652,6 +740,141 @@ pub const Alternative = struct {
                 w.writeAll(std.mem.trimStart(u8, alt.output, "/")) catch return error.OutOfMemory;
 
                 return String.init(buf.written());
+            }
+        };
+    };
+};
+
+pub const Paginator = struct {
+    current: usize,
+    total: usize,
+    page_size: usize,
+    total_items: usize,
+    _page: *const Page,
+
+    pub const Dot = true;
+
+    pub const docs_description =
+        \\The pagination state of the section-index render in progress:
+        \\which window this output is, out of how many. Obtained from
+        \\`$page.pagination?()`.
+    ;
+    pub const Fields = struct {
+        pub const current =
+            \\The current page number, 1-based.
+        ;
+        pub const total =
+            \\How many pages this section paginates into.
+        ;
+        pub const page_size =
+            \\How many subpages each window holds (`pagination.page_size`).
+        ;
+        pub const total_items =
+            \\Total active subpages across all windows.
+        ;
+    };
+
+    fn printPageUrl(
+        pg: Paginator,
+        w: *Writer,
+        ctx: *const context.Root,
+        n: usize,
+    ) error{OutOfMemory}!void {
+        const p = pg._page;
+        const v = &ctx._meta.build.variants[p._scan.variant_id];
+        // Compose through printLinkPrefix, exactly like $page.link():
+        // it is the single point that makes url_path_prefix correct.
+        ctx.printLinkPrefix(w, p._scan.variant_id, false) catch return error.OutOfMemory;
+        w.print("{f}", .{
+            p._scan.url.fmt(&v.string_table, &v.path_table, null, true),
+        }) catch return error.OutOfMemory;
+        if (n <= 1) return; // page 1 IS the section URL
+        const style = p.pagination.?.url_style;
+        try style.writePathnameTail(w, @intCast(n));
+    }
+
+    pub const Builtins = struct {
+        pub const @"prevLink?" = struct {
+            pub const signature: Signature = .{ .ret = .{ .Opt = .String } };
+            pub const docs_description =
+                \\URL of the previous pagination page, or null on page 1.
+                \\From page 2 this is the section's own URL.
+            ;
+            pub const examples =
+                \\<ctx :if="$page.pagination?()">
+                \\  <ctx pg="$if">
+                \\    <ctx :if="$ctx.pg.prevLink?()"><a href="$if">Newer</a></ctx>
+                \\  </ctx>
+                \\</ctx>
+            ;
+            pub fn call(
+                pg: Paginator,
+                gpa: Allocator,
+                ctx: *const context.Root,
+                args: []const Value,
+            ) context.CallError!Value {
+                if (args.len != 0) return .{ .err = "expected 0 arguments" };
+                if (pg.current <= 1) return context.Optional.Null;
+                var aw: Writer.Allocating = .init(gpa);
+                try pg.printPageUrl(&aw.writer, ctx, pg.current - 1);
+                return context.Optional.init(gpa, Value{ .string = .{ .value = aw.written() } });
+            }
+        };
+        pub const @"nextLink?" = struct {
+            pub const signature: Signature = .{ .ret = .{ .Opt = .String } };
+            pub const docs_description =
+                \\URL of the next pagination page, or null on the last page.
+            ;
+            pub const examples =
+                \\<ctx :if="$page.pagination?()">
+                \\  <ctx pg="$if">
+                \\    <ctx :if="$ctx.pg.nextLink?()"><a href="$if">Older</a></ctx>
+                \\  </ctx>
+                \\</ctx>
+            ;
+            pub fn call(
+                pg: Paginator,
+                gpa: Allocator,
+                ctx: *const context.Root,
+                args: []const Value,
+            ) context.CallError!Value {
+                if (args.len != 0) return .{ .err = "expected 0 arguments" };
+                if (pg.current >= pg.total) return context.Optional.Null;
+                var aw: Writer.Allocating = .init(gpa);
+                try pg.printPageUrl(&aw.writer, ctx, pg.current + 1);
+                return context.Optional.init(gpa, Value{ .string = .{ .value = aw.written() } });
+            }
+        };
+        pub const pageLink = struct {
+            pub const signature: Signature = .{ .params = &.{.Int}, .ret = .String };
+            pub const docs_description =
+                \\URL of pagination page `n` (1-based). Page 1 is the
+                \\section's canonical URL. Errors when `n` is out of range.
+            ;
+            pub const examples =
+                \\<ctx :if="$page.pagination?()">
+                \\  <ctx pg="$if">
+                \\    <a href="$ctx.pg.pageLink(1)">1</a>
+                \\  </ctx>
+                \\</ctx>
+            ;
+            pub fn call(
+                pg: Paginator,
+                gpa: Allocator,
+                ctx: *const context.Root,
+                args: []const Value,
+            ) context.CallError!Value {
+                if (args.len != 1) return .{ .err = "expected 1 argument" };
+                const n_val = switch (args[0]) {
+                    .int => |i| i.value,
+                    else => return .{ .err = "expected an integer argument" },
+                };
+                if (n_val < 1 or n_val > pg.total) {
+                    return Value.errFmt(gpa, "page {d} is out of range (1..{d})", .{ n_val, pg.total });
+                }
+                var aw: Writer.Allocating = .init(gpa);
+                try pg.printPageUrl(&aw.writer, ctx, @intCast(n_val));
+                return String.init(aw.written());
             }
         };
     };
@@ -783,6 +1006,15 @@ pub const Fields = struct {
     pub const custom =
         \\A Ziggy map where you can define custom properties for the page, 
         \\as set in the SuperMD frontmatter.
+    ;
+    pub const pagination =
+        \\Pagination settings of this section index,
+        \\as set in the SuperMD frontmatter (null when not paginated).
+        \\
+        \\`.pagination = { .page_size = 10 }` makes the build render this
+        \\index once per window of 10 active subpages. Use
+        \\`$page.pagination?()` for the per-render state (current page,
+        \\total pages, prev/next links).
     ;
 };
 pub const Builtins = struct {
@@ -1292,7 +1524,18 @@ pub const Builtins = struct {
                 out_idx += 1;
             }
 
-            return context.Array.init(gpa, Value, pages[0..out_idx]);
+            var active = pages[0..out_idx];
+            // Windowing: only the paginated index being rendered gets a slice —
+            // a DIFFERENT page's subpages() inside the same render (via
+            // $site.page(...)) must stay full, as must alternatives (state null).
+            if (ctx._pagination) |pg| {
+                if (p == ctx.page) {
+                    const start = @min((pg.current - 1) * pg.page_size, active.len);
+                    const end = @min(start + pg.page_size, active.len);
+                    active = active[start..end];
+                }
+            }
+            return context.Array.init(gpa, Value, active);
         }
     };
 
@@ -1331,7 +1574,16 @@ pub const Builtins = struct {
                 out_idx += 1;
             }
 
-            const pages = pages_buf[0..out_idx];
+            var pages = pages_buf[0..out_idx];
+            // Windowing: same rule as subpages() — apply BEFORE the
+            // alphabetic sort, since the window is defined on date order.
+            if (ctx._pagination) |pg| {
+                if (p == ctx.page) {
+                    const start = @min((pg.current - 1) * pg.page_size, pages.len);
+                    const end = @min(start + pg.page_size, pages.len);
+                    pages = pages[start..end];
+                }
+            }
 
             std.mem.sort(Value, @constCast(pages), {}, struct {
                 fn alphaLessThan(_: void, lhs: Value, rhs: Value) bool {
@@ -1387,6 +1639,39 @@ pub const Builtins = struct {
             }
 
             return context.Optional.Null;
+        }
+    };
+    pub const @"pagination?" = struct {
+        pub const signature: Signature = .{ .ret = .{ .Opt = .Paginator } };
+        pub const docs_description =
+            \\Returns the pagination state when the current render is a
+            \\window of THIS page's section (the page sets `.pagination`
+            \\in its frontmatter), null otherwise — so shared layouts can
+            \\branch with an `if` attribute.
+        ;
+        pub const examples =
+            \\<div :if="$page.pagination?()">
+            \\  <span :text="$if.current"></span> / <span :text="$if.total"></span>
+            \\</div>
+        ;
+        pub fn call(
+            p: *const Page,
+            gpa: Allocator,
+            ctx: *const context.Root,
+            args: []const Value,
+        ) context.CallError!Value {
+            if (args.len != 0) return .{ .err = "expected 0 arguments" };
+            const state = ctx._pagination orelse return context.Optional.Null;
+            // Only the paginated index itself has a window; other pages
+            // referenced during the same render (e.g. $site.page(...)) don't.
+            if (p != ctx.page) return context.Optional.Null;
+            return context.Optional.init(gpa, Value{ .paginator = .{
+                .current = state.current,
+                .total = state.total_pages,
+                .page_size = state.page_size,
+                .total_items = state.total_items,
+                ._page = p,
+            } });
         }
     };
     pub const @"prevPage?" = struct {
@@ -2076,3 +2361,48 @@ pub const ContentSection = struct {
         };
     };
 };
+
+const testing = std.testing;
+
+test "pagination: frontmatter field parses with defaults" {
+    // The Page struct is the ziggy schema; parse a minimal frontmatter the way
+    // Page.parse does and check the new field round-trips.
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const src =
+        \\.title = "Blog",
+        \\.layout = "index.shtml",
+        \\.pagination = { .page_size = 10 },
+    ;
+    const page = try ziggy.parseLeaky(Page, arena, src, .{});
+    const pg = page.pagination.?;
+    try testing.expectEqual(@as(u32, 10), pg.page_size);
+    try testing.expectEqual(Pagination.UrlStyle.page_dir, pg.url_style);
+
+    const src_style =
+        \\.title = "Blog",
+        \\.layout = "index.shtml",
+        \\.pagination = { .page_size = 3, .url_style = "plain_dir" },
+    ;
+    const page2 = try ziggy.parseLeaky(Page, arena, src_style, .{});
+    try testing.expectEqual(Pagination.UrlStyle.plain_dir, page2.pagination.?.url_style);
+
+    const src_none =
+        \\.title = "Blog",
+        \\.layout = "index.shtml",
+    ;
+    const page3 = try ziggy.parseLeaky(Page, arena, src_none, .{});
+    try testing.expectEqual(@as(?Pagination, null), page3.pagination);
+}
+
+test "pagination: analysis error variants carry codes and titles" {
+    const size_err: FrontmatterAnalysisError = .pagination_size;
+    try testing.expectEqual(diagcodes.Code.ZP_INVALID_PAGINATION_SIZE, size_err.code());
+    try testing.expect(size_err.title().len > 0);
+
+    const sec_err: FrontmatterAnalysisError = .pagination_not_section;
+    try testing.expectEqual(diagcodes.Code.ZP_PAGINATION_NOT_SECTION, sec_err.code());
+    try testing.expect(sec_err.title().len > 0);
+}

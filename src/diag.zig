@@ -195,6 +195,10 @@ pub const Code = enum {
     ZP_INVALID_ALTERNATIVE_PATH,
     // emitted by: context/Page.zig FrontmatterAnalysisError, invalid alternative layout
     ZP_INVALID_ALTERNATIVE_LAYOUT,
+    // emitted by: context/Page.zig FrontmatterAnalysisError, pagination page_size == 0
+    ZP_INVALID_PAGINATION_SIZE,
+    // emitted by: context/Page.zig FrontmatterAnalysisError, pagination on a non-section page
+    ZP_PAGINATION_NOT_SECTION,
     // emitted by: context/Page.zig PageAnalysisError.not_a_section
     ZP_LINK_NOT_A_SECTION,
     // emitted by: context/Page.zig PageAnalysisError.no_parent_section
@@ -356,6 +360,22 @@ pub fn info(c: Code) Info {
             \\Each `alternatives` entry may set its own `layout`; when it does,
             \\that path must resolve to a real layout under `layouts_dir_path`,
             \\same as a page's own top-level `layout` field.
+            ,
+        },
+        .ZP_INVALID_PAGINATION_SIZE => .{
+            .summary = "a page's `pagination.page_size` is zero",
+            .explanation =
+            \\`.pagination = .{ .page_size = N }` splits a section index into
+            \\windows of N subpages, so N must be at least 1. This fires when
+            \\the frontmatter sets it to 0.
+            ,
+        },
+        .ZP_PAGINATION_NOT_SECTION => .{
+            .summary = "`pagination` was set on a page that is not a section index",
+            .explanation =
+            \\Pagination windows a section's subpage list, so it is only
+            \\meaningful on an `index.smd` that owns a section. This fires when
+            \\a leaf page sets `.pagination` in its frontmatter.
             ,
         },
         .ZP_LINK_NOT_A_SECTION => .{

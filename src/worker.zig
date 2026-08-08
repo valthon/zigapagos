@@ -320,6 +320,13 @@ fn analyzeFrontmatter(page_arena: Allocator, p: *Page) error{OutOfMemory}!void {
             },
         });
     }
+
+    if (p.pagination) |pg| {
+        if (pg.page_size == 0) try errors.append(page_arena, .pagination_size);
+        // subsection_id == 0 means "this page owns no section" — i.e. it is a
+        // leaf page, not an index.smd (see Variant.zig's scan).
+        if (p._scan.subsection_id == 0) try errors.append(page_arena, .pagination_not_section);
+    }
 }
 
 /// A page-output path (an `aliases` entry or an alternative's `output`) comes

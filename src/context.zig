@@ -49,6 +49,8 @@ pub const Value = union(enum) {
     missing_page: MissingPage,
     ctx: Ctx(Value),
     alternative: Page.Alternative,
+    pagination: Page.Pagination,
+    paginator: Page.Paginator,
     content_section: Page.ContentSection,
     footnote: Page.Footnote,
     build: *const Build,
@@ -142,6 +144,13 @@ pub const Value = union(enum) {
             Page.Alternative => .{ .alternative = v },
             Page.ContentSection => .{ .content_section = v },
             Page.Footnote => .{ .footnote = v },
+            Page.Pagination => .{ .pagination = v },
+            Page.Paginator => .{ .paginator = v },
+            ?Page.Pagination => if (v) |pg|
+                try context.Optional.init(gpa, pg)
+            else
+                context.Optional.Null,
+            Page.Pagination.UrlStyle => .{ .string = .{ .value = @tagName(v) } },
             *Build => .{ .build = v },
             Git => .{ .git = v },
             Ctx(Value) => .{ .ctx = v },
@@ -149,7 +158,7 @@ pub const Value = union(enum) {
             DateTime => .{ .date = v },
             []const u8, []u8 => .{ .string = .{ .value = v } },
             bool => .{ .bool = .{ .value = v } },
-            i64, usize => .{ .int = .{ .value = @intCast(v) } },
+            i64, usize, u32 => .{ .int = .{ .value = @intCast(v) } },
             ziggy.dynamic.Value => try fromZiggy(gpa, v),
             Map.ZiggyMap => .{ .map = .{ .value = v } },
             Map.KV => .{ .map_kv = v },
