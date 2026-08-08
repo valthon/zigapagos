@@ -32,9 +32,7 @@ pub const Config = struct {
 
 pub fn parse(b: *std.Build) Config {
     const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{
-        // .preferred_optimize_mode = .ReleaseFast,
-    });
+    const optimize = b.standardOptimizeOption(.{});
 
     const version: Version = if (b.option(
         bool,
