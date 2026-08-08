@@ -685,6 +685,94 @@ pub fn paginationPathName(
     }
 }
 
+/// Lookup-only counterpart to `paginationPathName`, for the stale-output
+/// prune (root.zig, after the render barrier): that probe walks past the end
+/// of the current plan and, on a style change, past ranges that were never
+/// planned at all, so most candidates it asks about were never registered.
+/// `paginationPathName` INTERNS its formatted path into the string/path
+/// tables on every call; probing with it would grow those tables once per
+/// stale candidate, on every build, forever. This queries them instead
+/// (`PathTable.PathName.get`, backed by `StringTable.get` /
+/// `PathTable.getPathNoName` -- neither interns) and returns null both when
+/// nothing is registered at that path AND when some path component was never
+/// interned by anything else. The two cases are indistinguishable from a
+/// pure lookup, but equivalent for the caller: every REAL entry in
+/// `Variant.urls` was interned when it was registered, so "never interned
+/// anywhere" already implies "not in `Variant.urls`".
+pub fn paginationPathNameLookup(
+    v: *const Variant,
+    page: *const Page,
+    style: context.Page.Pagination.UrlStyle,
+    n: u32,
+) ?PathName {
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    switch (style) {
+        .page_dir, .plain_dir => {
+            const full = std.fmt.bufPrint(&buf, "{f}{s}{d}/index.html", .{
+                page._scan.url.fmt(&v.string_table, &v.path_table, null, true),
+                if (style == .page_dir) "page/" else "",
+                n,
+            }) catch return null;
+            return PathName.get(&v.string_table, &v.path_table, full);
+        },
+        .page_html => {
+            const name = std.fmt.bufPrint(&buf, "page-{d}.html", .{n}) catch return null;
+            return .{
+                .path = page._scan.url,
+                .name = v.string_table.get(name) orelse return null,
+            };
+        },
+    }
+}
+
+/// Whether the stale-pagination-prune candidate `rel` (page `n` of
+/// `index_page`'s plan, under `style`, whose output-dir-relative path is
+/// `rel`) must be PRESERVED rather than deleted. Two independent reasons a
+/// candidate is real, not stale:
+///
+///  1. A page/alias/alternative/pagination-page URL is registered at that
+///     path in `v.urls` -- checked via the lookup-only
+///     `paginationPathNameLookup` above, so the probe never grows the
+///     interning tables -- AND the page that OWNS that registration is
+///     still active. `v.urls` is populated at SCAN time, before
+///     draft/active status is known (`Section.activate` sets `_parse.active`
+///     during the later parse phase), and an inactive page's `urls` entries
+///     are never removed once scanned -- so a bare hit is not proof the path
+///     is a real output of THIS build: a draft page can sit at a former
+///     pagination path and keep its stale dir alive in release builds
+///     forever. Every `LocationHint` kind carries the id of the page that
+///     owns it (`page_main`/`page_alias`/`page_alternative`/`page_asset` are
+///     all emitted -- or not -- alongside their owning page, same as
+///     `page_pagination`), so deferring to that owner's `_parse.active` is a
+///     uniform rule, not a special case for one `ResourceKind`.
+///  2. An SPA prerendered a real output there (`build.spa_out_paths`). SPA
+///     shells/manifests/the 404 fallback are never `Page`s, so they are
+///     NEVER in `Variant.urls` -- reason 1 alone would let the prune delete
+///     a real SPA output that happens to sit at a pagination-shaped path
+///     (e.g. a `staticPaths` entry "2" under one SPA's base while a sibling
+///     section's non-current-style sweep probes "…/2/index.html").
+///
+/// This is the single function both `root.zig`'s prune loop and this file's
+/// own regression tests call, so a test pinning "an SPA output survives"
+/// cannot drift from what the prune actually does.
+///
+/// NO_SLOP.md §2.2a contract 3 (caller-buffer): allocates nothing; `rel` is
+/// the caller's own (already-freed-by-caller) `paginationOutputPath` result.
+pub fn isPruneCandidateProtected(
+    v: *const Variant,
+    build: *const Build,
+    index_page: *const Page,
+    style: context.Page.Pagination.UrlStyle,
+    n: u32,
+    rel: []const u8,
+) bool {
+    if (v.paginationPathNameLookup(index_page, style, n)) |pn| {
+        if (v.urls.get(pn)) |hint| {
+            if (v.pages.items[hint.id]._parse.active) return true;
+        }
+    }
+    return build.spa_out_paths.contains(rel);
+}
 
 pub fn installAssets(
     v: *const Variant,
@@ -733,4 +821,203 @@ pub fn installAssets(
 
         progress.completeOne();
     }
+}
+
+// --- tests ---
+
+const testing = std.testing;
+
+/// A `Variant` fixture sufficient for the pagination-prune helpers below:
+/// only `string_table`/`path_table`/`urls`/`pages` are initialized (neither
+/// `paginationPathName(Lookup)` nor `isPruneCandidateProtected` touches
+/// anything else on `Variant`), left genuinely `undefined` otherwise on
+/// purpose -- a stray read of an unrelated field is a Debug-mode crash
+/// rather than silently "working" on garbage.
+///
+/// The priming calls mirror `Variant.load`'s exactly (see its first few
+/// lines): `PathName.get`'s Debug-mode asserts require the empty path/string
+/// to already sit at offset/index 0 in both tables, which only holds if they
+/// are the FIRST thing ever interned.
+///
+/// `pages` starts empty: `isPruneCandidateProtected` now dereferences
+/// `v.pages.items[hint.id]` for every `LocationHint` it finds in `v.urls`,
+/// so any test that registers a `urls` entry must first give it an owning
+/// page via `testOwningPage` below -- an unregistered `id` is a Debug-mode
+/// out-of-bounds crash, same "crash rather than garbage" intent as leaving
+/// the rest of `Variant` `undefined`.
+fn testVariant(gpa: std.mem.Allocator) !Variant {
+    var v: Variant = undefined;
+    v.path_table = .empty;
+    _ = try v.path_table.intern(gpa, &.{}); // empty path
+    v.string_table = .empty;
+    _ = try v.string_table.intern(gpa, ""); // invalid path component string
+    v.urls = .empty;
+    v.pages = .empty;
+    return v;
+}
+
+/// Appends a minimal owning `Page` to `v.pages` with `_parse.active` set as
+/// requested, and returns its index -- the `id` a test's `LocationHint`
+/// needs to point at for `isPruneCandidateProtected`'s new active-owner
+/// check. Every field but `title`/`layout`/`_parse.active` is left
+/// `undefined`; the function under test reads nothing else off the page.
+fn testOwningPage(v: *Variant, gpa: std.mem.Allocator, active: bool) !u32 {
+    var page: Page = .{ .title = "Owner", .layout = "list.shtml" };
+    page._parse.active = active;
+    const id: u32 = @intCast(v.pages.items.len);
+    try v.pages.append(gpa, page);
+    return id;
+}
+
+/// A minimal section-index `Page` whose `_scan.url` is a real interned path
+/// (everything pagination-prune code reads off a `Page`); every other field
+/// is `undefined` on purpose, same reasoning as `testVariant`.
+fn testIndexPage(v: *Variant, gpa: std.mem.Allocator, url: []const u8) !Page {
+    var page: Page = .{ .title = "Test", .layout = "list.shtml" };
+    page._scan.url = try v.path_table.internPath(gpa, &v.string_table, url);
+    return page;
+}
+
+// Finding 2 (issue #127 tasks 8+9 combined review, fix round 1): nothing
+// pinned that `paginationPathNameLookup` and `paginationPathName` agree --
+// the invariant the stale-pagination prune's safety depends on entirely
+// (skip a lookup HIT, delete a lookup MISS). Verified to fail without the
+// fix: reverting `paginationPathNameLookup`'s `.page_dir`/`.plain_dir` arm to
+// unconditionally `return null` makes the "then agrees" assertions below
+// fail on `looked_up != null` for those two styles.
+test "pagination: paginationPathNameLookup is null until paginationPathName registers the same path, then agrees, for every url style" {
+    const gpa = testing.allocator;
+    var v = try testVariant(gpa);
+    defer v.string_table.deinit(gpa);
+    defer v.path_table.deinit(gpa);
+    defer v.urls.deinit(gpa);
+
+    const page = try testIndexPage(&v, gpa, "blog");
+
+    const styles = comptime std.enums.values(context.Page.Pagination.UrlStyle);
+    for (styles) |style| {
+        // Nothing interned yet for this (style, n) pair: lookup misses.
+        try testing.expectEqual(@as(?PathName, null), v.paginationPathNameLookup(&page, style, 2));
+
+        const interned = try v.paginationPathName(gpa, &page, style, 2);
+        const looked_up = v.paginationPathNameLookup(&page, style, 2);
+        try testing.expect(looked_up != null);
+        try testing.expectEqual(interned.path, looked_up.?.path);
+        try testing.expectEqual(interned.name, looked_up.?.name);
+    }
+
+    // An unregistered candidate (page 99, never interned by anything above)
+    // still misses for every style -- the symmetry above didn't just get
+    // lucky on n=2.
+    for (styles) |style| {
+        try testing.expectEqual(@as(?PathName, null), v.paginationPathNameLookup(&page, style, 99));
+    }
+}
+
+// Finding 1 (issue #127 tasks 8+9 combined review, fix round 1): the prune's
+// ONLY skip-list was `Variant.urls`, but an SPA's prerendered output is never
+// a `Page` and so is never registered there -- a `staticPaths` entry "2"
+// under an SPA based at `/news/` collides with `news`'s own non-current-style
+// sweep (a sibling section still on `.page_dir`) and would be silently
+// deleted every build. `isPruneCandidateProtected` is the exact function
+// `root.zig`'s prune loop calls, so this pins the real behaviour rather than
+// a reimplementation of it.
+test "pagination: isPruneCandidateProtected treats a Variant.urls registration as protected" {
+    const gpa = testing.allocator;
+    var v = try testVariant(gpa);
+    defer v.string_table.deinit(gpa);
+    defer v.path_table.deinit(gpa);
+    defer v.urls.deinit(gpa);
+    defer v.pages.deinit(gpa);
+
+    const page = try testIndexPage(&v, gpa, "news");
+
+    // Register page 2 as a REAL page's main output -- mirrors what the scan
+    // phase does for a subpage literally named "2" under `.plain_dir`. The
+    // owning page is active, same as any real, published subpage.
+    const owner_id = try testOwningPage(&v, gpa, true);
+    const pn = try v.paginationPathName(gpa, &page, .plain_dir, 2);
+    try v.urls.put(gpa, pn, .{ .id = owner_id, .kind = .page_main });
+
+    var build: Build = undefined;
+    build.spa_out_paths = .empty;
+    defer build.spa_out_paths.deinit(gpa);
+
+    try testing.expect(v.isPruneCandidateProtected(&build, &page, .plain_dir, 2, "news/2/index.html"));
+    // A different, unregistered candidate is genuinely unprotected -- the
+    // prune must still be able to delete real stale pagination pages.
+    try testing.expect(!v.isPruneCandidateProtected(&build, &page, .plain_dir, 3, "news/3/index.html"));
+}
+
+// Finding 3 (issue #127 tasks 8+9 combined review, fix round 2): a
+// `Variant.urls` hit alone was treated as protection, but `urls` is
+// populated at SCAN time -- before draft/active status exists -- and an
+// inactive page's entries are never removed. A draft page occupying a
+// former pagination path therefore kept the stale dir alive forever in
+// release builds. Verified to fail without the fix: reverting
+// `isPruneCandidateProtected` to skip the `_parse.active` check makes the
+// first assertion below fail (an inactive owner wrongly protects the path).
+test "pagination: isPruneCandidateProtected ignores a Variant.urls registration owned by an inactive page" {
+    const gpa = testing.allocator;
+    var v = try testVariant(gpa);
+    defer v.string_table.deinit(gpa);
+    defer v.path_table.deinit(gpa);
+    defer v.urls.deinit(gpa);
+    defer v.pages.deinit(gpa);
+
+    const page = try testIndexPage(&v, gpa, "news");
+
+    // Same registration shape as the test above, but the owning page is a
+    // draft: `_parse.active = false`, mirroring a page whose scan-time
+    // `urls` entry outlived its own exclusion from the render.
+    const inactive_owner = try testOwningPage(&v, gpa, false);
+    const pn = try v.paginationPathName(gpa, &page, .plain_dir, 2);
+    try v.urls.put(gpa, pn, .{ .id = inactive_owner, .kind = .page_main });
+
+    var build: Build = undefined;
+    build.spa_out_paths = .empty;
+    defer build.spa_out_paths.deinit(gpa);
+
+    // The urls hit exists, but its owner is inactive -- NOT protected, so
+    // the stale pagination dir is free to be pruned.
+    try testing.expect(!v.isPruneCandidateProtected(&build, &page, .plain_dir, 2, "news/2/index.html"));
+
+    // The same path, owned by an ACTIVE page, is protected -- the uniform
+    // rule cuts both ways.
+    const active_owner = try testOwningPage(&v, gpa, true);
+    const pn3 = try v.paginationPathName(gpa, &page, .plain_dir, 3);
+    try v.urls.put(gpa, pn3, .{ .id = active_owner, .kind = .page_main });
+    try testing.expect(v.isPruneCandidateProtected(&build, &page, .plain_dir, 3, "news/3/index.html"));
+}
+
+test "pagination: isPruneCandidateProtected treats a recorded SPA output path as protected, even with no Variant.urls entry" {
+    const gpa = testing.allocator;
+    var v = try testVariant(gpa);
+    defer v.string_table.deinit(gpa);
+    defer v.path_table.deinit(gpa);
+    defer v.urls.deinit(gpa);
+    defer v.pages.deinit(gpa);
+
+    const page = try testIndexPage(&v, gpa, "blog");
+
+    var build: Build = undefined;
+    build.spa_out_paths = .empty;
+    defer {
+        var it = build.spa_out_paths.keyIterator();
+        while (it.next()) |k| gpa.free(k.*);
+        build.spa_out_paths.deinit(gpa);
+    }
+    // Mirrors spa.zig's recordSpaOutPath: an owned dupe, keyed by the exact
+    // output-dir-relative path spa.zig's writeFile used.
+    try build.spa_out_paths.put(gpa, try gpa.dupe(u8, "blog/2/index.html"), {});
+
+    // Nothing is registered in Variant.urls for this candidate -- ONLY the
+    // SPA record protects it. This is the exact reachable case the review
+    // flagged: a staticPaths entry "2" under an SPA based at /blog/ collides
+    // with a sibling .page_dir section's non-current-style sweep.
+    try testing.expect(v.isPruneCandidateProtected(&build, &page, .plain_dir, 2, "blog/2/index.html"));
+
+    // A path that is neither an SPA output nor in Variant.urls is genuinely
+    // unprotected.
+    try testing.expect(!v.isPruneCandidateProtected(&build, &page, .plain_dir, 3, "blog/3/index.html"));
 }
