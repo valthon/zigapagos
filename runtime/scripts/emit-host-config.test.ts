@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
   emitNginx, emitApache, emitZigbase, assertSafeManifest, zigStringLiteral, escapePcre,
-  scanInlineScriptHashes, scanExternalLinkOrigins, cspHeaderValue, emitCsp, emitAllCsp,
+  scanInlineScriptHashes, scanInlineStyleHashes, scanExternalLinkOrigins, cspHeaderValue, emitCsp, emitAllCsp,
   type Manifest,
 } from "./emit-host-config.ts";
 
@@ -468,18 +468,21 @@ test("nginx CSP snippet has script-src 'self' + both hashes and NO unsafe-inline
   expect(file.content).toContain(`script-src 'self' ${hashes[0]} ${hashes[1]}`);
   expect(file.content).toContain("add_header Content-Security-Policy");
   expect(file.content).toContain("always;");
-  // script-src stays strict; only style-src carries unsafe-inline (framework styles).
+  // script-src stays strict; style-src-attr is the only directive carrying
+  // unsafe-inline (the framework's inline style ATTRIBUTES) — style-src-elem
+  // (<style> elements) is just as strict as script-src.
   expect(scriptSrcOf(file.content)).not.toContain("unsafe-inline");
 });
 
-test("cspHeaderValue is a strict baseline: script-src has hashes + no unsafe-inline, styles lenient", () => {
+test("cspHeaderValue is a strict baseline: script-src AND style-src-elem have no unsafe-inline; only style-src-attr is lenient", () => {
   const v = cspHeaderValue(scanInlineScriptHashes([PAGE]));
   expect(v).toContain("default-src 'self'");
   expect(v).toContain("script-src 'self' 'sha256-");
   expect(v).toContain("object-src 'none'");
   expect(v).toContain("base-uri 'self'");
   expect(scriptSrcOf(v)).not.toContain("unsafe-inline"); // script-src is strict
-  expect(v).toContain("style-src 'self' 'unsafe-inline'"); // framework inline styles
+  expect(v).toContain("style-src-elem 'self'"); // <style> elements: strict, no unsafe-inline
+  expect(v).toContain("style-src-attr 'unsafe-inline'"); // framework inline style ATTRIBUTES only
 });
 
 test("apache + zigbase CSP artifacts carry the same header value, script-src strict", () => {
@@ -504,8 +507,8 @@ test("apache + zigbase CSP artifacts carry the same header value, script-src str
 // renders into every shell's <head> as <link> tags. The emitted CSP must allow
 // those origins or the deployed conf blocks the fonts the build itself linked.
 // Rule: every external origin referenced by a <link> href in the built HTML is
-// unioned into BOTH style-src and font-src (simple + predictable; a stylesheet
-// origin and the font origin it pulls from both end up allowed).
+// unioned into BOTH style-src-elem and font-src (simple + predictable; a
+// stylesheet origin and the font origin it pulls from both end up allowed).
 
 // Rendered exactly like src/spa.zig's renderHeadLinks output (attribute values
 // HTML-escaped, so a query "&" appears as "&amp;").
@@ -520,7 +523,7 @@ const FONT_PAGE = [
   `</head><body></body></html>`,
 ].join("");
 
-const styleSrcOf = (csp: string) => csp.match(/style-src[^;]*/)![0];
+const styleSrcOf = (csp: string) => csp.match(/style-src-elem[^;]*/)![0];
 
 test("scanExternalLinkOrigins returns the sorted, deduped external <link> origins (local hrefs excluded)", () => {
   const origins = scanExternalLinkOrigins([FONT_PAGE]);
@@ -562,34 +565,42 @@ test("scanExternalLinkOrigins keeps an explicit port and ignores non-link tags a
   expect(scanExternalLinkOrigins([page])).toEqual(["https://cdn.example.com:8443"]);
 });
 
-test("cspHeaderValue unions external link origins into style-src AND font-src", () => {
+test("cspHeaderValue unions external link origins into style-src-elem AND font-src (never style-src-attr)", () => {
   const hashes = scanInlineScriptHashes([FONT_PAGE]);
   const origins = scanExternalLinkOrigins([FONT_PAGE]);
   const v = cspHeaderValue(hashes, origins);
   expect(styleSrcOf(v)).toBe(
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com",
+    "style-src-elem 'self' https://fonts.googleapis.com https://fonts.gstatic.com",
   );
   expect(v).toContain(
     "font-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com",
   );
   // script-src stays strict: origins are NOT added there.
   expect(scriptSrcOf(v)).not.toContain("fonts.");
+  // Nor into style-src-attr, which carries only the fixed 'unsafe-inline' grant.
+  expect(v).toContain("style-src-attr 'unsafe-inline'");
+  expect(v).not.toContain("style-src-attr 'unsafe-inline' https://");
 });
 
-test("cspHeaderValue without external origins is byte-identical to the pre-linkOrigins value (no font-src)", () => {
+test("cspHeaderValue without external origins or style hashes is byte-identical across the linkOrigins/styleHashes defaults (no font-src)", () => {
+  // Byte-identity with the OLD pre-split value is intentionally broken by this
+  // change (issue #130 drops the blanket style-src) — what still must hold is
+  // that omitting the optional params is identical to passing empty arrays.
   const hashes = scanInlineScriptHashes([PAGE]);
   expect(cspHeaderValue(hashes, [])).toBe(cspHeaderValue(hashes));
+  expect(cspHeaderValue(hashes, [], [])).toBe(cspHeaderValue(hashes));
   expect(cspHeaderValue(hashes)).not.toContain("font-src");
-  expect(styleSrcOf(cspHeaderValue(hashes))).toBe("style-src 'self' 'unsafe-inline'");
+  expect(styleSrcOf(cspHeaderValue(hashes))).toBe("style-src-elem 'self'");
 });
 
-test("all three emitted CSP flavors carry the head origins (nginx/apache/zigbase)", () => {
+test("all three emitted CSP flavors carry the head origins (nginx/apache/zigbase) and the style-src-attr grant", () => {
   const hashes = scanInlineScriptHashes([FONT_PAGE]);
   const origins = scanExternalLinkOrigins([FONT_PAGE]);
   const value = cspHeaderValue(hashes, origins);
   for (const f of emitAllCsp(hashes, origins)) {
     expect(f.content).toContain(value);
     expect(f.content).toContain("font-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com");
+    expect(f.content).toContain("style-src-attr 'unsafe-inline'");
   }
   const nginx = emitCsp(hashes, "nginx", origins);
   expect(styleSrcOf(nginx.content)).toContain("https://fonts.googleapis.com");
@@ -600,4 +611,102 @@ test("no-type inline script IS hashed; application/json is NOT", () => {
     `<script type="application/json">{"a":1}</script></html>`;
   const hashes = scanInlineScriptHashes([classic]);
   expect(hashes).toEqual([b64("console.log(1)")]);
+});
+
+// ── style-src-elem / style-src-attr split (issue #130) ──────────────────────
+// The blanket `style-src 'self' 'unsafe-inline'` granted inline-style-ELEMENT
+// injection sitewide to cover something narrower: inline style ATTRIBUTES
+// (`display:contents` on island slot wrappers), which hashes cannot reach.
+// These tests are the regression pin for that split; each was run against the
+// unmodified (pre-#130) emitter and confirmed to FAIL there.
+
+test("unsafe-inline appears in style-src-attr and NOWHERE else", () => {
+  const hashes = scanInlineScriptHashes([PAGE]);
+  const v = cspHeaderValue(hashes);
+  const directives = v.split("; ");
+  const withUnsafeInline = directives.filter((d) => d.includes("'unsafe-inline'"));
+  expect(withUnsafeInline).toEqual(["style-src-attr 'unsafe-inline'"]);
+});
+
+test("no blanket style-src directive is emitted", () => {
+  const hashes = scanInlineScriptHashes([PAGE]);
+  const v = cspHeaderValue(hashes);
+  const directives = v.split("; ");
+  // Space after "style-src" so this does not accidentally match
+  // "style-src-elem"/"style-src-attr", which legitimately start with the same prefix.
+  expect(directives.some((d) => d.startsWith("style-src "))).toBe(false);
+});
+
+test("inline <style> ELEMENTS are hashed into style-src-elem, independent of script-src", () => {
+  const STYLE_CONTENT = "h1{color:red}";
+  const page = `<html><head><style>${STYLE_CONTENT}</style></head><body></body></html>`;
+  const styleHashes = scanInlineStyleHashes([page]);
+  const independent = "'sha256-" + createHash("sha256").update(STYLE_CONTENT, "utf8").digest("base64") + "'";
+  expect(styleHashes).toEqual([independent]);
+
+  const hashes = scanInlineScriptHashes([page]); // no <script> on this page
+  const v = cspHeaderValue(hashes, [], styleHashes);
+  expect(styleSrcOf(v)).toBe(`style-src-elem 'self' ${independent}`);
+  expect(scriptSrcOf(v)).not.toContain(independent); // never leaks into script-src
+});
+
+test("scanInlineStyleHashes dedupes + sorts across pages; a style ATTRIBUTE contributes nothing; an empty page yields []", () => {
+  const a = `<html><head><style>h1{color:red}</style></head><body></body></html>`;
+  const b = `<html><head><style>h1{color:red}</style><style>p{margin:0}</style></head></html>`;
+  const withAttrOnly = `<div style="display:contents">x</div>`; // attribute, not an element
+  expect(scanInlineStyleHashes([a, b])).toEqual(
+    [...new Set([...scanInlineStyleHashes([a]), ...scanInlineStyleHashes([b])])].sort(),
+  );
+  expect(scanInlineStyleHashes([a, b]).length).toBe(2); // deduped: "h1{color:red}" shared
+  expect(scanInlineStyleHashes([withAttrOnly])).toEqual([]);
+  expect(scanInlineStyleHashes([])).toEqual([]);
+  expect(scanInlineStyleHashes(["<html></html>"])).toEqual([]);
+  // An empty style-hash set still yields a well-formed, strict style-src-elem.
+  expect(cspHeaderValue([], [], [])).toContain("style-src-elem 'self'");
+});
+
+// ── Tokenizer fidelity of the hash scanners ────────────────────────────────
+// A hash allow-list that disagrees with the browser's tokenizer is worse than
+// no allow-list: the bogus match ALSO consumes forward past the real element,
+// so the header both permits text that is not markup and omits the hash of
+// markup that is. examples/tsx-site/layouts/index.shtml carries a comment that
+// names the tags below it precisely so the e2e run exercises this too.
+
+test("a <style>/<script> named inside an HTML COMMENT is text: no hash, and the real element that follows still gets one", () => {
+  const page = [
+    `<html><head>`,
+    `<!-- the <style> block below is inline on purpose; so is the <script> -->`,
+    `<style>h1{color:red}</style>`,
+    `<script type="module">boot()</script>`,
+    `</head><body></body></html>`,
+  ].join("");
+  // Naive regexes would open at the mention inside the comment and run to the
+  // real close tag, hashing "-->…<style>h1{color:red}" and losing the true one.
+  expect(scanInlineStyleHashes([page])).toEqual([b64("h1{color:red}")]);
+  expect(scanInlineScriptHashes([page])).toEqual([b64("boot()")]);
+});
+
+test("a <style> inside a JSON data block is CONTENT, not an element (data-z-slots escapes only `</`)", () => {
+  // Exactly the shape src/islands/pass.zig emits: slot HTML with `</` escaped to
+  // `<\/`, so the OPEN tag survives literally inside the JSON string.
+  const page = [
+    `<html><body>`,
+    `<div><style>h1{color:red}</style></div>`,
+    `<script type="application/json" data-z-slots="z-island-0">`,
+    `{"default":"<style>evil{}<\\/style>"}`,
+    `</script>`,
+    `<style>p{margin:0}</style>`,
+    `</body></html>`,
+  ].join("");
+  // The JSON block contributes nothing, and — the part a naive scan gets wrong —
+  // the <style> AFTER it is still hashed rather than swallowed.
+  expect(scanInlineStyleHashes([page])).toEqual(
+    [b64("h1{color:red}"), b64("p{margin:0}")].sort(),
+  );
+});
+
+test("an unterminated comment or raw-text element stops the scan instead of guessing", () => {
+  expect(scanInlineStyleHashes([`<style>a{}</style><!-- <style>b{}</style>`])).toEqual([b64("a{}")]);
+  expect(scanInlineStyleHashes([`<style>a{}</style><style>never closed`])).toEqual([b64("a{}")]);
+  expect(scanInlineScriptHashes([`<script>a()</script><script>never closed`])).toEqual([b64("a()")]);
 });

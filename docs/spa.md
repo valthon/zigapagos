@@ -1164,9 +1164,11 @@ Overriding this fallback from a content page requires the alias to be root-absol
 ### Content Security Policy (strict CSP)
 
 A hardened deployment runs CSP without `unsafe-inline`, which would block the generated inline
-`<script type="importmap">` and the inline `mountSpa` bootstrap. Their content is deterministic
-at build time, so `emit-host-config.ts` scans the built HTML, computes a **sha256** for each
-unique inline script, and writes a ready-to-merge CSP at the site root:
+`<script type="importmap">` and the inline `mountSpa` bootstrap (and, for `style-src-elem`, any
+inline `<style>` element the site's own layouts ship — the `zigapagos init` scaffold layouts do).
+Their content is deterministic at build time, so `emit-host-config.ts` scans the built HTML,
+computes a **sha256** for each unique inline script and each unique inline `<style>` element, and
+writes a ready-to-merge CSP at the site root:
 
 - `csp.nginx.conf` — an `add_header Content-Security-Policy "…" always;` line.
 - `csp.apache.conf` — a `Header set Content-Security-Policy "…"` line.
@@ -1175,7 +1177,7 @@ unique inline script, and writes a ready-to-merge CSP at the site root:
 All three carry the same host-agnostic value:
 
 ```
-default-src 'self'; script-src 'self' 'sha256-…' 'sha256-…'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'
+default-src 'self'; script-src 'self' 'sha256-…' 'sha256-…'; style-src-elem 'self' 'sha256-…'; style-src-attr 'unsafe-inline'; object-src 'none'; base-uri 'self'
 ```
 
 - **`script-src` is hash-strict** — `'self'` (external `/zigapagos-runtime.js`, `/spa/*.js`,
@@ -1184,16 +1186,35 @@ default-src 'self'; script-src 'self' 'sha256-…' 'sha256-…'; style-src 'self
   `type="application/json"` (data blocks, not executed) and need no hash. **If the shell's inline content ever changes, regenerate**
   (the hashes are recomputed on every build; a stale hosted header would break the site — the
   hash is byte-exact).
-- **`style-src` allows `'unsafe-inline'`** because the framework emits inline `style` attributes
-  (e.g. `display:contents` on slot wrappers) that CSP hashes cannot cover (hashes apply to
-  `<style>`/`<script>` elements, not style *attributes*). Style injection is far lower-risk than
-  script injection; the XSS-critical `script-src` stays strict. (v2: move those inline styles to
-  a class/external stylesheet to enable a fully-strict `style-src`.)
+- **`style-src-elem` / `style-src-attr` split (CSP3), not a blanket `style-src`.** `<style>`
+  elements and `<link>` stylesheets are governed by `style-src-elem`, and it is **just as strict
+  as `script-src`**: `'self'` plus a `'sha256-…'` per unique inline `<style>` element, no
+  `unsafe-inline`. Only `style-src-attr` carries `'unsafe-inline'`, because it covers inline
+  `style` *attributes* (e.g. `display:contents` on island slot wrappers) — CSP hash-sources can
+  only allow-list `<style>`/`<script>` *element* content, never an attribute value, so there is no
+  hash-based alternative for attributes short of the broader `'unsafe-hashes'` (which this emitter
+  does not opt into). Attribute-style injection is far lower-risk than script injection, so this
+  confines the one remaining lenient grant to exactly the surface that needs it — the XSS-critical
+  `script-src` and now `style-src-elem` both stay fully strict. **If the shell's inline `<style>`
+  content ever changes, regenerate** — same byte-exact-hash requirement as inline scripts.
+  Support for `style-src-elem`/`style-src-attr` is fine in all evergreen browsers (Chrome 75+,
+  Firefox 108+, Safari 15.4+); a bare `style-src` fallback is deliberately NOT emitted alongside
+  the split (that would put `unsafe-inline` back in the header for any browser preferring it), so
+  an older browser ignores both and falls back to `default-src 'self'` for styles — external
+  stylesheets, inline `<style>` elements and inline style attributes all degrade there,
+  cosmetically, on an already-obsolete browser.
+
+  **Only `<style>` elements the build can SEE are hashed** — i.e. those present in the emitted
+  HTML. A `<style>` element a component creates *at runtime* (client-side render, or a CSS-in-JS
+  library injecting one on hydration) has no build-time text to hash and is blocked by
+  `style-src-elem`, where the old blanket `unsafe-inline` used to permit it. Ship such styles as
+  an asset (`<link rel="stylesheet">`, covered by `'self'`) or as `style` *attributes* (covered by
+  `style-src-attr`). This only bites a site whose operator actually serves the emitted header.
 - **External head origins are folded in automatically.** If the built HTML references external
   origins via `<link>` tags — typically a [`spa.head`](#head-assets) with a Google Fonts
   stylesheet and its `preconnect` — the emitted CSP would otherwise block the very resources the
   same build linked. The rule is simple and predictable: **every external origin referenced by a
-  `<link href="…">` in the built HTML is unioned into both `style-src` and `font-src`** (the
+  `<link href="…">` in the built HTML is unioned into both `style-src-elem` and `font-src`** (the
   `font-src` directive is only emitted when at least one external origin exists; without one the
   header value is unchanged and fonts fall back to `default-src 'self'`). So
 
@@ -1204,9 +1225,10 @@ default-src 'self'; script-src 'self' 'sha256-…' 'sha256-…'; style-src 'self
   ]
   ```
 
-  yields `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com`
+  yields `style-src-elem 'self' https://fonts.googleapis.com https://fonts.gstatic.com`
   and `font-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com` in all three
-  emitted flavors. `script-src` is never widened by head entries.
+  emitted flavors. `script-src` is never widened by head entries, and neither is `style-src-attr`
+  — it always reads exactly `'unsafe-inline'`.
 
 Verified end-to-end: a strict-CSP vhost serves a hydrated SPA (+ an island page) with **zero
 CSP violations** in real Chrome (`examples/tsx-site/test/spa_csp_playwright.py`).

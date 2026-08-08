@@ -138,12 +138,17 @@ Not vulnerabilities to report, but stated so nobody has to rediscover them:
   `csp.nginx.conf`, `csp.apache.conf` and `csp.zigbase.txt` at the site root for
   any site with islands or SPAs — but nothing forces your host to actually serve
   that header, and a stale hosted copy will break the page, because the hashes
-  are byte-exact. Two deliberate looseness decisions, documented in
-  `docs/spa.md`: `style-src` keeps `unsafe-inline` (the framework emits inline
-  `style` *attributes*, which hashes cannot cover — hashes apply to elements, not
-  attributes), and every external origin appearing in a `<link href>` is unioned
-  into `style-src` and `font-src`, so a `spa.head` entry widens those two.
-  `script-src` is never widened.
+  are byte-exact (now true of inline `<style>` elements too, not just scripts).
+  The remaining deliberate looseness, documented in `docs/spa.md`: `style-src`
+  is split (CSP3) into `style-src-elem` — as strict as `script-src`, `'self'`
+  plus a hash per inline `<style>` element — and `style-src-attr`, which alone
+  keeps `unsafe-inline`, because the framework emits inline `style`
+  *attributes* (e.g. `display:contents` on island slot wrappers) that CSP
+  hashes cannot cover (hashes apply to elements, not attributes). Every
+  external origin appearing in a `<link href>` is unioned into `style-src-elem`
+  and `font-src`, so a `spa.head` entry widens those two. `script-src` is never
+  widened, and neither is `style-src-attr` — it is always exactly
+  `'unsafe-inline'`.
 
 ### Not vulnerabilities
 
