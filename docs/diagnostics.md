@@ -112,6 +112,11 @@ diagnostics above, and the same convention as `zigapagos languages`. So
 `zigapagos explain-code 2>&1 | grep ZP_LINK` works and a bare `| grep` sees
 nothing.
 
+`explain-code --format=json` emits the same information as NDJSON on stderr:
+one `{"code","summary","explanation"}` object per line (one line for a single
+`CODE`, one per registered code for the no-argument listing) — the
+machine-readable form of this registry.
+
 ## Coverage
 
 The NDJSON stream covers **the whole prerender/analysis gate**: every diagnostic
