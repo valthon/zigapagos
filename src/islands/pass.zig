@@ -163,6 +163,50 @@ pub fn prefixed(alloc: std.mem.Allocator, prefix: []const u8, url: []const u8) !
     return std.fmt.allocPrint(alloc, "/{s}{s}", .{ trimmed, url });
 }
 
+/// The build-time `<script type="speculationrules">` block for issue #128:
+/// hints browsers that support the Speculation Rules API to prefetch
+/// same-origin links on hover/pointerdown ("moderate" eagerness). Browsers
+/// without support see an unrecognized `<script>` type and ignore it -- it
+/// is inert JSON either way, zero runtime JS. Gated by
+/// `root.Site.speculation_rules` (off by default).
+///
+/// `href_matches` is a URLPattern; `*` matches any suffix including `/`, so
+/// unprefixed this is `"/*"` (every same-origin path) and with a
+/// `url_path_prefix` it becomes `"/<prefix>/*"` -- reusing `prefixed` gets
+/// the same "" vs "/myrepo" vs "myrepo/" normalization every other emitted
+/// URL in this file already has, instead of a second ad-hoc trim.
+///
+/// NO_SLOP.md §2.2a contract 1: `pattern` is scratch, freed here; one
+/// allocation (the tag) escapes as the return.
+pub fn speculationRulesTag(alloc: std.mem.Allocator, url_prefix: []const u8) ![]u8 {
+    const pattern = try prefixed(alloc, url_prefix, "/*");
+    defer alloc.free(pattern);
+    return std.fmt.allocPrint(
+        alloc,
+        "<script type=\"speculationrules\">{{\"prefetch\":[{{\"where\":{{\"href_matches\":\"{s}\"}},\"eagerness\":\"moderate\"}}]}}</script>",
+        .{pattern},
+    );
+}
+
+/// Splice `tag` immediately before the first `</head>` in `html`, returning a
+/// new owned buffer -- or `null` when `html` has no `</head>` (an
+/// `.alternative` output like RSS/XML, which has no head to inject into; the
+/// caller keeps the original bytes in that case, matching how the islands
+/// pass itself only rewrites when there's something to rewrite).
+///
+/// NO_SLOP.md §2.2a contract 1: one allocation (the spliced buffer) escapes;
+/// nothing else is held past the call.
+pub fn injectBeforeHeadEnd(alloc: std.mem.Allocator, html: []const u8, tag: []const u8) !?[]u8 {
+    const idx = std.mem.indexOf(u8, html, "</head>") orelse return null;
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(alloc);
+    try out.ensureTotalCapacityPrecise(alloc, html.len + tag.len);
+    out.appendSliceAssumeCapacity(html[0..idx]);
+    out.appendSliceAssumeCapacity(tag);
+    out.appendSliceAssumeCapacity(html[idx..]);
+    return try out.toOwnedSlice(alloc);
+}
+
 test "importMapFor/runtimeScriptFor/runtimePreloadFor reproduce the shared constants byte-for-byte" {
     // Contract-1 helpers, so: raw testing allocator, leak detection ON.
     const gpa = std.testing.allocator;
@@ -184,6 +228,46 @@ test "importMapFor points every specifier at a sliced runtime URL" {
     // no residual shared-runtime target, and @z/runtime routes to the slice
     try std.testing.expect(std.mem.indexOf(u8, map, shared_runtime_url) == null);
     try std.testing.expect(std.mem.indexOf(u8, map, "\"@z/runtime\":\"/spa/public-runtime.js\"") != null);
+}
+
+test "speculationRulesTag emits the exact unprefixed block" {
+    const gpa = std.testing.allocator;
+    const tag = try speculationRulesTag(gpa, "");
+    defer gpa.free(tag);
+    try std.testing.expectEqualStrings(
+        "<script type=\"speculationrules\">{\"prefetch\":[{\"where\":{\"href_matches\":\"/*\"},\"eagerness\":\"moderate\"}]}</script>",
+        tag,
+    );
+}
+
+test "speculationRulesTag prefixes href_matches with url_path_prefix" {
+    const gpa = std.testing.allocator;
+    const tag = try speculationRulesTag(gpa, "myrepo");
+    defer gpa.free(tag);
+    try std.testing.expectEqualStrings(
+        "<script type=\"speculationrules\">{\"prefetch\":[{\"where\":{\"href_matches\":\"/myrepo/*\"},\"eagerness\":\"moderate\"}]}</script>",
+        tag,
+    );
+}
+
+test "injectBeforeHeadEnd splices before the first </head>" {
+    const gpa = std.testing.allocator;
+    const html = "<html><head><title>x</title></head><body></body></html>";
+    const spliced = (try injectBeforeHeadEnd(gpa, html, "<!--TAG-->")).?;
+    defer gpa.free(spliced);
+    try std.testing.expectEqualStrings(
+        "<html><head><title>x</title><!--TAG--></head><body></body></html>",
+        spliced,
+    );
+    // original untouched
+    try std.testing.expectEqualStrings("<html><head><title>x</title></head><body></body></html>", html);
+}
+
+test "injectBeforeHeadEnd returns null for head-less input" {
+    const gpa = std.testing.allocator;
+    const html = "<rss><channel></channel></rss>";
+    const result = try injectBeforeHeadEnd(gpa, html, "<!--TAG-->");
+    try std.testing.expect(result == null);
 }
 
 /// Build the modulepreload <link> block for a page's islands: the page's runtime

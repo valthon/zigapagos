@@ -5,6 +5,7 @@ import {
   scanInlineScriptHashes, scanInlineStyleHashes, scanExternalLinkOrigins, cspHeaderValue, emitCsp, emitAllCsp,
   IMMUTABLE_CACHE_CONTROL, REVALIDATE_CACHE_CONTROL, FINGERPRINT_SUFFIX_PATTERN,
   collectChunkPaths, emitCache, emitAllCache,
+  hasInlineSpeculationRules,
   type Manifest,
 } from "./emit-host-config.ts";
 
@@ -884,3 +885,65 @@ test("an unterminated comment or raw-text element stops the scan instead of gues
   expect(scanInlineStyleHashes([`<style>a{}</style><style>never closed`])).toEqual([b64("a{}")]);
   expect(scanInlineScriptHashes([`<script>a()</script><script>never closed`])).toEqual([b64("a()")]);
 });
+
+// ── Speculation-rules CSP threading (issue #128) ────────────────────────────
+// `src/islands/pass.zig`'s `speculationRulesTag` emits a build-time
+// `<script type="speculationrules">…</script>` block on opted-in sites.
+// Hash-sources don't cover it in Chromium, so it needs the dedicated CSP3
+// `'inline-speculation-rules'` script-src keyword instead of a hash.
+
+const SPEC_RULES_BLOCK =
+  `<script type="speculationrules">{"prefetch":[{"where":{"href_matches":"/*"},"eagerness":"moderate"}]}</script>`;
+
+test("hasInlineSpeculationRules detects a speculationrules block, case- and quote-insensitively", () => {
+  expect(hasInlineSpeculationRules([PAGE])).toBe(false);
+  const withSpec = PAGE.replace("</head>", SPEC_RULES_BLOCK + "</head>");
+  expect(hasInlineSpeculationRules([withSpec])).toBe(true);
+  // Case-insensitive type match.
+  const upper = `<html><head><script TYPE="SpeculationRules">{}</script></head></html>`;
+  expect(hasInlineSpeculationRules([upper])).toBe(true);
+  // Single-quoted and unquoted type attribute forms.
+  const singleQuoted = `<html><head><script type='speculationrules'>{}</script></head></html>`;
+  expect(hasInlineSpeculationRules([singleQuoted])).toBe(true);
+  const unquoted = `<html><head><script type=speculationrules>{}</script></head></html>`;
+  expect(hasInlineSpeculationRules([unquoted])).toBe(true);
+});
+
+test("hasInlineSpeculationRules is false when no page carries the block", () => {
+  expect(hasInlineSpeculationRules([PAGE, FONT_PAGE])).toBe(false);
+});
+
+test("hasInlineSpeculationRules is true if ANY page in the set carries the block", () => {
+  const withSpec = PAGE.replace("</head>", SPEC_RULES_BLOCK + "</head>");
+  expect(hasInlineSpeculationRules([FONT_PAGE, withSpec])).toBe(true);
+});
+
+test("cspHeaderValue(hashes, origins, styleHashes, true) adds 'inline-speculation-rules' to script-src", () => {
+  const hashes = scanInlineScriptHashes([PAGE]);
+  const v = cspHeaderValue(hashes, [], [], true);
+  expect(scriptSrcOf(v)).toContain("'inline-speculation-rules'");
+  expect(scriptSrcOf(v)).toBe(`script-src 'self' 'inline-speculation-rules' ${hashes[0]} ${hashes[1]}`);
+});
+
+test("cspHeaderValue with speculationRules omitted/false is BYTE-IDENTICAL to today's value", () => {
+  const hashes = scanInlineScriptHashes([PAGE]);
+  const withoutArg = cspHeaderValue(hashes);
+  const explicitFalse = cspHeaderValue(hashes, [], [], false);
+  expect(withoutArg).toBe(
+    `default-src 'self'; script-src 'self' ${hashes[0]} ${hashes[1]}; style-src-elem 'self'; style-src-attr 'unsafe-inline'; object-src 'none'; base-uri 'self'`,
+  );
+  expect(explicitFalse).toBe(withoutArg);
+  expect(withoutArg).not.toContain("inline-speculation-rules");
+});
+
+test("emitAllCsp threads speculationRules into every host flavor's script-src", () => {
+  const hashes = scanInlineScriptHashes([PAGE]);
+  for (const f of emitAllCsp(hashes, [], [], true)) {
+    expect(scriptSrcOf(f.content)).toContain("'inline-speculation-rules'");
+  }
+  // Default (omitted) stays byte-identical to before this flag existed.
+  for (const f of emitAllCsp(hashes)) {
+    expect(f.content).not.toContain("inline-speculation-rules");
+  }
+});
+

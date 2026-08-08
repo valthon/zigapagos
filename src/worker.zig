@@ -1391,7 +1391,7 @@ fn renderPage(
     // Skip the pass entirely when no sidecar is configured (build.island_sidecar == null);
     // that means islands aren't in use for this build, so raw HTML is correct.
     var rendered_html_is_gpa_owned = false;
-    const rendered_html: []const u8 = blk: {
+    var rendered_html: []const u8 = blk: {
         const raw = out_aw.written();
         // Fast path: a page with no `<island` AND no `<z-island` tag has nothing
         // to rewrite and no runtime script to inject (`process` only injects when
@@ -1462,11 +1462,10 @@ fn renderPage(
         // Prefix emitted island asset URLs (runtime + island module scripts) with
         // the site's `url_path_prefix` (e.g. "zigapagos" for a GitHub Pages
         // project site served under `/zigapagos/`). Only single-site configs
-        // carry this field today; multilingual sites don't (yet) support it.
-        const url_prefix: []const u8 = switch (build.cfg.*) {
-            .Site => |s| s.url_path_prefix,
-            .Multilingual => "",
-        };
+        // carry this field today; multilingual sites don't (yet) support it —
+        // which is exactly what `Config.getUrlPathPrefix` encodes, so go
+        // through it rather than re-deriving the same switch here.
+        const url_prefix = build.cfg.getUrlPathPrefix();
         // Render-error policy: a disk build is a release/deploy —
         // fail so broken output never ships (`process` returns the error, caught
         // below → any_rendering_error). A memory build reports rather than
@@ -1598,6 +1597,31 @@ fn renderPage(
         rendered_html_is_gpa_owned = true;
         break :blk result.html;
     };
+
+    // Issue #128: opt-in build-time `<script type="speculationrules">` head
+    // injection (see `root.Site.speculation_rules`). Runs for BOTH `.main`
+    // and `.alternative` outputs -- same precedent as the islands pass above
+    // -- and is a no-op on head-less alternatives (RSS/XML feeds) via the
+    // `null` return from `injectBeforeHeadEnd`. Applies in both `.memory`
+    // (dev) and `.disk` (release) modes -- dev/release parity, matching how
+    // `auto_heading_ids` behaves. The islands fast path (`break :blk raw`
+    // above) already ran by the time we get here, so island-free pages are
+    // covered too: this is a site-wide emission, not an islands-only one.
+    if (build.cfg.getSpeculationRules()) {
+        // Re-fetch the prefix: the `url_prefix` local the islands pass uses is
+        // scoped to the `blk` above and out of reach here.
+        const spec_tag = try islands.speculationRulesTag(gpa, build.cfg.getUrlPathPrefix());
+        defer gpa.free(spec_tag);
+        if (try islands.injectBeforeHeadEnd(gpa, rendered_html, spec_tag)) |spliced| {
+            // `rendered_html` was either a gpa allocation from the islands
+            // pass (freed here before replacing it) or a borrowed slice into
+            // `out_aw`'s buffer (owned/freed by that arraylist, not by us --
+            // leave it alone and just repoint the local).
+            if (rendered_html_is_gpa_owned) gpa.free(rendered_html);
+            rendered_html = spliced;
+            rendered_html_is_gpa_owned = true;
+        }
+    }
 
     switch (build.mode) {
         .memory => switch (kind) {
