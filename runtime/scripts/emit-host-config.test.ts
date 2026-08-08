@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import {
   emitNginx, emitApache, emitZigbase, assertSafeManifest, zigStringLiteral, escapePcre,
   scanInlineScriptHashes, scanInlineStyleHashes, scanExternalLinkOrigins, cspHeaderValue, emitCsp, emitAllCsp,
+  IMMUTABLE_CACHE_CONTROL, REVALIDATE_CACHE_CONTROL, FINGERPRINT_SUFFIX_PATTERN,
+  collectChunkPaths, emitCache, emitAllCache,
   type Manifest,
 } from "./emit-host-config.ts";
 
@@ -611,6 +613,178 @@ test("no-type inline script IS hashed; application/json is NOT", () => {
     `<script type="application/json">{"a":1}</script></html>`;
   const hashes = scanInlineScriptHashes([classic]);
   expect(hashes).toEqual([b64("console.log(1)")]);
+});
+
+
+// ── Cache-Control host-config artifacts (issue #133) ────────────────────────
+// Astro's route-caching / CDN-header providers are an SSR feature that
+// doesn't fit zigapagos, but their static-site shadow is worth taking:
+// fingerprinted site assets (asset_fingerprint) and content-hashed SPA
+// lazy-route chunks are already safe for immutable caching, and the
+// host-config emitters already write routing rules per target. This follows
+// the exact CSP precedent — three new site-wide, operator-merged artifacts.
+
+const mWithChunks: Manifest = {
+  ...m,
+  chunks: { "/app/heavy/": "/spa/Heavy-abc123.js" },
+};
+
+test("nginx cache artifact: map block + exact constant values", () => {
+  const file = emitCache("nginx", []);
+  expect(file.name).toBe("cache.nginx.conf");
+  expect(file.content).toContain("map $uri $zigapagos_cache_control");
+  expect(file.content).toContain(`"${IMMUTABLE_CACHE_CONTROL}"`);
+  expect(file.content).toContain(`"${REVALIDATE_CACHE_CONTROL}"`);
+});
+
+// The BASELINE is the half of the issue's ask that the fingerprint pattern
+// cannot cover. /spa/<name>.js, /spa/<name>-runtime.js, /islands/*.js and
+// /zigapagos-runtime.js are all at STABLE paths with content that changes
+// every deploy and no hash in the name, so leaving them header-less hands them
+// to heuristic (or CDN-default) caching — fresh HTML paired with a stale
+// bundle. Both emitters must therefore name a revalidating DEFAULT, not "".
+test("nginx baseline: an unmatched stable path (the SPA entry bundle) revalidates, it is not left header-less", () => {
+  const file = emitCache("nginx", []);
+  expect(file.content).toContain(`default "${REVALIDATE_CACHE_CONTROL}";`);
+  expect(file.content).not.toContain(`default "";`);
+  // The nginx map's `default` is position-independent, so this is the whole
+  // rule for /spa/app.js: no other line here can match it.
+  const re = new RegExp(FINGERPRINT_SUFFIX_PATTERN);
+  expect(re.test("/spa/app.js")).toBe(false);
+});
+
+test("apache baseline: a catch-all no-cache FilesMatch is emitted FIRST, so the immutable stanzas below still win", () => {
+  const file = emitCache("apache", []);
+  const catchAllIdx = file.content.indexOf(`<FilesMatch ".">`);
+  const immutableIdx = file.content.indexOf(IMMUTABLE_CACHE_CONTROL);
+  expect(catchAllIdx).toBeGreaterThan(-1);
+  // Apache is last-Header-set-wins, so a baseline that came AFTER the
+  // fingerprint stanza would silently un-do immutable caching.
+  expect(catchAllIdx).toBeLessThan(immutableIdx);
+});
+
+test("zigbase advisory names the stable-path baseline too, not just the two matched shapes", () => {
+  const file = emitCache("zigbase", []);
+  expect(file.content).toContain("everything else");
+  expect(file.content).toContain("/zigapagos-runtime.js");
+});
+
+test("nginx cache ORDER: \\.html$ no-cache appears before the fingerprint regex (stable beats immutable, first-match-wins)", () => {
+  const file = emitCache("nginx", []);
+  const htmlIdx = file.content.indexOf(String.raw`~\.html$`);
+  const fingerprintIdx = file.content.indexOf(FINGERPRINT_SUFFIX_PATTERN);
+  expect(htmlIdx).toBeGreaterThan(-1);
+  expect(fingerprintIdx).toBeGreaterThan(-1);
+  expect(htmlIdx).toBeLessThan(fingerprintIdx);
+});
+
+test("apache cache ORDER: immutable <FilesMatch> appears before the \\.html$ no-cache one (last Header set wins)", () => {
+  const file = emitCache("apache", []);
+  const immutableIdx = file.content.indexOf(IMMUTABLE_CACHE_CONTROL);
+  const htmlIdx = file.content.indexOf(String.raw`\.html$`);
+  expect(immutableIdx).toBeGreaterThan(-1);
+  expect(htmlIdx).toBeGreaterThan(-1);
+  expect(immutableIdx).toBeLessThan(htmlIdx);
+});
+
+test("chunk exact-listing: nginx gets a quoted exact map entry, apache gets a basename FilesMatch alternation", () => {
+  const chunkPaths = collectChunkPaths([mWithChunks]);
+  expect(chunkPaths).toEqual(["/spa/Heavy-abc123.js"]);
+
+  const nginx = emitCache("nginx", chunkPaths);
+  expect(nginx.content).toContain(`"/spa/Heavy-abc123.js"`);
+
+  const apache = emitCache("apache", chunkPaths);
+  // "." in the chunk basename is escapePcre'd, same discipline as route values.
+  expect(apache.content).toContain("^(Heavy-abc123\\.js)$");
+});
+
+test("collectChunkPaths unions across manifests, dedupes+sorts, and tolerates a manifest with no chunks field", () => {
+  const a: Manifest = { ...m, chunks: { "/x/": "/spa/B-2.js", "/y/": "/spa/A-1.js" } };
+  const b: Manifest = { ...m, chunks: { "/x/": "/spa/B-2.js" } }; // duplicate value
+  const c: Manifest = { ...m }; // no chunks field at all — back-compat
+  expect(collectChunkPaths([a, b, c])).toEqual(["/spa/A-1.js", "/spa/B-2.js"]);
+  expect(() => collectChunkPaths([c])).not.toThrow();
+  expect(collectChunkPaths([c])).toEqual([]);
+});
+
+test("collectChunkPaths rejects an unsafe chunk value, naming it, and accepts '+' in a basename", () => {
+  expect(() => collectChunkPaths([{ ...m, chunks: { "/x/": "/spa/evil path.js" } }]))
+    .toThrow(/"\/spa\/evil path\.js"/);
+  expect(() => collectChunkPaths([{ ...m, chunks: { "/x/": '/spa/"evil.js' } }]))
+    .toThrow(/is not a safe URL path/);
+  expect(() => collectChunkPaths([{ ...m, chunks: { "/x/": "/spa/../../etc/passwd" } }]))
+    .toThrow(/segment/);
+  // Bun legitimately names some chunks with a "+" in the basename (module
+  // names like "useA+B" — see findRouteChunk's doc comment in bundle-island.ts).
+  expect(() => collectChunkPaths([{ ...m, chunks: { "/x/": "/spa/foo+bar-abc123.js" } }])).not.toThrow();
+  expect(collectChunkPaths([{ ...m, chunks: { "/x/": "/spa/foo+bar-abc123.js" } }]))
+    .toEqual(["/spa/foo+bar-abc123.js"]);
+});
+
+test("zigbase cache artifact is advisory: both header values, the concrete chunk path, and warns against the global knob", () => {
+  const chunkPaths = collectChunkPaths([mWithChunks]);
+  const file = emitCache("zigbase", chunkPaths);
+  expect(file.name).toBe("cache.zigbase.txt");
+  expect(file.content).toContain(IMMUTABLE_CACHE_CONTROL);
+  expect(file.content).toContain(REVALIDATE_CACHE_CONTROL);
+  expect(file.content).toContain("/spa/Heavy-abc123.js");
+  expect(file.content).toContain("ZIGBASE_STATIC_CACHE_CONTROL");
+  expect(file.content.toLowerCase()).toContain("do not set it");
+});
+
+test("emitAllCache writes all three targets, and works with an empty chunk set (island-only sites)", () => {
+  const files = emitAllCache([]);
+  expect(files.map((f) => f.name).sort()).toEqual(
+    ["cache.apache.conf", "cache.nginx.conf", "cache.zigbase.txt"],
+  );
+});
+
+// ── FINGERPRINT_SUFFIX_PATTERN: the asset_fingerprint name-shape heuristic ──
+// src/fingerprint.zig's nameFromDigest: "<stem>.<8 lowercase hex>.<ext>",
+// extension-less files get the hash appended ("CNAME.a1b2c3d4").
+
+test("FINGERPRINT_SUFFIX_PATTERN matches the fingerprinted name shape and nothing else", () => {
+  const re = new RegExp(FINGERPRINT_SUFFIX_PATTERN);
+  expect(re.test("style.a1b2c3d4.css")).toBe(true);
+  expect(re.test("CNAME.a1b2c3d4")).toBe(true);
+  expect(re.test("style.css")).toBe(false);
+  expect(re.test("app-runtime.js")).toBe(false);
+  expect(re.test("index.html")).toBe(false);
+  // The stable-path bundles the baseline exists for: none of them may drift
+  // into the immutable rule on a name that merely looks hex-ish.
+  expect(re.test("app.js")).toBe(false);
+  expect(re.test("app-runtime.js")).toBe(false);
+  expect(re.test("Heavy-abc123.js")).toBe(false);
+  // Uppercase hex and a 7- or 9-digit run are NOT nameFromDigest output.
+  expect(re.test("style.A1B2C3D4.css")).toBe(false);
+  expect(re.test("style.a1b2c3d.css")).toBe(false);
+  expect(re.test("style.a1b2c3d4e.css")).toBe(false);
+});
+
+// The pattern is spliced VERBATIM into an Apache <FilesMatch>, which mod_headers
+// compiles with PCRE2 — so it has to be checked by the same real engine the
+// RewriteRule patterns above are, not only by ECMAScript's. (A JS-only check
+// would have accepted a pattern PCRE rejects outright.)
+test("the emitted <FilesMatch> patterns are valid PCRE that match the right BASENAMES", () => {
+  const chunkPaths = collectChunkPaths([mWithChunks]);
+  const pats = [...emitCache("apache", chunkPaths).content.matchAll(/^\s*<FilesMatch "(.*)">$/gm)]
+    .map((x) => x[1]);
+  // catch-all baseline, fingerprint, chunk alternation, .html, routing-manifest
+  expect(pats.length).toBe(5);
+
+  // FilesMatch is applied to the BASENAME, unanchored.
+  expect(perlMatches(pats[0], "app.js")).toBe(true); // the baseline catches everything
+  expect(perlMatches(pats[1], "style.a1b2c3d4.css")).toBe(true);
+  expect(perlMatches(pats[1], "app.js")).toBe(false);
+  expect(perlMatches(pats[2], "Heavy-abc123.js")).toBe(true);
+  // The escaped "." in the chunk basename must not match any character.
+  expect(perlMatches(pats[2], "Heavy-abc123Xjs")).toBe(false);
+  // ...and the alternation is anchored, so a longer name is not a chunk.
+  expect(perlMatches(pats[2], "xHeavy-abc123.js")).toBe(false);
+  expect(perlMatches(pats[3], "index.html")).toBe(true);
+  expect(perlMatches(pats[3], "indexXhtml")).toBe(false);
+  expect(perlMatches(pats[4], "routing-manifest.json")).toBe(true);
 });
 
 // ── style-src-elem / style-src-attr split (issue #130) ──────────────────────

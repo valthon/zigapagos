@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { basename } from "node:path";
 
 export type Manifest = {
   base: string;
@@ -29,6 +30,25 @@ export type Manifest = {
    *  resolve `bundle` against the output tree, and do not run it through
    *  `withPrefix` — either would double-count the prefix. */
   bundle: string;
+  /** Lazy-route URL -> its content-hashed chunk request URL, e.g.
+   *  "/app/heavy/" -> "/spa/Heavy-abc123.js". Same convention as `bundle`
+   *  above: VALUES are already-prefixed request URLs (`renderShell` bakes
+   *  them into `modulepreload` tags verbatim), never resolved against the
+   *  output tree or run through `withPrefix`. Written by `src/spa.zig`
+   *  `renderManifest` from the driver's `spa-chunks.json` route-chunk map.
+   *
+   *  Only LAZY-ROUTE chunks are listed here — shared (non-lazy-route) split
+   *  chunks and `.map` sourcemaps are not tracked per-route by the build and
+   *  so cannot appear; `collectChunkPaths` documents this as a deliberate
+   *  coverage gap, not a bug: those files fall back to the baseline
+   *  revalidating rule instead of being marked immutable.
+   *
+   *  OPTIONAL for BACK-COMPAT ONLY: `src/spa.zig` `renderManifest` always
+   *  writes the key (`"chunks":{}` for an SPA with no lazy route), so every
+   *  manifest this build produces carries it. The `?` covers a manifest
+   *  written before the field existed, which the emitter must still
+   *  translate. */
+  chunks?: Record<string, string>;
 };
 
 /** A file to write into the SPA namespace directory (sibling of routing-manifest.json). */
@@ -51,12 +71,31 @@ export type EmittedFile = { name: string; content: string };
 const SAFE_PATH_RE = /^\/[A-Za-z0-9._~\-/]*$/;
 /** A route PATTERN: a safe path that may also carry ":param" and "*" segments. */
 const SAFE_PATTERN_RE = /^\/[A-Za-z0-9._~\-/:*]*$/;
+/** A chunk request URL: a safe path that may also carry "+". Bun names a
+ *  split chunk `<source-module-basename>-<hash>.js` (`findRouteChunk` in
+ *  runtime/sidecar/bundle-island.ts), and only the HASH half is constrained
+ *  — the basename half is whatever the author called the module, so a
+ *  `+`-carrying file name (the `+page`/`+layout` convention) arrives here as
+ *  a perfectly legitimate chunk URL. Admitting it costs nothing (nginx quotes
+ *  the map key, Apache `escapePcre`s the basename) whereas rejecting it would
+ *  fail the emitter — and therefore `zigapagos release` — on a valid build.
+ *  It is the one character SAFE_PATH_RE's charset doesn't already cover. */
+const SAFE_CHUNK_RE = /^\/[A-Za-z0-9._~+\-/]*$/;
+
+/** The human-readable charset suffix for `assertSafeRouteValue`'s error
+ *  message, keyed by which charset `re` actually is — so the message never
+ *  drifts from the regex it is describing. */
+function charsetSuffix(re: RegExp): string {
+  if (re === SAFE_PATTERN_RE) return " : *";
+  if (re === SAFE_CHUNK_RE) return " +";
+  return "";
+}
 
 function assertSafeRouteValue(value: string, re: RegExp, what: string): void {
   if (!re.test(value)) {
     throw new Error(
       `emit-host-config: ${what} ${JSON.stringify(value)} is not a safe URL path — it must start ` +
-        `with "/" and use only A-Za-z0-9 . _ ~ - /${re === SAFE_PATTERN_RE ? " : *" : ""}. ` +
+        `with "/" and use only A-Za-z0-9 . _ ~ - /${charsetSuffix(re)}. ` +
         `Route values are interpolated into generated nginx, Apache and Zig config.`,
     );
   }
@@ -96,6 +135,30 @@ export function assertSafeManifest(m: Manifest): void {
     assertSafeRouteValue(d.pattern, SAFE_PATTERN_RE, "dynamic route pattern");
     assertSafeRouteValue(d.shell, SAFE_PATH_RE, "dynamic route shell");
   }
+}
+
+/**
+ * The union of every LAZY-ROUTE chunk request URL across `manifests`
+ * (already-prefixed, see `Manifest.chunks`) — deduped and sorted, same
+ * determinism discipline as `scanInlineScriptHashes` below. Throws loudly,
+ * naming the offending value, for anything outside the chunk charset or
+ * carrying a ".." segment (mirrors `assertSafeRouteValue`'s error style).
+ *
+ * Deliberately NOT folded into `assertSafeManifest`: none of the three
+ * routing emitters (`emitNginx`/`emitApache`/`emitZigbase`) read `chunks`, so
+ * an exotic chunk basename must never start failing routing emission that
+ * worked yesterday. This function is the only reader of `chunks`, and its
+ * only caller is the Cache-Control emitter below.
+ */
+export function collectChunkPaths(manifests: Manifest[]): string[] {
+  const paths = new Set<string>();
+  for (const m of manifests) {
+    for (const value of Object.values(m.chunks ?? {})) {
+      assertSafeRouteValue(value, SAFE_CHUNK_RE, "chunk path");
+      paths.add(value);
+    }
+  }
+  return [...paths].sort();
 }
 
 /**
@@ -651,6 +714,195 @@ export function emitAllCsp(hashes: string[], linkOrigins: string[] = [], styleHa
   return (["nginx", "apache", "zigbase"] as CspTarget[]).map((t) => emitCsp(hashes, t, linkOrigins, styleHashes));
 }
 
+// ── Cache-Control support (issue #133) ───────────────────────────────────────
+// Astro's route-caching / CDN cache-header providers are an SSR feature that
+// doesn't fit zigapagos, but their static-site shadow is worth taking:
+// fingerprinted site assets (`asset_fingerprint`, src/fingerprint.zig) and
+// content-hashed SPA lazy-route chunks (a manifest's `chunks` map) are already
+// safe for immutable caching. Follows the exact CSP precedent above — three
+// new site-wide, operator-merged artifacts (`cache.{nginx,apache,zigbase}`),
+// pure addition, no build-pass changes.
+
+/** Same alias relationship as `emitCsp`'s `CspTarget` — Cache-Control is
+ *  emitted per the same three deploy targets. */
+export type HostTarget = CspTarget;
+
+export const IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable";
+export const REVALIDATE_CACHE_CONTROL = "no-cache";
+
+/** A regex SUFFIX (no leading anchor — it is spliced into a larger pattern in
+ *  both nginx and Apache, and used bare via `new RegExp(...)` in tests) that
+ *  matches `src/fingerprint.zig`'s `nameFromDigest` output shape:
+ *  "<stem>.<8 lowercase hex>[.<ext>]" — 8 lowercase hex digits after the last
+ *  literal ".", an extension optional (an extension-less file like `CNAME`
+ *  gets the hash appended with nothing after it: `CNAME.a1b2c3d4`).
+ *
+ *  This is a NAME-SHAPE heuristic, not proof `asset_fingerprint` is actually
+ *  on: the emitter runs over a finished output tree with no access to the
+ *  site config, so a non-fingerprinting site with a coincidentally-shaped
+ *  filename would be marked immutable too. Both generated artifacts carry a
+ *  comment saying so and how to drop the line — see docs/spa.md's
+ *  "Cache-Control" section. */
+export const FINGERPRINT_SUFFIX_PATTERN = "\\.[0-9a-f]{8}(\\.[A-Za-z0-9]+)?$";
+
+function emitCacheNginx(chunkPaths: string[]): EmittedFile {
+  const lines: string[] = [
+    `# Generated by emit-host-config.ts — Cache-Control policy for this site.`,
+    `#`,
+    `# A nginx \`map\`, not per-path \`location\` blocks: a regex \`location\``,
+    `# outranks the PREFIX \`location\` blocks the per-namespace nginx.nginx.conf`,
+    `# emits, so a \\.html$ location here would swallow an .html-suffixed miss`,
+    `# under an SPA base and 404 it instead of reaching the try_files shell`,
+    `# fallback. A \`map\` composes with any location layout instead.`,
+    `#`,
+    `# Merge the map into your http{} block, then add`,
+    `#   add_header Cache-Control $zigapagos_cache_control always;`,
+    `# in the SAME server{}/location{} block that adds csp.nginx.conf's header —`,
+    `# add_header in a nested location suppresses any server-level add_header,`,
+    `# so keep both at the same level (or repeat both).`,
+    `#`,
+    `# Order matters: a nginx map matches an exact string first, then regexes`,
+    `# in DECLARATION ORDER — first match wins. So "stable beats immutable" is`,
+    `# encoded by listing the HTML/routing-manifest rules before the`,
+    `# fingerprint pattern below.`,
+    `map $uri $zigapagos_cache_control {`,
+    `    # BASELINE: anything at a stable path revalidates. The build emits`,
+    `    # plenty of it — /spa/<name>.js, /spa/<name>-runtime.js,`,
+    `    # /islands/*.js, /zigapagos-runtime.js — whose CONTENT changes every`,
+    `    # deploy while the URL does not, so an unset header (heuristic or CDN`,
+    `    # default caching) can pair fresh HTML with a stale bundle. no-cache`,
+    `    # still allows a 304, so the cost is one conditional request; turn on`,
+    `    # asset_fingerprint to move your assets to the immutable rule below.`,
+    `    default "${REVALIDATE_CACHE_CONTROL}";`,
+    `    ~\\.html$ "${REVALIDATE_CACHE_CONTROL}";`,
+    `    ~/routing-manifest\\.json$ "${REVALIDATE_CACHE_CONTROL}";`,
+    `    # asset_fingerprint's <stem>.<8 hex>[.<ext>] name shape (docs/assets.md).`,
+    `    # NAME-SHAPE heuristic, not proof fingerprinting is actually on — if you`,
+    `    # have un-fingerprinted files that happen to match it, drop this line.`,
+    `    ~${FINGERPRINT_SUFFIX_PATTERN} "${IMMUTABLE_CACHE_CONTROL}";`,
+  ];
+  if (chunkPaths.length > 0) {
+    lines.push(`    # This build's content-hashed SPA lazy-route chunks (routing-manifest.json .chunks).`);
+    for (const c of chunkPaths) lines.push(`    ${nginxQuote(c)} "${IMMUTABLE_CACHE_CONTROL}";`);
+  }
+  lines.push(`}`, ``);
+  return { name: "cache.nginx.conf", content: lines.join("\n") };
+}
+
+function emitCacheApache(chunkPaths: string[]): EmittedFile {
+  const lines: string[] = [
+    `# Generated by emit-host-config.ts — Cache-Control policy for this site.`,
+    `#`,
+    `# Install into <docroot>/.htaccess or a <Directory> block (requires`,
+    `# mod_headers) — same install target as csp.apache.conf.`,
+    `#`,
+    `# Order matters: Header set directives apply top-to-bottom and Apache lets`,
+    `# the LAST match win — the opposite of the nginx map's first-match-wins —`,
+    `# so the layout runs least-specific to most: the catch-all baseline, then`,
+    `# the immutable stanzas, then the stable-path ones that must beat them`,
+    `# (a fingerprint-shaped .html). Same priority as the nginx map, encoded`,
+    `# from the other end.`,
+    `<IfModule mod_headers.c>`,
+    `    # BASELINE, and FIRST so every rule below overrides it: anything at a`,
+    `    # stable path revalidates. The build emits plenty of it —`,
+    `    # /spa/<name>.js, /spa/<name>-runtime.js, /islands/*.js,`,
+    `    # /zigapagos-runtime.js — whose CONTENT changes every deploy while the`,
+    `    # URL does not, so an unset header (heuristic or CDN default caching)`,
+    `    # can pair fresh HTML with a stale bundle. no-cache still allows a 304,`,
+    `    # so the cost is one conditional request; turn on asset_fingerprint to`,
+    `    # move your assets to the immutable block below.`,
+    `    <FilesMatch ".">`,
+    `        Header set Cache-Control "${REVALIDATE_CACHE_CONTROL}"`,
+    `    </FilesMatch>`,
+    `    # asset_fingerprint's <stem>.<8 hex>[.<ext>] name shape (docs/assets.md).`,
+    `    # NAME-SHAPE heuristic, not proof fingerprinting is actually on — if you`,
+    `    # have un-fingerprinted files that happen to match it, drop this block.`,
+    `    <FilesMatch "${FINGERPRINT_SUFFIX_PATTERN}">`,
+    `        Header set Cache-Control "${IMMUTABLE_CACHE_CONTROL}"`,
+    `    </FilesMatch>`,
+  ];
+  if (chunkPaths.length > 0) {
+    // FilesMatch matches basenames only, so these are chunk BASENAMES, PCRE-escaped
+    // the same way route dir segments are (escapePcre's doc comment applies verbatim).
+    const alt = chunkPaths.map((c) => escapePcre(basename(c))).join("|");
+    lines.push(
+      `    # This build's content-hashed SPA lazy-route chunks (routing-manifest.json .chunks).`,
+      `    <FilesMatch "^(${alt})$">`,
+      `        Header set Cache-Control "${IMMUTABLE_CACHE_CONTROL}"`,
+      `    </FilesMatch>`,
+    );
+  }
+  lines.push(
+    `    <FilesMatch "\\.html$">`,
+    `        Header set Cache-Control "${REVALIDATE_CACHE_CONTROL}"`,
+    `    </FilesMatch>`,
+    `    <FilesMatch "^routing-manifest\\.json$">`,
+    `        Header set Cache-Control "${REVALIDATE_CACHE_CONTROL}"`,
+    `    </FilesMatch>`,
+    `</IfModule>`,
+    ``,
+  );
+  return { name: "cache.apache.conf", content: lines.join("\n") };
+}
+
+function emitCacheZigbase(chunkPaths: string[]): EmittedFile {
+  const lines: string[] = [
+    `# Generated by emit-host-config.ts — advisory Cache-Control notes.`,
+    `#`,
+    `# ZigBase has no per-path response-header configuration; this file is`,
+    `# reference-only, same stance as csp.zigbase.txt.`,
+    `#`,
+    `# The stock 'zigbase serve' binary already does the safe thing with ZERO`,
+    `# configuration:`,
+    `#   - static files: "max-age=3600" + ETag revalidation (fast, but not`,
+    `#     immutable — a returning visitor still round-trips on the ETag)`,
+    `#   - .spa-marker fallback shells: hard-coded "${REVALIDATE_CACHE_CONTROL}" (never stale)`,
+    `#`,
+    `# The only knob, ZIGBASE_STATIC_CACHE_CONTROL (.static_cache_control in a`,
+    `# custom build), is GLOBAL. Do NOT set it to the immutable value below —`,
+    `# it would apply to HTML and the SPA shell too, caching a stale shell`,
+    `# across deploys.`,
+    `#`,
+    `# If you front ZigBase with a CDN or reverse proxy (or run a custom`,
+    `# ZigBase build) that CAN set per-path headers, this is the ideal policy:`,
+    `#`,
+    `#   *.<8 lowercase hex>[.ext]  (asset_fingerprint output)  -> ${IMMUTABLE_CACHE_CONTROL}`,
+  ];
+  if (chunkPaths.length > 0) {
+    lines.push(`#   this build's content-hashed SPA lazy-route chunks:`);
+    for (const c of chunkPaths) lines.push(`#     ${c}  -> ${IMMUTABLE_CACHE_CONTROL}`);
+  }
+  lines.push(
+    // The residual, and the reason this file is worth reading even for a site
+    // with no fingerprinting: /spa/<name>.js, /spa/<name>-runtime.js,
+    // /islands/*.js and /zigapagos-runtime.js all sit at STABLE paths whose
+    // content changes every deploy.
+    `#   everything else — *.html, */routing-manifest.json, and the`,
+    `#   stable-path /spa/*.js, /islands/*.js, /zigapagos-runtime.js`,
+    `#                                                          -> ${REVALIDATE_CACHE_CONTROL}`,
+    ``,
+  );
+  return { name: "cache.zigbase.txt", content: lines.join("\n") };
+}
+
+/** One host-specific Cache-Control artifact — mirrors `emitCsp`. `chunkPaths`
+ *  is `collectChunkPaths`' output (already validated). */
+export function emitCache(target: HostTarget, chunkPaths: string[]): EmittedFile {
+  switch (target) {
+    case "nginx": return emitCacheNginx(chunkPaths);
+    case "apache": return emitCacheApache(chunkPaths);
+    case "zigbase": return emitCacheZigbase(chunkPaths);
+  }
+}
+
+/** All three site-wide Cache-Control artifacts — mirrors `emitAllCsp`.
+ *  Written unconditionally, including for an island-only site with no SPA
+ *  chunks (`chunkPaths` empty): the HTML/fingerprint pattern rules still
+ *  apply, matching `emitAllCsp`'s always-write behavior. */
+export function emitAllCache(chunkPaths: string[]): EmittedFile[] {
+  return (["nginx", "apache", "zigbase"] as HostTarget[]).map((t) => emitCache(t, chunkPaths));
+}
+
 if (import.meta.main) {
   const args = process.argv.slice(2);
   let site = "";
@@ -663,9 +915,11 @@ if (import.meta.main) {
 
   const glob = new Bun.Glob("**/routing-manifest.json");
   let count = 0;
+  const manifests: Manifest[] = [];
   for (const rel of glob.scanSync({ cwd: site })) {
     const path = `${site}/${rel}`;
     const m: Manifest = JSON.parse(readFileSync(path, "utf8"));
+    manifests.push(m);
     const target = override || m.deploy_target || "zigbase";
     const emit = EMITTERS[target];
     if (!emit) { console.error(`unknown deploy_target: ${target}`); process.exit(1); }
@@ -701,5 +955,16 @@ if (import.meta.main) {
     const outPath = `${site}/${f.name}`;
     writeFileSync(outPath, f.content, "utf8");
     console.log(`emit-host-config: wrote ${outPath} (csp, ${hashes.length} inline-script hashes, ${styleHashes.length} inline-style hashes, ${linkOrigins.length} external link origins)`);
+  }
+
+  // Site-wide Cache-Control (independent of routing manifests, same reasoning
+  // as the CSP block above): written unconditionally, including for an
+  // island-only site with no manifests at all — the HTML/fingerprint pattern
+  // rules still apply.
+  const chunkPaths = collectChunkPaths(manifests);
+  for (const f of emitAllCache(chunkPaths)) {
+    const outPath = `${site}/${f.name}`;
+    writeFileSync(outPath, f.content, "utf8");
+    console.log(`emit-host-config: wrote ${outPath} (cache-control, ${chunkPaths.length} SPA lazy-route chunks)`);
   }
 }
