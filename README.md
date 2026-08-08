@@ -52,6 +52,9 @@ map. No island on the page? Zero JavaScript shipped.
   React → `@z/runtime` import swaps already applied. It converts no page, layout
   or config itself — the docs are written as a deterministic mapping spec so an
   AI agent can complete the migration unattended.
+  Ships as an installable [Agent Skill](skills/zigapagos-astro-migration/)
+  (the open `SKILL.md` format read by Claude Code, Codex, Cursor, Gemini CLI,
+  and others).
 - **Zero-config dev loop** — `zigapagos dev` rebuilds the site, serves the real
   release tree with the stock ZigBase binary (same-origin API and admin UI, not
   a proxy shim), and live-reloads the browser over SSE. Islands hot-swap with

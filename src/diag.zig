@@ -62,22 +62,31 @@ pub fn parseFormat(value: []const u8) ?Format {
 /// OWN diagnostic format flipped by the wrapped command's identically-spelled
 /// flag.
 ///
-/// An unrecognised `--format=` value returns `null` (same as "no flag seen")
-/// rather than fatal-ing -- this is a pre-scan, not the authoritative parse;
-/// the real parser (`release.zig`) reports the bad value with a proper usage
-/// error once it runs.
+/// The LAST `--format=` flag wins, mirroring every accepting command's own
+/// parser (release/validate/doctor/explain-code all overwrite on repeat), so
+/// the pre-scan and the authoritative parse can never disagree about
+/// accepted input -- a first-flag scan would resolve `--format=text
+/// --format=json` to text, print the Debug banner, and then have the parser
+/// switch the stream to NDJSON underneath it.
+///
+/// An unrecognised `--format=` value resolves to `null` exactly as the
+/// parser's overwrite semantics imply (the parser fatals on the bad value;
+/// until then nothing valid was chosen) -- this is a pre-scan, not the
+/// authoritative parse; the real parser (`release.zig` and siblings) reports
+/// the bad value with a proper usage error once it runs.
 ///
 /// Contract 3 (caller-buffer, NO_SLOP §2.2a): allocates nothing, returns a
 /// value type, and borrows nothing past return.
 pub fn scanArgv(args: []const []const u8) ?Format {
     const prefix = "--format=";
+    var result: ?Format = null;
     for (args) |arg| {
-        if (std.mem.eql(u8, arg, "--")) return null;
+        if (std.mem.eql(u8, arg, "--")) break;
         if (std.mem.startsWith(u8, arg, prefix)) {
-            return parseFormat(arg[prefix.len..]);
+            result = parseFormat(arg[prefix.len..]);
         }
     }
-    return null;
+    return result;
 }
 
 pub const Severity = enum { @"error", warning };
@@ -715,6 +724,27 @@ test "diag: scanArgv stops at a bare -- (does not see the wrapped command's own 
     try std.testing.expect(scanArgv(&.{
         "e2e", "--site=x", "--", "mycmd", "--format=json",
     }) == null);
+}
+
+test "diag: scanArgv last flag wins, mirroring the command parsers" {
+    // The parsers overwrite on repeat, so the pre-scan must too -- a
+    // first-flag scan resolves text here and leaks the Debug banner onto a
+    // stream the parser is about to declare NDJSON.
+    try std.testing.expectEqual(
+        Format.json,
+        scanArgv(&.{ "--format=text", "--format=json" }).?,
+    );
+    try std.testing.expectEqual(
+        Format.text,
+        scanArgv(&.{ "--format=json", "--format=text" }).?,
+    );
+    // A trailing invalid value resolves to null (no valid choice stood when
+    // the parser would fatal), and a bare -- still fences the tail.
+    try std.testing.expect(scanArgv(&.{ "--format=json", "--format=xml" }) == null);
+    try std.testing.expectEqual(
+        Format.json,
+        scanArgv(&.{ "--format=text", "--format=json", "--", "--format=text" }).?,
+    );
 }
 
 test "diag: emit round-trips through std.json, exact bytes and field order" {

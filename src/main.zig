@@ -65,16 +65,21 @@ pub fn main(init: std.process.Init) u8 {
     // for a bad --format value; this pre-scan is purely a stderr-suppression
     // optimisation).
     //
-    // Gated to `release`, the ONLY command that accepts `--format` (see
-    // docs/diagnostics.md's scope section). An ungated pre-scan reads argv
-    // that belongs to some OTHER command's parser: `zigapagos dev
-    // --format=json` would flip the global format and then answer with an
-    // NDJSON `ZP_FATAL` complaining about a flag `dev` does not have, and
-    // `zigapagos explain-code --format=json` would do the same. Neither command
-    // documents the flag, so neither may switch the stream. src/root.zig's
-    // `.memory`-mode comment (a memory build never emits JSON) rests on
-    // exactly this gate.
-    if (args.len >= 2 and std.mem.eql(u8, args[1], "release")) {
+    // Gated to the commands that ACCEPT `--format` (see docs/diagnostics.md's
+    // scope section) -- today `release`, `validate`, `doctor`, and
+    // `explain-code`. An ungated pre-scan reads argv that belongs to some
+    // OTHER command's parser: `zigapagos dev --format=json` would flip the
+    // global format and then answer with an NDJSON `ZP_FATAL` complaining
+    // about a flag `dev` does not have. A command may only appear in this
+    // list in the same change that teaches its own parser the flag
+    // (tests/diagnostics/format-json.sh Phase 4 pins the gate with `explain`
+    // as the non-accepting witness).
+    if (args.len >= 2 and
+        (std.mem.eql(u8, args[1], "release") or
+            std.mem.eql(u8, args[1], "validate") or
+            std.mem.eql(u8, args[1], "doctor") or
+            std.mem.eql(u8, args[1], "explain-code")))
+    {
         if (diag.scanArgv(args[2..])) |f| diag.format = f;
     }
 

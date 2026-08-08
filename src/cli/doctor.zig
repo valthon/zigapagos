@@ -20,12 +20,20 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const fatal = @import("../fatal.zig");
 const superhtml = @import("superhtml");
+const diag = @import("../diag.zig");
 
 /// Contract 1 (self-freeing, NO_SLOP.md §2.2a): every allocation (the
 /// `.html` path list, one file's source, one file's Ast) is freed before
 /// `doctor` returns; nothing escapes to the caller.
 pub fn doctor(io: Io, gpa: Allocator, args: []const []const u8) bool {
     const cmd: Command = .parse(args);
+
+    // Authoritative assignment (mirrors release.zig/validate.zig): doctor's
+    // FINDINGS go to stdout in both formats, but fatals (bad DIR, walk
+    // failure) route through fatal.zig, which emits ZP_FATAL NDJSON on
+    // stderr when this is .json -- so the assignment matters even though
+    // doctor never touches the build-diagnostic emit paths.
+    diag.format = cmd.format;
 
     var root_dir = Io.Dir.cwd().openDir(io, cmd.dir, .{ .iterate = true }) catch |err| {
         fatal.usageError(
@@ -51,11 +59,22 @@ pub fn doctor(io: Io, gpa: Allocator, args: []const []const u8) bool {
             // A walk error yields a PARTIAL file list. Reporting whatever we
             // saw as "clean" would be worse than reporting nothing — same
             // reasoning as the zero-`.html`-files rule below: a gate that
-            // audited only part of the tree must not report success.
-            std.debug.print(
-                "doctor: could not finish scanning '{s}': {t}\n",
-                .{ cmd.dir, err },
-            );
+            // audited only part of the tree must not report success. In json
+            // mode this is a fatal like any other and must ride the NDJSON
+            // stderr stream as ZP_FATAL — prose here would corrupt the one
+            // stream the mode promises is machine-readable. Not routed
+            // through fatal.msg: that would change TEXT mode too (a Debug
+            // build panics there), and text mode is a frozen contract.
+            switch (diag.format) {
+                .json => diag.emitFatal(
+                    "doctor: could not finish scanning '{s}': {t}",
+                    .{ cmd.dir, err },
+                ),
+                .text => std.debug.print(
+                    "doctor: could not finish scanning '{s}': {t}\n",
+                    .{ cmd.dir, err },
+                ),
+            }
             return true;
         }) |entry| {
             if (entry.kind != .file) continue;
@@ -139,22 +158,39 @@ pub fn doctor(io: Io, gpa: Allocator, args: []const []const u8) bool {
     }
 
     // The summary always prints, even on a completely clean tree — that is
-    // the only output a clean run produces, and grep-ability of "doctor: 0
-    // error" is the contract.
-    fw.interface.print(
-        "doctor: {d} error{s}, {d} warning{s} across {d} file{s}",
-        .{
-            ctx.errors,   plural(ctx.errors),
-            ctx.warnings, plural(ctx.warnings),
-            ctx.files,    plural(ctx.files),
+    // the only output a clean run produces. In text mode grep-ability of
+    // "doctor: 0 error" is the contract; in JSON mode the summary object is
+    // the last NDJSON line, and its being LAST is contract too (a consumer
+    // may read the stream backwards for it).
+    switch (diag.format) {
+        .json => {
+            std.json.Stringify.value(@as(Summary, .{
+                .errors = ctx.errors,
+                .warnings = ctx.warnings,
+                .files = ctx.files,
+                .skipped = ctx.skipped,
+            }), .{}, &fw.interface) catch |err|
+                fatal.msg("error writing doctor report to stdout: {t}\n", .{err});
+            fw.interface.writeAll("\n") catch |err|
+                fatal.msg("error writing doctor report to stdout: {t}\n", .{err});
         },
-    ) catch |err| fatal.msg("error writing doctor report to stdout: {t}\n", .{err});
-    if (ctx.skipped > 0) {
-        fw.interface.print(", {d} file{s} skipped", .{ ctx.skipped, plural(ctx.skipped) }) catch |err|
-            fatal.msg("error writing doctor report to stdout: {t}\n", .{err});
+        .text => {
+            fw.interface.print(
+                "doctor: {d} error{s}, {d} warning{s} across {d} file{s}",
+                .{
+                    ctx.errors,   plural(ctx.errors),
+                    ctx.warnings, plural(ctx.warnings),
+                    ctx.files,    plural(ctx.files),
+                },
+            ) catch |err| fatal.msg("error writing doctor report to stdout: {t}\n", .{err});
+            if (ctx.skipped > 0) {
+                fw.interface.print(", {d} file{s} skipped", .{ ctx.skipped, plural(ctx.skipped) }) catch |err|
+                    fatal.msg("error writing doctor report to stdout: {t}\n", .{err});
+            }
+            fw.interface.writeAll("\n") catch |err|
+                fatal.msg("error writing doctor report to stdout: {t}\n", .{err});
+        },
     }
-    fw.interface.writeAll("\n") catch |err|
-        fatal.msg("error writing doctor report to stdout: {t}\n", .{err});
 
     // A write failure (EPIPE, ENOSPC) mid-report must not exit 0: exiting 0
     // after a truncated report would mean "clean" to a caller that only
@@ -174,6 +210,7 @@ pub const Command = struct {
     dir: []const u8 = "public",
     url_prefix: []const u8 = "",
     strict: bool = false,
+    format: diag.Format = .text,
 
     /// Contract 1 (self-freeing, trivially: nothing here allocates at all).
     /// Every field is either a literal or slices into `args`, which the
@@ -183,6 +220,7 @@ pub const Command = struct {
         var url_prefix: []const u8 = "";
         var strict = false;
         var have_dir = false;
+        var format: diag.Format = .text;
 
         const eql = std.mem.eql;
         const startsWith = std.mem.startsWith;
@@ -193,20 +231,27 @@ pub const Command = struct {
                 url_prefix = normalizeUrlPrefix(arg["--url-prefix=".len..]);
             } else if (eql(u8, arg, "--strict")) {
                 strict = true;
+            } else if (startsWith(u8, arg, "--format=")) {
+                const v = arg["--format=".len..];
+                format = diag.parseFormat(v) orelse fatal.usageError(
+                    "error: invalid --format value '{s}' (want text|json)\n",
+                    .{v},
+                );
             } else if (startsWith(u8, arg, "-")) {
-                fatal.usageError("error: unknown flag '{s}'\n\n{s}", .{ arg, help_message });
+                fatal.usageError("error: unknown flag '{s}'\n\n" ++ help_message, .{arg});
             } else if (!have_dir) {
                 dir = arg;
                 have_dir = true;
             } else {
                 fatal.usageError(
-                    "error: unexpected extra argument '{s}' (doctor takes at most one DIR)\n\n{s}",
-                    .{ arg, help_message },
+                    "error: unexpected extra argument '{s}' (doctor takes at most one DIR)\n\n" ++
+                        help_message,
+                    .{arg},
                 );
             }
         }
 
-        return .{ .dir = dir, .url_prefix = url_prefix, .strict = strict };
+        return .{ .dir = dir, .url_prefix = url_prefix, .strict = strict, .format = format };
     }
 };
 
@@ -232,6 +277,12 @@ const help_message =
     \\                    Pages project site): root-relative links are expected to
     \\                    start with '/P/'
     \\  --strict          Exit non-zero on warnings too (errors always exit non-zero)
+    \\  --format=FORMAT   text (default) | json -- emit each finding as one
+    \\                    NDJSON object {{"check","severity","file","message"}}
+    \\                    on stdout, then one summary object
+    \\                    {{"errors","warnings","files","skipped"}} as the last
+    \\                    line. severity is "error"|"warning". Fatals (a bad
+    \\                    DIR) emit ZP_FATAL NDJSON on stderr.
     \\  --help, -h        Show this help menu
     \\
     \\
@@ -271,6 +322,32 @@ const checks: []const Check = &.{
     check_dangling_internal_link,
 };
 
+/// Wire shape for one `--format=json` finding: one minified NDJSON object
+/// per line on STDOUT (doctor's report stream -- unlike the build
+/// diagnostics, which live on stderr; docs/diagnostics.md documents the
+/// split). Field declaration order is the wire order and is part of the
+/// published contract, same rule as src/diag.zig's Diagnostic. `severity`
+/// uses the diag stream's words ("error"/"warning"), not the text-mode
+/// report's "warn", so a consumer switching on severity handles one
+/// vocabulary across both streams.
+const Finding = struct {
+    check: []const u8,
+    severity: []const u8,
+    file: []const u8,
+    message: []const u8,
+};
+
+/// Wire shape for the final `--format=json` summary line -- the JSON
+/// counterpart of the always-printed prose summary ("a gate that audits
+/// nothing must not report success silently" applies in both formats).
+/// Field declaration order is the wire order and is contract.
+const Summary = struct {
+    errors: usize,
+    warnings: usize,
+    files: usize,
+    skipped: usize,
+};
+
 /// One parsed `.html` file, produced ONCE by the driver and fanned to every
 /// check in `checks` — checks must not re-parse.
 const Doc = struct {
@@ -292,9 +369,12 @@ const Ctx = struct {
     skipped: usize = 0,
 };
 
-/// Prints one finding as "<severity-word> <id>: <path>: <fmt>\n" to the
-/// report stream and bumps the matching counter. `<severity-word>` is the
-/// literal text "error"/"warn" (not the Zig `error` keyword).
+/// Text mode: prints one finding as "<severity-word> <id>: <path>: <fmt>\n"
+/// (`<severity-word>` is the literal text "error"/"warn"). JSON mode: one
+/// minified `Finding` object per line. Both bump the matching counter.
+/// Contract 3 (caller-buffer, NO_SLOP §2.2a): the JSON branch renders into a
+/// stack buffer via diag.render (truncating, never failing) and allocates
+/// nothing.
 fn report(
     ctx: *Ctx,
     check: Check,
@@ -302,11 +382,29 @@ fn report(
     comptime fmt: []const u8,
     args: anytype,
 ) std.Io.Writer.Error!void {
-    const word: []const u8 = switch (check.severity) {
-        .err => "error",
-        .warn => "warn",
-    };
-    try ctx.w.print("{s} {s}: {s}: " ++ fmt ++ "\n", .{ word, check.id, path } ++ args);
+    switch (diag.format) {
+        .json => {
+            var msg_buf: [2048]u8 = undefined;
+            const finding: Finding = .{
+                .check = check.id,
+                .severity = switch (check.severity) {
+                    .err => "error",
+                    .warn => "warning",
+                },
+                .file = path,
+                .message = diag.render(&msg_buf, fmt, args),
+            };
+            try std.json.Stringify.value(finding, .{}, ctx.w);
+            try ctx.w.writeByte('\n');
+        },
+        .text => {
+            const word: []const u8 = switch (check.severity) {
+                .err => "error",
+                .warn => "warn",
+            };
+            try ctx.w.print("{s} {s}: {s}: " ++ fmt ++ "\n", .{ word, check.id, path } ++ args);
+        },
+    }
     switch (check.severity) {
         .err => ctx.errors += 1,
         .warn => ctx.warnings += 1,
@@ -767,6 +865,11 @@ test "doctor: Command.parse normalises --url-prefix=" {
 
 test "doctor: Command.parse recognizes --strict" {
     try std.testing.expect(Command.parse(&.{"--strict"}).strict);
+}
+
+test "doctor: Command.parse recognizes --format=json (and defaults to text)" {
+    try std.testing.expectEqual(diag.Format.json, Command.parse(&.{"--format=json"}).format);
+    try std.testing.expectEqual(diag.Format.text, Command.parse(&.{}).format);
 }
 
 test "doctor: isRootRelative classifies root-relative vs. everything else" {

@@ -263,25 +263,24 @@ set -e
 grep -q 'want text|json' "$WORK/p3.err" || { cat "$WORK/p3.err"; fail "bad --format error message missing 'want text|json'"; }
 echo "ok: --format=xml is a clean exit-1 usage error"
 
-echo "=== Phase 4: the --format pre-scan is gated to 'release' ==="
-# `--format` is documented as a `release` flag. main.zig pre-scans argv for it
-# before std.Progress and the banners, and that pre-scan is gated to
-# `args[1] == "release"` -- without the gate it reads argv belonging to some
-# OTHER command's parser, and e.g. `zigapagos explain-code --format=json`
-# answers a flag `explain-code` does not have with an NDJSON ZP_FATAL line.
-# `explain-code` is the cheapest witness: it needs no site on disk, and its
-# unknown-code path is a `fatal.usageError`, exactly the call this would
-# reroute.
+echo "=== Phase 4: the --format pre-scan is gated to format-accepting commands ==="
+# `--format` is accepted by release/validate/doctor/explain-code. main.zig
+# pre-scans argv for it before std.Progress and the banners, and that
+# pre-scan is gated to exactly those commands -- without the gate it reads
+# argv belonging to some OTHER command's parser. `explain` (route
+# introspection) is the witness: it does not accept the flag, so its
+# unexpected-argument usage error must arrive as TEXT, not as an NDJSON
+# ZP_FATAL line.
 set +e
-"$ZIGAPAGOS" explain-code --format=json >"$WORK/p4.out" 2>"$WORK/p4.err"
+"$ZIGAPAGOS" explain --format=json >"$WORK/p4.out" 2>"$WORK/p4.err"
 RC4=$?
 set -e
-[[ "$RC4" -eq 1 ]] || { cat "$WORK/p4.err"; fail "explain-code --format=json exited $RC4, want 1"; }
-grep -q "unknown diagnostic code '--format=json'" "$WORK/p4.err" \
-  || { cat "$WORK/p4.err"; fail "explain-code --format=json did not report the unknown code in text form"; }
+[[ "$RC4" -eq 1 ]] || { cat "$WORK/p4.err"; fail "explain --format=json exited $RC4, want 1"; }
 ! grep -q '"code":"ZP_FATAL"' "$WORK/p4.err" \
-  || { cat "$WORK/p4.err"; fail "explain-code --format=json emitted NDJSON -- the pre-scan is not gated to 'release'"; }
-echo "ok: a non-release command cannot flip the diagnostic stream to NDJSON"
+  || { cat "$WORK/p4.err"; fail "explain --format=json emitted NDJSON -- the pre-scan gate leaked past the accepting commands"; }
+grep -q 'error:' "$WORK/p4.err" \
+  || { cat "$WORK/p4.err"; fail "explain --format=json did not print a text usage error"; }
+echo "ok: a non-accepting command cannot flip the diagnostic stream to NDJSON"
 
 echo "=== Phase 5: ZP_FRONTMATTER_FRAMING agrees with text mode on line:col ==="
 # Phase 1d proves cross-mode location agreement for a diagnostic whose column

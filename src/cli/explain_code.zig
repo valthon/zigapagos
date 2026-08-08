@@ -38,15 +38,29 @@ const diag = @import("../diag.zig");
 /// follow-up rather than a change to this one command.
 pub fn explainCode(args: []const []const u8) bool {
     var code_arg: ?[]const u8 = null;
+    var format: diag.Format = .text;
     for (args) |arg| {
         if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
             fatal.usage(help_message, .{});
+        }
+        if (std.mem.startsWith(u8, arg, "--format=")) {
+            const v = arg["--format=".len..];
+            format = diag.parseFormat(v) orelse fatal.usageError(
+                "error: invalid --format value '{s}' (want text|json)\n",
+                .{v},
+            );
+            continue;
         }
         if (code_arg != null) {
             fatal.usageError("error: unexpected extra argument '{s}'\n", .{arg});
         }
         code_arg = arg;
     }
+
+    // Authoritative assignment (mirrors release/validate/doctor): main.zig's
+    // pre-scan already suppressed the banners; this makes the unknown-code
+    // fatal.usageError below emit ZP_FATAL NDJSON in json mode.
+    diag.format = format;
 
     const code_str = code_arg orelse {
         listAll();
@@ -61,17 +75,56 @@ pub fn explainCode(args: []const []const u8) bool {
         );
     };
 
-    const i = diag.info(code);
-    std.debug.print("{s}\n{s}\n\n{s}\n", .{ @tagName(code), i.summary, i.explanation });
+    switch (diag.format) {
+        .json => emitEntry(code),
+        .text => {
+            const i = diag.info(code);
+            std.debug.print("{s}\n{s}\n\n{s}\n", .{ @tagName(code), i.summary, i.explanation });
+        },
+    }
     return false;
 }
 
 fn listAll() void {
     inline for (@typeInfo(diag.Code).@"enum".fields) |field| {
         const code: diag.Code = @enumFromInt(field.value);
-        const i = diag.info(code);
-        std.debug.print("{s}  {s}\n", .{ field.name, i.summary });
+        switch (diag.format) {
+            .json => emitEntry(code),
+            .text => {
+                const i = diag.info(code);
+                std.debug.print("{s}  {s}\n", .{ field.name, i.summary });
+            },
+        }
     }
+}
+
+/// Wire shape for one `--format=json` entry, on STDERR (the same stream as
+/// the text output and the NDJSON diagnostics this command explains --
+/// moving CLI output to stdout is a CLI-wide follow-up, not a change to this
+/// one command). Field declaration order is the wire order and is contract,
+/// same rule as src/diag.zig's Diagnostic.
+const Entry = struct {
+    code: []const u8,
+    summary: []const u8,
+    explanation: []const u8,
+};
+
+/// One minified NDJSON `Entry` line for `code`, to locked stderr. Contract 3
+/// (caller-buffer, NO_SLOP §2.2a): the lock buffer is on this frame,
+/// nothing allocates, write errors are swallowed exactly as diag.emit
+/// swallows them (a failed stderr write is unrecoverable here too).
+fn emitEntry(code: diag.Code) void {
+    const i = diag.info(code);
+    var buf: [8192]u8 = undefined;
+    const locked = std.debug.lockStderr(&buf);
+    defer std.debug.unlockStderr();
+    const w = &locked.file_writer.interface;
+    std.json.Stringify.value(@as(Entry, .{
+        .code = @tagName(code),
+        .summary = i.summary,
+        .explanation = i.explanation,
+    }), .{}, w) catch return;
+    w.writeByte('\n') catch return;
 }
 
 const help_message =
@@ -88,8 +141,13 @@ const help_message =
     \\Output is written to stderr, the same stream as the JSON diagnostics,
     \\so redirect with 2>&1 to pipe it.
     \\
+    \\With --format=json, each entry is one NDJSON object
+    \\{{"code","summary","explanation"}} on stderr: one line for a single CODE,
+    \\one line per registered code for the no-argument listing.
+    \\
     \\Command specific options:
-    \\  --help, -h   Show this help menu
+    \\  --format=FORMAT   text (default) | json
+    \\  --help, -h        Show this help menu
     \\
     \\
 ;

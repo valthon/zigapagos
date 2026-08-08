@@ -24,8 +24,12 @@ zigapagos release --format=xml
 # error: invalid --format value 'xml' (want text|json)
 ```
 
-`--format` is accepted by `release` only. It is not a flag `dev` recognises:
-`dev` re-runs a rebuild command and reports whatever that command printed.
+`--format` is accepted by `release` and `validate` (build diagnostics), plus
+`doctor` (its own finding stream on stdout — see below). `release` and
+`validate` share one stream and schema — `validate` covers the release
+build's pre-SSR subset, see `zigapagos validate --help` for exactly what that
+excludes. It is not a flag `dev` recognises: `dev` re-runs a rebuild command
+and reports whatever that command printed.
 
 ## Wire schema
 
@@ -108,6 +112,11 @@ diagnostics above, and the same convention as `zigapagos languages`. So
 `zigapagos explain-code 2>&1 | grep ZP_LINK` works and a bare `| grep` sees
 nothing.
 
+`explain-code --format=json` emits the same information as NDJSON on stderr:
+one `{"code","summary","explanation"}` object per line (one line for a single
+`CODE`, one per registered code for the no-argument listing) — the
+machine-readable form of this registry.
+
 ## Coverage
 
 The NDJSON stream covers **the whole prerender/analysis gate**: every diagnostic
@@ -131,7 +140,14 @@ Config-validation failures (bad `host_url`, bad `deploy_target`, …) do reach t
 stream, as `ZP_FATAL` rather than under named codes of their own.
 
 `zigapagos doctor` has its own stable check-id namespace (`abs-url-meta`,
-`dangling-internal-link`, …) and does not emit this stream.
+`dangling-internal-link`, …) and does not emit this stream. It has its own
+`--format=json`: one NDJSON object per finding on **stdout** (doctor's report
+stream), shaped `{"check","severity","file","message"}` with `severity` one of
+`"error"`/`"warning"`, followed by exactly one summary object
+`{"errors","warnings","files","skipped"}` as the last line. `check` follows the
+same stability rule as `code` here: stable once shipped; `message` is prose and
+is not. Doctor fatals (a bad `DIR`) do emit on this page's stderr stream, as
+`ZP_FATAL`.
 
 SuperMD errors carry **one** code, `ZP_SUPERMD`, not one per error kind.
 SuperMD's error *tags* (`scripty`, `html`, `duplicate_id`, …) come from the
