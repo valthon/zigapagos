@@ -17,7 +17,7 @@ pub fn setup(
         .root_module = b.createModule(.{
             .root_source_file = b.path("build/camera.zig"),
             .target = target,
-            .optimize = .ReleaseFast,
+            .optimize = .Debug,
         }),
     });
 
