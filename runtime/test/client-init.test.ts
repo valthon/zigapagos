@@ -11,7 +11,7 @@
 import { test, expect, beforeEach, afterEach } from "bun:test";
 import { h } from "@z/runtime/core";
 import { __resetStoresForTest } from "@z/runtime/host";
-import { mountSpa, Router } from "@z/runtime/router";
+import { mountSpa, Router, navigate, __setRouterBaseForTest } from "@z/runtime/router";
 import { flush } from "@z/runtime/testing";
 import { setLocationPathname } from "@z/runtime/testing/parity";
 
@@ -21,6 +21,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   delete (window as any).zigapagosOnError;
+  delete (document as any).startViewTransition;
 });
 
 function shellRoot(html: string): HTMLElement {
@@ -75,6 +76,100 @@ test("a throwing clientInit is reported loudly but does not abort hydration", ()
   expect(reported.length).toBe(1);
   expect(reported[0]).toContain("boom in clientInit");
   expect(root.textContent).toBe("alive"); // the app still hydrated
+});
+
+// --- spa.viewTransitions: the mountSpa opt-in ------------------------------
+// `mountSpa` reads the module's `export const spa` and drives the router's
+// (default-off) view-transition opt-in from `spa.viewTransitions`, applied
+// BEFORE `clientInit` runs (a clientInit that calls `navigate()` must already
+// see the setting) and unconditionally (explicit `false` on absence), so a
+// later mountSpa() call — or the two-arg back-compat call — never inherits a
+// PREVIOUS module's setting. happy-dom has no `startViewTransition`, so each
+// test stubs it on `document` (cleared in `afterEach` above).
+function installVTStub(): Array<() => Promise<void> | void> {
+  const calls: Array<() => Promise<void> | void> = [];
+  (document as any).startViewTransition = (cb: () => Promise<void> | void) => {
+    calls.push(cb);
+    const p = Promise.resolve(cb());
+    return { ready: p.catch(() => {}), updateCallbackDone: p };
+  };
+  return calls;
+}
+const VtHome = () => h("div", { "data-view": "home" }, "home");
+const VtOther = () => h("div", { "data-view": "other" }, "other");
+function VtApp() {
+  return h(Router, { routes: [{ path: "/", component: VtHome }, { path: "/other", component: VtOther }] });
+}
+
+test("mountSpa's spa.viewTransitions: true wraps a subsequent navigate() in startViewTransition (regression: behavioral, not a test-only getter)", async () => {
+  __setRouterBaseForTest("");
+  setLocationPathname("/");
+  const calls = installVTStub();
+  const root = shellRoot('<div data-view="home">home</div>');
+  mountSpa(VtApp, "#z-spa-root", { spa: { viewTransitions: true } });
+  await flush();
+  navigate("/other");
+  expect(calls.length).toBe(1); // wrapped synchronously as part of navigate()
+  await flush();
+  expect(root.textContent).toBe("other");
+});
+
+test("a subsequent mountSpa() without spa.viewTransitions resets to OFF — no bleed from a prior module (also covers the two-arg back-compat call)", async () => {
+  __setRouterBaseForTest("");
+  setLocationPathname("/");
+  const calls = installVTStub();
+
+  // First module opts in.
+  shellRoot('<div data-view="home">home</div>');
+  mountSpa(VtApp, "#z-spa-root", { spa: { viewTransitions: true } });
+  await flush();
+
+  // A namespace WITHOUT spa.viewTransitions (mirrors a plain SPA's shell
+  // boot) must not inherit the previous module's opt-in.
+  document.body.innerHTML = "";
+  const root2 = shellRoot('<div data-view="home">home</div>');
+  mountSpa(VtApp, "#z-spa-root", {});
+  await flush();
+  navigate("/other");
+  await flush();
+  expect(calls.length).toBe(0);
+  expect(root2.textContent).toBe("other");
+
+  // The two-arg back-compat call (no module namespace at all) resets the
+  // same way: explicit `false` on ABSENCE, never "leave it as it was".
+  // Two things this block has to get right or it asserts NOTHING:
+  //   - RE-ARM the opt-in first. The `{}` mount above already turned it off,
+  //     so a two-arg call that skipped the reset entirely would still leave it
+  //     off and the expectation below would pass on a broken implementation.
+  //   - Put the location back to "/". `navigate()` short-circuits a
+  //     same-pathname target BEFORE the transition seam, so navigating to
+  //     "/other" while already on "/other" can never reach the stub.
+  document.body.innerHTML = "";
+  shellRoot('<div data-view="home">home</div>');
+  mountSpa(VtApp, "#z-spa-root", { spa: { viewTransitions: true } });
+  await flush();
+  setLocationPathname("/");
+  document.body.innerHTML = "";
+  shellRoot('<div data-view="home">home</div>');
+  mountSpa(VtApp, "#z-spa-root");
+  await flush();
+  navigate("/other");
+  await flush();
+  expect(calls.length).toBe(0);
+});
+
+test("spa.viewTransitions is applied BEFORE clientInit runs — clientInit's own navigate() is already wrapped", async () => {
+  __setRouterBaseForTest("");
+  setLocationPathname("/");
+  const calls = installVTStub();
+  const root = shellRoot('<div data-view="home">home</div>');
+  mountSpa(VtApp, "#z-spa-root", {
+    spa: { viewTransitions: true },
+    clientInit: () => { navigate("/other"); },
+  });
+  expect(calls.length).toBe(1); // clientInit's navigate() was already wrapped
+  await flush();
+  expect(root.textContent).toBe("other");
 });
 
 test("clientInit runs before the first render AND before any route guard fires", async () => {
