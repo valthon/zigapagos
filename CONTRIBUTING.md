@@ -68,10 +68,11 @@ bash scripts/rescue-codeberg.sh
 zig build
 ```
 
-The rescue script is an outage-only escape hatch. It derives the exact direct
-and SuperMD-transitive `translate-c` pins from the checked-in dependency graph,
-warms those content hashes from the `translate-c` GitHub mirror, verifies the
-resolved graph, and changes no manifest. A hash mismatch or an unexpected
+The rescue script is an outage-only escape hatch. It derives the exact
+SuperMD-transitive `translate-c` pin (the only Codeberg-hosted dependency in
+the graph) from the checked-in dependency graph, warms that content hash from
+the `translate-c` GitHub mirror, verifies the resolved graph, and changes no
+manifest. A hash mismatch or an unexpected
 source fails closed. Once it succeeds, retry the build command that originally
 failed; normal development does not require the script.
 

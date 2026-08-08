@@ -117,15 +117,16 @@ jobs:
       - name: Setup toolchain (zig + bun via mise)
         uses: jdx/mise-action@v4
 
-      # Both translate-c pins normally resolve from Codeberg (one directly, one
-      # through SuperMD), but Codeberg capability discovery has failed
-      # persistently from GitHub-hosted runners (tracked in #121). The official
+      # The one translate-c pin left — SuperMD's transitive one (the root
+      # manifest's unconsumed direct entry was deleted) — normally resolves from
+      # Codeberg, but Codeberg capability discovery has failed persistently from
+      # GitHub-hosted runners (tracked in #121). The official
       # ziglang/translate-c GitHub archive contains the identical commits. Zig
-      # caches by content hash, so warming those hashes lets the unchanged graph
+      # caches by content hash, so warming that hash lets the unchanged graph
       # resolve without contacting Codeberg.
       #
       # Remove only this step when #121 confirms Codeberg is reachable from
-      # hosted runners again, or when neither resolved pin uses Codeberg. Pin
+      # hosted runners again, or when no resolved pin uses Codeberg. Pin
       # changes still fail closed, although when Codeberg is unavailable the
       # later fetch retry may report its general dependency-fetch diagnostic
       # before the resolved-graph check can name an obsolete warmed hash.
