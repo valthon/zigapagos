@@ -428,6 +428,62 @@ separate SPAs), stage the same stylesheet — or a standalone one carrying just
 the `@view-transition` rule — via [`spa.head`](spa.md#head-assets) on the
 SPA side.
 
+## Link prefetching (speculation rules)
+
+Issue #128. Opt into `.speculation_rules = true` on a `Site` (or
+`MultilingualSite`) and every rendered HTML page gets one extra tag spliced in
+right before `</head>`:
+
+```html
+<script type="speculationrules">{"prefetch":[{"where":{"href_matches":"/*"},"eagerness":"moderate"}]}</script>
+```
+
+This is the browser-native [Speculation Rules
+API](https://developer.mozilla.org/en-US/docs/Web/API/Speculation_Rules_API):
+a supporting browser (Chromium today) prefetches the target of a same-origin
+link when the visitor hovers or presses down on it, so the navigation that
+follows often has the response already in cache. A browser without support
+sees an unrecognized `<script>` type and ignores the block — it is inert
+JSON either way, so this ships **zero runtime JS** in either case. That is
+the point of the feature: Astro ships a JS prefetch runtime to get this
+effect; a static site generator can emit the declarative version instead.
+
+`href_matches` is a [URLPattern](https://developer.mozilla.org/en-US/docs/Web/API/URLPattern):
+`*` matches any suffix including `/`, so the unprefixed pattern above matches
+every same-origin path. A site with `url_path_prefix = "myrepo"` gets
+`"href_matches":"/myrepo/*"` instead — same prefix-normalization every other
+emitted URL in this codebase gets (`src/islands/pass.zig`'s `prefixed`).
+
+Off by default: it changes every page's bytes and adds hover-time network
+traffic, which no site should get without asking for it. `MultilingualSite`
+takes the same field; the emitted rule is same-origin and path-wide, so one
+block covers every locale prefix.
+
+**This is also how a content page warms an SPA's shell.** A soft navigation
+inside a running SPA never fetches shell HTML (see
+[Prefetching](spa.md#prefetching) in `docs/spa.md`), so "warm the
+`staticPaths` shells" is delivered by THIS mechanism instead: the
+site-wide `document`-level rule matches an SPA's shell URLs — including
+concrete `staticPaths` pages — the same as any other same-origin link, so
+hovering a link into the SPA from ordinary content prefetches its shell for
+the hard-nav entry.
+
+**Strict CSP.** `runtime/scripts/emit-host-config.ts`'s inline-script hasher
+deliberately does not hash this block — Chromium does not honor
+hash-sources for `<script type="speculationrules">` — and instead adds the
+CSP3 `'inline-speculation-rules'` script-src keyword when the scan detects
+one (`hasInlineSpeculationRules`, threaded through `cspHeaderValue`). A site
+serving a strict CSP without this keyword gets a silent console violation and
+no prefetch — no build failure — so if you hand-roll your own CSP instead of
+using the generated one, add `'inline-speculation-rules'` to `script-src`
+yourself. Browsers that don't understand the keyword ignore it, so it's safe
+to include unconditionally.
+
+**Speculation Rules are Chromium-only today.** Firefox and Safari execute the
+page exactly as if the block weren't there — no error, no prefetch, no
+regression. That's an acceptable, on-brand posture (progressive enhancement,
+zero JS shipped either way), not a defect.
+
 ## Runtime slicing
 
 The shared runtime (`/zigapagos-runtime.js`) is the whole `@z/runtime` barrel:

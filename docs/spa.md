@@ -733,6 +733,54 @@ explicit `skeleton: ClubSkeleton` — see the routes array above — so the
 router never actually reaches `ClubDetail`'s own `isServer()` branch during
 hydration; it renders `ClubSkeleton` instead until hydration completes.)
 
+### Prefetching
+
+Issue #128. `<Link>` starts a [lazy (code-split)](#code-splitting-lazy-routes) route's
+chunk load early — before the visitor actually clicks — so by the time they navigate the
+chunk is often already in cache:
+
+```tsx
+<Link href="/heavy">Heavy view</Link>                       {/* default: hover */}
+<Link href="/heavy" prefetch="viewport">Heavy view</Link>    {/* prefetch when scrolled into view */}
+<Link href="/heavy" prefetch={false}>Heavy view</Link>       {/* opt out */}
+```
+
+- **`"hover"` (default).** Fires on `mouseenter`, `focus`, and `touchstart` — covers mouse
+  hover, keyboard tabbing, and a touch-device's tap-down before the tap completes.
+- **`"viewport"`.** An `IntersectionObserver` on the rendered `<a>` fires once, the first
+  time it scrolls into view, then disconnects — a link that's already been seen doesn't
+  re-fire on every re-intersection.
+- **`false`.** No prefetching for this `Link`.
+
+What actually happens: prefetching a route just means starting its `lazy()` loader (the
+dynamic `import()`) early. A **non-lazy** route has nothing to prefetch, so it's a no-op.
+The load is shared with the real navigation — hovering and then clicking doesn't double-fetch
+the chunk, and if the chunk already resolved before the click, the real navigation renders it
+immediately with no further loader call. A **guarded** lazy route's public chunk may still
+prefetch on hover (the component itself never renders pre-auth — see [Route
+Guards](#route-guards--gated-spas)); a `redirect` entry prefetches its TARGET's chunk, not
+itself.
+
+**Failure semantics are silent and asymmetric on purpose.** A prefetch that fails (offline
+hover, a flaky network) is swallowed — no `reportError`, no `failed` flag set — because a
+hover that never becomes a real navigation is not a user-facing failure, and latching
+`failed` would permanently strand the route on its skeleton for the ACTUAL navigation that
+follows. The next real load attempt (or a later prefetch) gets a fresh try. A failure during
+a real navigation load still reports and behaves exactly as before this feature.
+
+**Data-saver guard.** Prefetching is skipped when the browser reports `navigator.connection`
+data-saver mode (`saveData: true`) or a very slow connection (`effectiveType` containing
+`"2g"`) — the same heuristic Astro's prefetch uses. `navigator.connection` is a
+Chromium-only, experimental API; everywhere else this check is a no-op (prefetch stays on).
+
+**Why a soft navigation never fetches the SPA shell.** Prefetching here only ever starts a
+JS chunk load — it does **not** fetch shell HTML, because a soft navigation inside a running
+SPA never requests one either (the Router renders client-side from the already-loaded App).
+Warming an SPA's shells (including concrete `staticPaths` pages) for the **hard-nav entry**
+into the SPA is a separate, build-time mechanism: an ordinary content page's
+`<script type="speculationrules">` block — see [Link prefetching (speculation
+rules)](islands.md#link-prefetching-speculation-rules) in `docs/islands.md`.
+
 ## Declarative Redirects
 
 An index alias ("/" should land on the dashboard) needs no component:
@@ -1361,7 +1409,8 @@ Two documented gaps, both safe — they fall back to the revalidating baseline, 
 
 One bundle per SPA means a heavy view (a rich editor, a dashboard) sits in the initial bundle
 even when the first paint is a login screen. Wrap a route's component in `lazy()` to split it
-into its own chunk, loaded on demand:
+into its own chunk, loaded on demand — and, by default, prefetched on hover before the visitor
+even clicks (see [Prefetching](#prefetching)):
 
 ```tsx
 import { lazy } from "@z/runtime";
@@ -1382,7 +1431,8 @@ Rendering: SSR and the first client render show the route's `skeleton`; the load
 post-hydration and the Router flips to the real component (a normal, non-hydrating re-render —
 same two-phase rule as a dynamic route). It composes with route guards: a guarded lazy route
 shows the guard `fallback` while unauthorized and only reveals the component after authorization
-(the component never renders pre-auth, even though its public chunk may prefetch).
+(the component never renders pre-auth, even though its public chunk may
+[prefetch](#prefetching) on hover).
 
 Rules & caveats:
 

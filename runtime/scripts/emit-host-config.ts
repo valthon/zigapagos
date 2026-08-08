@@ -484,14 +484,22 @@ function inlineContentHash(content: string): string {
   return "'sha256-" + createHash("sha256").update(content, "utf8").digest("base64") + "'";
 }
 
+/** The lowercased `type=` of a `<script>` start tag's attribute text (`""` when
+ * absent), accepting double-quoted, single-quoted and unquoted forms. One
+ * parser for every `type`-sensitive scan below, so they can never disagree
+ * about quoting or case. */
+function scriptType(attrs: string): string {
+  const t = attrs.match(/\btype\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/i);
+  return (t ? (t[1] ?? t[2] ?? t[3] ?? "") : "").trim().toLowerCase();
+}
+
 /** True for a `<script>` whose ATTRIBUTES mark it executable-or-importmap and
  * NOT external: `type="importmap"`, or `type="module"`/no `type`, and no `src`.
  * `type="application/json"` (our `data-z-props`/`data-z-slots` data blocks) and
  * any `src=` script (covered by `script-src 'self'`) return false. */
 function isHashableInlineScript(attrs: string): boolean {
   if (/\bsrc\s*=/i.test(attrs)) return false; // external → 'self', not inline
-  const t = attrs.match(/\btype\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/i);
-  const type = (t ? (t[1] ?? t[2] ?? t[3] ?? "") : "").trim().toLowerCase();
+  const type = scriptType(attrs);
   return type === "" || type === "importmap" || type === "module";
 }
 
@@ -586,6 +594,26 @@ export function scanInlineStyleHashes(htmlStrings: string[]): string[] {
   return [...hashes].sort();
 }
 
+/**
+ * True if any `<script type="speculationrules">` block appears anywhere in
+ * the scanned HTML (issue #128, `root.Site.speculation_rules`). Shares
+ * `scriptType` with `isHashableInlineScript`, so quoting and case are read
+ * identically — but the block is deliberately NOT hashed: hash-sources don't
+ * cover speculationrules scripts in Chromium, which needs the dedicated CSP3
+ * `'inline-speculation-rules'` script-src keyword instead (see
+ * `cspHeaderValue`). Only the start tag matters here, so unlike
+ * `scanInlineScriptHashes` this scan doesn't need to capture the content.
+ */
+export function hasInlineSpeculationRules(htmlStrings: string[]): boolean {
+  const re = /<script\b([^>]*)>/gi;
+  for (const html of htmlStrings) {
+    for (let m = re.exec(html); m !== null; m = re.exec(html)) {
+      if (scriptType(m[1]) === "speculationrules") return true;
+    }
+  }
+  return false;
+}
+
 // ── External head origins ──────────────────────────────────────────────────
 // `spa.head` may reference external origins the build can plainly see (a
 // Google Fonts stylesheet + its `preconnect`); those entries render into every
@@ -660,9 +688,18 @@ export function scanExternalLinkOrigins(htmlStrings: string[]): string[] {
  * into `style-src-elem` AND a `font-src` (emitted only when the set is
  * non-empty, keeping the no-external-heads value byte-identical to before —
  * `font-src` then falls back to `default-src 'self'`). `styleHashes` is the
- * `scanInlineStyleHashes` set. */
-export function cspHeaderValue(hashes: string[], linkOrigins: string[] = [], styleHashes: string[] = []): string {
-  const scriptSrc = ["'self'", ...hashes].join(" ");
+ * `scanInlineStyleHashes` set.
+ *
+ * `speculationRules` (issue #128, default false — keeps every existing output
+ * byte-identical): when true, appends the CSP3 `'inline-speculation-rules'`
+ * keyword to `script-src`. Hash-sources do NOT cover `<script
+ * type="speculationrules">` in Chromium, so without this keyword the block
+ * `src/islands/pass.zig`'s `speculationRulesTag` emits is silently dropped by
+ * a strict CSP — no build failure, just a console violation and dead
+ * prefetch. Browsers that don't support Speculation Rules ignore the unknown
+ * source expression, so adding it is safe everywhere. */
+export function cspHeaderValue(hashes: string[], linkOrigins: string[] = [], styleHashes: string[] = [], speculationRules = false): string {
+  const scriptSrc = ["'self'", ...(speculationRules ? ["'inline-speculation-rules'"] : []), ...hashes].join(" ");
   const styleSrcElem = ["'self'", ...styleHashes, ...linkOrigins].join(" ");
   const fontSrc = linkOrigins.length === 0
     ? ""
@@ -671,8 +708,8 @@ export function cspHeaderValue(hashes: string[], linkOrigins: string[] = [], sty
 }
 
 /** One host-specific CSP artifact (site-wide, host-agnostic value). */
-export function emitCsp(hashes: string[], target: CspTarget, linkOrigins: string[] = [], styleHashes: string[] = []): EmittedFile {
-  const value = cspHeaderValue(hashes, linkOrigins, styleHashes);
+export function emitCsp(hashes: string[], target: CspTarget, linkOrigins: string[] = [], styleHashes: string[] = [], speculationRules = false): EmittedFile {
+  const value = cspHeaderValue(hashes, linkOrigins, styleHashes, speculationRules);
   switch (target) {
     case "nginx":
       return {
@@ -710,8 +747,8 @@ export function emitCsp(hashes: string[], target: CspTarget, linkOrigins: string
 
 /** All three site-wide CSP artifacts for a scanned HTML set (operators pick the
  * file for their host; the header value is identical across targets). */
-export function emitAllCsp(hashes: string[], linkOrigins: string[] = [], styleHashes: string[] = []): EmittedFile[] {
-  return (["nginx", "apache", "zigbase"] as CspTarget[]).map((t) => emitCsp(hashes, t, linkOrigins, styleHashes));
+export function emitAllCsp(hashes: string[], linkOrigins: string[] = [], styleHashes: string[] = [], speculationRules = false): EmittedFile[] {
+  return (["nginx", "apache", "zigbase"] as CspTarget[]).map((t) => emitCsp(hashes, t, linkOrigins, styleHashes, speculationRules));
 }
 
 // ── Cache-Control support (issue #133) ───────────────────────────────────────
@@ -951,10 +988,14 @@ if (import.meta.main) {
   // into every shell) must be allowed by the same CSP, or the emitted conf
   // blocks resources the emitted HTML loads.
   const linkOrigins = scanExternalLinkOrigins(htmls);
-  for (const f of emitAllCsp(hashes, linkOrigins, styleHashes)) {
+  // Issue #128: a site with `speculation_rules` on gets `<script
+  // type="speculationrules">` on every page; thread that into the CSP so
+  // strict deployments don't silently drop it (see `cspHeaderValue`).
+  const speculationRules = hasInlineSpeculationRules(htmls);
+  for (const f of emitAllCsp(hashes, linkOrigins, styleHashes, speculationRules)) {
     const outPath = `${site}/${f.name}`;
     writeFileSync(outPath, f.content, "utf8");
-    console.log(`emit-host-config: wrote ${outPath} (csp, ${hashes.length} inline-script hashes, ${styleHashes.length} inline-style hashes, ${linkOrigins.length} external link origins)`);
+    console.log(`emit-host-config: wrote ${outPath} (csp, ${hashes.length} inline-script hashes, ${styleHashes.length} inline-style hashes, ${linkOrigins.length} external link origins${speculationRules ? ", speculation rules" : ""})`);
   }
 
   // Site-wide Cache-Control (independent of routing manifests, same reasoning

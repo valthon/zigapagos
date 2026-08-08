@@ -123,6 +123,14 @@ pub const Site = struct {
     /// off by default: existing sites that rely on "an unmatched anchor is a
     /// build error" keep that behaviour unless they turn this on.
     auto_heading_ids: bool = false,
+    /// When enabled, every rendered HTML page gets a browser-native
+    /// `<script type="speculationrules">` block injected before `</head>`:
+    /// same-origin links are prefetched on hover/pointerdown ("moderate"
+    /// eagerness) by browsers that support Speculation Rules; others ignore
+    /// the block (it is inert JSON either way -- zero runtime JS).
+    /// Off by default: it changes every page's bytes and adds hover-time
+    /// network traffic no site should get without asking.
+    speculation_rules: bool = false,
 };
 
 pub const MultilingualSite = struct {
@@ -202,6 +210,10 @@ pub const MultilingualSite = struct {
     /// off by default: existing sites that rely on "an unmatched anchor is a
     /// build error" keep that behaviour unless they turn this on.
     auto_heading_ids: bool = false,
+    /// Browser-native link prefetching. See the field of the same name on a
+    /// single-locale `Site` for the full rationale. The emitted rule is
+    /// same-origin and path-wide, so one block covers every locale prefix.
+    speculation_rules: bool = false,
 };
 
 /// A localized variant of a multilingual website
@@ -545,6 +557,14 @@ pub const Config = union(enum) {
         return switch (c.*) {
             .Site => |s| s.auto_heading_ids,
             .Multilingual => |m| m.auto_heading_ids,
+        };
+    }
+
+    /// `speculation_rules` (issue #128) -- browser-native prefetch hints.
+    pub fn getSpeculationRules(c: *const Config) bool {
+        return switch (c.*) {
+            .Site => |s| s.speculation_rules,
+            .Multilingual => |m| m.speculation_rules,
         };
     }
 
