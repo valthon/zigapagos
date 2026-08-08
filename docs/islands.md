@@ -384,6 +384,50 @@ instead of N sequential calls) is on hold pending co-design with `sidecar-slots`
 nested-slot weaving — the `BatchItem` struct must carry `slots_json` and the
 deferred-splice sentinel must round-trip through slot-weaving for nested islands.
 
+## Cross-document view transitions (MPA pages)
+
+Content/island pages navigate between each other with full page loads (no
+client router), so soft-navigation's `document.startViewTransition()` (see
+[SPA view transitions](spa.md#view-transitions)) doesn't apply here — but the
+browser's **cross-document** view transitions do, and they need zero runtime
+JS. Add one rule to the site stylesheet:
+
+```css
+@view-transition {
+  navigation: auto;
+}
+```
+
+That's the whole recipe. `navigation: auto` opts every same-origin navigation
+into a transition whenever **both** the outgoing and the incoming page carry
+the rule — a page without it (or a cross-origin destination) just navigates
+normally, so this is pure progressive enhancement: unsupported browsers
+ignore the at-rule and nothing breaks. There is no build-time flag for this;
+it is one line an author adds to their own CSS, same as any other rule.
+
+As with the SPA-side feature, the browser does not disable the transition for
+`prefers-reduced-motion` by itself — carry the same guard:
+
+```css
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}
+```
+
+**The SPA boundary.** An SPA shell has a [fixed `<head>`](spa.md#head-assets)
+and does not inherit the site's stylesheet, so `@view-transition` in the site
+CSS does not reach an SPA's own routes — those are soft-navigated anyway and
+use the SPA-side `spa.viewTransitions` opt-in instead. To extend
+*cross-document* transitions into the boundary itself (e.g. the full-page
+navigation from a content page into an SPA's entry route, or between two
+separate SPAs), stage the same stylesheet — or a standalone one carrying just
+the `@view-transition` rule — via [`spa.head`](spa.md#head-assets) on the
+SPA side.
+
 ## Runtime slicing
 
 The shared runtime (`/zigapagos-runtime.js`) is the whole `@z/runtime` barrel:

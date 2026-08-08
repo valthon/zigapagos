@@ -1090,9 +1090,80 @@ function bindPopstate(): void {
   window.addEventListener("popstate", onPopstate);
 }
 
+// ---------------------------------------------------------------------------
+// View transitions. Opt-in (`spa.viewTransitions: true` via mountSpa, or the
+// escape hatch `setViewTransitions()` for a hand-mounted Router) wraps a route
+// flip in `document.startViewTransition()`. Off by default and
+// feature-detected, so an unsupported browser (or the opt-in never set) gets
+// today's instant flip — progressive enhancement, no polyfill. This is the
+// ONE seam both the push path (`navigateResolved`) and `onPopstate` go
+// through, so there is no second, divergent flip path to keep in sync.
+// ---------------------------------------------------------------------------
+let viewTransitionsOn = false;
+/** Opt in to (or back out of) wrapping route flips in document.startViewTransition().
+ *  Off by default; usually driven by `spa.viewTransitions` via mountSpa. */
+export function setViewTransitions(on: boolean): void { viewTransitionsOn = on; }
+
+type ViewTransitionLike = { ready?: Promise<void>; updateCallbackDone?: Promise<void> };
+/**
+ * The feature-detected `document.startViewTransition`, bound to `document`,
+ * or null when transitions are off or unsupported. Typed via a local cast —
+ * this does not depend on lib.dom declaring `ViewTransition`.
+ */
+function viewTransitionApi(): ((cb: () => Promise<void>) => ViewTransitionLike | undefined) | null {
+  if (!viewTransitionsOn || typeof document === "undefined") return null;
+  const f = (document as { startViewTransition?: (cb: () => Promise<void>) => ViewTransitionLike }).startViewTransition;
+  return f ? f.bind(document) : null;
+}
+
+/**
+ * Resolve after the CURRENT commit flushes. The browser snapshots the NEW
+ * state when the transition's update-callback promise settles; Preact
+ * schedules its re-render flush on a microtask created during `emit()`
+ * (inside the callback), and microtasks are FIFO, so a microtask queued
+ * AFTER the flip runs after Preact's commit.
+ *
+ * Deliberately NOT `afterRender`/rAF: rendering is suppressed while the
+ * capture is pending, so a rAF tick may never fire while the browser waits —
+ * that would stall the navigation until the spec's ~4s timeout instead of
+ * completing in a microtask. Do not "simplify" this to rAF.
+ */
+function afterCommit(): Promise<void> {
+  return new Promise((r) => queueMicrotask(r));
+}
+
+/**
+ * Run a route flip, inside a view transition when opted-in + supported.
+ * `settle` (a scroll adjustment) runs after the flip's Preact commit and
+ * BEFORE the browser captures the new state, so the snapshot is coherent; on
+ * the plain (no-transition) path it keeps today's `afterRender` timing
+ * exactly. The one seam used by both `navigateResolved`'s push branch and
+ * `onPopstate` — replace navigation and query/hash-only navigation never call
+ * this (see their call sites).
+ */
+function flipWithTransition(flip: () => void, settle?: () => void): void {
+  const vt = viewTransitionApi();
+  if (!vt) {
+    flip();
+    if (settle) afterRender(settle);
+    return;
+  }
+  const t = vt(() => {
+    flip();
+    return afterCommit().then(settle);
+  });
+  // A transition skipped by a rapid follow-up navigation rejects `ready` —
+  // normal flow, not an error; leave it unhandled-but-caught. A rejected
+  // `updateCallbackDone` means OUR flip (or `settle`) threw, which without a
+  // transition would have surfaced synchronously — route it to
+  // host.reportError so it stays loud instead of a silent unhandledrejection.
+  t?.ready?.catch(() => {});
+  t?.updateCallbackDone?.catch((err) => host.reportError(err));
+}
+
 function onPopstate(): void {
   if (!scrollRestorationOn) {
-    emit();
+    flipWithTransition(() => emit());
     return;
   }
   const st = history.state as { __zScrollId?: number } | null;
@@ -1101,12 +1172,13 @@ function onPopstate(): void {
   // is still the LEAVING entry's position — save it, then restore the target's.
   const pos = scrollOnPop(readScroll(), targetId);
   const nav = ++navSeq; // this POP now owns the viewport
-  emit();
   // A browser-created fragment entry keeps its fragment position (see
   // __shouldRestoreOnPop); the bookkeeping above still ran, so the entry we
   // LEFT keeps its saved position and a later stamped POP restores normally.
-  if (!__shouldRestoreOnPop(targetId !== undefined, window.location.hash)) return;
-  afterRender(() => restoreScrollWithRetry(pos, SCROLL_RESTORE_MAX_FRAMES, nav));
+  const restore = __shouldRestoreOnPop(targetId !== undefined, window.location.hash)
+    ? () => restoreScrollWithRetry(pos, SCROLL_RESTORE_MAX_FRAMES, nav)
+    : undefined;
+  flipWithTransition(() => emit(), restore);
 }
 
 /**
@@ -1154,9 +1226,13 @@ function navigateResolved(to: string, opts: { replace?: boolean } = {}): void {
   const samePathname = targetPathname(to) === window.location.pathname;
   const newId = scrollRestorationOn ? scrollOnPush(readScroll()) : null;
   navSeq++; // this PUSH now owns the viewport; any in-flight restore is stale
-  history.pushState(scrollStateFor(newId), "", to);
-  emit();
-  if (scrollRestorationOn && !samePathname) afterRender(() => window.scrollTo(0, 0));
+  const flip = () => { history.pushState(scrollStateFor(newId), "", to); emit(); };
+  // Query/hash-only nav (a filter box setting a param per keystroke) never
+  // transitions and never scrolls — the viewport must stay exactly where it
+  // is, so this bypasses flipWithTransition entirely rather than passing an
+  // undefined settle through it.
+  if (samePathname) { flip(); return; }
+  flipWithTransition(flip, scrollRestorationOn ? () => window.scrollTo(0, 0) : undefined);
 }
 
 /**
@@ -1720,7 +1796,11 @@ export function useSearchParams(): [URLSearchParams, SetSearchParams] {
 /** The optional client-only lifecycle surface of a `.spa.tsx` module.
  * The shell bootstrap passes the whole module namespace, so a missing
  * `clientInit` export is simply `undefined` — no ESM link error. */
-export type SpaModuleHooks = { clientInit?: () => void };
+export type SpaModuleHooks = {
+  clientInit?: () => void;
+  /** The module's `export const spa`; mountSpa reads its client-relevant fields (viewTransitions). */
+  spa?: { viewTransitions?: boolean };
+};
 
 /** Client boot: hydrate the SPA App into its prerendered shell root.
  *
@@ -1756,6 +1836,12 @@ export function mountSpa(
   // → "", which makes the composition a no-op.
   setUrlPathPrefix(root?.getAttribute("data-z-prefix") ?? "");
   seedFlagsFromShell();
+  // Applied unconditionally (explicit `false` on absence) BEFORE clientInit,
+  // which may itself call `navigate()` — so a `spa.viewTransitions: true`
+  // module's very first navigation is already wrapped, and a subsequent
+  // mountSpa() call (or the two-arg back-compat call) never inherits a
+  // PREVIOUS module's setting.
+  setViewTransitions(mod?.spa?.viewTransitions === true);
   if (typeof mod?.clientInit === "function") {
     try {
       mod.clientInit();

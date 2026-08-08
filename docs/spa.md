@@ -98,6 +98,7 @@ export const spa = {
   title?: string;     // page <title>
   noindex?: boolean;  // <meta name="robots" content="noindex">; defaults to true
   flags?: Record<string, boolean>;  // build-time feature-flag defaults — see below
+  viewTransitions?: boolean;  // wrap soft navigations in document.startViewTransition() — see View transitions
 };
 
 export const routes = [
@@ -432,6 +433,77 @@ The client-side flow:
 
 Data loading happens entirely in the client: components use `useLocation()` or `useParams()` to determine the current route and fetch data accordingly (not shown in the skeleton).
 
+## View transitions
+
+Opt in with `spa.viewTransitions: true`:
+
+```ts
+export const spa = { base: "/app", title: "…", viewTransitions: true };
+```
+
+`mountSpa` reads it and wraps every soft navigation's route flip in
+[`document.startViewTransition()`](https://developer.mozilla.org/en-US/docs/Web/API/View_Transition_API).
+**Feature-detected**: on a browser without the API, navigation is exactly
+today's instant flip — no polyfill, no error, just progressive enhancement.
+**Off by default**: the API is same-document only, so opting in is a one-line
+decision an author makes deliberately, not a behavior change every existing
+SPA suddenly inherits.
+
+**Which flips transition:**
+
+- A pathname-changing `navigate()`/`<Link>` push, and a back/forward
+  (`popstate`) navigation — **do** transition.
+- A `replace` navigation (`navigate(to, { replace: true })`, and the URL-sync
+  a route's declarative `redirect` performs) — **never** transitions. A
+  replace doesn't move the history cursor, and its dominant use — the
+  redirect URL-sync, which happens *after* the target route has already
+  rendered — has nothing left to animate. `navigate(to, { replace: true })`
+  between two different routes therefore flips instantly by design; use a
+  push if you want it animated.
+- A query/hash-only navigation (a filter box calling `setSearchParams` on
+  every keystroke) — **never** transitions and never scrolls, exactly as
+  without the opt-in: the viewport must stay put, not crossfade under the
+  visitor's cursor.
+
+**The transition captures the *immediate* flip, not the settled page.** A
+guarded route's guard, and a `lazy()` route's chunk, both resolve
+*after* the transition finishes (as an ordinary post-hydration re-render) —
+so a guarded route animates to its `fallback` and a lazy route to its
+`skeleton`, not to the final authorized/loaded content. This is
+correct-by-design (the transition can't wait on async work without risking
+the spec's ~4s timeout) but is worth knowing before filing it as a bug.
+
+**Customize the animation** with the standard View Transitions CSS —
+`::view-transition-old(*)`, `::view-transition-new(*)`, and a per-element
+`view-transition-name` for anything that should morph individually (a shared
+hero image, say) rather than cross-fade with the rest of the page. The
+browser does **not** disable view transitions for `prefers-reduced-motion` on
+its own; add the guard yourself:
+
+```css
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}
+```
+
+**Interplay with [scroll restoration](#utilities):** the scroll-to-top (push)
+or restore (pop) adjustment runs *inside* the transition, after the flip's
+render commits and before the browser captures the new state — so the first
+scroll attempt is always in the snapshot the browser animates to. One caveat
+on pop: when the saved position isn't reachable yet because guarded or lazy
+content is still mounting, restoration retries over subsequent frames (the
+same race documented for plain scroll restoration), and those later
+adjustments land after the snapshot — the transition animates to the closest
+reachable position and the retries settle the rest without animation.
+
+**The escape hatch:** `setViewTransitions(on)` — the same setter `mountSpa`
+calls internally from `spa.viewTransitions` — is exported for a hand-mounted
+`<Router>` that doesn't go through `mountSpa`. See [Utilities](#utilities).
+
 ## Router API
 
 All router symbols are imported from `@z/runtime`:
@@ -630,6 +702,12 @@ scrolls to the top; **back/forward** (popstate) restores the scroll position sav
 history entry. Positions are keyed to the history entry (a monotonic id in `history.state`),
 not the pathname, so a repeated path restores the right position. Call
 `setScrollRestoration(false)` to opt out (e.g. to manage scroll yourself).
+
+**`setViewTransitions(on)`** (off by default)
+Opt in to (or back out of) wrapping route flips in
+`document.startViewTransition()` — see [View transitions](#view-transitions).
+`mountSpa` calls this from `spa.viewTransitions`, so most apps never call it
+directly; it's the escape hatch for a hand-mounted `<Router>`.
 
 **`isServer()`**
 Returns `true` during SSR (build time), `false` in the browser. Used for

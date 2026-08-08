@@ -1,4 +1,4 @@
-import { expect, test, describe } from "bun:test";
+import { expect, test, describe, afterEach } from "bun:test";
 import { matchRoute, matchChain, flattenLeafPaths, substituteRouteParams, describeRoutes, resolveHref, type RouteDef } from "./router.ts";
 
 const C = () => null; // stand-in component
@@ -206,7 +206,7 @@ describe("flattenLeafPaths (describe flattening)", () => {
 
 import {
   Router, Link, navigate, useParams, useLocation, mountSpa, Outlet, useSearchParams, lazy,
-  useGuardData,
+  useGuardData, setViewTransitions, setScrollRestoration,
   __resetScrollForTest, __scrollStateForTest, __scrollBookkeepingForTest,
   __scrollRestoreShouldRetry, __shouldRestoreOnPop, __navSeqForTest,
   __setRouterBaseForTest,
@@ -1348,6 +1348,173 @@ describe("query-only navigation preserves the scroll position", () => {
   });
 });
 
+// --- View transitions --------------------------------------------------------
+// document.startViewTransition() wraps a route flip when opted in
+// (setViewTransitions(true), normally driven by `spa.viewTransitions` via
+// mountSpa) AND supported (feature-detected). happy-dom has no
+// startViewTransition, so a test that needs one installs a stub on `document`;
+// the block's afterEach removes it and resets the other module-globals.
+describe("view transitions", () => {
+  function installVTStub(): Array<() => Promise<void> | void> {
+    const calls: Array<() => Promise<void> | void> = [];
+    (document as any).startViewTransition = (cb: () => Promise<void> | void) => {
+      calls.push(cb);
+      // The stub runs the callback INLINE, which a real browser does not: it
+      // screenshots the old state first and calls the callback at the next
+      // rendering opportunity. Running it inline only keeps these tests
+      // deterministic under `await flush()`; the `calls.length` assertions
+      // below pin that `startViewTransition` is CALLED synchronously by
+      // navigate(), never that the flip has already happened when it returns
+      // (no router code may assume that).
+      const p = Promise.resolve(cb());
+      return { ready: p.catch(() => {}), updateCallbackDone: p };
+    };
+    return calls;
+  }
+
+  // Every knob these tests turn is MODULE-global: a failed assertion aborts the
+  // test body, so per-test cleanup at the bottom would leave the opt-in on and
+  // the stub installed for the rest of the file, turning one red test into a
+  // cascade of unrelated ones. Reset here instead — it always runs.
+  afterEach(() => {
+    delete (document as any).startViewTransition;
+    setViewTransitions(false);
+    setScrollRestoration(true);
+    delete (window as any).zigapagosOnError;
+    setLocationPathname("/app/");
+  });
+
+  test("a pathname-changing navigate() wraps the flip in startViewTransition exactly once; the DOM shows the target route once the callback's promise settles (fails without the fix)", async () => {
+    setViewTransitions(true);
+    const calls = installVTStub();
+    setLocationPathname("/app/");
+    const r = renderIsland(App, {}, { mode: "render", pathname: "/app/" });
+    await flush();
+    navigate("/booking");
+    // Wrapped SYNCHRONOUSLY as part of navigate() — a refactor that emits
+    // outside the callback (or doesn't wrap at all) fails this.
+    expect(calls.length).toBe(1);
+    await flush();
+    expect(window.location.pathname).toBe("/app/booking");
+    expect(r.html()).toContain('data-view="booking"');
+    r.unmount();
+  });
+
+  test("opt-in guard: setViewTransitions left off — navigate() still flips but never touches the stub", async () => {
+    const calls = installVTStub();
+    __setRouterBaseForTest("");
+    setLocationPathname("/app/x");
+    navigate("/app/y");
+    await flush();
+    expect(calls.length).toBe(0);
+    expect(window.location.pathname).toBe("/app/y");
+  });
+
+  test("feature-detection fallback: opted in with NO document.startViewTransition still flips and still scrolls to top (fails without feature detection)", async () => {
+    setViewTransitions(true);
+    __setRouterBaseForTest("");
+    setLocationPathname("/app/x");
+    await withScrollSpy(async (scrolls) => {
+      navigate("/app/y");
+      await flush();
+      expect(scrolls).toEqual([[0, 0]]); // non-VT path unchanged
+    });
+    expect(window.location.pathname).toBe("/app/y");
+  });
+
+  test("a query-only navigation never transitions (fails without the samePathname gate)", async () => {
+    setViewTransitions(true);
+    const calls = installVTStub();
+    __setRouterBaseForTest("");
+    setLocationPathname("/app/filter");
+    navigate("/app/filter?q=a");
+    await flush();
+    expect(calls.length).toBe(0);
+  });
+
+  test("a replace navigation never transitions", async () => {
+    setViewTransitions(true);
+    const calls = installVTStub();
+    __setRouterBaseForTest("");
+    setLocationPathname("/app/x");
+    navigate("/app/y", { replace: true });
+    await flush();
+    expect(calls.length).toBe(0);
+    expect(window.location.pathname).toBe("/app/y");
+  });
+
+  test("popstate wraps the flip too (fails without fix); route re-renders after the callback settles", async () => {
+    setViewTransitions(true);
+    setLocationPathname("/app/");
+    const r = renderIsland(App, {}, { mode: "render", pathname: "/app/" }); // binds popstate
+    await flush();
+    const calls = installVTStub();
+    window.history.pushState(null, "", "/app/club/9");
+    window.dispatchEvent(new Event("popstate"));
+    await flush();
+    expect(calls.length).toBe(1);
+    expect(r.html()).toContain('data-id="9"');
+    r.unmount();
+  });
+
+  // The fragment-entry exemption (__shouldRestoreOnPop) is orthogonal to
+  // transitions — it decides whether `settle` restores scroll, not whether
+  // the flip is wrapped — and is already pinned by "scroll restore on a
+  // browser-created fragment entry" above; this just confirms popstate still
+  // reaches emit() (via flipWithTransition) when scrollRestorationOn is off.
+  test("popstate still flips when scroll restoration is off (the early-return branch)", async () => {
+    setViewTransitions(true);
+    setScrollRestoration(false);
+    setLocationPathname("/app/");
+    const r = renderIsland(App, {}, { mode: "render", pathname: "/app/" });
+    await flush();
+    const calls = installVTStub();
+    window.history.pushState(null, "", "/app/club/11");
+    window.dispatchEvent(new Event("popstate"));
+    await flush();
+    expect(calls.length).toBe(1);
+    expect(r.html()).toContain('data-id="11"');
+    r.unmount();
+  });
+
+  test("a rejected updateCallbackDone (our flip threw) is routed to host.reportError, staying loud", async () => {
+    setViewTransitions(true);
+    const err = new Error("boom in transition");
+    (document as any).startViewTransition = (cb: () => Promise<void> | void) => {
+      cb();
+      return { ready: Promise.resolve(), updateCallbackDone: Promise.reject(err) };
+    };
+    const reported: unknown[] = [];
+    (window as any).zigapagosOnError = (msg: string) => reported.push(msg);
+    __setRouterBaseForTest("");
+    setLocationPathname("/app/x");
+    navigate("/app/y");
+    await flush();
+    await flush(); // let the rejected updateCallbackDone's .catch handler run
+    expect(reported.length).toBeGreaterThan(0);
+    expect(String(reported[0])).toContain("boom in transition");
+  });
+
+  // A transition SKIPPED by a rapid follow-up navigation rejects `ready` —
+  // normal flow, not an error. Without the wrapper's no-op `.catch()` this
+  // would surface as unhandledrejection console noise.
+  test("a rejected `ready` (skipped transition) is swallowed, not reported", async () => {
+    setViewTransitions(true);
+    (document as any).startViewTransition = (cb: () => Promise<void> | void) => {
+      const p = Promise.resolve(cb());
+      return { ready: Promise.reject(new Error("transition skipped")), updateCallbackDone: p };
+    };
+    const reported: unknown[] = [];
+    (window as any).zigapagosOnError = (msg: string) => reported.push(msg);
+    __setRouterBaseForTest("");
+    setLocationPathname("/app/x");
+    navigate("/app/y");
+    await flush();
+    await flush();
+    expect(reported.length).toBe(0); // the skip is swallowed, not surfaced as an app error
+  });
+});
+
 // --- Lazy (code-split) routes ---------------------------------------------
 const HeavySkeleton = () => h("div", { "data-view": "heavy-skeleton" }, "loading heavy…");
 const Heavy = () => h("div", { "data-view": "heavy", "data-heavy": "yes" }, "HEAVY CONTENT");
@@ -1614,7 +1781,7 @@ test("mountSpa is exported and callable", () => {
 import * as barrel from "./index.ts";
 
 test("router symbols are re-exported from the @z/runtime barrel", () => {
-  for (const sym of ["Router", "Link", "Outlet", "lazy", "useParams", "useLocation", "useNavigate", "useSearchParams", "setScrollRestoration", "navigate", "matchChain", "matchRoute", "mountSpa", "isServer"]) {
+  for (const sym of ["Router", "Link", "Outlet", "lazy", "useParams", "useLocation", "useNavigate", "useSearchParams", "setScrollRestoration", "setViewTransitions", "navigate", "matchChain", "matchRoute", "mountSpa", "isServer"]) {
     expect(typeof (barrel as any)[sym]).toBe("function");
   }
 });
