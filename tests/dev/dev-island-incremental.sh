@@ -22,6 +22,7 @@
 #       its frontmatter can be embedded in listing/prev-next pages),
 #   (f) teardown leaves no orphans.
 set -euo pipefail
+export ZIGAPAGOS_DEV_BACKGROUND=0 # keep dev foreground: this harness manages the process itself
 cd "$(dirname "$0")"
 HERE="$(pwd)"
 REPO="$(cd ../.. && pwd)"

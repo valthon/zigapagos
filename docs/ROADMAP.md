@@ -53,7 +53,11 @@ Policy:
   [cross-tier codegen](cross-tier-codegen.md)); what remains is retiring the
   bootstrap OpenAPI path in real consumer projects.
 - **Router and DX paper cuts** — browser error relay, same-origin fetch
-  defaults, live feature flags, state-preserving reload.
+  defaults, live feature flags, state-preserving reload. **Background
+  dev-server management shipped** (`zigapagos dev --background` +
+  `stop|status|logs`, build-aware `/_zigapagos/status`, AI-agent
+  auto-detection; issue #126, see [dev-server.md](dev-server.md)); its own
+  v1.1 remainder — `dev wait`, NDJSON structured logs — stays on this list.
 - **Windows builds**, gated on the Zig 0.17 port above.
 
 **ZigBase integration seams.** Route guards, browser error relay, same-origin

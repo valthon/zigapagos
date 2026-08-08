@@ -22,6 +22,7 @@
 #   (c) a shared-input edit (a layout) also falls back to a FULL rebuild,
 #   (d) teardown leaves no orphans.
 set -euo pipefail
+export ZIGAPAGOS_DEV_BACKGROUND=0 # keep dev foreground: this harness manages the process itself
 cd "$(dirname "$0")"
 HERE="$(pwd)"
 REPO="$(cd ../.. && pwd)"

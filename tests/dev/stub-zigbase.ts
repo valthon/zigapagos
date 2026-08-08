@@ -118,7 +118,20 @@ Bun.serve({
   hostname: host,
   port,
   async fetch(req) {
-    const resolved = resolve(new URL(req.url).pathname);
+    const pathname = new URL(req.url).pathname;
+    // Liveness probe (docs/api.md: "GET /api/health | Liveness probe + the
+    // active database backend + component versions. No auth."), served on
+    // the same port/origin as the static tree, just like the real binary.
+    // `dev_control.zig`'s orphan sweep (tests/dev/background.sh scenario g)
+    // refuses to reap a zigbase pid that doesn't answer this — a stub
+    // without it makes that sweep permanently a no-op, not a passing test.
+    if (pathname === "/api/health") {
+      return new Response(JSON.stringify({ status: "ok", backend: "stub", versions: {} }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    const resolved = resolve(pathname);
     if (!resolved) return new Response("stub-zigbase: not found\n", { status: 404 });
     return new Response(Bun.file(resolved));
   },

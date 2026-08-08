@@ -121,6 +121,13 @@ const help_menu =
     \\  --reload-port=N   SSE reload-server port (default 0 = pick a free port)
     \\  --watch-dir=DIR   Watch this directory instead of the discovered
     \\                    island/SPA dirs (repeatable; any use replaces them)
+    \\  --background      Detach: start the dev loop as a background process,
+    \\                    print its URL/PID, and exit. Then: 'zigapagos dev
+    \\                    stop|status|logs [--follow]' (auto-enabled when an
+    \\                    AI-agent environment is detected; set
+    \\                    ZIGAPAGOS_DEV_BACKGROUND=0 to disable)
+    \\  --force           Stop an already-running dev session first
+    \\  --ignore-lock     Run untracked alongside an existing session
     \\
     \\End-to-end testing (zigapagos e2e ... -- CMD [ARGS...]):
     \\  Boots the STOCK zigbase binary over the built site on a free port,
