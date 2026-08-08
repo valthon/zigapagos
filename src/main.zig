@@ -258,6 +258,7 @@ test "e2e" {
 test "dev" {
     _ = @import("cli/dev.zig");
     _ = @import("cli/reload.zig");
+    _ = @import("cli/dev_lockfile.zig");
 }
 
 // Pull doctor.zig into the test compilation unit for `zig build test-doctor`.
