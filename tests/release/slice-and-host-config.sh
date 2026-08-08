@@ -95,15 +95,22 @@ export default function $c({ start = 0 }: { start?: number }) {
 TSX
 done
 
-cat > "$SITE/layouts/page.shtml" <<'EOF'
+# The inline <style> whose hash must land in style-src-elem, and the comment
+# that NAMES the tag right before it — the shape that broke the scanner once
+# (a non-comment-aware scan hashes the comment prose and loses the real hash).
+STYLE_CSS='h1{color:#123456}'
+
+cat > "$SITE/layouts/page.shtml" <<EOF
 <!DOCTYPE html>
 <html>
   <head>
     <meta charset="UTF-8">
-    <title :text="$site.title"></title>
+    <title :text="\$site.title"></title>
+    <!-- the <style> element below is inline on purpose; so is the <script> -->
+    <style>$STYLE_CSS</style>
   </head>
   <body>
-    <div :html="$page.content()"></div>
+    <div :html="\$page.content()"></div>
     <island src="components/Counter.island.tsx" client:load :props='{ .start = 1 }'></island>
     <island src="components/Ticker.island.tsx" client:load :props='{ .start = 2 }'></island>
   </body>
@@ -195,6 +202,32 @@ grep -q '<FilesMatch "\.">' "$OUT/cache.apache.conf" \
   || fail "cache.apache.conf has no catch-all baseline stanza"
 [[ -f "$OUT/spa/app.js" ]] \
   || fail "expected a stable-path SPA bundle at /spa/app.js for the baseline assertion above to be about something"
+
+# The style-src-elem/style-src-attr split (issue #130): a blanket `style-src
+# 'unsafe-inline'` grants inline-style-ELEMENT injection sitewide when only
+# style ATTRIBUTES (the framework's `display:contents` slot wrappers) need the
+# lenient grant. This is the CI-visible pin — the Playwright CSP e2e that
+# proves the split works end to end in a real browser is NOT wired into
+# ci.yml (see examples/tsx-site/test/spa_csp_playwright.py).
+grep -q "style-src-attr 'unsafe-inline'" "$OUT/csp.nginx.conf" \
+  || fail "csp.nginx.conf grants no style-src-attr — the framework's inline style attributes would be blocked"
+grep -Eq "(^|; )style-src ['\"]" "$OUT/csp.nginx.conf" \
+  && fail "csp.nginx.conf still emits a blanket style-src — issue #130 asks for the elem/attr split"
+grep -q "style-src-elem 'self'" "$OUT/csp.nginx.conf" \
+  || fail "csp.nginx.conf has no strict style-src-elem"
+
+# ...and the hash must be BYTE-EXACT against the <style> the same build served.
+# A strict style-src-elem with a wrong hash is worse than the old blanket grant:
+# it blocks the site's own stylesheet and the build still exits 0. The layout
+# above deliberately puts a comment NAMING <style>/<script> in front of the real
+# element — a scan that is not comment-aware hashes the comment text instead and
+# silently drops the real hash, which is exactly how this shipped once.
+STYLE_HASH="$(printf '%s' "$STYLE_CSS" | bun -e '
+  const { createHash } = require("node:crypto");
+  process.stdout.write(createHash("sha256").update(await Bun.stdin.text(), "utf8").digest("base64"));
+')" || fail "could not compute the expected inline-style hash"
+grep -q "sha256-$STYLE_HASH" "$OUT/csp.nginx.conf" \
+  || { cat "$OUT/csp.nginx.conf"; fail "style-src-elem is missing the byte-exact hash of the page's own <style> (expected sha256-$STYLE_HASH) — the deployed CSP would block it"; }
 
 # The zigbase default target, beside the SPA's routing manifest.
 [[ -f "$OUT/app/routing-manifest.json" ]] || fail "no routing-manifest.json for the SPA"

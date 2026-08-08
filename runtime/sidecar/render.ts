@@ -47,6 +47,18 @@ function validateSpaFlags(flags: unknown): asserts flags is Record<string, boole
   }
 }
 
+/** Loud-fail validation of a module's `spa.viewTransitions` export: it must
+ * be a boolean when present. Mirrors `validateSpaFlags` — a bad value is a
+ * config error the SSG should surface at build time, not silently ignore
+ * client-side (the router's feature-detected wrapper would just treat any
+ * truthy non-boolean as "on" and any falsy one as "off", masking a typo). */
+function validateSpaViewTransitions(spa: unknown): void {
+  const vt = (spa as { viewTransitions?: unknown } | undefined)?.viewTransitions;
+  if (vt !== undefined && typeof vt !== "boolean") {
+    throw new Error(`spa.viewTransitions must be a boolean (got ${typeof vt})`);
+  }
+}
+
 /** Seed (or CLEAR) the sidecar's page-global flags store from the module's
  * declared `spa.flags` defaults, per render request. Seeding makes the SSR'd
  * skeleton render with the same defaults the shell's `data-z-flags` snapshot
@@ -71,6 +83,7 @@ async function handle(line: string): Promise<string> {
       const mod = await load(req.src);
       const spa = mod.spa ?? {};
       validateSpaFlags((spa as { flags?: unknown }).flags); // loud build failure on bad defaults
+      validateSpaViewTransitions(spa); // loud build failure on a non-boolean viewTransitions
       const routes = await describeRoutes(mod.routes ?? []);
       return JSON.stringify({ id: req.id, spa, routes });
     }

@@ -477,9 +477,10 @@ export type CspTarget = "nginx" | "apache" | "zigbase";
  * token, INCLUDING the wrapping single quotes the grammar requires (an unquoted
  * `sha256-…` is parsed as a HOST source, e.g. `http://sha256-…`, and ignored —
  * verified against real Chrome + Firefox). The browser hashes the literal UTF-8
- * bytes between the start tag's `>` and `</script>`, so `content` must be passed
- * byte-for-byte as served. */
-function inlineScriptHash(content: string): string {
+ * bytes between a start tag's `>` and its matching close tag, so `content` must
+ * be passed byte-for-byte as served. Serves `<script>` and `<style>` alike — CSP
+ * hashing is the same sha256-of-exact-bytes rule for both element kinds. */
+function inlineContentHash(content: string): string {
   return "'sha256-" + createHash("sha256").update(content, "utf8").digest("base64") + "'";
 }
 
@@ -495,23 +496,92 @@ function isHashableInlineScript(attrs: string): boolean {
 }
 
 /**
+ * Walk `html` left-to-right and call `onElement` for every `<script>` and
+ * `<style>` ELEMENT, in document order, with its attribute text and its exact
+ * raw-text content.
+ *
+ * A hash allow-list is only as good as its agreement with what the browser
+ * tokenizes, and a scan that is not comment- and raw-text-aware disagrees in
+ * BOTH directions at once: it hashes text that is not an element, and — because
+ * the bogus match consumes forward to the next close tag — it drops the hash of
+ * a real element that follows. The deployed CSP then blocks markup the same
+ * build emitted. (`src/islands/pass.zig` tokenizes with the same discipline for
+ * the same reason.) So this walker mirrors the three tokenizer states that
+ * matter here:
+ *
+ * - **Comment.** `<!--…-->` is skipped whole. A layout that merely *mentions*
+ *   `<style>`/`<script>` in a comment — prose about the markup below it — must
+ *   contribute no hash and must not swallow the element it describes.
+ * - **Raw text.** Once inside `<script>`/`<style>` the content runs to the FIRST
+ *   literal close tag, so a nested `<style>` inside a `<script type=
+ *   "application/json">` data block is CONTENT, not an element. That case is
+ *   real, not theoretical: `data-z-slots` JSON carries author HTML with only
+ *   `</` escaped to `<\/` (`escapeScriptContent` in `src/islands/pass.zig`), so
+ *   a slot holding a `<style>` leaves a literal, UNescaped `<style>` open tag in
+ *   the page — visible to a naive regex, invisible to a browser.
+ * - **Unterminated.** An unclosed comment or raw-text element means everything
+ *   after it is content to the browser, so scanning stops rather than guessing.
+ *
+ * (Attribute values in our generated shells never contain `>`, so `[^>]*` for
+ * the start tag is faithful.)
+ */
+function forEachRawTextElement(
+  html: string,
+  onElement: (name: "script" | "style", attrs: string, content: string) => void,
+): void {
+  // Constructed per call: a module-level /g regex carries `lastIndex` between
+  // calls, which is exactly the kind of spooky state this file should not have.
+  const open = /<!--|<(script|style)\b([^>]*)>/gi;
+  for (let m = open.exec(html); m !== null; m = open.exec(html)) {
+    if (m[0] === "<!--") {
+      const end = html.indexOf("-->", m.index + "<!--".length);
+      if (end < 0) return; // unterminated comment: the rest of the document is comment
+      open.lastIndex = end + "-->".length;
+      continue;
+    }
+    const name = m[1].toLowerCase() as "script" | "style";
+    const from = m.index + m[0].length;
+    const close = name === "script" ? /<\/script\s*>/gi : /<\/style\s*>/gi;
+    close.lastIndex = from;
+    const c = close.exec(html);
+    if (c === null) return; // unterminated raw text: nothing after it is an element
+    onElement(name, m[2], html.slice(from, c.index));
+    open.lastIndex = c.index + c[0].length;
+  }
+}
+
+/**
  * Scan HTML for inline scripts a strict CSP would block and return the SORTED,
  * DEDUPED set of `'sha256-…'` hashes over their exact content.
- *
- * The regex mirrors the HTML tokenizer's "script data" state: once inside a
- * `<script>` the content runs to the FIRST literal `</script>`. Our JSON data
- * blocks escape any nested markup as `<\/script>` (backslash), so a nested
- * script is captured as content, not matched as its own element — exactly as a
- * browser sees it. (Attribute values here never contain `>`, so `[^>]*` for the
- * start tag is faithful for our generated shells.)
  */
 export function scanInlineScriptHashes(htmlStrings: string[]): string[] {
   const hashes = new Set<string>();
-  const re = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
   for (const html of htmlStrings) {
-    for (let m = re.exec(html); m !== null; m = re.exec(html)) {
-      if (isHashableInlineScript(m[1])) hashes.add(inlineScriptHash(m[2]));
-    }
+    forEachRawTextElement(html, (name, attrs, content) => {
+      if (name === "script" && isHashableInlineScript(attrs)) hashes.add(inlineContentHash(content));
+    });
+  }
+  return [...hashes].sort();
+}
+
+/**
+ * Scan HTML for inline `<style>` ELEMENTS and return the SORTED, DEDUPED set of
+ * `'sha256-…'` hashes over their exact content — the `style-src-elem` analogue
+ * of `scanInlineScriptHashes` above.
+ *
+ * Style ATTRIBUTES (`style="…"` on an element) are NOT covered here — a CSP
+ * hash-source can only allow-list `<style>`/`<script>` ELEMENT content, never an
+ * attribute value (that would need `'unsafe-hashes'`, a broader grant this
+ * emitter does not opt into). That is exactly why `style-src-attr` below stays
+ * `'unsafe-inline'`: the framework's `display:contents` slot-wrapper attributes
+ * have no hash-based alternative.
+ */
+export function scanInlineStyleHashes(htmlStrings: string[]): string[] {
+  const hashes = new Set<string>();
+  for (const html of htmlStrings) {
+    forEachRawTextElement(html, (name, _attrs, content) => {
+      if (name === "style") hashes.add(inlineContentHash(content));
+    });
   }
   return [...hashes].sort();
 }
@@ -524,7 +594,7 @@ export function scanInlineScriptHashes(htmlStrings: string[]): string[] {
 //
 // Rule (simple + predictable, documented in docs/spa.md): every EXTERNAL
 // origin referenced by a `<link href="…">` in the built HTML is unioned into
-// BOTH `style-src` and `font-src`. This covers the pragmatic font pattern in
+// BOTH `style-src-elem` and `font-src`. This covers the pragmatic font pattern in
 // one stroke — the stylesheet origin (fonts.googleapis.com) and the font-file
 // origin its `preconnect` names (fonts.gstatic.com) both end up allowed in
 // both directives. `script-src` is never widened. Root-relative hrefs are
@@ -562,37 +632,56 @@ export function scanExternalLinkOrigins(htmlStrings: string[]): string[] {
 
 /** The site-wide CSP header VALUE. `script-src` is strict — `'self'` plus the
  * inline-script hashes, NO `unsafe-inline` (that's the XSS-critical directive
- * and the whole point of hashing). `style-src` allows `'unsafe-inline'` because
- * the framework emits inline `style="display:contents"` on island slot wrappers
- * that can't be hashed for static hosting (attribute styles need `unsafe-hashes`);
- * style injection is far lower risk than script injection, so this is the
- * standard strict-script / lenient-style posture (verified: island pages then
- * serve with zero violations).
+ * and the whole point of hashing).
  *
- * `linkOrigins` is the `scanExternalLinkOrigins` set: each origin
- * is unioned into `style-src` AND a `font-src` (emitted only when the set is
+ * `<style>`/`<link>` are governed by the CSP3 split directives instead of a
+ * single blanket `style-src` (issue #130): `style-src-elem` stays just as
+ * strict as `script-src` — `'self'` plus a `'sha256-…'` per unique inline
+ * `<style>` element plus the folded external `<link>` origins, NO
+ * `unsafe-inline` — because `<style>` element content CAN be hashed exactly
+ * like a `<script>`. Only `style-src-attr` carries `'unsafe-inline'`, because
+ * the framework emits inline `style="display:contents"` ATTRIBUTES on island
+ * slot wrappers that a hash-source cannot cover (hashes apply to elements, not
+ * attributes — reaching an attribute needs the broader `'unsafe-hashes'`,
+ * which this emitter does not opt into). Attribute-style injection is far
+ * lower risk than script injection, so this confines the one remaining lenient
+ * grant to exactly the surface that needs it (verified: island + SPA pages
+ * then serve with zero violations, elements included).
+ *
+ * There is deliberately NO bare `style-src` fallback line: the issue asks to
+ * drop the blanket grant, and a lenient `style-src` alongside the split would
+ * put `unsafe-inline` back in the header for any browser preferring it. The
+ * accepted tradeoff is that a browser without CSP3 elem/attr support (pre-Chrome
+ * 75, pre-Firefox 108, pre-Safari 15.4) falls back to `default-src 'self'` for
+ * styles — external stylesheets and inline style attributes degrade there,
+ * cosmetically, on an already-obsolete browser; see docs/spa.md.
+ *
+ * `linkOrigins` is the `scanExternalLinkOrigins` set: each origin is unioned
+ * into `style-src-elem` AND a `font-src` (emitted only when the set is
  * non-empty, keeping the no-external-heads value byte-identical to before —
- * `font-src` then falls back to `default-src 'self'`). */
-export function cspHeaderValue(hashes: string[], linkOrigins: string[] = []): string {
+ * `font-src` then falls back to `default-src 'self'`). `styleHashes` is the
+ * `scanInlineStyleHashes` set. */
+export function cspHeaderValue(hashes: string[], linkOrigins: string[] = [], styleHashes: string[] = []): string {
   const scriptSrc = ["'self'", ...hashes].join(" ");
-  const styleSrc = ["'self'", "'unsafe-inline'", ...linkOrigins].join(" ");
+  const styleSrcElem = ["'self'", ...styleHashes, ...linkOrigins].join(" ");
   const fontSrc = linkOrigins.length === 0
     ? ""
     : `; font-src ${["'self'", ...linkOrigins].join(" ")}`;
-  return `default-src 'self'; script-src ${scriptSrc}; style-src ${styleSrc}${fontSrc}; object-src 'none'; base-uri 'self'`;
+  return `default-src 'self'; script-src ${scriptSrc}; style-src-elem ${styleSrcElem}; style-src-attr 'unsafe-inline'${fontSrc}; object-src 'none'; base-uri 'self'`;
 }
 
 /** One host-specific CSP artifact (site-wide, host-agnostic value). */
-export function emitCsp(hashes: string[], target: CspTarget, linkOrigins: string[] = []): EmittedFile {
-  const value = cspHeaderValue(hashes, linkOrigins);
+export function emitCsp(hashes: string[], target: CspTarget, linkOrigins: string[] = [], styleHashes: string[] = []): EmittedFile {
+  const value = cspHeaderValue(hashes, linkOrigins, styleHashes);
   switch (target) {
     case "nginx":
       return {
         name: "csp.nginx.conf",
         content:
           `# Generated by emit-host-config.ts — strict Content-Security-Policy for the\n` +
-          `# site's deterministic inline scripts (importmap + SPA bootstrap), allow-listed\n` +
-          `# by sha256 hash. Merge into the server{}/location{} that serves the site.\n` +
+          `# site's deterministic inline scripts and styles (importmap + SPA bootstrap,\n` +
+          `# plus any inline <style> elements), allow-listed by sha256 hash. Merge into\n` +
+          `# the server{}/location{} that serves the site.\n` +
           `add_header Content-Security-Policy "${value}" always;\n`,
       };
     case "apache":
@@ -600,9 +689,9 @@ export function emitCsp(hashes: string[], target: CspTarget, linkOrigins: string
         name: "csp.apache.conf",
         content:
           `# Generated by emit-host-config.ts — strict Content-Security-Policy for the\n` +
-          `# site's deterministic inline scripts (importmap + SPA bootstrap), allow-listed\n` +
-          `# by sha256 hash. Install in <docroot>/.htaccess or a <Directory> block\n` +
-          `# (requires mod_headers).\n` +
+          `# site's deterministic inline scripts and styles (importmap + SPA bootstrap,\n` +
+          `# plus any inline <style> elements), allow-listed by sha256 hash. Install in\n` +
+          `# <docroot>/.htaccess or a <Directory> block (requires mod_headers).\n` +
           `Header set Content-Security-Policy "${value}"\n`,
       };
     case "zigbase":
@@ -610,9 +699,10 @@ export function emitCsp(hashes: string[], target: CspTarget, linkOrigins: string
         name: "csp.zigbase.txt",
         content:
           `# Generated by emit-host-config.ts — strict Content-Security-Policy for the\n` +
-          `# site's deterministic inline scripts (importmap + SPA bootstrap), allow-listed\n` +
-          `# by sha256 hash. Set this response header in your ZigBase App config\n` +
-          `# (e.g. a global .headers entry) so every served page carries it.\n` +
+          `# site's deterministic inline scripts and styles (importmap + SPA bootstrap,\n` +
+          `# plus any inline <style> elements), allow-listed by sha256 hash. Set this\n` +
+          `# response header in your ZigBase App config (e.g. a global .headers entry)\n` +
+          `# so every served page carries it.\n` +
           `Content-Security-Policy: ${value}\n`,
       };
   }
@@ -620,8 +710,8 @@ export function emitCsp(hashes: string[], target: CspTarget, linkOrigins: string
 
 /** All three site-wide CSP artifacts for a scanned HTML set (operators pick the
  * file for their host; the header value is identical across targets). */
-export function emitAllCsp(hashes: string[], linkOrigins: string[] = []): EmittedFile[] {
-  return (["nginx", "apache", "zigbase"] as CspTarget[]).map((t) => emitCsp(hashes, t, linkOrigins));
+export function emitAllCsp(hashes: string[], linkOrigins: string[] = [], styleHashes: string[] = []): EmittedFile[] {
+  return (["nginx", "apache", "zigbase"] as CspTarget[]).map((t) => emitCsp(hashes, t, linkOrigins, styleHashes));
 }
 
 // ── Cache-Control support (issue #133) ───────────────────────────────────────
@@ -854,14 +944,17 @@ if (import.meta.main) {
     htmls.push(readFileSync(`${site}/${rel}`, "utf8"));
   }
   const hashes = scanInlineScriptHashes(htmls);
+  // Inline <style> ELEMENTS get their own hash set (style-src-elem) — see
+  // scanInlineStyleHashes's doc comment for why attributes are out of scope.
+  const styleHashes = scanInlineStyleHashes(htmls);
   // External origins referenced by <link> tags (spa.head renders
   // into every shell) must be allowed by the same CSP, or the emitted conf
   // blocks resources the emitted HTML loads.
   const linkOrigins = scanExternalLinkOrigins(htmls);
-  for (const f of emitAllCsp(hashes, linkOrigins)) {
+  for (const f of emitAllCsp(hashes, linkOrigins, styleHashes)) {
     const outPath = `${site}/${f.name}`;
     writeFileSync(outPath, f.content, "utf8");
-    console.log(`emit-host-config: wrote ${outPath} (csp, ${hashes.length} inline-script hashes, ${linkOrigins.length} external link origins)`);
+    console.log(`emit-host-config: wrote ${outPath} (csp, ${hashes.length} inline-script hashes, ${styleHashes.length} inline-style hashes, ${linkOrigins.length} external link origins)`);
   }
 
   // Site-wide Cache-Control (independent of routing manifests, same reasoning

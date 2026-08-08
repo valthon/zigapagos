@@ -97,8 +97,20 @@ def main():
     clean_rebuild()
     csp = read_csp_header()
     print(f"\nEmitted Content-Security-Policy:\n  {csp}\n", flush=True)
-    if "unsafe-inline" in csp.split("style-src")[0]:  # script side must be strict
-        sys.exit("FAIL: script-src carries unsafe-inline — not a strict CSP")
+
+    # Directive-level asserts for the style-src-elem/style-src-attr split
+    # (issue #130): 'unsafe-inline' must be confined to style-src-attr (the
+    # framework's inline style ATTRIBUTES — display:contents on slot
+    # wrappers), never in script-src or in a blanket style-src, and
+    # style-src-elem must be present so <style>/<link> stay hash-strict.
+    directives = [d.strip() for d in csp.split(";")]
+    offenders = [d for d in directives if "unsafe-inline" in d and not d.startswith("style-src-attr")]
+    if offenders:
+        sys.exit(f"FAIL: unsafe-inline outside style-src-attr: {offenders}")
+    if not any(d.startswith("style-src-elem") for d in directives):
+        sys.exit("FAIL: no style-src-elem directive — <style>/<link> are not strictly governed")
+    if any(d.startswith("style-src ") for d in directives):
+        sys.exit("FAIL: blanket style-src still emitted")
 
     CSPHandler.csp = csp
     httpd = socketserver.TCPServer(("127.0.0.1", 0), functools.partial(CSPHandler, directory=OUT))

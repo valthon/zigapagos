@@ -3,6 +3,11 @@
   <head>
     <title :text="$page.title"></title>
     <link type="text/css" rel="stylesheet" href="$site.asset('style.css').link()">
+    <!-- Deliberately inline, and deliberately preceded by a comment that names
+         the <style> and <script> tags below it: together they prove the emitted
+         CSP hashes the real elements byte-exactly and hashes nothing that only
+         LOOKS like markup inside a comment (test/spa_csp_playwright.py, #130). -->
+    <style>h1 { letter-spacing: 0.01em; }</style>
   </head>
   <body>
     <h1 :text="$page.title"></h1>

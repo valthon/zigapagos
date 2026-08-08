@@ -179,6 +179,40 @@ test("render clears stale flag state for a module without spa.flags", async () =
   expect(second.html).toContain("guest-off");
 });
 
+// --- spa.viewTransitions: baked build-time opt-in --------------------------
+// `describe` passes `spa` through untouched (spa.zig snapshots it into the
+// shell) and validates `viewTransitions` is a boolean when present, mirroring
+// `validateSpaFlags` — a bad value is a build-time config error, not a value
+// the router's feature-detected wrapper should silently coerce.
+const vtDir = join(import.meta.dir, ".describe-vt-fixture");
+mkdirSync(vtDir, { recursive: true });
+const vtFixture = join(vtDir, "app.spa.tsx");
+writeFileSync(vtFixture, `
+import { h } from "@z/runtime/core";
+export const spa = { base: "/app", title: "T", viewTransitions: true };
+export const routes = [{ path: "/", component: () => h("i", null, "home") }];
+export default function App() { return h("div", null); }
+`);
+const badVtFixture = join(vtDir, "bad.spa.tsx");
+writeFileSync(badVtFixture, `
+import { h } from "@z/runtime/core";
+export const spa = { base: "/bad", viewTransitions: "yes" };
+export const routes = [{ path: "/", component: () => null }];
+export default function App() { return h("div", null); }
+`);
+afterAll(() => rmSync(vtDir, { recursive: true, force: true }));
+
+test("describe rejects a non-boolean spa.viewTransitions (loud build failure)", async () => {
+  const res = await describe(badVtFixture);
+  expect(res.error).toContain("spa.viewTransitions must be a boolean");
+});
+
+test("describe passes spa.viewTransitions through untouched (the whole spa object still serializes)", async () => {
+  const res = await describe(vtFixture);
+  expect(res.error).toBeUndefined();
+  expect(res.spa).toEqual({ base: "/app", title: "T", viewTransitions: true });
+});
+
 // --- clientInit: the client-only lifecycle hook ----------------------------
 // The SSR sidecar must NEVER call a module's `clientInit` export — neither on
 // a describe nor on a render. The fixture's clientInit throws, so any sidecar

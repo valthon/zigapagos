@@ -19,7 +19,7 @@ export { __zHotRegister } from "./hot-registry.ts";
 export type { Slots } from "./slots.ts";
 export {
   Router, Link, Outlet, lazy, navigate, matchChain, matchRoute, useParams, useLocation,
-  useNavigate, useSearchParams, useGuardData, setScrollRestoration, mountSpa,
+  useNavigate, useSearchParams, useGuardData, setScrollRestoration, setViewTransitions, mountSpa,
   resolveHref, isExternalHref,
 } from "./router.ts";
 export type {

@@ -98,6 +98,7 @@ export const spa = {
   title?: string;     // page <title>
   noindex?: boolean;  // <meta name="robots" content="noindex">; defaults to true
   flags?: Record<string, boolean>;  // build-time feature-flag defaults — see below
+  viewTransitions?: boolean;  // wrap soft navigations in document.startViewTransition() — see View transitions
 };
 
 export const routes = [
@@ -432,6 +433,77 @@ The client-side flow:
 
 Data loading happens entirely in the client: components use `useLocation()` or `useParams()` to determine the current route and fetch data accordingly (not shown in the skeleton).
 
+## View transitions
+
+Opt in with `spa.viewTransitions: true`:
+
+```ts
+export const spa = { base: "/app", title: "…", viewTransitions: true };
+```
+
+`mountSpa` reads it and wraps every soft navigation's route flip in
+[`document.startViewTransition()`](https://developer.mozilla.org/en-US/docs/Web/API/View_Transition_API).
+**Feature-detected**: on a browser without the API, navigation is exactly
+today's instant flip — no polyfill, no error, just progressive enhancement.
+**Off by default**: the API is same-document only, so opting in is a one-line
+decision an author makes deliberately, not a behavior change every existing
+SPA suddenly inherits.
+
+**Which flips transition:**
+
+- A pathname-changing `navigate()`/`<Link>` push, and a back/forward
+  (`popstate`) navigation — **do** transition.
+- A `replace` navigation (`navigate(to, { replace: true })`, and the URL-sync
+  a route's declarative `redirect` performs) — **never** transitions. A
+  replace doesn't move the history cursor, and its dominant use — the
+  redirect URL-sync, which happens *after* the target route has already
+  rendered — has nothing left to animate. `navigate(to, { replace: true })`
+  between two different routes therefore flips instantly by design; use a
+  push if you want it animated.
+- A query/hash-only navigation (a filter box calling `setSearchParams` on
+  every keystroke) — **never** transitions and never scrolls, exactly as
+  without the opt-in: the viewport must stay put, not crossfade under the
+  visitor's cursor.
+
+**The transition captures the *immediate* flip, not the settled page.** A
+guarded route's guard, and a `lazy()` route's chunk, both resolve
+*after* the transition finishes (as an ordinary post-hydration re-render) —
+so a guarded route animates to its `fallback` and a lazy route to its
+`skeleton`, not to the final authorized/loaded content. This is
+correct-by-design (the transition can't wait on async work without risking
+the spec's ~4s timeout) but is worth knowing before filing it as a bug.
+
+**Customize the animation** with the standard View Transitions CSS —
+`::view-transition-old(*)`, `::view-transition-new(*)`, and a per-element
+`view-transition-name` for anything that should morph individually (a shared
+hero image, say) rather than cross-fade with the rest of the page. The
+browser does **not** disable view transitions for `prefers-reduced-motion` on
+its own; add the guard yourself:
+
+```css
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}
+```
+
+**Interplay with [scroll restoration](#utilities):** the scroll-to-top (push)
+or restore (pop) adjustment runs *inside* the transition, after the flip's
+render commits and before the browser captures the new state — so the first
+scroll attempt is always in the snapshot the browser animates to. One caveat
+on pop: when the saved position isn't reachable yet because guarded or lazy
+content is still mounting, restoration retries over subsequent frames (the
+same race documented for plain scroll restoration), and those later
+adjustments land after the snapshot — the transition animates to the closest
+reachable position and the retries settle the rest without animation.
+
+**The escape hatch:** `setViewTransitions(on)` — the same setter `mountSpa`
+calls internally from `spa.viewTransitions` — is exported for a hand-mounted
+`<Router>` that doesn't go through `mountSpa`. See [Utilities](#utilities).
+
 ## Router API
 
 All router symbols are imported from `@z/runtime`:
@@ -630,6 +702,12 @@ scrolls to the top; **back/forward** (popstate) restores the scroll position sav
 history entry. Positions are keyed to the history entry (a monotonic id in `history.state`),
 not the pathname, so a repeated path restores the right position. Call
 `setScrollRestoration(false)` to opt out (e.g. to manage scroll yourself).
+
+**`setViewTransitions(on)`** (off by default)
+Opt in to (or back out of) wrapping route flips in
+`document.startViewTransition()` — see [View transitions](#view-transitions).
+`mountSpa` calls this from `spa.viewTransitions`, so most apps never call it
+directly; it's the escape hatch for a hand-mounted `<Router>`.
 
 **`isServer()`**
 Returns `true` during SSR (build time), `false` in the browser. Used for
@@ -1164,9 +1242,11 @@ Overriding this fallback from a content page requires the alias to be root-absol
 ### Content Security Policy (strict CSP)
 
 A hardened deployment runs CSP without `unsafe-inline`, which would block the generated inline
-`<script type="importmap">` and the inline `mountSpa` bootstrap. Their content is deterministic
-at build time, so `emit-host-config.ts` scans the built HTML, computes a **sha256** for each
-unique inline script, and writes a ready-to-merge CSP at the site root:
+`<script type="importmap">` and the inline `mountSpa` bootstrap (and, for `style-src-elem`, any
+inline `<style>` element the site's own layouts ship — the `zigapagos init` scaffold layouts do).
+Their content is deterministic at build time, so `emit-host-config.ts` scans the built HTML,
+computes a **sha256** for each unique inline script and each unique inline `<style>` element, and
+writes a ready-to-merge CSP at the site root:
 
 - `csp.nginx.conf` — an `add_header Content-Security-Policy "…" always;` line.
 - `csp.apache.conf` — a `Header set Content-Security-Policy "…"` line.
@@ -1175,7 +1255,7 @@ unique inline script, and writes a ready-to-merge CSP at the site root:
 All three carry the same host-agnostic value:
 
 ```
-default-src 'self'; script-src 'self' 'sha256-…' 'sha256-…'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'
+default-src 'self'; script-src 'self' 'sha256-…' 'sha256-…'; style-src-elem 'self' 'sha256-…'; style-src-attr 'unsafe-inline'; object-src 'none'; base-uri 'self'
 ```
 
 - **`script-src` is hash-strict** — `'self'` (external `/zigapagos-runtime.js`, `/spa/*.js`,
@@ -1184,16 +1264,35 @@ default-src 'self'; script-src 'self' 'sha256-…' 'sha256-…'; style-src 'self
   `type="application/json"` (data blocks, not executed) and need no hash. **If the shell's inline content ever changes, regenerate**
   (the hashes are recomputed on every build; a stale hosted header would break the site — the
   hash is byte-exact).
-- **`style-src` allows `'unsafe-inline'`** because the framework emits inline `style` attributes
-  (e.g. `display:contents` on slot wrappers) that CSP hashes cannot cover (hashes apply to
-  `<style>`/`<script>` elements, not style *attributes*). Style injection is far lower-risk than
-  script injection; the XSS-critical `script-src` stays strict. (v2: move those inline styles to
-  a class/external stylesheet to enable a fully-strict `style-src`.)
+- **`style-src-elem` / `style-src-attr` split (CSP3), not a blanket `style-src`.** `<style>`
+  elements and `<link>` stylesheets are governed by `style-src-elem`, and it is **just as strict
+  as `script-src`**: `'self'` plus a `'sha256-…'` per unique inline `<style>` element, no
+  `unsafe-inline`. Only `style-src-attr` carries `'unsafe-inline'`, because it covers inline
+  `style` *attributes* (e.g. `display:contents` on island slot wrappers) — CSP hash-sources can
+  only allow-list `<style>`/`<script>` *element* content, never an attribute value, so there is no
+  hash-based alternative for attributes short of the broader `'unsafe-hashes'` (which this emitter
+  does not opt into). Attribute-style injection is far lower-risk than script injection, so this
+  confines the one remaining lenient grant to exactly the surface that needs it — the XSS-critical
+  `script-src` and now `style-src-elem` both stay fully strict. **If the shell's inline `<style>`
+  content ever changes, regenerate** — same byte-exact-hash requirement as inline scripts.
+  Support for `style-src-elem`/`style-src-attr` is fine in all evergreen browsers (Chrome 75+,
+  Firefox 108+, Safari 15.4+); a bare `style-src` fallback is deliberately NOT emitted alongside
+  the split (that would put `unsafe-inline` back in the header for any browser preferring it), so
+  an older browser ignores both and falls back to `default-src 'self'` for styles — external
+  stylesheets, inline `<style>` elements and inline style attributes all degrade there,
+  cosmetically, on an already-obsolete browser.
+
+  **Only `<style>` elements the build can SEE are hashed** — i.e. those present in the emitted
+  HTML. A `<style>` element a component creates *at runtime* (client-side render, or a CSS-in-JS
+  library injecting one on hydration) has no build-time text to hash and is blocked by
+  `style-src-elem`, where the old blanket `unsafe-inline` used to permit it. Ship such styles as
+  an asset (`<link rel="stylesheet">`, covered by `'self'`) or as `style` *attributes* (covered by
+  `style-src-attr`). This only bites a site whose operator actually serves the emitted header.
 - **External head origins are folded in automatically.** If the built HTML references external
   origins via `<link>` tags — typically a [`spa.head`](#head-assets) with a Google Fonts
   stylesheet and its `preconnect` — the emitted CSP would otherwise block the very resources the
   same build linked. The rule is simple and predictable: **every external origin referenced by a
-  `<link href="…">` in the built HTML is unioned into both `style-src` and `font-src`** (the
+  `<link href="…">` in the built HTML is unioned into both `style-src-elem` and `font-src`** (the
   `font-src` directive is only emitted when at least one external origin exists; without one the
   header value is unchanged and fonts fall back to `default-src 'self'`). So
 
@@ -1204,9 +1303,10 @@ default-src 'self'; script-src 'self' 'sha256-…' 'sha256-…'; style-src 'self
   ]
   ```
 
-  yields `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com`
+  yields `style-src-elem 'self' https://fonts.googleapis.com https://fonts.gstatic.com`
   and `font-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com` in all three
-  emitted flavors. `script-src` is never widened by head entries.
+  emitted flavors. `script-src` is never widened by head entries, and neither is `style-src-attr`
+  — it always reads exactly `'unsafe-inline'`.
 
 Verified end-to-end: a strict-CSP vhost serves a hydrated SPA (+ an island page) with **zero
 CSP violations** in real Chrome (`examples/tsx-site/test/spa_csp_playwright.py`).
