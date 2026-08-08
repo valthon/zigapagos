@@ -11,6 +11,14 @@ type LazyState = {
   loader: () => Promise<{ default: ComponentType<any> }>;
   comp?: ComponentType<any>; // resolved module default, cached across the app
   failed?: boolean; // loader rejected — stay on the skeleton, never retry-loop
+  // In-flight/settled loader call, shared between the real navigation load
+  // (below) and a hover/viewport prefetch (issue #128's `RouterCtx.prefetch`)
+  // — so a prefetch that starts the fetch and a navigation that follows
+  // share the SAME network request instead of double-fetching the chunk.
+  // Cleared (not left rejected) on a PREFETCH failure so a transient
+  // hover-time error never blocks the real navigation load — see
+  // `startLazyLoad`'s callers.
+  promise?: Promise<{ default: ComponentType<any> }>;
 };
 /** The marker the Router recognizes on a lazy route's `component`. */
 const LAZY = "__zLazy" as const;
@@ -18,6 +26,21 @@ type LazyComponent = ComponentType<any> & { [LAZY]: LazyState };
 
 function lazyStateOf(c: ComponentType<any> | undefined): LazyState | undefined {
   return c ? (c as Partial<LazyComponent>)[LAZY] : undefined;
+}
+
+/**
+ * Start (or reuse) a lazy route's chunk load. `??=` means a concurrent
+ * navigation-load and prefetch — or two prefetches — share one in-flight
+ * request rather than each calling `loader()` (a fresh dynamic `import()`)
+ * independently. Callers each attach their own `.then`/`.catch` to the
+ * returned promise; a REJECTED promise stays cached here (so a second
+ * caller doesn't retry a load that's already known to fail) — a
+ * prefetch-only failure clears it back to `undefined` instead (see the
+ * `prefetch` implementation below), specifically so the real navigation
+ * load gets a fresh attempt rather than inheriting a stale rejection.
+ */
+function startLazyLoad(lz: LazyState): Promise<{ default: ComponentType<any> }> {
+  return (lz.promise ??= lz.loader());
 }
 
 /**
@@ -695,8 +718,35 @@ type RouterCtx = {
   pathname: string;
   params: Record<string, string>;
   navigate: (to: string, opts?: { replace?: boolean; external?: boolean }) => void;
+  /**
+   * Issue #128: start a lazy leaf's chunk load early, from a hover/focus/
+   * touch or a viewport intersection on a `<Link>` — NOT from a real
+   * navigation (that path is the lazy-load effect above, which shares the
+   * same in-flight promise via `startLazyLoad`). `resolvedHref` is already
+   * base-resolved (same value `<Link>` uses for its actual `href`). A no-op
+   * for a non-lazy target, an external href, or when the connection is
+   * data-saver/slow (`prefetchAllowed`).
+   */
+  prefetch: (resolvedHref: string) => void;
 };
 const Ctx = createContext<RouterCtx | null>(null);
+
+/**
+ * The Astro-standard data-saver guard: skip prefetching when the browser
+ * reports the user opted into reduced data usage, or is on a very slow
+ * connection. `navigator.connection` (Network Information API) is
+ * Chromium-only and experimental — absent everywhere else, where this
+ * simply returns `true` (prefetch allowed; matches the feature being
+ * Chromium-first the same way Speculation Rules is, see docs/islands.md).
+ */
+function prefetchAllowed(): boolean {
+  const conn = (navigator as any)?.connection;
+  if (!conn) return true;
+  if (conn.saveData === true) return false;
+  if (typeof conn.effectiveType === "string" && conn.effectiveType.includes("2g")) return false;
+  return true;
+}
+export function __prefetchAllowedForTest(): boolean { return prefetchAllowed(); }
 
 // The matched chain + the current rung's depth, threaded down so each layout's
 // <Outlet/> knows which nested route to render next. `gateDepth` is the depth of
@@ -1566,10 +1616,28 @@ export function Router(
         "nothing renders until its chunk loads. Add a skeleton for a proper loading state.",
     );
   }
+  // What THIS render actually painted. `leafLazy.comp` is no longer set only
+  // from inside the effect below: a hover/viewport `prefetch` resolves out of
+  // band (issue #128), and Preact flushes `useEffect` a whole frame after the
+  // render, so a chunk can land in between. Capturing the render's own view of
+  // it is what lets the effect tell "already resolved when we rendered" from
+  // "resolved behind our back" — see the `leafLazy.comp` branch below.
+  const renderedLazyComp = leafLazy?.comp;
   useEffect(() => {
-    if (isServer() || !leafLazy || leafLazy.comp || leafLazy.failed) return;
+    if (isServer() || !leafLazy || leafLazy.failed) return;
+    if (leafLazy.comp) {
+      // Resolved between the render and this effect (a prefetch's `.then`).
+      // The render still painted the skeleton and nothing else will ever flip
+      // it — the load is finished, so no further `.then` is coming. Tick.
+      if (!renderedLazyComp) setLazyTick((t) => t + 1);
+      return;
+    }
     let cancelled = false;
-    leafLazy.loader().then((mod) => {
+    // `startLazyLoad`, not `leafLazy.loader()` directly: reuses an in-flight
+    // (or already-settled) promise a hover/viewport `prefetch()` may have
+    // already started for this same route, so the two never double-fetch
+    // the chunk (issue #128).
+    startLazyLoad(leafLazy).then((mod) => {
       if (cancelled) return;
       leafLazy.comp = mod.default;
       setLazyTick((t) => t + 1);
@@ -1581,9 +1649,53 @@ export function Router(
     return () => { cancelled = true; };
   }, [effectivePathname]);
 
+  // Issue #128: hover/viewport chunk prefetch. Closes over `props.routes` and
+  // `base` (the SAME effective base every other resolution in this component
+  // uses — see the comment above `const base = …`). Defined with `useCallback`
+  // so `<Link>`'s effect deps (viewport mode) get a stable reference across
+  // re-renders instead of re-observing on every render.
+  const prefetch = useCallback((resolvedHref: string) => {
+    if (isServer() || !prefetchAllowed()) return;
+    // Strip query/hash — route matching is path-only, exactly like
+    // `currentPathname()`'s contract elsewhere in this file.
+    const pathname = resolvedHref.replace(/[?#].*$/, "");
+    // `resolveRedirects`, not `matchChain` directly: a `<Link>` to a
+    // `redirect` alias must prefetch the TARGET's chunk (what a real
+    // navigation actually loads), exactly like the render path above does.
+    const { chain } = resolveRedirects(props.routes, pathname, base);
+    if (!chain) return;
+    const leafNode = chain[chain.length - 1];
+    const lz = lazyStateOf(leafNode.route.component);
+    if (!lz || lz.comp || lz.failed) return;
+    const p = startLazyLoad(lz);
+    p.then((mod) => {
+      // Primes the real navigation: a later render reads `comp` and shows the
+      // real component with no skeleton frame at all. When the navigation
+      // render already happened and read `comp` as unset, the lazy-load effect
+      // above notices and ticks — that is the ONLY thing that repaints, so
+      // this assignment is never the last word on its own.
+      lz.comp = mod.default;
+    }).catch(() => {
+      // A prefetch-time failure (offline hover, flaky network) must NEVER
+      // set `failed` — that would permanently strand the route on its
+      // skeleton (`failed` short-circuits the real load effect above,
+      // which never retries). Clear the cached promise instead, so the
+      // real navigation's `startLazyLoad` gets a fresh `loader()` call
+      // (and thus its own error-report-on-reject path) rather than
+      // inheriting this rejection silently. Deliberately no
+      // `host.reportError` here — a hover that never becomes a
+      // navigation is not a user-facing failure.
+      // Identity-checked: two prefetches share one promise, so both
+      // catches run back to back. Without this a second catch could
+      // clear a promise a THIRD prefetch had already installed, orphaning
+      // that in-flight load into a duplicate fetch later.
+      if (lz.promise === p) lz.promise = undefined;
+    });
+  }, [props.routes, base]);
+
   // ctx.pathname is the EFFECTIVE pathname (the rendered route), so
   // useLocation() reports the redirect TARGET during the pre-sync frame too.
-  const ctx: RouterCtx = { base, pathname: effectivePathname, params: leaf?.params ?? {}, navigate };
+  const ctx: RouterCtx = { base, pathname: effectivePathname, params: leaf?.params ?? {}, navigate, prefetch };
   let view: VNode<any>;
   if (!chain) {
     view = h(props.notFound ?? DefaultNotFound, {});
@@ -1707,9 +1819,29 @@ function noRouterLink(href: string): void {
  * the click with `preventDefault()`.
  */
 export function Link(
-  props: { href: string; children?: any; onClick?: (e: any) => void; [k: string]: any },
+  props: {
+    href: string;
+    children?: any;
+    onClick?: (e: any) => void;
+    /**
+     * When to prefetch the target's lazy chunk (issue #128), default
+     * `"hover"`. `"viewport"` prefetches once the link scrolls into view
+     * instead; `false` disables prefetching for this Link entirely.
+     * Destructured out below — it MUST NOT reach the rendered `<a>` (a
+     * `prefetch` DOM attribute would churn the SSR shell's bytes, which
+     * every strict-CSP hash and the "byte-identical shells" guarantee in
+     * docs/spa.md depend on staying stable).
+     */
+    prefetch?: "hover" | "viewport" | false;
+    [k: string]: any;
+  },
 ): VNode<any> {
-  const { href, children, onClick: callerOnClick, ...rest } = props;
+  const {
+    href, children, onClick: callerOnClick,
+    prefetch: prefetchMode = "hover",
+    onMouseEnter: callerOnMouseEnter, onFocus: callerOnFocus, onTouchStart: callerOnTouchStart,
+    ...rest
+  } = props;
   const ctx = useContext(Ctx);
   if (!ctx) noRouterLink(href);
   const internal = !!ctx && href.startsWith("/") && !isExternalHref(href);
@@ -1724,8 +1856,59 @@ export function Link(
     e.preventDefault();
     navigateResolved(resolved); // already base-resolved — never resolve twice
   };
-  // `onClick` LAST so `rest` can never clobber the router's handler.
-  return h("a", { href: resolved, ...rest, onClick }, children);
+  // No context (outside a Router) or a non-internal target (external/bare
+  // relative): prefetch is a no-op either way — `ctx.prefetch` itself
+  // no-ops on a non-matching/non-lazy target, but skipping the call here
+  // avoids touching `ctx` at all when it may be null.
+  const doPrefetch = () => { if (internal) ctx!.prefetch(resolved); };
+  // Hover/focus/touch prefetch — chained AFTER any caller-supplied handler
+  // of the same name, same pattern as `onClick` above, so a caller's own
+  // `onMouseEnter` keeps firing. Only wired when `prefetchMode === "hover"`
+  // (the default); `"viewport"` and `false` leave these exactly as the
+  // caller passed them (possibly undefined).
+  const onMouseEnter = prefetchMode === "hover"
+    ? (e: any) => { if (callerOnMouseEnter) callerOnMouseEnter(e); doPrefetch(); }
+    : callerOnMouseEnter;
+  const onFocus = prefetchMode === "hover"
+    ? (e: any) => { if (callerOnFocus) callerOnFocus(e); doPrefetch(); }
+    : callerOnFocus;
+  const onTouchStart = prefetchMode === "hover"
+    ? (e: any) => { if (callerOnTouchStart) callerOnTouchStart(e); doPrefetch(); }
+    : callerOnTouchStart;
+
+  // Viewport-mode prefetch: observe the rendered <a>, prefetch once on first
+  // intersection, then stop observing (a link that's been visible has had
+  // its one shot; re-scrolling it into view should not re-fire). Guarded on
+  // `IntersectionObserver` existing (SSR has no DOM at all — `useEffect`
+  // itself never runs there — and this also degrades harmlessly on an
+  // ancient/non-browser client).
+  const anchorRef = useRef<HTMLAnchorElement | null>(null);
+  useEffect(() => {
+    if (prefetchMode !== "viewport") return;
+    if (typeof IntersectionObserver === "undefined") return;
+    const el = anchorRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          doPrefetch();
+          obs.disconnect();
+          break;
+        }
+      }
+    });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [prefetchMode, resolved]);
+  // `onClick`/`ref` LAST so `rest` can never clobber the router's handlers.
+  // (`ref` can't be in `rest` anyway — `h()` strips it into the vnode before a
+  // component ever sees its props — which is also why there is nothing to
+  // chain here: a caller's `ref` on a `<Link>` never reaches this function.)
+  return h(
+    "a",
+    { href: resolved, ...rest, onClick, onMouseEnter, onFocus, onTouchStart, ref: anchorRef },
+    children,
+  );
 }
 
 export function useParams<T = Record<string, string>>(): T {

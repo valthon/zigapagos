@@ -209,7 +209,7 @@ import {
   useGuardData, setViewTransitions, setScrollRestoration,
   __resetScrollForTest, __scrollStateForTest, __scrollBookkeepingForTest,
   __scrollRestoreShouldRetry, __shouldRestoreOnPop, __navSeqForTest,
-  __setRouterBaseForTest,
+  __setRouterBaseForTest, __prefetchAllowedForTest,
   type GuardResult,
 } from "./router.ts";
 import { h, type ComponentType } from "./core.ts";
@@ -1612,6 +1612,356 @@ describe("Router lazy routes", () => {
     const routes: RouteDef[] = [{ path: "/heavy", component: lazy(() => Promise.resolve({ default: Heavy })) }];
     const App = () => h(Router, { base: "/app", routes });
     expect(() => ssrIsland(App, {}, { pathname: "/app/heavy" })).toThrow(/lazy\(\) component was rendered directly/);
+  });
+});
+
+// --- Hover/viewport lazy-chunk prefetch (issue #128) ------------------------
+// `<Link>` starts a lazy leaf's chunk load early (default: on hover/focus/
+// touchstart) via `RouterCtx.prefetch`, sharing the in-flight promise with the
+// real navigation load (`startLazyLoad`) so the two never double-fetch.
+// A minimal fake `IntersectionObserver`: happy-dom's real one never fires on
+// its own (no actual layout/viewport), so `prefetch="viewport"` tests install
+// this in its place, capture the callback per instance, and `fire()` it by
+// hand — mirroring the plan's "stub a global IntersectionObserver capturing
+// observe/callback" approach.
+class FakeIntersectionObserver {
+  static instances: FakeIntersectionObserver[] = [];
+  callback: IntersectionObserverCallback;
+  observed: Element[] = [];
+  disconnected = false;
+  constructor(cb: IntersectionObserverCallback) {
+    this.callback = cb;
+    FakeIntersectionObserver.instances.push(this);
+  }
+  observe(el: Element) { this.observed.push(el); }
+  unobserve(_el: Element) {}
+  disconnect() { this.disconnected = true; }
+  takeRecords(): IntersectionObserverEntry[] { return []; }
+  fire(isIntersecting: boolean) {
+    this.callback(
+      this.observed.map((target) => ({ isIntersecting, target }) as IntersectionObserverEntry),
+      this as unknown as IntersectionObserver,
+    );
+  }
+}
+
+describe("Router prefetch", () => {
+  const hover = async (el: Element) => {
+    el.dispatchEvent(new Event("mouseenter", { bubbles: true }));
+    await flush();
+  };
+
+  test("hover prefetches a lazy route's chunk without navigating", async () => {
+    let calls = 0;
+    const d = deferred<{ default: ComponentType<any> }>();
+    const loader = () => { calls++; return d.promise; };
+    const routes: RouteDef[] = [
+      { path: "/", component: () => h(Link, { href: "/heavy", "data-testid": "go" }, "heavy") },
+      { path: "/heavy", component: lazy(loader), skeleton: HeavySkeleton },
+    ];
+    const PfApp = () => h(Router, { base: "/app", routes });
+    setLocationPathname("/app/");
+    const r = renderIsland(PfApp, {}, { mode: "render", pathname: "/app/" });
+    await flush();
+    expect(calls).toBe(0); // no fetch just from rendering the Link
+    await hover(r.get('[data-testid="go"]'));
+    expect(calls).toBe(1);
+    expect(window.location.pathname).toBe("/app/"); // hover never navigates
+    r.unmount();
+    setLocationPathname("/app/");
+  });
+
+  test("a second hover does not re-invoke the loader (in-flight promise is cached), and navigating after resolve renders the real component with no further loader call", async () => {
+    let calls = 0;
+    const d = deferred<{ default: ComponentType<any> }>();
+    const loader = () => { calls++; return d.promise; };
+    const routes: RouteDef[] = [
+      { path: "/", component: () => h(Link, { href: "/heavy", "data-testid": "go" }, "heavy") },
+      { path: "/heavy", component: lazy(loader), skeleton: HeavySkeleton },
+    ];
+    const PfApp = () => h(Router, { base: "/app", routes });
+    setLocationPathname("/app/");
+    const r = renderIsland(PfApp, {}, { mode: "render", pathname: "/app/" });
+    await flush();
+    const link = r.get('[data-testid="go"]');
+    await hover(link);
+    await hover(link); // second hover — same in-flight promise, no second loader call
+    expect(calls).toBe(1);
+    d.resolve({ default: Heavy });
+    await flush();
+    await click(link); // real navigation
+    expect(window.location.pathname).toBe("/app/heavy");
+    expect(r.html()).toContain('data-heavy="yes"');
+    expect(calls).toBe(1); // still just the one prefetch call — navigation reused it
+    r.unmount();
+    setLocationPathname("/app/");
+  });
+
+  test("hover on a non-lazy target is a no-op (no loader to call, nothing throws)", async () => {
+    const routes: RouteDef[] = [
+      { path: "/", component: () => h(Link, { href: "/booking", "data-testid": "go" }, "booking") },
+      { path: "/booking", component: Booking },
+    ];
+    const PfApp = () => h(Router, { base: "/app", routes });
+    setLocationPathname("/app/");
+    const r = renderIsland(PfApp, {}, { mode: "render", pathname: "/app/" });
+    await flush();
+    await hover(r.get('[data-testid="go"]')); // must not throw
+    expect(window.location.pathname).toBe("/app/");
+    r.unmount();
+    setLocationPathname("/app/");
+  });
+
+  test("hover on an external href is a no-op", async () => {
+    let calls = 0;
+    const routes: RouteDef[] = [
+      { path: "/", component: () => h(Link, { href: "http://localhost/other", "data-testid": "go" }, "out") },
+      { path: "/heavy", component: lazy(() => { calls++; return Promise.resolve({ default: Heavy }); }), skeleton: HeavySkeleton },
+    ];
+    const PfApp = () => h(Router, { base: "/app", routes });
+    setLocationPathname("/app/");
+    const r = renderIsland(PfApp, {}, { mode: "render", pathname: "/app/" });
+    await flush();
+    await hover(r.get('[data-testid="go"]'));
+    expect(calls).toBe(0);
+    r.unmount();
+    setLocationPathname("/app/");
+  });
+
+  test("prefetch={false} disables hover prefetch", async () => {
+    let calls = 0;
+    const loader = () => { calls++; return Promise.resolve({ default: Heavy }); };
+    const routes: RouteDef[] = [
+      { path: "/", component: () => h(Link, { href: "/heavy", prefetch: false, "data-testid": "go" }, "heavy") },
+      { path: "/heavy", component: lazy(loader), skeleton: HeavySkeleton },
+    ];
+    const PfApp = () => h(Router, { base: "/app", routes });
+    setLocationPathname("/app/");
+    const r = renderIsland(PfApp, {}, { mode: "render", pathname: "/app/" });
+    await flush();
+    await hover(r.get('[data-testid="go"]'));
+    expect(calls).toBe(0);
+    r.unmount();
+    setLocationPathname("/app/");
+  });
+
+  test('prefetch="viewport" fires the loader once on first intersection, and disconnects the observer', async () => {
+    let calls = 0;
+    const loader = () => { calls++; return Promise.resolve({ default: Heavy }); };
+    const routes: RouteDef[] = [
+      { path: "/", component: () => h(Link, { href: "/heavy", prefetch: "viewport", "data-testid": "go" }, "heavy") },
+      { path: "/heavy", component: lazy(loader), skeleton: HeavySkeleton },
+    ];
+    const PfApp = () => h(Router, { base: "/app", routes });
+    setLocationPathname("/app/");
+
+    const realIO = (globalThis as any).IntersectionObserver;
+    FakeIntersectionObserver.instances = [];
+    (globalThis as any).IntersectionObserver = FakeIntersectionObserver;
+    try {
+      const r = renderIsland(PfApp, {}, { mode: "render", pathname: "/app/" });
+      await flush();
+      expect(FakeIntersectionObserver.instances.length).toBe(1);
+      const io = FakeIntersectionObserver.instances[0];
+      expect(io.observed.length).toBe(1);
+      expect(calls).toBe(0); // observing alone doesn't prefetch
+      io.fire(true);
+      await flush();
+      expect(calls).toBe(1);
+      expect(io.disconnected).toBe(true); // one-shot: disconnects itself after firing
+      // A second (spurious) intersection callback must not re-fire the loader.
+      io.fire(true);
+      await flush();
+      expect(calls).toBe(1);
+      r.unmount();
+    } finally {
+      (globalThis as any).IntersectionObserver = realIO;
+      setLocationPathname("/app/");
+    }
+  });
+
+  test('prefetch="viewport" disconnects its observer on unmount even if never intersected', async () => {
+    const routes: RouteDef[] = [
+      { path: "/", component: () => h(Link, { href: "/heavy", prefetch: "viewport", "data-testid": "go" }, "heavy") },
+      { path: "/heavy", component: lazy(() => Promise.resolve({ default: Heavy })), skeleton: HeavySkeleton },
+    ];
+    const PfApp = () => h(Router, { base: "/app", routes });
+    setLocationPathname("/app/");
+
+    const realIO = (globalThis as any).IntersectionObserver;
+    FakeIntersectionObserver.instances = [];
+    (globalThis as any).IntersectionObserver = FakeIntersectionObserver;
+    try {
+      const r = renderIsland(PfApp, {}, { mode: "render", pathname: "/app/" });
+      await flush();
+      expect(FakeIntersectionObserver.instances[0].disconnected).toBe(false);
+      r.unmount();
+      expect(FakeIntersectionObserver.instances[0].disconnected).toBe(true);
+    } finally {
+      (globalThis as any).IntersectionObserver = realIO;
+      setLocationPathname("/app/");
+    }
+  });
+
+  test("the Astro-standard save-data guard suppresses prefetching (navigator.connection.saveData)", async () => {
+    let calls = 0;
+    const loader = () => { calls++; return Promise.resolve({ default: Heavy }); };
+    const routes: RouteDef[] = [
+      { path: "/", component: () => h(Link, { href: "/heavy", "data-testid": "go" }, "heavy") },
+      { path: "/heavy", component: lazy(loader), skeleton: HeavySkeleton },
+    ];
+    const PfApp = () => h(Router, { base: "/app", routes });
+    setLocationPathname("/app/");
+    const prevConn = (navigator as any).connection;
+    (navigator as any).connection = { saveData: true };
+    try {
+      const r = renderIsland(PfApp, {}, { mode: "render", pathname: "/app/" });
+      await flush();
+      await hover(r.get('[data-testid="go"]'));
+      expect(calls).toBe(0);
+      r.unmount();
+    } finally {
+      (navigator as any).connection = prevConn;
+      setLocationPathname("/app/");
+    }
+  });
+
+  test("a saveData=false / no-connection environment still prefetches (default posture)", () => {
+    const prevConn = (navigator as any).connection;
+    delete (navigator as any).connection;
+    try {
+      expect(__prefetchAllowedForTest()).toBe(true);
+      (navigator as any).connection = { saveData: false, effectiveType: "4g" };
+      expect(__prefetchAllowedForTest()).toBe(true);
+      (navigator as any).connection = { effectiveType: "slow-2g" };
+      expect(__prefetchAllowedForTest()).toBe(false);
+    } finally {
+      (navigator as any).connection = prevConn;
+    }
+  });
+
+  test("a TRANSIENT prefetch failure does not set `failed` — the real navigation load gets a fresh attempt and succeeds", async () => {
+    let calls = 0;
+    const d2 = deferred<{ default: ComponentType<any> }>();
+    const loader = () => {
+      calls++;
+      if (calls === 1) return Promise.reject(new Error("offline hover"));
+      return d2.promise;
+    };
+    const routes: RouteDef[] = [
+      { path: "/", component: () => h(Link, { href: "/heavy", "data-testid": "go" }, "heavy") },
+      { path: "/heavy", component: lazy(loader), skeleton: HeavySkeleton },
+    ];
+    const PfApp = () => h(Router, { base: "/app", routes });
+    setLocationPathname("/app/");
+    const r = renderIsland(PfApp, {}, { mode: "render", pathname: "/app/" });
+    await flush();
+    await hover(r.get('[data-testid="go"]')); // call #1 — rejects
+    expect(calls).toBe(1);
+    // Navigate for real; the lazy-load effect must get its OWN fresh attempt
+    // (call #2), not inherit the prefetch's rejection.
+    await click(r.get('[data-testid="go"]'));
+    await flush();
+    expect(calls).toBe(2);
+    expect(r.html()).toContain('data-view="heavy-skeleton"'); // still pending
+    d2.resolve({ default: Heavy });
+    await flush();
+    expect(r.html()).toContain('data-heavy="yes"'); // succeeded — `failed` was never latched
+    r.unmount();
+    setLocationPathname("/app/");
+  });
+
+  test("hovering a Link to a `redirect` entry prefetches the TARGET's lazy chunk", async () => {
+    let calls = 0;
+    const loader = () => { calls++; return Promise.resolve({ default: Heavy }); };
+    const routes: RouteDef[] = [
+      { path: "/", component: () => h(Link, { href: "/old", "data-testid": "go" }, "old") },
+      { path: "/old", redirect: "/heavy" },
+      { path: "/heavy", component: lazy(loader), skeleton: HeavySkeleton },
+    ];
+    const PfApp = () => h(Router, { base: "/app", routes });
+    setLocationPathname("/app/");
+    const r = renderIsland(PfApp, {}, { mode: "render", pathname: "/app/" });
+    await flush();
+    await hover(r.get('[data-testid="go"]'));
+    expect(calls).toBe(1); // the redirect TARGET's chunk, not a no-op
+    r.unmount();
+    setLocationPathname("/app/");
+  });
+
+  test("prefetch wiring chains, never clobbers, a caller's own hover handlers", async () => {
+    // The hover/focus/touch handlers are Link-internal now; a consumer passing
+    // their own must keep getting called, or their code breaks with no error
+    // anywhere.
+    let calls = 0;
+    let callerHovers = 0;
+    let callerFocuses = 0;
+    const loader = () => { calls++; return Promise.resolve({ default: Heavy }); };
+    const routes: RouteDef[] = [
+      {
+        path: "/",
+        component: () =>
+          h(Link, {
+            href: "/heavy",
+            "data-testid": "go",
+            onMouseEnter: () => { callerHovers++; },
+            onFocus: () => { callerFocuses++; },
+          }, "heavy"),
+      },
+      { path: "/heavy", component: lazy(loader), skeleton: HeavySkeleton },
+    ];
+    const PfApp = () => h(Router, { base: "/app", routes });
+    setLocationPathname("/app/");
+    const r = renderIsland(PfApp, {}, { mode: "render", pathname: "/app/" });
+    await flush();
+    const link = r.get('[data-testid="go"]');
+    link.dispatchEvent(new Event("focusin", { bubbles: true }));
+    await flush();
+    expect(callerFocuses).toBe(1);
+    await hover(link);
+    expect(callerHovers).toBe(1); // caller handler still fired
+    expect(calls).toBe(1); // and the prefetch still happened (once)
+    r.unmount();
+    setLocationPathname("/app/");
+  });
+
+  test("a prefetch that resolves BETWEEN the navigation render and its lazy effect still flips off the skeleton", async () => {
+    // Preact renders on a microtask but flushes `useEffect` after paint, so
+    // there is a whole frame in which a hover-started chunk can resolve after
+    // the navigation render has already read `lz.comp` as unset. If the
+    // prefetch's resolve is the one that populates `lz.comp`, the lazy-load
+    // effect's `leafLazy.comp` early-return fires and NOTHING re-renders --
+    // the route is stranded on its skeleton forever.
+    const d = deferred<{ default: ComponentType<any> }>();
+    const routes: RouteDef[] = [
+      { path: "/", component: () => h(Link, { href: "/heavy", "data-testid": "go" }, "heavy") },
+      { path: "/heavy", component: lazy(() => d.promise), skeleton: HeavySkeleton },
+    ];
+    const PfApp = () => h(Router, { base: "/app", routes });
+    setLocationPathname("/app/");
+    const r = renderIsland(PfApp, {}, { mode: "render", pathname: "/app/" });
+    await flush();
+    const link = r.get('[data-testid="go"]');
+    await hover(link); // prefetch in flight
+    (link as HTMLElement).click(); // navigate -- render is a microtask, effects are post-paint
+    await Promise.resolve();
+    await Promise.resolve();
+    d.resolve({ default: Heavy }); // lands in the render->effect window
+    await flush();
+    expect(r.html()).toContain('data-heavy="yes"');
+    r.unmount();
+    setLocationPathname("/app/");
+  });
+
+  test("SSR byte-stability: a default-prefetch Link renders identical anchor markup — no `prefetch` attribute leaks", () => {
+    const LinkOnly = () => h(Link, { href: "/heavy", "data-testid": "go" }, "heavy");
+    const routes: RouteDef[] = [
+      { path: "/", component: LinkOnly },
+      { path: "/heavy", component: Heavy, skeleton: HeavySkeleton },
+    ];
+    const PfApp = () => h(Router, { base: "/app", routes });
+    const html = ssrIsland(PfApp, {}, { pathname: "/app/" });
+    expect(html).toContain('<a href="/app/heavy" data-testid="go">heavy</a>');
   });
 });
 
