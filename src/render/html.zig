@@ -95,10 +95,10 @@ pub fn html(
                         try w.writeAll("<div");
                     }
 
-                    if (d.id) |id| try w.print(" id=\"{s}\"", .{id});
+                    if (d.id) |id| try w.print(" id=\"{f}\"", .{HtmlSafe{ .bytes = id }});
                     try w.print(" class=\"block", .{});
                     if (d.attrs) |attrs| {
-                        for (attrs) |attr| try w.print(" {s}", .{attr});
+                        for (attrs) |attr| try w.print(" {f}", .{HtmlSafe{ .bytes = attr }});
                     }
                     try w.print("\">", .{});
                 },
@@ -151,10 +151,10 @@ pub fn html(
                             }
                             open_div = true;
                             try w.print("<div", .{});
-                            if (d.id) |id| try w.print(" id=\"{s}\"", .{id});
+                            if (d.id) |id| try w.print(" id=\"{f}\"", .{HtmlSafe{ .bytes = id }});
                             if (d.attrs) |attrs| {
                                 try w.print(" class=\"", .{});
-                                for (attrs) |attr| try w.print("{s} ", .{attr});
+                                for (attrs) |attr| try w.print("{f} ", .{HtmlSafe{ .bytes = attr }});
                                 try w.print("\"", .{});
                             }
 
@@ -193,10 +193,10 @@ pub fn html(
                         else => {},
                         .heading => {
                             try w.print("<h{}", .{node.headingLevel()});
-                            if (d.id) |id| try w.print(" id=\"{s}\"", .{id});
+                            if (d.id) |id| try w.print(" id=\"{f}\"", .{HtmlSafe{ .bytes = id }});
                             if (d.attrs) |attrs| {
                                 try w.print(" class=\"", .{});
-                                for (attrs) |attr| try w.print("{s} ", .{attr});
+                                for (attrs) |attr| try w.print("{f} ", .{HtmlSafe{ .bytes = attr }});
                                 try w.print("\"", .{});
                             }
 
@@ -209,10 +209,10 @@ pub fn html(
                             }
                             open_div = true;
                             try w.print("<div", .{});
-                            if (d.id) |id| try w.print(" id=\"{s}\"", .{id});
+                            if (d.id) |id| try w.print(" id=\"{f}\"", .{HtmlSafe{ .bytes = id }});
                             if (d.attrs) |attrs| {
                                 try w.print(" class=\"", .{});
-                                for (attrs) |attr| try w.print("{s} ", .{attr});
+                                for (attrs) |attr| try w.print("{f} ", .{HtmlSafe{ .bytes = attr }});
                                 try w.print("\"", .{});
                             }
 
@@ -319,7 +319,7 @@ pub fn html(
                                 continue;
                             }
 
-                            try w.print("<pre><code class=\"{s}\">", .{lang_name});
+                            try w.print("<pre><code class=\"{f}\">", .{HtmlSafe{ .bytes = lang_name }});
 
                             highlightCode(
                                 ctx._meta.io,
@@ -434,13 +434,13 @@ fn renderDirective(
         .mathtex => |katek| switch (ev.dir) {
             .enter => {
                 try w.writeAll("<script type=\"math/tex\"");
-                if (directive.id) |id| try w.print(" id=\"{s}\"", .{id});
+                if (directive.id) |id| try w.print(" id=\"{f}\"", .{HtmlSafe{ .bytes = id }});
                 if (directive.attrs) |attrs| {
                     try w.writeAll(" class=\"");
-                    for (attrs) |attr| try w.print("{s} ", .{attr});
+                    for (attrs) |attr| try w.print("{f} ", .{HtmlSafe{ .bytes = attr }});
                     try w.writeAll("\"");
                 }
-                if (directive.title) |t| try w.print(" title=\"{s}\"", .{t});
+                if (directive.title) |t| try w.print(" title=\"{f}\"", .{HtmlSafe{ .bytes = t }});
                 try w.writeAll(">");
                 try w.writeAll(katek.formula);
             },
@@ -451,13 +451,13 @@ fn renderDirective(
         .text => switch (ev.dir) {
             .enter => {
                 try w.print("<span", .{});
-                if (directive.id) |id| try w.print(" id=\"{s}\"", .{id});
+                if (directive.id) |id| try w.print(" id=\"{f}\"", .{HtmlSafe{ .bytes = id }});
                 if (directive.attrs) |attrs| {
                     try w.print(" class=\"", .{});
-                    for (attrs) |attr| try w.print("{s} ", .{attr});
+                    for (attrs) |attr| try w.print("{f} ", .{HtmlSafe{ .bytes = attr }});
                     try w.print("\"", .{});
                 }
-                if (directive.title) |t| try w.print(" title=\"{s}\"", .{t});
+                if (directive.title) |t| try w.print(" title=\"{f}\"", .{HtmlSafe{ .bytes = t }});
                 try w.print(">", .{});
             },
             .exit => {
@@ -490,18 +490,18 @@ fn renderDirective(
                 }
 
                 try w.writeAll("<img");
-                if (directive.id) |id| try w.print(" id=\"{s}\"", .{id});
+                if (directive.id) |id| try w.print(" id=\"{f}\"", .{HtmlSafe{ .bytes = id }});
                 if (directive.attrs) |attrs| {
                     try w.writeAll(" class=\"");
-                    for (attrs) |attr| try w.print("{s} ", .{attr});
+                    for (attrs) |attr| try w.print("{f} ", .{HtmlSafe{ .bytes = attr }});
                     try w.writeAll("\"");
                 }
-                if (directive.title) |t| try w.print(" title=\"{s}\"", .{t});
+                if (directive.title) |t| try w.print(" title=\"{f}\"", .{HtmlSafe{ .bytes = t }});
                 try w.writeAll(" src=\"");
                 try printUrl(ctx, page, img.src.?, w);
                 try w.writeAll("\"");
 
-                if (img.alt) |alt| try w.print(" alt=\"{s}\"", .{alt});
+                if (img.alt) |alt| try w.print(" alt=\"{f}\"", .{HtmlSafe{ .bytes = alt }});
                 if (img.size) |size| {
                     if (size.w > 0) try w.print(" width=\"{d}\"", .{size.w});
                     if (size.h > 0) try w.print(" height=\"{d}\"", .{size.h});
@@ -523,13 +523,13 @@ fn renderDirective(
                 const caption = node.firstChild();
                 if (caption != null) try w.writeAll("<figure>");
                 try w.writeAll("<video");
-                if (directive.id) |id| try w.print(" id=\"{s}\"", .{id});
+                if (directive.id) |id| try w.print(" id=\"{f}\"", .{HtmlSafe{ .bytes = id }});
                 if (directive.attrs) |attrs| {
                     try w.writeAll(" class=\"");
-                    for (attrs) |attr| try w.print("{s} ", .{attr});
+                    for (attrs) |attr| try w.print("{f} ", .{HtmlSafe{ .bytes = attr }});
                     try w.writeAll("\"");
                 }
-                if (directive.title) |t| try w.print(" title=\"{s}\"", .{t});
+                if (directive.title) |t| try w.print(" title=\"{f}\"", .{HtmlSafe{ .bytes = t }});
                 if (vid.loop) |val| if (val) try w.writeAll(" loop");
                 if (vid.autoplay) |val| if (val) try w.writeAll(" autoplay");
                 if (vid.muted) |val| if (val) try w.writeAll(" muted");
@@ -552,17 +552,21 @@ fn renderDirective(
         .link => |lnk| switch (ev.dir) {
             .enter => {
                 try w.writeAll("<a");
-                if (directive.id) |id| try w.print(" id=\"{s}\"", .{id});
+                if (directive.id) |id| try w.print(" id=\"{f}\"", .{HtmlSafe{ .bytes = id }});
                 if (directive.attrs) |attrs| {
                     try w.writeAll(" class=\"");
-                    for (attrs) |attr| try w.print("{s} ", .{attr});
+                    for (attrs) |attr| try w.print("{f} ", .{HtmlSafe{ .bytes = attr }});
                     try w.writeAll("\"");
                 }
 
-                if (directive.title) |t| try w.print(" title=\"{s}\"", .{t});
+                if (directive.title) |t| try w.print(" title=\"{f}\"", .{HtmlSafe{ .bytes = t }});
                 try w.writeAll(" href=\"");
                 try printUrl(ctx, page, lnk.src.?, w);
-                if (lnk.ref) |r| try w.print("#{s}", .{r});
+                // Escaped for the same reason as `id` (#148): `$link.ref(…)`
+                // resolves to a heading/section id, which is author-written and
+                // is escaped where it is *emitted*. Escaping both sides keeps
+                // the fragment and the id it points at spelled the same way.
+                if (lnk.ref) |r| try w.print("#{f}", .{HtmlSafe{ .bytes = r }});
                 try w.writeAll("\"");
 
                 if (lnk.new) |n| if (n) try w.writeAll(" target=\"_blank\"");
@@ -578,26 +582,48 @@ fn renderDirective(
                     try w.writeAll(code.src.?.url);
                 } else if (std.mem.eql(u8, code.language orelse "", "=mathtex")) {
                     try w.writeAll("<script type=\"math/tex\"");
-                    if (directive.id) |id| try w.print(" id=\"{s}\"", .{id});
+                    if (directive.id) |id| try w.print(" id=\"{f}\"", .{HtmlSafe{ .bytes = id }});
+                    // Matched trio -- open, write, close -- as in every other
+                    // directive arm. The `if (code.language == null)` that used
+                    // to guard the opening quote was unreachable here (this
+                    // branch is only entered when the language IS `=mathtex`),
+                    // so the attrs were emitted with no attribute name and no
+                    // leading space, fusing onto `type="math/tex"`.
                     if (directive.attrs) |attrs| {
-                        if (code.language == null) try w.writeAll(" class=\"");
-                        for (attrs) |attr| try w.print("{s} ", .{attr});
+                        try w.writeAll(" class=\"");
+                        for (attrs) |attr| try w.print("{f} ", .{HtmlSafe{ .bytes = attr }});
+                        try w.writeAll("\"");
                     }
 
-                    if (directive.title) |t| try w.print(" title=\"{s}\"", .{t});
+                    if (directive.title) |t| try w.print(" title=\"{f}\"", .{HtmlSafe{ .bytes = t }});
                     try w.writeAll(">");
                     try w.writeAll(code.src.?.url);
                     try w.writeAll("</script>");
                 } else {
                     try w.writeAll("<pre");
-                    if (directive.id) |id| try w.print(" id=\"{s}\"", .{id});
+                    if (directive.id) |id| try w.print(" id=\"{f}\"", .{HtmlSafe{ .bytes = id }});
+                    // Same matched trio. Guarding the opening quote on
+                    // `code.language == null` broke both ways: with a language
+                    // it emitted no ` class="` and no leading space, so the
+                    // first attr fused onto the tag name (`<prealpha`), and
+                    // without one it opened the quote and never closed it,
+                    // swallowing the rest of the tag into the attribute value.
                     if (directive.attrs) |attrs| {
-                        if (code.language == null) try w.writeAll(" class=\"");
-                        for (attrs) |attr| try w.print("{s} ", .{attr});
+                        try w.writeAll(" class=\"");
+                        for (attrs) |attr| try w.print("{f} ", .{HtmlSafe{ .bytes = attr }});
+                        try w.writeAll("\"");
                     }
 
-                    if (directive.title) |t| try w.print(" title=\"{s}\"", .{t});
-                    try w.print("><code class=\"{?s}\">", .{code.language});
+                    if (directive.title) |t| try w.print(" title=\"{f}\"", .{HtmlSafe{ .bytes = t }});
+                    // `class="null"` for a language-less fence is what `{?s}`
+                    // already produced, and #148 is an escaping fix -- so the
+                    // null arm is reproduced verbatim rather than quietly
+                    // corrected here.
+                    if (code.language) |lang| {
+                        try w.print("><code class=\"{f}\">", .{HtmlSafe{ .bytes = lang }});
+                    } else {
+                        try w.writeAll("><code class=\"null\">");
+                    }
 
                     if (code.language) |lang| {
                         highlightCode(

@@ -26,6 +26,7 @@
           <tr><td>Bundler to configure</td><td>No</td><td>Vite</td><td>Turbopack/webpack</td><td>Bring your own</td><td>No</td></tr>
           <tr><td>Component language</td><td>TSX</td><td>TSX/JSX/Vue/Svelte</td><td>TSX/JSX</td><td>Templates only</td><td>Templates only</td></tr>
           <tr><td>Build-time props typechecking</td><td>Yes</td><td>Opt-in (<code>astro check</code>)</td><td>Yes (<code>next build</code>)</td><td>n/a</td><td>n/a</td></tr>
+          <tr><td>Built-in image optimization</td><td>Yes (opt-in)</td><td>Yes (<code>astro:assets</code>)</td><td>No under static export</td><td>Official plugin</td><td>Yes (template functions)</td></tr>
           <tr><td>Client-routed SPA from the same project</td><td>Yes</td><td>Via a framework router</td><td>Yes</td><td>No</td><td>No</td></tr>
           <tr><td>Plugin ecosystem</td><td>No</td><td>Large</td><td>Large</td><td>Large</td><td>Moderate</td></tr>
         </tbody>
@@ -40,6 +41,20 @@
       <code>astro build</code> runs on its own. Next.js's production build runs a
       project-wide <code>tsc</code> pass and fails on type errors by default, which
       catches a bad prop the same way.
+    </p>
+    <p class="section-note">
+      "Built-in image optimization" means the generator itself turns a committed
+      image into responsive variants at build time. Zigapagos does it with one
+      config field &mdash; <code>.image_optimize = {}</code> emits WebP variants at
+      configured widths as a <code>&lt;picture&gt;</code> with a full
+      <code>srcset</code>/<code>sizes</code>, AVIF opt-in via an external encoder
+      you supply. Astro's <code>astro:assets</code> does the same job with
+      per-image control through its <code>&lt;Image&gt;</code> component. Hugo
+      processes images through template functions, so the variants are built in
+      but the markup is yours to write. Eleventy covers it with an official
+      plugin rather than a core feature, and Next.js's image optimizer runs at
+      request time, which a static export does not have &mdash; it needs a custom
+      loader or ships the originals.
     </p>
   </section>
 

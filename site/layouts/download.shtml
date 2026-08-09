@@ -52,9 +52,9 @@ npx zigapagos release --output=public --force  # build it</code></pre>
 
     <h2>Release binaries</h2>
     <p>
-      Tagged builds — a statically-linked x86_64 Linux binary (musl), an x86_64
-      macOS binary, a <code>runtime.tar.xz</code> and a checksum file — are
-      published on
+      Tagged builds — statically-linked x86_64 and arm64 Linux binaries (musl),
+      x86_64 and arm64 macOS binaries, a <code>runtime.tar.xz</code> and a
+      checksum file — are published on
       <a href="https://github.com/valthon/zigapagos/releases">the releases page</a>.
     </p>
     <p>

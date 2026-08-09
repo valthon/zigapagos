@@ -94,6 +94,14 @@ Add `content/guides/deploying.smd` with `.layout = "page.shtml"` and any body
 text, rebuild, and it appears in the list. Nothing registers it — being in the
 directory is the registration.
 
+The same loop paginates. When the section outgrows one page, add
+`.pagination = { .page_size = 10 }` to the fields in `index.smd` and the build
+renders the index once per window of ten subpages — `$page.subpages()` returns
+only the current window on those renders, so the layout above needs no edit.
+`$page.pagination?()` returns a `Paginator` with prev/next and numbered-page
+links when you want a pager; the
+[Scripty reference]($link.page("docs/scripty")) covers it.
+
 ## 4. An island that must be interactive immediately
 
 Some components are broken without JavaScript. A search box is the usual

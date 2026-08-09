@@ -77,6 +77,13 @@
     "description": "Build-time responsive srcset and an opt-in AVIF hatch from image_optimize: config, <picture> emission, cache boundaries, and dev-loop behavior."
   },
   {
+    "canonical": "docs/dev-server.md",
+    "mirror": "dev-server.smd",
+    "slug": "dev-server",
+    "title": "Background dev server",
+    "description": "Detaching the dev loop with dev --background: the stop, status and logs verbs, the /_zigapagos/status JSON an agent polls, the .zigbase/dev.json lockfile, and agent auto-detection."
+  },
+  {
     "canonical": "docs/diagnostics.md",
     "mirror": "diagnostics.smd",
     "slug": "diagnostics",

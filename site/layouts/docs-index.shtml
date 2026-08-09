@@ -22,6 +22,12 @@
       <a class="card" href="$site.page('docs/spa').link()">
         <h3>Native SPAs</h3><p>One .spa.tsx to a client-routed app.</p>
       </a>
+      <a class="card" href="$site.page('docs/images').link()">
+        <h3>Images</h3><p>Build-time srcset, WebP and AVIF, the cache.</p>
+      </a>
+      <a class="card" href="$site.page('docs/dev-server').link()">
+        <h3>Background dev server</h3><p>dev --background, status polling, the lockfile.</p>
+      </a>
       <a class="card" href="$site.page('docs/testing').link()">
         <h3>Testing a built site</h3><p>Assertions for the output tree, with a self-test.</p>
       </a>

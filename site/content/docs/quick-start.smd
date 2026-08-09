@@ -23,9 +23,9 @@ or newer to run the launcher, and covers everything: content sites, islands,
 native SPAs and the dev loop.
 
 Prefer a bare binary? Download one from the
-[releases page](https://github.com/valthon/zigapagos/releases) — an x86_64 Linux
-(musl) or x86_64 macOS build — and put it on your `PATH`. That archive is
-**the binary and nothing else**, which is enough for a content-only site but not
+[releases page](https://github.com/valthon/zigapagos/releases) — x86_64 and
+arm64 builds for Linux (musl) and macOS — and put it on your `PATH`. That
+archive is **the binary and nothing else**, which is enough for a content-only site but not
 for islands or SPAs; those additionally need Bun and the `@z/runtime` tree, and
 the npm install is the way to get both. The full rule, per command, is in
 [runtime dependencies]($link.page("docs/runtime-dependencies")).

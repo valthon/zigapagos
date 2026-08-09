@@ -51,6 +51,392 @@ requests each adding their own fragment merge cleanly, whereas two pull requests
 each appending a bullet to this block collide on the same lines. To see what is
 queued for the next release, read `changelog.d/`.
 
+## [0.4.0] - 2026-08-09
+
+### Added
+
+- `zigapagos validate --format=json` (issue #131): the fast pre-SSR gate now emits the same
+  NDJSON diagnostic stream on stderr as `release --format=json` — same `ZP_*` code registry,
+  same `{"code","severity","file","line","col","message","help"}` schema — so an agent's
+  `release` → fix → `validate` loop never parses prose. In JSON mode the trailing
+  `validate: FAILED` prose line is suppressed; the non-zero exit and the stream carry it.
+- `zigapagos doctor --format=json`: each finding as one NDJSON object on **stdout** (doctor's
+  report stream, distinct from the build-diagnostics stderr stream), shaped
+  `{"check","severity","file","message"}`, followed by exactly one
+  `{"errors","warnings","files","skipped"}` summary object as the last line. `check` ids
+  (`abs-url-meta`, `dangling-internal-link`, …) are stable once shipped; `message` prose is
+  not. Doctor fatals emit `ZP_FATAL` NDJSON on stderr. Text-mode output is byte-for-byte
+  unchanged.
+- `zigapagos explain-code --format=json`: the frozen code registry as NDJSON on stderr, one
+  `{"code","summary","explanation"}` object per line — the machine-readable dictionary an
+  agent reaches for after matching a `code`.
+- `zigapagos init` now scaffolds `AGENTS.md` and `CLAUDE.md` into a new site (`CLAUDE.md` is
+  exactly `@AGENTS.md`). The generated `AGENTS.md` documents the two naming traps (`build` is
+  spelled `release`, `serve` is spelled `dev`), the `--format=json` fix loop, the
+  match-on-`code`-never-`message` rule, and the exit-code semantics. Both ride the existing
+  exclusive-create path — an existing file is skipped, never overwritten.
+- The Astro migration ships as an installable Agent Skill: `skills/zigapagos-astro-migration/`
+  in the open agentskills.io `SKILL.md` format (read by Claude Code, Codex, Cursor, Gemini CLI
+  and others) — a workflow layer over the `zigapagos migrate` scan and the JSON fix loop, with
+  the full deterministic mapping spec bundled under `references/`.
+- **`zigapagos dev --background`**: detach the dev loop as its own process
+  group (stdio to `.zigbase/dev.log`), wait for it to actually become ready,
+  then print its URL/PID/log path and exit 0 — no more babysitting a
+  foreground `dev` from a script or an agent. `dev stop|status [--json]|logs
+  [--follow]` manage it afterward; `--force` restarts an existing session,
+  `--ignore-lock` runs a second, untracked instance. See `docs/dev-server.md`.
+- **`GET /_zigapagos/status`**: the dev control server (formerly just the
+  live-reload stream, now always on) reports the served URL/PID plus
+  build-aware state — a monotonic `generation` counter, `status`
+  (`ok`/`failed`/`building`), `duration_ms`, and a bounded `error` tail on
+  failure — so an agent can poll for its own edit to land and branch on the
+  result instead of guessing when a rebuild finished.
+- **Agent auto-detection**: `zigapagos dev` backgrounds itself automatically
+  in a recognized AI-agent environment (Claude Code, OpenAI Codex, Gemini
+  CLI, Cursor's agent mode, and others — see the table in
+  `docs/dev-server.md`). `ZIGAPAGOS_DEV_BACKGROUND=0` opts out;
+  `ZIGAPAGOS_DEV_BACKGROUND=1` forces it even outside a detected environment.
+- `dev stop` now reaps a zigbase left orphaned by a `kill -9`'d dev session
+  (health-verified via zigbase's own `/api/health` before touching it),
+  retiring the previously-documented manual `pkill zigbase` recovery.
+- Cache-Control host config (issue #133): `zigapagos release` now writes a site-wide caching
+  policy at the output root alongside the routing and CSP artifacts — `cache.nginx.conf`,
+  `cache.apache.conf` and `cache.zigbase.txt`, emitted wherever the CSP artifacts already are —
+  which is every site carrying islands or an SPA, island-only sites with no SPA namespace
+  included. (A content-only site with neither gets no host config at all; the emitter is a pass
+  over the finished tree and `release` skips it, exactly as it already skipped the CSP.)
+  nginx's `map $uri $zigapagos_cache_control { … }` merges into
+  `http{}` with `add_header Cache-Control $zigapagos_cache_control always;` in the *same*
+  block that carries `csp.nginx.conf`'s header (a nested `add_header` suppresses the
+  server-level one); Apache's `<FilesMatch>` stanzas install where `csp.apache.conf` does.
+  Documented in `docs/spa.md`.
+- The policy is two header values with `no-cache` as the baseline, so nothing the build emits
+  ships header-less: `public, max-age=31536000, immutable` for `asset_fingerprint`'s
+  `<stem>.<8 hex>[.<ext>]` name shape and for this build's content-hashed SPA lazy-route
+  chunks (exact-listed from each namespace's `routing-manifest.json`, never pattern-matched —
+  a naive chunk regex would also swallow stable paths like `<name>-runtime.js`); `no-cache`
+  for `*.html`, routing manifests, and every stable path whose URL survives a deploy while its
+  content does not. Header-less is not "no caching" but *unspecified* caching (heuristic
+  freshness, CDN extension-keyed TTLs) — i.e. fresh HTML paired with a stale entry bundle —
+  and `no-cache` still permits a 304, so the cost is one conditional request. Revalidating
+  rules always outrank immutable ones, encoded per target's match semantics (nginx `map` is
+  first-match-wins, Apache `Header set` is last-match-wins), so hand-merging the stanzas in a
+  different order is the one way to break it.
+- `cache.zigbase.txt` is advisory, the same stance as `csp.zigbase.txt`: ZigBase has no
+  per-path response-header configuration, so the file records the ideal policy for a CDN or
+  reverse proxy in front of it, and warns against pointing ZigBase's one *global* knob
+  (`--static-cache-control`) at the immutable value — that would cache a stale shell and HTML
+  across deploys. Stock `zigbase serve` already sends `max-age=3600` + ETag revalidation for
+  static files and `no-cache` for fallback shells.
+- Build-time image optimization (issue #132): `.image_optimize = {}` on a `Site` or
+  `MultilingualSite` resamples every content `$image` whose source is a decodable still
+  raster (JPEG, PNG, still WebP) into a WebP variant at build time, emitted inside a
+  `<picture>` with the untouched original as the `<img>` fallback — decode is wuffs, resampling
+  is a first-party linear-light Lanczos3, encoding is vendored libwebp. Off by default (`null`):
+  a site that never sets the field is byte-identical to today. Derived variants are cached at
+  `.zigapagos-cache/images/<stem>.<hash8>.<width>.webp`, addressed by source bytes plus every
+  transform parameter, so a full rebuild after the first pays only file-copy cost. `zigapagos
+  init` now scaffolds `.gitignore` (previously it wrote none) so the cache directory starts
+  ignored. Full `srcset`/`sizes` and the opt-in AVIF path are part of this same release, in the
+  entries that follow; see `docs/images.md`.
+- Full responsive `srcset` for build-time image optimization (issue #132): every
+  surviving configured width — not just the largest — gets a variant, emitted with `w`
+  descriptors plus a `sizes` attribute (`.image_optimize.sizes`, default `100vw`). Widths are
+  still filtered to `<=` each image's intrinsic width (never upscaled) and site-wide, not
+  per-image. `image_optimize.widths` is now rejected at config validation past 64 entries,
+  closing a silent second truncation the planner used to apply on top of whatever validation
+  let through.
+- Opt-in AVIF via an external encoder: set `image_optimize.avif_encoder` to an
+  `avifenc`-compatible binary (PATH-resolved name or explicit path) and every planned width
+  also gets an AVIF variant, emitted as `<source type="image/avif">` ahead of the WebP source
+  (best-format-first). Zigapagos never vendors or downloads an AV1 encoder — this only invokes
+  a binary you already have, as `<avif_encoder> <in.png> <out.avif>`. A missing/unspawnable
+  binary or a nonzero exit fails the build, naming the binary, the source, and the exit code.
+  A first-party interchange PNG writer (`src/image/png.zig`) hands the resampled pixels to the
+  encoder; it is never installed into the output tree itself.
+- AVIF variants are cached and named exactly like WebP ones, with one caveat: since there is no
+  in-process version call for an external binary, the cache key's encoder-identity component is
+  a hash of the *configured* `avif_encoder` string, not the binary's actual behavior. Pointing
+  `avif_encoder` at a different path/name busts the cache as expected; upgrading the binary in
+  place does not, and needs `.zigapagos-cache/images/` deleted by hand to force a re-encode. See
+  `docs/images.md`'s cache section for the full detail, including why `quality` moves an AVIF
+  variant's name without changing its (encoder-side-ignored) bytes.
+- Pagination for content sections (issue #127): a section index opts in with
+  `.pagination = { .page_size = 10 }` in its `index.smd` frontmatter and the build renders
+  that index once per window of active subpages. Nothing changes for a section that doesn't
+  set it, and drafts are excluded from the counts rather than merely hidden. Three URL styles
+  via `.pagination.url_style` — `page_dir` (`/blog/page/2/`, the default), `plain_dir`
+  (`/blog/2/`), `page_html` (`/blog/page-2.html`) — and page 1 is always the section's own URL
+  in every style. One formula backs the generated `href`, the on-disk output path and the
+  browser pathname handed to island SSR, so a link and the file it addresses cannot drift.
+- Windowed layout surface: `$page.subpages()` and `$page.subpagesAlphabetic()` return only the
+  current window when called on the index being rendered — a shared layout's existing loop
+  paginates with no edit. `$page.pagination?()` returns a `Paginator` on such a render and
+  null everywhere else, so a layout shared with unpaginated sections branches with a plain
+  `:if`. `Paginator` carries `current`, `total`, `page_size`, `total_items`, plus
+  `prevLink?()`, `nextLink?()` and `pageLink(n)` (which errors out of range — guard numbered
+  pagers with `.total`). A different section reached through `$site.page(…)` still sees its
+  full subpage list, and RSS `alternatives` are never windowed.
+- Guardrails and observability: `ZP_INVALID_PAGINATION_SIZE` (zero `page_size`) and
+  `ZP_PAGINATION_NOT_SECTION` (`.pagination` on a leaf page) are span-carrying frontmatter
+  diagnostics; a pagination URL colliding with a real page (a subpage literally named `2`
+  under `plain_dir`) aborts through the ordinary collision gate; `--summary` counts a
+  "pagination pages" category and `explain` lists each pagination page by output path.
+- Stale pagination output is pruned on rebuild. Pagination is the first feature whose output
+  set *shrinks* with content, and dev builds into the same tree, so a section dropping from
+  three pages to one would otherwise serve an orphaned `page/2/` forever. The prune probes
+  past each section's live plan in all three URL styles (changing `url_style` orphans the
+  previous shape) and skips anything registered as a real output or prerendered by an SPA.
+- Astro importer support: `zigapagos migrate` recognises `[page].astro` / `[...page].astro`
+  routes calling `paginate()`, reads a literal `pageSize` (flagging a computed one for review
+  rather than guessing), and prescribes the conversion in the worklist, the port doctor's
+  report and its `--format=json` output; `zigapagos init --from-astro` writes the section
+  `index.smd` stub with `.pagination` already set.
+- Prefetching (issue #128): a `<Link>` now starts a lazy route's chunk load on hover/focus/
+  touchstart by default (`prefetch="hover"`), or when it scrolls into view
+  (`prefetch="viewport"`); `prefetch={false}` opts out per-link. Prefetch failures are silent
+  and never block the real navigation load, and prefetching is skipped under a browser's
+  data-saver signal (`navigator.connection.saveData`/slow `effectiveType`).
+- Opt-in build-time link prefetching for content pages: `.speculation_rules = true` on a
+  `Site` or `MultilingualSite` injects a `<script type="speculationrules">` block into
+  every rendered page's `<head>`, hinting Speculation-Rules-supporting browsers
+  (Chromium today) to prefetch same-origin links on hover — pure declarative HTML,
+  zero runtime JS, and inert on browsers without support. This is also how a content
+  page warms an SPA's shell (including concrete `staticPaths` pages) ahead of the
+  hard-navigation entry into the SPA, since a soft navigation never fetches shell HTML.
+- `emit-host-config.ts`'s generated CSP now adds the CSP3 `'inline-speculation-rules'`
+  script-src keyword whenever a scanned page carries a `speculationrules` block, so a
+  strict-CSP deployment doesn't silently drop the feature (hash-sources don't cover this
+  script type in Chromium).
+- Opt-in view transitions for SPA soft navigation (issue #129): `viewTransitions: true` on a
+  `.spa.tsx`'s `export const spa` makes `mountSpa` wrap every route flip in
+  `document.startViewTransition()`, so a soft nav crossfades instead of flipping instantly —
+  customizable with the standard `::view-transition-old(*)`/`::view-transition-new(*)` CSS and
+  per-element `view-transition-name`. Off by default and feature-detected: without the opt-in,
+  or on a browser without the API, navigation is byte-for-byte the previous instant flip.
+  `setViewTransitions(on)` is exported from `@z/runtime` as the escape hatch for a hand-mounted
+  `<Router>` that doesn't go through `mountSpa`. A non-boolean `spa.viewTransitions` is a loud
+  build failure from the sidecar rather than a silent truthy coercion.
+- Scope is deliberate: a pathname-changing `navigate()`/`<Link>` push and a back/forward
+  (`popstate`) both transition; a `replace` navigation (including a declarative `redirect`'s
+  URL-sync) and a query/hash-only navigation (a filter box calling `setSearchParams` per
+  keystroke) never do — those must leave the viewport where it is rather than crossfade under
+  the visitor's cursor. Scroll-to-top (push) and scroll restore (pop) run *inside* the
+  transition, so the position change is part of the animated snapshot.
+- Cross-document view transitions for content/island (MPA) pages are documented in
+  `docs/islands.md`: one CSS rule, `@view-transition { navigation: auto; }`, in the site
+  stylesheet — zero runtime JS, no build flag. An SPA shell has a fixed `<head>` and does not
+  inherit the site stylesheet, so extending the rule across the content-page → SPA boundary
+  means staging the stylesheet via `spa.head` (`docs/spa.md`).
+
+### Changed
+
+- The `--format` pre-scan gate in `main.zig` (which suppresses stderr chatter before the
+  authoritative parse) now covers `release`, `validate`, `doctor` and `explain-code`. It stays
+  an explicit allowlist — a command joins it only in the same change that teaches its own
+  parser the flag.
+- The generated strict-CSP header (`csp.nginx.conf`/`csp.apache.conf`/`csp.zigbase.txt`) now
+  emits the CSP3 `style-src-elem`/`style-src-attr` split instead of a blanket
+  `style-src 'self' 'unsafe-inline'`. `<style>` elements and `<link>` stylesheets are now hashed
+  and governed by `style-src-elem`, exactly as strict as `script-src`; only `style-src-attr` keeps
+  `'unsafe-inline'`, confined to the framework's inline `style` *attributes* (`display:contents`
+  on island slot wrappers), which CSP hashes cannot cover. Operators who deployed a previously
+  generated CSP header must regenerate and redeploy it — the directive name changed, so a stale
+  copy no longer matches what the site's HTML needs. Sites relying on the old blanket grant for
+  their own inline `<style>` elements (e.g. the `zigapagos init` scaffold layouts) keep working
+  automatically: those elements are now hashed rather than allowed by the removed
+  `unsafe-inline`. The one case that does NOT survive is a `<style>` element created at RUNTIME by
+  client code (a CSS-in-JS library injecting one on hydration): it has no build-time text to hash,
+  so `style-src-elem` blocks it where the blanket grant permitted it — ship those as a stylesheet
+  asset or as `style` attributes instead (`docs/spa.md`). Fixes #130.
+- The pinned toolchain moves from Bun 1.2.23 (the final release of the discontinued 1.2
+  line) to Bun 1.3.14, and the pin is now exact — `bun = "1.3.14"` — because Bun minors
+  change the bundler's minified-identifier allocation and therefore emitted chunk content
+  hashes. Which is also the migration note: the first rebuild under 1.3.14 renames every
+  content-hashed bundle (`app.spa-<hash>.js`, lazy chunks), so a deploy that syncs without
+  deleting (rsync sans `--delete`) will retain stale chunks alongside the new ones.
+  `install.sh` and the npm package's `bun` dependency follow the pin. The shipped runtime
+  also picks up preact 10.29.8 (flushSync batching fix, faster memo/sCU bailouts).
+- Syntax highlighting advances flow-syntax to its maintained `zig-0.16` branch: query
+  directives no longer mis-evaluate, a crash in `get_cached_query` on tree-sitter-less
+  builds is fixed, and Vue and GLSL grammars land alongside `*.S` assembly recognition.
+- `docs/images.md` now documents the complete, shipped feature (config reference, `<picture>`
+  emission shape, cache/eviction status including the AVIF cache-identity caveat above, the
+  silent-filtering-vs-fatal failure split, dev-loop behavior for a newly referenced image on an
+  incremental rebuild, and an authoring gotcha for `$image` directives with non-empty link
+  text), rather than the partial feature it described while the work was still landing.
+  `docs/assets.md`'s derived-image-variants paragraph is updated for the two-codec cache-key
+  reality. `docs/migration/astro-to-zigapagos.md` (and its byte-identical mirror under
+  `skills/zigapagos-astro-migration/references/`) gains a new §14 mapping Astro's `<Image>` /
+  `astro:assets` to `image_optimize`, with the semantic deltas: site-wide widths rather than
+  per-image, never-upscale, AVIF requiring an external encoder, and no per-image format
+  overrides.
+- `docs/migration/astro-to-zigapagos.md` gains the full `paginate()` mapping table
+  (`page.data` → windowed `$page.subpages()`, `page.currentPage`/`page.lastPage`/`page.size`/
+  `page.total` → `Paginator` fields, `page.url.*` → the link helpers; `page.start`/`page.end`
+  have no direct equivalent — compute from `.current` and `.page_size`). Two porting notes:
+  Astro's `[...page].astro` is exact URL parity with `plain_dir`, while `[page].astro` puts
+  page 1 at `/blog/1` — zigapagos always puts page 1 at the section URL, so add
+  `.aliases = ["1/index.html"]` if the old URL must keep working.
+- Default hover-prefetch of lazy route chunks is a behavior change for existing SPAs using
+  `lazy()`: hovering a `<Link>` to such a route now fetches its chunk before the click. It
+  only affects lazy leaves, is connection-guarded, and chunks are documented side-effect-free
+  at module scope — set `prefetch={false}` on a `Link` to opt a specific link out.
+
+### Fixed
+
+- The `--format` pre-scan disagreed with the command parsers on a repeated flag: it kept the
+  **first** `--format=` value while every accepting parser keeps the **last**, so accepted
+  input like `release --format=text --format=json` printed the Debug banner onto what the
+  parser then treated as an NDJSON stream — reachable on released builds. The scan is now
+  last-wins with the parsers' overwrite semantics, and a trailing invalid value resolves to
+  "no format chosen", matching the parser about to fatal on it.
+- `doctor --format=json` printed a mid-walk failure (an unreadable subdirectory encountered
+  after the walk began) as prose straight onto the machine-readable stream; it now emits
+  `ZP_FATAL` NDJSON in JSON mode, with text mode byte-identical.
+- The unescaped-attribute defect recorded under **Security** below has a second, entirely
+  innocent face: a directive `title` or an image `alt` containing a plain double quote —
+  `He said "hi"` — terminated the attribute early and emitted malformed HTML. No malice
+  required, just a quotation mark. Both now render as `&quot;`.
+- A `$code` directive carrying `attrs` emitted a broken opening tag, in three different ways
+  depending on the arm. With a language it wrote no ` class="` and no leading space, so the
+  first attr fused onto the tag *name* — `[]($code.asset('x.zig').language('zig').attrs('a'))`
+  produced `<prea beta >`, an element called `prea` rather than a `<pre>` with a class. Without
+  a language it opened `class="` and never closed it, swallowing the `<code>` child and the
+  snippet into the attribute value. And the `=mathtex` arm jammed the attrs onto
+  `type="math/tex"`, because the guard meant to open the quote there was unreachable. All three
+  now write the same matched open/write/close trio every other directive arm uses.
+- `zigapagos init` (without `--from-astro`) previously wrote no `.gitignore` at all, so a
+  fresh scaffold left `node_modules/`, `zig-out/` and (as of this change) the image-derive
+  cache untracked but unignored.
+- `frontmatter.ziggy-schema` had drifted from the frontmatter the build actually accepts: it
+  was missing `translation_key` and `Alternative.name`, and still declared an
+  `Alternative.title` that no longer exists — editors validating against the schema rejected
+  valid fields and accepted a dead one.
+
+### Security
+
+- SuperMD directive metadata is now HTML-escaped everywhere it reaches an HTML attribute
+  (issue #148). `src/render/html.zig` printed `title`, `alt`, `id`, `attrs` (rendered into
+  `class`), `$link.ref(…)` fragments and the code-fence language with `{s}` — raw — so an
+  author-supplied value containing `"` closed the attribute it sat in and could open new ones:
+  a `title` of `x" onload="alert(1)` became a real `onload` handler on the emitted element.
+  Reachable only by whoever writes the content, so self-inflicted on a single-author site, and
+  **not** self-inflicted where content authorship is broader than code authorship — a migrated
+  site whose frontmatter came from elsewhere, generated or scripted content, or a repo that
+  accepts content contributions. Every such value now goes through `HtmlSafe`, which escapes
+  `&`, `<`, `>`, `'` and `"`. URLs are unaffected: `href`/`src` are emitted through `printUrl`
+  on its own resolution path, which this change does not touch.
+- Dropped the blanket `style-src 'unsafe-inline'` grant, which permitted inline `<style>`
+  *element* injection sitewide to cover something narrower (inline style *attributes*). The new
+  `style-src-elem` directive is hash-strict with no `unsafe-inline`; the lenient grant is now
+  confined to `style-src-attr` alone.
+- The declared `preact-render-to-string` range is raised from `^6.6.2` to `^6.7.0`, whose
+  attribute serializer rejects unsafe attribute *keys* before namespace normalization
+  (preactjs/preact-render-to-string#461). Under 6.6.x a key that looked namespaced but
+  contained `>` or spaces was rewritten and emitted — markup injection through prop keys on
+  the SSR path that renders every island. Committed lockfiles already resolved 6.7.0, so
+  sites built from this repository's locked toolchain were never affected; the raised floor
+  closes the window for fresh resolutions (including the published npm package, whose
+  dependency ranges derive from this manifest).
+
+### Known limitations
+
+- With `auto_heading_ids` on, a same-page reference through the `$link.ref('slug')` Scripty
+  directive still fails with `unknown ref` — SuperMD's own `invalid_ref` check runs inside
+  `Ast.init`, before ids can be injected. Plain Markdown links (`[t](#slug)`,
+  `[t](/other#slug)`) are validated later and work fine; `$link.unsafeRef('slug')` is the
+  workaround for the Scripty-directive case.
+- A content-authored `<z-island>` only accepts static props (`:props` Ziggy
+  literals and literal `prop-NAME="value"` attributes). `prop-NAME="$page.*"`
+  Scripty expressions do **not** resolve in content — Scripty is evaluated by
+  SuperHTML at layout render time, and an `=html` fence's body is emitted
+  verbatim, never run through SuperHTML's template evaluator. A page-bound
+  prop still needs a layout.
+- Two documented gaps in the emitted policy, both falling back to the revalidating baseline
+  rather than to a wrong header: shared (non-lazy-route) split chunks and `.map` sourcemaps
+  are not tracked per-route by the routing manifests, so they cannot be exact-listed as
+  immutable; and the fingerprint rule is a name-shape heuristic, not proof `asset_fingerprint`
+  is on — the emitter runs over a finished output tree with no site config, so a
+  coincidentally fingerprint-shaped filename is marked immutable too. Both artifacts say so
+  and show how to drop the line.
+- A view transition captures the *immediate* route flip, not the settled page: a guarded
+  route's guard and a `lazy()` route's chunk resolve after the transition finishes, so the
+  animation lands on the route's `fallback`/skeleton rather than the final content. Waiting on
+  that async work would risk the spec's ~4s transition timeout.
+- Neither the SPA-side nor the cross-document feature disables itself under
+  `prefers-reduced-motion`; the media-query guard is the author's to add.
+- **No Windows support** until the Zig 0.17 port. Inherited upstream code
+  (`src/cli/watcher/WindowsWatcher.zig`, `src/wuffs.zig`) does not compile on
+  stable Zig 0.16.0 — `os.windows` has neither `OVERLAPPED` nor `PAGE_READONLY`
+  there — and the fix rides upstream's 0.17-dev branch.
+- **No FreeBSD binary**, and a source build does not substitute for one: the
+  watcher-selection logic compiles the inotify-based `LinuxWatcher` on FreeBSD,
+  whose `inotify_init1`/`inotify_add_watch`/`inotify_rm_watch` that target does
+  not have, and there is no checked-in Wuffs shim for it under `src/hacks/`.
+  Both blockers are recorded against the shipped matrix in `build/release.zig`,
+  which is the list to re-add the target to once they are fixed.
+- **The emitted host config is only a file until you deploy it.** The build
+  writes the hash-strict CSP and the caching policy; serving them — and
+  re-serving them after a rebuild, since the CSP hashes are byte-exact — is the
+  host's job. As of this release the CSP's one lenient grant is
+  `style-src-attr 'unsafe-inline'`, for the framework's inline `style`
+  *attributes*; `style-src-elem` is hash-strict like `script-src`.
+- **A per-locale `host_url_override` cannot be exercised locally.** `zigapagos dev`
+  points ZigBase at one built tree and serves it verbatim on one origin, so a
+  multi-host locale set builds correctly but can only be checked as deployed. The
+  emitted output is unaffected; this is a preview limitation, not a build one.
+- **Prebuilt binaries cover four Unix targets**: `x86_64-linux-musl`,
+  `aarch64-linux-musl`, `x86_64-macos` and `aarch64-macos`, each built on its own
+  native runner, with `runtime.tar.xz` and `SHA256SUMS` beside them. arm64 archives
+  start at `v0.3.0` — earlier tags are x64-only, and `v0.1.0` predates prebuilt
+  binaries entirely. Any other host still needs a source build.
+- **AVIF needs an encoder you already have.** `image_optimize.avif_encoder` invokes an
+  external `avifenc`-compatible binary; Zigapagos never vendors or downloads an AV1 encoder,
+  and with no encoder configured a build emits WebP and the original only.
+- Pre-1.0: APIs may change between minor versions.
+
+### Internal
+
+- `tests/skills/sync.sh` turns drift between `skills/zigapagos-astro-migration/references/*`
+  and the canonical `docs/migration/*` into a red test (the reference copies must be
+  byte-identical — an installed skill is self-contained), and checks the agentskills.io
+  frontmatter invariants plus the progressive-disclosure line budget on `SKILL.md`.
+- Four new shell gates cover the JSON surfaces and the scaffold, each verified to fail against
+  the pre-change binary.
+- `tests/rendering/attr-escaping.sh` pins the whole class per attribute name rather than per
+  call site, so one directive arm regressing cannot hide behind another still passing, and was
+  verified to fail against the pre-fix renderer. Its fixture uses Markdown's angle-bracket
+  destination form (`[text](<$directive…>)`): a bare destination ends at the first double
+  quote, so a quote-carrying payload would not parse as a directive at all and the test would
+  have proved nothing.
+- `ReleaseFast` is now confined to the published release matrix (`build/release.zig`); build
+  and test tooling is Debug (issue #63). The snapshot suite's `camera` helper was built
+  `ReleaseFast`, and `build/config.zig` still carried a commented-out
+  `.preferred_optimize_mode = .ReleaseFast` left over from the consumer build API that #108
+  removed. The measurement behind it, taken on this repo's own site with isolated caches: a
+  cold Debug build is 29s against ReleaseFast's 96s (link alone, 3s against 58s) and produces
+  **byte-identical output** — so the optimization was buying nothing a contributor can
+  observe except the wait.
+- `build.zig.zon` drops `lsp_kit` and `translate_c`, inherited from upstream's LSP build
+  and consumed by nothing; `scripts/rescue-codeberg.sh` now warms the one remaining
+  Codeberg-hosted pin (SuperMD's transitive translate-c) and was verified against a fresh
+  cache under strace: zero Codeberg DNS queries or connections from warm through
+  `zig build --fetch`, and the warmed cache resolves fully offline.
+- CI workflow actions are unified on current majors (upload-artifact v7, download-artifact
+  v8, setup-node v7 — clearing the fall-2026 Node 20 runner removal), and Dependabot now
+  ignores jdx/mise-action minors/patches, whose tagging scheme otherwise makes it propose
+  stale concrete pins against the moving `@v4` tag (PR #125's `@v4.2.3` while `v4` already
+  pointed at 4.2.4).
+- happy-dom moves to 20.11.2 (MutationObserver callbacks no longer silently die after a
+  GC — the flaky-test kind of latent bug), and the site/ and examples/tsx-site lockfiles
+  are regenerated pinned to `configVersion: 0`, keeping Bun's hoisted linker so the
+  props-check gate's website-root `tsc` resolution cannot silently flip layouts.
+- Two allocator defects surfaced by the new tests and fixed alongside: `migrate.zig`'s
+  `buildReport` returned an `Allocating` buffer *view* that panics with "Invalid free" under
+  the debug allocator once a caller frees it, and `scanDir` leaked one joined-path allocation
+  per directory level.
+
 ## [0.3.0] - 2026-08-02
 
 ### Added
@@ -938,7 +1324,8 @@ what is new from what the port changed and removed.
 - Pre-1.0: APIs may change between minor versions. **Only the most recent
   release is supported** — there are no backports.
 
-[Unreleased]: https://github.com/valthon/zigapagos/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/valthon/zigapagos/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/valthon/zigapagos/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/valthon/zigapagos/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/valthon/zigapagos/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/valthon/zigapagos/compare/22ea4a0...v0.1.1
