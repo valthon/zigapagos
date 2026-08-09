@@ -13,6 +13,15 @@ const Allocator = std.mem.Allocator;
 
 pub const DecodeError = error{ OutOfMemory, UnsupportedImageFormat, WuffsError, TooLarge };
 
+/// 16k x 16k RGBA is 1 GiB; anything bigger is a config error, not a photo.
+/// `root.zig`'s `planImageVariants` must reject the same bound BEFORE
+/// planning a variant, so an oversized source lands in the documented
+/// silent-passthrough bucket (spec §7's "filtered out... never fatal")
+/// instead of promising a name this decoder then refuses to fulfil — the
+/// two gates share this constant so they can't drift apart again (#132
+/// final review, Fix 1).
+pub const max_dimension: u32 = 16384;
+
 pub const Decoded = struct {
     w: u32,
     h: u32,
@@ -52,8 +61,7 @@ pub fn decode(gpa: Allocator, bytes: []const u8) DecodeError!Decoded {
 
     const w = wuffs.wuffs_base__pixel_config__width(&cfg.pixcfg);
     const h = wuffs.wuffs_base__pixel_config__height(&cfg.pixcfg);
-    // 16k x 16k RGBA is 1 GiB; anything bigger is a config error, not a photo.
-    if (w == 0 or h == 0 or w > 16384 or h > 16384) return error.TooLarge;
+    if (w == 0 or h == 0 or w > max_dimension or h > max_dimension) return error.TooLarge;
 
     // Ask wuffs to swizzle whatever the source format is into interleaved
     // non-premultiplied RGBA8 in OUR buffer.

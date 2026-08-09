@@ -344,7 +344,76 @@ grep -q "$AVIFENC_SILENT" "$WORK/build-avif-silent.log" ||
   fail "fatal message does not name the encoder (log: $WORK/build-avif-silent.log)"
 echo "PASS: (8b) an encoder that exits 0 without writing output is diagnosed as such"
 
-# --- (9) whitespace in filename: percent-encoded in srcset, not the file on
+# --- (9) oversized source: silent passthrough, not fatal (#132 final review,
+# Fix 1) ---------------------------------------------------------------
+# decode.zig rejects anything over 16384px per side (`error.TooLarge`); before
+# the fix, planImageVariants didn't share that bound, so it planned a variant
+# for an oversized source, the render pass promised that URL in the HTML, and
+# derive.zig's decode() then fataled — output tree already partially written,
+# HTML pointing at files that would never exist. The fix makes the planner
+# apply decode.zig's own `max_dimension` and fall into the SAME silent
+# plain-<img> bucket as an undecodable source (spec §7), beside a normal
+# image in the same build so the guard is proven to be per-image, not a
+# feature-wide kill switch.
+SITE_BIG="$WORK/site-big"
+mkdir -p "$SITE_BIG/content" "$SITE_BIG/layouts" "$SITE_BIG/assets"
+cat > "$SITE_BIG/zigapagos.ziggy" <<EOF
+Site {
+    .title = "ImageOptimize oversized e2e",
+    .host_url = "https://example.com",
+    .content_dir_path = "content",
+    .layouts_dir_path = "layouts",
+    .assets_dir_path = "assets",
+    .image_optimize = {
+        .widths = [200, 400],
+    },
+}
+EOF
+printf '%s' "$LAYOUT" > "$SITE_BIG/layouts/index.shtml"
+cat > "$SITE_BIG/content/index.smd" <<'EOF'
+---
+.title = "Home",
+.date = @date("2020-07-06T00:00:00"),
+.author = "Test",
+.layout = "index.shtml",
+.draft = false,
+---
+
+[A test image.](<$image.asset("photo.jpg").alt("test photo")>)
+
+[](<$image.asset("wide.png")>)
+EOF
+cp "$SOURCE_JPG" "$SITE_BIG/content/photo.jpg"
+# 20000x4 RGBA PNG: past decode.zig's 16384px-per-side cap on width, well
+# under it on height, so this is unambiguously the oversized case and not an
+# accidental zero-dimension one.
+python3 - "$SITE_BIG/content/wide.png" <<'PY'
+import struct, sys, zlib
+W, H = 20000, 4
+path = sys.argv[1]
+def chunk(t, d):
+    return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
+raw = b""
+for y in range(H):
+    raw += b"\x00" + bytes([(x * 7 + y) % 256 for x in range(W * 4)])
+png = b"\x89PNG\r\n\x1a\n"
+png += chunk(b"IHDR", struct.pack(">IIBBBBB", W, H, 8, 6, 0, 0, 0))
+png += chunk(b"IDAT", zlib.compress(raw, 6))
+png += chunk(b"IEND", b"")
+open(path, "wb").write(png)
+PY
+OUT_BIG="$WORK/out-big"
+build_at "$SITE_BIG" "$OUT_BIG" "$WORK/build-big.log"
+HTML_BIG="$OUT_BIG/index.html"
+[[ -f "$HTML_BIG" ]] || fail "(9) oversized-source build did not emit index.html"
+[[ "$(grep -c '<picture>' "$HTML_BIG")" == "1" ]] ||
+  fail "(9) expected exactly 1 <picture> (normal image only), got $(grep -c '<picture>' "$HTML_BIG")"
+grep -q '<img src="/wide.png">' "$HTML_BIG" ||
+  fail "(9) oversized source did not fall back to a plain <img>: $(cat "$HTML_BIG")"
+[[ -f "$OUT_BIG/wide.png" ]] || fail "(9) oversized source's own asset was not installed"
+echo "PASS: (9) oversized source (20000x4) is silent passthrough (plain <img>, no fatal); normal image in the same build still gets a <picture>"
+
+# --- (10) whitespace in filename: percent-encoded in srcset, not the file on
 # disk (#132 final review, Fix 2) ---------------------------------------
 # Per the HTML "parse a srcset attribute" algorithm, a candidate URL
 # terminates at the first ASCII whitespace; a raw space in `srcset` silently
@@ -381,19 +450,19 @@ cp "$SOURCE_JPG" "$SITE_SPACE/content/my photo.jpg"
 OUT_SPACE="$WORK/out-space"
 build_at "$SITE_SPACE" "$OUT_SPACE" "$WORK/build-space.log"
 HTML_SPACE="$OUT_SPACE/index.html"
-[[ -f "$HTML_SPACE" ]] || fail "(9) whitespace-filename build did not emit index.html"
+[[ -f "$HTML_SPACE" ]] || fail "(10) whitespace-filename build did not emit index.html"
 SPACE_SRCSET=$(grep -o 'srcset="[^"]*"' "$HTML_SPACE" | head -1 | sed 's/srcset="//;s/"$//')
-[[ -n "$SPACE_SRCSET" ]] || fail "(9) no srcset attribute found"
+[[ -n "$SPACE_SRCSET" ]] || fail "(10) no srcset attribute found"
 FIRST_CANDIDATE=$(echo "$SPACE_SRCSET" | sed -E 's/,.*//; s/ [0-9]+w *$//')
 [[ "$FIRST_CANDIDATE" != *" "* ]] ||
-  fail "(9) srcset's first candidate URL still contains a raw space: '$FIRST_CANDIDATE'"
+  fail "(10) srcset's first candidate URL still contains a raw space: '$FIRST_CANDIDATE'"
 echo "$FIRST_CANDIDATE" | grep -q '%20' ||
-  fail "(9) srcset's first candidate URL has no %20 (space not encoded): '$FIRST_CANDIDATE'"
+  fail "(10) srcset's first candidate URL has no %20 (space not encoded): '$FIRST_CANDIDATE'"
 SPACE_FILE="$OUT_SPACE${FIRST_CANDIDATE//%20/ }"
-[[ -f "$SPACE_FILE" ]] || fail "(9) encoded srcset URL does not resolve to a file on disk: $SPACE_FILE"
-echo "PASS: (9) whitespace in a source filename is percent-encoded in srcset (%20), file on disk keeps its literal name"
+[[ -f "$SPACE_FILE" ]] || fail "(10) encoded srcset URL does not resolve to a file on disk: $SPACE_FILE"
+echo "PASS: (10) whitespace in a source filename is percent-encoded in srcset (%20), file on disk keeps its literal name"
 
-# --- (10) widths.len > 64 is rejected, naming the bound (#132 final review,
+# --- (11) widths.len > 64 is rejected, naming the bound (#132 final review,
 # Fix 3; previously untested) --------------------------------------------
 SITE_WIDE_LIST="$WORK/site-wide-list"
 mkdir -p "$SITE_WIDE_LIST/content" "$SITE_WIDE_LIST/layouts" "$SITE_WIDE_LIST/assets"
@@ -428,11 +497,11 @@ set +e
   >"$WORK/build-wide-list.log" 2>&1
 WIDE_LIST_STATUS=$?
 set -e
-[[ "$WIDE_LIST_STATUS" -ne 0 ]] || fail "(10) build with 65 configured widths unexpectedly succeeded"
+[[ "$WIDE_LIST_STATUS" -ne 0 ]] || fail "(11) build with 65 configured widths unexpectedly succeeded"
 grep -q '65 entries' "$WORK/build-wide-list.log" ||
-  fail "(10) fatal message does not name the entry count (log: $WORK/build-wide-list.log)"
+  fail "(11) fatal message does not name the entry count (log: $WORK/build-wide-list.log)"
 grep -q 'must be <= 64' "$WORK/build-wide-list.log" ||
-  fail "(10) fatal message does not name the 64-entry bound (log: $WORK/build-wide-list.log)"
-echo "PASS: (10) more than 64 configured widths fails the build, naming the count and the 64-entry bound"
+  fail "(11) fatal message does not name the 64-entry bound (log: $WORK/build-wide-list.log)"
+echo "PASS: (11) more than 64 configured widths fails the build, naming the count and the 64-entry bound"
 
 echo "ALL PROOF CHECKS PASSED (image_optimize)"

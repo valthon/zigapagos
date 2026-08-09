@@ -3306,6 +3306,7 @@ fn planImageVariants(io: Io, gpa: Allocator, build: *Build, opts: ImageOptimize)
     const image_requests = @import("image/requests.zig");
     const plan = @import("image/plan.zig");
     const webp = @import("image/webp.zig");
+    const decode = @import("image/decode.zig");
 
     const refs = image_requests.take(io, gpa) catch fatal.oom();
     defer gpa.free(refs);
@@ -3368,6 +3369,13 @@ fn planImageVariants(io: Io, gpa: Allocator, build: *Build, opts: ImageOptimize)
         const iw = std.math.cast(u32, size.w) orelse continue;
         const ih = std.math.cast(u32, size.h) orelse continue;
         if (iw == 0 or ih == 0) continue;
+        // Must agree with image/decode.zig's own bound: this planner promises
+        // a variant name to the render pass, and derive.zig's decode() fatals
+        // on anything decode.zig itself refuses. A source past the shared cap
+        // belongs in this function's existing silent-passthrough bucket
+        // (plain <img>, spec §7), not a fatal after output is already
+        // partially written (#132 final review, Fix 1).
+        if (iw > decode.max_dimension or ih > decode.max_dimension) continue;
 
         // `widths_buf` is sized off validateImageOptimize's `widths.len <= 64`
         // bound (+1 for pickWidths' single-intrinsic-width fallback); that
