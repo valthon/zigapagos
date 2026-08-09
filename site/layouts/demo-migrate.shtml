@@ -63,8 +63,12 @@
     <p class="section-note">
       The full mapping is specified in
       <a href="$site.page('docs/migrate-from-astro').link()">migrating from Astro</a>,
-      written precisely enough that an agent can complete a port unattended, with
-      per-pattern conversions in
+      written precisely enough that an agent can complete a port unattended &mdash;
+      and it ships that way: the same spec installs as an Agent Skill
+      (<code>skills/zigapagos-astro-migration</code>, in the open agentskills.io
+      <code>SKILL.md</code> format read by Claude Code, Codex, Cursor, Gemini CLI
+      and others), a workflow layer over <code>zigapagos migrate</code> and the
+      <code>--format=json</code> fix loop. Per-pattern conversions are in
       <a href="$site.page('docs/migration-recipes').link()">recipes</a>.
     </p>
   </section>

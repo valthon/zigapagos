@@ -46,6 +46,25 @@ map. No island on the page? Zero JavaScript shipped.
   client-routed app: prerendered route skeletons, two-phase hydration,
   soft navigation, route guards, nested layouts. Host-agnostic routing
   manifests (ZigBase / Nginx / Apache) generated for you.
+- **Prefetching** — a SPA `<Link>` starts a lazy route's chunk load on hover by
+  default (`prefetch="viewport"` and `prefetch={false}` per link), skipped
+  under the browser's data-saver signal. On content pages, opt-in
+  `.speculation_rules = true` injects declarative Speculation Rules prefetch
+  hints — zero runtime JS, inert on browsers without support.
+- **View transitions** — `viewTransitions: true` on a SPA wraps soft navigation
+  in `document.startViewTransition()`; feature-detected and off by default, so
+  without the opt-in or the API navigation stays the instant flip. Content
+  pages get the cross-document equivalent with one CSS rule.
+- **Build-time image optimization** — `.image_optimize = {}` resamples content
+  images into WebP at your configured widths and emits a `<picture>` with a
+  full responsive `srcset`/`sizes` and the untouched original as fallback;
+  opt-in AVIF through an external `avifenc`-compatible encoder you supply.
+  Variants are cached across rebuilds and never upscaled. Off by default —
+  see [docs/images.md](docs/images.md).
+- **Pagination** — a section index opts in with
+  `.pagination = { .page_size = 10 }` and is rendered once per window of
+  subpages, in a choice of three URL styles; `$page.subpages()` returns the
+  current window, so an existing layout loop paginates with no edit.
 - **LLM-native Astro migration** — `zigapagos migrate <astro-dir>` detects
   `client:*` component usage and writes a `MIGRATION.md` worklist; opt into
   `--scaffold` and it also emits a starter island per detected island with the
@@ -55,10 +74,22 @@ map. No island on the page? Zero JavaScript shipped.
   Ships as an installable [Agent Skill](skills/zigapagos-astro-migration/)
   (the open `SKILL.md` format read by Claude Code, Codex, Cursor, Gemini CLI,
   and others).
+- **Agent-legible diagnostics** — `--format=json` on `release`, `validate`,
+  `doctor` and `explain-code` emits NDJSON with stable `ZP_*` codes, so an
+  agent's build → fix → validate loop matches on codes instead of parsing
+  prose. `zigapagos init` scaffolds `AGENTS.md` and `CLAUDE.md` into a new
+  site.
 - **Zero-config dev loop** — `zigapagos dev` rebuilds the site, serves the real
   release tree with the stock ZigBase binary (same-origin API and admin UI, not
   a proxy shim), and live-reloads the browser over SSE. Islands hot-swap with
-  their `useState` intact.
+  their `useState` intact. `dev --background` detaches the loop —
+  `dev stop|status|logs` manage it afterward, and a build-aware
+  `GET /_zigapagos/status` lets a script poll for its own edit to land — and
+  `dev` backgrounds itself automatically in a recognized AI-agent environment.
+- **Deployable host config** — a release with islands or SPAs also writes a
+  hash-strict Content-Security-Policy (CSP3 `style-src-elem` /
+  `style-src-attr` split) and a site-wide `Cache-Control` policy beside the
+  routing manifests, each in ZigBase, Nginx and Apache form.
 - **A real templating stack, no JS required** — SuperHTML layouts and SuperMD
   content with build-time correctness checks, inherited from Zine.
 - **Fast native core** — the site graph and content pipeline are Zig; the only
@@ -113,7 +144,7 @@ entries and bundles them itself.
 
 ### From the releases page
 
-Each release publishes the two per-target archives, a `runtime.tar.xz`, and a
+Each release publishes the four per-target archives, a `runtime.tar.xz`, and a
 `SHA256SUMS`. The per-target archives contain the **binary alone**: islands and
 SPAs additionally need the `@z/runtime` tree out of `runtime.tar.xz`, with
 `ZIGAPAGOS_RUNTIME_DIR` pointed at it. Doing that by hand is exactly what

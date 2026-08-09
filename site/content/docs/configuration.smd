@@ -41,6 +41,20 @@ the project root.
 `nginx`, or `apache`. See [native SPAs]($link.page("docs/spa")) for what each
 one generates.
 
+`.image_optimize = {}` turns on build-time image optimization: WebP variants of
+every content image at configured widths, emitted as a `<picture>` with a full
+`srcset`/`sizes` and the untouched original as the fallback, with opt-in AVIF
+via an external encoder you supply. Off by default (`null`).
+[Images]($link.page("docs/images")) is the full reference, including the
+variant cache and the failure rules.
+
+`.speculation_rules = true` injects a browser-native
+`<script type="speculationrules">` prefetch hint into every rendered page:
+supporting browsers prefetch same-origin links on hover, with zero runtime JS,
+and browsers without support ignore the block. Off by default; the
+[islands reference]($link.page("docs/islands")) covers it under link
+prefetching.
+
 ## The build invocation
 
 `zigapagos` is a standalone executable, so a project's build is one command

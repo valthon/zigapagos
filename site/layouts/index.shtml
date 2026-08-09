@@ -133,6 +133,20 @@
           the guard runs in the browser after the shell is served.
         </p>
         <p>
+          Navigation is tuned by default: a <code>&lt;Link&gt;</code> to a
+          code-split route starts fetching that route's chunk on hover, focus
+          or touch, so the click usually finds it already loaded &mdash;
+          <code>prefetch="viewport"</code> and <code>prefetch={false}</code>
+          adjust it per link, and a browser's data-saver signal turns it off.
+          Add <code>viewTransitions: true</code> to the <code>spa</code>
+          export and every soft navigation crossfades instead of flipping
+          &mdash; feature-detected, off by default, no other code. Content
+          pages get the declarative counterpart:
+          <code>.speculation_rules = true</code> on the site injects a
+          browser-native speculation-rules prefetch hint into every page,
+          zero runtime JS.
+        </p>
+        <p>
           <a class="btn btn-primary" href="/zigapagos/demos/app/">Open the demo app</a>
         </p>
       </div>
@@ -147,6 +161,44 @@ export const routes = [
   { path: "/account", component: Account,
     guard: requireSession },
 ];</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section id="s-images" class="section wrap">
+    <p class="eyebrow">Images</p>
+    <h2>Responsive images from a build step, not a service</h2>
+    <div class="grid-2">
+      <div>
+        <p>
+          Set <code>.image_optimize = {}</code> in the site config and every
+          content image is resampled at build time into WebP variants at your
+          configured widths, emitted as a <code>&lt;picture&gt;</code> with a
+          full <code>srcset</code>/<code>sizes</code> and the untouched
+          original as the <code>&lt;img&gt;</code> fallback. Variants are
+          never upscaled past the source's own width, and derived files are
+          cached, so a full rebuild after the first pays file-copy cost.
+        </p>
+        <p>
+          AVIF is an explicit hatch: point
+          <code>.image_optimize.avif_encoder</code> at an
+          <code>avifenc</code>-compatible binary you already have and every
+          planned width gets an AVIF <code>&lt;source&gt;</code> ahead of the
+          WebP one &mdash; Zigapagos never vendors or downloads an encoder.
+          All of it is off by default: a site that never sets the field
+          builds byte-identical output.
+        </p>
+        <p><a href="$site.page('docs/images').link()">Images reference →</a></p>
+      </div>
+      <div>
+        <pre class="pipeline"><code>&lt;picture&gt;
+  &lt;source type="image/webp"
+          srcset="cover.a1b2c3d4.480.webp 480w,
+                  cover.a1b2c3d4.960.webp 960w"
+          sizes="100vw"&gt;
+  &lt;img src="cover.jpg" width="1600"
+       height="900" alt="…"&gt;
+&lt;/picture&gt;</code></pre>
       </div>
     </div>
   </section>
@@ -178,6 +230,45 @@ export const routes = [
         <p><a href="$site.page('docs/migrate-from-astro').link()">The full Astro → Zigapagos mapping →</a></p>
       </div>
     </div>
+  </section>
+
+  <section id="s-agents" class="section wrap">
+    <p class="eyebrow">Agent-ready</p>
+    <h2>Built to be driven by an agent as well as a person</h2>
+    <div class="grid-3">
+      <div class="card">
+        <h3>Diagnostics as data</h3>
+        <p>
+          <code>validate</code>, <code>doctor</code> and
+          <code>explain-code</code> take <code>--format=json</code> and emit
+          NDJSON with stable <code>ZP_*</code> codes, so a fix loop matches
+          on the code, never on message prose.
+        </p>
+      </div>
+      <div class="card">
+        <h3>A dev server that detaches</h3>
+        <p>
+          <code>zigapagos dev --background</code> waits for the server to be
+          ready, prints its URL, and exits; <code>/_zigapagos/status</code>
+          then reports a build generation counter and pass/fail state, so an
+          agent polls for its own edit to land instead of watching a
+          terminal. In a recognized agent environment, <code>dev</code>
+          backgrounds itself.
+        </p>
+      </div>
+      <div class="card">
+        <h3>Context that ships</h3>
+        <p>
+          <code>zigapagos init</code> scaffolds <code>AGENTS.md</code> and
+          <code>CLAUDE.md</code> into a new site, and the Astro migration is
+          an installable Agent Skill in the open agentskills.io format.
+        </p>
+      </div>
+    </div>
+    <p class="section-note">
+      <a href="$site.page('docs/diagnostics').link()">Machine-readable diagnostics →</a> ·
+      <a href="$site.page('docs/dev-server').link()">Background dev server →</a>
+    </p>
   </section>
 
   <section id="s-pipeline" class="section wrap">
@@ -231,12 +322,24 @@ components/*.island.tsx ──►  Bun SSR  ───┤     + import map
           build actually emitted, hashed, with no <code>unsafe-inline</code>,
           for whichever host ends up serving the site.
         </p>
+        <p>
+          The same goes for caching: <code>cache.nginx.conf</code>,
+          <code>cache.apache.conf</code> and <code>cache.zigbase.txt</code>
+          land beside them, carrying one site-wide policy &mdash;
+          content-hashed bundles and fingerprinted assets get
+          <code>public, max-age=31536000, immutable</code>, and anything
+          whose URL survives a deploy gets <code>no-cache</code>, so a
+          visitor is never served fresh HTML pointing at a stale bundle.
+        </p>
       </div>
       <div>
         <pre class="pipeline"><code>public/                  &lt;- the output tree
 ├── csp.nginx.conf       (written for every target)
 ├── csp.apache.conf
 ├── csp.zigbase.txt
+├── cache.nginx.conf     (likewise: the caching policy)
+├── cache.apache.conf
+├── cache.zigbase.txt
 └── demos/app/            deploy_target = "zigbase"
     ├── .spa
     └── zigbase.static_routes.zig
