@@ -295,6 +295,14 @@ queued for the next release, read `changelog.d/`.
   innocent face: a directive `title` or an image `alt` containing a plain double quote —
   `He said "hi"` — terminated the attribute early and emitted malformed HTML. No malice
   required, just a quotation mark. Both now render as `&quot;`.
+- A `$code` directive carrying `attrs` emitted a broken opening tag, in three different ways
+  depending on the arm. With a language it wrote no ` class="` and no leading space, so the
+  first attr fused onto the tag *name* — `[]($code.asset('x.zig').language('zig').attrs('a'))`
+  produced `<prea beta >`, an element called `prea` rather than a `<pre>` with a class. Without
+  a language it opened `class="` and never closed it, swallowing the `<code>` child and the
+  snippet into the attribute value. And the `=mathtex` arm jammed the attrs onto
+  `type="math/tex"`, because the guard meant to open the quote there was unreachable. All three
+  now write the same matched open/write/close trio every other directive arm uses.
 - `zigapagos init` (without `--from-astro`) previously wrote no `.gitignore` at all, so a
   fresh scaffold left `node_modules/`, `zig-out/` and (as of this change) the image-derive
   cache untracked but unignored.

@@ -583,9 +583,16 @@ fn renderDirective(
                 } else if (std.mem.eql(u8, code.language orelse "", "=mathtex")) {
                     try w.writeAll("<script type=\"math/tex\"");
                     if (directive.id) |id| try w.print(" id=\"{f}\"", .{HtmlSafe{ .bytes = id }});
+                    // Matched trio -- open, write, close -- as in every other
+                    // directive arm. The `if (code.language == null)` that used
+                    // to guard the opening quote was unreachable here (this
+                    // branch is only entered when the language IS `=mathtex`),
+                    // so the attrs were emitted with no attribute name and no
+                    // leading space, fusing onto `type="math/tex"`.
                     if (directive.attrs) |attrs| {
-                        if (code.language == null) try w.writeAll(" class=\"");
+                        try w.writeAll(" class=\"");
                         for (attrs) |attr| try w.print("{f} ", .{HtmlSafe{ .bytes = attr }});
+                        try w.writeAll("\"");
                     }
 
                     if (directive.title) |t| try w.print(" title=\"{f}\"", .{HtmlSafe{ .bytes = t }});
@@ -595,9 +602,16 @@ fn renderDirective(
                 } else {
                     try w.writeAll("<pre");
                     if (directive.id) |id| try w.print(" id=\"{f}\"", .{HtmlSafe{ .bytes = id }});
+                    // Same matched trio. Guarding the opening quote on
+                    // `code.language == null` broke both ways: with a language
+                    // it emitted no ` class="` and no leading space, so the
+                    // first attr fused onto the tag name (`<prealpha`), and
+                    // without one it opened the quote and never closed it,
+                    // swallowing the rest of the tag into the attribute value.
                     if (directive.attrs) |attrs| {
-                        if (code.language == null) try w.writeAll(" class=\"");
+                        try w.writeAll(" class=\"");
                         for (attrs) |attr| try w.print("{f} ", .{HtmlSafe{ .bytes = attr }});
+                        try w.writeAll("\"");
                     }
 
                     if (directive.title) |t| try w.print(" title=\"{f}\"", .{HtmlSafe{ .bytes = t }});
