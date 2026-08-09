@@ -143,7 +143,7 @@ pub fn setImageSize(
 }
 
 pub const Size = struct { w: i64, h: i64 };
-fn parseImageSize(
+pub fn parseImageSize(
     gpa: Allocator,
     image_src: []const u8,
 ) !Size {

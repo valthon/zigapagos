@@ -76,6 +76,12 @@ site_asset_reads: Assets = .empty,
 ///
 /// Values are gpa-owned and freed in `deinit`.
 asset_fingerprints: @import("fingerprint.zig").Map = .empty,
+/// Named image variants (#132): filled once by root.zig's planImageVariants
+/// before the render pass, read lock-free by the render workers (the
+/// asset_fingerprints discipline). Empty unless `image_optimize` is set.
+/// Keys' path/name ints are interned in the SourceRef's owning tables
+/// (site: Build.st/pt; page: that variant's tables). Values gpa-owned.
+image_variants: @import("image/plan.zig").Map = .empty,
 i18n_dir: Io.Dir,
 // Translation key map. Each entry is a slice with the same length as the
 // number of variants.
@@ -203,6 +209,18 @@ pub fn deinit(b: *const Build, io: Io, gpa: Allocator) void {
         var it = fps.valueIterator();
         while (it.next()) |name| gpa.free(name.*);
         fps.deinit(gpa);
+    }
+    // Planned image variants (#132): each `Planned.variants` slice and every
+    // `Variant.basename` in it is one gpa allocation from `planImageVariants`
+    // (`plan.variantBasename` / the planner's own `gpa.alloc`).
+    {
+        var iv = b.image_variants;
+        var it = iv.valueIterator();
+        while (it.next()) |planned| {
+            for (planned.variants) |v| gpa.free(v.basename);
+            gpa.free(planned.variants);
+        }
+        iv.deinit(gpa);
     }
     switch (b.mode) {
         .memory => |m| {

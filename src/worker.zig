@@ -26,6 +26,7 @@ const highlight = @import("highlight.zig");
 const main = @import("main.zig");
 const gpa = main.gpa;
 const wuffs = @import("wuffs.zig");
+const image_requests = @import("image/requests.zig");
 const Channel = @import("channel.zig").Channel;
 const islands = @import("islands/pass.zig");
 const RenderArena = @import("islands/render_arena.zig").RenderArena;
@@ -88,6 +89,10 @@ pub const Job = union(enum) {
         variant: *const Variant,
         install_dir: Io.Dir,
     },
+
+    /// One source image: decode once, resample+encode every planned
+    /// variant, staging through .zigapagos-cache/images (#132).
+    image_derive: @import("image/derive.zig").Job,
 
     leave,
 };
@@ -239,6 +244,11 @@ inline fn runOneJob(
             vai.progress,
             vai.install_dir,
         ),
+
+        .image_derive => |d| {
+            @import("image/derive.zig").run(io, gpa, d);
+            d.progress.completeOne();
+        },
     }
     return true;
 }
@@ -1027,6 +1037,15 @@ fn analyzeContent(
                                                 bytes,
                                             );
                                         }
+
+                                        if (b.mode == .disk and b.cfg.getImageOptimize() != null and directive.kind == .image) {
+                                            image_requests.register(io, gpa, .{
+                                                .kind = .page,
+                                                .variant_id = variant_id,
+                                                .path = @intFromEnum(path),
+                                                .name = @intFromEnum(name),
+                                            }) catch fatal.oom();
+                                        }
                                         continue :outer;
                                     },
                                     else => {},
@@ -1072,6 +1091,15 @@ fn analyzeContent(
                                             b.site_assets_dir,
                                             sa.ref,
                                         );
+                                    }
+
+                                    if (b.mode == .disk and b.cfg.getImageOptimize() != null and directive.kind == .image) {
+                                        image_requests.register(io, gpa, .{
+                                            .kind = .site,
+                                            .variant_id = 0,
+                                            .path = @intFromEnum(path),
+                                            .name = @intFromEnum(name),
+                                        }) catch fatal.oom();
                                     }
                                     continue :outer;
                                 }

@@ -12,6 +12,7 @@ const supermd = @import("supermd");
 const fatal = @import("fatal.zig");
 const diag = @import("diag.zig");
 const fingerprint = @import("fingerprint.zig");
+const wuffs = @import("wuffs.zig");
 /// The `--summary` emitted-artifact inventory (issue #42).
 const BuildSummary = @import("summary.zig").Summary;
 const worker = @import("worker.zig");
@@ -131,6 +132,17 @@ pub const Site = struct {
     /// Off by default: it changes every page's bytes and adds hover-time
     /// network traffic no site should get without asking.
     speculation_rules: bool = false,
+    /// Build-time image optimization (issue #132). When set, every content
+    /// `$image` whose source is a decodable still raster (JPEG, PNG, WebP)
+    /// is resampled to WebP variants and emitted inside a `<picture>` with
+    /// the untouched original as the `<img>` fallback. Null (the default)
+    /// means OFF: output is byte-identical to a build without the feature.
+    ///
+    /// Disk (release) builds only, like `asset_fingerprint` — in-memory
+    /// builds (`validate`/`explain`) never derive. The dev loop's builds are
+    /// disk builds, so dev serves optimized output too; incremental rebuilds
+    /// reuse the variants the previous full build installed.
+    image_optimize: ?ImageOptimize = null,
 };
 
 pub const MultilingualSite = struct {
@@ -214,6 +226,18 @@ pub const MultilingualSite = struct {
     /// single-locale `Site` for the full rationale. The emitted rule is
     /// same-origin and path-wide, so one block covers every locale prefix.
     speculation_rules: bool = false,
+    /// Build-time image optimization (issue #132). When set, every content
+    /// `$image` whose source is a decodable still raster (JPEG, PNG, WebP)
+    /// is resampled to WebP variants and emitted inside a `<picture>` with
+    /// the untouched original as the `<img>` fallback. Null (the default)
+    /// means OFF: output is byte-identical to a build without the feature.
+    /// See the field of the same name on a single-locale `Site`.
+    ///
+    /// Disk (release) builds only, like `asset_fingerprint` — in-memory
+    /// builds (`validate`/`explain`) never derive. The dev loop's builds are
+    /// disk builds, so dev serves optimized output too; incremental rebuilds
+    /// reuse the variants the previous full build installed.
+    image_optimize: ?ImageOptimize = null,
 };
 
 /// A localized variant of a multilingual website
@@ -323,6 +347,25 @@ pub const Config = union(enum) {
         }
     }
 
+    fn validateImageOptimize(img_opt: ImageOptimize) void {
+        if (img_opt.quality < 0 or img_opt.quality > 100) fatal.msg(
+            "error: image_optimize.quality '{d}' in zigapagos.ziggy is invalid, must be between 0 and 100",
+            .{img_opt.quality},
+        );
+
+        if (img_opt.widths.len == 0) fatal.msg(
+            "error: image_optimize.widths in zigapagos.ziggy must not be empty",
+            .{},
+        );
+
+        for (img_opt.widths) |w| {
+            if (w <= 0) fatal.msg(
+                "error: image_optimize.widths in zigapagos.ziggy contains non-positive value {d}, all widths must be > 0",
+                .{w},
+            );
+        }
+    }
+
     pub fn validate(cfg: *const Config) void {
         switch (cfg.*) {
             .Site => |s| {
@@ -389,6 +432,8 @@ pub const Config = union(enum) {
                     "error: deploy_target '{s}' in zigapagos.ziggy is invalid, must be one of: zigbase, nginx, apache",
                     .{s.deploy_target},
                 );
+
+                if (s.image_optimize) |img_opt| validateImageOptimize(img_opt);
             },
             .Multilingual => |ml| {
                 const u = std.Uri.parse(ml.host_url) catch |err| {
@@ -495,6 +540,8 @@ pub const Config = union(enum) {
                         );
                     }
                 }
+
+                if (ml.image_optimize) |img_opt| validateImageOptimize(img_opt);
             },
         }
     }
@@ -568,6 +615,14 @@ pub const Config = union(enum) {
         };
     }
 
+    /// `image_optimize` (issue #132) — build-time image optimization.
+    pub fn getImageOptimize(c: *const Config) ?ImageOptimize {
+        return switch (c.*) {
+            .Site => |s| s.image_optimize,
+            .Multilingual => |m| m.image_optimize,
+        };
+    }
+
     pub fn getSiteTitle(c: *const Config, locale_id: u32) []const u8 {
         return switch (c.*) {
             .Site => |s| s.title,
@@ -599,6 +654,24 @@ pub const BuildAsset = struct {
     install_path: ?[]const u8 = null,
     install_always: bool = false,
     rc: std.atomic.Value(u32),
+};
+
+/// The `image_optimize` config block (issue #132). Field defaults are the
+/// site-wide policy a bare `.image_optimize = .{}` opts into.
+pub const ImageOptimize = struct {
+    /// Variant widths (CSS px). Filtered per image to <= intrinsic width —
+    /// never upscaled. PR A generates only the largest surviving width;
+    /// the full srcset ships in PR B.
+    widths: []const i64 = &.{ 480, 800, 1200, 1920 },
+    /// WebP lossy quality (0-100) for JPEG sources. PNG sources always use
+    /// lossless WebP, ignoring this.
+    quality: i64 = 75,
+    /// Emitted verbatim as the `sizes` attribute (required by the HTML spec
+    /// whenever `srcset` uses `w` descriptors; unused until PR B).
+    sizes: []const u8 = "100vw",
+    /// Opt-in AVIF: name (PATH-resolved) or path of an avifenc-compatible
+    /// binary. Null = no AVIF output. Unused until PR B.
+    avif_encoder: ?[]const u8 = null,
 };
 
 /// One `--spa=<src>|<base>` entry from `zigapagos release`'s CLI args. `base` is
@@ -2601,6 +2674,18 @@ pub fn run(
         for (options.changed_files) |cf| changed_set.putAssumeCapacity(cf, {});
     }
 
+    // Image-variant planning (#132) sits HERE — after the analyze pass has
+    // collected every image reference, before the render pass consults the
+    // map lock-free. Disk builds only (fingerprinting's rationale: an
+    // in-memory build writes no tree), but INCLUDING incremental ones, so
+    // re-rendered pages emit the same param-addressed URLs the previous
+    // full build installed.
+    if (build.mode == .disk) {
+        if (build.cfg.getImageOptimize()) |img_opts| {
+            planImageVariants(io, gpa, &build, img_opts);
+        }
+    }
+
     // Release-time SPA prerender pass: route skeletons, dynamic-route shells,
     // per-namespace routing manifests, and the site-wide 404.html. No-ops when no
     // SPAs are declared.
@@ -2957,6 +3042,32 @@ pub fn run(
     // `spa/<name>.js` bundle is an `install_always` asset whose refcount
     // `prerenderAll` bumps, and it must land alongside the prerendered shells.
     var progress_install_assets = progress.start("Install assets", 0);
+
+    // Hoisted above BOTH the site-asset install block below and the image
+    // derive scheduling right after it (#132): a multilingual site's site
+    // assets — and therefore its derived image variants for `.site` refs —
+    // land under the same locale-prefixed dir either way, so the two
+    // consumers must not compute this independently and risk drifting.
+    const site_assets_install_dir = switch (build.cfg.*) {
+        .Site => build.mode.disk.output_dir,
+        .Multilingual => |ml| blk: {
+            if (ml.assets_prefix_path.len == 0) {
+                break :blk build.mode.disk.output_dir;
+            } else {
+                // The prefix subdir does not exist on a fresh output tree —
+                // nothing else in the release path creates it — so create it
+                // (matching how Build.load provisions every other dir) rather
+                // than `openDir`'ing it, which would `FileNotFound`-abort the
+                // whole release.
+                break :blk build.mode.disk.output_dir.createDirPathOpen(
+                    io,
+                    ml.assets_prefix_path,
+                    .{},
+                ) catch |err| fatal.dir(ml.assets_prefix_path, err);
+            }
+        },
+    };
+
     for (build.variants) |*v| {
         worker.addJob(io, .{
             .variant_assets_install = .{
@@ -2967,28 +3078,39 @@ pub fn run(
         });
     }
 
+    // Image derive jobs (#132). Scheduled alongside the install jobs above —
+    // the render pass has already emitted the variant URLs; this is where
+    // the promised bytes get produced (cache) and placed (output tree). The
+    // same `worker.wait()` below is the barrier. `.site` refs land under
+    // `site_assets_install_dir` (the same locale-prefixed dir the site-asset
+    // install block below uses); `.page` refs are never locale-prefixed at
+    // the output-DIR level — `derive.run` applies the variant's own
+    // `output_path_prefix` to the individual dest path instead, mirroring
+    // `Variant.installAssets`.
+    if (build.image_variants.count() > 0) {
+        const cache_dir = build.base_dir.createDirPathOpen(
+            io,
+            ".zigapagos-cache/images",
+            .{},
+        ) catch |err| fatal.dir(".zigapagos-cache/images", err);
+        var img_it = build.image_variants.iterator();
+        while (img_it.next()) |entry| {
+            worker.addJob(io, .{ .image_derive = .{
+                .progress = progress_install_assets,
+                .build = &build,
+                .ref = entry.key_ptr.*,
+                .planned = entry.value_ptr,
+                .cache_dir = cache_dir,
+                .output_dir = switch (entry.key_ptr.kind) {
+                    .site => site_assets_install_dir,
+                    .page => build.mode.disk.output_dir,
+                },
+            } });
+        }
+    }
+
     // install site assets
     {
-        const site_assets_install_dir = switch (build.cfg.*) {
-            .Site => build.mode.disk.output_dir,
-            .Multilingual => |ml| blk: {
-                if (ml.assets_prefix_path.len == 0) {
-                    break :blk build.mode.disk.output_dir;
-                } else {
-                    // The prefix subdir does not exist on a fresh output tree —
-                    // nothing else in the release path creates it — so create it
-                    // (matching how Build.load provisions every other dir) rather
-                    // than `openDir`'ing it, which would `FileNotFound`-abort the
-                    // whole release.
-                    break :blk build.mode.disk.output_dir.createDirPathOpen(
-                        io,
-                        ml.assets_prefix_path,
-                        .{},
-                    ) catch |err| fatal.dir(ml.assets_prefix_path, err);
-                }
-            },
-        };
-
         var buf: [std.fs.max_path_bytes]u8 = undefined;
         // Wider than `buf` by exactly what a fingerprint adds — `.` plus
         // `hash_len` hex digits — so that a source path which fits in `buf`
@@ -3153,6 +3275,102 @@ pub fn run(
     }
 
     return build;
+}
+
+/// Expand collected image-derivation requests into named variants (#132).
+/// Runs ONCE, single-threaded, after the analyze pass and before the render
+/// pass — the map is read lock-free by render workers, exactly the
+/// asset_fingerprints discipline (see that field's comment in Build.zig).
+///
+/// Runs on the incremental dev path too, like fingerprinting: names are
+/// pure functions of (bytes, params), so recomputing reproduces the URLs
+/// the previous full build installed. Derive JOBS are still skipped there
+/// (the install phase early-returns), matching site-asset behavior.
+///
+/// Allocator contract: self-freeing (NO_SLOP §2.2a contract 1) for scratch;
+/// basenames and variant slices stored in `build.image_variants` are
+/// gpa-owned by Build and freed in Build.deinit.
+fn planImageVariants(io: Io, gpa: Allocator, build: *Build, opts: ImageOptimize) void {
+    const image_requests = @import("image/requests.zig");
+    const plan = @import("image/plan.zig");
+    const webp = @import("image/webp.zig");
+
+    const refs = image_requests.take(io, gpa) catch fatal.oom();
+    defer gpa.free(refs);
+    if (refs.len == 0) return;
+
+    var p = progress.start("Plan image variants", refs.len);
+    defer p.end();
+
+    const encoder_version: u32 = @intCast(webp.WebPGetEncoderVersion());
+    const quality: u8 = @intCast(opts.quality);
+
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    for (refs) |ref| {
+        p.completeOne();
+        const dir: Io.Dir, const st, const pt = switch (ref.kind) {
+            .site => .{ build.site_assets_dir, &build.st, &build.pt },
+            .page => blk: {
+                const v = &build.variants[ref.variant_id];
+                break :blk .{ v.content_dir, &v.string_table, &v.path_table };
+            },
+        };
+        const pn: PathName = .{
+            .path = @enumFromInt(ref.path),
+            .name = @enumFromInt(ref.name),
+        };
+        const rel = std.fmt.bufPrint(&path_buf, "{f}", .{
+            pn.fmt(st, pt, null, "/"),
+        }) catch continue;
+
+        // Slurp: unlike fingerprinting (which must touch EVERY asset), this
+        // only reads images something actually referenced, and the derive
+        // job will decode the whole file anyway.
+        const bytes = dir.readFileAlloc(io, rel, gpa, .limited(512 * 1024 * 1024)) catch |err| {
+            fatal.msg("error: image_optimize: cannot read '{s}': {s}\n", .{ rel, @errorName(err) });
+        };
+        defer gpa.free(bytes);
+
+        if (!plan.eligible(bytes)) continue; // plain <img>, spec §7
+
+        const size = wuffs.parseImageSize(gpa, bytes) catch continue;
+        const iw = std.math.cast(u32, size.w) orelse continue;
+        const ih = std.math.cast(u32, size.h) orelse continue;
+        if (iw == 0 or ih == 0) continue;
+
+        var widths_buf: [65]u32 = undefined;
+        const widths = plan.pickWidths(
+            opts.widths[0..@min(opts.widths.len, 64)],
+            iw,
+            &widths_buf,
+        );
+        // PR A: single variant — the largest surviving width.
+        const chosen = widths[widths.len - 1 ..];
+
+        const basename = pn.name.slice(st);
+        const variants = gpa.alloc(plan.Variant, chosen.len) catch fatal.oom();
+        for (chosen, variants) |w, *out| {
+            out.* = .{
+                .width = w,
+                .height = plan.heightFor(iw, ih, w),
+                .codec = .webp,
+                .basename = plan.variantBasename(
+                    gpa,
+                    basename,
+                    bytes,
+                    w,
+                    .webp,
+                    quality,
+                    encoder_version,
+                ) catch fatal.oom(),
+            };
+        }
+        build.image_variants.putNoClobber(gpa, ref, .{
+            .intrinsic_w = iw,
+            .intrinsic_h = ih,
+            .variants = variants,
+        }) catch fatal.oom();
+    }
 }
 
 /// Fill `build.asset_fingerprints` (issue #53). One entry per site asset that
