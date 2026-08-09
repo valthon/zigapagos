@@ -101,8 +101,11 @@ queued for the next release, read `changelog.d/`.
   retiring the previously-documented manual `pkill zigbase` recovery.
 - Cache-Control host config (issue #133): `zigapagos release` now writes a site-wide caching
   policy at the output root alongside the routing and CSP artifacts — `cache.nginx.conf`,
-  `cache.apache.conf` and `cache.zigbase.txt`, emitted for every site (island-only sites with
-  no SPA namespace included). nginx's `map $uri $zigapagos_cache_control { … }` merges into
+  `cache.apache.conf` and `cache.zigbase.txt`, emitted wherever the CSP artifacts already are —
+  which is every site carrying islands or an SPA, island-only sites with no SPA namespace
+  included. (A content-only site with neither gets no host config at all; the emitter is a pass
+  over the finished tree and `release` skips it, exactly as it already skipped the CSP.)
+  nginx's `map $uri $zigapagos_cache_control { … }` merges into
   `http{}` with `add_header Cache-Control $zigapagos_cache_control always;` in the *same*
   block that carries `csp.nginx.conf`'s header (a nested `add_header` suppresses the
   server-level one); Apache's `<FilesMatch>` stanzas install where `csp.apache.conf` does.
