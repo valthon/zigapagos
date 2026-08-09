@@ -673,13 +673,16 @@ pub const ImageOptimize = struct {
     /// at 64 entries, enforced by config validation.
     widths: []const i64 = &.{ 480, 800, 1200, 1920 },
     /// WebP lossy quality (0-100) for JPEG sources. PNG sources always use
-    /// lossless WebP, ignoring this.
+    /// lossless WebP, ignoring this. Hashed into AVIF variant names but not
+    /// passed to the external AVIF encoder. See docs/images.md for details.
     quality: i64 = 75,
     /// Emitted verbatim as the `sizes` attribute on each `<source>` (required
     /// by the HTML spec whenever `srcset` uses `w` descriptors).
     sizes: []const u8 = "100vw",
-    /// Opt-in AVIF: name (PATH-resolved) or path of an avifenc-compatible
-    /// binary. Null = no AVIF output. Unused until the AVIF hatch lands.
+    /// Opt-in AVIF: when set, the name (PATH-resolved) or path of an
+    /// avifenc-compatible binary. Each planned width gets an AVIF variant
+    /// produced by spawning this binary; missing binary or nonzero exit fails
+    /// the build. Null (the default) means no AVIF variants.
     avif_encoder: ?[]const u8 = null,
 };
 
@@ -3314,6 +3317,25 @@ fn planImageVariants(io: Io, gpa: Allocator, build: *Build, opts: ImageOptimize)
     const encoder_version: u32 = @intCast(webp.WebPGetEncoderVersion());
     const quality: u8 = @intCast(opts.quality);
 
+    // Task 12's AVIF hatch: there is no in-process "encoder version" to
+    // query for an external binary the way `WebPGetEncoderVersion` gives
+    // us one for libwebp, so this hashes the CONFIGURED `avif_encoder`
+    // string instead. That only busts the cache when the STRING changes,
+    // not when the binary it names does: pointing `avif_encoder` at a
+    // *different* path/name moves every AVIF URL, but upgrading the binary
+    // IN PLACE (same path, new behavior) is invisible to this hash — the
+    // old encoder's bytes keep being served under unchanged URLs. This is
+    // the exact same shape as the minified-CSS caveat docs/assets.md
+    // documents ("the hash is taken over the source bytes, not the
+    // installed bytes... a change to the minifier itself changes the
+    // installed file without changing its name") — the remedy there and
+    // here is the same: deleting `.zigapagos-cache/images/` after an
+    // in-place AVIF encoder upgrade forces every variant to re-derive.
+    const avif_encoder_id: u32 = if (opts.avif_encoder) |bin|
+        @truncate(std.hash.Wyhash.hash(0, bin))
+    else
+        0;
+
     var path_buf: [std.fs.max_path_bytes]u8 = undefined;
     for (refs) |ref| {
         p.completeOne();
@@ -3354,14 +3376,22 @@ fn planImageVariants(io: Io, gpa: Allocator, build: *Build, opts: ImageOptimize)
         const chosen = plan.pickWidths(opts.widths, iw, &widths_buf);
 
         const basename = pn.name.slice(st);
-        // One webp variant per surviving width — every one, not just the
-        // largest (PR A truncated to a single variant; that truncation is
-        // gone).
-        const variants = gpa.alloc(plan.Variant, chosen.len) catch fatal.oom();
-        for (chosen, variants) |w, *out| {
-            out.* = .{
+        // One webp variant per width, plus one avif variant per width when
+        // the AVIF hatch is on — ADJACENT per width (webp, then avif), not
+        // all-webp-then-all-avif: `Planned.variants`' doc comment commits to
+        // "webp before avif per width", and `derive.zig`'s per-width resample
+        // (Task 12) groups on exactly that adjacency to resample once and
+        // feed both codecs, so this ordering isn't presentational — it's load
+        // bearing for that grouping.
+        const has_avif = opts.avif_encoder != null;
+        const per_width: usize = if (has_avif) 2 else 1;
+        const variants = gpa.alloc(plan.Variant, chosen.len * per_width) catch fatal.oom();
+        var vi: usize = 0;
+        for (chosen) |w| {
+            const height = plan.heightFor(iw, ih, w);
+            variants[vi] = .{
                 .width = w,
-                .height = plan.heightFor(iw, ih, w),
+                .height = height,
                 .codec = .webp,
                 .basename = plan.variantBasename(
                     gpa,
@@ -3373,6 +3403,24 @@ fn planImageVariants(io: Io, gpa: Allocator, build: *Build, opts: ImageOptimize)
                     encoder_version,
                 ) catch fatal.oom(),
             };
+            vi += 1;
+            if (has_avif) {
+                variants[vi] = .{
+                    .width = w,
+                    .height = height,
+                    .codec = .avif,
+                    .basename = plan.variantBasename(
+                        gpa,
+                        basename,
+                        bytes,
+                        w,
+                        .avif,
+                        quality,
+                        avif_encoder_id,
+                    ) catch fatal.oom(),
+                };
+                vi += 1;
+            }
         }
         build.image_variants.putNoClobber(gpa, ref, .{
             .intrinsic_w = iw,

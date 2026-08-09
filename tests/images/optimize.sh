@@ -40,6 +40,13 @@
 #   (6) OFF (control): the same content with `image_optimize` absent from
 #       `zigapagos.ziggy` emits no <picture> and no `.webp` anywhere — the
 #       feature is opt-in, and turning it off is byte-identical to today.
+#   (7) ON, AVIF hatch (Task 12): with `avif_encoder` set to a hermetic stub
+#       binary (no real AV1 encoder in CI), `<source type="image/avif">`
+#       appears BEFORE the webp source (spec §2 best-first order) and every
+#       URL it carries resolves to a file starting with the stub's marker.
+#   (8) AVIF encoder missing: the user opted in by naming a binary that does
+#       not exist, so the build fails loudly, naming that binary — never a
+#       silent fall-back to webp-only (spec §6).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 REPO="$(pwd)"
@@ -205,7 +212,139 @@ grep -q '<picture>' "$HTML_OFF" && fail "feature off but <picture> emitted"
 find "$OUT_OFF" -name '*.webp' | grep -q . && fail "feature off but webp emitted"
 echo "PASS: (6) flag OFF (control) — no <picture>, no .webp anywhere"
 
-# --- (7) whitespace in filename: percent-encoded in srcset, not the file on
+# --- (7)/(8) AVIF hatch (Task 12) -----------------------------------------
+# A fresh, independent fixture (own site dir) so the AVIF checks don't
+# entangle with the (1)-(6) fixture's already-pinned state/edits above.
+#
+# The stub is exactly the shape a real `avifenc`-compatible binary is
+# spawned with: `<in.png> <out.avif>`. It writes a marker instead of
+# actually encoding AV1 — CI has no AV1 encoder, and the pipeline plumbing
+# (temp PNG -> spawn -> rename into cache -> install) is what's under test,
+# not codec correctness (that's `png.zig`'s round-trip-through-wuffs test).
+AVIFENC="$WORK/avifenc-stub"
+cat > "$AVIFENC" <<'EOF'
+#!/usr/bin/env bash
+# argv: <in.png> <out.avif> — writes a marker so the test can verify the
+# pipeline without a real AV1 encoder.
+printf 'STUBAVIF' > "$2"
+cat "$1" >> "$2"
+EOF
+chmod +x "$AVIFENC"
+
+scaffold_avif() {
+  local dir="$1" avif_bin="$2"
+  mkdir -p "$dir/content" "$dir/layouts" "$dir/assets"
+  cat > "$dir/zigapagos.ziggy" <<EOF
+Site {
+    .title = "ImageOptimize AVIF e2e",
+    .host_url = "https://example.com",
+    .content_dir_path = "content",
+    .layouts_dir_path = "layouts",
+    .assets_dir_path = "assets",
+    .image_optimize = {
+        .widths = [200, 400, 100000],
+        .avif_encoder = "$avif_bin",
+    },
+}
+EOF
+  printf '%s' "$LAYOUT" > "$dir/layouts/index.shtml"
+  cat > "$dir/content/index.smd" <<'EOF'
+---
+.title = "Home",
+.date = @date("2020-07-06T00:00:00"),
+.author = "Test",
+.layout = "index.shtml",
+.draft = false,
+---
+
+[A test image.](<$image.asset("photo.jpg").alt("test photo")>)
+EOF
+  cp "$SOURCE_JPG" "$dir/content/photo.jpg"
+}
+
+build_at() {
+  local site="$1" out="$2" log="$3"
+  ( cd "$site" && "$ZIGAPAGOS" release "--output=$out" --force ) > "$log" 2>&1 ||
+    { cat "$log"; fail "build failed (see log above)"; }
+}
+
+# --- (7) AVIF ON: stub encoder ---
+SITE_AVIF="$WORK/site-avif"
+scaffold_avif "$SITE_AVIF" "$AVIFENC"
+OUT_AVIF="$WORK/out-avif"
+build_at "$SITE_AVIF" "$OUT_AVIF" "$WORK/build-avif.log"
+HTML_AVIF="$OUT_AVIF/index.html"
+[[ -f "$HTML_AVIF" ]] || fail "AVIF-ON build did not emit index.html"
+
+# avif <source> appears BEFORE the webp <source> (best-first per spec §2).
+# (`|| true` on each: absent output, e.g. no avif support yet, otherwise
+# kills the script under `set -eo pipefail` before the `fail` below runs.)
+AVIF_POS=$(grep -bo '<source type="image/avif"' "$HTML_AVIF" | head -1 | cut -d: -f1) || true
+WEBP_POS=$(grep -bo '<source type="image/webp"' "$HTML_AVIF" | head -1 | cut -d: -f1) || true
+[[ -n "$AVIF_POS" ]] || fail "no avif <source> emitted with avif_encoder set"
+[[ -n "$WEBP_POS" ]] || fail "no webp <source> emitted alongside avif"
+[[ "$AVIF_POS" -lt "$WEBP_POS" ]] || fail "avif <source> (byte $AVIF_POS) not before webp <source> (byte $WEBP_POS)"
+echo "PASS: (7a) avif <source> appears before webp <source>"
+
+# Every URL in the avif srcset resolves to a file that exists, is
+# param-addressed like the webp variants, and starts with the stub's marker
+# (i.e. actually went through the spawn -> rename -> install path, not a
+# leftover/misnamed webp file).
+AVIF_SRCSET=$(grep -o 'type="image/avif" srcset="[^"]*"' "$HTML_AVIF" | head -1 | sed 's/.*srcset="//;s/"$//') || true
+[[ -n "$AVIF_SRCSET" ]] || fail "no avif srcset attribute found"
+AVIF_URLS=$(echo "$AVIF_SRCSET" | tr ',' '\n' | sed -E 's/^ +//; s/ [0-9]+w *$//')
+AVIF_COUNT=0
+while IFS= read -r u; do
+  [[ -n "$u" ]] || continue
+  AVIF_COUNT=$((AVIF_COUNT + 1))
+  p="$OUT_AVIF/${u#/}"
+  [[ -f "$p" ]] || fail "avif srcset points at missing file: $u"
+  head -c 8 "$p" | grep -q 'STUBAVIF' || fail "avif variant missing the stub encoder's marker: $u"
+  basename "$p" | grep -Eq '^photo\.[0-9a-f]{8}\.[0-9]+\.avif$' || fail "bad avif variant name: $(basename "$p")"
+done <<<"$AVIF_URLS"
+[[ "$AVIF_COUNT" == "2" ]] || fail "expected 2 avif srcset entries (200w, 400w), got $AVIF_COUNT"
+echo "PASS: (7b) avif variant files exist, carry the stub's marker, and are param-addressed"
+
+# --- (8) AVIF encoder missing: fatal, naming the binary ---
+SITE_AVIF_MISSING="$WORK/site-avif-missing"
+scaffold_avif "$SITE_AVIF_MISSING" "/nonexistent/avifenc"
+set +e
+( cd "$SITE_AVIF_MISSING" && "$ZIGAPAGOS" release "--output=$WORK/out-avif-missing" --force ) \
+  >"$WORK/build-avif-missing.log" 2>&1
+AVIF_MISSING_STATUS=$?
+set -e
+[[ "$AVIF_MISSING_STATUS" -ne 0 ]] || fail "build with a missing avif_encoder binary unexpectedly succeeded"
+grep -q '/nonexistent/avifenc' "$WORK/build-avif-missing.log" ||
+  fail "fatal message does not name the missing avif_encoder binary (log: $WORK/build-avif-missing.log)"
+echo "PASS: (8) missing avif_encoder binary fails the build, naming the binary"
+
+# --- (8b) AVIF encoder exits 0 without writing its output ---
+# A wrapper script with its arguments reversed exits 0 and writes nothing, so
+# the install rename fails with a bare FileNotFound naming a cache entry the
+# author never heard of. The build must still fail, but the message has to
+# point at the encoder contract rather than at the cache.
+AVIFENC_SILENT="$WORK/avifenc-stub-silent"
+cat > "$AVIFENC_SILENT" <<'EOF'
+#!/usr/bin/env bash
+# argv: <in.png> <out.avif> — exits 0, writes nothing (the misconfiguration).
+exit 0
+EOF
+chmod +x "$AVIFENC_SILENT"
+SITE_AVIF_SILENT="$WORK/site-avif-silent"
+scaffold_avif "$SITE_AVIF_SILENT" "$AVIFENC_SILENT"
+set +e
+( cd "$SITE_AVIF_SILENT" && "$ZIGAPAGOS" release "--output=$WORK/out-avif-silent" --force ) \
+  >"$WORK/build-avif-silent.log" 2>&1
+AVIF_SILENT_STATUS=$?
+set -e
+[[ "$AVIF_SILENT_STATUS" -ne 0 ]] || fail "build with a non-writing avif_encoder unexpectedly succeeded"
+grep -q 'without writing its output file' "$WORK/build-avif-silent.log" ||
+  fail "fatal message does not diagnose the encoder writing no output (log: $WORK/build-avif-silent.log)"
+grep -q "$AVIFENC_SILENT" "$WORK/build-avif-silent.log" ||
+  fail "fatal message does not name the encoder (log: $WORK/build-avif-silent.log)"
+echo "PASS: (8b) an encoder that exits 0 without writing output is diagnosed as such"
+
+# --- (9) whitespace in filename: percent-encoded in srcset, not the file on
 # disk (#132 final review, Fix 2) ---------------------------------------
 # Per the HTML "parse a srcset attribute" algorithm, a candidate URL
 # terminates at the first ASCII whitespace; a raw space in `srcset` silently
@@ -240,22 +379,21 @@ cat > "$SITE_SPACE/content/index.smd" <<'EOF'
 EOF
 cp "$SOURCE_JPG" "$SITE_SPACE/content/my photo.jpg"
 OUT_SPACE="$WORK/out-space"
-( cd "$SITE_SPACE" && "$ZIGAPAGOS" release "--output=$OUT_SPACE" --force ) > "$WORK/build-space.log" 2>&1 ||
-  { cat "$WORK/build-space.log"; fail "build failed (see log above)"; }
+build_at "$SITE_SPACE" "$OUT_SPACE" "$WORK/build-space.log"
 HTML_SPACE="$OUT_SPACE/index.html"
-[[ -f "$HTML_SPACE" ]] || fail "(7) whitespace-filename build did not emit index.html"
+[[ -f "$HTML_SPACE" ]] || fail "(9) whitespace-filename build did not emit index.html"
 SPACE_SRCSET=$(grep -o 'srcset="[^"]*"' "$HTML_SPACE" | head -1 | sed 's/srcset="//;s/"$//')
-[[ -n "$SPACE_SRCSET" ]] || fail "(7) no srcset attribute found"
+[[ -n "$SPACE_SRCSET" ]] || fail "(9) no srcset attribute found"
 FIRST_CANDIDATE=$(echo "$SPACE_SRCSET" | sed -E 's/,.*//; s/ [0-9]+w *$//')
 [[ "$FIRST_CANDIDATE" != *" "* ]] ||
-  fail "(7) srcset's first candidate URL still contains a raw space: '$FIRST_CANDIDATE'"
+  fail "(9) srcset's first candidate URL still contains a raw space: '$FIRST_CANDIDATE'"
 echo "$FIRST_CANDIDATE" | grep -q '%20' ||
-  fail "(7) srcset's first candidate URL has no %20 (space not encoded): '$FIRST_CANDIDATE'"
+  fail "(9) srcset's first candidate URL has no %20 (space not encoded): '$FIRST_CANDIDATE'"
 SPACE_FILE="$OUT_SPACE${FIRST_CANDIDATE//%20/ }"
-[[ -f "$SPACE_FILE" ]] || fail "(7) encoded srcset URL does not resolve to a file on disk: $SPACE_FILE"
-echo "PASS: (7) whitespace in a source filename is percent-encoded in srcset (%20), file on disk keeps its literal name"
+[[ -f "$SPACE_FILE" ]] || fail "(9) encoded srcset URL does not resolve to a file on disk: $SPACE_FILE"
+echo "PASS: (9) whitespace in a source filename is percent-encoded in srcset (%20), file on disk keeps its literal name"
 
-# --- (8) widths.len > 64 is rejected, naming the bound (#132 final review,
+# --- (10) widths.len > 64 is rejected, naming the bound (#132 final review,
 # Fix 3; previously untested) --------------------------------------------
 SITE_WIDE_LIST="$WORK/site-wide-list"
 mkdir -p "$SITE_WIDE_LIST/content" "$SITE_WIDE_LIST/layouts" "$SITE_WIDE_LIST/assets"
@@ -290,11 +428,11 @@ set +e
   >"$WORK/build-wide-list.log" 2>&1
 WIDE_LIST_STATUS=$?
 set -e
-[[ "$WIDE_LIST_STATUS" -ne 0 ]] || fail "(8) build with 65 configured widths unexpectedly succeeded"
+[[ "$WIDE_LIST_STATUS" -ne 0 ]] || fail "(10) build with 65 configured widths unexpectedly succeeded"
 grep -q '65 entries' "$WORK/build-wide-list.log" ||
-  fail "(8) fatal message does not name the entry count (log: $WORK/build-wide-list.log)"
+  fail "(10) fatal message does not name the entry count (log: $WORK/build-wide-list.log)"
 grep -q 'must be <= 64' "$WORK/build-wide-list.log" ||
-  fail "(8) fatal message does not name the 64-entry bound (log: $WORK/build-wide-list.log)"
-echo "PASS: (8) more than 64 configured widths fails the build, naming the count and the 64-entry bound"
+  fail "(10) fatal message does not name the 64-entry bound (log: $WORK/build-wide-list.log)"
+echo "PASS: (10) more than 64 configured widths fails the build, naming the count and the 64-entry bound"
 
 echo "ALL PROOF CHECKS PASSED (image_optimize)"

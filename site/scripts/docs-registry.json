@@ -74,7 +74,7 @@
     "mirror": "images.smd",
     "slug": "images",
     "title": "Images",
-    "description": "Build-time WebP variants and <picture> emission from image_optimize: config, cache, and what PR A ships vs. what srcset support adds."
+    "description": "Build-time responsive srcset and an opt-in AVIF hatch from image_optimize: config, <picture> emission, cache boundaries, and dev-loop behavior."
   },
   {
     "canonical": "docs/diagnostics.md",

@@ -1,6 +1,10 @@
 //! Root of the `test-images` suite (build/tests.zig). Everything under
-//! src/image/ is reachable from here — the module-root constraint (see
-//! CLAUDE.md) means files in this directory must not @import upward.
+//! src/image/ is reachable from here EXCEPT `derive.zig`, which deliberately
+//! imports upward (fatal.zig, Build.zig, PathTable.zig — see its own header)
+//! and is therefore excluded from this module root; it is covered instead by
+//! tests/images/*.sh, which exercises it end-to-end through the exe. The
+//! module-root constraint (see CLAUDE.md) means every file reachable from
+//! here must not @import upward.
 const std = @import("std");
 
 test {
@@ -8,6 +12,8 @@ test {
     _ = @import("decode.zig");
     _ = @import("resample.zig");
     _ = @import("plan.zig");
+    _ = @import("png.zig");
+    _ = @import("requests.zig");
 }
 
 test "images: libwebp links and reports a version" {
@@ -210,4 +216,77 @@ test "images: eligible gates on format and animation" {
     try std.testing.expect(plan.eligible(&still));
     var anim = [_]u8{ 'R', 'I', 'F', 'F', 0x00, 0x00, 0x00, 0x00, 'W', 'E', 'B', 'P', 'V', 'P', '8', 'X', 0x0a, 0x00, 0x00, 0x00, 0x12 } ++ [_]u8{0} ** 4;
     try std.testing.expect(!plan.eligible(&anim));
+}
+
+test "images: png writer round-trips through wuffs" {
+    const png = @import("png.zig");
+    const decode = @import("decode.zig");
+    const gpa = std.testing.allocator;
+    var rgba: [3 * 2 * 4]u8 = undefined;
+    for (&rgba, 0..) |*b, i| b.* = @truncate(i * 37 + 11);
+    const encoded = try png.write(gpa, 3, 2, &rgba);
+    defer gpa.free(encoded);
+    const back = try decode.decode(gpa, encoded);
+    defer back.deinit(gpa);
+    try std.testing.expectEqual(@as(u32, 3), back.w);
+    try std.testing.expectEqual(@as(u32, 2), back.h);
+    try std.testing.expectEqualSlices(u8, &rgba, back.rgba);
+}
+
+test "images: png writer round-trips a 1x1 image" {
+    const png = @import("png.zig");
+    const decode = @import("decode.zig");
+    const gpa = std.testing.allocator;
+    const rgba = [_]u8{ 200, 100, 50, 128 };
+    const encoded = try png.write(gpa, 1, 1, &rgba);
+    defer gpa.free(encoded);
+    const back = try decode.decode(gpa, encoded);
+    defer back.deinit(gpa);
+    try std.testing.expectEqual(@as(u32, 1), back.w);
+    try std.testing.expectEqual(@as(u32, 1), back.h);
+    try std.testing.expectEqualSlices(u8, &rgba, back.rgba);
+}
+
+test "images: png writer splits into multiple stored deflate blocks" {
+    const png = @import("png.zig");
+    const decode = @import("decode.zig");
+    const gpa = std.testing.allocator;
+    // 16384x1 (decode.zig's max width) is 65536 bytes of pixel data;
+    // filtered (one leading filter-type byte per scanline) that's 65537
+    // bytes — over the 65535 stored-block cap, so the writer must emit two
+    // stored blocks (65535 + 2).
+    const w: u32 = 16384;
+    const rgba = try gpa.alloc(u8, @as(usize, w) * 4);
+    defer gpa.free(rgba);
+    for (rgba, 0..) |*b, i| b.* = @truncate(i * 53 + 7);
+    const encoded = try png.write(gpa, w, 1, rgba);
+    defer gpa.free(encoded);
+    const back = try decode.decode(gpa, encoded);
+    defer back.deinit(gpa);
+    try std.testing.expectEqual(w, back.w);
+    try std.testing.expectEqual(@as(u32, 1), back.h);
+    try std.testing.expectEqualSlices(u8, rgba, back.rgba);
+}
+
+test "images: requests register/take dedupes by ref and resets" {
+    const requests = @import("requests.zig");
+    const plan = @import("plan.zig");
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+
+    const ref: plan.SourceRef = .{ .kind = .site, .variant_id = 0, .path = 1, .name = 2 };
+    try requests.register(io, gpa, ref);
+    try requests.register(io, gpa, ref); // same ref twice: still one entry
+    const once = try requests.take(io, gpa);
+    defer gpa.free(once);
+    try std.testing.expectEqual(@as(usize, 1), once.len);
+
+    // take() must reset the collector: registering fresh refs after a drain
+    // must not resurrect anything from the previous cycle.
+    const ref2: plan.SourceRef = .{ .kind = .page, .variant_id = 0, .path = 3, .name = 4 };
+    try requests.register(io, gpa, ref);
+    try requests.register(io, gpa, ref2);
+    const twice = try requests.take(io, gpa);
+    defer gpa.free(twice);
+    try std.testing.expectEqual(@as(usize, 2), twice.len);
 }

@@ -478,10 +478,14 @@ fn renderDirective(
                 if (planned) |p| {
                     try w.writeAll("<picture>");
                     // Full responsive srcset (#132): one `w`-descriptor
-                    // entry per surviving width. The HTML spec requires
-                    // `sizes` alongside `w` descriptors, so it always
-                    // follows srcset.
+                    // entry per surviving width, filtered by codec so each
+                    // <source> carries only its own codec's variants. Codec
+                    // order is fixed best-first per spec §2 — AVIF (Task 12,
+                    // emitted only when the hatch produced variants) before
+                    // WebP. The HTML spec requires `sizes` alongside `w`
+                    // descriptors, so it always follows srcset.
                     const sizes = ctx._meta.build.cfg.getImageOptimize().?.sizes;
+                    try writeImageSourceLine(ctx, page, img.src.?, p, .avif, "image/avif", sizes, w);
                     try writeImageSourceLine(ctx, page, img.src.?, p, .webp, "image/webp", sizes, w);
                 }
 
@@ -663,9 +667,12 @@ fn imageVariantsFor(
 }
 
 /// Write one `<source type="...">` line for the variants of a single codec,
-/// or nothing at all when `planned` has none for that codec. Taking `codec`
-/// as a parameter rather than hard-coding webp keeps this ready for a
-/// second `<source>` call for a future codec without a rewrite.
+/// or nothing at all when `planned` has none for that codec — e.g. no
+/// `<source type="image/avif">` when `avif_encoder` is unset and the planner
+/// therefore never minted `.avif` variants (spec §2's "iff avif_encoder
+/// set"). Filtering here, rather than trusting caller order, is what keeps
+/// the two calls in the `.image` arm above independent: each call owns
+/// deciding whether ITS codec has anything to say.
 fn writeImageSourceLine(
     ctx: *const context.Root,
     page: *const context.Page,

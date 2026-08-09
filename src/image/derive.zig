@@ -28,6 +28,7 @@ const plan = @import("plan.zig");
 const decode = @import("decode.zig");
 const resample = @import("resample.zig");
 const webp = @import("webp.zig");
+const png = @import("png.zig");
 
 /// Payload for `worker.Job.image_derive`, named here rather than inline in
 /// the union so `run`'s signature below can be a concrete type instead of
@@ -45,8 +46,13 @@ pub const Job = struct {
 };
 
 /// Allocator contract: self-freeing (NO_SLOP §2.2a contract 1) — source
-/// bytes, decoded image data, resampled image, and WebP-encoded output all
-/// freed within the call. Writes derived variant files as a side effect.
+/// bytes, decoded image data, resampled image, WebP-encoded output, and (for
+/// AVIF variants) the interchange PNG bytes and its temp file are all
+/// freed/deleted within the call. The AVIF temp file spawned through the
+/// external encoder is not freed but consumed: it's renamed straight into
+/// the cache as the derived variant, the same way `writeCacheAtomic`'s own
+/// tmp file becomes the WebP cache entry rather than being deleted after.
+/// Writes derived variant files as a side effect.
 pub fn run(io: Io, gpa: Allocator, d: Job) void {
     const build = d.build;
 
@@ -109,56 +115,206 @@ pub fn run(io: Io, gpa: Allocator, d: Job) void {
     var decoded: ?Decoded = null;
     defer if (decoded) |ds| ds.img.deinit(gpa);
 
-    for (d.planned.variants) |variant| {
-        const dest = destPath(&dest_buf, output_path_prefix, st, pt, pn.path, variant.basename);
+    // Variants are grouped ADJACENT per width — webp, then an optional avif
+    // at the SAME width (`plan.Planned.variants`' doc comment commits to
+    // this order, and `planImageVariants` builds it that way on purpose).
+    // A single forward scan can therefore find each width's run and
+    // resample ONCE per run, feeding whichever codecs in it are cache
+    // misses (Task 12: before AVIF, one variant WAS one codec at one width,
+    // so resample-per-variant and resample-per-width were the same thing;
+    // now they're not, and re-resampling per codec would silently double
+    // the resample cost the moment avif_encoder is set).
+    var i: usize = 0;
+    while (i < d.planned.variants.len) {
+        const width = d.planned.variants[i].width;
+        var j = i;
+        while (j < d.planned.variants.len and d.planned.variants[j].width == width) : (j += 1) {}
+        const group = d.planned.variants[i..j];
+        i = j;
 
-        // Cache hit: stat-compare copy into the output tree and move on.
-        // `updateFile` opens `variant.basename` in `d.cache_dir` first, so a
-        // miss surfaces as `error.FileNotFound` from that open — the same
-        // error a genuinely-missing dest directory could never produce here
-        // (updateFile creates dest dirs as needed), so the switch below is
-        // unambiguous.
-        if (d.cache_dir.updateFile(io, variant.basename, d.output_dir, dest, .{})) |_| {
-            continue;
-        } else |err| switch (err) {
-            error.FileNotFound => {}, // miss: fall through and compute
-            else => fatal.file(variant.basename, err),
+        var resampled: ?[]u8 = null;
+        defer if (resampled) |r| gpa.free(r);
+
+        for (group) |variant| {
+            const dest = destPath(&dest_buf, output_path_prefix, st, pt, pn.path, variant.basename);
+
+            // Cache hit: stat-compare copy into the output tree and move on.
+            // `updateFile` opens `variant.basename` in `d.cache_dir` first, so
+            // a miss surfaces as `error.FileNotFound` from that open — the
+            // same error a genuinely-missing dest directory could never
+            // produce here (updateFile creates dest dirs as needed), so the
+            // switch below is unambiguous.
+            if (d.cache_dir.updateFile(io, variant.basename, d.output_dir, dest, .{})) |_| {
+                continue;
+            } else |err| switch (err) {
+                error.FileNotFound => {}, // miss: fall through and compute
+                else => fatal.file(variant.basename, err),
+            }
+
+            // Miss: decode the source once for all missed variants in this job.
+            if (decoded == null) {
+                const bytes = dir.readFileAlloc(io, rel, gpa, .limited(512 * 1024 * 1024)) catch |err|
+                    fatal.msg("error: image_optimize: cannot read '{s}': {s}\n", .{ rel, @errorName(err) });
+                defer gpa.free(bytes);
+                // Decided from BYTES before they're freed, not from `rel`'s
+                // extension — see the `Decoded.lossless` field doc comment.
+                const lossless = plan.isPng(bytes);
+                const img = decode.decode(gpa, bytes) catch |err|
+                    fatal.msg("error: image_optimize: cannot decode '{s}': {s}\n", .{ rel, @errorName(err) });
+                decoded = .{ .img = img, .lossless = lossless };
+            }
+            const state = decoded.?;
+            const img = state.img;
+
+            // Miss on THIS width: resample once, shared by every codec in
+            // `group` that turns out to be a miss too.
+            if (resampled == null) {
+                resampled = resample.resize(gpa, img.w, img.h, img.rgba, variant.width, variant.height) catch fatal.oom();
+            }
+            const small = resampled.?;
+
+            switch (variant.codec) {
+                .webp => {
+                    // PNG sources -> lossless; photographic -> lossy at cfg quality.
+                    var out: ?[*]u8 = null;
+                    defer webp.WebPFree(out);
+                    const n = if (state.lossless)
+                        webp.WebPEncodeLosslessRGBA(small.ptr, @intCast(variant.width), @intCast(variant.height), @intCast(variant.width * 4), &out)
+                    else
+                        webp.WebPEncodeRGBA(small.ptr, @intCast(variant.width), @intCast(variant.height), @intCast(variant.width * 4), quality(build), &out);
+                    if (n == 0) fatal.msg("error: image_optimize: WebP encode failed for '{s}' at {d}px\n", .{ rel, variant.width });
+
+                    writeCacheAtomic(io, d.cache_dir, d.ref, variant.basename, out.?[0..n]) catch |err|
+                        fatal.msg("error: image_optimize: cannot write cache entry '{s}': {s}\n", .{ variant.basename, @errorName(err) });
+                },
+                .avif => {
+                    // planImageVariants only mints `.avif` variants when this
+                    // is set — see its `has_avif` gate — so `.?` here can
+                    // never actually fire.
+                    const avif_encoder = build.cfg.getImageOptimize().?.avif_encoder.?;
+                    encodeAvif(io, gpa, d.cache_dir, d.ref, rel, variant, small, avif_encoder);
+                },
+            }
+            _ = d.cache_dir.updateFile(io, variant.basename, d.output_dir, dest, .{}) catch |err|
+                fatal.file(variant.basename, err);
         }
-
-        // Miss: decode the source once for all missed variants in this job.
-        if (decoded == null) {
-            const bytes = dir.readFileAlloc(io, rel, gpa, .limited(512 * 1024 * 1024)) catch |err|
-                fatal.msg("error: image_optimize: cannot read '{s}': {s}\n", .{ rel, @errorName(err) });
-            defer gpa.free(bytes);
-            // Decided from BYTES before they're freed, not from `rel`'s
-            // extension — see the `Decoded.lossless` field doc comment.
-            const lossless = plan.isPng(bytes);
-            const img = decode.decode(gpa, bytes) catch |err|
-                fatal.msg("error: image_optimize: cannot decode '{s}': {s}\n", .{ rel, @errorName(err) });
-            decoded = .{ .img = img, .lossless = lossless };
-        }
-        const state = decoded.?;
-        const img = state.img;
-
-        const small = resample.resize(gpa, img.w, img.h, img.rgba, variant.width, variant.height) catch fatal.oom();
-        defer gpa.free(small);
-
-        // PNG sources -> lossless; photographic -> lossy at cfg quality.
-        const lossless = state.lossless;
-        var out: ?[*]u8 = null;
-        defer webp.WebPFree(out);
-        const n = if (lossless)
-            webp.WebPEncodeLosslessRGBA(small.ptr, @intCast(variant.width), @intCast(variant.height), @intCast(variant.width * 4), &out)
-        else
-            webp.WebPEncodeRGBA(small.ptr, @intCast(variant.width), @intCast(variant.height), @intCast(variant.width * 4), quality(build), &out);
-        if (n == 0) fatal.msg("error: image_optimize: WebP encode failed for '{s}' at {d}px\n", .{ rel, variant.width });
-
-        // Stage into the cache atomically, then install.
-        writeCacheAtomic(io, d.cache_dir, d.ref, variant.basename, out.?[0..n]) catch |err|
-            fatal.msg("error: image_optimize: cannot write cache entry '{s}': {s}\n", .{ variant.basename, @errorName(err) });
-        _ = d.cache_dir.updateFile(io, variant.basename, d.output_dir, dest, .{}) catch |err|
-            fatal.file(variant.basename, err);
     }
+}
+
+/// Encode one AVIF variant by shelling out to the external encoder the site
+/// opted into (`ImageOptimize.avif_encoder`; #132 Task 12 — the one path in
+/// this pipeline that isn't in-process, which is exactly why it's opt-in).
+///
+/// Writes the resampled pixels as an interchange PNG (`png.zig`) — the
+/// encoder shells out and reads a file path, so the pixels need a
+/// container, not a codec choice — spawns
+/// `<avif_encoder> <tmp.png> <tmp.avif>`, and renames the encoder's output
+/// straight into the cache under `variant.basename`. That rename IS the
+/// atomic cache write (no separate `writeCacheAtomic` round trip reading the
+/// bytes back into memory first): the bytes are already sitting in a file
+/// inside `cache_dir` under a job-unique tmp name, so renaming it onto the
+/// param-addressed basename is exactly as atomic as `writeCacheAtomic`'s own
+/// tmp+rename, just without the redundant read.
+///
+/// Failure policy (spec §6): the user explicitly opted in by naming a
+/// binary, so a missing binary or a nonzero exit is `fatal.msg` — never a
+/// silent fall-back to webp-only — naming the binary, the source, and (for
+/// a nonzero exit) the exit code.
+///
+/// NO_SLOP §2.2a contract 1 (self-freeing): the encoded PNG bytes and both
+/// temp files are gone before returning; the only thing that escapes is the
+/// renamed-into-place cache entry itself.
+fn encodeAvif(
+    io: Io,
+    gpa: Allocator,
+    cache_dir: Io.Dir,
+    ref: plan.SourceRef,
+    rel: []const u8,
+    variant: plan.Variant,
+    pixels: []const u8,
+    avif_encoder: []const u8,
+) void {
+    const png_bytes = png.write(gpa, variant.width, variant.height, pixels) catch fatal.oom();
+    defer gpa.free(png_bytes);
+
+    // Tmp names unique PER JOB (ref-keyed), mirroring `writeCacheAtomic`'s
+    // own tmp-naming discipline below — see its doc comment for why two
+    // concurrent jobs whose bytes+params coincide must never share a tmp
+    // inode even though they may both rename onto the same final cache
+    // entry.
+    var tmp_png_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const tmp_png = std.fmt.bufPrint(&tmp_png_buf, ".tmp.{d}.{d}.{d}.{d}.{s}.png", .{
+        @intFromEnum(ref.kind), ref.variant_id, ref.path, ref.name, variant.basename,
+    }) catch unreachable;
+    var tmp_avif_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const tmp_avif = std.fmt.bufPrint(&tmp_avif_buf, ".tmp.{d}.{d}.{d}.{d}.{s}.avif", .{
+        @intFromEnum(ref.kind), ref.variant_id, ref.path, ref.name, variant.basename,
+    }) catch unreachable;
+
+    {
+        const f = cache_dir.createFile(io, tmp_png, .{}) catch |err|
+            fatal.msg("error: image_optimize: cannot write AVIF temp input for '{s}': {s}\n", .{ rel, @errorName(err) });
+        defer f.close(io);
+        var fw = f.writer(io, &.{});
+        fw.interface.writeAll(png_bytes) catch |err|
+            fatal.msg("error: image_optimize: cannot write AVIF temp input for '{s}': {s}\n", .{ rel, @errorName(err) });
+    }
+    defer cache_dir.deleteFile(io, tmp_png) catch {};
+
+    // The encoder is spawned with real filesystem paths, not `Io.Dir`-
+    // relative ones, so resolve the cache dir to absolute once — mirrors
+    // `root.zig`'s `installMinifiedCss`, the repo's other external-tool
+    // spawn (source of the spawn idiom copied below).
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_n = cache_dir.realPathFile(io, ".", &dir_buf) catch |err|
+        fatal.msg("error: image_optimize: cannot resolve the image cache dir: {s}\n", .{@errorName(err)});
+    const dir_abs = dir_buf[0..dir_n];
+
+    const png_abs = std.fs.path.join(gpa, &.{ dir_abs, tmp_png }) catch fatal.oom();
+    defer gpa.free(png_abs);
+    const avif_abs = std.fs.path.join(gpa, &.{ dir_abs, tmp_avif }) catch fatal.oom();
+    defer gpa.free(avif_abs);
+
+    var child = std.process.spawn(io, .{
+        .argv = &.{ avif_encoder, png_abs, avif_abs },
+        .stderr = .inherit, // surface the encoder's own diagnostics in the build log
+    }) catch |err| fatal.msg(
+        "error: image_optimize: failed to spawn AVIF encoder '{s}' for '{s}': {s}\n" ++
+            "note: ensure the binary named in avif_encoder is installed and on PATH (or set it to an explicit path)\n",
+        .{ avif_encoder, rel, @errorName(err) },
+    );
+
+    const term = child.wait(io) catch |err| fatal.msg(
+        "error: image_optimize: AVIF encoder '{s}' for '{s}' failed: {s}\n",
+        .{ avif_encoder, rel, @errorName(err) },
+    );
+    switch (term) {
+        .exited => |code| if (code != 0) fatal.msg(
+            "error: image_optimize: AVIF encoder '{s}' for '{s}' exited with code {d}\n",
+            .{ avif_encoder, rel, code },
+        ),
+        else => fatal.msg(
+            "error: image_optimize: AVIF encoder '{s}' for '{s}' terminated abnormally\n",
+            .{ avif_encoder, rel },
+        ),
+    }
+
+    // A zero exit does not prove the encoder wrote anything: a wrapper script
+    // with its arguments reversed, or one that writes to a path of its own
+    // choosing, exits 0 and leaves `tmp_avif` absent. That surfaces here as a
+    // bare `FileNotFound` naming a cache entry the user never heard of, so
+    // this arm says what actually went wrong instead.
+    cache_dir.rename(tmp_avif, cache_dir, variant.basename, io) catch |err| switch (err) {
+        error.FileNotFound => fatal.msg(
+            "error: image_optimize: AVIF encoder '{s}' exited 0 without writing its output file for '{s}'\n" ++
+                "note: zigapagos invokes it as `{s} <input.png> <output.avif>`; it must write the second argument\n",
+            .{ avif_encoder, rel, avif_encoder },
+        ),
+        else => fatal.msg(
+            "error: image_optimize: cannot install AVIF cache entry '{s}' for '{s}': {s}\n",
+            .{ variant.basename, rel, @errorName(err) },
+        ),
+    };
 }
 
 fn quality(build: *const Build) f32 {
@@ -202,6 +358,11 @@ fn destPath(
 /// is now a pure function of exactly the inputs the basename hashes over:
 /// source bytes, width, codec, quality, encoder version (`variantBasename`'s
 /// own parameter list) — same bytes, same params, same output, full stop.
+/// For `.webp` that purity is ours to guarantee (libwebp, in-process). For
+/// `.avif` (Task 12's `encodeAvif`, which mirrors this function's tmp-naming
+/// discipline but does its own rename rather than calling through here) it
+/// is a TRUST, not a guarantee: the property only holds if the configured
+/// `avif_encoder` binary is itself deterministic for identical input bytes.
 /// That's why `Decoded.lossless` above is decided from the source bytes'
 /// magic number (`plan.isPng`) rather than from `rel`'s filename extension:
 /// a filename-derived choice would let two byte-identical sources filed

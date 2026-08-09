@@ -611,6 +611,19 @@ emit real per-entry pages:
 
 Full reference: [docs/spa.md](../spa.md).
 
+## 14. Images: `<Image>` / `astro:assets` → `image_optimize`
+
+| Astro | Zigapagos | Notes |
+|---|---|---|
+| `import { Image } from "astro:assets"` + `<Image src={img} widths={[...]} />` | `.image_optimize = {}` on `Site`/`MultilingualSite` + `[]($image.asset('...'))` (or `.siteAsset(...)`) | Opt-in per site, not per import — every eligible `$image` directive gets variants once the config block is present. |
+| `widths={[400, 800, 1200]}` (per `<Image>`) | `.image_optimize.widths = [400, 800, 1200]` (site-wide) | **Site-wide, not per-image.** Astro's `widths` is a prop on each `<Image>`; Zigapagos has one configured width list for the whole site. A per-image override does not exist yet (see [Gaps](#gaps-not-yet-supported)). |
+| Astro upscales if you ask for a width larger than the source | filtered out, **never upscaled** | A configured width above the source's intrinsic width is silently dropped from that image's `srcset`; if none survive, one variant is generated at the source's own intrinsic width. |
+| `<Picture formats={["avif", "webp"]}>` | `.image_optimize.avif_encoder = "avifenc"` (or a path) | AVIF is opt-in against an **external encoder binary** you provide — Zigapagos never vendors or downloads one. Unset `avif_encoder` (the default) emits WebP only. WebP itself needs no toggle; it is always produced for an eligible source once `image_optimize` is on. |
+| `format="avif"` / per-`<Image>` format choice | not supported | No per-image format override — `image_optimize`'s codec set (WebP always, AVIF iff `avif_encoder` is set) applies uniformly. See [Gaps](#gaps-not-yet-supported). |
+| `<Image>`'s automatic `<picture>`/`srcset`/`sizes` output | `<picture>` with one `<source>` per active codec (best-format-first: AVIF before WebP), `w`-descriptor `srcset`, and `.image_optimize.sizes` (default `"100vw"`) on each `<source>` | Same shape, generated the same way — no `<Picture>`-equivalent component to import; it happens automatically for every `$image` directive once the config block is on. |
+
+Full reference: [docs/images.md](../images.md).
+
 ## Gaps (not yet supported)
 
 Flag these during migration; use the workaround:
@@ -621,6 +634,11 @@ Flag these during migration; use the workaround:
   `.pagination` (§11). For app-like pages, a `.spa.tsx` dynamic route
   (`/club/:id`) with a `staticPaths` hook prerenders one real page per
   enumerated entry (see [SPA mode](#13-spa-mode-client-routed-apps)).
+- **Per-image `<Image>` overrides** (`widths`, `formats`) — `image_optimize`
+  (§14) is a single site-wide policy; there is no per-image `widths=`/
+  `formats=` prop equivalent. If different pages genuinely need different
+  width sets, that is not yet supported — flag it during migration rather
+  than guessing a workaround.
 - **`client:only="framework"`** — there is one runtime, so the framework
   argument is meaningless; write plain `client:only`. A value on any
   directive other than `client:media` fails the build with a clear error.

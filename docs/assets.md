@@ -154,16 +154,22 @@ because the extension is load-bearing downstream: a web server picks the
 
 ### Derived image variants
 
-`image_optimize` (issue #132) names its own derived WebP variants
-`<stem>.<hash8>.<width>.webp` rather than going through this section's
-`asset_fingerprint` machinery at all — see [`docs/images.md`'s cache
-section](images.md#cache) for the full naming rule. Worth contrasting with
-the caveat below: that hash is taken over source bytes **and every
-transform parameter** (width, codec, quality, encoder version), which is
-what this document's minified-CSS caveat cannot claim — a change to the
-minifier itself moves no CSS hash, because that hash is source-bytes-only.
-An image variant's name moves on *any* parameter change, deliberately,
-because the transform is the thing being cached, not just the input to it.
+`image_optimize` (issue #132) names its own derived variants
+`<stem>.<hash8>.<width>.webp` / `<stem>.<hash8>.<width>.avif` rather than
+going through this section's `asset_fingerprint` machinery at all — see
+[`docs/images.md`'s cache section](images.md#cache) for the full naming
+rule, including one caveat this paragraph only summarizes: the hash is
+taken over source bytes **and every transform parameter** (width, codec,
+quality, encoder identity), so — for `.webp` — a change to any of those
+moves the name, closing this document's own minified-CSS caveat below
+(there, a minifier change moves no CSS hash, because that hash is
+source-bytes-only). For `.avif`, though, "encoder identity" can only be a
+hash of the *configured* `avif_encoder` string, since there is no
+in-process version call for an external binary — so an in-place binary
+upgrade at an unchanged path is the one case an image variant's name does
+**not** move on a real change, mirroring this document's own minifier
+caveat one level removed. `docs/images.md`'s cache section has the full
+detail and remedy (delete `.zigapagos-cache/images/`).
 
 Pruning is inherent rather than something this section's report has to
 account for separately: a variant is planned only from a directive some page

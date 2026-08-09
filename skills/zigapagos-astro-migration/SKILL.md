@@ -9,7 +9,7 @@ metadata:
 # Migrating an Astro site to zigapagos
 
 You are porting an Astro project to zigapagos. The full deterministic mapping
-(every Astro concept → its zigapagos counterpart, §1–13) is in
+(every Astro concept → its zigapagos counterpart, §1–14) is in
 [references/astro-to-zigapagos.md](references/astro-to-zigapagos.md) — read the
 sections you need as you reach them; do not guess a mapping that file defines.
 Island-porting mechanics (the TSX authoring contract, `host.*` bindings, the
