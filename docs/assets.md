@@ -152,6 +152,30 @@ because the extension is load-bearing downstream: a web server picks the
 - **Page assets.** They are installed next to the page that owns them, and a
   page's own assets are invalidated by the same deploy that rewrites the page.
 
+### Derived image variants
+
+`image_optimize` (issue #132) names its own derived variants
+`<stem>.<hash8>.<width>.webp` / `<stem>.<hash8>.<width>.avif` rather than
+going through this section's `asset_fingerprint` machinery at all — see
+[`docs/images.md`'s cache section](images.md#cache) for the full naming
+rule, including one caveat this paragraph only summarizes: the hash is
+taken over source bytes **and every transform parameter** (width, codec,
+quality, encoder identity), so — for `.webp` — a change to any of those
+moves the name, closing this document's own minified-CSS caveat below
+(there, a minifier change moves no CSS hash, because that hash is
+source-bytes-only). For `.avif`, though, "encoder identity" can only be a
+hash of the *configured* `avif_encoder` string, since there is no
+in-process version call for an external binary — so an in-place binary
+upgrade at an unchanged path is the one case an image variant's name does
+**not** move on a real change, mirroring this document's own minifier
+caveat one level removed. `docs/images.md`'s cache section has the full
+detail and remedy (delete `.zigapagos-cache/images/`).
+
+Pruning is inherent rather than something this section's report has to
+account for separately: a variant is planned only from a directive some page
+actually references, so an unreferenced source image gets no variant and
+never enters the pruned-asset report's accounting at all.
+
 ### Where it applies
 
 Fingerprinting is a `zigapagos release` pass, so it applies wherever a release

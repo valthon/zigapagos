@@ -1,59 +1,59 @@
-pub const __builtin_bswap16 = @import("std").zig.c_builtins.__builtin_bswap16;
-pub const __builtin_bswap32 = @import("std").zig.c_builtins.__builtin_bswap32;
-pub const __builtin_bswap64 = @import("std").zig.c_builtins.__builtin_bswap64;
-pub const __builtin_signbit = @import("std").zig.c_builtins.__builtin_signbit;
-pub const __builtin_signbitf = @import("std").zig.c_builtins.__builtin_signbitf;
-pub const __builtin_popcount = @import("std").zig.c_builtins.__builtin_popcount;
-pub const __builtin_ctz = @import("std").zig.c_builtins.__builtin_ctz;
-pub const __builtin_clz = @import("std").zig.c_builtins.__builtin_clz;
-pub const __builtin_sqrt = @import("std").zig.c_builtins.__builtin_sqrt;
-pub const __builtin_sqrtf = @import("std").zig.c_builtins.__builtin_sqrtf;
-pub const __builtin_sin = @import("std").zig.c_builtins.__builtin_sin;
-pub const __builtin_sinf = @import("std").zig.c_builtins.__builtin_sinf;
-pub const __builtin_cos = @import("std").zig.c_builtins.__builtin_cos;
-pub const __builtin_cosf = @import("std").zig.c_builtins.__builtin_cosf;
-pub const __builtin_exp = @import("std").zig.c_builtins.__builtin_exp;
-pub const __builtin_expf = @import("std").zig.c_builtins.__builtin_expf;
-pub const __builtin_exp2 = @import("std").zig.c_builtins.__builtin_exp2;
-pub const __builtin_exp2f = @import("std").zig.c_builtins.__builtin_exp2f;
-pub const __builtin_log = @import("std").zig.c_builtins.__builtin_log;
-pub const __builtin_logf = @import("std").zig.c_builtins.__builtin_logf;
-pub const __builtin_log2 = @import("std").zig.c_builtins.__builtin_log2;
-pub const __builtin_log2f = @import("std").zig.c_builtins.__builtin_log2f;
-pub const __builtin_log10 = @import("std").zig.c_builtins.__builtin_log10;
-pub const __builtin_log10f = @import("std").zig.c_builtins.__builtin_log10f;
-pub const __builtin_abs = @import("std").zig.c_builtins.__builtin_abs;
-pub const __builtin_labs = @import("std").zig.c_builtins.__builtin_labs;
-pub const __builtin_llabs = @import("std").zig.c_builtins.__builtin_llabs;
-pub const __builtin_fabs = @import("std").zig.c_builtins.__builtin_fabs;
-pub const __builtin_fabsf = @import("std").zig.c_builtins.__builtin_fabsf;
-pub const __builtin_floor = @import("std").zig.c_builtins.__builtin_floor;
-pub const __builtin_floorf = @import("std").zig.c_builtins.__builtin_floorf;
-pub const __builtin_ceil = @import("std").zig.c_builtins.__builtin_ceil;
-pub const __builtin_ceilf = @import("std").zig.c_builtins.__builtin_ceilf;
-pub const __builtin_trunc = @import("std").zig.c_builtins.__builtin_trunc;
-pub const __builtin_truncf = @import("std").zig.c_builtins.__builtin_truncf;
-pub const __builtin_round = @import("std").zig.c_builtins.__builtin_round;
-pub const __builtin_roundf = @import("std").zig.c_builtins.__builtin_roundf;
-pub const __builtin_strlen = @import("std").zig.c_builtins.__builtin_strlen;
-pub const __builtin_strcmp = @import("std").zig.c_builtins.__builtin_strcmp;
-pub const __builtin_object_size = @import("std").zig.c_builtins.__builtin_object_size;
-pub const __builtin___memset_chk = @import("std").zig.c_builtins.__builtin___memset_chk;
-pub const __builtin_memset = @import("std").zig.c_builtins.__builtin_memset;
-pub const __builtin___memcpy_chk = @import("std").zig.c_builtins.__builtin___memcpy_chk;
-pub const __builtin_memcpy = @import("std").zig.c_builtins.__builtin_memcpy;
-pub const __builtin_expect = @import("std").zig.c_builtins.__builtin_expect;
-pub const __builtin_nanf = @import("std").zig.c_builtins.__builtin_nanf;
-pub const __builtin_huge_valf = @import("std").zig.c_builtins.__builtin_huge_valf;
-pub const __builtin_inff = @import("std").zig.c_builtins.__builtin_inff;
-pub const __builtin_isnan = @import("std").zig.c_builtins.__builtin_isnan;
-pub const __builtin_isinf = @import("std").zig.c_builtins.__builtin_isinf;
-pub const __builtin_isinf_sign = @import("std").zig.c_builtins.__builtin_isinf_sign;
-pub const __has_builtin = @import("std").zig.c_builtins.__has_builtin;
-pub const __builtin_assume = @import("std").zig.c_builtins.__builtin_assume;
-pub const __builtin_unreachable = @import("std").zig.c_builtins.__builtin_unreachable;
-pub const __builtin_constant_p = @import("std").zig.c_builtins.__builtin_constant_p;
-pub const __builtin_mul_overflow = @import("std").zig.c_builtins.__builtin_mul_overflow;
+pub const __builtin_bswap16 = @import("std").zig.c_translation.builtins.bswap16;
+pub const __builtin_bswap32 = @import("std").zig.c_translation.builtins.bswap32;
+pub const __builtin_bswap64 = @import("std").zig.c_translation.builtins.bswap64;
+pub const __builtin_signbit = @import("std").zig.c_translation.builtins.signbit;
+pub const __builtin_signbitf = @import("std").zig.c_translation.builtins.signbitf;
+pub const __builtin_popcount = @import("std").zig.c_translation.builtins.popcount;
+pub const __builtin_ctz = @import("std").zig.c_translation.builtins.ctz;
+pub const __builtin_clz = @import("std").zig.c_translation.builtins.clz;
+pub const __builtin_sqrt = @import("std").zig.c_translation.builtins.sqrt;
+pub const __builtin_sqrtf = @import("std").zig.c_translation.builtins.sqrtf;
+pub const __builtin_sin = @import("std").zig.c_translation.builtins.sin;
+pub const __builtin_sinf = @import("std").zig.c_translation.builtins.sinf;
+pub const __builtin_cos = @import("std").zig.c_translation.builtins.cos;
+pub const __builtin_cosf = @import("std").zig.c_translation.builtins.cosf;
+pub const __builtin_exp = @import("std").zig.c_translation.builtins.exp;
+pub const __builtin_expf = @import("std").zig.c_translation.builtins.expf;
+pub const __builtin_exp2 = @import("std").zig.c_translation.builtins.exp2;
+pub const __builtin_exp2f = @import("std").zig.c_translation.builtins.exp2f;
+pub const __builtin_log = @import("std").zig.c_translation.builtins.log;
+pub const __builtin_logf = @import("std").zig.c_translation.builtins.logf;
+pub const __builtin_log2 = @import("std").zig.c_translation.builtins.log2;
+pub const __builtin_log2f = @import("std").zig.c_translation.builtins.log2f;
+pub const __builtin_log10 = @import("std").zig.c_translation.builtins.log10;
+pub const __builtin_log10f = @import("std").zig.c_translation.builtins.log10f;
+pub const __builtin_abs = @import("std").zig.c_translation.builtins.abs;
+pub const __builtin_labs = @import("std").zig.c_translation.builtins.labs;
+pub const __builtin_llabs = @import("std").zig.c_translation.builtins.llabs;
+pub const __builtin_fabs = @import("std").zig.c_translation.builtins.fabs;
+pub const __builtin_fabsf = @import("std").zig.c_translation.builtins.fabsf;
+pub const __builtin_floor = @import("std").zig.c_translation.builtins.floor;
+pub const __builtin_floorf = @import("std").zig.c_translation.builtins.floorf;
+pub const __builtin_ceil = @import("std").zig.c_translation.builtins.ceil;
+pub const __builtin_ceilf = @import("std").zig.c_translation.builtins.ceilf;
+pub const __builtin_trunc = @import("std").zig.c_translation.builtins.trunc;
+pub const __builtin_truncf = @import("std").zig.c_translation.builtins.truncf;
+pub const __builtin_round = @import("std").zig.c_translation.builtins.round;
+pub const __builtin_roundf = @import("std").zig.c_translation.builtins.roundf;
+pub const __builtin_strlen = @import("std").zig.c_translation.builtins.strlen;
+pub const __builtin_strcmp = @import("std").zig.c_translation.builtins.strcmp;
+pub const __builtin_object_size = @import("std").zig.c_translation.builtins.object_size;
+pub const __builtin___memset_chk = @import("std").zig.c_translation.builtins.memset_chk;
+pub const __builtin_memset = @import("std").zig.c_translation.builtins.memset;
+pub const __builtin___memcpy_chk = @import("std").zig.c_translation.builtins.memcpy_chk;
+pub const __builtin_memcpy = @import("std").zig.c_translation.builtins.memcpy;
+pub const __builtin_expect = @import("std").zig.c_translation.builtins.expect;
+pub const __builtin_nanf = @import("std").zig.c_translation.builtins.nanf;
+pub const __builtin_huge_valf = @import("std").zig.c_translation.builtins.huge_valf;
+pub const __builtin_inff = @import("std").zig.c_translation.builtins.inff;
+pub const __builtin_isnan = @import("std").zig.c_translation.builtins.isnan;
+pub const __builtin_isinf = @import("std").zig.c_translation.builtins.isinf;
+pub const __builtin_isinf_sign = @import("std").zig.c_translation.builtins.isinf_sign;
+pub const __has_builtin = @import("std").zig.c_translation.builtins.has_builtin;
+pub const __builtin_assume = @import("std").zig.c_translation.builtins.assume;
+pub const __builtin_unreachable = @import("std").zig.c_translation.builtins.@"unreachable";
+pub const __builtin_constant_p = @import("std").zig.c_translation.builtins.constant_p;
+pub const __builtin_mul_overflow = @import("std").zig.c_translation.builtins.mul_overflow;
 pub const intmax_t = c_long;
 pub const uintmax_t = c_ulong;
 pub const int_fast8_t = i8;
@@ -746,14 +746,14 @@ pub inline fn vcombine_bf16(arg___p0: bfloat16x4_t, arg___p1: bfloat16x4_t) bflo
     var __ret: bfloat16x8_t = undefined;
     _ = &__ret;
     __ret = @as(bfloat16x8_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -817,10 +817,10 @@ pub inline fn vget_high_bf16(arg___p0: bfloat16x8_t) bfloat16x4_t {
     var __ret: bfloat16x4_t = undefined;
     _ = &__ret;
     __ret = @as(bfloat16x4_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -830,10 +830,10 @@ pub inline fn vget_low_bf16(arg___p0: bfloat16x8_t) bfloat16x4_t {
     var __ret: bfloat16x4_t = undefined;
     _ = &__ret;
     __ret = @as(bfloat16x4_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -2937,22 +2937,22 @@ pub inline fn vcombine_p8(arg___p0: poly8x8_t, arg___p1: poly8x8_t) poly8x16_t {
     var __ret: poly8x16_t = undefined;
     _ = &__ret;
     __ret = @as(poly8x16_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(16, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -2964,14 +2964,14 @@ pub inline fn vcombine_p16(arg___p0: poly16x4_t, arg___p1: poly16x4_t) poly16x8_
     var __ret: poly16x8_t = undefined;
     _ = &__ret;
     __ret = @as(poly16x8_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -2983,22 +2983,22 @@ pub inline fn vcombine_u8(arg___p0: uint8x8_t, arg___p1: uint8x8_t) uint8x16_t {
     var __ret: uint8x16_t = undefined;
     _ = &__ret;
     __ret = @as(uint8x16_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(16, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -3010,10 +3010,10 @@ pub inline fn vcombine_u32(arg___p0: uint32x2_t, arg___p1: uint32x2_t) uint32x4_
     var __ret: uint32x4_t = undefined;
     _ = &__ret;
     __ret = @as(uint32x4_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -3025,8 +3025,8 @@ pub inline fn vcombine_u64(arg___p0: uint64x1_t, arg___p1: uint64x1_t) uint64x2_
     var __ret: uint64x2_t = undefined;
     _ = &__ret;
     __ret = @as(uint64x2_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -3038,14 +3038,14 @@ pub inline fn vcombine_u16(arg___p0: uint16x4_t, arg___p1: uint16x4_t) uint16x8_
     var __ret: uint16x8_t = undefined;
     _ = &__ret;
     __ret = @as(uint16x8_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -3057,22 +3057,22 @@ pub inline fn vcombine_s8(arg___p0: int8x8_t, arg___p1: int8x8_t) int8x16_t {
     var __ret: int8x16_t = undefined;
     _ = &__ret;
     __ret = @as(int8x16_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(16, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -3084,10 +3084,10 @@ pub inline fn vcombine_f32(arg___p0: float32x2_t, arg___p1: float32x2_t) float32
     var __ret: float32x4_t = undefined;
     _ = &__ret;
     __ret = @as(float32x4_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -3099,14 +3099,14 @@ pub inline fn vcombine_f16(arg___p0: float16x4_t, arg___p1: float16x4_t) float16
     var __ret: float16x8_t = undefined;
     _ = &__ret;
     __ret = @as(float16x8_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -3118,10 +3118,10 @@ pub inline fn vcombine_s32(arg___p0: int32x2_t, arg___p1: int32x2_t) int32x4_t {
     var __ret: int32x4_t = undefined;
     _ = &__ret;
     __ret = @as(int32x4_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -3133,8 +3133,8 @@ pub inline fn vcombine_s64(arg___p0: int64x1_t, arg___p1: int64x1_t) int64x2_t {
     var __ret: int64x2_t = undefined;
     _ = &__ret;
     __ret = @as(int64x2_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -3146,14 +3146,14 @@ pub inline fn vcombine_s16(arg___p0: int16x4_t, arg___p1: int16x4_t) int16x8_t {
     var __ret: int16x8_t = undefined;
     _ = &__ret;
     __ret = @as(int16x8_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -3861,14 +3861,14 @@ pub inline fn vget_high_p8(arg___p0: poly8x16_t) poly8x8_t {
     var __ret: poly8x8_t = undefined;
     _ = &__ret;
     __ret = @as(poly8x8_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -3878,10 +3878,10 @@ pub inline fn vget_high_p16(arg___p0: poly16x8_t) poly16x4_t {
     var __ret: poly16x4_t = undefined;
     _ = &__ret;
     __ret = @as(poly16x4_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -3891,14 +3891,14 @@ pub inline fn vget_high_u8(arg___p0: uint8x16_t) uint8x8_t {
     var __ret: uint8x8_t = undefined;
     _ = &__ret;
     __ret = @as(uint8x8_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -3908,8 +3908,8 @@ pub inline fn vget_high_u32(arg___p0: uint32x4_t) uint32x2_t {
     var __ret: uint32x2_t = undefined;
     _ = &__ret;
     __ret = @as(uint32x2_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -3919,7 +3919,7 @@ pub inline fn vget_high_u64(arg___p0: uint64x2_t) uint64x1_t {
     var __ret: uint64x1_t = undefined;
     _ = &__ret;
     __ret = @as(uint64x1_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(1, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -3929,10 +3929,10 @@ pub inline fn vget_high_u16(arg___p0: uint16x8_t) uint16x4_t {
     var __ret: uint16x4_t = undefined;
     _ = &__ret;
     __ret = @as(uint16x4_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -3942,14 +3942,14 @@ pub inline fn vget_high_s8(arg___p0: int8x16_t) int8x8_t {
     var __ret: int8x8_t = undefined;
     _ = &__ret;
     __ret = @as(int8x8_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -3959,8 +3959,8 @@ pub inline fn vget_high_f32(arg___p0: float32x4_t) float32x2_t {
     var __ret: float32x2_t = undefined;
     _ = &__ret;
     __ret = @as(float32x2_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -3970,10 +3970,10 @@ pub inline fn vget_high_f16(arg___p0: float16x8_t) float16x4_t {
     var __ret: float16x4_t = undefined;
     _ = &__ret;
     __ret = @as(float16x4_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -3983,8 +3983,8 @@ pub inline fn vget_high_s32(arg___p0: int32x4_t) int32x2_t {
     var __ret: int32x2_t = undefined;
     _ = &__ret;
     __ret = @as(int32x2_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -3994,7 +3994,7 @@ pub inline fn vget_high_s64(arg___p0: int64x2_t) int64x1_t {
     var __ret: int64x1_t = undefined;
     _ = &__ret;
     __ret = @as(int64x1_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(1, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -4004,10 +4004,10 @@ pub inline fn vget_high_s16(arg___p0: int16x8_t) int16x4_t {
     var __ret: int16x4_t = undefined;
     _ = &__ret;
     __ret = @as(int16x4_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -4017,14 +4017,14 @@ pub inline fn vget_low_p8(arg___p0: poly8x16_t) poly8x8_t {
     var __ret: poly8x8_t = undefined;
     _ = &__ret;
     __ret = @as(poly8x8_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -4034,10 +4034,10 @@ pub inline fn vget_low_p16(arg___p0: poly16x8_t) poly16x4_t {
     var __ret: poly16x4_t = undefined;
     _ = &__ret;
     __ret = @as(poly16x4_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -4047,14 +4047,14 @@ pub inline fn vget_low_u8(arg___p0: uint8x16_t) uint8x8_t {
     var __ret: uint8x8_t = undefined;
     _ = &__ret;
     __ret = @as(uint8x8_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -4064,8 +4064,8 @@ pub inline fn vget_low_u32(arg___p0: uint32x4_t) uint32x2_t {
     var __ret: uint32x2_t = undefined;
     _ = &__ret;
     __ret = @as(uint32x2_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -4075,7 +4075,7 @@ pub inline fn vget_low_u64(arg___p0: uint64x2_t) uint64x1_t {
     var __ret: uint64x1_t = undefined;
     _ = &__ret;
     __ret = @as(uint64x1_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(1, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -4085,10 +4085,10 @@ pub inline fn vget_low_u16(arg___p0: uint16x8_t) uint16x4_t {
     var __ret: uint16x4_t = undefined;
     _ = &__ret;
     __ret = @as(uint16x4_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -4098,14 +4098,14 @@ pub inline fn vget_low_s8(arg___p0: int8x16_t) int8x8_t {
     var __ret: int8x8_t = undefined;
     _ = &__ret;
     __ret = @as(int8x8_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -4115,8 +4115,8 @@ pub inline fn vget_low_f32(arg___p0: float32x4_t) float32x2_t {
     var __ret: float32x2_t = undefined;
     _ = &__ret;
     __ret = @as(float32x2_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -4126,10 +4126,10 @@ pub inline fn vget_low_f16(arg___p0: float16x8_t) float16x4_t {
     var __ret: float16x4_t = undefined;
     _ = &__ret;
     __ret = @as(float16x4_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -4139,8 +4139,8 @@ pub inline fn vget_low_s32(arg___p0: int32x4_t) int32x2_t {
     var __ret: int32x2_t = undefined;
     _ = &__ret;
     __ret = @as(int32x2_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -4150,7 +4150,7 @@ pub inline fn vget_low_s64(arg___p0: int64x2_t) int64x1_t {
     var __ret: int64x1_t = undefined;
     _ = &__ret;
     __ret = @as(int64x1_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(1, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -4160,10 +4160,10 @@ pub inline fn vget_low_s16(arg___p0: int16x8_t) int16x4_t {
     var __ret: int16x4_t = undefined;
     _ = &__ret;
     __ret = @as(int16x4_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -7623,14 +7623,14 @@ pub inline fn vrev16_p8(arg___p0: poly8x8_t) poly8x8_t {
     var __ret: poly8x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -7640,22 +7640,22 @@ pub inline fn vrev16q_p8(arg___p0: poly8x16_t) poly8x16_t {
     var __ret: poly8x16_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(16, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -7665,22 +7665,22 @@ pub inline fn vrev16q_u8(arg___p0: uint8x16_t) uint8x16_t {
     var __ret: uint8x16_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(16, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -7690,22 +7690,22 @@ pub inline fn vrev16q_s8(arg___p0: int8x16_t) int8x16_t {
     var __ret: int8x16_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(16, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -7715,14 +7715,14 @@ pub inline fn vrev16_u8(arg___p0: uint8x8_t) uint8x8_t {
     var __ret: uint8x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -7732,14 +7732,14 @@ pub inline fn vrev16_s8(arg___p0: int8x8_t) int8x8_t {
     var __ret: int8x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -7749,14 +7749,14 @@ pub inline fn vrev32_p8(arg___p0: poly8x8_t) poly8x8_t {
     var __ret: poly8x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -7766,10 +7766,10 @@ pub inline fn vrev32_p16(arg___p0: poly16x4_t) poly16x4_t {
     var __ret: poly16x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -7779,22 +7779,22 @@ pub inline fn vrev32q_p8(arg___p0: poly8x16_t) poly8x16_t {
     var __ret: poly8x16_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(16, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -7804,14 +7804,14 @@ pub inline fn vrev32q_p16(arg___p0: poly16x8_t) poly16x8_t {
     var __ret: poly16x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -7821,22 +7821,22 @@ pub inline fn vrev32q_u8(arg___p0: uint8x16_t) uint8x16_t {
     var __ret: uint8x16_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(16, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -7846,14 +7846,14 @@ pub inline fn vrev32q_u16(arg___p0: uint16x8_t) uint16x8_t {
     var __ret: uint16x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -7863,22 +7863,22 @@ pub inline fn vrev32q_s8(arg___p0: int8x16_t) int8x16_t {
     var __ret: int8x16_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(16, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -7888,14 +7888,14 @@ pub inline fn vrev32q_s16(arg___p0: int16x8_t) int16x8_t {
     var __ret: int16x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -7905,14 +7905,14 @@ pub inline fn vrev32_u8(arg___p0: uint8x8_t) uint8x8_t {
     var __ret: uint8x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -7922,10 +7922,10 @@ pub inline fn vrev32_u16(arg___p0: uint16x4_t) uint16x4_t {
     var __ret: uint16x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -7935,14 +7935,14 @@ pub inline fn vrev32_s8(arg___p0: int8x8_t) int8x8_t {
     var __ret: int8x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -7952,10 +7952,10 @@ pub inline fn vrev32_s16(arg___p0: int16x4_t) int16x4_t {
     var __ret: int16x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -7965,14 +7965,14 @@ pub inline fn vrev64_p8(arg___p0: poly8x8_t) poly8x8_t {
     var __ret: poly8x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -7982,10 +7982,10 @@ pub inline fn vrev64_p16(arg___p0: poly16x4_t) poly16x4_t {
     var __ret: poly16x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -7995,22 +7995,22 @@ pub inline fn vrev64q_p8(arg___p0: poly8x16_t) poly8x16_t {
     var __ret: poly8x16_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(16, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -8020,14 +8020,14 @@ pub inline fn vrev64q_p16(arg___p0: poly16x8_t) poly16x8_t {
     var __ret: poly16x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -8037,22 +8037,22 @@ pub inline fn vrev64q_u8(arg___p0: uint8x16_t) uint8x16_t {
     var __ret: uint8x16_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(16, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -8062,10 +8062,10 @@ pub inline fn vrev64q_u32(arg___p0: uint32x4_t) uint32x4_t {
     var __ret: uint32x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -8075,14 +8075,14 @@ pub inline fn vrev64q_u16(arg___p0: uint16x8_t) uint16x8_t {
     var __ret: uint16x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -8092,22 +8092,22 @@ pub inline fn vrev64q_s8(arg___p0: int8x16_t) int8x16_t {
     var __ret: int8x16_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(16, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -8117,10 +8117,10 @@ pub inline fn vrev64q_f32(arg___p0: float32x4_t) float32x4_t {
     var __ret: float32x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -8130,10 +8130,10 @@ pub inline fn vrev64q_s32(arg___p0: int32x4_t) int32x4_t {
     var __ret: int32x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -8143,14 +8143,14 @@ pub inline fn vrev64q_s16(arg___p0: int16x8_t) int16x8_t {
     var __ret: int16x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -8160,14 +8160,14 @@ pub inline fn vrev64_u8(arg___p0: uint8x8_t) uint8x8_t {
     var __ret: uint8x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -8177,8 +8177,8 @@ pub inline fn vrev64_u32(arg___p0: uint32x2_t) uint32x2_t {
     var __ret: uint32x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -8188,10 +8188,10 @@ pub inline fn vrev64_u16(arg___p0: uint16x4_t) uint16x4_t {
     var __ret: uint16x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -8201,14 +8201,14 @@ pub inline fn vrev64_s8(arg___p0: int8x8_t) int8x8_t {
     var __ret: int8x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -8218,8 +8218,8 @@ pub inline fn vrev64_f32(arg___p0: float32x2_t) float32x2_t {
     var __ret: float32x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -8229,8 +8229,8 @@ pub inline fn vrev64_s32(arg___p0: int32x2_t) int32x2_t {
     var __ret: int32x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -8240,10 +8240,10 @@ pub inline fn vrev64_s16(arg___p0: int16x4_t) int16x4_t {
     var __ret: int16x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -8253,14 +8253,14 @@ pub inline fn vrev64q_f16(arg___p0: float16x8_t) float16x8_t {
     var __ret: float16x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -8270,10 +8270,10 @@ pub inline fn vrev64_f16(arg___p0: float16x4_t) float16x4_t {
     var __ret: float16x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -11611,8 +11611,8 @@ pub inline fn vcombine_p64(arg___p0: poly64x1_t, arg___p1: poly64x1_t) poly64x2_
     var __ret: poly64x2_t = undefined;
     _ = &__ret;
     __ret = @as(poly64x2_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -11624,8 +11624,8 @@ pub inline fn vcombine_f64(arg___p0: float64x1_t, arg___p1: float64x1_t) float64
     var __ret: float64x2_t = undefined;
     _ = &__ret;
     __ret = @as(float64x2_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -12131,7 +12131,7 @@ pub inline fn vget_high_p64(arg___p0: poly64x2_t) poly64x1_t {
     var __ret: poly64x1_t = undefined;
     _ = &__ret;
     __ret = @as(poly64x1_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(1, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -12141,7 +12141,7 @@ pub inline fn vget_high_f64(arg___p0: float64x2_t) float64x1_t {
     var __ret: float64x1_t = undefined;
     _ = &__ret;
     __ret = @as(float64x1_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(1, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -12151,7 +12151,7 @@ pub inline fn vget_low_p64(arg___p0: poly64x2_t) poly64x1_t {
     var __ret: poly64x1_t = undefined;
     _ = &__ret;
     __ret = @as(poly64x1_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(1, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -12161,7 +12161,7 @@ pub inline fn vget_low_f64(arg___p0: float64x2_t) float64x1_t {
     var __ret: float64x1_t = undefined;
     _ = &__ret;
     __ret = @as(float64x1_t, @bitCast(@shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p0, @Vector(1, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
     })));
     return __ret;
 }
@@ -17718,14 +17718,14 @@ pub inline fn vtrn1_p8(arg___p0: poly8x8_t, arg___p1: poly8x8_t) poly8x8_t {
     var __ret: poly8x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -17737,10 +17737,10 @@ pub inline fn vtrn1_p16(arg___p0: poly16x4_t, arg___p1: poly16x4_t) poly16x4_t {
     var __ret: poly16x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -17752,22 +17752,22 @@ pub inline fn vtrn1q_p8(arg___p0: poly8x16_t, arg___p1: poly8x16_t) poly8x16_t {
     var __ret: poly8x16_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(16, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(16, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(18, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(20, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(22, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(24, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(26, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(28, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(30, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(16, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(18, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(20, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(22, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(24, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(26, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(28, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(30, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -17779,8 +17779,8 @@ pub inline fn vtrn1q_p64(arg___p0: poly64x2_t, arg___p1: poly64x2_t) poly64x2_t 
     var __ret: poly64x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -17792,14 +17792,14 @@ pub inline fn vtrn1q_p16(arg___p0: poly16x8_t, arg___p1: poly16x8_t) poly16x8_t 
     var __ret: poly16x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -17811,22 +17811,22 @@ pub inline fn vtrn1q_u8(arg___p0: uint8x16_t, arg___p1: uint8x16_t) uint8x16_t {
     var __ret: uint8x16_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(16, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(16, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(18, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(20, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(22, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(24, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(26, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(28, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(30, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(16, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(18, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(20, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(22, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(24, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(26, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(28, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(30, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -17838,10 +17838,10 @@ pub inline fn vtrn1q_u32(arg___p0: uint32x4_t, arg___p1: uint32x4_t) uint32x4_t 
     var __ret: uint32x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -17853,8 +17853,8 @@ pub inline fn vtrn1q_u64(arg___p0: uint64x2_t, arg___p1: uint64x2_t) uint64x2_t 
     var __ret: uint64x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -17866,14 +17866,14 @@ pub inline fn vtrn1q_u16(arg___p0: uint16x8_t, arg___p1: uint16x8_t) uint16x8_t 
     var __ret: uint16x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -17885,22 +17885,22 @@ pub inline fn vtrn1q_s8(arg___p0: int8x16_t, arg___p1: int8x16_t) int8x16_t {
     var __ret: int8x16_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(16, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(16, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(18, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(20, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(22, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(24, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(26, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(28, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(30, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(16, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(18, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(20, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(22, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(24, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(26, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(28, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(30, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -17912,8 +17912,8 @@ pub inline fn vtrn1q_f64(arg___p0: float64x2_t, arg___p1: float64x2_t) float64x2
     var __ret: float64x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -17925,10 +17925,10 @@ pub inline fn vtrn1q_f32(arg___p0: float32x4_t, arg___p1: float32x4_t) float32x4
     var __ret: float32x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -17940,10 +17940,10 @@ pub inline fn vtrn1q_s32(arg___p0: int32x4_t, arg___p1: int32x4_t) int32x4_t {
     var __ret: int32x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -17955,8 +17955,8 @@ pub inline fn vtrn1q_s64(arg___p0: int64x2_t, arg___p1: int64x2_t) int64x2_t {
     var __ret: int64x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -17968,14 +17968,14 @@ pub inline fn vtrn1q_s16(arg___p0: int16x8_t, arg___p1: int16x8_t) int16x8_t {
     var __ret: int16x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -17987,14 +17987,14 @@ pub inline fn vtrn1_u8(arg___p0: uint8x8_t, arg___p1: uint8x8_t) uint8x8_t {
     var __ret: uint8x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18006,8 +18006,8 @@ pub inline fn vtrn1_u32(arg___p0: uint32x2_t, arg___p1: uint32x2_t) uint32x2_t {
     var __ret: uint32x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18019,10 +18019,10 @@ pub inline fn vtrn1_u16(arg___p0: uint16x4_t, arg___p1: uint16x4_t) uint16x4_t {
     var __ret: uint16x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18034,14 +18034,14 @@ pub inline fn vtrn1_s8(arg___p0: int8x8_t, arg___p1: int8x8_t) int8x8_t {
     var __ret: int8x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18053,8 +18053,8 @@ pub inline fn vtrn1_f32(arg___p0: float32x2_t, arg___p1: float32x2_t) float32x2_
     var __ret: float32x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18066,8 +18066,8 @@ pub inline fn vtrn1_s32(arg___p0: int32x2_t, arg___p1: int32x2_t) int32x2_t {
     var __ret: int32x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18079,10 +18079,10 @@ pub inline fn vtrn1_s16(arg___p0: int16x4_t, arg___p1: int16x4_t) int16x4_t {
     var __ret: int16x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18094,14 +18094,14 @@ pub inline fn vtrn1q_f16(arg___p0: float16x8_t, arg___p1: float16x8_t) float16x8
     var __ret: float16x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18113,10 +18113,10 @@ pub inline fn vtrn1_f16(arg___p0: float16x4_t, arg___p1: float16x4_t) float16x4_
     var __ret: float16x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18128,14 +18128,14 @@ pub inline fn vtrn2_p8(arg___p0: poly8x8_t, arg___p1: poly8x8_t) poly8x8_t {
     var __ret: poly8x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18147,10 +18147,10 @@ pub inline fn vtrn2_p16(arg___p0: poly16x4_t, arg___p1: poly16x4_t) poly16x4_t {
     var __ret: poly16x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18162,22 +18162,22 @@ pub inline fn vtrn2q_p8(arg___p0: poly8x16_t, arg___p1: poly8x16_t) poly8x16_t {
     var __ret: poly8x16_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(16, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(17, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(19, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(21, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(23, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(25, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(27, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(29, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(31, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(17, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(19, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(21, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(23, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(25, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(27, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(29, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(31, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18189,8 +18189,8 @@ pub inline fn vtrn2q_p64(arg___p0: poly64x2_t, arg___p1: poly64x2_t) poly64x2_t 
     var __ret: poly64x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18202,14 +18202,14 @@ pub inline fn vtrn2q_p16(arg___p0: poly16x8_t, arg___p1: poly16x8_t) poly16x8_t 
     var __ret: poly16x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18221,22 +18221,22 @@ pub inline fn vtrn2q_u8(arg___p0: uint8x16_t, arg___p1: uint8x16_t) uint8x16_t {
     var __ret: uint8x16_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(16, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(17, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(19, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(21, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(23, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(25, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(27, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(29, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(31, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(17, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(19, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(21, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(23, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(25, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(27, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(29, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(31, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18248,10 +18248,10 @@ pub inline fn vtrn2q_u32(arg___p0: uint32x4_t, arg___p1: uint32x4_t) uint32x4_t 
     var __ret: uint32x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18263,8 +18263,8 @@ pub inline fn vtrn2q_u64(arg___p0: uint64x2_t, arg___p1: uint64x2_t) uint64x2_t 
     var __ret: uint64x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18276,14 +18276,14 @@ pub inline fn vtrn2q_u16(arg___p0: uint16x8_t, arg___p1: uint16x8_t) uint16x8_t 
     var __ret: uint16x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18295,22 +18295,22 @@ pub inline fn vtrn2q_s8(arg___p0: int8x16_t, arg___p1: int8x16_t) int8x16_t {
     var __ret: int8x16_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(16, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(17, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(19, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(21, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(23, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(25, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(27, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(29, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(31, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(17, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(19, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(21, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(23, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(25, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(27, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(29, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(31, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18322,8 +18322,8 @@ pub inline fn vtrn2q_f64(arg___p0: float64x2_t, arg___p1: float64x2_t) float64x2
     var __ret: float64x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18335,10 +18335,10 @@ pub inline fn vtrn2q_f32(arg___p0: float32x4_t, arg___p1: float32x4_t) float32x4
     var __ret: float32x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18350,10 +18350,10 @@ pub inline fn vtrn2q_s32(arg___p0: int32x4_t, arg___p1: int32x4_t) int32x4_t {
     var __ret: int32x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18365,8 +18365,8 @@ pub inline fn vtrn2q_s64(arg___p0: int64x2_t, arg___p1: int64x2_t) int64x2_t {
     var __ret: int64x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18378,14 +18378,14 @@ pub inline fn vtrn2q_s16(arg___p0: int16x8_t, arg___p1: int16x8_t) int16x8_t {
     var __ret: int16x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18397,14 +18397,14 @@ pub inline fn vtrn2_u8(arg___p0: uint8x8_t, arg___p1: uint8x8_t) uint8x8_t {
     var __ret: uint8x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18416,8 +18416,8 @@ pub inline fn vtrn2_u32(arg___p0: uint32x2_t, arg___p1: uint32x2_t) uint32x2_t {
     var __ret: uint32x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18429,10 +18429,10 @@ pub inline fn vtrn2_u16(arg___p0: uint16x4_t, arg___p1: uint16x4_t) uint16x4_t {
     var __ret: uint16x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18444,14 +18444,14 @@ pub inline fn vtrn2_s8(arg___p0: int8x8_t, arg___p1: int8x8_t) int8x8_t {
     var __ret: int8x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18463,8 +18463,8 @@ pub inline fn vtrn2_f32(arg___p0: float32x2_t, arg___p1: float32x2_t) float32x2_
     var __ret: float32x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18476,8 +18476,8 @@ pub inline fn vtrn2_s32(arg___p0: int32x2_t, arg___p1: int32x2_t) int32x2_t {
     var __ret: int32x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18489,10 +18489,10 @@ pub inline fn vtrn2_s16(arg___p0: int16x4_t, arg___p1: int16x4_t) int16x4_t {
     var __ret: int16x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18504,14 +18504,14 @@ pub inline fn vtrn2q_f16(arg___p0: float16x8_t, arg___p1: float16x8_t) float16x8
     var __ret: float16x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18523,10 +18523,10 @@ pub inline fn vtrn2_f16(arg___p0: float16x4_t, arg___p1: float16x4_t) float16x4_
     var __ret: float16x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18618,14 +18618,14 @@ pub inline fn vuzp1_p8(arg___p0: poly8x8_t, arg___p1: poly8x8_t) poly8x8_t {
     var __ret: poly8x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18637,10 +18637,10 @@ pub inline fn vuzp1_p16(arg___p0: poly16x4_t, arg___p1: poly16x4_t) poly16x4_t {
     var __ret: poly16x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18652,22 +18652,22 @@ pub inline fn vuzp1q_p8(arg___p0: poly8x16_t, arg___p1: poly8x16_t) poly8x16_t {
     var __ret: poly8x16_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(16, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(16, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(18, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(20, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(22, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(24, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(26, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(28, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(30, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(16, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(18, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(20, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(22, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(24, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(26, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(28, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(30, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18679,8 +18679,8 @@ pub inline fn vuzp1q_p64(arg___p0: poly64x2_t, arg___p1: poly64x2_t) poly64x2_t 
     var __ret: poly64x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18692,14 +18692,14 @@ pub inline fn vuzp1q_p16(arg___p0: poly16x8_t, arg___p1: poly16x8_t) poly16x8_t 
     var __ret: poly16x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18711,22 +18711,22 @@ pub inline fn vuzp1q_u8(arg___p0: uint8x16_t, arg___p1: uint8x16_t) uint8x16_t {
     var __ret: uint8x16_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(16, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(16, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(18, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(20, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(22, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(24, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(26, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(28, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(30, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(16, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(18, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(20, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(22, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(24, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(26, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(28, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(30, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18738,10 +18738,10 @@ pub inline fn vuzp1q_u32(arg___p0: uint32x4_t, arg___p1: uint32x4_t) uint32x4_t 
     var __ret: uint32x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18753,8 +18753,8 @@ pub inline fn vuzp1q_u64(arg___p0: uint64x2_t, arg___p1: uint64x2_t) uint64x2_t 
     var __ret: uint64x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18766,14 +18766,14 @@ pub inline fn vuzp1q_u16(arg___p0: uint16x8_t, arg___p1: uint16x8_t) uint16x8_t 
     var __ret: uint16x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18785,22 +18785,22 @@ pub inline fn vuzp1q_s8(arg___p0: int8x16_t, arg___p1: int8x16_t) int8x16_t {
     var __ret: int8x16_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(16, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(16, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(18, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(20, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(22, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(24, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(26, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(28, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(30, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(16, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(18, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(20, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(22, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(24, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(26, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(28, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(30, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18812,8 +18812,8 @@ pub inline fn vuzp1q_f64(arg___p0: float64x2_t, arg___p1: float64x2_t) float64x2
     var __ret: float64x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18825,10 +18825,10 @@ pub inline fn vuzp1q_f32(arg___p0: float32x4_t, arg___p1: float32x4_t) float32x4
     var __ret: float32x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18840,10 +18840,10 @@ pub inline fn vuzp1q_s32(arg___p0: int32x4_t, arg___p1: int32x4_t) int32x4_t {
     var __ret: int32x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18855,8 +18855,8 @@ pub inline fn vuzp1q_s64(arg___p0: int64x2_t, arg___p1: int64x2_t) int64x2_t {
     var __ret: int64x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18868,14 +18868,14 @@ pub inline fn vuzp1q_s16(arg___p0: int16x8_t, arg___p1: int16x8_t) int16x8_t {
     var __ret: int16x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18887,14 +18887,14 @@ pub inline fn vuzp1_u8(arg___p0: uint8x8_t, arg___p1: uint8x8_t) uint8x8_t {
     var __ret: uint8x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18906,8 +18906,8 @@ pub inline fn vuzp1_u32(arg___p0: uint32x2_t, arg___p1: uint32x2_t) uint32x2_t {
     var __ret: uint32x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18919,10 +18919,10 @@ pub inline fn vuzp1_u16(arg___p0: uint16x4_t, arg___p1: uint16x4_t) uint16x4_t {
     var __ret: uint16x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18934,14 +18934,14 @@ pub inline fn vuzp1_s8(arg___p0: int8x8_t, arg___p1: int8x8_t) int8x8_t {
     var __ret: int8x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18953,8 +18953,8 @@ pub inline fn vuzp1_f32(arg___p0: float32x2_t, arg___p1: float32x2_t) float32x2_
     var __ret: float32x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18966,8 +18966,8 @@ pub inline fn vuzp1_s32(arg___p0: int32x2_t, arg___p1: int32x2_t) int32x2_t {
     var __ret: int32x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18979,10 +18979,10 @@ pub inline fn vuzp1_s16(arg___p0: int16x4_t, arg___p1: int16x4_t) int16x4_t {
     var __ret: int16x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -18994,14 +18994,14 @@ pub inline fn vuzp1q_f16(arg___p0: float16x8_t, arg___p1: float16x8_t) float16x8
     var __ret: float16x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19013,10 +19013,10 @@ pub inline fn vuzp1_f16(arg___p0: float16x4_t, arg___p1: float16x4_t) float16x4_
     var __ret: float16x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19028,14 +19028,14 @@ pub inline fn vuzp2_p8(arg___p0: poly8x8_t, arg___p1: poly8x8_t) poly8x8_t {
     var __ret: poly8x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19047,10 +19047,10 @@ pub inline fn vuzp2_p16(arg___p0: poly16x4_t, arg___p1: poly16x4_t) poly16x4_t {
     var __ret: poly16x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19062,22 +19062,22 @@ pub inline fn vuzp2q_p8(arg___p0: poly8x16_t, arg___p1: poly8x16_t) poly8x16_t {
     var __ret: poly8x16_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(16, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(17, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(19, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(21, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(23, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(25, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(27, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(29, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(31, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(17, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(19, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(21, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(23, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(25, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(27, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(29, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(31, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19089,8 +19089,8 @@ pub inline fn vuzp2q_p64(arg___p0: poly64x2_t, arg___p1: poly64x2_t) poly64x2_t 
     var __ret: poly64x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19102,14 +19102,14 @@ pub inline fn vuzp2q_p16(arg___p0: poly16x8_t, arg___p1: poly16x8_t) poly16x8_t 
     var __ret: poly16x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19121,22 +19121,22 @@ pub inline fn vuzp2q_u8(arg___p0: uint8x16_t, arg___p1: uint8x16_t) uint8x16_t {
     var __ret: uint8x16_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(16, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(17, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(19, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(21, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(23, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(25, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(27, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(29, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(31, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(17, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(19, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(21, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(23, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(25, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(27, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(29, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(31, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19148,10 +19148,10 @@ pub inline fn vuzp2q_u32(arg___p0: uint32x4_t, arg___p1: uint32x4_t) uint32x4_t 
     var __ret: uint32x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19163,8 +19163,8 @@ pub inline fn vuzp2q_u64(arg___p0: uint64x2_t, arg___p1: uint64x2_t) uint64x2_t 
     var __ret: uint64x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19176,14 +19176,14 @@ pub inline fn vuzp2q_u16(arg___p0: uint16x8_t, arg___p1: uint16x8_t) uint16x8_t 
     var __ret: uint16x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19195,22 +19195,22 @@ pub inline fn vuzp2q_s8(arg___p0: int8x16_t, arg___p1: int8x16_t) int8x16_t {
     var __ret: int8x16_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(16, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(17, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(19, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(21, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(23, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(25, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(27, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(29, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(31, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(17, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(19, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(21, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(23, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(25, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(27, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(29, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(31, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19222,8 +19222,8 @@ pub inline fn vuzp2q_f64(arg___p0: float64x2_t, arg___p1: float64x2_t) float64x2
     var __ret: float64x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19235,10 +19235,10 @@ pub inline fn vuzp2q_f32(arg___p0: float32x4_t, arg___p1: float32x4_t) float32x4
     var __ret: float32x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19250,10 +19250,10 @@ pub inline fn vuzp2q_s32(arg___p0: int32x4_t, arg___p1: int32x4_t) int32x4_t {
     var __ret: int32x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19265,8 +19265,8 @@ pub inline fn vuzp2q_s64(arg___p0: int64x2_t, arg___p1: int64x2_t) int64x2_t {
     var __ret: int64x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19278,14 +19278,14 @@ pub inline fn vuzp2q_s16(arg___p0: int16x8_t, arg___p1: int16x8_t) int16x8_t {
     var __ret: int16x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19297,14 +19297,14 @@ pub inline fn vuzp2_u8(arg___p0: uint8x8_t, arg___p1: uint8x8_t) uint8x8_t {
     var __ret: uint8x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19316,8 +19316,8 @@ pub inline fn vuzp2_u32(arg___p0: uint32x2_t, arg___p1: uint32x2_t) uint32x2_t {
     var __ret: uint32x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19329,10 +19329,10 @@ pub inline fn vuzp2_u16(arg___p0: uint16x4_t, arg___p1: uint16x4_t) uint16x4_t {
     var __ret: uint16x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19344,14 +19344,14 @@ pub inline fn vuzp2_s8(arg___p0: int8x8_t, arg___p1: int8x8_t) int8x8_t {
     var __ret: int8x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19363,8 +19363,8 @@ pub inline fn vuzp2_f32(arg___p0: float32x2_t, arg___p1: float32x2_t) float32x2_
     var __ret: float32x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19376,8 +19376,8 @@ pub inline fn vuzp2_s32(arg___p0: int32x2_t, arg___p1: int32x2_t) int32x2_t {
     var __ret: int32x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19389,10 +19389,10 @@ pub inline fn vuzp2_s16(arg___p0: int16x4_t, arg___p1: int16x4_t) int16x4_t {
     var __ret: int16x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19404,14 +19404,14 @@ pub inline fn vuzp2q_f16(arg___p0: float16x8_t, arg___p1: float16x8_t) float16x8
     var __ret: float16x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19423,10 +19423,10 @@ pub inline fn vuzp2_f16(arg___p0: float16x4_t, arg___p1: float16x4_t) float16x4_
     var __ret: float16x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19438,14 +19438,14 @@ pub inline fn vzip1_p8(arg___p0: poly8x8_t, arg___p1: poly8x8_t) poly8x8_t {
     var __ret: poly8x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19457,10 +19457,10 @@ pub inline fn vzip1_p16(arg___p0: poly16x4_t, arg___p1: poly16x4_t) poly16x4_t {
     var __ret: poly16x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19472,22 +19472,22 @@ pub inline fn vzip1q_p8(arg___p0: poly8x16_t, arg___p1: poly8x16_t) poly8x16_t {
     var __ret: poly8x16_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(16, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(16, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(17, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(18, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(19, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(20, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(21, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(22, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(23, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(16, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(17, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(18, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(19, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(20, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(21, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(22, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(23, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19499,8 +19499,8 @@ pub inline fn vzip1q_p64(arg___p0: poly64x2_t, arg___p1: poly64x2_t) poly64x2_t 
     var __ret: poly64x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19512,14 +19512,14 @@ pub inline fn vzip1q_p16(arg___p0: poly16x8_t, arg___p1: poly16x8_t) poly16x8_t 
     var __ret: poly16x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19531,22 +19531,22 @@ pub inline fn vzip1q_u8(arg___p0: uint8x16_t, arg___p1: uint8x16_t) uint8x16_t {
     var __ret: uint8x16_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(16, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(16, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(17, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(18, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(19, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(20, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(21, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(22, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(23, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(16, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(17, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(18, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(19, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(20, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(21, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(22, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(23, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19558,10 +19558,10 @@ pub inline fn vzip1q_u32(arg___p0: uint32x4_t, arg___p1: uint32x4_t) uint32x4_t 
     var __ret: uint32x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19573,8 +19573,8 @@ pub inline fn vzip1q_u64(arg___p0: uint64x2_t, arg___p1: uint64x2_t) uint64x2_t 
     var __ret: uint64x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19586,14 +19586,14 @@ pub inline fn vzip1q_u16(arg___p0: uint16x8_t, arg___p1: uint16x8_t) uint16x8_t 
     var __ret: uint16x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19605,22 +19605,22 @@ pub inline fn vzip1q_s8(arg___p0: int8x16_t, arg___p1: int8x16_t) int8x16_t {
     var __ret: int8x16_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(16, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(16, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(17, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(18, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(19, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(20, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(21, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(22, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(23, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(16, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(17, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(18, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(19, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(20, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(21, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(22, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(23, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19632,8 +19632,8 @@ pub inline fn vzip1q_f64(arg___p0: float64x2_t, arg___p1: float64x2_t) float64x2
     var __ret: float64x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19645,10 +19645,10 @@ pub inline fn vzip1q_f32(arg___p0: float32x4_t, arg___p1: float32x4_t) float32x4
     var __ret: float32x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19660,10 +19660,10 @@ pub inline fn vzip1q_s32(arg___p0: int32x4_t, arg___p1: int32x4_t) int32x4_t {
     var __ret: int32x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19675,8 +19675,8 @@ pub inline fn vzip1q_s64(arg___p0: int64x2_t, arg___p1: int64x2_t) int64x2_t {
     var __ret: int64x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19688,14 +19688,14 @@ pub inline fn vzip1q_s16(arg___p0: int16x8_t, arg___p1: int16x8_t) int16x8_t {
     var __ret: int16x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19707,14 +19707,14 @@ pub inline fn vzip1_u8(arg___p0: uint8x8_t, arg___p1: uint8x8_t) uint8x8_t {
     var __ret: uint8x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19726,8 +19726,8 @@ pub inline fn vzip1_u32(arg___p0: uint32x2_t, arg___p1: uint32x2_t) uint32x2_t {
     var __ret: uint32x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19739,10 +19739,10 @@ pub inline fn vzip1_u16(arg___p0: uint16x4_t, arg___p1: uint16x4_t) uint16x4_t {
     var __ret: uint16x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19754,14 +19754,14 @@ pub inline fn vzip1_s8(arg___p0: int8x8_t, arg___p1: int8x8_t) int8x8_t {
     var __ret: int8x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19773,8 +19773,8 @@ pub inline fn vzip1_f32(arg___p0: float32x2_t, arg___p1: float32x2_t) float32x2_
     var __ret: float32x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19786,8 +19786,8 @@ pub inline fn vzip1_s32(arg___p0: int32x2_t, arg___p1: int32x2_t) int32x2_t {
     var __ret: int32x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19799,10 +19799,10 @@ pub inline fn vzip1_s16(arg___p0: int16x4_t, arg___p1: int16x4_t) int16x4_t {
     var __ret: int16x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19814,14 +19814,14 @@ pub inline fn vzip1q_f16(arg___p0: float16x8_t, arg___p1: float16x8_t) float16x8
     var __ret: float16x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19833,10 +19833,10 @@ pub inline fn vzip1_f16(arg___p0: float16x4_t, arg___p1: float16x4_t) float16x4_
     var __ret: float16x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(0, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19848,14 +19848,14 @@ pub inline fn vzip2_p8(arg___p0: poly8x8_t, arg___p1: poly8x8_t) poly8x8_t {
     var __ret: poly8x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19867,10 +19867,10 @@ pub inline fn vzip2_p16(arg___p0: poly16x4_t, arg___p1: poly16x4_t) poly16x4_t {
     var __ret: poly16x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19882,22 +19882,22 @@ pub inline fn vzip2q_p8(arg___p0: poly8x16_t, arg___p1: poly8x16_t) poly8x16_t {
     var __ret: poly8x16_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(16, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(24, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(25, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(26, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(27, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(28, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(29, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(30, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(31, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(24, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(25, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(26, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(27, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(28, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(29, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(30, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(31, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19909,8 +19909,8 @@ pub inline fn vzip2q_p64(arg___p0: poly64x2_t, arg___p1: poly64x2_t) poly64x2_t 
     var __ret: poly64x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19922,14 +19922,14 @@ pub inline fn vzip2q_p16(arg___p0: poly16x8_t, arg___p1: poly16x8_t) poly16x8_t 
     var __ret: poly16x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19941,22 +19941,22 @@ pub inline fn vzip2q_u8(arg___p0: uint8x16_t, arg___p1: uint8x16_t) uint8x16_t {
     var __ret: uint8x16_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(16, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(24, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(25, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(26, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(27, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(28, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(29, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(30, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(31, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(24, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(25, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(26, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(27, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(28, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(29, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(30, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(31, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19968,10 +19968,10 @@ pub inline fn vzip2q_u32(arg___p0: uint32x4_t, arg___p1: uint32x4_t) uint32x4_t 
     var __ret: uint32x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19983,8 +19983,8 @@ pub inline fn vzip2q_u64(arg___p0: uint64x2_t, arg___p1: uint64x2_t) uint64x2_t 
     var __ret: uint64x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -19996,14 +19996,14 @@ pub inline fn vzip2q_u16(arg___p0: uint16x8_t, arg___p1: uint16x8_t) uint16x8_t 
     var __ret: uint16x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -20015,22 +20015,22 @@ pub inline fn vzip2q_s8(arg___p0: int8x16_t, arg___p1: int8x16_t) int8x16_t {
     var __ret: int8x16_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(16, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(24, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(25, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(26, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(27, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(28, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(29, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(30, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(31, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(8, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(24, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(9, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(25, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(10, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(26, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(11, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(27, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(28, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(29, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(30, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(31, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -20042,8 +20042,8 @@ pub inline fn vzip2q_f64(arg___p0: float64x2_t, arg___p1: float64x2_t) float64x2
     var __ret: float64x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -20055,10 +20055,10 @@ pub inline fn vzip2q_f32(arg___p0: float32x4_t, arg___p1: float32x4_t) float32x4
     var __ret: float32x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -20070,10 +20070,10 @@ pub inline fn vzip2q_s32(arg___p0: int32x4_t, arg___p1: int32x4_t) int32x4_t {
     var __ret: int32x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -20085,8 +20085,8 @@ pub inline fn vzip2q_s64(arg___p0: int64x2_t, arg___p1: int64x2_t) int64x2_t {
     var __ret: int64x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -20098,14 +20098,14 @@ pub inline fn vzip2q_s16(arg___p0: int16x8_t, arg___p1: int16x8_t) int16x8_t {
     var __ret: int16x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -20117,14 +20117,14 @@ pub inline fn vzip2_u8(arg___p0: uint8x8_t, arg___p1: uint8x8_t) uint8x8_t {
     var __ret: uint8x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -20136,8 +20136,8 @@ pub inline fn vzip2_u32(arg___p0: uint32x2_t, arg___p1: uint32x2_t) uint32x2_t {
     var __ret: uint32x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -20149,10 +20149,10 @@ pub inline fn vzip2_u16(arg___p0: uint16x4_t, arg___p1: uint16x4_t) uint16x4_t {
     var __ret: uint16x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -20164,14 +20164,14 @@ pub inline fn vzip2_s8(arg___p0: int8x8_t, arg___p1: int8x8_t) int8x8_t {
     var __ret: int8x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -20183,8 +20183,8 @@ pub inline fn vzip2_f32(arg___p0: float32x2_t, arg___p1: float32x2_t) float32x2_
     var __ret: float32x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -20196,8 +20196,8 @@ pub inline fn vzip2_s32(arg___p0: int32x2_t, arg___p1: int32x2_t) int32x2_t {
     var __ret: int32x2_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(2, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(1, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -20209,10 +20209,10 @@ pub inline fn vzip2_s16(arg___p0: int16x4_t, arg___p1: int16x4_t) int16x4_t {
     var __ret: int16x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -20224,14 +20224,14 @@ pub inline fn vzip2q_f16(arg___p0: float16x8_t, arg___p1: float16x8_t) float16x8
     var __ret: float16x8_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(8, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(4, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(12, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(5, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(13, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(14, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(15, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -20243,10 +20243,10 @@ pub inline fn vzip2_f16(arg___p0: float16x4_t, arg___p1: float16x4_t) float16x4_
     var __ret: float16x4_t = undefined;
     _ = &__ret;
     __ret = @shuffle(@typeInfo(@TypeOf(__p0)).vector.child, __p0, __p1, @Vector(4, i32){
-        @import("std").zig.c_translation.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
-        @import("std").zig.c_translation.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(2, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(6, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(3, @typeInfo(@TypeOf(__p0)).vector.len),
+        @import("std").zig.c_translation.helpers.shuffleVectorIndex(7, @typeInfo(@TypeOf(__p0)).vector.len),
     });
     return __ret;
 }
@@ -26215,24 +26215,24 @@ pub const __LLONG_WIDTH__ = @as(c_int, 64);
 pub const __BITINT_MAXWIDTH__ = @as(c_int, 128);
 pub const __SCHAR_MAX__ = @as(c_int, 127);
 pub const __SHRT_MAX__ = @as(c_int, 32767);
-pub const __INT_MAX__ = @import("std").zig.c_translation.promoteIntLiteral(c_int, 2147483647, .decimal);
-pub const __LONG_MAX__ = @import("std").zig.c_translation.promoteIntLiteral(c_long, 9223372036854775807, .decimal);
+pub const __INT_MAX__ = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 2147483647, .decimal);
+pub const __LONG_MAX__ = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_long, 9223372036854775807, .decimal);
 pub const __LONG_LONG_MAX__ = @as(c_longlong, 9223372036854775807);
-pub const __WCHAR_MAX__ = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 4294967295, .decimal);
+pub const __WCHAR_MAX__ = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 4294967295, .decimal);
 pub const __WCHAR_WIDTH__ = @as(c_int, 32);
-pub const __WINT_MAX__ = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 4294967295, .decimal);
+pub const __WINT_MAX__ = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 4294967295, .decimal);
 pub const __WINT_WIDTH__ = @as(c_int, 32);
-pub const __INTMAX_MAX__ = @import("std").zig.c_translation.promoteIntLiteral(c_long, 9223372036854775807, .decimal);
+pub const __INTMAX_MAX__ = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_long, 9223372036854775807, .decimal);
 pub const __INTMAX_WIDTH__ = @as(c_int, 64);
-pub const __SIZE_MAX__ = @import("std").zig.c_translation.promoteIntLiteral(c_ulong, 18446744073709551615, .decimal);
+pub const __SIZE_MAX__ = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_ulong, 18446744073709551615, .decimal);
 pub const __SIZE_WIDTH__ = @as(c_int, 64);
-pub const __UINTMAX_MAX__ = @import("std").zig.c_translation.promoteIntLiteral(c_ulong, 18446744073709551615, .decimal);
+pub const __UINTMAX_MAX__ = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_ulong, 18446744073709551615, .decimal);
 pub const __UINTMAX_WIDTH__ = @as(c_int, 64);
-pub const __PTRDIFF_MAX__ = @import("std").zig.c_translation.promoteIntLiteral(c_long, 9223372036854775807, .decimal);
+pub const __PTRDIFF_MAX__ = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_long, 9223372036854775807, .decimal);
 pub const __PTRDIFF_WIDTH__ = @as(c_int, 64);
-pub const __INTPTR_MAX__ = @import("std").zig.c_translation.promoteIntLiteral(c_long, 9223372036854775807, .decimal);
+pub const __INTPTR_MAX__ = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_long, 9223372036854775807, .decimal);
 pub const __INTPTR_WIDTH__ = @as(c_int, 64);
-pub const __UINTPTR_MAX__ = @import("std").zig.c_translation.promoteIntLiteral(c_ulong, 18446744073709551615, .decimal);
+pub const __UINTPTR_MAX__ = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_ulong, 18446744073709551615, .decimal);
 pub const __UINTPTR_WIDTH__ = @as(c_int, 64);
 pub const __SIZEOF_DOUBLE__ = @as(c_int, 8);
 pub const __SIZEOF_FLOAT__ = @as(c_int, 4);
@@ -26252,7 +26252,7 @@ pub const __INTMAX_FMTd__ = "ld";
 pub const __INTMAX_FMTi__ = "li";
 pub const __INTMAX_C_SUFFIX__ = @compileError("unable to translate macro: undefined identifier `L`");
 // (no file):95:9
-pub const __INTMAX_C = @import("std").zig.c_translation.Macros.L_SUFFIX;
+pub const __INTMAX_C = @import("std").zig.c_translation.helpers.L_SUFFIX;
 pub const __UINTMAX_TYPE__ = c_ulong;
 pub const __UINTMAX_FMTo__ = "lo";
 pub const __UINTMAX_FMTu__ = "lu";
@@ -26260,7 +26260,7 @@ pub const __UINTMAX_FMTx__ = "lx";
 pub const __UINTMAX_FMTX__ = "lX";
 pub const __UINTMAX_C_SUFFIX__ = @compileError("unable to translate macro: undefined identifier `UL`");
 // (no file):102:9
-pub const __UINTMAX_C = @import("std").zig.c_translation.Macros.UL_SUFFIX;
+pub const __UINTMAX_C = @import("std").zig.c_translation.helpers.UL_SUFFIX;
 pub const __PTRDIFF_TYPE__ = c_long;
 pub const __PTRDIFF_FMTd__ = "ld";
 pub const __PTRDIFF_FMTi__ = "li";
@@ -26274,7 +26274,7 @@ pub const __SIZE_FMTx__ = "lx";
 pub const __SIZE_FMTX__ = "lX";
 pub const __WCHAR_TYPE__ = c_uint;
 pub const __WINT_TYPE__ = c_uint;
-pub const __SIG_ATOMIC_MAX__ = @import("std").zig.c_translation.promoteIntLiteral(c_int, 2147483647, .decimal);
+pub const __SIG_ATOMIC_MAX__ = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 2147483647, .decimal);
 pub const __SIG_ATOMIC_WIDTH__ = @as(c_int, 32);
 pub const __CHAR16_TYPE__ = c_ushort;
 pub const __CHAR32_TYPE__ = c_uint;
@@ -26377,7 +26377,7 @@ pub const __INT64_FMTd__ = "ld";
 pub const __INT64_FMTi__ = "li";
 pub const __INT64_C_SUFFIX__ = @compileError("unable to translate macro: undefined identifier `L`");
 // (no file):209:9
-pub const __INT64_C = @import("std").zig.c_translation.Macros.L_SUFFIX;
+pub const __INT64_C = @import("std").zig.c_translation.helpers.L_SUFFIX;
 pub const __UINT8_TYPE__ = u8;
 pub const __UINT8_FMTo__ = "hho";
 pub const __UINT8_FMTu__ = "hhu";
@@ -26400,7 +26400,7 @@ pub inline fn __UINT16_C(c: anytype) @TypeOf(c) {
     _ = &c;
     return c;
 }
-pub const __UINT16_MAX__ = @import("std").zig.c_translation.promoteIntLiteral(c_int, 65535, .decimal);
+pub const __UINT16_MAX__ = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 65535, .decimal);
 pub const __INT16_MAX__ = @as(c_int, 32767);
 pub const __UINT32_TYPE__ = c_uint;
 pub const __UINT32_FMTo__ = "o";
@@ -26409,9 +26409,9 @@ pub const __UINT32_FMTx__ = "x";
 pub const __UINT32_FMTX__ = "X";
 pub const __UINT32_C_SUFFIX__ = @compileError("unable to translate macro: undefined identifier `U`");
 // (no file):234:9
-pub const __UINT32_C = @import("std").zig.c_translation.Macros.U_SUFFIX;
-pub const __UINT32_MAX__ = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 4294967295, .decimal);
-pub const __INT32_MAX__ = @import("std").zig.c_translation.promoteIntLiteral(c_int, 2147483647, .decimal);
+pub const __UINT32_C = @import("std").zig.c_translation.helpers.U_SUFFIX;
+pub const __UINT32_MAX__ = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 4294967295, .decimal);
+pub const __INT32_MAX__ = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 2147483647, .decimal);
 pub const __UINT64_TYPE__ = c_ulong;
 pub const __UINT64_FMTo__ = "lo";
 pub const __UINT64_FMTu__ = "lu";
@@ -26419,9 +26419,9 @@ pub const __UINT64_FMTx__ = "lx";
 pub const __UINT64_FMTX__ = "lX";
 pub const __UINT64_C_SUFFIX__ = @compileError("unable to translate macro: undefined identifier `UL`");
 // (no file):243:9
-pub const __UINT64_C = @import("std").zig.c_translation.Macros.UL_SUFFIX;
-pub const __UINT64_MAX__ = @import("std").zig.c_translation.promoteIntLiteral(c_ulong, 18446744073709551615, .decimal);
-pub const __INT64_MAX__ = @import("std").zig.c_translation.promoteIntLiteral(c_long, 9223372036854775807, .decimal);
+pub const __UINT64_C = @import("std").zig.c_translation.helpers.UL_SUFFIX;
+pub const __UINT64_MAX__ = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_ulong, 18446744073709551615, .decimal);
+pub const __INT64_MAX__ = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_long, 9223372036854775807, .decimal);
 pub const __INT_LEAST8_TYPE__ = i8;
 pub const __INT_LEAST8_MAX__ = @as(c_int, 127);
 pub const __INT_LEAST8_WIDTH__ = @as(c_int, 8);
@@ -26439,29 +26439,29 @@ pub const __INT_LEAST16_WIDTH__ = @as(c_int, 16);
 pub const __INT_LEAST16_FMTd__ = "hd";
 pub const __INT_LEAST16_FMTi__ = "hi";
 pub const __UINT_LEAST16_TYPE__ = c_ushort;
-pub const __UINT_LEAST16_MAX__ = @import("std").zig.c_translation.promoteIntLiteral(c_int, 65535, .decimal);
+pub const __UINT_LEAST16_MAX__ = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 65535, .decimal);
 pub const __UINT_LEAST16_FMTo__ = "ho";
 pub const __UINT_LEAST16_FMTu__ = "hu";
 pub const __UINT_LEAST16_FMTx__ = "hx";
 pub const __UINT_LEAST16_FMTX__ = "hX";
 pub const __INT_LEAST32_TYPE__ = c_int;
-pub const __INT_LEAST32_MAX__ = @import("std").zig.c_translation.promoteIntLiteral(c_int, 2147483647, .decimal);
+pub const __INT_LEAST32_MAX__ = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 2147483647, .decimal);
 pub const __INT_LEAST32_WIDTH__ = @as(c_int, 32);
 pub const __INT_LEAST32_FMTd__ = "d";
 pub const __INT_LEAST32_FMTi__ = "i";
 pub const __UINT_LEAST32_TYPE__ = c_uint;
-pub const __UINT_LEAST32_MAX__ = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 4294967295, .decimal);
+pub const __UINT_LEAST32_MAX__ = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 4294967295, .decimal);
 pub const __UINT_LEAST32_FMTo__ = "o";
 pub const __UINT_LEAST32_FMTu__ = "u";
 pub const __UINT_LEAST32_FMTx__ = "x";
 pub const __UINT_LEAST32_FMTX__ = "X";
 pub const __INT_LEAST64_TYPE__ = c_long;
-pub const __INT_LEAST64_MAX__ = @import("std").zig.c_translation.promoteIntLiteral(c_long, 9223372036854775807, .decimal);
+pub const __INT_LEAST64_MAX__ = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_long, 9223372036854775807, .decimal);
 pub const __INT_LEAST64_WIDTH__ = @as(c_int, 64);
 pub const __INT_LEAST64_FMTd__ = "ld";
 pub const __INT_LEAST64_FMTi__ = "li";
 pub const __UINT_LEAST64_TYPE__ = c_ulong;
-pub const __UINT_LEAST64_MAX__ = @import("std").zig.c_translation.promoteIntLiteral(c_ulong, 18446744073709551615, .decimal);
+pub const __UINT_LEAST64_MAX__ = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_ulong, 18446744073709551615, .decimal);
 pub const __UINT_LEAST64_FMTo__ = "lo";
 pub const __UINT_LEAST64_FMTu__ = "lu";
 pub const __UINT_LEAST64_FMTx__ = "lx";
@@ -26483,29 +26483,29 @@ pub const __INT_FAST16_WIDTH__ = @as(c_int, 16);
 pub const __INT_FAST16_FMTd__ = "hd";
 pub const __INT_FAST16_FMTi__ = "hi";
 pub const __UINT_FAST16_TYPE__ = c_ushort;
-pub const __UINT_FAST16_MAX__ = @import("std").zig.c_translation.promoteIntLiteral(c_int, 65535, .decimal);
+pub const __UINT_FAST16_MAX__ = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 65535, .decimal);
 pub const __UINT_FAST16_FMTo__ = "ho";
 pub const __UINT_FAST16_FMTu__ = "hu";
 pub const __UINT_FAST16_FMTx__ = "hx";
 pub const __UINT_FAST16_FMTX__ = "hX";
 pub const __INT_FAST32_TYPE__ = c_int;
-pub const __INT_FAST32_MAX__ = @import("std").zig.c_translation.promoteIntLiteral(c_int, 2147483647, .decimal);
+pub const __INT_FAST32_MAX__ = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 2147483647, .decimal);
 pub const __INT_FAST32_WIDTH__ = @as(c_int, 32);
 pub const __INT_FAST32_FMTd__ = "d";
 pub const __INT_FAST32_FMTi__ = "i";
 pub const __UINT_FAST32_TYPE__ = c_uint;
-pub const __UINT_FAST32_MAX__ = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 4294967295, .decimal);
+pub const __UINT_FAST32_MAX__ = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 4294967295, .decimal);
 pub const __UINT_FAST32_FMTo__ = "o";
 pub const __UINT_FAST32_FMTu__ = "u";
 pub const __UINT_FAST32_FMTx__ = "x";
 pub const __UINT_FAST32_FMTX__ = "X";
 pub const __INT_FAST64_TYPE__ = c_long;
-pub const __INT_FAST64_MAX__ = @import("std").zig.c_translation.promoteIntLiteral(c_long, 9223372036854775807, .decimal);
+pub const __INT_FAST64_MAX__ = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_long, 9223372036854775807, .decimal);
 pub const __INT_FAST64_WIDTH__ = @as(c_int, 64);
 pub const __INT_FAST64_FMTd__ = "ld";
 pub const __INT_FAST64_FMTi__ = "li";
 pub const __UINT_FAST64_TYPE__ = c_ulong;
-pub const __UINT_FAST64_MAX__ = @import("std").zig.c_translation.promoteIntLiteral(c_ulong, 18446744073709551615, .decimal);
+pub const __UINT_FAST64_MAX__ = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_ulong, 18446744073709551615, .decimal);
 pub const __UINT_FAST64_FMTo__ = "lo";
 pub const __UINT_FAST64_FMTu__ = "lu";
 pub const __UINT_FAST64_FMTx__ = "lx";
@@ -26552,8 +26552,8 @@ pub inline fn __ARM_ACLE_VERSION(year: anytype, quarter: anytype, patch: anytype
     _ = &patch;
     return ((@as(c_int, 100) * year) + (@as(c_int, 10) * quarter)) + patch;
 }
-pub const __ARM_ACLE = @import("std").zig.c_translation.promoteIntLiteral(c_int, 202420, .decimal);
-pub const __FUNCTION_MULTI_VERSIONING_SUPPORT_LEVEL = @import("std").zig.c_translation.promoteIntLiteral(c_int, 202430, .decimal);
+pub const __ARM_ACLE = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 202420, .decimal);
+pub const __FUNCTION_MULTI_VERSIONING_SUPPORT_LEVEL = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 202430, .decimal);
 pub const __ARM_ARCH = @as(c_int, 8);
 pub const __ARM_ARCH_PROFILE = 'A';
 pub const __ARM_64BIT_STATE = @as(c_int, 1);
@@ -26625,7 +26625,7 @@ pub const _Addr = c_long;
 pub const _Int64 = c_long;
 pub const _Reg = c_long;
 pub const __BYTE_ORDER = @as(c_int, 1234);
-pub const __LONG_MAX = @import("std").zig.c_translation.promoteIntLiteral(c_long, 0x7fffffffffffffff, .hex);
+pub const __LONG_MAX = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_long, 0x7fffffffffffffff, .hex);
 pub const __LITTLE_ENDIAN = @as(c_int, 1234);
 pub const __BIG_ENDIAN = @as(c_int, 4321);
 pub const __USE_TIME_BITS64 = @as(c_int, 1);
@@ -26643,16 +26643,16 @@ pub const __DEFINED_uint64_t = "";
 pub const __DEFINED_uintmax_t = "";
 pub const INT8_MIN = -@as(c_int, 1) - @as(c_int, 0x7f);
 pub const INT16_MIN = -@as(c_int, 1) - @as(c_int, 0x7fff);
-pub const INT32_MIN = -@as(c_int, 1) - @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x7fffffff, .hex);
-pub const INT64_MIN = -@as(c_int, 1) - @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x7fffffffffffffff, .hex);
+pub const INT32_MIN = -@as(c_int, 1) - @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x7fffffff, .hex);
+pub const INT64_MIN = -@as(c_int, 1) - @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x7fffffffffffffff, .hex);
 pub const INT8_MAX = @as(c_int, 0x7f);
 pub const INT16_MAX = @as(c_int, 0x7fff);
-pub const INT32_MAX = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x7fffffff, .hex);
-pub const INT64_MAX = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x7fffffffffffffff, .hex);
+pub const INT32_MAX = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x7fffffff, .hex);
+pub const INT64_MAX = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x7fffffffffffffff, .hex);
 pub const UINT8_MAX = @as(c_int, 0xff);
-pub const UINT16_MAX = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xffff, .hex);
-pub const UINT32_MAX = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 0xffffffff, .hex);
-pub const UINT64_MAX = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 0xffffffffffffffff, .hex);
+pub const UINT16_MAX = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0xffff, .hex);
+pub const UINT32_MAX = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 0xffffffff, .hex);
+pub const UINT64_MAX = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 0xffffffffffffffff, .hex);
 pub const INT_FAST8_MIN = INT8_MIN;
 pub const INT_FAST64_MIN = INT64_MIN;
 pub const INT_LEAST8_MIN = INT8_MIN;
@@ -26676,7 +26676,7 @@ pub const INTMAX_MAX = INT64_MAX;
 pub const UINTMAX_MAX = UINT64_MAX;
 pub const WINT_MIN = @as(c_uint, 0);
 pub const WINT_MAX = UINT32_MAX;
-pub const WCHAR_MAX = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 0xffffffff, .hex) + '\x00';
+pub const WCHAR_MAX = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 0xffffffff, .hex) + '\x00';
 pub const WCHAR_MIN = @as(c_int, 0) + '\x00';
 pub const SIG_ATOMIC_MIN = INT32_MIN;
 pub const SIG_ATOMIC_MAX = INT32_MAX;
@@ -26712,11 +26712,11 @@ pub inline fn UINT16_C(c: anytype) @TypeOf(c) {
     _ = &c;
     return c;
 }
-pub const UINT32_C = @import("std").zig.c_translation.Macros.U_SUFFIX;
-pub const INT64_C = @import("std").zig.c_translation.Macros.L_SUFFIX;
-pub const UINT64_C = @import("std").zig.c_translation.Macros.UL_SUFFIX;
-pub const INTMAX_C = @import("std").zig.c_translation.Macros.L_SUFFIX;
-pub const UINTMAX_C = @import("std").zig.c_translation.Macros.UL_SUFFIX;
+pub const UINT32_C = @import("std").zig.c_translation.helpers.U_SUFFIX;
+pub const INT64_C = @import("std").zig.c_translation.helpers.L_SUFFIX;
+pub const UINT64_C = @import("std").zig.c_translation.helpers.UL_SUFFIX;
+pub const INTMAX_C = @import("std").zig.c_translation.helpers.L_SUFFIX;
+pub const UINTMAX_C = @import("std").zig.c_translation.helpers.UL_SUFFIX;
 pub const _STDLIB_H = "";
 pub const _FEATURES_H = "";
 pub const _BSD_SOURCE = @as(c_int, 1);
@@ -26727,7 +26727,7 @@ pub const __inline = @compileError("unable to translate C expr: unexpected token
 // /Users/kristoff/.local/share/zigup/0.15.2/files/lib/libc/include/generic-musl/features.h:26:9
 pub const __REDIR = @compileError("unable to translate C expr: unexpected token '__typeof__'");
 // /Users/kristoff/.local/share/zigup/0.15.2/files/lib/libc/include/generic-musl/features.h:38:9
-pub const NULL = @import("std").zig.c_translation.cast(?*anyopaque, @as(c_int, 0));
+pub const NULL = @import("std").zig.c_translation.helpers.cast(?*anyopaque, @as(c_int, 0));
 pub const __NEED_size_t = "";
 pub const __NEED_wchar_t = "";
 pub const __DEFINED_wchar_t = "";
@@ -26735,12 +26735,12 @@ pub const __DEFINED_size_t = "";
 pub const EXIT_FAILURE = @as(c_int, 1);
 pub const EXIT_SUCCESS = @as(c_int, 0);
 pub const MB_CUR_MAX = __ctype_get_mb_cur_max();
-pub const RAND_MAX = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x7fffffff, .hex);
+pub const RAND_MAX = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x7fffffff, .hex);
 pub const WNOHANG = @as(c_int, 1);
 pub const WUNTRACED = @as(c_int, 2);
-pub inline fn WEXITSTATUS(s: anytype) @TypeOf((s & @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xff00, .hex)) >> @as(c_int, 8)) {
+pub inline fn WEXITSTATUS(s: anytype) @TypeOf((s & @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0xff00, .hex)) >> @as(c_int, 8)) {
     _ = &s;
-    return (s & @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xff00, .hex)) >> @as(c_int, 8);
+    return (s & @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0xff00, .hex)) >> @as(c_int, 8);
 }
 pub inline fn WTERMSIG(s: anytype) @TypeOf(s & @as(c_int, 0x7f)) {
     _ = &s;
@@ -26754,22 +26754,22 @@ pub inline fn WIFEXITED(s: anytype) @TypeOf(!(WTERMSIG(s) != 0)) {
     _ = &s;
     return !(WTERMSIG(s) != 0);
 }
-pub inline fn WIFSTOPPED(s: anytype) @TypeOf(@import("std").zig.c_translation.cast(c_short, ((s & @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xffff, .hex)) * @import("std").zig.c_translation.promoteIntLiteral(c_uint, 0x10001, .hex)) >> @as(c_int, 8)) > @as(c_int, 0x7f00)) {
+pub inline fn WIFSTOPPED(s: anytype) @TypeOf(@import("std").zig.c_translation.helpers.cast(c_short, ((s & @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0xffff, .hex)) * @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 0x10001, .hex)) >> @as(c_int, 8)) > @as(c_int, 0x7f00)) {
     _ = &s;
-    return @import("std").zig.c_translation.cast(c_short, ((s & @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xffff, .hex)) * @import("std").zig.c_translation.promoteIntLiteral(c_uint, 0x10001, .hex)) >> @as(c_int, 8)) > @as(c_int, 0x7f00);
+    return @import("std").zig.c_translation.helpers.cast(c_short, ((s & @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0xffff, .hex)) * @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 0x10001, .hex)) >> @as(c_int, 8)) > @as(c_int, 0x7f00);
 }
-pub inline fn WIFSIGNALED(s: anytype) @TypeOf(((s & @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xffff, .hex)) - @as(c_uint, 1)) < @as(c_uint, 0xff)) {
+pub inline fn WIFSIGNALED(s: anytype) @TypeOf(((s & @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0xffff, .hex)) - @as(c_uint, 1)) < @as(c_uint, 0xff)) {
     _ = &s;
-    return ((s & @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xffff, .hex)) - @as(c_uint, 1)) < @as(c_uint, 0xff);
+    return ((s & @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0xffff, .hex)) - @as(c_uint, 1)) < @as(c_uint, 0xff);
 }
 pub const _ALLOCA_H = "";
 pub inline fn WCOREDUMP(s: anytype) @TypeOf(s & @as(c_int, 0x80)) {
     _ = &s;
     return s & @as(c_int, 0x80);
 }
-pub inline fn WIFCONTINUED(s: anytype) @TypeOf(s == @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xffff, .hex)) {
+pub inline fn WIFCONTINUED(s: anytype) @TypeOf(s == @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0xffff, .hex)) {
     _ = &s;
-    return s == @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xffff, .hex);
+    return s == @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0xffff, .hex);
 }
 pub const _STRING_H = "";
 pub const __NEED_locale_t = "";
@@ -26781,7 +26781,7 @@ pub const WUFFS_VERSION_MINOR = @as(c_int, 4);
 pub const WUFFS_VERSION_PATCH = @as(c_int, 0);
 pub const WUFFS_VERSION_PRE_RELEASE_LABEL = "alpha.8";
 pub const WUFFS_VERSION_BUILD_METADATA_COMMIT_COUNT = @as(c_int, 3796);
-pub const WUFFS_VERSION_BUILD_METADATA_COMMIT_DATE = @import("std").zig.c_translation.promoteIntLiteral(c_int, 20240812, .decimal);
+pub const WUFFS_VERSION_BUILD_METADATA_COMMIT_DATE = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 20240812, .decimal);
 pub const WUFFS_VERSION_STRING = "0.4.0-alpha.8+3796.20240812";
 pub const WUFFS_BASE__MAYBE_ATTRIBUTE_TARGET = @compileError("unable to translate macro: undefined identifier `target`");
 // wuffs-v0.4.c:133:9
@@ -30452,9 +30452,9 @@ pub const WUFFS_BASE__WARN_UNUSED_RESULT = @compileError("unable to translate ma
 // wuffs-v0.4.c:423:9
 pub const WUFFS_BASE__GENERATED_C_CODE = @compileError("unable to translate macro: undefined identifier `no_sanitize`");
 // wuffs-v0.4.c:446:9
-pub const WUFFS_INITIALIZE__DEFAULT_OPTIONS = @import("std").zig.c_translation.cast(u32, @as(c_int, 0x00000000));
+pub const WUFFS_INITIALIZE__DEFAULT_OPTIONS = @import("std").zig.c_translation.helpers.cast(u32, @as(c_int, 0x00000000));
 pub const WUFFS_INITIALIZE__ALREADY_ZEROED = @as(u32, @as(c_int, 0x00000001));
-pub const WUFFS_INITIALIZE__LEAVE_INTERNAL_BUFFERS_UNINITIALIZED = @import("std").zig.c_translation.cast(u32, @as(c_int, 0x00000002));
+pub const WUFFS_INITIALIZE__LEAVE_INTERNAL_BUFFERS_UNINITIALIZED = @import("std").zig.c_translation.helpers.cast(u32, @as(c_int, 0x00000002));
 pub const WUFFS_BASE__RESULT = @compileError("unable to translate macro: undefined identifier `status`");
 // wuffs-v0.4.c:724:9
 pub const WUFFS_BASE__FOURCC__BGCL = @as(c_int, 0x4247434C);
@@ -30522,8 +30522,8 @@ pub const WUFFS_BASE__FOURCC__ZLIB = @as(c_int, 0x5A4C4942);
 pub const WUFFS_BASE__FOURCC__ZSTD = @as(c_int, 0x5A535444);
 pub const WUFFS_BASE__QUIRK_IGNORE_CHECKSUM = @as(c_int, 1);
 pub const WUFFS_BASE__QUIRK_QUALITY = @as(c_int, 2);
-pub const WUFFS_BASE__FLICKS_PER_SECOND = @import("std").zig.c_translation.cast(u64, @import("std").zig.c_translation.promoteIntLiteral(c_int, 705600000, .decimal));
-pub const WUFFS_BASE__FLICKS_PER_MILLISECOND = @import("std").zig.c_translation.cast(u64, @import("std").zig.c_translation.promoteIntLiteral(c_int, 705600, .decimal));
+pub const WUFFS_BASE__FLICKS_PER_SECOND = @import("std").zig.c_translation.helpers.cast(u64, @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 705600000, .decimal));
+pub const WUFFS_BASE__FLICKS_PER_MILLISECOND = @import("std").zig.c_translation.helpers.cast(u64, @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 705600, .decimal));
 pub const wuffs_base__peek_u8be__no_bounds_check = wuffs_base__peek_u8__no_bounds_check;
 pub const wuffs_base__peek_u8le__no_bounds_check = wuffs_base__peek_u8__no_bounds_check;
 pub const wuffs_base__poke_u8be__no_bounds_check = wuffs_base__poke_u8__no_bounds_check;
@@ -30533,7 +30533,7 @@ pub const WUFFS_BASE__SLICE = @compileError("unable to translate macro: undefine
 pub const WUFFS_BASE__TABLE = @compileError("unable to translate macro: undefined identifier `ptr`");
 // wuffs-v0.4.c:1682:9
 pub const WUFFS_BASE__QUIRK_QUALITY__VALUE__LOWER_QUALITY = UINT64_MAX;
-pub const WUFFS_BASE__QUIRK_QUALITY__VALUE__HIGHER_QUALITY = @import("std").zig.c_translation.cast(u64, @as(c_int, 1));
+pub const WUFFS_BASE__QUIRK_QUALITY__VALUE__HIGHER_QUALITY = @import("std").zig.c_translation.helpers.cast(u64, @as(c_int, 1));
 pub const WUFFS_BASE__MORE_INFORMATION__FLAVOR__IO_REDIRECT = @as(c_int, 1);
 pub const WUFFS_BASE__MORE_INFORMATION__FLAVOR__IO_SEEK = @as(c_int, 2);
 pub const WUFFS_BASE__MORE_INFORMATION__FLAVOR__METADATA_RAW_PASSTHROUGH = @as(c_int, 3);
@@ -30551,7 +30551,7 @@ pub const WUFFS_BASE__SRGB_RENDERING_INTENT__PERCEPTUAL = @as(c_int, 0);
 pub const WUFFS_BASE__SRGB_RENDERING_INTENT__RELATIVE_COLORIMETRIC = @as(c_int, 1);
 pub const WUFFS_BASE__SRGB_RENDERING_INTENT__SATURATION = @as(c_int, 2);
 pub const WUFFS_BASE__SRGB_RENDERING_INTENT__ABSOLUTE_COLORIMETRIC = @as(c_int, 3);
-pub const WUFFS_BASE__TOKEN__LENGTH__MAX_INCL = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xFFFF, .hex);
+pub const WUFFS_BASE__TOKEN__LENGTH__MAX_INCL = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0xFFFF, .hex);
 pub const WUFFS_BASE__TOKEN__VALUE__SHIFT = @as(c_int, 17);
 pub const WUFFS_BASE__TOKEN__VALUE_EXTENSION__SHIFT = @as(c_int, 17);
 pub const WUFFS_BASE__TOKEN__VALUE_MAJOR__SHIFT = @as(c_int, 42);
@@ -30594,8 +30594,8 @@ pub const WUFFS_BASE__TOKEN__VBD__STRING__CONVERT_1_DST_4_SRC_BACKSLASH_X = @as(
 pub const WUFFS_BASE__TOKEN__VBD__STRING__CONVERT_3_DST_4_SRC_BASE_64_STD = @as(c_int, 0x01000);
 pub const WUFFS_BASE__TOKEN__VBD__STRING__CONVERT_3_DST_4_SRC_BASE_64_URL = @as(c_int, 0x02000);
 pub const WUFFS_BASE__TOKEN__VBD__STRING__CONVERT_4_DST_5_SRC_ASCII_85 = @as(c_int, 0x04000);
-pub const WUFFS_BASE__TOKEN__VBD__STRING__CONVERT_5_DST_8_SRC_BASE_32_HEX = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x08000, .hex);
-pub const WUFFS_BASE__TOKEN__VBD__STRING__CONVERT_5_DST_8_SRC_BASE_32_STD = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x10000, .hex);
+pub const WUFFS_BASE__TOKEN__VBD__STRING__CONVERT_5_DST_8_SRC_BASE_32_HEX = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x08000, .hex);
+pub const WUFFS_BASE__TOKEN__VBD__STRING__CONVERT_5_DST_8_SRC_BASE_32_STD = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x10000, .hex);
 pub const WUFFS_BASE__TOKEN__VBD__LITERAL__UNDEFINED = @as(c_int, 0x00001);
 pub const WUFFS_BASE__TOKEN__VBD__LITERAL__NULL = @as(c_int, 0x00002);
 pub const WUFFS_BASE__TOKEN__VBD__LITERAL__FALSE = @as(c_int, 0x00004);
@@ -30611,9 +30611,9 @@ pub const WUFFS_BASE__TOKEN__VBD__NUMBER__FORMAT_BINARY_BIG_ENDIAN = @as(c_int, 
 pub const WUFFS_BASE__TOKEN__VBD__NUMBER__FORMAT_BINARY_LITTLE_ENDIAN = @as(c_int, 0x00200);
 pub const WUFFS_BASE__TOKEN__VBD__NUMBER__FORMAT_TEXT = @as(c_int, 0x00400);
 pub const WUFFS_BASE__TOKEN__VBD__NUMBER__FORMAT_IGNORE_FIRST_BYTE = @as(c_int, 0x01000);
-pub const WUFFS_BASE__IMAGE__DIMENSION_MAX_INCL = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xFFFFFF, .hex);
-pub const WUFFS_BASE__PIXEL_BLEND__SRC = @import("std").zig.c_translation.cast(wuffs_base__pixel_blend, @as(c_int, 0));
-pub const WUFFS_BASE__PIXEL_BLEND__SRC_OVER = @import("std").zig.c_translation.cast(wuffs_base__pixel_blend, @as(c_int, 1));
+pub const WUFFS_BASE__IMAGE__DIMENSION_MAX_INCL = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0xFFFFFF, .hex);
+pub const WUFFS_BASE__PIXEL_BLEND__SRC = @import("std").zig.c_translation.helpers.cast(wuffs_base__pixel_blend, @as(c_int, 0));
+pub const WUFFS_BASE__PIXEL_BLEND__SRC_OVER = @import("std").zig.c_translation.helpers.cast(wuffs_base__pixel_blend, @as(c_int, 1));
 pub const WUFFS_BASE__PIXEL_ALPHA_TRANSPARENCY__OPAQUE = @as(c_int, 0);
 pub const WUFFS_BASE__PIXEL_ALPHA_TRANSPARENCY__NONPREMULTIPLIED_ALPHA = @as(c_int, 1);
 pub const WUFFS_BASE__PIXEL_ALPHA_TRANSPARENCY__PREMULTIPLIED_ALPHA = @as(c_int, 2);
@@ -30624,72 +30624,72 @@ pub const WUFFS_BASE__PIXEL_FORMAT__INDEXED__INDEX_PLANE = @as(c_int, 0);
 pub const WUFFS_BASE__PIXEL_FORMAT__INDEXED__COLOR_PLANE = @as(c_int, 3);
 pub const WUFFS_BASE__PIXEL_FORMAT__INDEXED__PALETTE_BYTE_LENGTH = @as(c_int, 1024);
 pub const WUFFS_BASE__PIXEL_FORMAT__INVALID = @as(c_int, 0x00000000);
-pub const WUFFS_BASE__PIXEL_FORMAT__A = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x02000008, .hex);
-pub const WUFFS_BASE__PIXEL_FORMAT__Y = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x20000008, .hex);
-pub const WUFFS_BASE__PIXEL_FORMAT__Y_16LE = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x2000000B, .hex);
-pub const WUFFS_BASE__PIXEL_FORMAT__Y_16BE = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x2010000B, .hex);
-pub const WUFFS_BASE__PIXEL_FORMAT__YA_NONPREMUL = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x21000088, .hex);
-pub const WUFFS_BASE__PIXEL_FORMAT__YA_PREMUL = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x22000088, .hex);
-pub const WUFFS_BASE__PIXEL_FORMAT__YCBCR = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x40020888, .hex);
-pub const WUFFS_BASE__PIXEL_FORMAT__YCBCRA_NONPREMUL = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x41038888, .hex);
-pub const WUFFS_BASE__PIXEL_FORMAT__YCBCRK = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x50038888, .hex);
-pub const WUFFS_BASE__PIXEL_FORMAT__YCOCG = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x60020888, .hex);
-pub const WUFFS_BASE__PIXEL_FORMAT__YCOCGA_NONPREMUL = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x61038888, .hex);
-pub const WUFFS_BASE__PIXEL_FORMAT__YCOCGK = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x70038888, .hex);
-pub const WUFFS_BASE__PIXEL_FORMAT__INDEXED__BGRA_NONPREMUL = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x81040008, .hex);
-pub const WUFFS_BASE__PIXEL_FORMAT__INDEXED__BGRA_PREMUL = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x82040008, .hex);
-pub const WUFFS_BASE__PIXEL_FORMAT__INDEXED__BGRA_BINARY = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x83040008, .hex);
-pub const WUFFS_BASE__PIXEL_FORMAT__BGR_565 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x80000565, .hex);
-pub const WUFFS_BASE__PIXEL_FORMAT__BGR = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x80000888, .hex);
-pub const WUFFS_BASE__PIXEL_FORMAT__BGRA_NONPREMUL = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x81008888, .hex);
-pub const WUFFS_BASE__PIXEL_FORMAT__BGRA_NONPREMUL_4X16LE = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x8100BBBB, .hex);
-pub const WUFFS_BASE__PIXEL_FORMAT__BGRA_PREMUL = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x82008888, .hex);
-pub const WUFFS_BASE__PIXEL_FORMAT__BGRA_PREMUL_4X16LE = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x8200BBBB, .hex);
-pub const WUFFS_BASE__PIXEL_FORMAT__BGRA_BINARY = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x83008888, .hex);
-pub const WUFFS_BASE__PIXEL_FORMAT__BGRX = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x90008888, .hex);
-pub const WUFFS_BASE__PIXEL_FORMAT__RGB = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xA0000888, .hex);
-pub const WUFFS_BASE__PIXEL_FORMAT__RGBA_NONPREMUL = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xA1008888, .hex);
-pub const WUFFS_BASE__PIXEL_FORMAT__RGBA_NONPREMUL_4X16LE = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xA100BBBB, .hex);
-pub const WUFFS_BASE__PIXEL_FORMAT__RGBA_PREMUL = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xA2008888, .hex);
-pub const WUFFS_BASE__PIXEL_FORMAT__RGBA_PREMUL_4X16LE = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xA200BBBB, .hex);
-pub const WUFFS_BASE__PIXEL_FORMAT__RGBA_BINARY = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xA3008888, .hex);
-pub const WUFFS_BASE__PIXEL_FORMAT__RGBX = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xB0008888, .hex);
-pub const WUFFS_BASE__PIXEL_FORMAT__CMY = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xC0020888, .hex);
-pub const WUFFS_BASE__PIXEL_FORMAT__CMYK = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xD0038888, .hex);
+pub const WUFFS_BASE__PIXEL_FORMAT__A = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x02000008, .hex);
+pub const WUFFS_BASE__PIXEL_FORMAT__Y = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x20000008, .hex);
+pub const WUFFS_BASE__PIXEL_FORMAT__Y_16LE = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x2000000B, .hex);
+pub const WUFFS_BASE__PIXEL_FORMAT__Y_16BE = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x2010000B, .hex);
+pub const WUFFS_BASE__PIXEL_FORMAT__YA_NONPREMUL = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x21000088, .hex);
+pub const WUFFS_BASE__PIXEL_FORMAT__YA_PREMUL = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x22000088, .hex);
+pub const WUFFS_BASE__PIXEL_FORMAT__YCBCR = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x40020888, .hex);
+pub const WUFFS_BASE__PIXEL_FORMAT__YCBCRA_NONPREMUL = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x41038888, .hex);
+pub const WUFFS_BASE__PIXEL_FORMAT__YCBCRK = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x50038888, .hex);
+pub const WUFFS_BASE__PIXEL_FORMAT__YCOCG = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x60020888, .hex);
+pub const WUFFS_BASE__PIXEL_FORMAT__YCOCGA_NONPREMUL = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x61038888, .hex);
+pub const WUFFS_BASE__PIXEL_FORMAT__YCOCGK = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x70038888, .hex);
+pub const WUFFS_BASE__PIXEL_FORMAT__INDEXED__BGRA_NONPREMUL = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x81040008, .hex);
+pub const WUFFS_BASE__PIXEL_FORMAT__INDEXED__BGRA_PREMUL = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x82040008, .hex);
+pub const WUFFS_BASE__PIXEL_FORMAT__INDEXED__BGRA_BINARY = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x83040008, .hex);
+pub const WUFFS_BASE__PIXEL_FORMAT__BGR_565 = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x80000565, .hex);
+pub const WUFFS_BASE__PIXEL_FORMAT__BGR = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x80000888, .hex);
+pub const WUFFS_BASE__PIXEL_FORMAT__BGRA_NONPREMUL = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x81008888, .hex);
+pub const WUFFS_BASE__PIXEL_FORMAT__BGRA_NONPREMUL_4X16LE = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x8100BBBB, .hex);
+pub const WUFFS_BASE__PIXEL_FORMAT__BGRA_PREMUL = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x82008888, .hex);
+pub const WUFFS_BASE__PIXEL_FORMAT__BGRA_PREMUL_4X16LE = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x8200BBBB, .hex);
+pub const WUFFS_BASE__PIXEL_FORMAT__BGRA_BINARY = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x83008888, .hex);
+pub const WUFFS_BASE__PIXEL_FORMAT__BGRX = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x90008888, .hex);
+pub const WUFFS_BASE__PIXEL_FORMAT__RGB = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0xA0000888, .hex);
+pub const WUFFS_BASE__PIXEL_FORMAT__RGBA_NONPREMUL = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0xA1008888, .hex);
+pub const WUFFS_BASE__PIXEL_FORMAT__RGBA_NONPREMUL_4X16LE = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0xA100BBBB, .hex);
+pub const WUFFS_BASE__PIXEL_FORMAT__RGBA_PREMUL = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0xA2008888, .hex);
+pub const WUFFS_BASE__PIXEL_FORMAT__RGBA_PREMUL_4X16LE = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0xA200BBBB, .hex);
+pub const WUFFS_BASE__PIXEL_FORMAT__RGBA_BINARY = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0xA3008888, .hex);
+pub const WUFFS_BASE__PIXEL_FORMAT__RGBX = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0xB0008888, .hex);
+pub const WUFFS_BASE__PIXEL_FORMAT__CMY = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0xC0020888, .hex);
+pub const WUFFS_BASE__PIXEL_FORMAT__CMYK = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0xD0038888, .hex);
 pub const WUFFS_BASE__PIXEL_SUBSAMPLING__NONE = @as(c_int, 0x00000000);
 pub const WUFFS_BASE__PIXEL_SUBSAMPLING__444 = @as(c_int, 0x000000);
-pub const WUFFS_BASE__PIXEL_SUBSAMPLING__440 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x010100, .hex);
-pub const WUFFS_BASE__PIXEL_SUBSAMPLING__422 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x101000, .hex);
-pub const WUFFS_BASE__PIXEL_SUBSAMPLING__420 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x111100, .hex);
-pub const WUFFS_BASE__PIXEL_SUBSAMPLING__411 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x303000, .hex);
-pub const WUFFS_BASE__PIXEL_SUBSAMPLING__410 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x313100, .hex);
-pub const WUFFS_BASE__ANIMATION_DISPOSAL__NONE = @import("std").zig.c_translation.cast(wuffs_base__animation_disposal, @as(c_int, 0));
-pub const WUFFS_BASE__ANIMATION_DISPOSAL__RESTORE_BACKGROUND = @import("std").zig.c_translation.cast(wuffs_base__animation_disposal, @as(c_int, 1));
-pub const WUFFS_BASE__ANIMATION_DISPOSAL__RESTORE_PREVIOUS = @import("std").zig.c_translation.cast(wuffs_base__animation_disposal, @as(c_int, 2));
-pub const WUFFS_BASE__PARSE_NUMBER_XXX__DEFAULT_OPTIONS = @import("std").zig.c_translation.cast(u32, @as(c_int, 0x00000000));
-pub const WUFFS_BASE__PARSE_NUMBER_XXX__ALLOW_MULTIPLE_LEADING_ZEROES = @import("std").zig.c_translation.cast(u32, @as(c_int, 0x00000001));
-pub const WUFFS_BASE__PARSE_NUMBER_XXX__ALLOW_UNDERSCORES = @import("std").zig.c_translation.cast(u32, @as(c_int, 0x00000002));
-pub const WUFFS_BASE__PARSE_NUMBER_FXX__DECIMAL_SEPARATOR_IS_A_COMMA = @import("std").zig.c_translation.cast(u32, @as(c_int, 0x00000010));
-pub const WUFFS_BASE__PARSE_NUMBER_FXX__REJECT_INF_AND_NAN = @import("std").zig.c_translation.cast(u32, @as(c_int, 0x00000020));
-pub const WUFFS_BASE__RENDER_NUMBER_XXX__DEFAULT_OPTIONS = @import("std").zig.c_translation.cast(u32, @as(c_int, 0x00000000));
-pub const WUFFS_BASE__RENDER_NUMBER_XXX__ALIGN_RIGHT = @import("std").zig.c_translation.cast(u32, @as(c_int, 0x00000100));
-pub const WUFFS_BASE__RENDER_NUMBER_XXX__LEADING_PLUS_SIGN = @import("std").zig.c_translation.cast(u32, @as(c_int, 0x00000200));
-pub const WUFFS_BASE__RENDER_NUMBER_FXX__DECIMAL_SEPARATOR_IS_A_COMMA = @import("std").zig.c_translation.cast(u32, @as(c_int, 0x00001000));
-pub const WUFFS_BASE__RENDER_NUMBER_FXX__EXPONENT_ABSENT = @import("std").zig.c_translation.cast(u32, @as(c_int, 0x00002000));
-pub const WUFFS_BASE__RENDER_NUMBER_FXX__EXPONENT_PRESENT = @import("std").zig.c_translation.cast(u32, @as(c_int, 0x00004000));
-pub const WUFFS_BASE__RENDER_NUMBER_FXX__JUST_ENOUGH_PRECISION = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x00008000, .hex));
+pub const WUFFS_BASE__PIXEL_SUBSAMPLING__440 = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x010100, .hex);
+pub const WUFFS_BASE__PIXEL_SUBSAMPLING__422 = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x101000, .hex);
+pub const WUFFS_BASE__PIXEL_SUBSAMPLING__420 = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x111100, .hex);
+pub const WUFFS_BASE__PIXEL_SUBSAMPLING__411 = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x303000, .hex);
+pub const WUFFS_BASE__PIXEL_SUBSAMPLING__410 = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x313100, .hex);
+pub const WUFFS_BASE__ANIMATION_DISPOSAL__NONE = @import("std").zig.c_translation.helpers.cast(wuffs_base__animation_disposal, @as(c_int, 0));
+pub const WUFFS_BASE__ANIMATION_DISPOSAL__RESTORE_BACKGROUND = @import("std").zig.c_translation.helpers.cast(wuffs_base__animation_disposal, @as(c_int, 1));
+pub const WUFFS_BASE__ANIMATION_DISPOSAL__RESTORE_PREVIOUS = @import("std").zig.c_translation.helpers.cast(wuffs_base__animation_disposal, @as(c_int, 2));
+pub const WUFFS_BASE__PARSE_NUMBER_XXX__DEFAULT_OPTIONS = @import("std").zig.c_translation.helpers.cast(u32, @as(c_int, 0x00000000));
+pub const WUFFS_BASE__PARSE_NUMBER_XXX__ALLOW_MULTIPLE_LEADING_ZEROES = @import("std").zig.c_translation.helpers.cast(u32, @as(c_int, 0x00000001));
+pub const WUFFS_BASE__PARSE_NUMBER_XXX__ALLOW_UNDERSCORES = @import("std").zig.c_translation.helpers.cast(u32, @as(c_int, 0x00000002));
+pub const WUFFS_BASE__PARSE_NUMBER_FXX__DECIMAL_SEPARATOR_IS_A_COMMA = @import("std").zig.c_translation.helpers.cast(u32, @as(c_int, 0x00000010));
+pub const WUFFS_BASE__PARSE_NUMBER_FXX__REJECT_INF_AND_NAN = @import("std").zig.c_translation.helpers.cast(u32, @as(c_int, 0x00000020));
+pub const WUFFS_BASE__RENDER_NUMBER_XXX__DEFAULT_OPTIONS = @import("std").zig.c_translation.helpers.cast(u32, @as(c_int, 0x00000000));
+pub const WUFFS_BASE__RENDER_NUMBER_XXX__ALIGN_RIGHT = @import("std").zig.c_translation.helpers.cast(u32, @as(c_int, 0x00000100));
+pub const WUFFS_BASE__RENDER_NUMBER_XXX__LEADING_PLUS_SIGN = @import("std").zig.c_translation.helpers.cast(u32, @as(c_int, 0x00000200));
+pub const WUFFS_BASE__RENDER_NUMBER_FXX__DECIMAL_SEPARATOR_IS_A_COMMA = @import("std").zig.c_translation.helpers.cast(u32, @as(c_int, 0x00001000));
+pub const WUFFS_BASE__RENDER_NUMBER_FXX__EXPONENT_ABSENT = @import("std").zig.c_translation.helpers.cast(u32, @as(c_int, 0x00002000));
+pub const WUFFS_BASE__RENDER_NUMBER_FXX__EXPONENT_PRESENT = @import("std").zig.c_translation.helpers.cast(u32, @as(c_int, 0x00004000));
+pub const WUFFS_BASE__RENDER_NUMBER_FXX__JUST_ENOUGH_PRECISION = @import("std").zig.c_translation.helpers.cast(u32, @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x00008000, .hex));
 pub const WUFFS_BASE__I64__BYTE_LENGTH__MAX_INCL = @as(c_int, 20);
 pub const WUFFS_BASE__U64__BYTE_LENGTH__MAX_INCL = @as(c_int, 21);
-pub const WUFFS_BASE__BASE_16__DEFAULT_OPTIONS = @import("std").zig.c_translation.cast(u32, @as(c_int, 0x00000000));
-pub const WUFFS_BASE__BASE_64__DEFAULT_OPTIONS = @import("std").zig.c_translation.cast(u32, @as(c_int, 0x00000000));
-pub const WUFFS_BASE__BASE_64__DECODE_ALLOW_PADDING = @import("std").zig.c_translation.cast(u32, @as(c_int, 0x00000001));
-pub const WUFFS_BASE__BASE_64__ENCODE_EMIT_PADDING = @import("std").zig.c_translation.cast(u32, @as(c_int, 0x00000002));
-pub const WUFFS_BASE__BASE_64__URL_ALPHABET = @import("std").zig.c_translation.cast(u32, @as(c_int, 0x00000100));
+pub const WUFFS_BASE__BASE_16__DEFAULT_OPTIONS = @import("std").zig.c_translation.helpers.cast(u32, @as(c_int, 0x00000000));
+pub const WUFFS_BASE__BASE_64__DEFAULT_OPTIONS = @import("std").zig.c_translation.helpers.cast(u32, @as(c_int, 0x00000000));
+pub const WUFFS_BASE__BASE_64__DECODE_ALLOW_PADDING = @import("std").zig.c_translation.helpers.cast(u32, @as(c_int, 0x00000001));
+pub const WUFFS_BASE__BASE_64__ENCODE_EMIT_PADDING = @import("std").zig.c_translation.helpers.cast(u32, @as(c_int, 0x00000002));
+pub const WUFFS_BASE__BASE_64__URL_ALPHABET = @import("std").zig.c_translation.helpers.cast(u32, @as(c_int, 0x00000100));
 pub const WUFFS_BASE__UNICODE_CODE_POINT__MIN_INCL = @as(c_int, 0x00000000);
-pub const WUFFS_BASE__UNICODE_CODE_POINT__MAX_INCL = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0010FFFF, .hex);
-pub const WUFFS_BASE__UNICODE_REPLACEMENT_CHARACTER = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0000FFFD, .hex);
-pub const WUFFS_BASE__UNICODE_SURROGATE__MIN_INCL = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0000D800, .hex);
-pub const WUFFS_BASE__UNICODE_SURROGATE__MAX_INCL = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0000DFFF, .hex);
+pub const WUFFS_BASE__UNICODE_CODE_POINT__MAX_INCL = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x0010FFFF, .hex);
+pub const WUFFS_BASE__UNICODE_REPLACEMENT_CHARACTER = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x0000FFFD, .hex);
+pub const WUFFS_BASE__UNICODE_SURROGATE__MIN_INCL = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x0000D800, .hex);
+pub const WUFFS_BASE__UNICODE_SURROGATE__MAX_INCL = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x0000DFFF, .hex);
 pub const WUFFS_BASE__ASCII__MIN_INCL = @as(c_int, 0x00);
 pub const WUFFS_BASE__ASCII__MAX_INCL = @as(c_int, 0x7F);
 pub const WUFFS_BASE__UTF_8__BYTE_LENGTH__MIN_INCL = @as(c_int, 1);
@@ -30699,9 +30699,9 @@ pub const WUFFS_BASE__UTF_8__BYTE_LENGTH_1__CODE_POINT__MAX_INCL = @as(c_int, 0x
 pub const WUFFS_BASE__UTF_8__BYTE_LENGTH_2__CODE_POINT__MIN_INCL = @as(c_int, 0x00000080);
 pub const WUFFS_BASE__UTF_8__BYTE_LENGTH_2__CODE_POINT__MAX_INCL = @as(c_int, 0x000007FF);
 pub const WUFFS_BASE__UTF_8__BYTE_LENGTH_3__CODE_POINT__MIN_INCL = @as(c_int, 0x00000800);
-pub const WUFFS_BASE__UTF_8__BYTE_LENGTH_3__CODE_POINT__MAX_INCL = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0000FFFF, .hex);
-pub const WUFFS_BASE__UTF_8__BYTE_LENGTH_4__CODE_POINT__MIN_INCL = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x00010000, .hex);
-pub const WUFFS_BASE__UTF_8__BYTE_LENGTH_4__CODE_POINT__MAX_INCL = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x0010FFFF, .hex);
+pub const WUFFS_BASE__UTF_8__BYTE_LENGTH_3__CODE_POINT__MAX_INCL = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x0000FFFF, .hex);
+pub const WUFFS_BASE__UTF_8__BYTE_LENGTH_4__CODE_POINT__MIN_INCL = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x00010000, .hex);
+pub const WUFFS_BASE__UTF_8__BYTE_LENGTH_4__CODE_POINT__MAX_INCL = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_int, 0x0010FFFF, .hex);
 pub const WUFFS_BMP__DECODER_WORKBUF_LEN_MAX_INCL_WORST_CASE = @as(c_uint, 0);
 pub const WUFFS_BZIP2__DECODER_DST_HISTORY_RETAIN_LENGTH_MAX_INCL_WORST_CASE = @as(c_uint, 0);
 pub const WUFFS_BZIP2__DECODER_WORKBUF_LEN_MAX_INCL_WORST_CASE = @as(c_uint, 0);
@@ -30709,72 +30709,72 @@ pub const WUFFS_CBOR__DECODER_WORKBUF_LEN_MAX_INCL_WORST_CASE = @as(c_uint, 0);
 pub const WUFFS_CBOR__DECODER_DEPTH_MAX_INCL = @as(c_uint, 1024);
 pub const WUFFS_CBOR__DECODER_DST_TOKEN_BUFFER_LENGTH_MIN_INCL = @as(c_uint, 2);
 pub const WUFFS_CBOR__DECODER_SRC_IO_BUFFER_LENGTH_MIN_INCL = @as(c_uint, 9);
-pub const WUFFS_CBOR__TOKEN_VALUE_MAJOR = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 787997, .decimal);
-pub const WUFFS_CBOR__TOKEN_VALUE_MINOR__DETAIL_MASK = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 262143, .decimal);
-pub const WUFFS_CBOR__TOKEN_VALUE_MINOR__MINUS_1_MINUS_X = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 16777216, .decimal);
-pub const WUFFS_CBOR__TOKEN_VALUE_MINOR__SIMPLE_VALUE = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 8388608, .decimal);
-pub const WUFFS_CBOR__TOKEN_VALUE_MINOR__TAG = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 4194304, .decimal);
+pub const WUFFS_CBOR__TOKEN_VALUE_MAJOR = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 787997, .decimal);
+pub const WUFFS_CBOR__TOKEN_VALUE_MINOR__DETAIL_MASK = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 262143, .decimal);
+pub const WUFFS_CBOR__TOKEN_VALUE_MINOR__MINUS_1_MINUS_X = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 16777216, .decimal);
+pub const WUFFS_CBOR__TOKEN_VALUE_MINOR__SIMPLE_VALUE = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 8388608, .decimal);
+pub const WUFFS_CBOR__TOKEN_VALUE_MINOR__TAG = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 4194304, .decimal);
 pub const WUFFS_DEFLATE__DECODER_DST_HISTORY_RETAIN_LENGTH_MAX_INCL_WORST_CASE = @as(c_uint, 0);
 pub const WUFFS_DEFLATE__DECODER_WORKBUF_LEN_MAX_INCL_WORST_CASE = @as(c_uint, 1);
 pub const WUFFS_GIF__DECODER_WORKBUF_LEN_MAX_INCL_WORST_CASE = @as(c_uint, 0);
-pub const WUFFS_GIF__QUIRK_DELAY_NUM_DECODED_FRAMES = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 1041635328, .decimal);
-pub const WUFFS_GIF__QUIRK_FIRST_FRAME_LOCAL_PALETTE_MEANS_BLACK_BACKGROUND = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 1041635329, .decimal);
-pub const WUFFS_GIF__QUIRK_HONOR_BACKGROUND_COLOR = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 1041635330, .decimal);
-pub const WUFFS_GIF__QUIRK_IGNORE_TOO_MUCH_PIXEL_DATA = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 1041635331, .decimal);
-pub const WUFFS_GIF__QUIRK_IMAGE_BOUNDS_ARE_STRICT = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 1041635332, .decimal);
-pub const WUFFS_GIF__QUIRK_REJECT_EMPTY_FRAME = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 1041635333, .decimal);
-pub const WUFFS_GIF__QUIRK_REJECT_EMPTY_PALETTE = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 1041635334, .decimal);
+pub const WUFFS_GIF__QUIRK_DELAY_NUM_DECODED_FRAMES = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 1041635328, .decimal);
+pub const WUFFS_GIF__QUIRK_FIRST_FRAME_LOCAL_PALETTE_MEANS_BLACK_BACKGROUND = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 1041635329, .decimal);
+pub const WUFFS_GIF__QUIRK_HONOR_BACKGROUND_COLOR = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 1041635330, .decimal);
+pub const WUFFS_GIF__QUIRK_IGNORE_TOO_MUCH_PIXEL_DATA = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 1041635331, .decimal);
+pub const WUFFS_GIF__QUIRK_IMAGE_BOUNDS_ARE_STRICT = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 1041635332, .decimal);
+pub const WUFFS_GIF__QUIRK_REJECT_EMPTY_FRAME = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 1041635333, .decimal);
+pub const WUFFS_GIF__QUIRK_REJECT_EMPTY_PALETTE = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 1041635334, .decimal);
 pub const WUFFS_GZIP__DECODER_DST_HISTORY_RETAIN_LENGTH_MAX_INCL_WORST_CASE = @as(c_uint, 0);
 pub const WUFFS_GZIP__DECODER_WORKBUF_LEN_MAX_INCL_WORST_CASE = @as(c_uint, 1);
-pub const WUFFS_JPEG__DECODER_WORKBUF_LEN_MAX_INCL_WORST_CASE = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 51552191232, .decimal);
-pub const WUFFS_JPEG__QUIRK_REJECT_PROGRESSIVE_JPEGS = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 1220532224, .decimal);
+pub const WUFFS_JPEG__DECODER_WORKBUF_LEN_MAX_INCL_WORST_CASE = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 51552191232, .decimal);
+pub const WUFFS_JPEG__QUIRK_REJECT_PROGRESSIVE_JPEGS = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 1220532224, .decimal);
 pub const WUFFS_JSON__DECODER_WORKBUF_LEN_MAX_INCL_WORST_CASE = @as(c_uint, 0);
 pub const WUFFS_JSON__DECODER_DEPTH_MAX_INCL = @as(c_uint, 1024);
 pub const WUFFS_JSON__DECODER_DST_TOKEN_BUFFER_LENGTH_MIN_INCL = @as(c_uint, 1);
 pub const WUFFS_JSON__DECODER_SRC_IO_BUFFER_LENGTH_MIN_INCL = @as(c_uint, 100);
-pub const WUFFS_JSON__QUIRK_ALLOW_ASCII_CONTROL_CODES = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 1225364480, .decimal);
-pub const WUFFS_JSON__QUIRK_ALLOW_BACKSLASH_A = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 1225364481, .decimal);
-pub const WUFFS_JSON__QUIRK_ALLOW_BACKSLASH_CAPITAL_U = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 1225364482, .decimal);
-pub const WUFFS_JSON__QUIRK_ALLOW_BACKSLASH_E = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 1225364483, .decimal);
-pub const WUFFS_JSON__QUIRK_ALLOW_BACKSLASH_NEW_LINE = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 1225364484, .decimal);
-pub const WUFFS_JSON__QUIRK_ALLOW_BACKSLASH_QUESTION_MARK = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 1225364485, .decimal);
-pub const WUFFS_JSON__QUIRK_ALLOW_BACKSLASH_SINGLE_QUOTE = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 1225364486, .decimal);
-pub const WUFFS_JSON__QUIRK_ALLOW_BACKSLASH_V = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 1225364487, .decimal);
-pub const WUFFS_JSON__QUIRK_ALLOW_BACKSLASH_X_AS_CODE_POINTS = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 1225364489, .decimal);
-pub const WUFFS_JSON__QUIRK_ALLOW_BACKSLASH_ZERO = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 1225364490, .decimal);
-pub const WUFFS_JSON__QUIRK_ALLOW_COMMENT_BLOCK = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 1225364491, .decimal);
-pub const WUFFS_JSON__QUIRK_ALLOW_COMMENT_LINE = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 1225364492, .decimal);
-pub const WUFFS_JSON__QUIRK_ALLOW_EXTRA_COMMA = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 1225364493, .decimal);
-pub const WUFFS_JSON__QUIRK_ALLOW_INF_NAN_NUMBERS = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 1225364494, .decimal);
-pub const WUFFS_JSON__QUIRK_ALLOW_LEADING_ASCII_RECORD_SEPARATOR = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 1225364495, .decimal);
-pub const WUFFS_JSON__QUIRK_ALLOW_LEADING_UNICODE_BYTE_ORDER_MARK = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 1225364496, .decimal);
-pub const WUFFS_JSON__QUIRK_ALLOW_TRAILING_FILLER = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 1225364497, .decimal);
-pub const WUFFS_JSON__QUIRK_EXPECT_TRAILING_NEW_LINE_OR_EOF = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 1225364498, .decimal);
-pub const WUFFS_JSON__QUIRK_JSON_POINTER_ALLOW_TILDE_N_TILDE_R_TILDE_T = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 1225364499, .decimal);
-pub const WUFFS_JSON__QUIRK_REPLACE_INVALID_UNICODE = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 1225364500, .decimal);
+pub const WUFFS_JSON__QUIRK_ALLOW_ASCII_CONTROL_CODES = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 1225364480, .decimal);
+pub const WUFFS_JSON__QUIRK_ALLOW_BACKSLASH_A = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 1225364481, .decimal);
+pub const WUFFS_JSON__QUIRK_ALLOW_BACKSLASH_CAPITAL_U = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 1225364482, .decimal);
+pub const WUFFS_JSON__QUIRK_ALLOW_BACKSLASH_E = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 1225364483, .decimal);
+pub const WUFFS_JSON__QUIRK_ALLOW_BACKSLASH_NEW_LINE = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 1225364484, .decimal);
+pub const WUFFS_JSON__QUIRK_ALLOW_BACKSLASH_QUESTION_MARK = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 1225364485, .decimal);
+pub const WUFFS_JSON__QUIRK_ALLOW_BACKSLASH_SINGLE_QUOTE = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 1225364486, .decimal);
+pub const WUFFS_JSON__QUIRK_ALLOW_BACKSLASH_V = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 1225364487, .decimal);
+pub const WUFFS_JSON__QUIRK_ALLOW_BACKSLASH_X_AS_CODE_POINTS = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 1225364489, .decimal);
+pub const WUFFS_JSON__QUIRK_ALLOW_BACKSLASH_ZERO = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 1225364490, .decimal);
+pub const WUFFS_JSON__QUIRK_ALLOW_COMMENT_BLOCK = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 1225364491, .decimal);
+pub const WUFFS_JSON__QUIRK_ALLOW_COMMENT_LINE = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 1225364492, .decimal);
+pub const WUFFS_JSON__QUIRK_ALLOW_EXTRA_COMMA = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 1225364493, .decimal);
+pub const WUFFS_JSON__QUIRK_ALLOW_INF_NAN_NUMBERS = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 1225364494, .decimal);
+pub const WUFFS_JSON__QUIRK_ALLOW_LEADING_ASCII_RECORD_SEPARATOR = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 1225364495, .decimal);
+pub const WUFFS_JSON__QUIRK_ALLOW_LEADING_UNICODE_BYTE_ORDER_MARK = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 1225364496, .decimal);
+pub const WUFFS_JSON__QUIRK_ALLOW_TRAILING_FILLER = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 1225364497, .decimal);
+pub const WUFFS_JSON__QUIRK_EXPECT_TRAILING_NEW_LINE_OR_EOF = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 1225364498, .decimal);
+pub const WUFFS_JSON__QUIRK_JSON_POINTER_ALLOW_TILDE_N_TILDE_R_TILDE_T = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 1225364499, .decimal);
+pub const WUFFS_JSON__QUIRK_REPLACE_INVALID_UNICODE = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 1225364500, .decimal);
 pub const WUFFS_LZMA__DECODER_DST_HISTORY_RETAIN_LENGTH_MAX_INCL_WORST_CASE = @as(c_uint, 0);
-pub const WUFFS_LZMA__DECODER_WORKBUF_LEN_MAX_INCL_WORST_CASE = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 4294967568, .decimal);
-pub const WUFFS_LZMA__QUIRK_ALLOW_NON_ZERO_INITIAL_BYTE = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 1348001792, .decimal);
-pub const WUFFS_LZMA__QUIRK_FORMAT_EXTENSION = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 1348001793, .decimal);
+pub const WUFFS_LZMA__DECODER_WORKBUF_LEN_MAX_INCL_WORST_CASE = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 4294967568, .decimal);
+pub const WUFFS_LZMA__QUIRK_ALLOW_NON_ZERO_INITIAL_BYTE = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 1348001792, .decimal);
+pub const WUFFS_LZMA__QUIRK_FORMAT_EXTENSION = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 1348001793, .decimal);
 pub const WUFFS_LZIP__DECODER_DST_HISTORY_RETAIN_LENGTH_MAX_INCL_WORST_CASE = @as(c_uint, 0);
-pub const WUFFS_LZIP__DECODER_WORKBUF_LEN_MAX_INCL_WORST_CASE = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 4294967568, .decimal);
+pub const WUFFS_LZIP__DECODER_WORKBUF_LEN_MAX_INCL_WORST_CASE = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 4294967568, .decimal);
 pub const WUFFS_LZW__DECODER_DST_HISTORY_RETAIN_LENGTH_MAX_INCL_WORST_CASE = @as(c_uint, 0);
 pub const WUFFS_LZW__DECODER_WORKBUF_LEN_MAX_INCL_WORST_CASE = @as(c_uint, 0);
-pub const WUFFS_LZW__QUIRK_LITERAL_WIDTH_PLUS_ONE = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 1348378624, .decimal);
+pub const WUFFS_LZW__QUIRK_LITERAL_WIDTH_PLUS_ONE = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 1348378624, .decimal);
 pub const WUFFS_NETPBM__DECODER_WORKBUF_LEN_MAX_INCL_WORST_CASE = @as(c_uint, 0);
 pub const WUFFS_NIE__DECODER_WORKBUF_LEN_MAX_INCL_WORST_CASE = @as(c_uint, 0);
-pub const WUFFS_ZLIB__QUIRK_JUST_RAW_DEFLATE = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 2113790976, .decimal);
+pub const WUFFS_ZLIB__QUIRK_JUST_RAW_DEFLATE = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 2113790976, .decimal);
 pub const WUFFS_ZLIB__DECODER_DST_HISTORY_RETAIN_LENGTH_MAX_INCL_WORST_CASE = @as(c_uint, 0);
 pub const WUFFS_ZLIB__DECODER_WORKBUF_LEN_MAX_INCL_WORST_CASE = @as(c_uint, 1);
-pub const WUFFS_PNG__DECODER_WORKBUF_LEN_MAX_INCL_WORST_CASE = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 2251799562027015, .decimal);
+pub const WUFFS_PNG__DECODER_WORKBUF_LEN_MAX_INCL_WORST_CASE = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 2251799562027015, .decimal);
 pub const WUFFS_PNG__DECODER_SRC_IO_BUFFER_LENGTH_MIN_INCL = @as(c_uint, 8);
 pub const WUFFS_QOI__DECODER_WORKBUF_LEN_MAX_INCL_WORST_CASE = @as(c_uint, 0);
 pub const WUFFS_TGA__DECODER_WORKBUF_LEN_MAX_INCL_WORST_CASE = @as(c_uint, 0);
 pub const WUFFS_WBMP__DECODER_WORKBUF_LEN_MAX_INCL_WORST_CASE = @as(c_uint, 0);
 pub const WUFFS_WEBP__DECODER_WORKBUF_LEN_MAX_INCL_WORST_CASE = @as(c_uint, 0);
-pub const WUFFS_XZ__QUIRK_DECODE_STANDALONE_CONCATENATED_STREAMS = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 2021322752, .decimal);
+pub const WUFFS_XZ__QUIRK_DECODE_STANDALONE_CONCATENATED_STREAMS = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 2021322752, .decimal);
 pub const WUFFS_XZ__DECODER_DST_HISTORY_RETAIN_LENGTH_MAX_INCL_WORST_CASE = @as(c_uint, 0);
-pub const WUFFS_XZ__DECODER_WORKBUF_LEN_MAX_INCL_WORST_CASE = @import("std").zig.c_translation.promoteIntLiteral(c_uint, 4294967568, .decimal);
+pub const WUFFS_XZ__DECODER_WORKBUF_LEN_MAX_INCL_WORST_CASE = @import("std").zig.c_translation.helpers.promoteIntLiteral(c_uint, 4294967568, .decimal);
 pub const __locale_struct = struct___locale_struct;
 pub const __ARM_FPM_FORMAT = enum___ARM_FPM_FORMAT;
 pub const __ARM_FPM_OVERFLOW = enum___ARM_FPM_OVERFLOW;

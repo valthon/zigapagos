@@ -33,6 +33,14 @@ pub fn init(io: Io, gpa: Allocator, args: []const []const u8) bool {
             .src = @embedFile("init/zigapagos.ziggy"),
         },
         .{
+            // Plain `init` previously wrote no `.gitignore` at all, so
+            // `.zigapagos-cache/` (the image-optimization derive cache, #132)
+            // was untracked-but-unignored on a fresh scaffold. Reuse
+            // `init_from_astro`'s template rather than duplicating it.
+            .path = ".gitignore",
+            .src = @import("init_from_astro.zig").emitGitignore(),
+        },
+        .{
             .path = "content/index.smd",
             .src = @embedFile("init/content/index.smd"),
         },

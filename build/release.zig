@@ -170,6 +170,7 @@ fn addTargets(
         zigapagos_exe_release.root_module.addImport("tracy", tracy.module("tracy"));
         zigapagos_exe_release.root_module.addImport("mime", mime.module("mime"));
         exe.addWuffsImports(b, zigapagos_exe_release.root_module, target, optimize);
+        exe.addWebpLib(b, zigapagos_exe_release.root_module, target, optimize);
 
         switch (target.result.os.tag) {
             else => @panic("target must be added to build.zig"),

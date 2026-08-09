@@ -13,6 +13,7 @@
 const std = @import("std");
 const config = @import("config.zig");
 const deps = @import("deps.zig");
+const exe_build = @import("exe.zig");
 
 /// A suite compiled as its own root module (std-only, or std + ziggy).
 const Standalone = struct {
@@ -30,6 +31,10 @@ const Standalone = struct {
     /// Run the test binary from the repo root (it reads repo-relative fixtures
     /// or spawns repo-relative scripts).
     repo_root_cwd: bool = false,
+    /// Wires the wuffs shims + compiled libwebp into this suite's root
+    /// module, the same way `addZigapagosExe` wires them into the exe, so
+    /// the suite cannot drift from production linkage (issue #132).
+    image_deps: bool = false,
 };
 
 const standalone: []const Standalone = &.{
@@ -87,6 +92,16 @@ const standalone: []const Standalone = &.{
         .step_name = "test-summary",
         .description = "Run build-summary inventory tests",
         .root_source_file = "src/summary.zig",
+    },
+    // Build-time image optimization (issue #132): webp bindings, decode,
+    // resample, planning. Needs the wuffs shims + the compiled libwebp
+    // (`image_deps`), wired the same way the exe gets them so the suite
+    // cannot drift from production linkage.
+    .{
+        .step_name = "test-images",
+        .description = "Run image-optimization (decode/resample/encode/plan) unit tests",
+        .root_source_file = "src/image/tests.zig",
+        .image_deps = true,
     },
 };
 
@@ -253,6 +268,10 @@ pub fn setup(
         if (suite.supermd) {
             const up = deps.upstream(b, target, cfg.optimize, cfg.enable_tracy);
             tests.root_module.addImport("supermd", up.supermd);
+        }
+        if (suite.image_deps) {
+            exe_build.addWuffsImports(b, tests.root_module, target, cfg.optimize);
+            exe_build.addWebpLib(b, tests.root_module, target, cfg.optimize);
         }
         check.dependOn(&tests.step);
         const run_tests = b.addRunArtifact(tests);

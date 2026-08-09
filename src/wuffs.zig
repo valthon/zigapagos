@@ -142,8 +142,8 @@ pub fn setImageSize(
     directive.kind.image.size = .{ .w = img_size.w, .h = img_size.h };
 }
 
-const Size = struct { w: i64, h: i64 };
-fn parseImageSize(
+pub const Size = struct { w: i64, h: i64 };
+pub fn parseImageSize(
     gpa: Allocator,
     image_src: []const u8,
 ) !Size {

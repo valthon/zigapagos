@@ -14,6 +14,7 @@ const PathTable = @import("../PathTable.zig");
 const Path = PathTable.Path;
 const PathName = PathTable.PathName;
 const fingerprint = @import("../fingerprint.zig");
+const image_plan = @import("../image/plan.zig");
 const HtmlSafe = @import("superhtml").HtmlSafe;
 
 const log = std.log.scoped(.render);
@@ -473,6 +474,21 @@ fn renderDirective(
                     try w.writeAll("\">");
                 };
 
+                const planned = imageVariantsFor(ctx, page, img.src.?);
+                if (planned) |p| {
+                    try w.writeAll("<picture>");
+                    // Full responsive srcset (#132): one `w`-descriptor
+                    // entry per surviving width, filtered by codec so each
+                    // <source> carries only its own codec's variants. Codec
+                    // order is fixed best-first per spec §2 — AVIF (Task 12,
+                    // emitted only when the hatch produced variants) before
+                    // WebP. The HTML spec requires `sizes` alongside `w`
+                    // descriptors, so it always follows srcset.
+                    const sizes = ctx._meta.build.cfg.getImageOptimize().?.sizes;
+                    try writeImageSourceLine(ctx, page, img.src.?, p, .avif, "image/avif", sizes, w);
+                    try writeImageSourceLine(ctx, page, img.src.?, p, .webp, "image/webp", sizes, w);
+                }
+
                 try w.writeAll("<img");
                 if (directive.id) |id| try w.print(" id=\"{s}\"", .{id});
                 if (directive.attrs) |attrs| {
@@ -491,6 +507,7 @@ fn renderDirective(
                     if (size.h > 0) try w.print(" height=\"{d}\"", .{size.h});
                 }
                 try w.writeAll(">");
+                if (planned != null) try w.writeAll("</picture>");
                 if (img.linked) |l| if (l) try w.writeAll("</a>");
                 if (caption != null) try w.writeAll("\n<figcaption>");
             },
@@ -618,6 +635,141 @@ fn renderDirective(
             },
         },
     }
+}
+
+/// The image_variants entry for an image directive's source, or null when
+/// the feature is off / the source was ineligible / it's a kind we don't
+/// optimize (URLs, external, build assets — spec's out-of-scope list).
+/// Contract 3: allocates nothing.
+fn imageVariantsFor(
+    ctx: *const context.Root,
+    page: *const context.Page,
+    src: supermd.context.Src,
+) ?*const image_plan.Planned {
+    const map = &ctx._meta.build.image_variants;
+    if (map.count() == 0) return null;
+    const ref: image_plan.SourceRef = switch (src) {
+        .page_asset => |pa| .{
+            .kind = .page,
+            .variant_id = page._scan.variant_id,
+            .path = pa.resolved.path,
+            .name = pa.resolved.name,
+        },
+        .site_asset => |sa| .{
+            .kind = .site,
+            .variant_id = 0,
+            .path = sa.resolved.path,
+            .name = sa.resolved.name,
+        },
+        else => return null,
+    };
+    return map.getPtr(ref);
+}
+
+/// Write one `<source type="...">` line for the variants of a single codec,
+/// or nothing at all when `planned` has none for that codec — e.g. no
+/// `<source type="image/avif">` when `avif_encoder` is unset and the planner
+/// therefore never minted `.avif` variants (spec §2's "iff avif_encoder
+/// set"). Filtering here, rather than trusting caller order, is what keeps
+/// the two calls in the `.image` arm above independent: each call owns
+/// deciding whether ITS codec has anything to say.
+fn writeImageSourceLine(
+    ctx: *const context.Root,
+    page: *const context.Page,
+    src: supermd.context.Src,
+    planned: *const image_plan.Planned,
+    codec: image_plan.Codec,
+    mime: []const u8,
+    sizes: []const u8,
+    w: *Writer,
+) !void {
+    var first = true;
+    for (planned.variants) |variant| {
+        if (variant.codec != codec) continue;
+        if (first) {
+            try w.print("<source type=\"{s}\" srcset=\"", .{mime});
+        } else {
+            try w.writeAll(", ");
+        }
+        first = false;
+        try printVariantUrl(ctx, page, src, variant.basename, w);
+        try w.print(" {d}w", .{variant.width});
+    }
+    if (!first) {
+        try w.writeAll("\" sizes=\"");
+        try w.print("{f}", .{HtmlSafe{ .bytes = sizes }});
+        try w.writeAll("\">");
+    }
+}
+
+/// Print a derived variant's URL: the same prefix + directory the fallback
+/// original gets from printUrl, with the variant basename substituted.
+/// The basename is already content-addressed, so fingerprint.fmtUrl is
+/// deliberately NOT consulted (double-hashing would desync install/link).
+///
+/// Path components and the basename are written through `writeSrcsetSegment`,
+/// NOT a plain `w.writeAll`: this URL lands in a `srcset` attribute, and the
+/// HTML "parse a srcset attribute" algorithm terminates a candidate URL at
+/// the first ASCII whitespace character (unquoted, unlike `src`) — a source
+/// basename or directory containing a space would otherwise silently split
+/// into an invalid candidate, and the browser falls back to plain `<img>`
+/// with optimization off and nothing observable (#132 final review, Fix 2).
+/// The file on disk keeps its literal name; only this URL is encoded, and
+/// `printUrl`'s plain-`<img src>` path is untouched on purpose — a quoted
+/// `src` attribute tolerates the raw space.
+fn printVariantUrl(
+    ctx: *const context.Root,
+    page: *const context.Page,
+    src: supermd.context.Src,
+    basename: []const u8,
+    w: *Writer,
+) !void {
+    switch (src) {
+        .page_asset => |pa| {
+            try ctx.printLinkPrefix(w, page._scan.variant_id, page != ctx.page);
+            const path: Path = @enumFromInt(pa.resolved.path);
+            const v = ctx._meta.build.variants[page._scan.variant_id];
+            for (path.slice(&v.path_table)) |comp| {
+                try writeSrcsetSegment(w, comp.slice(&v.string_table));
+                try w.writeAll("/");
+            }
+            try writeSrcsetSegment(w, basename);
+        },
+        .site_asset => |sa| {
+            try printAssetUrlPrefix(ctx, page, w, false);
+            const path: Path = @enumFromInt(sa.resolved.path);
+            for (path.slice(&ctx._meta.build.pt)) |comp| {
+                try writeSrcsetSegment(w, comp.slice(&ctx._meta.build.st));
+                try w.writeAll("/");
+            }
+            try writeSrcsetSegment(w, basename);
+        },
+        else => unreachable, // imageVariantsFor filtered these
+    }
+}
+
+/// Write `s`, percent-encoding the five characters the HTML "ASCII
+/// whitespace" definition names (space, tab, LF, FF, CR) — the exact set
+/// the srcset candidate-URL parser splits on. Everything else is written
+/// byte-identical, so no existing URL changes.
+fn writeSrcsetSegment(w: *Writer, s: []const u8) !void {
+    var start: usize = 0;
+    for (s, 0..) |ch, i| {
+        const enc: ?[]const u8 = switch (ch) {
+            ' ' => "%20",
+            '\t' => "%09",
+            '\n' => "%0A",
+            '\x0C' => "%0C",
+            '\r' => "%0D",
+            else => null,
+        };
+        if (enc) |e| {
+            try w.writeAll(s[start..i]);
+            try w.writeAll(e);
+            start = i + 1;
+        }
+    }
+    try w.writeAll(s[start..]);
 }
 
 fn printUrl(
