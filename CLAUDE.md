@@ -56,12 +56,13 @@ bundlers and both runtime slicers come from; without it a `--spa` entry cannot b
 all (only prerendered).
 
 **`zig build test` does NOT run the unit tests.** It builds the three-root snapshot fixtures and
-diffs them. The Zig unit tests live in seventeen separate steps, and CI runs them explicitly:
+diffs them. The Zig unit tests live in eighteen separate steps, and CI runs them explicitly:
 
 ```sh
 zig build test-islands test-props test-migrate test-sidecar test-init \
   test-release test-debug test-spa test-assets test-e2e test-dev \
-  test-doctor test-slugs test-validate test-explain test-diag test-summary
+  test-doctor test-slugs test-validate test-explain test-diag test-summary \
+  test-images
 ```
 
 **Running a single test.** Each `test-*` step is already a *filtered slice* of one test binary.
