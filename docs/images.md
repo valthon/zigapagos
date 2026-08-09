@@ -2,17 +2,13 @@
 
 # Images
 
-**Status: PR A of two.** This page documents what ships today — decode, resample,
-one WebP variant per image, `<picture>` emission. Responsive `srcset`/`sizes`
-and the opt-in AVIF path land in PR B; see the note at the bottom of each
-section below for what is coming.
-
 Turn on `image_optimize` and every content `$image` whose source is a
-decodable raster (JPEG, PNG, still WebP) is resampled at build time into a
-WebP variant, emitted inside a `<picture>` with the untouched original as the
-`<img>` fallback. Off by default (`null`): a site that never sets the field
-gets byte-identical output to today, same as `asset_fingerprint` and
-`speculation_rules`.
+decodable still raster (JPEG, PNG, still WebP) is resampled at build time
+into WebP variants at every configured width the source is large enough
+for, emitted inside a `<picture>` with a full `srcset`/`sizes` and the
+untouched original as the `<img>` fallback. Off by default (`null`): a site
+that never sets the field gets byte-identical output to today, same as
+`asset_fingerprint` and `speculation_rules`.
 
 ## Config
 
@@ -32,27 +28,21 @@ overridden.
 
 | field | default | meaning |
 | --- | --- | --- |
-| `widths` | `[480, 800, 1200, 1920]` | Candidate variant widths (CSS px), site-wide. Filtered per image to `<=` its intrinsic width — **never upscaled**. If the source is narrower than the smallest configured width, one variant is generated at the source's own intrinsic width. |
-| `quality` | `75` | WebP lossy quality (0–100) for JPEG/lossy-WebP sources. A PNG source always encodes lossless WebP, ignoring this. |
-| `sizes` | `"100vw"` | Emitted verbatim as the `sizes` attribute once `srcset` carries multiple widths (PR B). Present in the config now so a site that sets it today needs no later config change. |
-| `avif_encoder` | `null` | Name (PATH-resolved) or path of an `avifenc`-compatible binary. `null` = no AVIF output. Unused until PR B. |
+| `widths` | `[480, 800, 1200, 1920]` | Candidate variant widths (CSS px), site-wide — not per-image. Filtered per image to `<=` its intrinsic width — **never upscaled**. If the source is narrower than the smallest configured width, one variant is generated at the source's own intrinsic width. Rejected at config validation if empty, if any entry is `<= 0`, or if there are more than 64 entries (`error: image_optimize.widths in zigapagos.ziggy has N entries, must be <= 64`) — the planner's scratch buffer is sized off that bound, so it is enforced once, at validation, rather than silently re-capped later. |
+| `quality` | `75` | WebP lossy quality (0–100) for JPEG/lossy-WebP sources. A PNG source (detected from its magic bytes, not its extension) always encodes lossless WebP, ignoring this. Rejected at config validation outside 0–100. |
+| `sizes` | `"100vw"` | Emitted verbatim (HTML-escaped) as the `sizes` attribute on every `<source>` that carries `w` descriptors — which is always, once a variant exists. |
+| `avif_encoder` | `null` | Reserved for an opt-in AVIF hatch; not wired up yet. |
 
 `$image.size(w, h)` keeps its current meaning — display-size attributes on
 the fallback `<img>` — and does not affect variant generation. Per-image
 overrides (`$image.formats(...)`, a per-image `sizes`/`widths`) are out of
-scope; see below.
-
-**PR A note:** exactly **one** variant is generated per image — the largest
-configured width that survives the `<=` intrinsic filter — as a single-entry
-`srcset` with no `w` descriptor. `widths` still matters (it decides which one
-width that is), `sizes` does not, since a one-entry `srcset` needs no
-`sizes` to disambiguate. PR B generates every surviving width.
+scope; see [Out of scope](#out-of-scope).
 
 ## What gets emitted
 
 ```html
 <picture>
-  <source type="image/webp" srcset="cover.a1b2c3d4.480.webp">
+  <source type="image/webp" srcset="cover.a1b2c3d4.480.webp 480w, cover.a1b2c3d4.960.webp 960w" sizes="100vw">
   <img src="cover.e5f6a7b8.jpg" width="1600" height="900" alt="…">
 </picture>
 ```
@@ -61,8 +51,10 @@ width that is), `sizes` does not, since a one-entry `srcset` needs no
   fingerprint / refcount path — same bytes, same `width`/`height` attributes
   (from `$image.size` or the autosize probe), same `alt`/`title`/caption
   behavior as a plain `$image` directive.
-- The WebP `<source>` always comes first (best-format-first ordering; AVIF
-  will slot in ahead of it in PR B, once `avif_encoder` is set).
+- The `<source>`'s `srcset` lists every surviving width, ascending, each
+  with a `w` descriptor, comma-joined, followed by `sizes` (required by the
+  HTML spec whenever `srcset` uses `w` descriptors, which it always does
+  here).
 - Animated GIF/WebP, SVG, and anything wuffs can't decode at sniff time are
   filtered out **before** a variant is planned: silent, never fatal, plain
   `<img>` passthrough (reported via `--format=json` diagnostics). Once a
@@ -71,9 +63,37 @@ width that is), `sizes` does not, since a one-entry `srcset` needs no
   point is a broken `<picture>` if swallowed, so it **is** fatal
   (`fatal.msg`), not silently skipped.
 
-**PR B note:** once `widths` has more than one surviving entry, `srcset`
-carries every one of them with `w` descriptors and the `<source>` gains a
-`sizes` attribute.
+## Dev-loop behavior
+
+`zigapagos dev`'s incremental rebuild only re-renders the content pages that
+actually changed, reusing the previous full build's output tree for
+everything else — the same fast path `static_assets` installs and site-asset
+fingerprints already take. Image planning runs on every rebuild, incremental
+or not, so a **newly referenced** image on an incremental rebuild gets a
+correct, param-addressed URL in the re-rendered page's HTML immediately. The
+actual derive job that produces the bytes, though, only runs on a full
+build — so the URL points at a file that doesn't exist yet until the next
+full rebuild picks it up. This is the same shape as an unbuilt site asset on
+the incremental path, not a new failure mode, but it means a broken image in
+`zigapagos dev` right after adding a new one is expected, not a bug — a full
+rebuild (or restarting `dev`) resolves it.
+
+## Authoring gotcha: angle brackets on non-empty link text
+
+A `$image` directive whose link text is **non-empty** needs its destination
+wrapped in angle brackets:
+
+```markdown
+[A test image.](<$image.asset("photo.jpg").alt("test photo")>)
+
+[]($image.siteAsset("art/wide.jpg"))
+```
+
+An **empty**-text directive (`[]( … )`, the common case — it applies the
+directive to the image itself rather than wrapping it in a link) needs no
+wrapping. See [`docs/scripty.md`'s content directive
+syntax](scripty.md#content-directives) for the general directive-as-link
+grammar this follows.
 
 ## Cache
 
@@ -122,9 +142,10 @@ site adopting this feature should add the line by hand:
 
 - **Per-image directive control** (`$image.formats(...)`, a per-image
   `sizes`/`widths` override) — would require a supermd fork; triggered by
-  real demand, not built speculatively.
-- **Vendored AV1 encoding**, or any encoder auto-download. AVIF is opt-in
-  against a binary you already have (PR B).
+  real demand, not built speculatively. `widths` is site-wide, not
+  per-image.
+- **Vendored AV1 encoding, or any encoder auto-download.** An opt-in AVIF
+  hatch, spawning a binary you already have, is not built yet.
 - **Animated image optimization**; SVG is never touched.
 - **Build-asset images** (`$image.buildAsset(...)`) — their install paths are
   CLI-declared (see [`docs/assets.md`'s fingerprint
@@ -135,18 +156,16 @@ site adopting this feature should add the line by hand:
 
 ## Where this lives in the code
 
-- `src/root.zig` — `ImageOptimize` (the config struct), `Config.getImageOptimize`,
-  `planImageVariants` (fills `build.image_variants` before the render pass
-  reads it, mirroring `computeAssetFingerprints`'s write-once/read-lock-free
-  discipline).
+- `src/root.zig` — `ImageOptimize` (the config struct), `validateImageOptimize`,
+  `Config.getImageOptimize`, `planImageVariants` (fills `build.image_variants`
+  before the render pass reads it, mirroring `computeAssetFingerprints`'s
+  write-once/read-lock-free discipline).
 - `src/image/` — `plan.zig` (eligibility, width selection, variant naming),
   `decode.zig` (wuffs full-frame decode to RGBA), `resample.zig`
   (linear-light Lanczos3), `webp.zig` (libwebp bindings), `derive.zig` (the
   worker job: cache-or-compute each planned variant), `requests.zig`
   (analyze-time request collection).
-- `src/render/html.zig` — the `.image` arm's `<picture>` emission.
+- `src/render/html.zig` — the `.image` arm's `<picture>` emission
+  (`writeImageSourceLine`).
 
 Proof: `tests/images/optimize.sh`.
-
-**Full documentation — the complete config reference, srcset mechanics, and
-the AVIF hatch — lands with srcset support (PR B).**

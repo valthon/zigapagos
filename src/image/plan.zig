@@ -147,9 +147,9 @@ pub fn variantBasename(
 /// `max_basename_growth` below can't drift from the format it's bounding.
 pub const hash_hex_len: usize = 8;
 
-/// Longest `Codec` tag name, computed once at comptime so a future codec
-/// (PR B's AVIF hatch) that widens `variantBasename`'s output moves this
-/// bound too, instead of quietly falsifying it.
+/// Longest `Codec` tag name, computed once at comptime so adding a future
+/// codec that widens `variantBasename`'s output moves this bound too,
+/// instead of quietly falsifying it.
 pub const max_codec_name_len: usize = blk: {
     var max: usize = 0;
     for (std.enums.values(Codec)) |c| max = @max(max, @tagName(c).len);

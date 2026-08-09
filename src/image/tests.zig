@@ -154,6 +154,21 @@ test "images: pickWidths filters, sorts, dedupes, never upscales" {
     try std.testing.expectEqualSlices(u32, &.{ 480, 800 }, exact);
 }
 
+test "images: heightFor preserves aspect ratio, rounds half up, never zero" {
+    const plan = @import("plan.zig");
+    // Exact ratio: 1600x900 -> 800 wide is exactly 450 tall.
+    try std.testing.expectEqual(@as(u32, 450), plan.heightFor(1600, 900, 800));
+    // Identity: requesting the intrinsic width returns the intrinsic height.
+    try std.testing.expectEqual(@as(u32, 900), plan.heightFor(1600, 900, 1600));
+    // Round-half-up: 500x715 at 200w -> 715*200/500 = 286 exactly.
+    try std.testing.expectEqual(@as(u32, 286), plan.heightFor(500, 715, 200));
+    // Exact halfway point: 4x3 at width 2 -> raw height 3*2/4 = 1.5, must
+    // round UP to 2 (not truncate to 1).
+    try std.testing.expectEqual(@as(u32, 2), plan.heightFor(4, 3, 2));
+    // min-1 floor: an extreme aspect ratio must never round down to 0.
+    try std.testing.expectEqual(@as(u32, 1), plan.heightFor(10000, 1, 1));
+}
+
 test "images: variantBasename is param-addressed" {
     const plan = @import("plan.zig");
     const gpa = std.testing.allocator;

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Proof for `image_optimize` — build-time WebP variants + <picture> emission
-# (issue #132, PR A: docs/superpowers/specs/2026-08-08-image-optimization-design.md).
+# Proof for `image_optimize` — build-time WebP variants + <picture> emission,
+# including PR B's full multi-width srcset + sizes (issue #132; design doc:
+# docs/superpowers/specs/2026-08-08-image-optimization-design.md).
 #
 # WHAT IT IS FOR. The pipeline is three separate touchpoints stitched together
 # across passes that don't otherwise talk to each other: the analyze pass
@@ -14,21 +15,29 @@
 # actually wrote with actually-valid WebP bytes. That is a build-time
 # integration property, so it needs a real build.
 #
-# Checks:
+# Checks. The fixture sets `.widths = [200, 400, 100000]`: 200 and 400 are
+# below the fixture image's 500px intrinsic width and survive; 100000 does
+# not (never upscale) and must be filtered out of the srcset entirely.
 #   (1) ON:  a raster `$image` directive emits <picture><source type=
 #            "image/webp" srcset="...">.
-#   (2) ON:  the srcset URL resolves to a file that exists and starts with
-#            the WebP RIFF/WEBP magic.
-#   (3) ON:  the variant's basename is `<stem>.<8 hex>.<width>.webp` — the
-#            param-addressed cache key (spec §4).
-#   (4) ON:  the fallback <img> still points at the untouched original bytes,
+#   (2) ON:  the srcset carries exactly the surviving widths as `w`
+#            descriptors (" 200w, " and " 400w"), and does NOT carry the
+#            filtered 100000 — the PR A truncation-to-one-variant is gone.
+#   (2b) ON: every URL named in that srcset resolves to a file that exists
+#            and starts with the WebP RIFF/WEBP magic, and its basename is
+#            `<stem>.<8 hex>.<width>.webp` — the param-addressed cache key
+#            (spec §4) — for EACH surviving width, not just one.
+#   (2c) ON: the `sizes` attribute is emitted verbatim from config
+#            (`"100vw"`, the default) — required by the HTML spec once
+#            srcset carries `w` descriptors.
+#   (3) ON:  the fallback <img> still points at the untouched original bytes,
 #            which exist on disk unmodified.
-#   (5) ON:  a second directive (`$image.siteAsset`) gets its own <picture> —
+#   (4) ON:  a second directive (`$image.siteAsset`) gets its own <picture> —
 #            the emission seam works for both directive kinds, not just one.
-#   (6) cache: a rebuild of unchanged input does not re-encode (cache-file
+#   (5) cache: a rebuild of unchanged input does not re-encode (cache-file
 #       mtime unchanged) — this is what makes a full rebuild cheap after the
 #       first (spec §4's "first build pays the encode cost once").
-#   (7) OFF (control): the same content with `image_optimize` absent from
+#   (6) OFF (control): the same content with `image_optimize` absent from
 #       `zigapagos.ziggy` emits no <picture> and no `.webp` anywhere — the
 #       feature is opt-in, and turning it off is byte-identical to today.
 set -euo pipefail
@@ -88,7 +97,9 @@ Site {
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "assets",
-    .image_optimize = {},
+    .image_optimize = {
+        .widths = [200, 400, 100000],
+    },
 }
 EOF
   printf '%s' "$LAYOUT" > "$WORK/site/layouts/index.shtml"
@@ -117,7 +128,7 @@ build() {
 
 scaffold
 
-# --- (1)-(6) flag ON ---------------------------------------------------
+# --- (1)-(5) flag ON -----------------------------------------------------
 OUT="$WORK/out"
 build "$OUT" "$WORK/build-on.log"
 
@@ -128,29 +139,48 @@ HTML="$OUT/index.html"
 grep -q '<picture><source type="image/webp" srcset="' "$HTML" || fail "no <picture> emitted"
 echo "PASS: (1) <picture><source type=\"image/webp\"...> emitted"
 
-# (2) the variant file the HTML references exists and is really WebP.
-VAR_URL=$(grep -o 'srcset="[^"]*"' "$HTML" | head -1 | sed 's/srcset="//;s/"$//')
-VAR_PATH="$OUT/${VAR_URL#/}"
-[[ -f "$VAR_PATH" ]] || fail "srcset points at missing file: $VAR_URL"
-head -c 12 "$VAR_PATH" | grep -q 'WEBP' || fail "variant is not a WebP container"
-echo "PASS: (2) srcset '$VAR_URL' resolves to a real WebP file"
+# (2) full srcset: exactly the surviving widths as `w` descriptors, in
+# ascending order, with the filtered-out 100000 nowhere in it. This is the
+# PR B check — PR A truncated to one variant, so this fails against that code.
+SRCSET=$(grep -o 'srcset="[^"]*"' "$HTML" | head -1 | sed 's/srcset="//;s/"$//')
+[[ -n "$SRCSET" ]] || fail "no srcset attribute found"
+echo "$SRCSET" | grep -q ' 200w, ' || fail "srcset missing ' 200w, ' descriptor: $SRCSET"
+echo "$SRCSET" | grep -q ' 400w' || fail "srcset missing ' 400w' descriptor: $SRCSET"
+echo "$SRCSET" | grep -q '100000' && fail "srcset carries the filtered-out 100000 width: $SRCSET"
+echo "PASS: (2) srcset carries exactly the surviving widths (200w, 400w); 100000 filtered"
 
-# (3) name shape: <stem>.<8hex>.<width>.webp
-basename "$VAR_PATH" | grep -Eq '^photo\.[0-9a-f]{8}\.[0-9]+\.webp$' || fail "bad variant name: $(basename "$VAR_PATH")"
-echo "PASS: (3) variant basename is param-addressed: $(basename "$VAR_PATH")"
+# (2b) every URL in that srcset resolves to a real WebP file, param-addressed
+# per check (3)'s original name shape — for BOTH surviving widths.
+VAR_URLS=$(echo "$SRCSET" | tr ',' '\n' | sed -E 's/^ +//; s/ [0-9]+w *$//')
+VAR_COUNT=0
+while IFS= read -r u; do
+  [[ -n "$u" ]] || continue
+  VAR_COUNT=$((VAR_COUNT + 1))
+  p="$OUT/${u#/}"
+  [[ -f "$p" ]] || fail "srcset points at missing file: $u"
+  head -c 12 "$p" | grep -q 'WEBP' || fail "variant is not a WebP container: $u"
+  # name shape: <stem>.<8hex>.<width>.webp — the param-addressed cache key.
+  basename "$p" | grep -Eq '^photo\.[0-9a-f]{8}\.[0-9]+\.webp$' || fail "bad variant name: $(basename "$p")"
+done <<<"$VAR_URLS"
+[[ "$VAR_COUNT" == "2" ]] || fail "expected 2 srcset entries (200w, 400w), got $VAR_COUNT"
+echo "PASS: (2b) both named variant files exist, are WebP, and are param-addressed"
 
-# (4) fallback <img> still points at the untouched original, which exists.
+# (2c) sizes attribute, emitted verbatim from config (default "100vw").
+grep -q 'sizes="100vw"' "$HTML" || fail "sizes=\"100vw\" attribute missing"
+echo "PASS: (2c) sizes=\"100vw\" emitted"
+
+# (3) fallback <img> still points at the untouched original, which exists.
 grep -q '<img src="' "$HTML" || fail "fallback <img> missing"
 ORIG_URL=$(grep -o '<img src="[^"]*"' "$HTML" | head -1 | sed 's/<img src="//;s/"$//')
 [[ -f "$OUT/${ORIG_URL#/}" ]] || fail "fallback original missing"
 cmp -s "$OUT/${ORIG_URL#/}" "$WORK/site/content/photo.jpg" || fail "original was modified"
-echo "PASS: (4) fallback <img> src='$ORIG_URL' is the untouched original"
+echo "PASS: (3) fallback <img> src='$ORIG_URL' is the untouched original"
 
-# (5) the site-asset image also got a variant (second URL seam).
+# (4) the site-asset image also got a variant (second URL seam).
 [[ "$(grep -c '<picture>' "$HTML")" == "2" ]] || fail "expected 2 pictures, got $(grep -c '<picture>' "$HTML")"
-echo "PASS: (5) both \$image.asset and \$image.siteAsset directives emitted <picture>"
+echo "PASS: (4) both \$image.asset and \$image.siteAsset directives emitted <picture>"
 
-# (6) cache: entry exists; a rebuild does not re-encode (mtime stable).
+# (5) cache: entries exist; a rebuild does not re-encode (mtime stable).
 CACHE_DIR="$WORK/site/.zigapagos-cache/images"
 CACHE=$(ls "$CACHE_DIR" | head -1)
 [[ -n "$CACHE" ]] || fail "cache empty after build"
@@ -159,17 +189,112 @@ sleep 1.1
 build "$OUT" "$WORK/build-on-rebuild.log"
 M2=$(mtime "$CACHE_DIR/$CACHE")
 [[ "$M1" == "$M2" ]] || fail "rebuild re-encoded a cached variant (mtime $M1 -> $M2)"
-echo "PASS: (6) rebuild of unchanged input hit the cache (mtime unchanged)"
+echo "PASS: (5) rebuild of unchanged input hit the cache (mtime unchanged)"
 
-# --- (7) flag OFF control -----------------------------------------------
+# --- (6) flag OFF control -------------------------------------------------
 # Same content, `image_optimize` simply absent — matches how every existing
-# site is configured today (the field defaults to null / off).
-sed -i.bak '/\.image_optimize/d' "$WORK/site/zigapagos.ziggy" && rm -f "$WORK/site/zigapagos.ziggy.bak"
+# site is configured today (the field defaults to null / off). The block now
+# spans multiple lines (`.widths = [...]`), so the deletion is a range, not
+# a single-line match.
+sed -i.bak '/\.image_optimize = {/,/},/d' "$WORK/site/zigapagos.ziggy" && rm -f "$WORK/site/zigapagos.ziggy.bak"
+grep -q 'image_optimize' "$WORK/site/zigapagos.ziggy" && fail "image_optimize block survived the OFF-control edit"
 OUT_OFF="$WORK/out-off"
 build "$OUT_OFF" "$WORK/build-off.log"
 HTML_OFF="$OUT_OFF/index.html"
 grep -q '<picture>' "$HTML_OFF" && fail "feature off but <picture> emitted"
 find "$OUT_OFF" -name '*.webp' | grep -q . && fail "feature off but webp emitted"
-echo "PASS: (7) flag OFF (control) — no <picture>, no .webp anywhere"
+echo "PASS: (6) flag OFF (control) — no <picture>, no .webp anywhere"
+
+# --- (7) whitespace in filename: percent-encoded in srcset, not the file on
+# disk (#132 final review, Fix 2) ---------------------------------------
+# Per the HTML "parse a srcset attribute" algorithm, a candidate URL
+# terminates at the first ASCII whitespace; a raw space in `srcset` silently
+# truncates every candidate and the browser falls back to plain <img> with
+# optimization off and nothing observable. printVariantUrl must percent-
+# encode it; the file itself keeps its literal (space-containing) name.
+SITE_SPACE="$WORK/site-space"
+mkdir -p "$SITE_SPACE/content" "$SITE_SPACE/layouts" "$SITE_SPACE/assets"
+cat > "$SITE_SPACE/zigapagos.ziggy" <<EOF
+Site {
+    .title = "ImageOptimize space e2e",
+    .host_url = "https://example.com",
+    .content_dir_path = "content",
+    .layouts_dir_path = "layouts",
+    .assets_dir_path = "assets",
+    .image_optimize = {
+        .widths = [200, 400],
+    },
+}
+EOF
+printf '%s' "$LAYOUT" > "$SITE_SPACE/layouts/index.shtml"
+cat > "$SITE_SPACE/content/index.smd" <<'EOF'
+---
+.title = "Home",
+.date = @date("2020-07-06T00:00:00"),
+.author = "Test",
+.layout = "index.shtml",
+.draft = false,
+---
+
+[](<$image.asset("my photo.jpg")>)
+EOF
+cp "$SOURCE_JPG" "$SITE_SPACE/content/my photo.jpg"
+OUT_SPACE="$WORK/out-space"
+( cd "$SITE_SPACE" && "$ZIGAPAGOS" release "--output=$OUT_SPACE" --force ) > "$WORK/build-space.log" 2>&1 ||
+  { cat "$WORK/build-space.log"; fail "build failed (see log above)"; }
+HTML_SPACE="$OUT_SPACE/index.html"
+[[ -f "$HTML_SPACE" ]] || fail "(7) whitespace-filename build did not emit index.html"
+SPACE_SRCSET=$(grep -o 'srcset="[^"]*"' "$HTML_SPACE" | head -1 | sed 's/srcset="//;s/"$//')
+[[ -n "$SPACE_SRCSET" ]] || fail "(7) no srcset attribute found"
+FIRST_CANDIDATE=$(echo "$SPACE_SRCSET" | sed -E 's/,.*//; s/ [0-9]+w *$//')
+[[ "$FIRST_CANDIDATE" != *" "* ]] ||
+  fail "(7) srcset's first candidate URL still contains a raw space: '$FIRST_CANDIDATE'"
+echo "$FIRST_CANDIDATE" | grep -q '%20' ||
+  fail "(7) srcset's first candidate URL has no %20 (space not encoded): '$FIRST_CANDIDATE'"
+SPACE_FILE="$OUT_SPACE${FIRST_CANDIDATE//%20/ }"
+[[ -f "$SPACE_FILE" ]] || fail "(7) encoded srcset URL does not resolve to a file on disk: $SPACE_FILE"
+echo "PASS: (7) whitespace in a source filename is percent-encoded in srcset (%20), file on disk keeps its literal name"
+
+# --- (8) widths.len > 64 is rejected, naming the bound (#132 final review,
+# Fix 3; previously untested) --------------------------------------------
+SITE_WIDE_LIST="$WORK/site-wide-list"
+mkdir -p "$SITE_WIDE_LIST/content" "$SITE_WIDE_LIST/layouts" "$SITE_WIDE_LIST/assets"
+WIDTHS_65=$(python3 -c 'print(", ".join(str(100 + i) for i in range(65)))')
+cat > "$SITE_WIDE_LIST/zigapagos.ziggy" <<EOF
+Site {
+    .title = "ImageOptimize widths-cap e2e",
+    .host_url = "https://example.com",
+    .content_dir_path = "content",
+    .layouts_dir_path = "layouts",
+    .assets_dir_path = "assets",
+    .image_optimize = {
+        .widths = [$WIDTHS_65],
+    },
+}
+EOF
+printf '%s' "$LAYOUT" > "$SITE_WIDE_LIST/layouts/index.shtml"
+cat > "$SITE_WIDE_LIST/content/index.smd" <<'EOF'
+---
+.title = "Home",
+.date = @date("2020-07-06T00:00:00"),
+.author = "Test",
+.layout = "index.shtml",
+.draft = false,
+---
+
+[A test image.](<$image.asset("photo.jpg").alt("test photo")>)
+EOF
+cp "$SOURCE_JPG" "$SITE_WIDE_LIST/content/photo.jpg"
+set +e
+( cd "$SITE_WIDE_LIST" && "$ZIGAPAGOS" release "--output=$WORK/out-wide-list" --force ) \
+  >"$WORK/build-wide-list.log" 2>&1
+WIDE_LIST_STATUS=$?
+set -e
+[[ "$WIDE_LIST_STATUS" -ne 0 ]] || fail "(8) build with 65 configured widths unexpectedly succeeded"
+grep -q '65 entries' "$WORK/build-wide-list.log" ||
+  fail "(8) fatal message does not name the entry count (log: $WORK/build-wide-list.log)"
+grep -q 'must be <= 64' "$WORK/build-wide-list.log" ||
+  fail "(8) fatal message does not name the 64-entry bound (log: $WORK/build-wide-list.log)"
+echo "PASS: (8) more than 64 configured widths fails the build, naming the count and the 64-entry bound"
 
 echo "ALL PROOF CHECKS PASSED (image_optimize)"

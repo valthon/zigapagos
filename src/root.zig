@@ -358,6 +358,15 @@ pub const Config = union(enum) {
             .{},
         );
 
+        // planImageVariants sizes its scratch buffer off this bound (widths.len
+        // + 1, for pickWidths' single-intrinsic-width fallback); rejecting the
+        // overflow here means that sizing is never a second, silent truncation
+        // of whatever this validation let through.
+        if (img_opt.widths.len > 64) fatal.msg(
+            "error: image_optimize.widths in zigapagos.ziggy has {d} entries, must be <= 64",
+            .{img_opt.widths.len},
+        );
+
         for (img_opt.widths) |w| {
             if (w <= 0) fatal.msg(
                 "error: image_optimize.widths in zigapagos.ziggy contains non-positive value {d}, all widths must be > 0",
@@ -659,18 +668,18 @@ pub const BuildAsset = struct {
 /// The `image_optimize` config block (issue #132). Field defaults are the
 /// site-wide policy a bare `.image_optimize = .{}` opts into.
 pub const ImageOptimize = struct {
-    /// Variant widths (CSS px). Filtered per image to <= intrinsic width —
-    /// never upscaled. PR A generates only the largest surviving width;
-    /// the full srcset ships in PR B.
+    /// Variant widths (CSS px). All surviving widths (filtered per image to
+    /// <= intrinsic width, never upscaled) get variants. The list is capped
+    /// at 64 entries, enforced by config validation.
     widths: []const i64 = &.{ 480, 800, 1200, 1920 },
     /// WebP lossy quality (0-100) for JPEG sources. PNG sources always use
     /// lossless WebP, ignoring this.
     quality: i64 = 75,
-    /// Emitted verbatim as the `sizes` attribute (required by the HTML spec
-    /// whenever `srcset` uses `w` descriptors; unused until PR B).
+    /// Emitted verbatim as the `sizes` attribute on each `<source>` (required
+    /// by the HTML spec whenever `srcset` uses `w` descriptors).
     sizes: []const u8 = "100vw",
     /// Opt-in AVIF: name (PATH-resolved) or path of an avifenc-compatible
-    /// binary. Null = no AVIF output. Unused until PR B.
+    /// binary. Null = no AVIF output. Unused until the AVIF hatch lands.
     avif_encoder: ?[]const u8 = null,
 };
 
@@ -3338,16 +3347,16 @@ fn planImageVariants(io: Io, gpa: Allocator, build: *Build, opts: ImageOptimize)
         const ih = std.math.cast(u32, size.h) orelse continue;
         if (iw == 0 or ih == 0) continue;
 
+        // `widths_buf` is sized off validateImageOptimize's `widths.len <= 64`
+        // bound (+1 for pickWidths' single-intrinsic-width fallback); that
+        // validation owns the cap, so this is not a second silent truncation.
         var widths_buf: [65]u32 = undefined;
-        const widths = plan.pickWidths(
-            opts.widths[0..@min(opts.widths.len, 64)],
-            iw,
-            &widths_buf,
-        );
-        // PR A: single variant — the largest surviving width.
-        const chosen = widths[widths.len - 1 ..];
+        const chosen = plan.pickWidths(opts.widths, iw, &widths_buf);
 
         const basename = pn.name.slice(st);
+        // One webp variant per surviving width — every one, not just the
+        // largest (PR A truncated to a single variant; that truncation is
+        // gone).
         const variants = gpa.alloc(plan.Variant, chosen.len) catch fatal.oom();
         for (chosen, variants) |w, *out| {
             out.* = .{
