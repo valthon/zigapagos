@@ -5,8 +5,7 @@
   then print its URL/PID/log path and exit 0 — no more babysitting a
   foreground `dev` from a script or an agent. `dev stop|status [--json]|logs
   [--follow]` manage it afterward; `--force` restarts an existing session,
-  `--ignore-lock` runs a second, untracked instance. See
-  [`docs/dev-server.md`](../docs/dev-server.md).
+  `--ignore-lock` runs a second, untracked instance. See `docs/dev-server.md`.
 - **`GET /_zigapagos/status`**: the dev control server (formerly just the
   live-reload stream, now always on) reports the served URL/PID plus
   build-aware state — a monotonic `generation` counter, `status`
