@@ -14,6 +14,7 @@ const PathTable = @import("../PathTable.zig");
 const Path = PathTable.Path;
 const PathName = PathTable.PathName;
 const fingerprint = @import("../fingerprint.zig");
+const image_plan = @import("../image/plan.zig");
 const HtmlSafe = @import("superhtml").HtmlSafe;
 
 const log = std.log.scoped(.render);
@@ -473,6 +474,17 @@ fn renderDirective(
                     try w.writeAll("\">");
                 };
 
+                const planned = imageVariantsFor(ctx, page, img.src.?);
+                if (planned) |p| {
+                    try w.writeAll("<picture>");
+                    // PR A: one webp variant, single-entry srcset (no `w`
+                    // descriptor, so no sizes attribute needed). PR B turns
+                    // this into the full width list + sizes.
+                    try w.writeAll("<source type=\"image/webp\" srcset=\"");
+                    try printVariantUrl(ctx, page, img.src.?, p.variants[0].basename, w);
+                    try w.writeAll("\">");
+                }
+
                 try w.writeAll("<img");
                 if (directive.id) |id| try w.print(" id=\"{s}\"", .{id});
                 if (directive.attrs) |attrs| {
@@ -491,6 +503,7 @@ fn renderDirective(
                     if (size.h > 0) try w.print(" height=\"{d}\"", .{size.h});
                 }
                 try w.writeAll(">");
+                if (planned != null) try w.writeAll("</picture>");
                 if (img.linked) |l| if (l) try w.writeAll("</a>");
                 if (caption != null) try w.writeAll("\n<figcaption>");
             },
@@ -617,6 +630,70 @@ fn renderDirective(
                 }
             },
         },
+    }
+}
+
+/// The image_variants entry for an image directive's source, or null when
+/// the feature is off / the source was ineligible / it's a kind we don't
+/// optimize (URLs, external, build assets — spec's out-of-scope list).
+/// Contract 3: allocates nothing.
+fn imageVariantsFor(
+    ctx: *const context.Root,
+    page: *const context.Page,
+    src: supermd.context.Src,
+) ?*const image_plan.Planned {
+    const map = &ctx._meta.build.image_variants;
+    if (map.count() == 0) return null;
+    const ref: image_plan.SourceRef = switch (src) {
+        .page_asset => |pa| .{
+            .kind = .page,
+            .variant_id = page._scan.variant_id,
+            .path = pa.resolved.path,
+            .name = pa.resolved.name,
+        },
+        .site_asset => |sa| .{
+            .kind = .site,
+            .variant_id = 0,
+            .path = sa.resolved.path,
+            .name = sa.resolved.name,
+        },
+        else => return null,
+    };
+    return map.getPtr(ref);
+}
+
+/// Print a derived variant's URL: the same prefix + directory the fallback
+/// original gets from printUrl, with the variant basename substituted.
+/// The basename is already content-addressed, so fingerprint.fmtUrl is
+/// deliberately NOT consulted (double-hashing would desync install/link).
+fn printVariantUrl(
+    ctx: *const context.Root,
+    page: *const context.Page,
+    src: supermd.context.Src,
+    basename: []const u8,
+    w: *Writer,
+) !void {
+    switch (src) {
+        .page_asset => |pa| {
+            try ctx.printLinkPrefix(w, page._scan.variant_id, page != ctx.page);
+            const path: Path = @enumFromInt(pa.resolved.path);
+            const v = ctx._meta.build.variants[page._scan.variant_id];
+            for (path.slice(&v.path_table)) |comp| {
+                try w.writeAll(comp.slice(&v.string_table));
+                try w.writeAll("/");
+            }
+            try w.writeAll(basename);
+        },
+        .site_asset => |sa| {
+            try printAssetUrlPrefix(ctx, page, w, false);
+            const path: Path = @enumFromInt(sa.resolved.path);
+            for (path.slice(&ctx._meta.build.pt)) |comp| {
+                try w.writeAll(comp.slice(&ctx._meta.build.st));
+                try w.writeAll("/");
+            }
+            try w.writeAll(basename);
+        },
+        else => unreachable, // imageVariantsFor filtered these
     }
 }
 

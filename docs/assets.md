@@ -152,6 +152,24 @@ because the extension is load-bearing downstream: a web server picks the
 - **Page assets.** They are installed next to the page that owns them, and a
   page's own assets are invalidated by the same deploy that rewrites the page.
 
+### Derived image variants
+
+`image_optimize` (issue #132) names its own derived WebP variants
+`<stem>.<hash8>.<width>.webp` rather than going through this section's
+`asset_fingerprint` machinery at all — see [`docs/images.md`'s cache
+section](images.md#cache) for the full naming rule. Worth contrasting with
+the caveat below: that hash is taken over source bytes **and every
+transform parameter** (width, codec, quality, encoder version), which is
+what this document's minified-CSS caveat cannot claim — a change to the
+minifier itself moves no CSS hash, because that hash is source-bytes-only.
+An image variant's name moves on *any* parameter change, deliberately,
+because the transform is the thing being cached, not just the input to it.
+
+Pruning is inherent rather than something this section's report has to
+account for separately: a variant is planned only from a directive some page
+actually references, so an unreferenced source image gets no variant and
+never enters the pruned-asset report's accounting at all.
+
 ### Where it applies
 
 Fingerprinting is a `zigapagos release` pass, so it applies wherever a release

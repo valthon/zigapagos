@@ -20,6 +20,7 @@ content/docs/build-errors.smd
 content/docs/superhtml.smd
 content/docs/runtime-dependencies.smd
 content/docs/assets.smd
+content/docs/images.smd
 content/docs/diagnostics.smd
 content/docs/observability.smd
 content/docs/migrate-from-astro.smd

@@ -154,6 +154,14 @@
             </ctx>
           </li>
           <li>
+            <ctx :if="$page.custom.get('slug').eql('images')">
+              <a aria-current="page" href="$site.page('docs/images').link()">Images</a>
+            </ctx>
+            <ctx :if="$page.custom.get('slug').eql('images').not()">
+              <a href="$site.page('docs/images').link()">Images</a>
+            </ctx>
+          </li>
+          <li>
             <ctx :if="$page.custom.get('slug').eql('diagnostics')">
               <a aria-current="page" href="$site.page('docs/diagnostics').link()">Machine-readable diagnostics</a>
             </ctx>

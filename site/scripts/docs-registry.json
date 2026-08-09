@@ -70,6 +70,13 @@
     "description": "How a file under assets_dir_path reaches the output tree: refcounted installs, the two switches that change that, and why an unreferenced asset is dropped."
   },
   {
+    "canonical": "docs/images.md",
+    "mirror": "images.smd",
+    "slug": "images",
+    "title": "Images",
+    "description": "Build-time WebP variants and <picture> emission from image_optimize: config, cache, and what PR A ships vs. what srcset support adds."
+  },
+  {
     "canonical": "docs/diagnostics.md",
     "mirror": "diagnostics.smd",
     "slug": "diagnostics",
