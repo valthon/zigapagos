@@ -60,13 +60,33 @@ pub const PaginationState = struct {
 /// to call `printLinkPrefix` through — shares this ONE chokepoint instead of
 /// growing a second, driftable copy of the same three lines (issue #150's
 /// design caveat: "do not invent a second composition").
+///
+/// `host_url` may carry exactly one trailing '/' -- `Config.validate`
+/// (root.zig) explicitly allows a `host_url` whose URI path is exactly "/"
+/// (the percent-encoded-path carve-out next to its "must not contain a
+/// path" check), and stores it untrimmed: `$site.host_url` has to keep
+/// reading back what the author wrote. Every consumer of THIS function
+/// unconditionally appends its own leading '/' next (either the
+/// `url_path_prefix` branch or the bare "/" below), so printing `host_url`
+/// verbatim doubles that slash -- "https://example.com/" + "/" ->
+/// "https://example.com//" -- in every absolute URL this chokepoint
+/// composes: sitemap `<loc>` entries (always `force_host_url`),
+/// `$page.absLink()`, `Asset.absLink()`. Trimmed HERE, not at config load
+/// (that would change the value `$site.host_url` itself reads back as) and
+/// not per call site (every one of them would need the same fix).
 pub fn printSimplePrefix(
     w: *Writer,
     host_url: []const u8,
     url_path_prefix: []const u8,
     force_host_url: bool,
 ) error{WriteFailed}!void {
-    if (force_host_url) try w.print("{s}", .{host_url});
+    if (force_host_url) {
+        const trimmed = if (std.mem.endsWith(u8, host_url, "/"))
+            host_url[0 .. host_url.len - 1]
+        else
+            host_url;
+        try w.print("{s}", .{trimmed});
+    }
     if (url_path_prefix.len > 0) {
         try w.print("/{s}/", .{url_path_prefix});
     } else {

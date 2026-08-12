@@ -209,6 +209,20 @@ test "sitemap: composeRawUrl with no url_path_prefix" {
     try std.testing.expectEqualStrings("https://example.com/app/", got);
 }
 
+test "sitemap: composeRawUrl trims a trailing-slash host_url instead of doubling the slash" {
+    // Config.validate (root.zig) explicitly allows a host_url whose URI path
+    // is exactly "/" -- e.g. "https://example.com/" -- and stores it
+    // untrimmed. Root.printSimplePrefix (the chokepoint this composes
+    // through) has to trim it, or every absolute URL doubles the slash.
+    const gpa = std.testing.allocator;
+    const got = try composeRawUrl(gpa, "https://example.com/", "myprefix", "/app/");
+    defer gpa.free(got);
+    try std.testing.expectEqualStrings("https://example.com/myprefix/app/", got);
+    // Scoped past the scheme's own "//" -- this is the doubled-slash defect
+    // shape specifically (host immediately followed by a second "/").
+    try std.testing.expect(std.mem.indexOf(u8, got, "example.com//") == null);
+}
+
 test "sitemap: composePageUrl composes host_url + url_path_prefix + page path with no pagination tail at n=1" {
     const gpa = std.testing.allocator;
     var st: StringTable = .empty;

@@ -40,6 +40,11 @@
 #       config validation -- `host_url` is a mandatory, always-validated
 #       `Site` field, so there is no SEPARATE "sitemap needs host_url" check
 #       to write; this pins that the existing validation already covers it.
+#  (12) a TRAILING-SLASH `host_url` ("https://example.com/", which
+#       Config.validate explicitly allows -- its URI path is exactly "/")
+#       does not double the slash in any <loc>. Same no-doubled-slash scan
+#       as (6), against a site built with the trailing slash, so a
+#       regression here fails the same way (6) would.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 REPO="$(pwd)"
@@ -461,5 +466,70 @@ set -e
 [[ "$HU_RC" -ne 0 ]] || { cat "$WORK/hu.out" "$WORK/hu.err"; fail "(11) 'sitemap = true' with an empty host_url built successfully"; }
 grep -qi 'host_url\|host url' "$WORK/hu.err" || { cat "$WORK/hu.err"; fail "(11) the failure does not mention host_url"; }
 echo "PASS (11): 'sitemap = true' with an invalid host_url still fails at config validation (the existing mandatory-field check already covers it)"
+
+# --- (12) a trailing-slash host_url must not double the slash in any <loc> ----
+TRAILSITE="$WORK/trailsite"
+mkdir -p "$TRAILSITE/content/blog" "$TRAILSITE/layouts/templates" "$TRAILSITE/assets"
+cat >"$TRAILSITE/zigapagos.ziggy" <<'EOF'
+Site {
+    .title = "Trailing Slash Host",
+    .host_url = "https://example.com/",
+    .url_path_prefix = "myprefix",
+    .content_dir_path = "content",
+    .layouts_dir_path = "layouts",
+    .assets_dir_path = "assets",
+    .sitemap = true,
+}
+EOF
+cp "$SITE/layouts/templates/base.shtml" "$TRAILSITE/layouts/templates/base.shtml"
+cp "$SITE/layouts/page.shtml" "$TRAILSITE/layouts/page.shtml"
+cat >"$TRAILSITE/content/index.smd" <<'EOF'
+---
+.title = "Home",
+.layout = "page.shtml",
+---
+Home.
+EOF
+# A paginated section too: composePageUrl's n>1 branch appends its own tail
+# after the same prefix, so it needs the same trim to not double the slash.
+cat >"$TRAILSITE/content/blog/index.smd" <<'EOF'
+---
+.title = "Blog",
+.layout = "page.shtml",
+.pagination = { .page_size = 2 },
+---
+3 active posts, page_size=2: 2 windows.
+EOF
+for i in 1 2 3; do
+  cat >"$TRAILSITE/content/blog/post$i.smd" <<EOF
+---
+.title = "Post $i",
+.date = @date("2024-06-0${i}T00:00:00"),
+.layout = "page.shtml",
+---
+Post $i.
+EOF
+done
+if ! ( cd "$TRAILSITE" && "$ZIGAPAGOS" release "--output=$WORK/trail-out" --force ) >"$WORK/trail.log" 2>&1; then
+  cat "$WORK/trail.log"; fail "(12) the trailing-slash host_url fixture failed to build"
+fi
+TRAIL_SM="$WORK/trail-out/sitemap.xml"
+[[ -f "$TRAIL_SM" ]] || { cat "$WORK/trail.log"; fail "(12) sitemap.xml was not emitted for the trailing-slash host_url fixture"; }
+mapfile -t TRAIL_LOCS < <(grep -o '<loc>[^<]*</loc>' "$TRAIL_SM" | sed 's/<loc>//; s#</loc>##')
+[[ "${#TRAIL_LOCS[@]}" -gt 0 ]] || { cat "$TRAIL_SM"; fail "(12) trailing-slash fixture's sitemap.xml has zero entries"; }
+for loc in "${TRAIL_LOCS[@]}"; do
+  case "$loc" in
+    https://example.com/myprefix/*) ;;
+    *) echo "--- sitemap.xml ---"; cat "$TRAIL_SM"; fail "(12) '$loc' does not start with the trimmed host_url + url_path_prefix exactly once" ;;
+  esac
+  case "$loc" in
+    *example.com//*) echo "--- sitemap.xml ---"; cat "$TRAIL_SM"; fail "(12) '$loc' has a doubled slash right after the (trailing-slash) host_url" ;;
+  esac
+done
+printf '%s
+' "${TRAIL_LOCS[@]}" | grep -qxF "https://example.com/myprefix/" || { cat "$TRAIL_SM"; fail "(12) the home page's URL is missing entirely"; }
+printf '%s
+' "${TRAIL_LOCS[@]}" | grep -qxF "https://example.com/myprefix/blog/page/2/" || { cat "$TRAIL_SM"; fail "(12) the pagination window's URL (n>1, exercises composePageUrl's tail branch) is missing or malformed"; }
+echo "PASS (12): a trailing-slash host_url does not double the slash in any <loc>, including a pagination window's URL"
 
 echo "PASS: tests/sitemap/sitemap.sh"
