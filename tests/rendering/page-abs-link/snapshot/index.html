@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>Page Abs Link Test</title>
+    <link rel="canonical" href="https://example.com/">
+    <meta property="og:url" content="https://example.com/">
+    <meta name="rel-link" content="/">
+    <meta name="abs-link-ref" content="https://example.com/#intro">
+    <meta name="rel-link-ref" content="/#intro">
+    <meta name="other-page-abs" content="https://example.com/about/">
+    <meta name="other-page-rel" content="/about/">
+  </head>
+  <body>
+    <h1>Home</h1>
+    <div><p>This fixture pins <code>$page.absLink()</code>/<code>$page.absLinkRef()</code> (issue #151): a SIMPLE site (no <code>url_path_prefix</code>), so the composed URL is exactly <code>host_url</code> + page path, with no prefix segment to get wrong. The <code>url_path_prefix</code> case (prefix present exactly once) is pinned instead by <code>tests/rendering/abs-link/</code>, which already sets one for <code>Asset.absLink()</code> and now also exercises <code>$page.absLink()</code>.</p><h1 id="intro">Intro</h1><p>Anchor target for <code>linkRef()</code>/<code>absLinkRef()</code>.</p></div>
+  </body>
+</html>

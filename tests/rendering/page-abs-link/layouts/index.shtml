@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title :text="$site.title"></title>
+    <link rel="canonical" href="$page.absLink()">
+    <meta property="og:url" content="$page.absLink()">
+    <meta name="rel-link" content="$page.link()">
+    <meta name="abs-link-ref" content="$page.absLinkRef('intro')">
+    <meta name="rel-link-ref" content="$page.linkRef('intro')">
+    <meta name="other-page-abs" content="$site.page('about').absLink()">
+    <meta name="other-page-rel" content="$site.page('about').link()">
+  </head>
+  <body>
+    <h1 :text="$page.title"></h1>
+    <div :html="$page.content()"></div>
+  </body>
+</html>

@@ -501,8 +501,9 @@ fn checkAbsUrlMeta(ctx: *Ctx, doc: Doc) CheckError!void {
                     // paren is the last character and a reader selecting to
                     // end-of-line copies something that parses.
                     "{s} is root-relative ('{s}'); Open Graph and Twitter card metadata " ++
-                        "require an absolute URL — build one from $site.host_url, e.g. " ++
-                        "$site.host_url.addPath($site.asset('og.png').link())",
+                        "require an absolute URL — for an asset, build one from $site.host_url, " ++
+                        "e.g. $site.host_url.addPath($site.asset('og.png').link()); for a page " ++
+                        "URL (e.g. og:url), use $page.absLink()",
                     .{ k, v },
                 );
             },
@@ -524,7 +525,8 @@ fn checkAbsUrlMeta(ctx: *Ctx, doc: Doc) CheckError!void {
                     check_abs_url_meta,
                     doc.path,
                     "rel=canonical is root-relative ('{s}'); a canonical URL must be " ++
-                        "absolute — build one from $site.host_url",
+                        "absolute — use $page.absLink() (or, for an asset, build one from " ++
+                        "$site.host_url)",
                     .{h},
                 );
             },

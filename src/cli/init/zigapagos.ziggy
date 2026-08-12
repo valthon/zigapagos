@@ -1,5 +1,8 @@
 Site {
     .title = "Welcome to Zigapagos!",
+    // Placeholder -- every layout's canonical link and og:url are built from
+    // this via $page.absLink() (issue #151), so change it to your real
+    // domain before deploying. Left as-is, they will point at example.com.
     .host_url = "https://example.com",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",

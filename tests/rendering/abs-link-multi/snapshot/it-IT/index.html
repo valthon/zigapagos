@@ -11,6 +11,61 @@
          as a bare `/page-og.png`. -->
     <link rel="canonical" href="https://example.com/it-IT/page-og.png">
 
+    <!-- PAGE itself via absLink (issue #151, not an Asset): a different Zig
+         function (`Page.linkImpl`) from the asset cells above, but it must
+         go through the exact same `printLinkPrefix` call -- this pins that
+         it does, on a MULTILINGUAL site, without a second composition path
+         drifting from the asset one. -->
+    <meta property="og:url" content="https://example.com/it-IT/">
+
+    <!-- PAGE itself via absLink, reached through $page.locale(...) instead
+         of $page directly (issue #151). Corrected after review: the first
+         version of this comment got three things backwards, so read this
+         one carefully rather than trusting the name "CROSS-VARIANT" alone --
+         which variant `$page.locale('de-DE')` actually returns depends on
+         which page is rendering:
+           - Rendered from de-DE's OWN page, the target IS the current
+             variant -- SAME-variant, `handled=false` (Page.zig:1061-1064).
+             It is `linkImpl`'s own one-line host-print patch
+             (Page.zig:1065-1067) -- NOT `printLinkPrefix` alone -- that
+             makes `absLink()` come out absolute here. That patch is NOT
+             asset-only: `Page.linkImpl` carries its own copy, independent
+             of `Asset.linkImpl`'s (Asset.zig:82-121). This is the exact
+             same mechanism the `og:url` cell six lines above pins, reached
+             through a different accessor -- so "Page.absLink relies on
+             printLinkPrefix alone for every case" was never true; that cell
+             is the standing counter-example.
+           - Rendered from en-US/fr-FR/it-IT, the target (de-DE) IS a
+             different variant -- `handled=true` here because variant_id
+             differs, NOT because `site._meta.kind == .multi`: `.multi` is
+             precisely the arm where `handled` CAN be false (see the de-DE
+             case above; `.simple` is the only arm that is unconditionally
+             `true`). In this direction `printLinkPrefix`'s own cross-variant
+             branch already prints the host on its own (de-DE's override
+             differs from every other locale's), so this cell does not
+             actually exercise `force_host_url` that way -- the
+             shared-host-cross-variant cell below does. -->
+    <meta name="cross-variant-page-abs" content="https://de.example.com/de-DE/">
+    <meta name="cross-variant-page-rel" content="https://de.example.com/de-DE/">
+
+    <!-- SHARED-HOST cross-variant PAGE via absLink (#151 review, minor #2):
+         en-US and it-IT both omit `host_url_override`, so they share the
+         exact same `host_url` SLICE (`ml.host_url` itself, not merely equal
+         text -- see printLinkPrefix's `.ptr` compare, and contrast with the
+         de-DE/fr-FR `same-host-cross-variant` asset cells below, which are
+         equal TEXT but a different pointer). Read from en-US's snapshot,
+         `$page.locale('it-IT')` is genuinely cross-variant AND same host
+         pointer, so `printLinkPrefix`'s `our_host_url.ptr !=
+         other_host_url.ptr` check does NOT fire by itself -- `force_host_url`
+         is the ONLY thing deciding whether a host gets printed here. The
+         de-DE-targeted cell above cannot be this: de-DE's override always
+         differs by content, so its cross-variant branch already prints a
+         host regardless of `force_host_url`. If `absLink()` were ever
+         reduced to a plain alias of `link()`, THIS cell (on the en-US
+         snapshot) is the one that would go root-relative and catch it. -->
+    <meta name="shared-host-cross-variant-page-abs" content="https://example.com/it-IT/">
+    <meta name="shared-host-cross-variant-page-rel" content="/it-IT/">
+
     <!-- SITE asset via absLink: must keep a separator between
          `assets_prefix_path` and the asset name. This used to render as
          `https://example.com/staticsite.css`. -->
