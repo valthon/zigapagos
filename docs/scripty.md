@@ -400,7 +400,7 @@ $page.hasPrev()
 Returns the URL of the target page.
 
 In multilingual sites, if the target page belongs to a different
-localized variant, the link will containt the full host URL if
+localized variant, the link will contain the full host URL if
 'host_url_override' was specified for either page.
 
 The result is root-relative unless the multilingual case above
