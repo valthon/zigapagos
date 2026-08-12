@@ -79,6 +79,12 @@ pub const ScanResult = struct {
     entries: []Entry,
     island_names: std.StringHashMapUnmanaged(void),
     has_config: bool,
+    /// True when `package.json` at the project root mentions
+    /// `@astrojs/sitemap` (issue #150). Astro's sitemap integration has a
+    /// direct mapping now that zigapagos generates its own -- flagged in
+    /// MIGRATION.md as a worklist item rather than silently dropped, the
+    /// way it was before this field existed.
+    has_astro_sitemap: bool,
 };
 
 /// Run the two-pass Astro scan over `root` and return the results.
@@ -108,10 +114,26 @@ pub fn scan(io: Io, gpa: Allocator, root: Io.Dir) ScanResult {
         }
     }
 
+    // A plain substring scan of package.json, not a JSON parse: this
+    // importer converts nothing (see the CLI's own usage text), so a
+    // dependency name is all the signal a worklist entry needs, and a
+    // full parse would be new machinery to detect one string. A false
+    // positive (the substring appearing in an unrelated key/comment) just
+    // adds one extra worklist line for a human to dismiss; a false
+    // negative silently repeats the exact defect this field exists to fix
+    // (see the doc comment on `ScanResult.has_astro_sitemap`), so the scan
+    // is deliberately loose rather than strict.
+    var has_astro_sitemap = false;
+    if (root.readFileAlloc(io, "package.json", gpa, .limited(16 * 1024 * 1024))) |content| {
+        defer gpa.free(content);
+        has_astro_sitemap = std.mem.indexOf(u8, content, "@astrojs/sitemap") != null;
+    } else |_| {}
+
     return .{
         .entries = entries.toOwnedSlice(gpa) catch fatal.oom(),
         .island_names = island_names,
         .has_config = has_config,
+        .has_astro_sitemap = has_astro_sitemap,
     };
 }
 
@@ -167,7 +189,7 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8) bool {
 
     const res = scan(io, gpa, root);
 
-    const report = buildReport(gpa, dir_path, res.entries, res.has_config, scaffold_dir != null);
+    const report = buildReport(gpa, dir_path, res.entries, res.has_config, scaffold_dir != null, res.has_astro_sitemap);
 
     const f = Io.Dir.cwd().createFile(io, out_path, .{}) catch |err|
         fatal.file(out_path, err);
@@ -628,7 +650,7 @@ pub fn scaffoldIslands(io: Io, gpa: Allocator, astro_root: Io.Dir, scaffold_dir:
 /// mismatches the allocator's tracked allocation size and panics ("Invalid
 /// free") under the debug allocator. No caller freed this before the
 /// pagination worklist test did, so the mismatch went unnoticed.
-pub fn buildReport(gpa: Allocator, dir_path: []const u8, entries: []const Entry, has_config: bool, has_scaffold: bool) []const u8 {
+pub fn buildReport(gpa: Allocator, dir_path: []const u8, entries: []const Entry, has_config: bool, has_scaffold: bool, has_astro_sitemap: bool) []const u8 {
     var aw: std.Io.Writer.Allocating = .init(gpa);
     const w = &aw.writer;
 
@@ -641,8 +663,12 @@ pub fn buildReport(gpa: Allocator, dir_path: []const u8, entries: []const Entry,
         \\## 1. Scaffold the target
         \\
         \\- [ ] `zigapagos.ziggy` (begins with `Site {{`), `content/`, `layouts/`, `assets/`, `components/`, `build.sh`
-        \\{s}
-    , .{ dir_path, if (has_config) "- [ ] Port `astro.config.*` → `zigapagos.ziggy` (site/host) + `build.sh` (islands)\n" else "" }) catch fatal.oom();
+        \\{s}{s}
+    , .{
+        dir_path,
+        if (has_config) "- [ ] Port `astro.config.*` → `zigapagos.ziggy` (site/host) + `build.sh` (islands)\n" else "",
+        if (has_astro_sitemap) "- [ ] `@astrojs/sitemap` detected → mapped: set `sitemap = true` in `zigapagos.ziggy` (requires `host_url`, already required) — zigapagos generates `sitemap.xml` at release time\n" else "",
+    }) catch fatal.oom();
 
     buildWiringSection(w, entries, has_scaffold);
 
@@ -1134,7 +1160,7 @@ test "paginate: scan flags a paginated route and buildReport prescribes the conv
     }
     try std.testing.expect(found);
 
-    const report = buildReport(gpa, "astro-sample", res.entries, res.has_config, false);
+    const report = buildReport(gpa, "astro-sample", res.entries, res.has_config, false, res.has_astro_sitemap);
     defer gpa.free(report);
 
     try std.testing.expect(std.mem.indexOf(u8, report, "`src/pages/blog/[page].astro`") != null);
@@ -1145,6 +1171,54 @@ test "paginate: scan flags a paginated route and buildReport prescribes the conv
         ".pagination = { .page_size = 4, .url_style = \"plain_dir\" }",
     ) != null);
     try std.testing.expect(std.mem.indexOf(u8, report, "content/blog/index.smd") != null);
+}
+
+test "scan detects @astrojs/sitemap in package.json and buildReport flags it in the worklist" {
+    const testing_io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    {
+        const f = try tmp.dir.createFile(testing_io, "package.json", .{});
+        defer f.close(testing_io);
+        var w = f.writer(testing_io, &.{});
+        try w.interface.writeAll(
+            \\{
+            \\  "dependencies": {
+            \\    "astro": "^4.0.0",
+            \\    "@astrojs/sitemap": "^3.0.0"
+            \\  }
+            \\}
+            \\
+        );
+    }
+
+    var res = scan(testing_io, gpa, tmp.dir);
+    defer freeScanResult(gpa, &res);
+    try std.testing.expect(res.has_astro_sitemap);
+
+    const report = buildReport(gpa, "astro-sample", res.entries, res.has_config, false, res.has_astro_sitemap);
+    defer gpa.free(report);
+    try std.testing.expect(std.mem.indexOf(u8, report, "@astrojs/sitemap") != null);
+    try std.testing.expect(std.mem.indexOf(u8, report, "sitemap = true") != null);
+}
+
+test "scan reports no @astrojs/sitemap when package.json is absent or silent about it" {
+    const testing_io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // No package.json at all: readFileAlloc's error.FileNotFound must fall
+    // through to "false", not propagate and abort the whole scan.
+    var res = scan(testing_io, gpa, tmp.dir);
+    defer freeScanResult(gpa, &res);
+    try std.testing.expect(!res.has_astro_sitemap);
+
+    const report = buildReport(gpa, "astro-sample", res.entries, res.has_config, false, res.has_astro_sitemap);
+    defer gpa.free(report);
+    try std.testing.expect(std.mem.indexOf(u8, report, "@astrojs/sitemap") == null);
 }
 
 test "usage says outright that migrate converts nothing" {
