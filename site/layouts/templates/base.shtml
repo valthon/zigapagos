@@ -25,6 +25,15 @@
     <meta property="og:type" content="website">
     <meta property="og:title" content="$page.title">
     <meta property="og:description" content="$page.description">
+    <!-- Canonical + og:url via $page.absLink() (issue #151): before this
+         builtin existed the only one-call form was the asset-flavored
+         $site.host_url.addPath(...) below, which doesn't fit a PAGE url --
+         hand-composing it here would have meant repeating host_url +
+         url_path_prefix + $page.link() by hand, exactly the composition
+         $page.absLink() now does through the same printLinkPrefix
+         Asset.absLink() already goes through. -->
+    <link rel="canonical" href="$page.absLink()">
+    <meta property="og:url" content="$page.absLink()">
     <!-- og:image is a PNG, not og.svg: the Open Graph protocol doesn't list
          SVG as a supported image type, and Twitter/X, Facebook and LinkedIn's
          scrapers all skip it, rendering a card with no image. og.svg stays as
