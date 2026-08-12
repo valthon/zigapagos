@@ -480,7 +480,8 @@ pub fn substituteArg(
 /// `<staging_root_abs>/<prefix>` SYMLINK into `site_dir_abs` -- does not work:
 /// zigbase's static server canonicalizes every match and refuses to serve
 /// anything whose real path escapes the served root (its own F10 hardening,
-/// confirmed against ~/nothlav/zigbase's `static_files.zig`), and a symlinked
+/// confirmed against zigbase's `static_files.zig` -- the F10 escape-guard and
+/// its dedicated test), and a symlinked
 /// prefix pointing outside the staging root is exactly that escape. It would
 /// silently 404 every request instead of working. So the mirror has to be
 /// REAL: every regular file under `site_dir_abs` is copied into
