@@ -9,6 +9,15 @@ const Blake3 = std.crypto.hash.Blake3;
 
 pub const Codec = enum { webp, avif };
 
+/// Cap on a single source-image read. The planner (`root.zig`'s
+/// `planImageVariants`) reads a source once to size/plan its variants; the
+/// deriver (`derive.zig`'s `run`) reads the SAME source again on a cache
+/// miss to decode/resample/encode it. Named once here rather than
+/// duplicated as a bare `.limited(512 * 1024 * 1024)` literal in both call
+/// sites (#147) — plan.zig is the natural shared home since both files
+/// already import it for `SourceRef`/`eligible`/etc.
+pub const max_source_bytes: std.Io.Limit = .limited(512 * 1024 * 1024);
+
 pub const SourceRef = struct {
     kind: enum(u8) { site, page },
     /// 0 for `.site` (multilingual sites keep one copy of site assets).

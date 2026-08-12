@@ -645,3 +645,29 @@ pub fn scanTemplates(b: *Build, io: Io, gpa: Allocator, arena: Allocator) !void 
         }
     }
 }
+
+/// Resolve an image-derivation `SourceRef` to the directory it lives under
+/// and the string/path tables that name it there. Both `root.zig`'s
+/// `planImageVariants` (planning a variant's name before the render pass
+/// needs it) and `image/derive.zig`'s `run` (reading the SAME source again
+/// on a cache miss) need this exact triple, decided the exact same way — if
+/// the two ever diverged, a derive job would read a DIFFERENT file than the
+/// planner hashed, and the cache name would no longer describe the bytes
+/// (#147: this used to be a `switch (ref.kind)` copy-pasted into both
+/// files, a "must-agree pair that nothing pins").
+///
+/// NO_SLOP §2.2a contract 3 (caller-buffer): allocates nothing; every field
+/// of the returned struct is a borrow of state already owned by `self`.
+pub fn resolveImageSourceRef(self: *const Build, ref: @import("image/plan.zig").SourceRef) struct {
+    dir: Io.Dir,
+    st: *const StringTable,
+    pt: *const PathTable,
+} {
+    return switch (ref.kind) {
+        .site => .{ .dir = self.site_assets_dir, .st = &self.st, .pt = &self.pt },
+        .page => blk: {
+            const v = &self.variants[ref.variant_id];
+            break :blk .{ .dir = v.content_dir, .st = &v.string_table, .pt = &v.path_table };
+        },
+    };
+}

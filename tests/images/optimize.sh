@@ -286,6 +286,15 @@ WEBP_POS=$(grep -bo '<source type="image/webp"' "$HTML_AVIF" | head -1 | cut -d:
 [[ "$AVIF_POS" -lt "$WEBP_POS" ]] || fail "avif <source> (byte $AVIF_POS) not before webp <source> (byte $WEBP_POS)"
 echo "PASS: (7a) avif <source> appears before webp <source>"
 
+# (7a-sizes) #147: the WebP <source> line's `sizes=` was pinned, the AVIF
+# line's never was — the two lines are built by the same
+# `writeImageSourceLine` call, once per codec, so a regression that dropped
+# `sizes` from only the FIRST (avif) call would have shipped silently.
+AVIF_LINE=$(grep -o '<source type="image/avif"[^>]*>' "$HTML_AVIF" | head -1) || true
+[[ -n "$AVIF_LINE" ]] || fail "(7a-sizes) no avif <source> line found to check for sizes="
+echo "$AVIF_LINE" | grep -q 'sizes="100vw"' || fail "(7a-sizes) avif <source> line missing sizes=\"100vw\": $AVIF_LINE"
+echo "PASS: (7a-sizes) avif <source> line carries sizes=\"100vw\""
+
 # Every URL in the avif srcset resolves to a file that exists, is
 # param-addressed like the webp variants, and starts with the stub's marker
 # (i.e. actually went through the spawn -> rename -> install path, not a
