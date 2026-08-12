@@ -90,6 +90,60 @@ pub fn printLinkPrefix(
     }
 }
 
+/// The one patch `printLinkPrefix` above cannot provide on its own (issue
+/// #151 review -- extracted here after `Asset.linkImpl` and `Page.linkImpl`
+/// were caught carrying verbatim-identical copies of it, each with its own
+/// long comment restating the same reasoning). Call this INSTEAD of
+/// `printLinkPrefix` whenever the caller wants an absolute URL
+/// (`force_host_url=true` in `Asset`/`Page`'s `absLink()` family); for the
+/// relative case call `printLinkPrefix(w, variant_id, false)` directly --
+/// there is no patch to apply there, and skipping this function is what
+/// keeps the relative hot path (`link()`) from computing (and discarding)
+/// the site/`handled` lookup below on every call.
+///
+/// The gap: `printLinkPrefix`'s `.multi` arm only ever prints a host INSIDE
+/// `if (other_variant_id != our_variant_id)`, i.e. only cross-variant. A
+/// same-variant target on a multilingual site -- the common case, since the
+/// target is usually the page currently rendering -- falls through that
+/// guard and comes back root-relative even when the caller asked for an
+/// absolute URL. Hence `handled`: this function prints the host itself ONLY
+/// in the cell `printLinkPrefix` ignores (multilingual, same variant), then
+/// defers to `printLinkPrefix(force_host_url=true)` for everything else --
+/// every cross-variant case (which already prints on its own whenever the
+/// two hosts differ) and the simple-site case.
+///
+/// The patch lives HERE, wrapped around `printLinkPrefix`, rather than
+/// inside it, because `printLinkPrefix`'s `force_host_url` parameter is not
+/// exclusively "give me an absolute URL": `render/html.zig`'s `printUrl`
+/// call sites pass `page != ctx.page`, reusing the same parameter as "this
+/// is a cross-page reference" -- and `page != ctx.page` with the SAME
+/// variant is reachable via embedded content. Making `printLinkPrefix`
+/// itself always print a same-variant host under that flag would change
+/// `$link` output on every multilingual site that embeds content across
+/// pages. This function is additive on top instead: a second, narrower call
+/// that only ever runs where `Asset.absLink()`/`Page.absLink()` route
+/// through it.
+///
+/// This is the SINGLE home for this patch and its reasoning -- do not
+/// duplicate it back into `Asset.linkImpl`/`Page.linkImpl`, and do not add a
+/// third composition path elsewhere (e.g. hand-composing
+/// `$site.host_url.addPath(...)`, the doctor-recommended workaround
+/// `Page.absLink()` replaced): `printLinkPrefix` plus this one patched cell
+/// is the WHOLE story for how an absolute link is built.
+pub fn printAbsLinkPrefix(
+    ctx: *const Root,
+    w: *Writer,
+    variant_id: u32,
+) error{ OutOfMemory, WriteFailed }!void {
+    const site = ctx._meta.sites.entries.items(.value)[variant_id];
+    const handled = switch (site._meta.kind) {
+        .simple => true,
+        .multi => variant_id != ctx.page._scan.variant_id,
+    };
+    if (!handled) try w.print("{s}", .{site.host_url});
+    try ctx.printLinkPrefix(w, variant_id, true);
+}
+
 pub const docs_description = "";
 pub const Fields = struct {
     pub const site =

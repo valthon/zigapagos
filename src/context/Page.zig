@@ -1023,14 +1023,11 @@ pub const Fields = struct {
 /// compose the SAME url -- `host_url` (when `force_host_url`) + the site's
 /// `url_path_prefix` + this page's path, optionally with a `#frag` suffix --
 /// and differ only in those two knobs. Composition goes through
-/// `ctx.printLinkPrefix`, the one place that knows how `host_url` and
-/// `url_path_prefix` combine and how multilingual host-crossing works, plus
-/// the one-line same-variant patch below that `printLinkPrefix` itself
-/// cannot cover (see the comment on it) -- together they are the WHOLE
-/// composition, so `absLink()` cannot drift from what
+/// `ctx.printLinkPrefix`/`ctx.printAbsLinkPrefix` (`Root.zig`, the single
+/// home for both the normal composition and the one patched cell the
+/// absolute case needs), so `absLink()` cannot drift from what
 /// `$site.host_url.addPath($page.link())` already computes by hand (the
-/// doctor-recommended workaround this builtin replaces). Do not add a
-/// third path alongside these two.
+/// doctor-recommended workaround this builtin replaces).
 ///
 /// NO_SLOP.md §2.2a contract 1 (self-freeing): the only allocation is the
 /// growing `Writer.Allocating` buffer, which escapes whole as the returned
@@ -1048,29 +1045,18 @@ fn linkImpl(
     var aw: Writer.Allocating = .init(gpa);
     errdefer aw.deinit();
 
-    // `printLinkPrefix` honours `force_host_url` in every case but ONE
-    // (the same gap `Asset.linkImpl` documents and patches at
-    // Asset.zig:82-121): its `.multi` arm only prints a host at all INSIDE
-    // `if (other_variant_id != our_variant_id)` (Root.zig), i.e. only
-    // cross-variant. A page in the CURRENT render's own locale -- the
-    // common case, since `p` is usually `$page` itself -- falls through
-    // that guard and would come back root-relative even with
-    // `force_host_url=true`. Patch it the same one-line way Asset does,
-    // rather than teaching `printLinkPrefix` a third caller's special case.
-    const site = ctx._meta.sites.entries.items(.value)[p._scan.variant_id];
-    const handled = switch (site._meta.kind) {
-        .simple => true,
-        .multi => p._scan.variant_id != ctx.page._scan.variant_id,
-    };
-    if (force_host_url and !handled) {
-        aw.writer.print("{s}", .{site.host_url}) catch return error.OutOfMemory;
+    // The cross-variant host patch (issue #151 review: was a
+    // verbatim-duplicated block here and in `Asset.linkImpl`, now
+    // consolidated as the single `Root.printAbsLinkPrefix` -- read its
+    // doc comment for the why). Routing the relative case straight to
+    // `printLinkPrefix` instead of through the helper also means `link()`'s
+    // hot path never computes the site/`handled` lookup that only the
+    // absolute case needs.
+    if (force_host_url) {
+        ctx.printAbsLinkPrefix(&aw.writer, p._scan.variant_id) catch return error.OutOfMemory;
+    } else {
+        ctx.printLinkPrefix(&aw.writer, p._scan.variant_id, false) catch return error.OutOfMemory;
     }
-
-    ctx.printLinkPrefix(
-        &aw.writer,
-        p._scan.variant_id,
-        force_host_url,
-    ) catch return error.OutOfMemory;
 
     aw.writer.print("{f}", .{
         p._scan.url.fmt(
