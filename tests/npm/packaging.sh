@@ -263,7 +263,12 @@ write_stub "$PKG/npm/cli-$KEY/zigapagos"
 # or a shell function) confines the value to that one call and leaves every
 # other call site untouched — no new positional arg to `install_project`, no
 # value that could leak forward into the next call. Only the #116 case below
-# sets it.
+# sets it. Parsed into an array via `read -ra` (word-splits on whitespace, same
+# as an unquoted expansion would) and expanded as `"${arr[@]}"`, rather than
+# spliced in unquoted, so a flag value can never be re-globbed against
+# `$dir` — today's only value is the fixed literal `--omit=optional`, but an
+# unquoted `$NPM_INSTALL_FLAGS` would silently pathname-expand anything with a
+# `*` or `?` in it.
 install_project() {
   local dir="$1"; shift
   mkdir -p "$dir"
@@ -300,7 +305,9 @@ install_project() {
       ) + "\n",
     );
   ' "$dir" "$VERSION" "$@" -- "${DEP_PAIRS[@]}"
-  ( cd "$dir" && npm install --no-audit --no-fund --offline ${NPM_INSTALL_FLAGS:-} \
+  local npm_extra_flags=()
+  read -ra npm_extra_flags <<< "${NPM_INSTALL_FLAGS:-}"
+  ( cd "$dir" && npm install --no-audit --no-fund --offline "${npm_extra_flags[@]}" \
       >/dev/null 2>&1 ) \
     || fail "npm install failed in $dir"
 }
