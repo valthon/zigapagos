@@ -256,6 +256,19 @@ write_stub "$PKG/npm/cli-$KEY/zigapagos"
 # version, which npm then IGNORES because it is optional — leaving an install
 # that resolves and cannot run). Pointing the override at the local tarball means
 # --offline succeeds and the platform package under test is the one just packed.
+#
+# NPM_INSTALL_FLAGS, if the caller sets it, is spliced onto the npm-install line
+# below. `VAR=val install_project ...` (bash's single-command prefix-assignment
+# form, which scopes a variable to one command whether that command is external
+# or a shell function) confines the value to that one call and leaves every
+# other call site untouched — no new positional arg to `install_project`, no
+# value that could leak forward into the next call. Only the #116 case below
+# sets it. Parsed into an array via `read -ra` (word-splits on whitespace, same
+# as an unquoted expansion would) and expanded as `"${arr[@]}"`, rather than
+# spliced in unquoted, so a flag value can never be re-globbed against
+# `$dir` — today's only value is the fixed literal `--omit=optional`, but an
+# unquoted `$NPM_INSTALL_FLAGS` would silently pathname-expand anything with a
+# `*` or `?` in it.
 install_project() {
   local dir="$1"; shift
   mkdir -p "$dir"
@@ -292,7 +305,10 @@ install_project() {
       ) + "\n",
     );
   ' "$dir" "$VERSION" "$@" -- "${DEP_PAIRS[@]}"
-  ( cd "$dir" && npm install --no-audit --no-fund --offline >/dev/null 2>&1 ) \
+  local npm_extra_flags=()
+  read -ra npm_extra_flags <<< "${NPM_INSTALL_FLAGS:-}"
+  ( cd "$dir" && npm install --no-audit --no-fund --offline "${npm_extra_flags[@]}" \
+      >/dev/null 2>&1 ) \
     || fail "npm install failed in $dir"
 }
 
@@ -411,10 +427,26 @@ STUB_EXIT=3 expect_run "the alias propagates the child's exit code" 3 "" \
   node "$ALIAS_PROJ/node_modules/zigapagos/bin/zigapagos.js"
 
 # --- 6. Resolver failure paths ----------------------------------------------
-# A missing optionalDependency is the `--omit=optional` install, and it must not
-# be reported as an unsupported platform: the fix is completely different.
+# A missing optionalDependency is what `npm install --omit=optional` produces,
+# and it must not be reported as an unsupported platform: the fix is completely
+# different (binaryPath()'s message literally tells the reader to reinstall
+# without that flag). This case has to run that real install, not merely
+# arrange for @zigapagos/cli-$KEY to be unfindable: an earlier revision instead
+# just omitted $PLAT_TGZ from `install_project`'s tarball args, which only drops
+# the `overrides` entry and leaves ordinary optionalDependency resolution in
+# charge. `npm install --offline` won't fetch that from the (unpublished)
+# registry, but it CAN still be satisfied from `~/.npm/_cacache` on any machine
+# that has ever really installed the published @zigapagos/cli-$KEY@$VERSION —
+# at which point the install silently succeeds and this case fails ("expected
+# exit 1, got 0"). CI's cache is always cold, so that never showed up there; a
+# developer's is not (#116). `--omit=optional` makes npm skip every optional
+# dependency outright, so the result no longer depends on what is or isn't
+# already on disk. $PLAT_TGZ stays out of `install_project`'s args here too —
+# passing it would add @zigapagos/cli-$KEY as a top-level, non-optional
+# dependency of the throwaway project itself, which `--omit=optional` does not
+# touch.
 NOPLAT_PROJ="$WORK/proj-no-platform"
-install_project "$NOPLAT_PROJ" "$CLI_TGZ"
+NPM_INSTALL_FLAGS=--omit=optional install_project "$NOPLAT_PROJ" "$CLI_TGZ"
 expect_run "a missing platform package names the install flag" 1 \
   "reinstall without it" \
   node -e 'require(process.argv[1]).binaryPath()' \
