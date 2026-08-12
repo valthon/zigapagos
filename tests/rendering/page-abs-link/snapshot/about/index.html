@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>Page Abs Link Test</title>
+    <link rel="canonical" href="https://example.com/about/">
+    <meta property="og:url" content="https://example.com/about/">
+    <meta name="rel-link" content="/about/">
+    <meta name="abs-link-ref" content="https://example.com/about/#intro">
+    <meta name="rel-link-ref" content="/about/#intro">
+    <meta name="other-page-abs" content="https://example.com/about/">
+    <meta name="other-page-rel" content="/about/">
+  </head>
+  <body>
+    <h1>About</h1>
+    <div><p>Second page, linked from the index via <code>$site.page(&apos;about&apos;).absLink()</code> to prove the shared <code>linkImpl</code> composes correctly for a page OTHER than <code>$page</code> itself, not just the one currently rendering.</p><h1 id="intro">Intro</h1><p>Every page in this fixture carries this same anchor, so the shared <code>index.shtml</code> layout’s <code>linkRef(&apos;intro&apos;)</code>/<code>absLinkRef(&apos;intro&apos;)</code> calls (evaluated against whichever page is <code>$page</code> for that render) resolve on both pages.</p></div>
+  </body>
+</html>

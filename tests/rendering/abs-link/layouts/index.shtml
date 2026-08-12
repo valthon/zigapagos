@@ -5,6 +5,7 @@
     <title :text="$site.title"></title>
     <meta property="og:image" content="$site.asset('og.png').absLink()">
     <link rel="canonical" href="$page.asset('page-og.png').absLink()">
+    <meta property="og:url" content="$page.absLink()">
     <link rel="icon" href="$site.asset('logo.png').link()">
   </head>
   <body>

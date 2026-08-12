@@ -403,8 +403,32 @@ In multilingual sites, if the target page belongs to a different
 localized variant, the link will containt the full host URL if
 'host_url_override' was specified for either page.
 
+The result is root-relative unless the multilingual case above
+applies. Use `absLink()` instead for a URL that is consumed
+outside the page and therefore has to be absolute: social
+metadata, canonical links, feeds.
+
 ```superhtml
 $page.link()
+```
+
+#### `Page.absLink() -> String`
+
+Like `link()`, but always returns an absolute URL
+(host_url + url_path_prefix + page path).
+
+Required for URLs consumed outside the page: `og:*` and
+`twitter:*` meta tags, canonical links, feeds. Scrapers do
+not resolve root-relative URLs.
+
+`host_url` is a required site-config field, so this never
+needs a null check -- if it were missing or malformed the
+build would already have failed at config validation, before
+any page rendered.
+
+```superhtml
+<link rel="canonical" href="$page.absLink()">
+<meta property="og:url" content="$page.absLink()">
 ```
 
 #### `Page.linkRef(String) -> String`
@@ -419,8 +443,20 @@ reported if it does not exist.
 See the SuperMD reference documentation to learn how to give
 ids to elements.
 
+The result is root-relative, like `link()`. Use
+`absLinkRef()` for the absolute form.
+
 ```superhtml
 $page.linkRef('foo')
+```
+
+#### `Page.absLinkRef(String) -> String`
+
+Like `linkRef()`, but always returns an absolute URL -- see
+`absLink()`.
+
+```superhtml
+$page.absLinkRef('foo')
 ```
 
 #### `Page.alternative(String) -> Alternative`

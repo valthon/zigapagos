@@ -1017,6 +1017,75 @@ pub const Fields = struct {
         \\total pages, prev/next links).
     ;
 };
+
+/// Shared body of `link()`/`absLink()` and `linkRef()`/`absLinkRef()`
+/// (issue #151, mirrors `Asset.linkImpl`'s split at Asset.zig:70): all four
+/// compose the SAME url -- `host_url` (when `force_host_url`) + the site's
+/// `url_path_prefix` + this page's path, optionally with a `#frag` suffix --
+/// and differ only in those two knobs. Composition goes through
+/// `ctx.printLinkPrefix`, the one place that knows how `host_url` and
+/// `url_path_prefix` combine and how multilingual host-crossing works, plus
+/// the one-line same-variant patch below that `printLinkPrefix` itself
+/// cannot cover (see the comment on it) -- together they are the WHOLE
+/// composition, so `absLink()` cannot drift from what
+/// `$site.host_url.addPath($page.link())` already computes by hand (the
+/// doctor-recommended workaround this builtin replaces). Do not add a
+/// third path alongside these two.
+///
+/// NO_SLOP.md §2.2a contract 1 (self-freeing): the only allocation is the
+/// growing `Writer.Allocating` buffer, which escapes whole as the returned
+/// `String` -- there is no separate scratch to free on the success path, and
+/// `errdefer` covers every `catch return error.OutOfMemory` path below it.
+fn linkImpl(
+    p: *const Page,
+    gpa: Allocator,
+    ctx: *const context.Root,
+    force_host_url: bool,
+    frag: ?[]const u8,
+) context.CallError!Value {
+    const v = &ctx._meta.build.variants[p._scan.variant_id];
+
+    var aw: Writer.Allocating = .init(gpa);
+    errdefer aw.deinit();
+
+    // `printLinkPrefix` honours `force_host_url` in every case but ONE
+    // (the same gap `Asset.linkImpl` documents and patches at
+    // Asset.zig:82-121): its `.multi` arm only prints a host at all INSIDE
+    // `if (other_variant_id != our_variant_id)` (Root.zig), i.e. only
+    // cross-variant. A page in the CURRENT render's own locale -- the
+    // common case, since `p` is usually `$page` itself -- falls through
+    // that guard and would come back root-relative even with
+    // `force_host_url=true`. Patch it the same one-line way Asset does,
+    // rather than teaching `printLinkPrefix` a third caller's special case.
+    const site = ctx._meta.sites.entries.items(.value)[p._scan.variant_id];
+    const handled = switch (site._meta.kind) {
+        .simple => true,
+        .multi => p._scan.variant_id != ctx.page._scan.variant_id,
+    };
+    if (force_host_url and !handled) {
+        aw.writer.print("{s}", .{site.host_url}) catch return error.OutOfMemory;
+    }
+
+    ctx.printLinkPrefix(
+        &aw.writer,
+        p._scan.variant_id,
+        force_host_url,
+    ) catch return error.OutOfMemory;
+
+    aw.writer.print("{f}", .{
+        p._scan.url.fmt(
+            &v.string_table,
+            &v.path_table,
+            null,
+            true,
+        ),
+    }) catch return error.OutOfMemory;
+
+    if (frag) |id| aw.writer.print("#{s}", .{id}) catch return error.OutOfMemory;
+
+    return String.init(aw.written());
+}
+
 pub const Builtins = struct {
     pub const isCurrent = struct {
         pub const signature: Signature = .{ .ret = .Bool };
@@ -1806,6 +1875,11 @@ pub const Builtins = struct {
             \\In multilingual sites, if the target page belongs to a different
             \\localized variant, the link will containt the full host URL if
             \\'host_url_override' was specified for either page.
+            \\
+            \\The result is root-relative unless the multilingual case above
+            \\applies. Use `absLink()` instead for a URL that is consumed
+            \\outside the page and therefore has to be absolute: social
+            \\metadata, canonical links, feeds.
         ;
         pub const examples =
             \\$page.link()
@@ -1818,25 +1892,38 @@ pub const Builtins = struct {
         ) context.CallError!Value {
             if (args.len != 0) return .{ .err = "expected 0 arguments" };
 
-            const v = &ctx._meta.build.variants[p._scan.variant_id];
+            return linkImpl(p, gpa, ctx, false, null);
+        }
+    };
 
-            var aw: Writer.Allocating = .init(gpa);
-            ctx.printLinkPrefix(
-                &aw.writer,
-                p._scan.variant_id,
-                false,
-            ) catch return error.OutOfMemory;
+    pub const absLink = struct {
+        pub const signature: Signature = .{ .ret = .String };
+        pub const docs_description =
+            \\Like `link()`, but always returns an absolute URL
+            \\(host_url + url_path_prefix + page path).
+            \\
+            \\Required for URLs consumed outside the page: `og:*` and
+            \\`twitter:*` meta tags, canonical links, feeds. Scrapers do
+            \\not resolve root-relative URLs.
+            \\
+            \\`host_url` is a required site-config field, so this never
+            \\needs a null check -- if it were missing or malformed the
+            \\build would already have failed at config validation, before
+            \\any page rendered.
+        ;
+        pub const examples =
+            \\<link rel="canonical" href="$page.absLink()">
+            \\<meta property="og:url" content="$page.absLink()">
+        ;
+        pub fn call(
+            p: *const Page,
+            gpa: Allocator,
+            ctx: *const context.Root,
+            args: []const Value,
+        ) context.CallError!Value {
+            if (args.len != 0) return .{ .err = "expected 0 arguments" };
 
-            aw.writer.print("{f}", .{
-                p._scan.url.fmt(
-                    &v.string_table,
-                    &v.path_table,
-                    null,
-                    true,
-                ),
-            }) catch return error.OutOfMemory;
-
-            return String.init(aw.written());
+            return linkImpl(p, gpa, ctx, true, null);
         }
     };
 
@@ -1855,6 +1942,9 @@ pub const Builtins = struct {
             \\
             \\See the SuperMD reference documentation to learn how to give
             \\ids to elements.
+            \\
+            \\The result is root-relative, like `link()`. Use
+            \\`absLinkRef()` for the absolute form.
         ;
         pub const examples =
             \\$page.linkRef('foo')
@@ -1882,27 +1972,46 @@ pub const Builtins = struct {
                 .{elem_id},
             );
 
-            const v = &ctx._meta.build.variants[p._scan.variant_id];
+            return linkImpl(p, gpa, ctx, false, elem_id);
+        }
+    };
 
-            var aw: Writer.Allocating = .init(gpa);
-            ctx.printLinkPrefix(
-                &aw.writer,
-                p._scan.variant_id,
-                false,
-            ) catch return error.OutOfMemory;
+    pub const absLinkRef = struct {
+        pub const signature: Signature = .{
+            .params = &.{.String},
+            .ret = .String,
+        };
+        pub const docs_description =
+            \\Like `linkRef()`, but always returns an absolute URL -- see
+            \\`absLink()`.
+        ;
+        pub const examples =
+            \\$page.absLinkRef('foo')
+        ;
+        pub fn call(
+            p: *const Page,
+            gpa: Allocator,
+            ctx: *const context.Root,
+            args: []const Value,
+        ) context.CallError!Value {
+            const bad_arg: Value = .{
+                .err = "expected 1 string argument",
+            };
+            if (args.len != 1) return bad_arg;
 
-            aw.writer.print("{f}", .{
-                p._scan.url.fmt(
-                    &v.string_table,
-                    &v.path_table,
-                    null,
-                    true,
-                ),
-            }) catch return error.OutOfMemory;
+            const elem_id = switch (args[0]) {
+                .string => |s| s.value,
+                else => return bad_arg,
+            };
 
-            aw.writer.print("#{s}", .{elem_id}) catch return error.OutOfMemory;
+            const ast = p._parse.ast;
+            if (!ast.ids.contains(elem_id)) return Value.errFmt(
+                gpa,
+                "cannot find id '{s}' in the content page",
+                .{elem_id},
+            );
 
-            return String.init(aw.written());
+            return linkImpl(p, gpa, ctx, true, elem_id);
         }
     };
 

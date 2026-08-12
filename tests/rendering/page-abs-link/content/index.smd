@@ -1,0 +1,17 @@
+---
+.title = "Home",
+.date = @date("2020-07-06T00:00:00"),
+.author = "Sample Author",
+.layout = "index.shtml",
+.draft = false,
+---
+This fixture pins `$page.absLink()`/`$page.absLinkRef()` (issue #151): a
+SIMPLE site (no `url_path_prefix`), so the composed URL is exactly
+`host_url` + page path, with no prefix segment to get wrong. The
+`url_path_prefix` case (prefix present exactly once) is pinned instead by
+`tests/rendering/abs-link/`, which already sets one for `Asset.absLink()`
+and now also exercises `$page.absLink()`.
+
+# [Intro]($heading.id('intro'))
+
+Anchor target for `linkRef()`/`absLinkRef()`.

@@ -1,0 +1,14 @@
+---
+.title = "About",
+.layout = "index.shtml",
+---
+Second page, linked from the index via `$site.page('about').absLink()` to
+prove the shared `linkImpl` composes correctly for a page OTHER than
+`$page` itself, not just the one currently rendering.
+
+# [Intro]($heading.id('intro'))
+
+Every page in this fixture carries this same anchor, so the shared
+`index.shtml` layout's `linkRef('intro')`/`absLinkRef('intro')` calls
+(evaluated against whichever page is `$page` for that render) resolve on
+both pages.
