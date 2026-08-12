@@ -23,6 +23,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const fatal = @import("../fatal.zig");
 const zigbase = @import("zigbase.zig");
+const root = @import("../root.zig");
 
 /// Default `zigbase serve` invocation template, VERIFIED against the real
 /// CLI (zigbase src/cli.zig `parse()` and `zigbase serve --help` of the
@@ -65,8 +66,22 @@ pub const Command = struct {
     /// Invocation template (`--zigbase-arg=`, repeatable; replaces the whole
     /// default template when at least one is given).
     zigbase_args: []const []const u8,
-    /// Readiness probe path (`--ready-path=`, default "/").
+    /// The site's `url_path_prefix` (`--url-prefix=`, default ""; issue #152).
+    /// When set, the built tree is mounted at `/<prefix>/` via a staged
+    /// served root (`stageServedRoot`) instead of at the server root, so
+    /// local URLs resolve the same way the site's own emitted hrefs do on a
+    /// GitHub Pages project host.
+    url_prefix: []const u8,
+    /// Readiness probe path (`--ready-path=`, default "/", or
+    /// "/<url_prefix>/" when `url_prefix` is set and this was never
+    /// overridden -- see `ready_path_explicit`).
     ready_path: []const u8,
+    /// True when `--ready-path=` was actually passed. `ready_path` above
+    /// always holds SOME value (its plain "/" default predates url_prefix
+    /// support and several tests pin it), so this is what lets `e2e()` tell
+    /// "user override" from "compute the url_prefix-aware default" without
+    /// changing that default or breaking those tests.
+    ready_path_explicit: bool,
     /// Readiness budget in milliseconds (`--timeout-ms=`, default 120s).
     timeout_ms: u32,
     /// The user command (everything after `--`).
@@ -85,7 +100,9 @@ pub const Command = struct {
         var zigbase_path: ?[]const u8 = null;
         var download_zigbase = false;
         var zigbase_args: std.ArrayListUnmanaged([]const u8) = .empty;
+        var url_prefix: []const u8 = "";
         var ready_path: []const u8 = "/";
+        var ready_path_explicit = false;
         var timeout_ms: u32 = 120_000;
         var argv: []const []const u8 = &.{};
         errdefer zigbase_args.deinit(gpa);
@@ -104,8 +121,22 @@ pub const Command = struct {
                 download_zigbase = true;
             } else if (std.mem.startsWith(u8, arg, "--zigbase-arg=")) {
                 try zigbase_args.append(gpa, arg["--zigbase-arg=".len..]);
+            } else if (std.mem.startsWith(u8, arg, "--url-prefix=")) {
+                url_prefix = arg["--url-prefix=".len..];
+                // Same validation `zigapagos.ziggy`'s url_path_prefix gets at
+                // config load (root.zig's Site-field validation loop) — this
+                // flag skips that path entirely (e2e never loads a config),
+                // so without its own check `--url-prefix=../../x` would
+                // reach stageServedRoot's createDirPath/copyFile and stage
+                // (and later, on the next call, deleteTree) a directory
+                // OUTSIDE the intended staging root.
+                if (root.validatePathMessage(url_prefix, .{ .empty = true })) |msg| fatal.usageError(
+                    "error: --url-prefix '{s}': {s}\n",
+                    .{ url_prefix, msg },
+                );
             } else if (std.mem.startsWith(u8, arg, "--ready-path=")) {
                 ready_path = arg["--ready-path=".len..];
+                ready_path_explicit = true;
                 if (ready_path.len == 0 or ready_path[0] != '/') fatal.usageError(
                     "error: --ready-path must start with '/' (got '{s}')\n",
                     .{ready_path},
@@ -149,7 +180,9 @@ pub const Command = struct {
             .zigbase_path = zigbase_path,
             .download_zigbase = download_zigbase,
             .zigbase_args = owned_zigbase_args,
+            .url_prefix = url_prefix,
             .ready_path = ready_path,
+            .ready_path_explicit = ready_path_explicit,
             .timeout_ms = timeout_ms,
             .argv = argv,
         };
@@ -158,7 +191,8 @@ pub const Command = struct {
     const usage =
         "usage: zigapagos e2e --site=DIR [--data-dir=DIR] [--zigbase=PATH]\n" ++
         "                     [--download-zigbase] [--zigbase-arg=ARG]...\n" ++
-        "                     [--ready-path=/…] [--timeout-ms=N] -- CMD [ARGS...]\n";
+        "                     [--url-prefix=P] [--ready-path=/…]\n" ++
+        "                     [--timeout-ms=N] -- CMD [ARGS...]\n";
 };
 
 pub fn e2e(
@@ -195,16 +229,27 @@ pub fn e2e(
         .{ data_dir, @errorName(err) },
     );
 
+    // Mount at the url_path_prefix (issue #152): nested beside the data dir
+    // so it shares its lifecycle (deleted with it when the data dir is the
+    // per-run temp dir; reused across restarts otherwise) -- a no-op when
+    // cmd.url_prefix is "" (see stageServedRoot's doc comment).
+    const staging_root = std.fs.path.join(gpa, &.{ data_dir, ".served-root" }) catch fatal.oom();
+    const served_root = try stageServedRoot(io, gpa, staging_root, cmd.url_prefix, cmd.site);
+    const ready_path = if (cmd.ready_path_explicit)
+        cmd.ready_path
+    else
+        try defaultReadyPath(gpa, cmd.url_prefix);
+
     // (3) Boot `zigbase serve` over the site tree.
     var zb_argv: std.ArrayListUnmanaged([]const u8) = .empty;
     try zb_argv.append(gpa, located.path);
     for (cmd.zigbase_args) |template| try zb_argv.append(
         gpa,
-        try substituteArg(gpa, template, "127.0.0.1", port_str, cmd.site, data_dir),
+        try substituteArg(gpa, template, "127.0.0.1", port_str, served_root, data_dir),
     );
 
     std.debug.print("e2e: zigbase = {s} ({s}); serving {s} (data: {s})\ne2e: exec", .{
-        located.path, @tagName(located.source), cmd.site, data_dir,
+        located.path, @tagName(located.source), served_root, data_dir,
     });
     for (zb_argv.items) |a| std.debug.print(" {s}", .{a});
     std.debug.print("\n", .{});
@@ -223,13 +268,13 @@ pub fn e2e(
     // (4) Readiness = the first successful shell fetch. The probe address is
     // resolved ONCE — and it is a loopback literal, so this never hits DNS.
     const address = Io.net.IpAddress.parse("127.0.0.1", port) catch unreachable;
-    waitReady(&harness, address, cmd.ready_path, cmd.timeout_ms);
+    waitReady(&harness, address, ready_path, cmd.timeout_ms);
 
     // (5) Run the user command with the origin exported.
     const origin = std.fmt.allocPrint(gpa, "http://127.0.0.1:{d}", .{port}) catch fatal.oom();
     environ_map.put("ZIGAPAGOS_ORIGIN", origin) catch fatal.oom();
 
-    std.debug.print("e2e: ready (GET {s} -> 200 at {s}); running:", .{ cmd.ready_path, origin });
+    std.debug.print("e2e: ready (GET {s} -> 200 at {s}); running:", .{ ready_path, origin });
     for (cmd.argv) |a| std.debug.print(" {s}", .{a});
     std.debug.print("\n", .{});
 
@@ -418,6 +463,114 @@ pub fn substituteArg(
     const step2 = try std.mem.replaceOwned(u8, gpa, step1, "{site}", site);
     defer gpa.free(step2);
     return std.mem.replaceOwned(u8, gpa, step2, "{data}", data);
+}
+
+/// Stages a served root that mounts `site_dir_abs` at `/<prefix>/`, shared by
+/// both `dev` (which threads `zigapagos.ziggy`'s `url_path_prefix` through)
+/// and `e2e` (`--url-prefix=`, issue #152). Returns `site_dir_abs` UNCHANGED
+/// when `prefix` trims to empty (the common, unprefixed case): no directory
+/// is created and no filesystem work happens at all, so an unprefixed site's
+/// `--serve-static` argument is byte-identical to what it was before this
+/// existed.
+///
+/// The built tree deliberately contains no prefix directory (`url_path_prefix`
+/// says where a host *mounts* it, not where files sit inside it -- see
+/// `docs/spa.md`), so a root `--serve-static site_dir_abs` 404s every emitted
+/// href/asset/island-module URL on a prefixed site. The obvious fix -- a
+/// `<staging_root_abs>/<prefix>` SYMLINK into `site_dir_abs` -- does not work:
+/// zigbase's static server canonicalizes every match and refuses to serve
+/// anything whose real path escapes the served root (its own F10 hardening,
+/// confirmed against ~/nothlav/zigbase's `static_files.zig`), and a symlinked
+/// prefix pointing outside the staging root is exactly that escape. It would
+/// silently 404 every request instead of working. So the mirror has to be
+/// REAL: every regular file under `site_dir_abs` is copied into
+/// `<staging_root_abs>/<trimmed prefix>/`, preserving its relative path.
+///
+/// `staging_root_abs` is wiped and rebuilt from scratch on every call. That
+/// is what makes it safe to call again after every rebuild (`dev`'s watch
+/// loop does, unconditionally -- this function is a no-op for an unprefixed
+/// site) and is the only way to guarantee two kinds of staleness can't
+/// linger: a page the last build deleted, and a leftover directory tree
+/// staged under a PRIOR, since-changed `url_path_prefix` from an earlier dev
+/// session. The cost is a full re-copy of the tree per call -- cheap next to
+/// the rebuild that just produced `site_dir_abs`, and there is no in-place
+/// alternative: zigbase re-reads the served files live, and a build that
+/// writes via replace-in-place (temp file + rename, the usual atomic-write
+/// pattern) would leave a hard-linked mirror pointing at stale inodes, so a
+/// real copy is the only refresh that is guaranteed current after every kind
+/// of rebuild.
+///
+/// NO_SLOP.md §2.2a contract 1 (self-freeing): `prefix_dir_abs` is scratch,
+/// freed before return; the only thing that escapes is `staging_root_abs` or
+/// `site_dir_abs`, both borrowed from the caller.
+pub fn stageServedRoot(
+    io: Io,
+    gpa: Allocator,
+    staging_root_abs: []const u8,
+    prefix: []const u8,
+    site_dir_abs: []const u8,
+) error{OutOfMemory}![]const u8 {
+    const trimmed = std.mem.trim(u8, prefix, "/");
+    if (trimmed.len == 0) return site_dir_abs;
+
+    // Wipe first (see the doc comment: this is what retires BOTH a deleted
+    // page and a stale prior-prefix directory). Missing is fine -- the first
+    // call in a fresh data dir has nothing to remove.
+    Io.Dir.cwd().deleteTree(io, staging_root_abs) catch {};
+
+    const prefix_dir_abs = std.fs.path.join(gpa, &.{ staging_root_abs, trimmed }) catch fatal.oom();
+    defer gpa.free(prefix_dir_abs);
+    Io.Dir.cwd().createDirPath(io, prefix_dir_abs) catch |err| fatal.msg(
+        "error: unable to create the served-root staging dir '{s}': {s}\n",
+        .{ prefix_dir_abs, @errorName(err) },
+    );
+
+    var src_dir = Io.Dir.cwd().openDir(io, site_dir_abs, .{ .iterate = true }) catch |err| fatal.msg(
+        "error: unable to open '{s}' to stage it at the url_path_prefix: {s}\n",
+        .{ site_dir_abs, @errorName(err) },
+    );
+    defer src_dir.close(io);
+    var dst_dir = Io.Dir.cwd().openDir(io, prefix_dir_abs, .{}) catch |err| fatal.msg(
+        "error: unable to open the staged prefix dir '{s}': {s}\n",
+        .{ prefix_dir_abs, @errorName(err) },
+    );
+    defer dst_dir.close(io);
+
+    var it = src_dir.walk(gpa) catch |err| {
+        if (err == error.OutOfMemory) fatal.oom();
+        fatal.msg("error: unable to walk '{s}' while staging the served root: {s}\n", .{ site_dir_abs, @errorName(err) });
+    };
+    defer it.deinit();
+    while (it.next(io) catch |err| fatal.msg(
+        "error: failed scanning '{s}' while staging the served root: {s}\n",
+        .{ site_dir_abs, @errorName(err) },
+    )) |entry| {
+        if (entry.kind != .file) continue;
+        // `entry.dir`/`entry.basename` (not `site_dir_abs`/`entry.path`) as the
+        // SOURCE side avoids `error.NameTooLong` on a deeply nested tree -- see
+        // `Walker.Entry`'s own doc comment.
+        entry.dir.copyFile(entry.basename, dst_dir, entry.path, io, .{ .make_path = true }) catch |err| fatal.msg(
+            "error: failed staging '{s}' at the served root: {s}\n",
+            .{ entry.path, @errorName(err) },
+        );
+    }
+
+    return staging_root_abs;
+}
+
+/// The readiness-probe path (and banner URL suffix) for a site with no
+/// explicit `--ready-path=` override: `"/"` when unprefixed, or
+/// `"/<trimmed prefix>/"` when a `url_path_prefix` is set. `GET /` 404s by
+/// design on a prefixed site (`stageServedRoot`'s served root has no content
+/// outside `/<prefix>/`), so probing bare `/` would spin until the timeout
+/// waiting for a 200 that can never come.
+///
+/// NO_SLOP.md §2.2a contract 1 (self-freeing): `trimmed` borrows `prefix`;
+/// only the formatted return value (or the static `"/"`) escapes.
+pub fn defaultReadyPath(gpa: Allocator, prefix: []const u8) error{OutOfMemory}![]const u8 {
+    const trimmed = std.mem.trim(u8, prefix, "/");
+    if (trimmed.len == 0) return "/";
+    return std.fmt.allocPrint(gpa, "/{s}/", .{trimmed});
 }
 
 // --- unit tests (run via `zig build test-e2e`, filter "e2e") -------------------
