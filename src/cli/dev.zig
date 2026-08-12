@@ -109,8 +109,17 @@ pub const Command = struct {
     /// Invocation template (`--zigbase-arg=`, repeatable; replaces the whole
     /// default template when at least one is given).
     zigbase_args: []const []const u8,
-    /// Readiness probe path (`--ready-path=`, default "/").
+    /// Readiness probe path (`--ready-path=`, default "/", or
+    /// "/<url_path_prefix>/" when the site has one and this was never
+    /// overridden -- see `ready_path_explicit` and issue #152).
     ready_path: []const u8,
+    /// True when `--ready-path=` was actually passed. `ready_path` above
+    /// always holds SOME value (its plain "/" default predates
+    /// url_path_prefix support and a pinned test expects it), so this is
+    /// what lets `dev()` tell "user override" from "compute the
+    /// prefix-aware default" once `zigapagos.ziggy` is loaded, without
+    /// changing that default or breaking the test.
+    ready_path_explicit: bool,
     /// Readiness budget in milliseconds (`--timeout-ms=`, default 120s).
     timeout_ms: u32,
     /// Listen host (`--host=`, default 127.0.0.1). Must be an IP literal —
@@ -159,6 +168,7 @@ pub const Command = struct {
         var no_download = false;
         var zigbase_args: std.ArrayListUnmanaged([]const u8) = .empty;
         var ready_path: []const u8 = "/";
+        var ready_path_explicit = false;
         var timeout_ms: u32 = 120_000;
         var host: []const u8 = "127.0.0.1";
         var port: u16 = 1990;
@@ -197,6 +207,7 @@ pub const Command = struct {
                 try zigbase_args.append(gpa, arg["--zigbase-arg=".len..]);
             } else if (std.mem.startsWith(u8, arg, "--ready-path=")) {
                 ready_path = arg["--ready-path=".len..];
+                ready_path_explicit = true;
                 if (ready_path.len == 0 or ready_path[0] != '/') fatal.usageError(
                     "error: --ready-path must start with '/' (got '{s}')\n",
                     .{ready_path},
@@ -285,6 +296,7 @@ pub const Command = struct {
             .no_download = no_download,
             .zigbase_args = owned_zigbase_args,
             .ready_path = ready_path,
+            .ready_path_explicit = ready_path_explicit,
             .timeout_ms = timeout_ms,
             .host = host,
             .port = port,
@@ -515,6 +527,26 @@ pub fn dev(
         );
     }
 
+    // The site's `url_path_prefix` (issue #152): when set, zigbase must be
+    // pointed at a STAGED root that mounts `site_abs` at `/<prefix>/`
+    // instead of at `site_abs` itself, or every emitted href/asset/island-
+    // module URL 404s (they all carry the prefix; the built tree does not
+    // -- see `stageServedRoot`'s doc comment in e2e.zig for why a plain
+    // symlink can't stand in for the staged copy). Nested beside the
+    // (persistent) zigbase data dir so it shares that dir's lifecycle;
+    // `stageServedRoot` is a no-op when the prefix is "".
+    const url_path_prefix = cfg.getUrlPathPrefix();
+    const staging_root_abs = std.fs.path.join(gpa, &.{ data_dir_abs, ".served-root" }) catch fatal.oom();
+    // Readiness probe path + banner URL: default to "/<prefix>/" so both
+    // land on a page the staged root actually serves, unless the caller
+    // overrode --ready-path= explicitly (see `Command.ready_path_explicit`'s
+    // doc comment for why the override can't just be detected from the
+    // value alone).
+    const ready_path = if (cmd.ready_path_explicit)
+        cmd.ready_path
+    else
+        e2e.defaultReadyPath(gpa, url_path_prefix) catch fatal.oom();
+
     // Persistent data dir — created BEFORE the initial build (not in the boot
     // section below) so the very first build can already write the island
     // manifest into it.
@@ -654,6 +686,15 @@ pub fn dev(
     reload_server.setBuildFinished(true, 0, null); // the initial build (gen 1)
     if (cmd.live_reload) reload.injectTree(io, gpa, site_abs, reload_port, null);
 
+    // Stage the served root (issue #152) AFTER injectTree, not before: on a
+    // live-reload session the tree `stageServedRoot` mirrors must already
+    // carry the injected snippet, and staging first would copy the
+    // pre-injection HTML. `served_root` (== site_abs when url_path_prefix is
+    // "") is the actual `--serve-static` argument from here on; the SAME
+    // staging_root_abs path is reused (and its contents refreshed in place)
+    // after every later rebuild below, so zigbase never needs restarting.
+    const served_root = e2e.stageServedRoot(io, gpa, staging_root_abs, url_path_prefix, site_abs) catch fatal.oom();
+
     // (2) Locate zigbase (explicit → PATH → pinned cache) and, when nothing is
     // found, fetch the pinned release into the cache (SHA256-verified).
     //
@@ -693,11 +734,11 @@ pub fn dev(
     try zb_argv.append(gpa, located.path);
     for (cmd.zigbase_args) |template| try zb_argv.append(
         gpa,
-        try e2e.substituteArg(gpa, template, cmd.host, port_str, site_abs, data_dir_abs),
+        try e2e.substituteArg(gpa, template, cmd.host, port_str, served_root, data_dir_abs),
     );
 
     std.debug.print("dev: zigbase = {s} ({s}); serving {s}\ndev: exec", .{
-        located.path, @tagName(located.source), site_abs,
+        located.path, @tagName(located.source), served_root,
     });
     for (zb_argv.items) |a| std.debug.print(" {s}", .{a});
     std.debug.print("\n", .{});
@@ -720,10 +761,17 @@ pub fn dev(
     reaper.track(harness.server);
     reaper.install();
 
-    e2e.waitReady(&harness, address, cmd.ready_path, cmd.timeout_ms);
+    e2e.waitReady(&harness, address, ready_path, cmd.timeout_ms);
 
     const self_pid: i64 = @intCast(std.c.getpid());
-    const url = std.fmt.allocPrint(gpa, "http://{s}:{d}/", .{ cmd.host, port }) catch fatal.oom();
+    // ready_path (not a bare "/") so the lockfile/status `url` — the string
+    // `dev --background`'s ready summary, `dev stop`/`status`'s "already
+    // running at" line and `/_zigapagos/status` all print VERBATIM, with no
+    // further parsing anywhere (checked: sweepOrphan/probeHealth use
+    // lf.host/lf.port, never lf.url) — lands on a page that actually exists
+    // on a prefixed site instead of the 404ing bare origin (issue #152:
+    // --background is agent-auto-enabled, so this is the DEFAULT agent flow).
+    const url = std.fmt.allocPrint(gpa, "http://{s}:{d}{s}", .{ cmd.host, port, ready_path }) catch fatal.oom();
     const started_at = blk: {
         const buf = gpa.create([20]u8) catch fatal.oom();
         const secs: u64 = @intCast(@divTrunc(Io.Clock.real.now(io).nanoseconds, std.time.ns_per_s));
@@ -753,7 +801,7 @@ pub fn dev(
         \\dev: ready — serving at http://{s}:{d}{s}
         \\dev: zigbase data dir: {s} (persistent — collections/auth state survive dev sessions)
         \\
-    , .{ cmd.host, port, cmd.ready_path, data_dir_abs });
+    , .{ cmd.host, port, ready_path, data_dir_abs });
     if (cmd.live_reload) {
         std.debug.print(
             "dev: live-reload: http://{s}:{d} (SSE) — pages auto-reload on rebuild\n\n\n",
@@ -871,6 +919,13 @@ pub fn dev(
                     .full => null,
                 };
                 reload.injectTree(io, gpa, site_abs, reload_port, inject_since);
+                // Refresh the staged served-root mirror (issue #152) AFTER
+                // injectTree, same reasoning as the initial-boot call above:
+                // it must pick up the just-injected snippet, and it has to
+                // run every time because a rebuild that writes via
+                // replace-in-place would otherwise leave the mirror pointing
+                // at stale content. A no-op when url_path_prefix is "".
+                _ = e2e.stageServedRoot(io, gpa, staging_root_abs, url_path_prefix, site_abs) catch fatal.oom();
                 const island_modules: []const []const u8 = switch (change) {
                     .incremental => |inc| inc.island_modules,
                     .full => &.{},
@@ -886,6 +941,9 @@ pub fn dev(
                     std.debug.print("dev: rebuild OK — reloading browsers\n", .{});
                 }
             } else {
+                // No live-reload: still refresh the mirror so a manual
+                // browser refresh sees the new build (see the comment above).
+                _ = e2e.stageServedRoot(io, gpa, staging_root_abs, url_path_prefix, site_abs) catch fatal.oom();
                 std.debug.print("dev: rebuild OK — refresh the browser\n", .{});
             }
         } else {
