@@ -184,14 +184,27 @@ function splitCodeSpans(line: string): LineSegment[] {
  * and so mis-parses every multi-backtick span: "`` `b` ``" came apart into two
  * empty spans plus a bare `` `b` ``, leaving the padding spaces behind and
  * slugging an extra hyphen into the anchor (issue #66).
+ *
+ * The emphasis-stripping regexes run PER SEGMENT, before the segments are
+ * joined -- never on the joined string. A code span's content is
+ * indistinguishable from plain prose once its backticks are gone, so
+ * running the strip AFTER joining reads the span's own underscores as an
+ * emphasis marker and eats them: a heading like `` `url_path_prefix` ``
+ * slugged to "sites-with-a-urlpathprefix" instead of
+ * "sites-with-a-url_path_prefix" -- found via a CI build failure on an
+ * `unknown ref`, not a review (issue #152's PR).
  */
 export function slugifyHeading(raw: string): string {
   const plain = splitCodeSpans(raw)
-    .map((seg) => seg.content)
-    .join("")
-    .replace(/\*\*([^*]*)\*\*/g, "$1")
-    .replace(/\*([^*]*)\*/g, "$1")
-    .replace(/_([^_]*)_/g, "$1");
+    .map((seg) =>
+      seg.code
+        ? seg.content
+        : seg.content
+            .replace(/\*\*([^*]*)\*\*/g, "$1")
+            .replace(/\*([^*]*)\*/g, "$1")
+            .replace(/_([^_]*)_/g, "$1"),
+    )
+    .join("");
   return plain
     .toLowerCase()
     .trim()

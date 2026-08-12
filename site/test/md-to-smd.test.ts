@@ -63,6 +63,24 @@ test("slugifyHeading: an unmatched backtick is not a span", () => {
   expect(slugifyHeading("a ` b")).toBe("a--b");
 });
 
+test("slugifyHeading: a code span's own underscores survive the emphasis strip", () => {
+  // Latent bug hit by issue #152's PR (CI: `unknown ref` on a `.ref(...)`
+  // built from this exact slug): the emphasis-stripping regexes used to run
+  // on the joined plain string, AFTER code-span delimiters were already
+  // gone -- so a code span's own underscore pair read as `_em_` markup and
+  // got eaten by `/_([^_]*)_/g`. "Sites with a `url_path_prefix`" slugged to
+  // "sites-with-a-urlpathprefix" instead of "sites-with-a-url_path_prefix".
+  expect(slugifyHeading("Sites with a `url_path_prefix`")).toBe(
+    "sites-with-a-url_path_prefix",
+  );
+});
+
+test("slugifyHeading: prose emphasis around a code span with underscores is unaffected", () => {
+  // The per-segment fix must not stop stripping emphasis in the PROSE
+  // segments either -- only a code span's own content is exempt.
+  expect(slugifyHeading("_before_ `a_b` _after_")).toBe("before-a_b-after");
+});
+
 // ---------------------------------------------------------------------------
 // heading ids via transformBody
 // ---------------------------------------------------------------------------
