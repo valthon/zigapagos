@@ -184,14 +184,42 @@ function splitCodeSpans(line: string): LineSegment[] {
  * and so mis-parses every multi-backtick span: "`` `b` ``" came apart into two
  * empty spans plus a bare `` `b` ``, leaving the padding spaces behind and
  * slugging an extra hyphen into the anchor (issue #66).
+ *
+ * The emphasis-stripping regexes run on the joined string, but a code span's
+ * CONTENT never reaches them: each code segment is swapped for a one-byte
+ * SENTINEL (`\x00`, a character that can never appear in a heading) before
+ * the prose+sentinel string is joined and stripped, then every sentinel is
+ * substituted back for its span's real content afterwards. Two things this
+ * has to get right, both pinned by tests:
+ *
+ *   - A code span's OWN underscores must survive verbatim even when nothing
+ *     wraps it: `` `url_path_prefix` `` must not become `urlpathprefix`.
+ *     Since the sentinel — never the span's real content — is what the
+ *     regexes ever see, this holds regardless of what the span contains.
+ *   - Emphasis delimiters that WRAP an entire code span must still be
+ *     stripped: `` _`a_b`_ `` is `_<code>a_b</code>_` in CommonMark terms,
+ *     an em-wrapped code span, and must slug to "a_b", not "_a_b_". A
+ *     PER-SEGMENT strip (an earlier version of this function) can't see
+ *     this: `/_([^_]*)_/g` needs both delimiters in the SAME segment, and
+ *     `splitCodeSpans` puts the two lone underscores either side of the code
+ *     segment into separate prose segments, so neither one ever finds its
+ *     partner and both survive into the slug. Substituting a single-
+ *     character sentinel for the whole span BEFORE joining puts both
+ *     delimiters back in one string, where the regex can pair them --
+ *     matching how CommonMark's own emphasis matching treats a code span as
+ *     one opaque inline node, not a barrier delimiters can't cross.
  */
 export function slugifyHeading(raw: string): string {
-  const plain = splitCodeSpans(raw)
-    .map((seg) => seg.content)
-    .join("")
+  const segments = splitCodeSpans(raw);
+  const codeContents = segments.filter((seg) => seg.code).map((seg) => seg.content);
+  const sentinel = "\x00";
+  const withSentinels = segments.map((seg) => (seg.code ? sentinel : seg.content)).join("");
+  const stripped = withSentinels
     .replace(/\*\*([^*]*)\*\*/g, "$1")
     .replace(/\*([^*]*)\*/g, "$1")
     .replace(/_([^_]*)_/g, "$1");
+  let nextCode = 0;
+  const plain = stripped.replace(new RegExp(sentinel, "g"), () => codeContents[nextCode++]);
   return plain
     .toLowerCase()
     .trim()

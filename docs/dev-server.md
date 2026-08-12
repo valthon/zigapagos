@@ -45,6 +45,41 @@ dev: manage:   zigapagos dev stop | status | logs [--follow]
   or `--force` (an untracked instance has no lockfile for `--background`'s
   own readiness handshake to poll).
 
+## Sites with a `url_path_prefix`
+
+A site with `url_path_prefix` set in `zigapagos.ziggy` (the documented setup
+for a GitHub Pages *project* site, served from `https://user.github.io/repo/`
+rather than the domain root — this repo's own `site/zigapagos.ziggy` uses it)
+emits every href, asset link and island module URL under `/<prefix>/…`. The
+built tree itself deliberately contains no prefix directory —
+`url_path_prefix` says where a host *mounts* the tree, not where files sit
+inside it (see [`docs/spa.md`](spa.md)) — so a plain root mount 404s every
+one of those URLs.
+
+`dev` (and `zigapagos e2e --url-prefix=`) handle this automatically: they
+stage a served root that mounts the built tree at `/<prefix>/` — refreshed
+after every rebuild — and point zigbase at that staged root instead of at
+the tree itself, so local URLs resolve exactly like production. Nested
+prefixes (`docs/v2`) work the same way.
+
+Two knock-on effects, both by design:
+
+- **`GET /` 404s.** The staged root's only real content lives under
+  `/<prefix>/`, so there is no `index.html` at the served root. The
+  readiness probe and the printed banner URL already account for this — both
+  default to `/<prefix>/` instead of `/` when the site has a prefix — but a
+  manually passed `--ready-path=/`, or a bookmark at the bare origin, still
+  404s.
+- **Unprefixed sites are completely unaffected.** No staging happens and
+  zigbase serves the built tree directly, byte-identical to before this
+  existed.
+
+The staged copy lives at `.zigbase/.served-root/` and — deliberately — is
+never cleaned up when `dev` exits: it shares the (persistent, gitignored)
+zigbase data dir's own lifecycle, so the next `dev` session reuses the
+directory and just re-stages into it, the same way `.zigbase/` itself is
+never deleted between sessions.
+
 ## Control verbs
 
 ```sh

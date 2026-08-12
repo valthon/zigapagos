@@ -1892,8 +1892,13 @@ zigbase serve --http-host 127.0.0.1 --http-port {port} --data-dir {data} --serve
 Flag values are **space-separated tokens** (the real parser matches exact flag names and
 takes the next argv token as the value — it does no `=` splitting, and unknown flags are
 rejected). `--serve-static` is present in the stock/release binary (its static-files mode
-is the default one). `{port}` (the free port), `{site}` (the installed output tree) and
-`{data}` are substituted at run time. The data dir defaults to a **fresh temp dir per
+is the default one). `{port}`, `{data}` and `{site}` are substituted at run time — `{site}`
+is the installed output tree itself, UNLESS `--url-prefix=P` is given, in which case it is
+a staged root that mounts that tree at `/P/` instead (nested prefixes like `docs/v2` work
+too; see [Sites served under a path prefix](#sites-served-under-a-path-prefix) and
+[`docs/dev-server.md`](dev-server.md#sites-with-a-url_path_prefix) for why a plain symlink
+can't stand in for the staged copy, and for the readiness-probe default this implies).
+The data dir defaults to a **fresh temp dir per
 run** (deleted on teardown, so runs are hermetic); point `--data-dir=` at a
 seeded directory to test against fixtures. If you run a custom ZigBase embedder build
 that spells its flags differently (or compiles static serving out), override the whole
@@ -1934,10 +1939,10 @@ test("booking flow against the real backend", async ({ page }) => {
 ```
 
 The same shape works CLI-only: `zigapagos e2e --site=public -- <cmd>` (plus
-`--data-dir=`, `--zigbase=`, `--zigbase-arg=`, `--ready-path=`, `--timeout-ms=`; see
-`zigapagos help`). `tests/dev/e2e.sh` exercises the whole contract end to end against
-a clearly-labeled stub server (`tests/dev/stub-zigbase.ts`) honoring the same
-invocation, so it runs on machines without a real ZigBase.
+`--data-dir=`, `--zigbase=`, `--zigbase-arg=`, `--url-prefix=`, `--ready-path=`,
+`--timeout-ms=`; see `zigapagos help`). `tests/dev/e2e.sh` exercises the whole contract
+end to end against a clearly-labeled stub server (`tests/dev/stub-zigbase.ts`) honoring
+the same invocation, so it runs on machines without a real ZigBase.
 
 ## State-Preserving Dev Reload
 
