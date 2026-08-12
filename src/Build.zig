@@ -117,6 +117,19 @@ spa_not_found: ?[]const u8 = null,
 /// keys (route/manifest paths are allocated from `prerenderAll`'s per-SPA
 /// arena, which is gone by the time the prune runs); freed in `deinit`.
 spa_out_paths: std.StringHashMapUnmanaged(void) = .empty,
+/// Every SPA route URL (browser-facing, e.g. "/app/club/1/" -- NOT the disk
+/// output path `spa_out_paths` tracks) that `prerenderAll` prerendered as a
+/// REAL page this build: a declared static route, or a `staticPaths`
+/// concrete entry. Deliberately excludes a dynamic route's own pattern
+/// shell (`_shell.html`): that file exists so an unmatched param has
+/// something to render, not because "/app/club/:id" is itself a URL a
+/// visitor (or a crawler) can go to. `src/sitemap.zig`'s emitter composes
+/// each entry with `host_url` + `url_path_prefix` (issue #150).
+///
+/// Unlike `spa_out_paths`, nothing else consumes this set, so it is
+/// collected only when `cfg.getSitemap()` is true -- a site with the
+/// sitemap off pays nothing. gpa-owned; freed in `deinit`.
+sitemap_urls: std.ArrayListUnmanaged([]const u8) = .empty,
 /// Build-time props-contract check. `island_props_checks` is
 /// appended to (mutex-guarded) during the render phase and consumed once after
 /// it, in root.run. gpa-owned dups; freed in deinit.
@@ -301,6 +314,14 @@ pub fn deinit(b: *const Build, io: Io, gpa: Allocator) void {
         while (it.next()) |key| gpa.free(key.*);
         var m = b.spa_out_paths;
         m.deinit(gpa);
+    }
+
+    // sitemap_urls (see its doc comment): every entry is a gpa dupe made by
+    // spa.zig's recordSitemapUrl.
+    {
+        for (b.sitemap_urls.items) |u| gpa.free(u);
+        var list = b.sitemap_urls;
+        list.deinit(gpa);
     }
 }
 

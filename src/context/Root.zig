@@ -51,6 +51,29 @@ pub const PaginationState = struct {
     total_items: usize,
 };
 
+/// Writes the `.simple`-site (non-multilingual) absolute/relative URL
+/// prefix: `host_url` (only when `force_host_url`) followed by the
+/// `url_path_prefix` segment, or a bare "/" when there is none.
+///
+/// Factored out of `printLinkPrefix` below so `src/sitemap.zig`'s emitter —
+/// which composes URLs from a post-build pass with no per-render `Root` Ctx
+/// to call `printLinkPrefix` through — shares this ONE chokepoint instead of
+/// growing a second, driftable copy of the same three lines (issue #150's
+/// design caveat: "do not invent a second composition").
+pub fn printSimplePrefix(
+    w: *Writer,
+    host_url: []const u8,
+    url_path_prefix: []const u8,
+    force_host_url: bool,
+) error{WriteFailed}!void {
+    if (force_host_url) try w.print("{s}", .{host_url});
+    if (url_path_prefix.len > 0) {
+        try w.print("/{s}/", .{url_path_prefix});
+    } else {
+        try w.writeAll("/");
+    }
+}
+
 pub fn printLinkPrefix(
     ctx: *const Root,
     w: *Writer,
@@ -64,14 +87,7 @@ pub fn printLinkPrefix(
     const other_site = ctx._meta.sites.entries.items(.value)[other_variant_id];
     switch (other_site._meta.kind) {
         .simple => |url_path_prefix| {
-            if (force_host_url) try w.print("{s}", .{
-                ctx._meta.build.cfg.Site.host_url,
-            });
-            if (url_path_prefix.len > 0) {
-                try w.print("/{s}/", .{url_path_prefix});
-            } else {
-                try w.writeAll("/");
-            }
+            try printSimplePrefix(w, ctx._meta.build.cfg.Site.host_url, url_path_prefix, force_host_url);
         },
         .multi => |loc| {
             const our_variant_id = ctx.page._scan.variant_id;

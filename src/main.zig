@@ -327,3 +327,16 @@ test "assets: unit-test anchor" {
     _ = @import("root.zig");
     _ = @import("fingerprint.zig");
 }
+
+// Pull sitemap.zig into the test compilation unit for `zig build test-sitemap`
+// (issue #150). sitemap.zig is only @import-ed from root.zig's top-level
+// `const sitemap = @import("sitemap.zig")`, and root.zig's own `run()` body
+// is the only thing that references it -- neither is analyzed under a
+// FILTERED compile unless something already-analyzed pulls it in (same
+// "assets:"/fingerprint.zig lesson right above: a top-level `const` an
+// unmatched test never references stays unanalyzed, so its tests silently
+// never run). This anchor imports sitemap.zig directly so "sitemap:" picks
+// up both this line and every `test "sitemap: …"` block in the file.
+test "sitemap: unit-test anchor" {
+    _ = @import("sitemap.zig");
+}

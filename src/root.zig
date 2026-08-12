@@ -15,6 +15,9 @@ const fingerprint = @import("fingerprint.zig");
 const wuffs = @import("wuffs.zig");
 /// The `--summary` emitted-artifact inventory (issue #42).
 const BuildSummary = @import("summary.zig").Summary;
+/// `sitemap.xml` filename constant (issue #150), shared with the alias
+/// collision check below so the two never name the artifact differently.
+const sitemap = @import("sitemap.zig");
 const worker = @import("worker.zig");
 const context = @import("context.zig");
 const Build = @import("Build.zig");
@@ -143,6 +146,33 @@ pub const Site = struct {
     /// disk builds, so dev serves optimized output too; incremental rebuilds
     /// reuse the variants the previous full build installed.
     image_optimize: ?ImageOptimize = null,
+    /// When enabled, a release build emits `sitemap.xml` at the output root
+    /// (issue #150): one `<url><loc>` entry per canonical page URL — the
+    /// main render plus, for a paginated section, its page-2+ windows — and
+    /// per SPA route this build actually prerendered as a real page (a
+    /// declared static route or a `staticPaths` concrete entry; a dynamic
+    /// route's own pattern shell is not a URL anyone can visit and is never
+    /// listed). Drafts and alias/alternative duplicates are excluded — see
+    /// `src/sitemap.zig`.
+    ///
+    /// `host_url` is what makes a listed URL meaningful (a sitemap of
+    /// relative paths is useless to a crawler), but there is no separate
+    /// "sitemap enabled without host_url" validation here: `host_url` is a
+    /// mandatory field on `Site` and `Config.validate` already rejects it
+    /// being empty or an invalid absolute URL for EVERY config, sitemap or
+    /// not — so by the time this field could be `true`, `host_url` is
+    /// already guaranteed present and valid.
+    ///
+    /// Scoped to `Site` only (not `MultilingualSite`, which has no
+    /// `.sitemap` field): composing one crawler-facing URL set across
+    /// per-locale hosts/prefixes is a bigger design than issue #150 asked
+    /// for. `Config.getSitemap` below returns `false` for every
+    /// multilingual config, so this stays a config-parse-time "unknown
+    /// field" error there rather than a silent no-op.
+    ///
+    /// Off by default: a site that never sets it gets byte-identical output
+    /// to today, same as `speculation_rules`/`asset_fingerprint`.
+    sitemap: bool = false,
 };
 
 pub const MultilingualSite = struct {
@@ -632,6 +662,17 @@ pub const Config = union(enum) {
         };
     }
 
+    /// `sitemap` (issue #150) — emit `sitemap.xml` at release time.
+    /// `MultilingualSite` has no field of this name (see its doc comment),
+    /// so this always reports `false` for a multilingual config rather than
+    /// failing to compile a `switch` arm that does not exist.
+    pub fn getSitemap(c: *const Config) bool {
+        return switch (c.*) {
+            .Site => |s| s.sitemap,
+            .Multilingual => false,
+        };
+    }
+
     pub fn getSiteTitle(c: *const Config, locale_id: u32) []const u8 {
         return switch (c.*) {
             .Site => |s| s.title,
@@ -833,6 +874,42 @@ pub const Options = struct {
         },
     };
 };
+
+/// #150: shared by the aliases loop and the alternatives loop (both inside
+/// `run` below) so a page reaching the site-root 'sitemap.xml' through
+/// EITHER frontmatter field is caught the same way -- fatal, not a warning.
+/// See the aliases loop's call site for the full "why a hard error" reasoning
+/// (the short version: unlike 404.html's deliberate silent-overwrite
+/// precedence, a sitemap silently losing to an unrelated page has no signal
+/// anywhere that anything went wrong).
+///
+/// `url` is the already-interned `PathName` the caller is about to register
+/// in `v.urls`; `kind`/`source` are purely cosmetic (the frontmatter field
+/// name and the raw string that produced `url`, for the error message).
+fn fatalIfSitemapRootCollision(
+    cfg: *const Config,
+    v: *const Variant,
+    p: *const context.Page,
+    url: PathName,
+    kind: []const u8,
+    source: []const u8,
+) void {
+    if (!cfg.getSitemap()) return;
+    // "resolves to the site root": true for a root-absolute alias/alternative
+    // from any page, or a plain relative one from a page that is itself at
+    // the root -- both collapse to a zero-component `url.path`.
+    if (url.path.slice(&v.path_table).len != 0) return;
+    if (!std.mem.eql(u8, url.name.slice(&v.string_table), sitemap.filename)) return;
+    fatal.msg(
+        "{f}: error: {s} '{s}' resolves to '{s}', which collides with the sitemap this build emits (zigapagos.ziggy: sitemap = true) — rename or remove it, or disable the sitemap\n",
+        .{
+            p._scan.file.fmt(&v.string_table, &v.path_table, v.content_dir_path, ""),
+            kind,
+            source,
+            sitemap.filename,
+        },
+    );
+}
 
 pub fn run(
     io: Io,
@@ -2085,6 +2162,21 @@ pub fn run(
                         a,
                     );
 
+                    // #150: a page whose alias resolves to the site-root
+                    // 'sitemap.xml' would silently overwrite (or lose to,
+                    // depending on install order) the sitemap this build is
+                    // about to emit. Unlike the 404.html case just below —
+                    // where a content page overriding the SPA fallback is a
+                    // deliberate "more specific wins" precedence, not an
+                    // error — a search engine silently reading an unrelated
+                    // page instead of the real sitemap has no signal
+                    // anywhere that anything went wrong, so this is a hard
+                    // error rather than a warning. See
+                    // `fatalIfSitemapRootCollision` -- the alternatives loop
+                    // below hits the exact same shape through `alt.output`
+                    // and shares this check rather than repeating it.
+                    fatalIfSitemapRootCollision(cfg, v, p, url, "alias", a);
+
                     // A content page once aliased `"404.html"` meaning to
                     // override a SPA's site-wide fallback. Resolution
                     // behaviour is inherited upstream semantics and unchanged
@@ -2172,6 +2264,15 @@ pub fn run(
                         prefix,
                         alt.output,
                     );
+
+                    // #150: same collision as the aliases loop above, same
+                    // reason it's a hard error rather than a warning -- an
+                    // `alternatives` entry reaches the site root exactly the
+                    // way an alias does (root-absolute `alt.output`, or a
+                    // relative one from a page at the root), and the render
+                    // pass would write it right before the emitter destroys
+                    // it, with nothing on disk marking the collision.
+                    fatalIfSitemapRootCollision(cfg, v, p, url, "alternative output", alt.output);
 
                     const loc: Variant.LocationHint = .{
                         .kind = .{ .page_alternative = alt.name },

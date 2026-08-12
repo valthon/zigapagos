@@ -487,6 +487,16 @@ pub fn prerenderAll(
             if (planned.static_url) |u| {
                 try static_urls.append(arena.a, u);
                 if (chunk_url) |cu| try chunk_entries.append(arena.a, .{ .url = u, .chunk = cu });
+                // #150: a non-null static_url means this route is NOT a
+                // dynamic pattern (see planRoute) -- a real page a visitor
+                // or crawler can go to, unlike the `.dynamic` branch below.
+                // `!noindex` matters just as much: this SPA's shells already
+                // carry <meta name="robots" content="noindex"> when noindex
+                // (the default -- see `desc.spa.noindex orelse true` above),
+                // and submitting a noindex URL in a sitemap is exactly the
+                // "Submitted URL marked 'noindex'" Search Console error --
+                // the two signals must agree.
+                if (cfg.getSitemap() and !noindex) try recordSitemapUrl(build, gpa, u);
             }
             if (planned.dynamic) |d| try dynamics.append(arena.a, d);
 
@@ -519,6 +529,12 @@ pub fn prerenderAll(
                     try recordSpaOutPath(build, gpa, planned_c.out_path);
                     if (collect) |sm| try sm.add(gpa, .spa_shell, planned_c.out_path);
                     try static_urls.append(arena.a, u);
+                    // #150: a staticPaths entry is always a concrete, real
+                    // page (planned_c.static_url is asserted non-null above).
+                    // `!noindex` for the same reason as the static-route call
+                    // site above: a noindex SPA's shells must never appear in
+                    // the sitemap either.
+                    if (cfg.getSitemap() and !noindex) try recordSitemapUrl(build, gpa, u);
                     // A lazy pattern route's chunk backs its concrete pages too.
                     if (chunk_url) |cu| try chunk_entries.append(arena.a, .{ .url = u, .chunk = cu });
                 }
@@ -1117,6 +1133,23 @@ fn recordSpaOutPath(build: *Build, gpa: std.mem.Allocator, rel_path: []const u8)
     const owned = try gpa.dupe(u8, rel_path);
     errdefer gpa.free(owned);
     try build.spa_out_paths.put(gpa, owned, {});
+}
+
+/// Record one sitemap-eligible SPA route URL on `build.sitemap_urls` (see its
+/// doc comment). Unlike `recordSpaOutPath`, no dedup check: `static_seen`
+/// (this pass's own per-SPA collision guard, checked before either call site
+/// below runs) already fatals on a duplicate `static_url` within one SPA, and
+/// two different SPAs cannot share a static_url without also sharing a base
+/// -- itself a fatal spec violation checked at the top of `prerenderAll`.
+///
+/// NO_SLOP.md §2.2a contract 1 (self-freeing), same reasoning as
+/// `recordSpaOutPath` just above: the one allocation it makes (the gpa dupe)
+/// is handed to `build.sitemap_urls`, which `Build.deinit` frees; nothing
+/// escapes to the caller.
+fn recordSitemapUrl(build: *Build, gpa: std.mem.Allocator, url: []const u8) !void {
+    const owned = try gpa.dupe(u8, url);
+    errdefer gpa.free(owned);
+    try build.sitemap_urls.append(gpa, owned);
 }
 
 fn writeFile(io: std.Io, out_dir: std.Io.Dir, rel_path: []const u8, contents: []const u8) !void {

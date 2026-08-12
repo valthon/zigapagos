@@ -6,6 +6,7 @@ const fatal = @import("../fatal.zig");
 const root = @import("../root.zig");
 const worker = @import("../worker.zig");
 const spa_mod = @import("../spa.zig");
+const sitemap = @import("../sitemap.zig");
 const diag = @import("../diag.zig");
 const Allocator = std.mem.Allocator;
 const BuildAsset = root.BuildAsset;
@@ -172,6 +173,31 @@ pub fn release(
         build.any_rendering_error.load(.acquire))
     {
         return true;
+    }
+
+    // `sitemap.xml` (issue #150): a SIBLING pass to the bun-gated host-config
+    // block below, not a step inside it -- the design caveat posted to the
+    // issue is explicit that a plain content site (no islands, no SPAs,
+    // never entering that block's `cmd.islands.len > 0 or cmd.spas.len > 0`
+    // gate) is the most common sitemap consumer, and this pass has no bun
+    // dependency to gate on in the first place.
+    //
+    // `changed_files.len == 0` restricts this to a FULL build. Unlike the
+    // host-config block (which reads the finished DISK tree and so stays
+    // correct across an incremental `zigapagos dev` rebuild for free), this
+    // pass reads in-memory `Page`/SPA state -- and SPA prerendering itself
+    // is skipped entirely on an incremental rebuild (`root.zig`'s
+    // `if (build.mode == .disk and !incremental)` guard), which would make
+    // `build.sitemap_urls` silently empty and overwrite a correct sitemap
+    // with one missing every SPA route. A full build's set is always
+    // complete, so gating on it is what keeps this pass from ever writing a
+    // wrong sitemap; the tradeoff is that dev's incremental rebuilds simply
+    // leave whatever the last full build wrote.
+    if (cfg.getSitemap() and changed_files.len == 0) {
+        sitemap.write(io, gpa, &build, build.mode.disk.output_dir) catch |err| fatal.msg(
+            "error: emitting sitemap.xml failed: {s}\n",
+            .{@errorName(err)},
+        );
     }
 
     // Host config + strict-CSP + Cache-Control artifacts, over the tree that
