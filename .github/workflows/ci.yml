@@ -424,7 +424,7 @@ jobs:
             test-islands test-props test-migrate test-sidecar test-init \
             test-release test-debug test-spa test-assets test-e2e test-dev \
             test-doctor test-slugs test-validate test-explain test-diag \
-            test-summary test-images
+            test-summary test-images test-sitemap
 
       - name: Runtime TypeScript tests (Bun)
         working-directory: runtime

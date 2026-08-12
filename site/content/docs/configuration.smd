@@ -20,6 +20,7 @@ Site {
     .layouts_dir_path = "layouts",
     .assets_dir_path = "assets",
     .deploy_target = "zigbase",
+    .sitemap = true,
 }
 ```
 
@@ -54,6 +55,33 @@ supporting browsers prefetch same-origin links on hover, with zero runtime JS,
 and browsers without support ignore the block. Off by default; the
 [islands reference]($link.page("docs/islands")) covers it under link
 prefetching.
+
+`.sitemap = true` emits `sitemap.xml` at the output root: one entry per
+canonical page URL, composed from `host_url` + `url_path_prefix` exactly like
+every other absolute link this build writes. Drafts and alias/alternative
+duplicates are excluded; a paginated section's page-2+ windows are included;
+a prerendered SPA route is included only when it is a real, indexable page —
+a static route or a `staticPaths` concrete entry (never a dynamic route's own
+pattern shell, since nobody can visit `/app/club/:id` as a URL), and never a
+route belonging to an SPA whose `noindex` is on (the default) — a sitemap
+listing a URL the same build tells crawlers not to index is a Search Console
+error, not a feature. Off by default. Requires `host_url` to be set — which
+every `zigapagos.ziggy` already must, so there is nothing extra to configure.
+A page whose `aliases` **or** `alternatives` output resolves to the
+site-root `sitemap.xml` is a build error while the sitemap is enabled, since
+either would otherwise silently collide with it.
+
+`sitemap` is a `Site`-only field — a multilingual `zigapagos.ziggy`
+(`Multilingual { ... }`) has no field of this name, so setting it there is a
+config-parse-time "unknown field" error, not a silent no-op. Composing one
+crawler-facing URL set across per-locale hosts/prefixes is a bigger design
+than this feature covers yet.
+
+`zigapagos dev`'s incremental rebuilds (the fast path that re-renders only
+changed content pages) never touch `sitemap.xml`: only a full, non-incremental
+build (the dev loop's first build, or a plain `zigapagos release`) writes it,
+so a previously-written sitemap is left as-is — stale, not wrong-shaped —
+until the next full rebuild.
 
 ## The build invocation
 

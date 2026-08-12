@@ -78,6 +78,15 @@ include with a literal `<script src>`) must be in `static_assets`.
 with `a/b/`. A glob that matches nothing is a build error, so a typo'd directory is
 caught rather than silently dropped.)
 
+**`@astrojs/sitemap` → `.sitemap = true`.** Zigapagos generates its own `sitemap.xml`
+at release time — opt in with `.sitemap = true` (requires `host_url`, which is already
+mandatory). Coverage: every canonical page URL (drafts and alias/alternative duplicates
+excluded), a paginated section's page-2+ windows, and a prerendered SPA route that is a
+real page (a static route, or a `staticPaths` concrete entry — a dynamic route's own
+pattern shell is never listed). `zigapagos migrate` flags `@astrojs/sitemap` in the
+generated `MIGRATION.md` worklist when it finds the dependency. Not built: a
+sitemap-index for sites past the 50k-URL single-file limit, and `<lastmod>`.
+
 ## 3. Routing
 
 Both are file-based and 1:1:
@@ -585,7 +594,8 @@ Keep **secrets** server-side; only public, client-safe config belongs in `data/`
 |---|---|
 | `<style>` scoped in `.astro` | a CSS file in `assets/`, linked from the layout |
 | `import "./x.css"` | `<link rel="stylesheet" href="…">` (asset) |
-| Tailwind/integrations | plain CSS in `assets/` (no integration system yet) |
+| Tailwind/most integrations | plain CSS in `assets/` (no integration system yet) |
+| `@astrojs/sitemap` | `.sitemap = true` (§2) | The one integration with a direct mapping — see §2 for the config and coverage rules. |
 
 ## 13. SPA mode (client-routed apps)
 

@@ -236,6 +236,18 @@ const exe_module: []const ExeModule = &.{
         .description = "Run explain CLI parse + route-normalization unit tests",
         .filters = &.{"explain:"},
     },
+    // `sitemap.xml` emitter unit tests (issue #150): URL composition
+    // (host_url + url_path_prefix + page path/pagination tail, and the raw
+    // SPA-route form) and XML escaping. The "sitemap:" filter matches
+    // main.zig's anchor and every `test "sitemap: …"` block in
+    // src/sitemap.zig -- see that anchor's comment for why the anchor has
+    // to import sitemap.zig directly rather than relying on root.zig's own
+    // top-level import of it.
+    .{
+        .step_name = "test-sitemap",
+        .description = "Run sitemap.xml emitter unit tests",
+        .filters = &.{"sitemap:"},
+    },
 };
 
 /// Registers every `test-*` step and hangs the test binaries off `check`.
