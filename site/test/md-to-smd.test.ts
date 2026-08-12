@@ -81,6 +81,31 @@ test("slugifyHeading: prose emphasis around a code span with underscores is unaf
   expect(slugifyHeading("_before_ `a_b` _after_")).toBe("before-a_b-after");
 });
 
+test("slugifyHeading: underscore emphasis WRAPPING a whole code span is stripped", () => {
+  // `` _`a_b`_ `` is `_<code>a_b</code>_` in CommonMark terms -- the whole
+  // code span sits inside an underscore-emphasis pair, and the pair must
+  // still be recognised and stripped, leaving the span's own underscore.
+  // splitCodeSpans puts the two lone underscores in SEPARATE prose segments
+  // (one either side of the code segment), so a strip that only ever looks
+  // at one segment at a time can never see them as a pair: each one alone
+  // fails to match `/_([^_]*)_/g` (there is no second underscore in its own
+  // segment) and both survive verbatim into the slug ("_a_b_" instead of
+  // "a_b").
+  expect(slugifyHeading("_`a_b`_")).toBe("a_b");
+});
+
+test("slugifyHeading: star emphasis wrapping a whole code span is stripped", () => {
+  expect(slugifyHeading("*`a_b`*")).toBe("a_b");
+});
+
+test("slugifyHeading: bold wrapping a whole code span is stripped", () => {
+  expect(slugifyHeading("**`a_b`**")).toBe("a_b");
+});
+
+test("slugifyHeading: emphasis wrapping a code span, plus surrounding prose", () => {
+  expect(slugifyHeading("Before _`x_y`_ After")).toBe("before-x_y-after");
+});
+
 // ---------------------------------------------------------------------------
 // heading ids via transformBody
 // ---------------------------------------------------------------------------
