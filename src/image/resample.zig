@@ -97,6 +97,13 @@ pub fn resize(
 ) Allocator.Error![]u8 {
     std.debug.assert(src_rgba.len == @as(usize, src_w) * src_h * 4);
     std.debug.assert(dst_w > 0 and dst_h > 0);
+    // Source dims must be nonzero too (#147): `buildTaps`'s `src_n - 1`
+    // underflows a `u32` (a safety-checked panic in Debug/ReleaseSafe, UB in
+    // ReleaseFast) on a zero-dimension source. Unreachable today only
+    // because `decode.zig` rejects `w == 0 or h == 0` before a `Decoded`
+    // ever reaches this function — a distant guarantee this assert now
+    // localises instead of leaving implicit.
+    std.debug.assert(src_w > 0 and src_h > 0);
 
     // Linearize + premultiply into f32.
     const src_f = try gpa.alloc(f32, @as(usize, src_w) * src_h * 4);

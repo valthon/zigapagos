@@ -3303,6 +3303,12 @@ pub fn run(
 /// basenames and variant slices stored in `build.image_variants` are
 /// gpa-owned by Build and freed in Build.deinit.
 fn planImageVariants(io: Io, gpa: Allocator, build: *Build, opts: ImageOptimize) void {
+    // Every sibling pass in this file gets a tracy zone; this is the one
+    // that reads every referenced image off disk (#147) — the pass most
+    // worth having in a profile, and the one that had been missing it.
+    const zone = tracy.trace(@src());
+    defer zone.end();
+
     const image_requests = @import("image/requests.zig");
     const plan = @import("image/plan.zig");
     const webp = @import("image/webp.zig");
@@ -3340,13 +3346,12 @@ fn planImageVariants(io: Io, gpa: Allocator, build: *Build, opts: ImageOptimize)
     var path_buf: [std.fs.max_path_bytes]u8 = undefined;
     for (refs) |ref| {
         p.completeOne();
-        const dir: Io.Dir, const st, const pt = switch (ref.kind) {
-            .site => .{ build.site_assets_dir, &build.st, &build.pt },
-            .page => blk: {
-                const v = &build.variants[ref.variant_id];
-                break :blk .{ v.content_dir, &v.string_table, &v.path_table };
-            },
-        };
+        // Shared with derive.zig's `run` — see Build.resolveImageSourceRef's
+        // doc comment for why this can't be a per-file `switch` (#147).
+        const resolved = build.resolveImageSourceRef(ref);
+        const dir: Io.Dir = resolved.dir;
+        const st = resolved.st;
+        const pt = resolved.pt;
         const pn: PathName = .{
             .path = @enumFromInt(ref.path),
             .name = @enumFromInt(ref.name),
@@ -3358,7 +3363,7 @@ fn planImageVariants(io: Io, gpa: Allocator, build: *Build, opts: ImageOptimize)
         // Slurp: unlike fingerprinting (which must touch EVERY asset), this
         // only reads images something actually referenced, and the derive
         // job will decode the whole file anyway.
-        const bytes = dir.readFileAlloc(io, rel, gpa, .limited(512 * 1024 * 1024)) catch |err| {
+        const bytes = dir.readFileAlloc(io, rel, gpa, plan.max_source_bytes) catch |err| {
             fatal.msg("error: image_optimize: cannot read '{s}': {s}\n", .{ rel, @errorName(err) });
         };
         defer gpa.free(bytes);

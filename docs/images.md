@@ -30,7 +30,7 @@ overridden.
 | field | default | meaning |
 | --- | --- | --- |
 | `widths` | `[480, 800, 1200, 1920]` | Candidate variant widths (CSS px), site-wide — not per-image. Filtered per image to `<=` its intrinsic width — **never upscaled**. If the source is narrower than the smallest configured width, one variant is generated at the source's own intrinsic width. Rejected at config validation if empty, if any entry is `<= 0`, or if there are more than 64 entries (`error: image_optimize.widths in zigapagos.ziggy has N entries, must be <= 64`) — the planner's scratch buffer is sized off that bound, so it is enforced once, at validation, rather than silently re-capped later. |
-| `quality` | `75` | WebP lossy quality (0–100) for JPEG/lossy-WebP sources. A PNG source (detected from its magic bytes, not its extension) always encodes lossless WebP, ignoring this. `quality` is hashed into every variant's cache name (webp *and* avif), but it is **not passed to the external AVIF encoder** — the spawn is `<avif_encoder> <in.png> <out.avif>`, argv only, no quality flag — so changing `quality` re-encodes AVIF variants to byte-identical output under a new URL. Rejected at config validation outside 0–100. |
+| `quality` | `75` | WebP lossy quality (0–100) for JPEG/lossy-WebP sources. A PNG source (detected from its magic bytes, not its extension) always encodes lossless WebP, ignoring this — but a source that is ITSELF a lossless WebP (VP8L) is not detected the same way: only PNG magic bytes flip this switch, so a deliberately-lossless WebP source is re-encoded **lossy** at `quality`, same as a JPEG. `quality` is hashed into every variant's cache name (webp *and* avif), but it is **not passed to the external AVIF encoder** — the spawn is `<avif_encoder> <in.png> <out.avif>`, argv only, no quality flag — so changing `quality` re-encodes AVIF variants to byte-identical output under a new URL. Rejected at config validation outside 0–100. |
 | `sizes` | `"100vw"` | Emitted verbatim (HTML-escaped) as the `sizes` attribute on every `<source>` that carries `w` descriptors — which is always, once a variant exists. |
 | `avif_encoder` | `null` | Name (PATH-resolved) or path of an `avifenc`-compatible binary: invoked as `<avif_encoder> <in.png> <out.avif>` for each planned width. `null` = no AVIF output, no `<source type="image/avif">` at all. See [Cache](#cache) for the caching caveat this introduces. |
 
@@ -69,7 +69,12 @@ scope; see [Out of scope](#out-of-scope).
   (`fatal.msg`), not silently skipped. This includes the AVIF hatch
   specifically: a missing/unspawnable `avif_encoder` binary or a nonzero
   exit both fail the build, naming the binary, the source path, and (for a
-  nonzero exit) the exit code.
+  nonzero exit) the exit code. **This is true for variants that still need
+  deriving.** A warm [cache](#cache) hit is a stat-and-copy that never
+  reaches the encoder, so `avifenc` can be deleted after a successful build
+  and later rebuilds of an unchanged site keep succeeding — "a missing
+  `avif_encoder` fails the build" is a per-cache-miss guarantee, not an
+  every-build one.
 
 ## Dev-loop behavior
 

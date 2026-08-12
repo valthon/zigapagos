@@ -95,6 +95,15 @@ fn writeChunk(
     chunk_type: *const [4]u8,
     data: []const u8,
 ) error{OutOfMemory}!void {
+    // `@intCast` into a big-endian u32 chunk length is sound only because
+    // every caller's `data` is bounded by `decode.max_dimension` (16384) on
+    // both `w` and `h` (#147): worst case is IDAT's filtered scanlines,
+    // `h * (w*4 + 1)` <= 16384 * (16384*4 + 1) ~= 1.07 GB, comfortably under
+    // u32's 4 GiB ceiling. That bound lives in decode.zig, a file this
+    // interchange-only writer deliberately doesn't import (see this file's
+    // header) — assert it here instead of leaving the cast's soundness
+    // implicit and one file removed.
+    std.debug.assert(data.len <= std.math.maxInt(u32));
     var len_bytes: [4]u8 = undefined;
     std.mem.writeInt(u32, &len_bytes, @intCast(data.len), .big);
     try out.appendSlice(gpa, &len_bytes);

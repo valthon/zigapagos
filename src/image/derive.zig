@@ -56,14 +56,14 @@ pub const Job = struct {
 pub fn run(io: Io, gpa: Allocator, d: Job) void {
     const build = d.build;
 
-    // Resolve source dir + relative path exactly like planImageVariants.
-    const dir: Io.Dir, const st: *const StringTable, const pt: *const PathTable = switch (d.ref.kind) {
-        .site => .{ build.site_assets_dir, &build.st, &build.pt },
-        .page => blk: {
-            const v = &build.variants[d.ref.variant_id];
-            break :blk .{ v.content_dir, &v.string_table, &v.path_table };
-        },
-    };
+    // Resolve source dir + relative path — shared with planImageVariants via
+    // `Build.resolveImageSourceRef` (#147: this used to be a copy-pasted
+    // `switch (d.ref.kind)`, a "must-agree pair that nothing pins" — see
+    // that method's doc comment for why a divergence here is dangerous).
+    const resolved = build.resolveImageSourceRef(d.ref);
+    const dir: Io.Dir = resolved.dir;
+    const st: *const StringTable = resolved.st;
+    const pt: *const PathTable = resolved.pt;
     const pn: PathName = .{
         .path = @enumFromInt(d.ref.path),
         .name = @enumFromInt(d.ref.name),
@@ -115,6 +115,12 @@ pub fn run(io: Io, gpa: Allocator, d: Job) void {
     var decoded: ?Decoded = null;
     defer if (decoded) |ds| ds.img.deinit(gpa);
 
+    // Lazily resolved on the first AVIF miss and reused for the rest of
+    // this job — see the `cache_dir_abs == null` check in the `.avif` arm
+    // below for why (#147, Task 12 follow-up).
+    var cache_dir_abs: ?[]const u8 = null;
+    var cache_dir_abs_buf: [std.fs.max_path_bytes]u8 = undefined;
+
     // Variants are grouped ADJACENT per width — webp, then an optional avif
     // at the SAME width (`plan.Planned.variants`' doc comment commits to
     // this order, and `planImageVariants` builds it that way on purpose).
@@ -148,12 +154,18 @@ pub fn run(io: Io, gpa: Allocator, d: Job) void {
                 continue;
             } else |err| switch (err) {
                 error.FileNotFound => {}, // miss: fall through and compute
-                else => fatal.file(variant.basename, err),
+                // Name the SOURCE (`rel`), not `variant.basename` — the
+                // param-addressed cache key is meaningless to the author who
+                // wrote `rel`, and spec §7 asks failures to name what they
+                // know about (#147; matches this function's own source-read
+                // failure a few lines below, and root.zig's, both keyed on
+                // `rel`).
+                else => fatal.file(rel, err),
             }
 
             // Miss: decode the source once for all missed variants in this job.
             if (decoded == null) {
-                const bytes = dir.readFileAlloc(io, rel, gpa, .limited(512 * 1024 * 1024)) catch |err|
+                const bytes = dir.readFileAlloc(io, rel, gpa, plan.max_source_bytes) catch |err|
                     fatal.msg("error: image_optimize: cannot read '{s}': {s}\n", .{ rel, @errorName(err) });
                 defer gpa.free(bytes);
                 // Decided from BYTES before they're freed, not from `rel`'s
@@ -169,7 +181,42 @@ pub fn run(io: Io, gpa: Allocator, d: Job) void {
             // Miss on THIS width: resample once, shared by every codec in
             // `group` that turns out to be a miss too.
             if (resampled == null) {
-                resampled = resample.resize(gpa, img.w, img.h, img.rgba, variant.width, variant.height) catch fatal.oom();
+                // 1:1 short-circuit (#147): when no configured width
+                // survives `plan.pickWidths`, it falls back to the source's
+                // own intrinsic width — the COMMON case for anything
+                // narrower than the smallest configured width, and more so
+                // now that AVIF can double the work per width. Even at true
+                // 1:1 scale, `resample.resize` is NOT a lossless identity:
+                // it premultiplies by alpha and un-premultiplies on the way
+                // out, a round trip `resample.zig`'s own identity-case unit
+                // test documents as ±1-per-channel lossy (see its "Opaque
+                // alpha so premultiply round-trip is exact" comment — the
+                // test only uses opaque pixels BECAUSE non-opaque ones
+                // aren't exact); and it hard-zeroes RGB wherever alpha
+                // rounds to 0 (`if (a <= 0.0) @memset(out[dp..dp+4], 0)`),
+                // which discards whatever RGB the source actually stored
+                // under full transparency. Copying the decoded pixels
+                // straight through instead reproduces the source EXACTLY in
+                // both respects — no quantization loss, and no zeroing of
+                // "invisible" RGB — so this is strictly MORE faithful to
+                // the source than the path it replaces, not merely cheaper.
+                // Nothing pins the resulting bytes (checked: no snapshot or
+                // e2e compares them, only structural/magic-byte/name-shape
+                // properties), and on the two fixtures this was verified
+                // against — including one with varied alpha — the change
+                // happened to compare identical AS ENCODED (WebP lossless
+                // encoding normalizes RGB under transparent pixels by
+                // default, which is why an encoded-bytes comparison can't
+                // observe the very case this short-circuit fixes; it does
+                // not mean the two pixel buffers were pixel-identical
+                // inputs to the encoder). The cache basename is unaffected
+                // either way — it hashes source bytes and transform
+                // PARAMETERS (`plan.variantBasename`), never the encoder's
+                // output.
+                resampled = if (variant.width == img.w and variant.height == img.h)
+                    gpa.dupe(u8, img.rgba) catch fatal.oom()
+                else
+                    resample.resize(gpa, img.w, img.h, img.rgba, variant.width, variant.height) catch fatal.oom();
             }
             const small = resampled.?;
 
@@ -192,11 +239,24 @@ pub fn run(io: Io, gpa: Allocator, d: Job) void {
                     // is set — see its `has_avif` gate — so `.?` here can
                     // never actually fire.
                     const avif_encoder = build.cfg.getImageOptimize().?.avif_encoder.?;
-                    encodeAvif(io, gpa, d.cache_dir, d.ref, rel, variant, small, avif_encoder);
+                    // Resolve the cache dir to absolute at most ONCE PER
+                    // JOB, not once per AVIF variant (#147): a job with
+                    // several missed widths used to re-resolve it on every
+                    // one, even though it is per-job invariant — this makes
+                    // encodeAvif's own "resolve once" comment literally
+                    // true instead of aspirational.
+                    if (cache_dir_abs == null) {
+                        const n = d.cache_dir.realPathFile(io, ".", &cache_dir_abs_buf) catch |err|
+                            fatal.msg("error: image_optimize: cannot resolve the image cache dir: {s}\n", .{@errorName(err)});
+                        cache_dir_abs = cache_dir_abs_buf[0..n];
+                    }
+                    encodeAvif(io, gpa, d.cache_dir, cache_dir_abs.?, d.ref, rel, variant, small, avif_encoder);
                 },
             }
+            // Same naming rationale as the cache-hit copy above (#147):
+            // name the source, not the internal cache key.
             _ = d.cache_dir.updateFile(io, variant.basename, d.output_dir, dest, .{}) catch |err|
-                fatal.file(variant.basename, err);
+                fatal.file(rel, err);
         }
     }
 }
@@ -228,6 +288,12 @@ fn encodeAvif(
     io: Io,
     gpa: Allocator,
     cache_dir: Io.Dir,
+    // Cache dir, pre-resolved to an absolute path by the caller (#147: used
+    // to be re-resolved via `realPathFile` on every call — once per AVIF
+    // variant — even though it is invariant for the whole job; the caller
+    // now resolves it at most once per job and passes it in). Borrowed, not
+    // owned: this function's own allocator contract (below) is unaffected.
+    cache_dir_abs: []const u8,
     ref: plan.SourceRef,
     rel: []const u8,
     variant: plan.Variant,
@@ -243,13 +309,9 @@ fn encodeAvif(
     // inode even though they may both rename onto the same final cache
     // entry.
     var tmp_png_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const tmp_png = std.fmt.bufPrint(&tmp_png_buf, ".tmp.{d}.{d}.{d}.{d}.{s}.png", .{
-        @intFromEnum(ref.kind), ref.variant_id, ref.path, ref.name, variant.basename,
-    }) catch unreachable;
+    const tmp_png = tmpName(&tmp_png_buf, ref, variant.basename, ".png");
     var tmp_avif_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const tmp_avif = std.fmt.bufPrint(&tmp_avif_buf, ".tmp.{d}.{d}.{d}.{d}.{s}.avif", .{
-        @intFromEnum(ref.kind), ref.variant_id, ref.path, ref.name, variant.basename,
-    }) catch unreachable;
+    const tmp_avif = tmpName(&tmp_avif_buf, ref, variant.basename, ".avif");
 
     {
         const f = cache_dir.createFile(io, tmp_png, .{}) catch |err|
@@ -259,20 +321,17 @@ fn encodeAvif(
         fw.interface.writeAll(png_bytes) catch |err|
             fatal.msg("error: image_optimize: cannot write AVIF temp input for '{s}': {s}\n", .{ rel, @errorName(err) });
     }
+    // Best-effort cleanup: a failed delete (already gone, permissions) just
+    // leaves an inert `.tmp.*` file — nothing ever reads one, so this is the
+    // same class of harmless leftover docs/images.md's Cache section
+    // documents for the `fatal.msg`-mid-encode case (a `noreturn` fatal
+    // skips `defer`s entirely, which is the more common way a `.tmp.*` file
+    // survives), not a real bug to surface (#147).
     defer cache_dir.deleteFile(io, tmp_png) catch {};
 
-    // The encoder is spawned with real filesystem paths, not `Io.Dir`-
-    // relative ones, so resolve the cache dir to absolute once — mirrors
-    // `root.zig`'s `installMinifiedCss`, the repo's other external-tool
-    // spawn (source of the spawn idiom copied below).
-    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const dir_n = cache_dir.realPathFile(io, ".", &dir_buf) catch |err|
-        fatal.msg("error: image_optimize: cannot resolve the image cache dir: {s}\n", .{@errorName(err)});
-    const dir_abs = dir_buf[0..dir_n];
-
-    const png_abs = std.fs.path.join(gpa, &.{ dir_abs, tmp_png }) catch fatal.oom();
+    const png_abs = std.fs.path.join(gpa, &.{ cache_dir_abs, tmp_png }) catch fatal.oom();
     defer gpa.free(png_abs);
-    const avif_abs = std.fs.path.join(gpa, &.{ dir_abs, tmp_avif }) catch fatal.oom();
+    const avif_abs = std.fs.path.join(gpa, &.{ cache_dir_abs, tmp_avif }) catch fatal.oom();
     defer gpa.free(avif_abs);
 
     var child = std.process.spawn(io, .{
@@ -319,6 +378,38 @@ fn encodeAvif(
 
 fn quality(build: *const Build) f32 {
     return @floatFromInt(build.cfg.getImageOptimize().?.quality);
+}
+
+/// Format the tmp-sibling name for one cache write: `.tmp.<kind>.<variant_id>
+/// .<path>.<name>.<basename><ext>`. Extracted from three inline
+/// `std.fmt.bufPrint` call sites that all built this exact shape by hand
+/// (#147) — `writeCacheAtomic`'s own tmp (no `ext`) and `encodeAvif`'s two
+/// interchange files (`.png`, `.avif`), which don't go through
+/// `writeCacheAtomic` because they rename via the external encoder's own
+/// output rather than a bytes-in-hand write. Unique PER JOB (`ref`'s
+/// kind+variant_id+path+name), not merely per basename — see
+/// `writeCacheAtomic`'s doc comment for why that matters.
+///
+/// Bound: `buf` is sized `std.fs.max_path_bytes` (4096 on every platform
+/// this repo builds for) at every call site. The formatted name is `.tmp.`
+/// (5 bytes) + four decimal `u32`s (<=10 digits each = 40) + 4 `.`
+/// separators + `basename` (itself bounded well under 4096 — it is one
+/// filesystem entry name, capped by the OS's `NAME_MAX`, typically 255) +
+/// `ext` (<=5 bytes, `".avif"` being the longest). The sum has no realistic
+/// path to `max_path_bytes`, which is why `catch unreachable` below is
+/// sound rather than merely convenient.
+///
+/// NO_SLOP §2.2a contract 3 (caller-buffer): allocates nothing, formats
+/// into the caller's `buf`.
+fn tmpName(buf: []u8, ref: plan.SourceRef, basename: []const u8, ext: []const u8) []const u8 {
+    return std.fmt.bufPrint(buf, ".tmp.{d}.{d}.{d}.{d}.{s}{s}", .{
+        @intFromEnum(ref.kind),
+        ref.variant_id,
+        ref.path,
+        ref.name,
+        basename,
+        ext,
+    }) catch unreachable;
 }
 
 /// The output-tree destination for one variant: `path`'s directory
@@ -382,13 +473,7 @@ fn writeCacheAtomic(
     bytes: []const u8,
 ) !void {
     var tmp_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const tmp = try std.fmt.bufPrint(&tmp_buf, ".tmp.{d}.{d}.{d}.{d}.{s}", .{
-        @intFromEnum(ref.kind),
-        ref.variant_id,
-        ref.path,
-        ref.name,
-        basename,
-    });
+    const tmp = tmpName(&tmp_buf, ref, basename, "");
     {
         const f = try cache_dir.createFile(io, tmp, .{});
         defer f.close(io);

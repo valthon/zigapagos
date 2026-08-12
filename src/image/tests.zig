@@ -209,8 +209,15 @@ test "images: eligible gates on format and animation" {
     const png_magic = [_]u8{ 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A } ++ [_]u8{0} ** 8;
     try std.testing.expect(plan.eligible(&jpeg_magic));
     try std.testing.expect(plan.eligible(&png_magic));
-    try std.testing.expect(!plan.eligible("GIF89a......")); // gif: never
-    try std.testing.expect(!plan.eligible("<svg xmlns=")); // not raster
+    // Both fixtures below are >=16 bytes (#147: they used to be under the
+    // `bytes.len < 16` length gate in `eligible`, so they tripped THAT
+    // instead of exercising real GIF/SVG content rejection — the assertion
+    // held for the wrong reason). Real GIF and SVG openers, not just magic
+    // bytes, so a future format-sniffing regression that only checks the
+    // first few bytes would still be caught.
+    const gif_magic = [_]u8{ 'G', 'I', 'F', '8', '9', 'a', 0x10, 0x00, 0x0a, 0x00, 0x91, 0x00, 0x00, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00 };
+    try std.testing.expect(!plan.eligible(&gif_magic)); // gif: never
+    try std.testing.expect(!plan.eligible("<svg xmlns=\"http://www.w3.org/2000/svg\">")); // not raster
     // Still WebP (VP8 chunk) yes; animated WebP (VP8X with anim flag) no.
     var still = [_]u8{ 'R', 'I', 'F', 'F', 0x00, 0x00, 0x00, 0x00, 'W', 'E', 'B', 'P', 'V', 'P', '8', ' ' } ++ [_]u8{0} ** 8;
     try std.testing.expect(plan.eligible(&still));
