@@ -188,6 +188,10 @@ cp "$JEKYLL_OUT" "$VALIDATE/content/posts/2026-08-15-hello.smd"
 HELP="$WORK/help.txt"
 "$ZIGAPAGOS" help >"$HELP" 2>&1
 grep -q 'Scan a supported framework' "$HELP" || fail "top-level help still describes migrate as Astro-only"
+MIGRATE_HELP="$WORK/migrate-help.txt"
+"$ZIGAPAGOS" migrate --help >"$MIGRATE_HELP" 2>&1
+grep -q 'nuxt|vue' "$MIGRATE_HELP" || fail "migrate help omits the supported --from vue alias"
+grep -q 'Astro, Next.js, and Gatsby React' "$MIGRATE_HELP" || fail "migrate help omits the --scaffold source constraint"
 
 # Eleventy: conventional config detection, private template inventory, and
 # Markdown conversion coexist without treating _includes/_layouts as pages.
@@ -262,14 +266,29 @@ cp "$WORK/hexo-content/posts/hello.smd" "$VALIDATE/content/posts/hello.smd"
 cp "$WORK/hexo-content/drafts/idea.smd" "$VALIDATE/content/drafts/idea.smd"
 ( cd "$VALIDATE" && "$ZIGAPAGOS" validate ) || fail "converted Eleventy/Hexo content is not valid Zigapagos input"
 
-# A bare _config.yml is shared by multiple ecosystems. Refuse to guess and
-# give both a human and an agent the explicit --from escape hatch.
+# A bare _config.yml is shared by multiple ecosystems and cannot be identified
+# confidently. Refuse to guess, print actionable usage, and do not panic.
+UNKNOWN="$WORK/unknown"
+mkdir -p "$UNKNOWN"
+: > "$UNKNOWN/_config.yml"
+if "$ZIGAPAGOS" migrate "$UNKNOWN" -o "$WORK/UNKNOWN.md" >"$WORK/unknown.log" 2>&1; then
+  fail "unidentifiable _config.yml was guessed instead of requesting --from"
+fi
+grep -q 'ask the project owner or pass --from' "$WORK/unknown.log" || fail "failed detection did not provide an actionable choice"
+grep -q 'Usage: zigapagos migrate' "$WORK/unknown.log" || fail "failed detection omitted command usage"
+! grep -q 'Zigapagos debug stack trace' "$WORK/unknown.log" || fail "failed detection panicked instead of exiting as a usage error"
+
+# Multiple positive framework markers are genuinely ambiguous. Treat this as
+# project/user input too, with the same clean --from escape hatch.
 AMBIGUOUS="$WORK/ambiguous"
 mkdir -p "$AMBIGUOUS"
-: > "$AMBIGUOUS/_config.yml"
+: > "$AMBIGUOUS/astro.config.mjs"
+: > "$AMBIGUOUS/next.config.mjs"
 if "$ZIGAPAGOS" migrate "$AMBIGUOUS" -o "$WORK/AMBIGUOUS.md" >"$WORK/ambiguous.log" 2>&1; then
-  fail "ambiguous _config.yml was guessed instead of requesting --from"
+  fail "multiple framework markers were guessed instead of requesting --from"
 fi
-grep -q 'ask the project owner or pass --from' "$WORK/ambiguous.log" || fail "ambiguous detection did not provide an actionable choice"
+grep -q 'multiple source frameworks detected' "$WORK/ambiguous.log" || fail "ambiguous detection omitted the conflicting-framework error"
+grep -q 'Usage: zigapagos migrate' "$WORK/ambiguous.log" || fail "ambiguous detection omitted command usage"
+! grep -q 'Zigapagos debug stack trace' "$WORK/ambiguous.log" || fail "ambiguous detection panicked instead of exiting as a usage error"
 
 echo "PASS: Next.js, Gatsby, Nuxt/Vue, Hugo, Jekyll, Eleventy, and Hexo migration adapters"

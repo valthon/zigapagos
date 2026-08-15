@@ -72,10 +72,12 @@ const usage =
     \\data loaders, plugins, and framework config remain explicit worklist items.
     \\
     \\Options:
-    \\  --from SOURCE         astro|next|gatsby|nuxt|hugo|jekyll|11ty|hexo
+    \\  --from SOURCE         astro|next|gatsby|nuxt|vue|hugo|jekyll|11ty|hexo
     \\                        (default: auto; use when detection is ambiguous)
     \\  -o, --output PATH      Report path (default: MIGRATION.md)
     \\  --scaffold DIR         Write a starter TSX island per island into DIR.
+    \\                         Supported for Astro, Next.js, and Gatsby React
+    \\                         sources only.
     \\                         Attempts a real port: rewrites React imports to
     \\                         `@z/runtime` and flags any bare npm imports for
     \\                         review (NO-NPM-GUARDRAIL). Falls back to a TSX
@@ -252,8 +254,8 @@ fn detectSource(io: Io, gpa: Allocator, root: Io.Dir) Source {
     var found: ?Source = null;
     for ([_]Source{ .astro, .nextjs, .gatsby, .nuxt, .hugo, .jekyll, .eleventy, .hexo }) |candidate| {
         if (!configMarker(io, root, candidate)) continue;
-        if (found != null) fatal.msg(
-            "multiple source frameworks detected ({s} and {s}); select one with --from\n",
+        if (found != null) fatal.usageError(
+            "error: multiple source frameworks detected ({s} and {s}); select one with --from\n\n" ++ usage,
             .{ found.?.name(), candidate.name() },
         );
         found = candidate;
@@ -262,14 +264,14 @@ fn detectSource(io: Io, gpa: Allocator, root: Io.Dir) Source {
 
     for ([_]Source{ .astro, .nextjs, .gatsby, .nuxt, .eleventy, .hexo }) |candidate| {
         if (!sourceMarker(io, gpa, root, candidate)) continue;
-        if (found != null) fatal.msg(
-            "multiple source frameworks detected ({s} and {s}); select one with --from\n",
+        if (found != null) fatal.usageError(
+            "error: multiple source frameworks detected ({s} and {s}); select one with --from\n\n" ++ usage,
             .{ found.?.name(), candidate.name() },
         );
         found = candidate;
     }
-    return found orelse fatal.msg(
-        "could not confidently detect a supported source framework; ask the project owner or pass --from astro|next|gatsby|nuxt|hugo|jekyll|11ty|hexo\n",
+    return found orelse fatal.usageError(
+        "error: could not confidently detect a supported source framework; ask the project owner or pass --from astro|next|gatsby|nuxt|vue|hugo|jekyll|11ty|hexo\n\n" ++ usage,
         .{},
     );
 }
@@ -1007,9 +1009,10 @@ pub fn scaffoldIslands(io: Io, gpa: Allocator, astro_root: Io.Dir, scaffold_dir:
     );
 }
 
-/// Convert the deterministic portion of Hugo/Jekyll Markdown into a separate
-/// Zigapagos content tree. Source files are never opened for writing and output
-/// collisions use the same exclusive-create + `.new*` contract as islands.
+/// Convert the deterministic portion of Hugo/Jekyll/Eleventy/Hexo Markdown
+/// into a separate Zigapagos content tree. Source files are never opened for
+/// writing and output collisions use the same exclusive-create + `.new*`
+/// contract as islands.
 const ContentOutcome = enum { converted, collision, non_markdown, unreadable };
 
 /// NO_SLOP.md section 2.2a contract 1 (self-freeing): every allocation and file
