@@ -296,21 +296,37 @@ must always be a paired tag — `<z-island …></z-island>` — even with no slo
 content. (Self-closing `<island … />` still works in a `.superhtml` layout;
 this restriction is specific to the content fence's `.html` validation mode.)
 
-### Props: static only — no `$page.*`
+### Page-bound props: opt in with `scripty:props`
 
-`:props` Ziggy struct literals and literal `prop-NAME="value"` attributes work
-exactly as they do in a layout, and the resolved props are typechecked by the
-`tsc` gate (`--island-props-check`) the same way. What does **not** work is a
-`prop-NAME="$page.*"` Scripty expression: Scripty is evaluated by SuperHTML at
-*layout* render time, and an `=html` fence's body is emitted verbatim rather
-than run through SuperHTML's template evaluator, so a `$page.*` value in
-content is never evaluated — it reaches the island as the literal string
-`"$page.title"`, not the page's actual title. This is a documented limitation,
-not a bug: a page-bound prop (one that has to read `$page`, `$site`, or any
-other Scripty value) belongs in a layout, not content. Everything else about
-authoring an island — static Ziggy props, dynamic `prop-NAME` literals, and
-slots (`<template slot="…">` children inside the fence, exactly as in a
-layout) — works the same in content as it does in a layout.
+By default the fence stays verbatim: `:props` Ziggy struct literals and literal
+`prop-NAME="value"` attributes work exactly as before, while
+`prop-title="$page.title"` reaches the island as the literal string
+`"$page.title"`. This default preserves existing content that intentionally
+contains a dollar-prefixed string.
+
+Add the value-less `scripty:props` marker to evaluate dollar-prefixed
+`prop-NAME` values in the same `$page` / `$site` / `$build` Scripty context as
+the surrounding layout:
+
+````markdown
+```=html
+<z-island src="components/Hero.island.tsx" client:load scripty:props
+          :props='{ .theme = "docs" }'
+          prop-title="$page.title"
+          prop-items="$page.custom.get('items').toJson()"></z-island>
+```
+````
+
+Only `prop-NAME` values beginning with `$` are evaluated; literals remain
+literal, and the `:props` Ziggy struct keeps its existing static meaning.
+Evaluation happens before SSR and before the `--island-props-check` TypeScript
+gate, so both receive the resolved values. A Scripty error fails the build with
+the page, component, and expression in the diagnostic.
+
+Everything else about authoring an island — static Ziggy props, literal
+`prop-NAME` overrides, and raw-HTML slots (`<template slot="…">` children
+inside the fence, exactly as in a layout) — works the same in content as it does
+in a layout. The slot body is still raw HTML, not rendered Markdown.
 
 ## Typed props contract (build-time)
 

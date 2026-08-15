@@ -13,15 +13,19 @@
 # tests/islands/undeclared-island.sh's discipline, so a broken fixture cannot
 # make any one part look like it proves something it doesn't:
 #   (1) POSITIVE: a page with a `<z-island>` in an `=html` fence builds
-#       successfully and the emitted HTML carries the SSR'd markup, the
-#       data-z-props script, and the import map.
-#   (2) NEGATIVE PIN: the identical page, but with the fence's `<z-island>`
+#       successfully; `scripty:props` resolves `$page` / `$site` prop values,
+#       and the emitted HTML carries the SSR'd markup, typed data-z-props, and
+#       the import map.
+#   (2) COMPATIBILITY: without the marker, `$page.title` remains a literal.
+#   (3) SCRIPTY ERROR: a marked prop with an invalid expression fails with the
+#       page, component source, and expression in the diagnostic.
+#   (4) NEGATIVE PIN: the identical page, but with the fence's `<z-island>`
 #       swapped for the plain `<island>` spelling, FAILS the build with
 #       superhtml's `invalid_html_tag_name` diagnostic, attributed to the
 #       `.smd` file. This is what documents *why* the hyphen is mandatory,
 #       and it will fail loudly (not silently pass) if a future supermd/
 #       superhtml sync relaxes or renames that validation.
-#   (3) CONTROL: the same fixture with the fence removed entirely builds
+#   (5) CONTROL: the same fixture with the fence removed entirely builds
 #       clean — so (1) and (2) are attributable to the fence content, not to
 #       some unrelated break in the shared fixture.
 set -euo pipefail
@@ -56,6 +60,7 @@ fail() { echo "FAIL: $*"; exit 1; }
 write_site() {
   local dir="$1" body="$2"
   mkdir -p "$dir/content" "$dir/layouts" "$dir/assets" "$dir/components"
+  ln -s "$REPO/runtime/node_modules" "$dir/node_modules"
   : > "$dir/assets/.keep"
   cat > "$dir/zigapagos.ziggy" <<'EOF'
 Site {
@@ -64,6 +69,18 @@ Site {
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "assets",
+}
+EOF
+  cat > "$dir/tsconfig.json" <<'EOF'
+{
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "target": "ESNext"
+  }
 }
 EOF
   cat > "$dir/layouts/plain.shtml" <<'EOF'
@@ -80,9 +97,9 @@ EOF
 </html>
 EOF
   cat > "$dir/components/Counter.island.tsx" <<'EOF'
-export interface Props { start: number }
-export default function Counter({ start }: Props) {
-  return `CONTENT-ISLAND-SSR-${start}`;
+export interface Props { start: number; page_title: string; site_title: string }
+export default function Counter({ start, page_title, site_title }: Props) {
+  return `CONTENT-ISLAND-SSR-${start}-${page_title}-${site_title}`;
 }
 EOF
   {
@@ -107,35 +124,74 @@ EOF
 
 release() { # SITE OUT
   ( cd "$1" && "$ZIGAPAGOS" release "--output=$2" --force --bun="$(command -v bun)" \
-      "--island-sidecar=$REPO/runtime/sidecar/render.ts" --island-src-dir=. )
+      "--island-sidecar=$REPO/runtime/sidecar/render.ts" --island-src-dir=. \
+      --island-props-check=error )
 }
 
 # --- (1) positive: <z-island> in an =html fence builds and SSRs -------------
 SITE_POS="$WORK/pos"; OUT_POS="$WORK/out-pos"
 write_site "$SITE_POS" '```=html
-<z-island src="components/Counter.island.tsx" client:load :props='"'"'{ .start = 5 }'"'"'></z-island>
+<z-island src="components/Counter.island.tsx" client:load scripty:props
+          :props='"'"'{ .start = 5 }'"'"'
+          prop-page_title="$page.title" prop-site_title="$site.title"></z-island>
 ```'
 release "$SITE_POS" "$OUT_POS" >"$WORK/pos.log" 2>&1 \
   || { sed -n '1,40p' "$WORK/pos.log"; fail "positive build (z-island in an =html fence) failed"; }
 
 INDEX_POS="$OUT_POS/index.html"
 [[ -f "$INDEX_POS" ]] || fail "positive build did not emit index.html"
-grep -q 'CONTENT-ISLAND-SSR-5' "$INDEX_POS" \
+grep -q 'CONTENT-ISLAND-SSR-5-Home-Content Island Test' "$INDEX_POS" \
   || { cat "$INDEX_POS"; fail "emitted HTML is missing the SSR'd island markup"; }
-grep -q 'data-z-props="z-island-0">{"start":5}</script>' "$INDEX_POS" \
+grep -q 'data-z-props="z-island-0">' "$INDEX_POS" \
   || { cat "$INDEX_POS"; fail "emitted HTML is missing the data-z-props script"; }
+for expected_prop in '"start":5' '"page_title":"Home"' '"site_title":"Content Island Test"'; do
+  grep -q "$expected_prop" "$INDEX_POS" \
+    || { cat "$INDEX_POS"; fail "emitted data-z-props is missing $expected_prop"; }
+done
 grep -q '<script type="importmap">' "$INDEX_POS" \
   || { cat "$INDEX_POS"; fail "emitted HTML is missing the import map"; }
 if grep -q '<z-island' "$INDEX_POS"; then
   cat "$INDEX_POS"
   fail "the literal <z-island tag survived into the output (not rewritten)"
 fi
-echo "PASS: a <z-island> inside an =html fence SSRs, with props script + import map"
+echo "PASS: a <z-island> inside an =html fence evaluates page/site props, typechecks, and SSRs"
 
-# --- (2) negative pin: plain <island> in the SAME fence fails validation ----
+# --- (2) no marker: preserve the historical literal-dollar behavior --------
+SITE_LITERAL="$WORK/literal"; OUT_LITERAL="$WORK/out-literal"
+write_site "$SITE_LITERAL" '```=html
+<z-island src="components/Counter.island.tsx" client:load
+          :props='"'"'{ .start = 5, .site_title = "static" }'"'"'
+          prop-page_title="$page.title"></z-island>
+```'
+release "$SITE_LITERAL" "$OUT_LITERAL" >"$WORK/literal.log" 2>&1 \
+  || { sed -n '1,60p' "$WORK/literal.log"; fail "unmarked compatibility build failed"; }
+grep -q 'CONTENT-ISLAND-SSR-5-\$page.title-static' "$OUT_LITERAL/index.html" \
+  || { cat "$OUT_LITERAL/index.html"; fail "unmarked dollar-prefixed prop was not preserved literally"; }
+echo "PASS: an unmarked content-island prop keeps its dollar-prefixed value literal"
+
+# --- (3) bad Scripty expression: attributed, actionable build failure -------
+SITE_EXPR="$WORK/expr"; OUT_EXPR="$WORK/out-expr"
+write_site "$SITE_EXPR" '```=html
+<z-island src="components/Counter.island.tsx" client:load scripty:props
+          :props='"'"'{ .start = 5 }'"'"'
+          prop-page_title="$page.not_a_field" prop-site_title="$site.title"></z-island>
+```'
+set +e
+release "$SITE_EXPR" "$OUT_EXPR" >"$WORK/expr.log" 2>&1
+EXPR_RC=$?
+set -e
+[[ "$EXPR_RC" -ne 0 ]] || fail "an invalid marked Scripty prop built successfully"
+grep -q 'content-island prop evaluation failed on content/index.smd: components/Counter.island.tsx' "$WORK/expr.log" \
+  || { sed -n '1,60p' "$WORK/expr.log"; fail "Scripty prop failure lacks page/component attribution"; }
+grep -q '\$page.not_a_field' "$WORK/expr.log" \
+  || { sed -n '1,60p' "$WORK/expr.log"; fail "Scripty prop failure lacks the bad expression"; }
+echo "PASS: an invalid marked Scripty prop fails with page, component, and expression context"
+
+# --- (4) negative pin: plain <island> in the SAME fence fails validation ----
 SITE_NEG="$WORK/neg"; OUT_NEG="$WORK/out-neg"
 write_site "$SITE_NEG" '```=html
-<island src="components/Counter.island.tsx" client:load :props='"'"'{ .start = 5 }'"'"'></island>
+<island src="components/Counter.island.tsx" client:load scripty:props :props='"'"'{ .start = 5 }'"'"'
+        prop-page_title="$page.title" prop-site_title="$site.title"></island>
 ```'
 set +e
 release "$SITE_NEG" "$OUT_NEG" >"$WORK/neg.log" 2>&1
@@ -157,7 +213,7 @@ grep -qE 'content/index\.smd:[0-9]+:[0-9]+: \[invalid_html_tag_name\]' "$WORK/ne
        fail "the diagnostic is not attributed to a .smd line (supermd's line-mapping regressed)"; }
 echo "PASS: a plain <island> inside an =html fence fails with superhtml's invalid_html_tag_name, attributed to the .smd line"
 
-# --- (3) control: same fixture, no fence at all -> builds clean -------------
+# --- (5) control: same fixture, no fence at all -> builds clean -------------
 SITE_CTRL="$WORK/ctrl"; OUT_CTRL="$WORK/out-ctrl"
 write_site "$SITE_CTRL" 'No fence here at all, just prose.'
 release "$SITE_CTRL" "$OUT_CTRL" >"$WORK/ctrl.log" 2>&1 \
