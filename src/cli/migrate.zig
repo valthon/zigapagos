@@ -2,28 +2,82 @@ const std = @import("std");
 const Io = std.Io;
 const fatal = @import("../fatal.zig");
 const detect = @import("migrate_detect.zig");
+const content_convert = @import("migrate_content.zig");
 const Allocator = std.mem.Allocator;
 
 const Role = detect.Role;
 
+const Source = enum {
+    astro,
+    nextjs,
+    gatsby,
+    nuxt,
+    hugo,
+    jekyll,
+    eleventy,
+    hexo,
+
+    fn parse(value: []const u8) ?Source {
+        if (std.mem.eql(u8, value, "astro")) return .astro;
+        if (std.mem.eql(u8, value, "next") or std.mem.eql(u8, value, "nextjs") or std.mem.eql(u8, value, "next.js")) return .nextjs;
+        if (std.mem.eql(u8, value, "gatsby")) return .gatsby;
+        if (std.mem.eql(u8, value, "nuxt") or std.mem.eql(u8, value, "vue")) return .nuxt;
+        if (std.mem.eql(u8, value, "hugo")) return .hugo;
+        if (std.mem.eql(u8, value, "jekyll")) return .jekyll;
+        if (std.mem.eql(u8, value, "eleventy") or std.mem.eql(u8, value, "11ty")) return .eleventy;
+        if (std.mem.eql(u8, value, "hexo")) return .hexo;
+        return null;
+    }
+
+    fn name(source: Source) []const u8 {
+        return switch (source) {
+            .astro => "Astro",
+            .nextjs => "Next.js",
+            .gatsby => "Gatsby",
+            .nuxt => "Nuxt/Vue",
+            .hugo => "Hugo",
+            .jekyll => "Jekyll",
+            .eleventy => "Eleventy (11ty)",
+            .hexo => "Hexo",
+        };
+    }
+
+    fn supportsScaffold(source: Source) bool {
+        return source == .astro or source == .nextjs or source == .gatsby;
+    }
+
+    fn contentSource(source: Source) ?content_convert.Source {
+        return switch (source) {
+            .hugo => .hugo,
+            .jekyll => .jekyll,
+            .eleventy => .eleventy,
+            .hexo => .hexo,
+            else => null,
+        };
+    }
+};
+
 const usage =
-    \\Usage: zigapagos migrate <astro-dir> [OPTIONS]
+    \\Usage: zigapagos migrate <project-dir> [OPTIONS]
     \\
-    \\Scans an Astro project and writes MIGRATION.md: a worklist mapping each
-    \\Astro source file to its Zigapagos target, the islands to port, and the
-    \\standard migration procedure. Follow docs/migration/astro-to-zigapagos.md.
+    \\Scans an Astro, Next.js, Gatsby, Nuxt/Vue, Hugo, Jekyll, Eleventy, or
+    \\Hexo project and
+    \\writes MIGRATION.md: a source-specific worklist mapping files to their
+    \\Zigapagos targets. The source is auto-detected or selected with --from.
     \\
-    \\IT CONVERTS NOTHING. <astro-dir> is read, never written. No .astro page
-    \\becomes an .smd, no layout becomes an .shtml, no astro.config becomes a
-    \\zigapagos.ziggy. The port is yours to carry out (or your agent's);
-    \\MIGRATION.md is the worklist for it and the guide above is the mapping
-    \\spec it follows. The one exception is --scaffold, which writes a STARTER
-    \\island per detected island into a separate directory you name -- a head
-    \\start on one step of that worklist, not a finished port.
+    \\Source files are read-only. The command always writes a MIGRATION.md
+    \\worklist. With --scaffold it also performs the deterministic React part of
+    \\the port into a separate directory: starter islands, React imports rewritten
+    \\to @z/runtime, and ambiguous npm imports marked for review. Pages, layouts,
+    \\data loaders, plugins, and framework config remain explicit worklist items.
     \\
     \\Options:
+    \\  --from SOURCE         astro|next|gatsby|nuxt|vue|hugo|jekyll|11ty|hexo
+    \\                        (default: auto; use when detection is ambiguous)
     \\  -o, --output PATH      Report path (default: MIGRATION.md)
     \\  --scaffold DIR         Write a starter TSX island per island into DIR.
+    \\                         Supported for Astro, Next.js, and Gatsby React
+    \\                         sources only.
     \\                         Attempts a real port: rewrites React imports to
     \\                         `@z/runtime` and flags any bare npm imports for
     \\                         review (NO-NPM-GUARDRAIL). Falls back to a TSX
@@ -36,12 +90,16 @@ const usage =
     \\                         and skipped — no stub is written for it.
     \\                         Props are re-emitted verbatim from the source's
     \\                         `interface Props` when found.
+    \\  --convert-content DIR  Convert Hugo/Jekyll/Eleventy/Hexo Markdown into a separate
+    \\                         Zigapagos content tree. Recognized frontmatter is
+    \\                         normalized to Ziggy; Markdown bodies are preserved.
+    \\                         Existing outputs are never clobbered.
     \\  --doctor PATH          Analyse a single island file: check its imports
     \\                         against the no-npm guardrail, enumerate the React
     \\                         hooks used, and list any host-binding smells.
     \\                         Non-mutating (reads only). Exits non-zero when any
     \\                         guardrail violation is found. Mutually exclusive
-    \\                         with --scaffold.
+    \\                         with --scaffold and --convert-content.
     \\  --json                 With --doctor: emit JSON instead of the human
     \\                         Markdown checklist (pipeable to jq etc.).
     \\  -h, --help             Show this help
@@ -146,10 +204,291 @@ pub fn freeScanResult(gpa: Allocator, res: *ScanResult) void {
     res.island_names.deinit(gpa);
 }
 
+fn packageDeclares(io: Io, gpa: Allocator, root: Io.Dir, dependency: []const u8) bool {
+    const package = readFileContent(io, gpa, root, "package.json") catch return false;
+    defer gpa.free(package);
+    const quoted = std.fmt.allocPrint(gpa, "\"{s}\"", .{dependency}) catch fatal.oom();
+    defer gpa.free(quoted);
+    return std.mem.indexOf(u8, package, quoted) != null;
+}
+
+fn configMarker(io: Io, root: Io.Dir, source: Source) bool {
+    const markers: []const []const u8 = switch (source) {
+        .astro => &.{ "astro.config.mjs", "astro.config.ts", "astro.config.js", "astro.config.json" },
+        .nextjs => &.{ "next.config.js", "next.config.mjs", "next.config.ts" },
+        .gatsby => &.{ "gatsby-config.js", "gatsby-config.ts", "gatsby-config.mjs" },
+        .nuxt => &.{ "nuxt.config.js", "nuxt.config.ts", "nuxt.config.mjs" },
+        .hugo => &.{ "hugo.toml", "hugo.yaml", "hugo.yml", "hugo.json" },
+        .jekyll => if ((fileExists(io, root, "Gemfile") or dirExists(io, root, "_posts") or
+            dirExists(io, root, "_layouts") or dirExists(io, root, "_includes")) and
+            !(dirExists(io, root, "source") and dirExists(io, root, "themes")))
+            &.{ "_config.yml", "_config.yaml" }
+        else
+            &.{},
+        .eleventy => &.{ ".eleventy.js", ".eleventy.cjs", ".eleventy.mjs", "eleventy.config.js", "eleventy.config.cjs", "eleventy.config.mjs" },
+        .hexo => if (dirExists(io, root, "source") and dirExists(io, root, "themes")) &.{ "_config.yml", "_config.yaml" } else &.{},
+    };
+    for (markers) |marker| if (fileExists(io, root, marker)) return true;
+    if (source == .hugo and dirExists(io, root, "content") and dirExists(io, root, "layouts")) {
+        for ([_][]const u8{ "config.toml", "config.yaml", "config.yml" }) |marker| {
+            if (fileExists(io, root, marker)) return true;
+        }
+    }
+    return false;
+}
+
+fn sourceMarker(io: Io, gpa: Allocator, root: Io.Dir, source: Source) bool {
+    if (configMarker(io, root, source)) return true;
+    return switch (source) {
+        .astro => packageDeclares(io, gpa, root, "astro"),
+        .nextjs => packageDeclares(io, gpa, root, "next"),
+        .gatsby => packageDeclares(io, gpa, root, "gatsby"),
+        .nuxt => packageDeclares(io, gpa, root, "nuxt") or packageDeclares(io, gpa, root, "vue"),
+        .hugo, .jekyll => false,
+        .eleventy => packageDeclares(io, gpa, root, "@11ty/eleventy"),
+        .hexo => packageDeclares(io, gpa, root, "hexo"),
+    };
+}
+
+fn detectSource(io: Io, gpa: Allocator, root: Io.Dir) Source {
+    var found: ?Source = null;
+    for ([_]Source{ .astro, .nextjs, .gatsby, .nuxt, .hugo, .jekyll, .eleventy, .hexo }) |candidate| {
+        if (!configMarker(io, root, candidate)) continue;
+        if (found != null) fatal.usageError(
+            "error: multiple source frameworks detected ({s} and {s}); select one with --from\n\n" ++ usage,
+            .{ found.?.name(), candidate.name() },
+        );
+        found = candidate;
+    }
+    if (found) |source| return source;
+
+    for ([_]Source{ .astro, .nextjs, .gatsby, .nuxt, .eleventy, .hexo }) |candidate| {
+        if (!sourceMarker(io, gpa, root, candidate)) continue;
+        if (found != null) fatal.usageError(
+            "error: multiple source frameworks detected ({s} and {s}); select one with --from\n\n" ++ usage,
+            .{ found.?.name(), candidate.name() },
+        );
+        found = candidate;
+    }
+    return found orelse fatal.usageError(
+        "error: could not confidently detect a supported source framework; ask the project owner or pass --from astro|next|gatsby|nuxt|vue|hugo|jekyll|11ty|hexo\n\n" ++ usage,
+        .{},
+    );
+}
+
+fn hasAnyExtension(path: []const u8, extensions: []const []const u8) bool {
+    for (extensions) |extension| if (std.mem.endsWith(u8, path, extension)) return true;
+    return false;
+}
+
+fn sourceFile(source: Source, path: []const u8) bool {
+    return switch (source) {
+        .astro => true,
+        .nextjs, .gatsby => hasAnyExtension(path, &.{ ".js", ".jsx", ".ts", ".tsx", ".md", ".mdx" }),
+        .nuxt => hasAnyExtension(path, &.{".vue"}),
+        .hugo => hasAnyExtension(path, &.{ ".md", ".html", ".gohtml" }),
+        .jekyll => hasAnyExtension(path, &.{ ".md", ".markdown", ".html", ".liquid" }),
+        .eleventy => hasAnyExtension(path, &.{ ".md", ".markdown", ".html", ".liquid", ".njk", ".11ty.js" }),
+        .hexo => hasAnyExtension(path, &.{ ".md", ".markdown", ".html", ".ejs", ".swig", ".njk" }),
+    };
+}
+
+fn sourceEntry(source: Source, entry: Entry) bool {
+    if (source == .eleventy) return switch (entry.kind) {
+        .page, .layout, .component => hasAnyExtension(entry.path, &.{ ".md", ".markdown", ".html", ".liquid", ".njk", ".11ty.js" }),
+        .other => hasAnyExtension(entry.path, &.{ ".json", ".json5", ".js", ".cjs", ".mjs", ".yaml", ".yml" }),
+        else => false,
+    };
+    if (source == .hexo and entry.kind == .other) return hasAnyExtension(entry.path, &.{ ".js", ".cjs", ".mjs" });
+    return sourceFile(source, entry.path);
+}
+
+fn scanTopLevelFiles(
+    io: Io,
+    gpa: Allocator,
+    base: Io.Dir,
+    kind: Kind,
+    out: *std.ArrayListUnmanaged(Entry),
+    island_names: *std.StringHashMapUnmanaged(void),
+) void {
+    var dir = base.openDir(io, ".", .{ .iterate = true }) catch return;
+    defer dir.close(io);
+    var it = dir.iterateAssumeFirstIteration();
+    while (it.next(io) catch null) |entry| {
+        if (entry.kind == .directory or entry.name.len == 0 or entry.name[0] == '.') continue;
+        if (entry.name[0] == '_' or std.ascii.eqlIgnoreCase(entry.name, "README.md")) continue;
+        const path = gpa.dupe(u8, entry.name) catch fatal.oom();
+        scanFile(io, gpa, base, path, kind, out, island_names);
+    }
+}
+
+fn eleventyPagePath(path: []const u8) bool {
+    return std.mem.indexOf(u8, path, "/_includes/") == null and
+        std.mem.indexOf(u8, path, "/_layouts/") == null and
+        std.mem.indexOf(u8, path, "/_data/") == null and
+        !std.mem.startsWith(u8, path, "_includes/") and
+        !std.mem.startsWith(u8, path, "_layouts/") and
+        !std.mem.startsWith(u8, path, "_data/");
+}
+
+fn nextAppRouteModule(path: []const u8) bool {
+    if (!std.mem.startsWith(u8, path, "app/") and
+        !std.mem.startsWith(u8, path, "src/app/")) return false;
+
+    const basename = std.fs.path.basename(path);
+    const stem = std.fs.path.stem(basename);
+    for ([_][]const u8{
+        "page",
+        "route",
+        "layout",
+        "template",
+        "default",
+        "loading",
+        "error",
+        "global-error",
+        "not-found",
+        "forbidden",
+        "unauthorized",
+    }) |reserved| {
+        if (std.mem.eql(u8, stem, reserved)) return true;
+    }
+    return false;
+}
+
+fn scanOther(io: Io, gpa: Allocator, root: Io.Dir, source: Source) ScanResult {
+    var entries: std.ArrayListUnmanaged(Entry) = .empty;
+    var names: std.StringHashMapUnmanaged(void) = .empty;
+
+    switch (source) {
+        .astro => unreachable,
+        .nextjs => {
+            scanDir(io, gpa, root, "app", .page, &entries, &names);
+            scanDir(io, gpa, root, "pages", .page, &entries, &names);
+            scanDir(io, gpa, root, "src/app", .page, &entries, &names);
+            scanDir(io, gpa, root, "src/pages", .page, &entries, &names);
+            scanDir(io, gpa, root, "components", .component, &entries, &names);
+            scanDir(io, gpa, root, "src/components", .component, &entries, &names);
+        },
+        .gatsby => {
+            scanDir(io, gpa, root, "src/pages", .page, &entries, &names);
+            scanDir(io, gpa, root, "src/templates", .layout, &entries, &names);
+            scanDir(io, gpa, root, "src/components", .component, &entries, &names);
+        },
+        .nuxt => {
+            const is_nuxt = configMarker(io, root, .nuxt) or packageDeclares(io, gpa, root, "nuxt");
+            if (is_nuxt) {
+                scanDir(io, gpa, root, "pages", .page, &entries, &names);
+                scanDir(io, gpa, root, "layouts", .layout, &entries, &names);
+                scanDir(io, gpa, root, "components", .component, &entries, &names);
+                scanDir(io, gpa, root, "src/pages", .page, &entries, &names);
+                scanDir(io, gpa, root, "src/views", .page, &entries, &names);
+                scanDir(io, gpa, root, "src/layouts", .layout, &entries, &names);
+                scanDir(io, gpa, root, "src/components", .component, &entries, &names);
+            } else {
+                // Plain Vue applications do not have Nuxt's directory roles.
+                // Inventory the complete SFC tree once so root-level App.vue
+                // and project-specific groupings are not silently missed.
+                scanDir(io, gpa, root, "src", .component, &entries, &names);
+            }
+        },
+        .hugo => {
+            scanDir(io, gpa, root, "content", .page, &entries, &names);
+            scanDir(io, gpa, root, "layouts", .layout, &entries, &names);
+        },
+        .jekyll => {
+            scanTopLevelFiles(io, gpa, root, .page, &entries, &names);
+            scanDir(io, gpa, root, "_posts", .page, &entries, &names);
+            scanDir(io, gpa, root, "_pages", .page, &entries, &names);
+            scanDir(io, gpa, root, "_layouts", .layout, &entries, &names);
+            scanDir(io, gpa, root, "_includes", .component, &entries, &names);
+        },
+        .eleventy => {
+            scanTopLevelFiles(io, gpa, root, .page, &entries, &names);
+            scanDir(io, gpa, root, "src", .page, &entries, &names);
+            scanDir(io, gpa, root, "content", .page, &entries, &names);
+            scanDir(io, gpa, root, "_layouts", .layout, &entries, &names);
+            scanDir(io, gpa, root, "_includes", .component, &entries, &names);
+            scanDir(io, gpa, root, "src/_layouts", .layout, &entries, &names);
+            scanDir(io, gpa, root, "src/_includes", .component, &entries, &names);
+            scanDir(io, gpa, root, "_data", .other, &entries, &names);
+            scanDir(io, gpa, root, "src/_data", .other, &entries, &names);
+        },
+        .hexo => {
+            scanDir(io, gpa, root, "source", .page, &entries, &names);
+            scanDir(io, gpa, root, "themes", .layout, &entries, &names);
+            scanDir(io, gpa, root, "scripts", .other, &entries, &names);
+        },
+    }
+
+    var kept: usize = 0;
+    for (entries.items) |entry| {
+        if (sourceEntry(source, entry) and
+            !(source == .eleventy and entry.kind == .page and !eleventyPagePath(entry.path)))
+        {
+            entries.items[kept] = entry;
+            kept += 1;
+        } else {
+            gpa.free(entry.path);
+        }
+    }
+    entries.shrinkRetainingCapacity(kept);
+
+    for (entries.items) |*entry| {
+        if (source == .nextjs and entry.kind == .page) {
+            const basename = std.fs.path.basename(entry.path);
+            if (std.mem.startsWith(u8, basename, "layout.") or
+                std.mem.startsWith(u8, basename, "_app.") or
+                std.mem.startsWith(u8, basename, "_document."))
+            {
+                entry.kind = .layout;
+            } else {
+                const is_client = blk: {
+                    const content = readFileContent(io, gpa, root, entry.path) catch break :blk false;
+                    defer gpa.free(content);
+                    break :blk std.mem.indexOf(u8, content, "\"use client\"") != null or
+                        std.mem.indexOf(u8, content, "'use client'") != null;
+                };
+                // A `use client` directive controls the rendering boundary; it
+                // does not stop reserved App Router modules from being routes.
+                // Only colocated, non-route modules become island candidates.
+                if (is_client and !nextAppRouteModule(entry.path) and
+                    (std.mem.startsWith(u8, entry.path, "app/") or
+                        std.mem.startsWith(u8, entry.path, "src/app/")))
+                {
+                    entry.kind = .component;
+                }
+            }
+        }
+        if (entry.kind != .component) continue;
+        switch (source) {
+            .nextjs, .gatsby => {
+                const react = std.mem.endsWith(u8, entry.path, ".tsx") or
+                    std.mem.endsWith(u8, entry.path, ".jsx") or
+                    std.mem.endsWith(u8, entry.path, ".js");
+                entry.role = if (react) .island else .plain;
+                entry.is_island = react;
+            },
+            .nuxt => entry.role = .plain,
+            .jekyll => entry.role = .partial,
+            .eleventy, .hexo => entry.role = .partial,
+            else => {},
+        }
+    }
+
+    return .{
+        .entries = entries.toOwnedSlice(gpa) catch fatal.oom(),
+        .island_names = names,
+        .has_config = sourceMarker(io, gpa, root, source),
+        .has_astro_sitemap = false,
+    };
+}
+
 pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8) bool {
-    var astro_dir: ?[]const u8 = null;
+    var project_dir: ?[]const u8 = null;
+    var requested_source: ?Source = null;
     var out_path: []const u8 = "MIGRATION.md";
     var scaffold_dir: ?[]const u8 = null;
+    var content_dir: ?[]const u8 = null;
     var doctor_path: ?[]const u8 = null;
     var json: bool = false;
 
@@ -158,6 +497,10 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8) bool {
         const a = args[i];
         if (std.mem.eql(u8, a, "-h") or std.mem.eql(u8, a, "--help")) {
             fatal.usage(usage, .{});
+        } else if (std.mem.eql(u8, a, "--from")) {
+            i += 1;
+            if (i >= args.len) fatal.usageError("error: --from needs a source framework\n\n" ++ usage, .{});
+            requested_source = Source.parse(args[i]) orelse fatal.usageError("error: unsupported --from source: {s}\n\n" ++ usage, .{args[i]});
         } else if (std.mem.eql(u8, a, "-o") or std.mem.eql(u8, a, "--output")) {
             i += 1;
             if (i >= args.len) fatal.usageError("error: --output needs a path\n\n" ++ usage, .{});
@@ -166,6 +509,10 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8) bool {
             i += 1;
             if (i >= args.len) fatal.usageError("error: --scaffold needs a directory path\n\n" ++ usage, .{});
             scaffold_dir = args[i];
+        } else if (std.mem.eql(u8, a, "--convert-content")) {
+            i += 1;
+            if (i >= args.len) fatal.usageError("error: --convert-content needs a directory path\n\n" ++ usage, .{});
+            content_dir = args[i];
         } else if (std.mem.eql(u8, a, "--doctor")) {
             i += 1;
             if (i >= args.len) fatal.usageError("error: --doctor needs a path\n\n" ++ usage, .{});
@@ -173,26 +520,42 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8) bool {
         } else if (std.mem.eql(u8, a, "--json")) {
             json = true;
         } else if (a.len > 0 and a[0] != '-') {
-            astro_dir = a;
+            project_dir = a;
         }
     }
 
-    if (doctor_path != null and scaffold_dir != null) {
-        fatal.usageError("error: --doctor and --scaffold are mutually exclusive\n\n" ++ usage, .{});
+    if (doctor_path != null and (scaffold_dir != null or content_dir != null)) {
+        fatal.usageError("error: --doctor is mutually exclusive with --scaffold and --convert-content\n\n" ++ usage, .{});
     }
     if (doctor_path) |dp| return doctor(io, gpa, dp, json);
 
-    const dir_path = astro_dir orelse fatal.usageError("error: missing <astro-dir>\n\n" ++ usage, .{});
+    const dir_path = project_dir orelse fatal.usageError("error: missing <project-dir>\n\n" ++ usage, .{});
 
     const root = Io.Dir.cwd().openDir(io, dir_path, .{}) catch |err|
         fatal.dir(dir_path, err);
+    defer root.close(io);
 
-    const res = scan(io, gpa, root);
+    const source = requested_source orelse detectSource(io, gpa, root);
+    if (scaffold_dir != null and !source.supportsScaffold()) fatal.usageError(
+        "error: --scaffold supports Astro, Next.js, and Gatsby React sources; {s} requires a template/component port\n\n" ++ usage,
+        .{source.name()},
+    );
+    if (content_dir != null and source.contentSource() == null) fatal.usageError(
+        "error: --convert-content supports Hugo, Jekyll, Eleventy, and Hexo Markdown sources; got {s}\n\n" ++ usage,
+        .{source.name()},
+    );
+    var res = if (source == .astro) scan(io, gpa, root) else scanOther(io, gpa, root, source);
+    defer freeScanResult(gpa, &res);
 
-    const report = buildReport(gpa, dir_path, res.entries, res.has_config, scaffold_dir != null, res.has_astro_sitemap);
+    const report = if (source == .astro)
+        buildReport(gpa, dir_path, res.entries, res.has_config, scaffold_dir != null, res.has_astro_sitemap)
+    else
+        buildOtherReport(gpa, source, dir_path, res.entries, scaffold_dir != null, content_dir != null);
+    defer gpa.free(report);
 
     const f = Io.Dir.cwd().createFile(io, out_path, .{}) catch |err|
         fatal.file(out_path, err);
+    defer f.close(io);
     var fw = f.writer(io, &.{});
     fw.interface.writeAll(report) catch |err| fatal.file(out_path, err);
 
@@ -206,12 +569,9 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8) bool {
         }
     }
     std.debug.print(
-        "Wrote {s}: {d} source file(s), {d} island(s) to port, {d} static partial(s).\n" ++
-            "Islands are components used with a `client:*` directive; everything else\n" ++
-            "(static .astro components, transitive children) maps to a partial or is\n" ++
-            "ported only if an island needs it. Next: follow MIGRATION.md and\n" ++
-            "docs/migration/astro-to-zigapagos.md.\n",
-        .{ out_path, res.entries.len, islands, partials },
+        "Wrote {s}: {s}, {d} source file(s), {d} island candidate(s), {d} static partial(s).\n" ++
+            "Next: follow MIGRATION.md and {s}.\n",
+        .{ out_path, source.name(), res.entries.len, islands, partials, if (source == .astro) "docs/migration/astro-to-zigapagos.md" else "docs/migration/other-frameworks.md" },
     );
 
     // Scaffold skeletons if requested. The migrate command never clobbers an
@@ -220,6 +580,7 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8) bool {
     if (scaffold_dir) |sdir| {
         scaffoldIslands(io, gpa, root, sdir, res.entries, false);
     }
+    if (content_dir) |cdir| convertContent(io, gpa, root, cdir, source.contentSource().?, res.entries);
 
     return false;
 }
@@ -289,6 +650,12 @@ fn scanFile(
 fn fileExists(io: Io, base: Io.Dir, path: []const u8) bool {
     const f = base.openFile(io, path, .{}) catch return false;
     f.close(io);
+    return true;
+}
+
+fn dirExists(io: Io, base: Io.Dir, path: []const u8) bool {
+    const dir = base.openDir(io, path, .{}) catch return false;
+    dir.close(io);
     return true;
 }
 
@@ -501,12 +868,12 @@ fn writeIslandSkeleton(
     w.flush() catch |err| fatal.file(out_path, err);
 }
 
-/// How many `<name>.island.tsx.new`, `.new.2`, … siblings `openIslandOutput`
-/// probes before refusing to scaffold at all.
+/// How many `.new`, `.new.2`, … siblings `openMigrationOutput` probes before
+/// refusing to generate a migration output at all.
 const max_new_versions: u32 = 99;
 
-/// An island output file that has been created without destroying anything.
-const IslandOutput = struct {
+/// A generated migration output file created without destroying anything.
+const MigrationOutput = struct {
     file: Io.File,
     /// The path actually opened.
     path: []const u8,
@@ -533,7 +900,7 @@ const IslandOutput = struct {
 /// Exclusive create rather than "stat, then create" on purpose: the check-then-
 /// write pair is a TOCTOU window, and the kernel already offers the atomic
 /// primitive (O_CREAT|O_EXCL).
-fn openIslandOutput(io: Io, gpa: Allocator, out_path: []const u8, force: bool) IslandOutput {
+fn openMigrationOutput(io: Io, gpa: Allocator, out_path: []const u8, force: bool) MigrationOutput {
     if (force) {
         const f = Io.Dir.cwd().createFile(io, out_path, .{ .exclusive = false }) catch |err|
             fatal.file(out_path, err);
@@ -564,7 +931,7 @@ fn openIslandOutput(io: Io, gpa: Allocator, out_path: []const u8, force: bool) I
     }
 
     fatal.msg(
-        "refusing to scaffold {s}: it and {s}.new … {s}.new.{d} all exist.\n" ++
+        "refusing to generate {s}: it and {s}.new … {s}.new.{d} all exist.\n" ++
             "Merge or delete the stale .new files (they hold your in-progress port) and re-run.\n",
         .{ out_path, out_path, out_path, max_new_versions },
     );
@@ -612,7 +979,7 @@ pub fn scaffoldIslands(io: Io, gpa: Allocator, astro_root: Io.Dir, scaffold_dir:
         const out_path = std.fs.path.join(gpa, &.{ scaffold_dir, base_name }) catch fatal.oom();
         defer gpa.free(out_path);
 
-        const out = openIslandOutput(io, gpa, out_path, force);
+        const out = openMigrationOutput(io, gpa, out_path, force);
         defer out.file.close(io);
         defer if (out.path_owned) gpa.free(out.path);
 
@@ -642,6 +1009,88 @@ pub fn scaffoldIslands(io: Io, gpa: Allocator, astro_root: Io.Dir, scaffold_dir:
     );
 }
 
+/// Convert the deterministic portion of Hugo/Jekyll/Eleventy/Hexo Markdown
+/// into a separate Zigapagos content tree. Source files are never opened for
+/// writing and output collisions use the same exclusive-create + `.new*`
+/// contract as islands.
+const ContentOutcome = enum { converted, collision, non_markdown, unreadable };
+
+/// NO_SLOP.md section 2.2a contract 1 (self-freeing): every allocation and file
+/// opened for one source entry is released before the outcome returns.
+fn convertOneContent(
+    io: Io,
+    gpa: Allocator,
+    source_root: Io.Dir,
+    out_root: []const u8,
+    source: content_convert.Source,
+    entry: Entry,
+) ContentOutcome {
+    const relative = content_convert.outputPath(gpa, source, entry.path) orelse return .non_markdown;
+    defer gpa.free(relative);
+    const src = readFileContent(io, gpa, source_root, entry.path) catch |err| {
+        std.debug.print("  ERROR cannot read {s}: {t} — content not converted\n", .{ entry.path, err });
+        return .unreadable;
+    };
+    defer gpa.free(src);
+    const rendered = content_convert.render(gpa, source, entry.path, src);
+    defer gpa.free(rendered.bytes);
+    const out_path = std.fs.path.join(gpa, &.{ out_root, relative }) catch fatal.oom();
+    defer gpa.free(out_path);
+    if (std.fs.path.dirname(out_path)) |parent| {
+        var parent_dir = Io.Dir.cwd().createDirPathOpen(io, parent, .{}) catch |err|
+            fatal.dir(parent, err);
+        parent_dir.close(io);
+    }
+    const out = openMigrationOutput(io, gpa, out_path, false);
+    defer out.file.close(io);
+    defer if (out.path_owned) gpa.free(out.path);
+    var writer = out.file.writer(io, &.{});
+    writer.interface.writeAll(rendered.bytes) catch |err| fatal.file(out.path, err);
+    if (rendered.has_unconverted_frontmatter) {
+        std.debug.print("  REVIEW {s}: unconverted frontmatter preserved in custom.migration_frontmatter\n", .{entry.path});
+    }
+    if (rendered.invalid_date) {
+        std.debug.print("  REVIEW {s}: invalid date preserved in custom.migration_invalid_date; target date uses 1970 placeholder\n", .{entry.path});
+    }
+    if (out.collided) {
+        std.debug.print("  preserve {s} -> wrote {s} instead\n", .{ out_path, out.path });
+        return .collision;
+    }
+    std.debug.print("  content -> {s}\n", .{out.path});
+    return .converted;
+}
+
+fn convertContent(
+    io: Io,
+    gpa: Allocator,
+    source_root: Io.Dir,
+    out_root: []const u8,
+    source: content_convert.Source,
+    entries: []const Entry,
+) void {
+    var out_dir = Io.Dir.cwd().createDirPathOpen(io, out_root, .{}) catch |err|
+        fatal.dir(out_root, err);
+    out_dir.close(io);
+
+    var converted: usize = 0;
+    var collisions: usize = 0;
+    var non_markdown: usize = 0;
+    var unreadable: usize = 0;
+    for (entries) |entry| {
+        if (entry.kind != .page) continue;
+        switch (convertOneContent(io, gpa, source_root, out_root, source, entry)) {
+            .converted => converted += 1,
+            .collision => collisions += 1,
+            .non_markdown => non_markdown += 1,
+            .unreadable => unreadable += 1,
+        }
+    }
+    std.debug.print(
+        "Content conversion: {d} written, {d} collision version(s), {d} non-Markdown skipped, {d} unreadable.\n",
+        .{ converted, collisions, non_markdown, unreadable },
+    );
+}
+
 /// Render the full MIGRATION.md worklist. NO_SLOP.md §2.2a contract 2
 /// (owned-result): the returned slice is gpa-owned — the caller frees it.
 /// Must return `aw.toOwnedSlice()`, not `aw.written()`: `written()` is a
@@ -650,6 +1099,114 @@ pub fn scaffoldIslands(io: Io, gpa: Allocator, astro_root: Io.Dir, scaffold_dir:
 /// mismatches the allocator's tracked allocation size and panics ("Invalid
 /// free") under the debug allocator. No caller freed this before the
 /// pagination worklist test did, so the mismatch went unnoticed.
+fn buildOtherReport(gpa: Allocator, source: Source, dir_path: []const u8, entries: []const Entry, has_scaffold: bool, converted_content: bool) []const u8 {
+    var aw: std.Io.Writer.Allocating = .init(gpa);
+    const w = &aw.writer;
+
+    w.print(
+        \\# Migration worklist: {s} ({s}) → Zigapagos
+        \\
+        \\Generated by `zigapagos migrate`. To bypass auto-detection, select this source with
+        \\`--from {s}`. Follow the source-specific mapping in
+        \\`docs/migration/other-frameworks.md`, then use `docs/migration/recipes.md` for TSX.
+        \\
+        \\Source files are read-only. Deterministic conversions requested with
+        \\`--scaffold` or `--convert-content` are called out below; ambiguous framework
+        \\semantics stay review items.
+        \\
+        \\## 1. Establish the target
+        \\
+        \\- [ ] Run `zigapagos init` in a separate target directory.
+        \\- [ ] Copy static assets without changing public URLs.
+        \\- [ ] Port the source config to `zigapagos.ziggy` and one `build.sh` invocation.
+        \\
+    , .{ dir_path, source.name(), switch (source) {
+        .nextjs => "next",
+        .gatsby => "gatsby",
+        .nuxt => "nuxt",
+        .hugo => "hugo",
+        .jekyll => "jekyll",
+        .eleventy => "11ty",
+        .hexo => "hexo",
+        .astro => unreachable,
+    } }) catch fatal.oom();
+
+    w.writeAll("## 2. Pages and data\n\n") catch fatal.oom();
+    if (converted_content) {
+        w.writeAll(
+            "Converted Markdown was written to the requested content tree; every file carries `migration_review = true`.\n\n",
+        ) catch fatal.oom();
+    } else if (source.contentSource() != null) {
+        w.writeAll(
+            "> **Tip:** re-run with `--convert-content <target-content-dir>` to normalize recognized frontmatter and preserve Markdown bodies without clobbering existing files.\n\n",
+        ) catch fatal.oom();
+    }
+    section(w, entries, .page, "Source pages/routes → `content/**/*.smd` or one `.spa.tsx`");
+    section(w, entries, .other, "Data files and custom generator scripts → Ziggy inputs or explicit generation steps");
+    w.writeAll(
+        \\
+        \\- [ ] Classify every route as build-time content, a client-routed SPA route, or backend-owned.
+        \\- [ ] Move request-time loaders/API routes to the backend; Zigapagos emits a static tree.
+        \\- [ ] Preserve redirects, canonical URLs, path prefixes, pagination, and generated routes.
+        \\
+        \\## 3. Layouts and reusable templates
+        \\
+    ) catch fatal.oom();
+    section(w, entries, .layout, "Layouts/templates → `layouts/**/*.shtml`");
+    otherComponentSection(w, entries, source);
+
+    if (source == .nextjs or source == .gatsby) {
+        w.writeAll(
+            \\
+            \\## 4. React island candidates
+            \\
+            \\The scanner conservatively lists JSX/TSX under conventional component directories
+            \\plus colocated Next.js `use client` modules. Keep interactive roots as
+            \\`.island.tsx`; fold presentation-only
+            \\components into SuperHTML or keep them as relative children of an island.
+            \\
+        ) catch fatal.oom();
+        islandSection(w, entries);
+        if (has_scaffold) w.writeAll(
+            "\nStarter islands were requested; React imports are rewritten to `@z/runtime`.\n",
+        ) catch fatal.oom();
+    } else if (source == .nuxt) {
+        w.writeAll(
+            \\
+            \\## 4. Vue components
+            \\
+            \\Vue SFCs are not mechanically rewritten to TSX. Classify each component: static
+            \\markup becomes a SuperHTML partial; interactive roots are re-authored as
+            \\`.island.tsx` against `@z/runtime`. Preserve props, emitted events, slots, and
+            \\client-only boundaries explicitly.
+            \\
+        ) catch fatal.oom();
+    } else {
+        w.writeAll(
+            \\
+            \\## 4. Template constructs
+            \\
+            \\- [ ] Translate includes/shortcodes/filters to SuperHTML partials or Scripty.
+            \\- [ ] Translate collections, taxonomies, and data files to sections/frontmatter/generated content.
+            \\- [ ] Replace plugin-provided output explicitly; do not silently drop generated files.
+            \\
+        ) catch fatal.oom();
+    }
+
+    w.writeAll(
+        \\
+        \\## 5. Prove parity
+        \\
+        \\- [ ] `zigapagos validate --format=json`
+        \\- [ ] `zigapagos release --format=json --output=public`
+        \\- [ ] `zigapagos doctor public --format=json`
+        \\- [ ] Compare the old and new route inventories, metadata, assets, and interactive behavior.
+        \\
+    ) catch fatal.oom();
+
+    return aw.toOwnedSlice() catch fatal.oom();
+}
+
 pub fn buildReport(gpa: Allocator, dir_path: []const u8, entries: []const Entry, has_config: bool, has_scaffold: bool, has_astro_sitemap: bool) []const u8 {
     var aw: std.Io.Writer.Allocating = .init(gpa);
     const w = &aw.writer;
@@ -817,6 +1374,24 @@ fn partialSection(w: anytype, entries: []const Entry) void {
     }
 }
 
+fn otherComponentSection(w: anytype, entries: []const Entry, source: Source) void {
+    if (source != .nuxt and source != .jekyll and source != .eleventy) return;
+    const title = switch (source) {
+        .nuxt => "Vue components → classify as SuperHTML partials or TSX interactive roots",
+        .jekyll => "Liquid includes → `layouts/templates/**/*.shtml` partials",
+        .eleventy => "Eleventy includes → `layouts/templates/**/*.shtml` partials",
+        else => unreachable,
+    };
+    w.print("\n### {s}\n\n", .{title}) catch fatal.oom();
+    var any = false;
+    for (entries) |entry| {
+        if (entry.kind != .component) continue;
+        w.print("- [ ] `{s}`\n", .{entry.path}) catch fatal.oom();
+        any = true;
+    }
+    if (!any) w.writeAll("- (none found)\n") catch fatal.oom();
+}
+
 fn islandSection(w: anytype, entries: []const Entry) void {
     var any = false;
     for (entries) |e| {
@@ -902,6 +1477,148 @@ fn plainComponentNote(w: anytype, entries: []const Entry) void {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+test "migration sources parse documented names" {
+    try std.testing.expectEqual(Source.astro, Source.parse("astro").?);
+    try std.testing.expectEqual(Source.nextjs, Source.parse("next").?);
+    try std.testing.expectEqual(Source.nextjs, Source.parse("next.js").?);
+    try std.testing.expectEqual(Source.gatsby, Source.parse("gatsby").?);
+    try std.testing.expectEqual(Source.nuxt, Source.parse("vue").?);
+    try std.testing.expectEqual(Source.hugo, Source.parse("hugo").?);
+    try std.testing.expectEqual(Source.jekyll, Source.parse("jekyll").?);
+    try std.testing.expectEqual(Source.eleventy, Source.parse("11ty").?);
+    try std.testing.expectEqual(Source.eleventy, Source.parse("eleventy").?);
+    try std.testing.expectEqual(Source.hexo, Source.parse("hexo").?);
+    try std.testing.expectEqual(null, Source.parse("express"));
+}
+
+test "source auto-detection reads package dependencies when config is optional" {
+    const gpa = std.testing.allocator;
+    const testing_io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const file = try tmp.dir.createFile(testing_io, "package.json", .{});
+    try file.writeStreamingAll(testing_io, "{\"dependencies\":{\"next\":\"16.0.0\"}}");
+    file.close(testing_io);
+    try std.testing.expectEqual(Source.nextjs, detectSource(testing_io, gpa, tmp.dir));
+}
+
+test "source config wins over a component-framework package dependency" {
+    const gpa = std.testing.allocator;
+    const testing_io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const config = try tmp.dir.createFile(testing_io, "astro.config.mjs", .{});
+    config.close(testing_io);
+    const package = try tmp.dir.createFile(testing_io, "package.json", .{});
+    try package.writeStreamingAll(testing_io, "{\"dependencies\":{\"astro\":\"6.0.0\",\"vue\":\"4.0.0\"}}");
+    package.close(testing_io);
+    try std.testing.expectEqual(Source.astro, detectSource(testing_io, gpa, tmp.dir));
+}
+
+test "Next scanner inventories routes and conservative React island candidates" {
+    const gpa = std.testing.allocator;
+    const testing_io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var pages = try tmp.dir.createDirPathOpen(testing_io, "src/pages", .{});
+    pages.close(testing_io);
+    var components = try tmp.dir.createDirPathOpen(testing_io, "src/components", .{});
+    components.close(testing_io);
+    var app = try tmp.dir.createDirPathOpen(testing_io, "src/app/dashboard", .{});
+    app.close(testing_io);
+    const page = try tmp.dir.createFile(testing_io, "src/pages/index.tsx", .{});
+    try page.writeStreamingAll(testing_io, "export default function Page(){return <main/>}");
+    page.close(testing_io);
+    const component = try tmp.dir.createFile(testing_io, "src/components/Counter.tsx", .{});
+    try component.writeStreamingAll(testing_io, "export default function Counter(){return <button/>}");
+    component.close(testing_io);
+    const css = try tmp.dir.createFile(testing_io, "src/components/counter.css", .{});
+    try css.writeStreamingAll(testing_io, "button{}");
+    css.close(testing_io);
+    const client = try tmp.dir.createFile(testing_io, "src/app/dashboard/Chart.tsx", .{});
+    try client.writeStreamingAll(testing_io, "\"use client\"; export default function Chart(){return <canvas/>}");
+    client.close(testing_io);
+    const app_page = try tmp.dir.createFile(testing_io, "src/app/dashboard/page.tsx", .{});
+    try app_page.writeStreamingAll(testing_io, "\"use client\"; export default function Dashboard(){return <main/>}");
+    app_page.close(testing_io);
+    const route = try tmp.dir.createFile(testing_io, "src/app/dashboard/route.ts", .{});
+    try route.writeStreamingAll(testing_io, "\"use client\"; export function GET(){}");
+    route.close(testing_io);
+
+    var result = scanOther(testing_io, gpa, tmp.dir, .nextjs);
+    defer freeScanResult(gpa, &result);
+    try std.testing.expectEqual(@as(usize, 5), result.entries.len);
+    var found_page = false;
+    var found_app_page = false;
+    var found_route = false;
+    var found_island = false;
+    var found_colocated_island = false;
+    for (result.entries) |entry| {
+        if (std.mem.eql(u8, entry.path, "src/pages/index.tsx")) found_page = entry.kind == .page;
+        if (std.mem.eql(u8, entry.path, "src/app/dashboard/page.tsx")) found_app_page = entry.kind == .page;
+        if (std.mem.eql(u8, entry.path, "src/app/dashboard/route.ts")) found_route = entry.kind == .page;
+        if (std.mem.eql(u8, entry.path, "src/components/Counter.tsx")) found_island = entry.is_island;
+        if (std.mem.eql(u8, entry.path, "src/app/dashboard/Chart.tsx")) found_colocated_island = entry.is_island;
+    }
+    try std.testing.expect(found_page);
+    try std.testing.expect(found_app_page);
+    try std.testing.expect(found_route);
+    try std.testing.expect(found_island);
+    try std.testing.expect(found_colocated_island);
+}
+
+test "non-Astro report names the source and marks ambiguous conversion for review" {
+    const gpa = std.testing.allocator;
+    const entries = [_]Entry{
+        .{ .path = "src/pages/index.tsx", .kind = .page },
+        .{ .path = "src/components/Counter.tsx", .kind = .component, .role = .island, .is_island = true },
+    };
+    const report = buildOtherReport(gpa, .nextjs, "next-site", &entries, true, false);
+    defer gpa.free(report);
+    try std.testing.expect(std.mem.indexOf(u8, report, "Next.js") != null);
+    try std.testing.expect(std.mem.indexOf(u8, report, "src/pages/index.tsx") != null);
+    try std.testing.expect(std.mem.indexOf(u8, report, "src/components/Counter.tsx") != null);
+    try std.testing.expect(std.mem.indexOf(u8, report, "Generated by `zigapagos migrate`.") != null);
+    try std.testing.expect(std.mem.indexOf(u8, report, "Generated by `zigapagos migrate --from") == null);
+    try std.testing.expect(std.mem.indexOf(u8, report, "ambiguous framework") != null);
+    try std.testing.expect(std.mem.indexOf(u8, report, "semantics stay review items") != null);
+}
+
+test "Hugo content conversion writes valid-looking non-clobbering output" {
+    const gpa = std.testing.allocator;
+    const testing_io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var content = try tmp.dir.createDirPathOpen(testing_io, "content/blog", .{});
+    content.close(testing_io);
+    const source = try tmp.dir.createFile(testing_io, "content/blog/post.md", .{});
+    try source.writeStreamingAll(testing_io,
+        \\---
+        \\title: Post
+        \\---
+        \\# Preserved body
+        \\
+    );
+    source.close(testing_io);
+    const out = try testTmpPath(gpa, &tmp, "converted");
+    defer gpa.free(out);
+    const entries = [_]Entry{.{ .path = "content/blog/post.md", .kind = .page }};
+    convertContent(testing_io, gpa, tmp.dir, out, .hugo, &entries);
+    convertContent(testing_io, gpa, tmp.dir, out, .hugo, &entries);
+
+    const first_path = try std.fs.path.join(gpa, &.{ out, "blog/post.smd" });
+    defer gpa.free(first_path);
+    const first = try Io.Dir.cwd().readFileAlloc(testing_io, first_path, gpa, .limited(64 * 1024));
+    defer gpa.free(first);
+    try std.testing.expect(std.mem.indexOf(u8, first, ".title = \"Post\"") != null);
+    try std.testing.expect(std.mem.endsWith(u8, first, "# Preserved body\n"));
+    const versioned_path = try std.fs.path.join(gpa, &.{ out, "blog/post.smd.new" });
+    defer gpa.free(versioned_path);
+    const versioned = try Io.Dir.cwd().readFileAlloc(testing_io, versioned_path, gpa, .limited(64 * 1024));
+    defer gpa.free(versioned);
+    try std.testing.expectEqualStrings(first, versioned);
+}
 
 test "readFileContent reads a source larger than 64 KiB in full (no truncation)" {
     const testing_io = std.testing.io;
@@ -1221,31 +1938,12 @@ test "scan reports no @astrojs/sitemap when package.json is absent or silent abo
     try std.testing.expect(std.mem.indexOf(u8, report, "@astrojs/sitemap") == null);
 }
 
-test "usage says outright that migrate converts nothing" {
-    // Issue #40: this project itself wrote copy claiming `migrate` "applies the
-    // mappings" three times before catching it, and a fourth survived into a
-    // published page description. The tool's own help is where that belief starts,
-    // and it never contradicted it — it described what migrate DOES (scan, write a
-    // worklist) and left the reader to infer the much larger set of things it does
-    // not. Inference is exactly what went wrong four times.
-    //
-    // So the disclaimer is load-bearing copy, pinned the way src/fatal.zig pins the
-    // live-reload help: a reword may move it, but it may not drop it.
+test "usage defines the read-only source and deterministic output contract" {
     const usage_text = usage;
-    try std.testing.expect(std.mem.indexOf(u8, usage_text, "CONVERTS NOTHING") != null);
-    // The three conversions a reader most plausibly assumes happen. Naming the
-    // target extensions is what makes the denial concrete rather than a hedge.
-    try std.testing.expect(std.mem.indexOf(u8, usage_text, ".smd") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage_text, ".shtml") != null);
-    // --scaffold is the single exception, and the denial is false unless it is
-    // named as one INSIDE the denial paragraph itself. The search is bounded to
-    // that paragraph on purpose: the Options block underneath always lists
-    // `--scaffold DIR`, so searching to the end of the usage string would hold
-    // even with the exception sentence deleted -- and an assertion that cannot
-    // fail pins nothing.
-    const nothing_at = std.mem.indexOf(u8, usage_text, "CONVERTS NOTHING").?;
-    const after_denial = usage_text[nothing_at..];
-    const options_at = std.mem.indexOf(u8, after_denial, "\nOptions:") orelse
-        return error.DenialParagraphNoLongerPrecedesOptions;
-    try std.testing.expect(std.mem.indexOf(u8, after_denial[0..options_at], "--scaffold") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage_text, "Source files are read-only") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage_text, "performs the deterministic React part") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage_text, "Pages, layouts") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage_text, "--scaffold") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage_text, "--convert-content") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage_text, "normalized to Ziggy") != null);
 }

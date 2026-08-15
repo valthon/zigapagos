@@ -2,9 +2,12 @@
 
 # Zigapagos roadmap
 
-North star: **excellent DX + LLM-native unattended migration from Astro.** Every
-item below is judged against "does this help an LLM migrate a real Astro site
-cleanly, and does the result run correctly with good DX."
+North star: **excellent DX + LLM-native unattended migration from Astro.** Astro
+remains the reference architecture and the lead marketing story. Migration
+adapters for Next.js, Gatsby, Nuxt/Vue, Hugo, Jekyll, Eleventy, and Hexo extend
+that capability without turning Zigapagos into a framework-conversion brand. Every item below is
+judged against "does this help an LLM migrate a real site cleanly, and does the
+result run correctly with good DX."
 
 This page is what is *planned* and what is *deferred*. For what the code does
 today, read the subsystem specs — [islands](islands.md), [native

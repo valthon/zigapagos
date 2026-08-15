@@ -25,6 +25,7 @@ content/docs/dev-server.smd
 content/docs/diagnostics.smd
 content/docs/observability.smd
 content/docs/migrate-from-astro.smd
+content/docs/migrate-from-other-frameworks.smd
 content/docs/migration-recipes.smd
 content/docs/react-spa-bridge.smd
 content/docs/roadmap.smd

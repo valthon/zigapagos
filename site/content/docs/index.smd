@@ -1,6 +1,6 @@
 ---
 .title = "Documentation",
-.description = "Everything Zigapagos does: islands, native SPAs, migration from Astro, configuration, and reference.",
+.description = "Everything Zigapagos does: islands, native SPAs, migration from Astro and other frameworks, configuration, and reference.",
 .layout = "docs-index.shtml",
 .custom = { .slug = "index" },
 ---

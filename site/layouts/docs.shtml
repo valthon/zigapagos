@@ -87,6 +87,14 @@
             </ctx>
           </li>
           <li>
+            <ctx :if="$page.custom.get('slug').eql('migrate-from-other-frameworks')">
+              <a aria-current="page" href="$site.page('docs/migrate-from-other-frameworks').link()">Other frameworks</a>
+            </ctx>
+            <ctx :if="$page.custom.get('slug').eql('migrate-from-other-frameworks').not()">
+              <a href="$site.page('docs/migrate-from-other-frameworks').link()">Other frameworks</a>
+            </ctx>
+          </li>
+          <li>
             <ctx :if="$page.custom.get('slug').eql('migration-recipes')">
               <a aria-current="page" href="$site.page('docs/migration-recipes').link()">Recipes</a>
             </ctx>

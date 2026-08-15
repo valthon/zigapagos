@@ -105,6 +105,13 @@
     "description": "A deterministic mapping from Astro projects to Zigapagos, and what `zigapagos migrate` reports for you."
   },
   {
+    "canonical": "docs/migration/other-frameworks.md",
+    "mirror": "migrate-from-other-frameworks.smd",
+    "slug": "migrate-from-other-frameworks",
+    "title": "Migrating from other frameworks",
+    "description": "Source-specific mappings and migration worklists for Next.js, Gatsby, Nuxt/Vue, Hugo, Jekyll, Eleventy, and Hexo."
+  },
+  {
     "canonical": "docs/migration/recipes.md",
     "mirror": "migration-recipes.smd",
     "slug": "migration-recipes",
