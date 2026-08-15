@@ -14,10 +14,11 @@ zigapagos migrate path/to/site --from gatsby --scaffold components
 zigapagos migrate path/to/site --from hugo --convert-content converted/content
 zigapagos migrate path/to/site --from 11ty --convert-content converted/content
 zigapagos migrate path/to/site --from hexo --convert-content converted/content
+zigapagos migrate path/to/site --copy-assets converted/assets
 ```
 
 The command auto-detects a source from its conventional config file. Use
-`--from astro|next|gatsby|nuxt|hugo|jekyll|11ty|hexo` when a monorepo contains
+`--from astro|next|gatsby|nuxt|vue|hugo|jekyll|11ty|hexo` when a monorepo contains
 multiple framework configs or its config has a nonstandard name. A bare
 `_config.yml` is not enough to distinguish Jekyll from Hexo; without supporting
 package or directory evidence, the command stops and asks the user or agent to
@@ -27,11 +28,44 @@ Source files are read-only. `migrate` always writes a worklist. For Astro,
 Next.js, and Gatsby, `--scaffold` additionally writes non-clobbering starter TSX
 islands. For Hugo, Jekyll, Eleventy, and Hexo, `--convert-content` writes a
 separate content tree with normalized Ziggy frontmatter and preserved Markdown
-bodies. Vue SFCs and static-template components are listed but never represented
-as successful automatic conversions.
+bodies. `--copy-assets` streams conventional public/static files into a separate
+Zigapagos assets tree while preserving their public URL-relative paths. Vue SFCs
+and static-template components are listed but never represented as successful
+automatic conversions.
 
 Generated files never overwrite earlier work: a collision is written beside it
 as `.new`, `.new.2`, and so on.
+
+## Deterministic asset copy
+
+`--copy-assets <target-assets-dir>` handles the conventional source trees whose
+URL mapping is deterministic:
+
+- Astro and Next.js `public/`, Gatsby and Hugo `static/`, and Nuxt/Vue
+  `public/` or legacy `static/` are copied from the root of those directories.
+- Jekyll's conventional `assets/`, `images/`, `css/`, `js/`, and `fonts/` keep
+  those directory names, because they are part of the public URL. Known
+  pipeline inputs (`.scss`, `.sass`, and `.coffee`) are excluded.
+- Eleventy `public/` is copied at the URL root and `assets/` keeps its prefix.
+  Configured passthrough-copy sources with other names remain review items.
+- Hexo copies non-renderable files from `source/` at their URL-relative paths;
+  Markdown and template inputs are excluded rather than being mistaken for
+  static output. `_posts`/`_drafts` asset folders are also excluded because
+  Hexo relocates them using permalink and `post_asset_folder` configuration.
+
+The copy is streamed, so large media does not need to fit in memory. Source
+files are opened read-only. Existing targets are preserved and the new copy is
+written as `.new`, `.new.2`, and so on for explicit review. Directory symlinks
+and other non-file entries are not followed; the CLI reports how many it
+skipped so linked asset trees remain visible review work.
+
+Zigapagos does not publish every file under `assets/` automatically. During
+initial parity work, add `.static_assets = ["**"]` to `zigapagos.ziggy` if all
+copied fixed URLs must remain public; later, narrow that list and link normal
+site assets from templates/content so unused files can be pruned. Framework
+asset pipelines remain deliberate ports: Hugo Pipes, Gatsby image processing,
+Nuxt modules, Jekyll plugins, Eleventy passthrough rules outside the conventional
+trees, and Hexo renderer/generator output are not reconstructed by a byte copy.
 
 This command is intentionally the shared migration entry point. Astro also has
 the deeper `zigapagos init --from-astro` whole-site scaffold; the other adapters

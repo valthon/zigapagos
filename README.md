@@ -77,9 +77,11 @@ map. No island on the page? Zero JavaScript shipped.
   Astro remains the reference path; the same command also produces first-class,
   source-specific worklists for Next.js, Gatsby, Nuxt/Vue, Hugo, Jekyll,
   Eleventy, and Hexo via auto-detection or `--from`, with React scaffolding and
-  deterministic Markdown/frontmatter conversion where the port is mechanical. Astro alone currently
-  has the deeper whole-site `init --from-astro` scaffold; other sources use the
-  shared `migrate` workflow plus a normal `init` target site.
+  deterministic Markdown/frontmatter conversion where the port is mechanical.
+  `--copy-assets` also preserves conventional public/static trees and URL paths
+  without clobbering an existing target. Astro alone currently has the deeper
+  whole-site `init --from-astro` scaffold; other sources use the shared
+  `migrate` workflow plus a normal `init` target site.
 - **Agent-legible diagnostics** — `--format=json` on `release`, `validate`,
   `doctor` and `explain-code` emits NDJSON with stable `ZP_*` codes, so an
   agent's build → fix → validate loop matches on codes instead of parsing

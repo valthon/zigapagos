@@ -867,7 +867,7 @@ pub fn run(io: Io, gpa: Allocator, args: []const []const u8) bool {
     }
 
     // Write MIGRATION.md.
-    const report = migrate.buildReport(a, o.astro_dir, res.entries, res.has_config, !o.no_islands, res.has_astro_sitemap);
+    const report = migrate.buildReport(a, o.astro_dir, res.entries, res.has_config, !o.no_islands, res.has_astro_sitemap, false);
     trackOutcome(&written, writeFile(io, out_dir, "MIGRATION.md", report, o.force));
 
     // Print summary.
