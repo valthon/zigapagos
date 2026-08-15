@@ -14,6 +14,8 @@ const Source = enum {
     nuxt,
     hugo,
     jekyll,
+    eleventy,
+    hexo,
 
     fn parse(value: []const u8) ?Source {
         if (std.mem.eql(u8, value, "astro")) return .astro;
@@ -22,6 +24,8 @@ const Source = enum {
         if (std.mem.eql(u8, value, "nuxt") or std.mem.eql(u8, value, "vue")) return .nuxt;
         if (std.mem.eql(u8, value, "hugo")) return .hugo;
         if (std.mem.eql(u8, value, "jekyll")) return .jekyll;
+        if (std.mem.eql(u8, value, "eleventy") or std.mem.eql(u8, value, "11ty")) return .eleventy;
+        if (std.mem.eql(u8, value, "hexo")) return .hexo;
         return null;
     }
 
@@ -33,6 +37,8 @@ const Source = enum {
             .nuxt => "Nuxt/Vue",
             .hugo => "Hugo",
             .jekyll => "Jekyll",
+            .eleventy => "Eleventy (11ty)",
+            .hexo => "Hexo",
         };
     }
 
@@ -44,6 +50,8 @@ const Source = enum {
         return switch (source) {
             .hugo => .hugo,
             .jekyll => .jekyll,
+            .eleventy => .eleventy,
+            .hexo => .hexo,
             else => null,
         };
     }
@@ -52,7 +60,8 @@ const Source = enum {
 const usage =
     \\Usage: zigapagos migrate <project-dir> [OPTIONS]
     \\
-    \\Scans an Astro, Next.js, Gatsby, Nuxt/Vue, Hugo, or Jekyll project and
+    \\Scans an Astro, Next.js, Gatsby, Nuxt/Vue, Hugo, Jekyll, Eleventy, or
+    \\Hexo project and
     \\writes MIGRATION.md: a source-specific worklist mapping files to their
     \\Zigapagos targets. The source is auto-detected or selected with --from.
     \\
@@ -63,7 +72,8 @@ const usage =
     \\data loaders, plugins, and framework config remain explicit worklist items.
     \\
     \\Options:
-    \\  --from SOURCE         astro|next|gatsby|nuxt|hugo|jekyll (default: auto)
+    \\  --from SOURCE         astro|next|gatsby|nuxt|hugo|jekyll|11ty|hexo
+    \\                        (default: auto; use when detection is ambiguous)
     \\  -o, --output PATH      Report path (default: MIGRATION.md)
     \\  --scaffold DIR         Write a starter TSX island per island into DIR.
     \\                         Attempts a real port: rewrites React imports to
@@ -78,7 +88,7 @@ const usage =
     \\                         and skipped — no stub is written for it.
     \\                         Props are re-emitted verbatim from the source's
     \\                         `interface Props` when found.
-    \\  --convert-content DIR  Convert Hugo/Jekyll Markdown into a separate
+    \\  --convert-content DIR  Convert Hugo/Jekyll/Eleventy/Hexo Markdown into a separate
     \\                         Zigapagos content tree. Recognized frontmatter is
     \\                         normalized to Ziggy; Markdown bodies are preserved.
     \\                         Existing outputs are never clobbered.
@@ -207,7 +217,14 @@ fn configMarker(io: Io, root: Io.Dir, source: Source) bool {
         .gatsby => &.{ "gatsby-config.js", "gatsby-config.ts", "gatsby-config.mjs" },
         .nuxt => &.{ "nuxt.config.js", "nuxt.config.ts", "nuxt.config.mjs" },
         .hugo => &.{ "hugo.toml", "hugo.yaml", "hugo.yml", "hugo.json" },
-        .jekyll => &.{ "_config.yml", "_config.yaml" },
+        .jekyll => if ((fileExists(io, root, "Gemfile") or dirExists(io, root, "_posts") or
+            dirExists(io, root, "_layouts") or dirExists(io, root, "_includes")) and
+            !(dirExists(io, root, "source") and dirExists(io, root, "themes")))
+            &.{ "_config.yml", "_config.yaml" }
+        else
+            &.{},
+        .eleventy => &.{ ".eleventy.js", ".eleventy.cjs", ".eleventy.mjs", "eleventy.config.js", "eleventy.config.cjs", "eleventy.config.mjs" },
+        .hexo => if (dirExists(io, root, "source") and dirExists(io, root, "themes")) &.{ "_config.yml", "_config.yaml" } else &.{},
     };
     for (markers) |marker| if (fileExists(io, root, marker)) return true;
     if (source == .hugo and dirExists(io, root, "content") and dirExists(io, root, "layouts")) {
@@ -226,12 +243,14 @@ fn sourceMarker(io: Io, gpa: Allocator, root: Io.Dir, source: Source) bool {
         .gatsby => packageDeclares(io, gpa, root, "gatsby"),
         .nuxt => packageDeclares(io, gpa, root, "nuxt") or packageDeclares(io, gpa, root, "vue"),
         .hugo, .jekyll => false,
+        .eleventy => packageDeclares(io, gpa, root, "@11ty/eleventy"),
+        .hexo => packageDeclares(io, gpa, root, "hexo"),
     };
 }
 
 fn detectSource(io: Io, gpa: Allocator, root: Io.Dir) Source {
     var found: ?Source = null;
-    for ([_]Source{ .astro, .nextjs, .gatsby, .nuxt, .hugo, .jekyll }) |candidate| {
+    for ([_]Source{ .astro, .nextjs, .gatsby, .nuxt, .hugo, .jekyll, .eleventy, .hexo }) |candidate| {
         if (!configMarker(io, root, candidate)) continue;
         if (found != null) fatal.msg(
             "multiple source frameworks detected ({s} and {s}); select one with --from\n",
@@ -241,7 +260,7 @@ fn detectSource(io: Io, gpa: Allocator, root: Io.Dir) Source {
     }
     if (found) |source| return source;
 
-    for ([_]Source{ .astro, .nextjs, .gatsby, .nuxt }) |candidate| {
+    for ([_]Source{ .astro, .nextjs, .gatsby, .nuxt, .eleventy, .hexo }) |candidate| {
         if (!sourceMarker(io, gpa, root, candidate)) continue;
         if (found != null) fatal.msg(
             "multiple source frameworks detected ({s} and {s}); select one with --from\n",
@@ -250,7 +269,7 @@ fn detectSource(io: Io, gpa: Allocator, root: Io.Dir) Source {
         found = candidate;
     }
     return found orelse fatal.msg(
-        "could not detect a supported source framework; pass --from astro|next|gatsby|nuxt|hugo|jekyll\n",
+        "could not confidently detect a supported source framework; ask the project owner or pass --from astro|next|gatsby|nuxt|hugo|jekyll|11ty|hexo\n",
         .{},
     );
 }
@@ -267,7 +286,19 @@ fn sourceFile(source: Source, path: []const u8) bool {
         .nuxt => hasAnyExtension(path, &.{".vue"}),
         .hugo => hasAnyExtension(path, &.{ ".md", ".html", ".gohtml" }),
         .jekyll => hasAnyExtension(path, &.{ ".md", ".markdown", ".html", ".liquid" }),
+        .eleventy => hasAnyExtension(path, &.{ ".md", ".markdown", ".html", ".liquid", ".njk", ".11ty.js" }),
+        .hexo => hasAnyExtension(path, &.{ ".md", ".markdown", ".html", ".ejs", ".swig", ".njk" }),
     };
+}
+
+fn sourceEntry(source: Source, entry: Entry) bool {
+    if (source == .eleventy) return switch (entry.kind) {
+        .page, .layout, .component => hasAnyExtension(entry.path, &.{ ".md", ".markdown", ".html", ".liquid", ".njk", ".11ty.js" }),
+        .other => hasAnyExtension(entry.path, &.{ ".json", ".json5", ".js", ".cjs", ".mjs", ".yaml", ".yml" }),
+        else => false,
+    };
+    if (source == .hexo and entry.kind == .other) return hasAnyExtension(entry.path, &.{ ".js", ".cjs", ".mjs" });
+    return sourceFile(source, entry.path);
 }
 
 fn scanTopLevelFiles(
@@ -287,6 +318,15 @@ fn scanTopLevelFiles(
         const path = gpa.dupe(u8, entry.name) catch fatal.oom();
         scanFile(io, gpa, base, path, kind, out, island_names);
     }
+}
+
+fn eleventyPagePath(path: []const u8) bool {
+    return std.mem.indexOf(u8, path, "/_includes/") == null and
+        std.mem.indexOf(u8, path, "/_layouts/") == null and
+        std.mem.indexOf(u8, path, "/_data/") == null and
+        !std.mem.startsWith(u8, path, "_includes/") and
+        !std.mem.startsWith(u8, path, "_layouts/") and
+        !std.mem.startsWith(u8, path, "_data/");
 }
 
 fn scanOther(io: Io, gpa: Allocator, root: Io.Dir, source: Source) ScanResult {
@@ -336,11 +376,29 @@ fn scanOther(io: Io, gpa: Allocator, root: Io.Dir, source: Source) ScanResult {
             scanDir(io, gpa, root, "_layouts", .layout, &entries, &names);
             scanDir(io, gpa, root, "_includes", .component, &entries, &names);
         },
+        .eleventy => {
+            scanTopLevelFiles(io, gpa, root, .page, &entries, &names);
+            scanDir(io, gpa, root, "src", .page, &entries, &names);
+            scanDir(io, gpa, root, "content", .page, &entries, &names);
+            scanDir(io, gpa, root, "_layouts", .layout, &entries, &names);
+            scanDir(io, gpa, root, "_includes", .component, &entries, &names);
+            scanDir(io, gpa, root, "src/_layouts", .layout, &entries, &names);
+            scanDir(io, gpa, root, "src/_includes", .component, &entries, &names);
+            scanDir(io, gpa, root, "_data", .other, &entries, &names);
+            scanDir(io, gpa, root, "src/_data", .other, &entries, &names);
+        },
+        .hexo => {
+            scanDir(io, gpa, root, "source", .page, &entries, &names);
+            scanDir(io, gpa, root, "themes", .layout, &entries, &names);
+            scanDir(io, gpa, root, "scripts", .other, &entries, &names);
+        },
     }
 
     var kept: usize = 0;
     for (entries.items) |entry| {
-        if (sourceFile(source, entry.path)) {
+        if (sourceEntry(source, entry) and
+            !(source == .eleventy and entry.kind == .page and !eleventyPagePath(entry.path)))
+        {
             entries.items[kept] = entry;
             kept += 1;
         } else {
@@ -378,6 +436,7 @@ fn scanOther(io: Io, gpa: Allocator, root: Io.Dir, source: Source) ScanResult {
             },
             .nuxt => entry.role = .plain,
             .jekyll => entry.role = .partial,
+            .eleventy, .hexo => entry.role = .partial,
             else => {},
         }
     }
@@ -448,7 +507,7 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8) bool {
         .{source.name()},
     );
     if (content_dir != null and source.contentSource() == null) fatal.usageError(
-        "error: --convert-content supports Hugo and Jekyll Markdown sources; got {s}\n",
+        "error: --convert-content supports Hugo, Jekyll, Eleventy, and Hexo Markdown sources; got {s}\n",
         .{source.name()},
     );
     var res = if (source == .astro) scan(io, gpa, root) else scanOther(io, gpa, root, source);
@@ -1031,6 +1090,8 @@ fn buildOtherReport(gpa: Allocator, source: Source, dir_path: []const u8, entrie
         .nuxt => "nuxt",
         .hugo => "hugo",
         .jekyll => "jekyll",
+        .eleventy => "11ty",
+        .hexo => "hexo",
         .astro => unreachable,
     } }) catch fatal.oom();
 
@@ -1039,12 +1100,13 @@ fn buildOtherReport(gpa: Allocator, source: Source, dir_path: []const u8, entrie
         w.writeAll(
             "Converted Markdown was written to the requested content tree; every file carries `migration_review = true`.\n\n",
         ) catch fatal.oom();
-    } else if (source == .hugo or source == .jekyll) {
+    } else if (source.contentSource() != null) {
         w.writeAll(
             "> **Tip:** re-run with `--convert-content <target-content-dir>` to normalize recognized frontmatter and preserve Markdown bodies without clobbering existing files.\n\n",
         ) catch fatal.oom();
     }
     section(w, entries, .page, "Source pages/routes → `content/**/*.smd` or one `.spa.tsx`");
+    section(w, entries, .other, "Data files and custom generator scripts → Ziggy inputs or explicit generation steps");
     w.writeAll(
         \\
         \\- [ ] Classify every route as build-time content, a client-routed SPA route, or backend-owned.
@@ -1277,11 +1339,13 @@ fn partialSection(w: anytype, entries: []const Entry) void {
 }
 
 fn otherComponentSection(w: anytype, entries: []const Entry, source: Source) void {
-    if (source != .nuxt and source != .jekyll) return;
-    const title = if (source == .nuxt)
-        "Vue components → classify as SuperHTML partials or TSX interactive roots"
-    else
-        "Liquid includes → `layouts/templates/**/*.shtml` partials";
+    if (source != .nuxt and source != .jekyll and source != .eleventy) return;
+    const title = switch (source) {
+        .nuxt => "Vue components → classify as SuperHTML partials or TSX interactive roots",
+        .jekyll => "Liquid includes → `layouts/templates/**/*.shtml` partials",
+        .eleventy => "Eleventy includes → `layouts/templates/**/*.shtml` partials",
+        else => unreachable,
+    };
     w.print("\n### {s}\n\n", .{title}) catch fatal.oom();
     var any = false;
     for (entries) |entry| {
@@ -1386,6 +1450,9 @@ test "migration sources parse documented names" {
     try std.testing.expectEqual(Source.nuxt, Source.parse("vue").?);
     try std.testing.expectEqual(Source.hugo, Source.parse("hugo").?);
     try std.testing.expectEqual(Source.jekyll, Source.parse("jekyll").?);
+    try std.testing.expectEqual(Source.eleventy, Source.parse("11ty").?);
+    try std.testing.expectEqual(Source.eleventy, Source.parse("eleventy").?);
+    try std.testing.expectEqual(Source.hexo, Source.parse("hexo").?);
     try std.testing.expectEqual(null, Source.parse("express"));
 }
 

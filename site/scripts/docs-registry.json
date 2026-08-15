@@ -109,7 +109,7 @@
     "mirror": "migrate-from-other-frameworks.smd",
     "slug": "migrate-from-other-frameworks",
     "title": "Migrating from other frameworks",
-    "description": "Source-specific mappings and migration worklists for Next.js, Gatsby, Nuxt/Vue, Hugo, and Jekyll."
+    "description": "Source-specific mappings and migration worklists for Next.js, Gatsby, Nuxt/Vue, Hugo, Jekyll, Eleventy, and Hexo."
   },
   {
     "canonical": "docs/migration/recipes.md",

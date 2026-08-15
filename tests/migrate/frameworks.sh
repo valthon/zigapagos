@@ -167,4 +167,87 @@ HELP="$WORK/help.txt"
 "$ZIGAPAGOS" help >"$HELP" 2>&1
 grep -q 'Scan a supported framework' "$HELP" || fail "top-level help still describes migrate as Astro-only"
 
-echo "PASS: Next.js, Gatsby, Nuxt/Vue, Hugo, and Jekyll migration adapters"
+# Eleventy: conventional config detection, private template inventory, and
+# Markdown conversion coexist without treating _includes/_layouts as pages.
+ELEVENTY="$WORK/eleventy"
+mkdir -p "$ELEVENTY/src/_includes" "$ELEVENTY/src/_layouts" "$ELEVENTY/src/_data" "$ELEVENTY/src/writing"
+: > "$ELEVENTY/.eleventy.js"
+cat > "$ELEVENTY/package.json" <<'JSON'
+{"devDependencies":{"@11ty/eleventy":"3.1.5"}}
+JSON
+cat > "$ELEVENTY/src/writing/hello.md" <<'MD'
+---
+title: Hello 11ty
+layout: base.njk
+permalink: /hello/
+---
+# Eleventy body
+MD
+: > "$ELEVENTY/src/_includes/card.njk"
+: > "$ELEVENTY/src/_layouts/base.njk"
+echo '{"siteName":"Example"}' > "$ELEVENTY/src/_data/site.json"
+"$ZIGAPAGOS" migrate "$ELEVENTY" --convert-content "$WORK/eleventy-content" -o "$WORK/ELEVENTY-MIGRATION.md"
+ELEVENTY_OUT="$WORK/eleventy-content/writing/hello.smd"
+grep -q 'Eleventy (11ty)' "$WORK/ELEVENTY-MIGRATION.md" || fail "Eleventy was not auto-detected"
+grep -q 'src/_includes/card.njk' "$WORK/ELEVENTY-MIGRATION.md" || fail "Eleventy include missing from worklist"
+grep -q 'src/_layouts/base.njk' "$WORK/ELEVENTY-MIGRATION.md" || fail "Eleventy layout missing from worklist"
+grep -q 'src/_data/site.json' "$WORK/ELEVENTY-MIGRATION.md" || fail "Eleventy data file missing from worklist"
+[[ "$(grep -c 'src/_includes/card.njk' "$WORK/ELEVENTY-MIGRATION.md")" == 1 ]] || fail "Eleventy include was also misclassified as a page"
+grep -q 'permalink: /hello/' "$ELEVENTY_OUT" || fail "Eleventy permalink was not preserved for review"
+grep -q '^# Eleventy body$' "$ELEVENTY_OUT" || fail "Eleventy Markdown body was not preserved"
+
+# Hexo: package/structure disambiguates its shared _config.yml name from
+# Jekyll, source/_posts paths normalize, drafts stay drafts, and theme EJS is
+# inventoried without claiming template conversion.
+HEXO="$WORK/hexo"
+mkdir -p "$HEXO/source/_posts" "$HEXO/source/_drafts" "$HEXO/themes/daily/layout"
+: > "$HEXO/_config.yml"
+cat > "$HEXO/package.json" <<'JSON'
+{"dependencies":{"hexo":"7.3.0"}}
+JSON
+cat > "$HEXO/source/_posts/hello.md" <<'MD'
+---
+title: Hello Hexo
+tags: [news]
+categories: [writing]
+---
+# Hexo body
+<!-- more -->
+<blockquote>
+  A quotation
+  <footer>--Author</footer>
+</blockquote>
+MD
+cat > "$HEXO/source/_drafts/idea.md" <<'MD'
+---
+title: An idea
+---
+Draft body
+MD
+: > "$HEXO/themes/daily/layout/post.ejs"
+"$ZIGAPAGOS" migrate "$HEXO" --convert-content "$WORK/hexo-content" -o "$WORK/HEXO-MIGRATION.md"
+grep -q 'Hexo' "$WORK/HEXO-MIGRATION.md" || fail "Hexo was not auto-detected"
+grep -q 'themes/daily/layout/post.ejs' "$WORK/HEXO-MIGRATION.md" || fail "Hexo theme layout missing from worklist"
+grep -q 'tags: \[news\]' "$WORK/hexo-content/posts/hello.smd" || fail "Hexo tags were not preserved for review"
+grep -q '^.draft = true,$' "$WORK/hexo-content/drafts/idea.smd" || fail "Hexo draft directory was not preserved"
+! grep -q '<!-- more -->' "$WORK/hexo-content/posts/hello.smd" || fail "Hexo excerpt marker survived conversion"
+grep -q '^> A quotation$' "$WORK/hexo-content/posts/hello.smd" || fail "Hexo blockquote was not normalized"
+mkdir -p "$VALIDATE/content/writing" "$VALIDATE/content/drafts"
+cp tests/rendering/simple/content/index.smd "$VALIDATE/content/writing/index.smd"
+cp tests/rendering/simple/content/index.smd "$VALIDATE/content/drafts/index.smd"
+cp "$ELEVENTY_OUT" "$VALIDATE/content/writing/hello.smd"
+cp "$WORK/hexo-content/posts/hello.smd" "$VALIDATE/content/posts/hello.smd"
+cp "$WORK/hexo-content/drafts/idea.smd" "$VALIDATE/content/drafts/idea.smd"
+( cd "$VALIDATE" && "$ZIGAPAGOS" validate ) || fail "converted Eleventy/Hexo content is not valid Zigapagos input"
+
+# A bare _config.yml is shared by multiple ecosystems. Refuse to guess and
+# give both a human and an agent the explicit --from escape hatch.
+AMBIGUOUS="$WORK/ambiguous"
+mkdir -p "$AMBIGUOUS"
+: > "$AMBIGUOUS/_config.yml"
+if "$ZIGAPAGOS" migrate "$AMBIGUOUS" -o "$WORK/AMBIGUOUS.md" >"$WORK/ambiguous.log" 2>&1; then
+  fail "ambiguous _config.yml was guessed instead of requesting --from"
+fi
+grep -q 'ask the project owner or pass --from' "$WORK/ambiguous.log" || fail "ambiguous detection did not provide an actionable choice"
+
+echo "PASS: Next.js, Gatsby, Nuxt/Vue, Hugo, Jekyll, Eleventy, and Hexo migration adapters"

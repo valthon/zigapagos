@@ -1,6 +1,6 @@
 > This documentation is also published, web-native, at <https://valthon.github.io/zigapagos/docs/migrate-from-other-frameworks/> — the site is the canonical reading experience.
 
-# Migrating from Next.js, Gatsby, Nuxt/Vue, Hugo, or Jekyll
+# Migrating from Next.js, Gatsby, Nuxt/Vue, Hugo, Jekyll, Eleventy, or Hexo
 
 Astro remains Zigapagos's reference migration: its islands model is the closest
 architectural match and has the deepest automated analysis. These adapters make
@@ -12,18 +12,23 @@ zigapagos migrate path/to/site
 zigapagos migrate path/to/site --from next -o MIGRATION.md
 zigapagos migrate path/to/site --from gatsby --scaffold components
 zigapagos migrate path/to/site --from hugo --convert-content converted/content
+zigapagos migrate path/to/site --from 11ty --convert-content converted/content
+zigapagos migrate path/to/site --from hexo --convert-content converted/content
 ```
 
 The command auto-detects a source from its conventional config file. Use
-`--from astro|next|gatsby|nuxt|hugo|jekyll` when a monorepo contains multiple
-framework configs or its config has a nonstandard name.
+`--from astro|next|gatsby|nuxt|hugo|jekyll|11ty|hexo` when a monorepo contains
+multiple framework configs or its config has a nonstandard name. A bare
+`_config.yml` is not enough to distinguish Jekyll from Hexo; without supporting
+package or directory evidence, the command stops and asks the user or agent to
+choose rather than guessing.
 
 Source files are read-only. `migrate` always writes a worklist. For Astro,
 Next.js, and Gatsby, `--scaffold` additionally writes non-clobbering starter TSX
-islands. For Hugo and Jekyll, `--convert-content` writes a separate content tree
-with normalized Ziggy frontmatter and preserved Markdown bodies. Vue SFCs and
-static-template components are listed but never represented as successful
-automatic conversions.
+islands. For Hugo, Jekyll, Eleventy, and Hexo, `--convert-content` writes a
+separate content tree with normalized Ziggy frontmatter and preserved Markdown
+bodies. Vue SFCs and static-template components are listed but never represented
+as successful automatic conversions.
 
 Generated files never overwrite earlier work: a collision is written beside it
 as `.new`, `.new.2`, and so on.
@@ -146,6 +151,48 @@ It recognizes `title`, `date`, `description`, `draft`, and `published: false`,
 preserves dated post filenames under `posts/`, and carries the same migration
 review metadata as Hugo output. Permalink rules, collection routing, Liquid,
 HTML bodies, and plugin fields remain explicit review work.
+
+## Eleventy (11ty)
+
+The scanner recognizes `.eleventy.*`, `eleventy.config.*`, or the
+`@11ty/eleventy` package. It inventories root content plus conventional `src/`
+and `content/` trees, and keeps `_layouts` and `_includes` out of the page list.
+
+- Markdown and HTML inputs map to content; Nunjucks/Liquid/JavaScript templates
+  map to SuperHTML layouts or generated content according to their output role.
+- Data cascade files, directory data, computed data, collections, filters,
+  shortcodes, and transforms require explicit Ziggy/Scripty or generation logic.
+- Passthrough-copy rules map to Zigapagos asset installation while preserving
+  their emitted URLs.
+- Pagination and custom permalinks must be compared against the old route tree.
+
+`--convert-content DIR` converts `.md`/`.markdown` below conventional content
+roots, strips `src/` or `content/` from output paths, preserves Markdown bodies,
+and carries layouts, permalinks, tags, and other unconverted data in
+`custom.migration_frontmatter` for review. HTML and template-language inputs
+remain worklist items.
+
+## Hexo
+
+The scanner uses the `hexo` package or the conventional `_config.yml` plus
+`source/` and `themes/` structure. It inventories source pages/posts/drafts and
+theme EJS, Swig, or Nunjucks templates.
+
+- `source/_posts` maps to `content/posts`; `source/_drafts` maps to
+  `content/drafts` and is emitted with `.draft = true`.
+- Theme layouts and partials map to SuperHTML. Helpers, generators, renderers,
+  and theme configuration remain explicit implementation boundaries.
+- Categories, tags, archives, pagination, post assets, and permalink patterns
+  must retain their generated route and asset behavior.
+- Renderer plugins can change Markdown semantics; compare rendered HTML where a
+  source uses Markdown-it extensions or custom tags.
+
+`--convert-content DIR` converts Markdown content, preserves bodies and
+unconverted metadata, and normalizes `_posts`/`_drafts` paths. Theme templates,
+Hexo tag syntax, plugin output, and generated indexes remain review work. The
+converter removes the `<!-- more -->` excerpt marker and translates simple
+`<blockquote>`/`<footer>` blocks to Markdown outside fenced code; other raw HTML
+remains a validation-visible review item.
 
 ## Verification loop
 

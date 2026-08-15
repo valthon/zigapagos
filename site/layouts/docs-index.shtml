@@ -44,7 +44,7 @@
         <h3>From Astro</h3><p>The deterministic mapping, and the migrate command.</p>
       </a>
       <a class="card" href="$site.page('docs/migrate-from-other-frameworks').link()">
-        <h3>From other frameworks</h3><p>Next.js, Gatsby, Nuxt/Vue, Hugo, and Jekyll mappings.</p>
+        <h3>From other frameworks</h3><p>Next.js, Gatsby, Nuxt/Vue, Hugo, Jekyll, Eleventy, and Hexo mappings.</p>
       </a>
     </div>
   </div>

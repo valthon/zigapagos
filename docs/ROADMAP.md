@@ -4,8 +4,8 @@
 
 North star: **excellent DX + LLM-native unattended migration from Astro.** Astro
 remains the reference architecture and the lead marketing story. Migration
-adapters for Next.js, Gatsby, Nuxt/Vue, Hugo, and Jekyll extend that capability
-without turning Zigapagos into a framework-conversion brand. Every item below is
+adapters for Next.js, Gatsby, Nuxt/Vue, Hugo, Jekyll, Eleventy, and Hexo extend
+that capability without turning Zigapagos into a framework-conversion brand. Every item below is
 judged against "does this help an LLM migrate a real site cleanly, and does the
 result run correctly with good DX."
 

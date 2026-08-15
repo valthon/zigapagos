@@ -6,7 +6,7 @@ const std = @import("std");
 const fatal = @import("../fatal.zig");
 const Allocator = std.mem.Allocator;
 
-pub const Source = enum { hugo, jekyll };
+pub const Source = enum { hugo, jekyll, eleventy, hexo };
 
 const Fields = struct {
     title: ?[]const u8 = null,
@@ -179,11 +179,70 @@ fn writeDate(w: anytype, raw: ?[]const u8) !void {
     try w.writeAll("1970-01-01T00:00:00");
 }
 
+fn fenceMarker(line: []const u8) ?u8 {
+    const trimmed = std.mem.trim(u8, line, " \t");
+    if (trimmed.len < 3 or (trimmed[0] != '`' and trimmed[0] != '~')) return null;
+    if (trimmed[1] != trimmed[0] or trimmed[2] != trimmed[0]) return null;
+    return trimmed[0];
+}
+
+/// NO_SLOP.md section 2.2a contract 1 (self-freeing): one normalized body
+/// allocation escapes. Hexo's excerpt marker has no target rendering meaning,
+/// and its common simple blockquote form has an exact Markdown equivalent.
+fn normalizeHexoBody(gpa: Allocator, body: []const u8) []const u8 {
+    var aw: std.Io.Writer.Allocating = .init(gpa);
+    const w = &aw.writer;
+    var lines = std.mem.splitScalar(u8, body, '\n');
+    var first = true;
+    var fence: ?u8 = null;
+    var blockquote = false;
+    while (lines.next()) |line| {
+        if (!first) w.writeByte('\n') catch fatal.oom();
+        first = false;
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        if (fenceMarker(line)) |marker| {
+            if (fence == null) fence = marker else if (fence.? == marker) fence = null;
+            w.writeAll(line) catch fatal.oom();
+            continue;
+        }
+        if (fence != null) {
+            w.writeAll(line) catch fatal.oom();
+            continue;
+        }
+        if (std.mem.eql(u8, trimmed, "<!-- more -->")) continue;
+        if (std.mem.eql(u8, trimmed, "<blockquote>")) {
+            blockquote = true;
+            continue;
+        }
+        if (std.mem.eql(u8, trimmed, "</blockquote>")) {
+            blockquote = false;
+            continue;
+        }
+        if (blockquote) {
+            w.writeAll(">") catch fatal.oom();
+            if (trimmed.len > 0) w.writeByte(' ') catch fatal.oom();
+            if (std.mem.startsWith(u8, trimmed, "<footer") and std.mem.endsWith(u8, trimmed, "</footer>")) {
+                const open_end = std.mem.indexOfScalar(u8, trimmed, '>') orelse 0;
+                const close_start = std.mem.lastIndexOf(u8, trimmed, "</footer>") orelse trimmed.len;
+                if (open_end < close_start) w.writeAll(std.mem.trim(u8, trimmed[open_end + 1 .. close_start], " \t")) catch fatal.oom();
+            } else {
+                w.writeAll(trimmed) catch fatal.oom();
+            }
+            continue;
+        }
+        w.writeAll(line) catch fatal.oom();
+    }
+    return aw.toOwnedSlice() catch fatal.oom();
+}
+
 /// NO_SLOP.md section 2.2a contract 1 (self-freeing): all scratch is borrowed;
 /// the returned rendered document is the one allocation that escapes.
 pub fn render(gpa: Allocator, source: Source, source_path: []const u8, src: []const u8) Rendered {
     const fields = parseFields(src);
     const invalid_date = if (fields.date) |date| !validDate(date) else false;
+    const draft = fields.draft or (source == .hexo and std.mem.startsWith(u8, source_path, "source/_drafts/"));
+    const normalized_body: ?[]const u8 = if (source == .hexo) normalizeHexoBody(gpa, fields.body) else null;
+    defer if (normalized_body) |body| gpa.free(body);
     var aw: std.Io.Writer.Allocating = .init(gpa);
     const w = &aw.writer;
     w.writeAll("---\n.title = ") catch fatal.oom();
@@ -197,7 +256,7 @@ pub fn render(gpa: Allocator, source: Source, source_path: []const u8, src: []co
         w.writeAll(",\n") catch fatal.oom();
     }
     w.writeAll(".layout = \"index.shtml\",\n.draft = ") catch fatal.oom();
-    w.writeAll(if (fields.draft) "true" else "false") catch fatal.oom();
+    w.writeAll(if (draft) "true" else "false") catch fatal.oom();
     w.writeAll(",\n.custom = { .migration_source = ") catch fatal.oom();
     writeString(w, source_path) catch fatal.oom();
     w.writeAll(", .migration_framework = ") catch fatal.oom();
@@ -212,7 +271,7 @@ pub fn render(gpa: Allocator, source: Source, source_path: []const u8, src: []co
         writeString(w, fields.date.?) catch fatal.oom();
     }
     w.writeAll(" },\n---\n\n") catch fatal.oom();
-    w.writeAll(fields.body) catch fatal.oom();
+    w.writeAll(normalized_body orelse fields.body) catch fatal.oom();
     return .{
         .bytes = aw.toOwnedSlice() catch fatal.oom(),
         .has_unconverted_frontmatter = fields.has_unconverted,
@@ -237,6 +296,15 @@ pub fn outputPath(gpa: Allocator, source: Source, source_path: []const u8) ?[]co
         .jekyll => {
             if (std.mem.startsWith(u8, relative, "_pages/")) relative = relative["_pages/".len..];
             if (std.mem.startsWith(u8, relative, "_posts/")) relative = relative[1..];
+        },
+        .eleventy => {
+            if (std.mem.startsWith(u8, relative, "src/")) relative = relative["src/".len..];
+            if (std.mem.startsWith(u8, relative, "content/")) relative = relative["content/".len..];
+        },
+        .hexo => {
+            if (std.mem.startsWith(u8, relative, "source/_posts/")) relative = relative["source/_".len..];
+            if (std.mem.startsWith(u8, relative, "source/_drafts/")) relative = relative["source/_".len..];
+            if (std.mem.startsWith(u8, relative, "source/")) relative = relative["source/".len..];
         },
     }
     const replaced = replaceExtension(gpa, relative);
@@ -318,5 +386,27 @@ test "output paths preserve reviewable source structure" {
     const post = outputPath(gpa, .jekyll, "_posts/2026-08-15-hello.markdown").?;
     defer gpa.free(post);
     try std.testing.expectEqualStrings("posts/2026-08-15-hello.smd", post);
+    const eleventy = outputPath(gpa, .eleventy, "src/writing/hello.md").?;
+    defer gpa.free(eleventy);
+    try std.testing.expectEqualStrings("writing/hello.smd", eleventy);
+    const hexo = outputPath(gpa, .hexo, "source/_posts/hello.md").?;
+    defer gpa.free(hexo);
+    try std.testing.expectEqualStrings("posts/hello.smd", hexo);
     try std.testing.expectEqual(null, outputPath(gpa, .hugo, "layouts/index.html"));
+}
+
+test "Hexo drafts are marked draft from their source directory" {
+    const gpa = std.testing.allocator;
+    const result = render(gpa, .hexo, "source/_drafts/idea.md", "---\ntitle: Idea\n---\nBody\n");
+    defer gpa.free(result.bytes);
+    try std.testing.expect(std.mem.indexOf(u8, result.bytes, ".draft = true") != null);
+}
+
+test "Hexo excerpt markers and simple blockquotes normalize outside code fences" {
+    const gpa = std.testing.allocator;
+    const result = render(gpa, .hexo, "source/_posts/post.md", "---\ntitle: Post\n---\nIntro\n<!-- more -->\n<blockquote>\n  Quoted\n  <footer>--Author</footer>\n</blockquote>\n```html\n<!-- more -->\n```\n");
+    defer gpa.free(result.bytes);
+    try std.testing.expect(std.mem.indexOf(u8, result.bytes, "\n<!-- more -->\n<blockquote>") == null);
+    try std.testing.expect(std.mem.indexOf(u8, result.bytes, "> Quoted\n> --Author") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.bytes, "```html\n<!-- more -->\n```") != null);
 }

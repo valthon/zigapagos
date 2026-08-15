@@ -35,7 +35,7 @@ help menu and exits 0, and needs nothing.
 | Command | Bun | ZigBase | Notes |
 | --- | --- | --- | --- |
 | `zigapagos init` | no | no | Writes a sample site. Pure file I/O. |
-| `zigapagos migrate` | no | no | Writes a source-specific worklist; can also scaffold React islands or convert Hugo/Jekyll Markdown without running source code. |
+| `zigapagos migrate` | no | no | Writes a source-specific worklist; can also scaffold React islands or convert Hugo/Jekyll/Eleventy/Hexo Markdown without running source code. |
 | `zigapagos doctor` | no | no | Reads a built tree. |
 | `zigapagos validate` | no | no | Parse + analyze in memory, deliberately without a sidecar. |
 | `zigapagos explain` | no | no | Route introspection, same memory build. |
