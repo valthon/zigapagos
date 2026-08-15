@@ -69,7 +69,7 @@ const help_menu =
     \\  doctor [DIR]      Audit a BUILT site tree (default 'public') for
     \\                    root-relative social-meta URLs and dangling links
     \\  init              Initialize a Zigapagos site in the current directory
-    \\  migrate <dir>     Scan an Astro project and write a MIGRATION.md worklist
+    \\  migrate <dir>     Scan a supported framework and write a migration worklist
     \\  validate          Parse + analyze the site WITHOUT bundling islands,
     \\                    running Bun, or writing output (a fast subset of
     \\                    `release`'s checks; see `zigapagos validate --help`)
