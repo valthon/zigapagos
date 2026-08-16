@@ -75,6 +75,16 @@ const usage =
     \\  --from SOURCE         astro|next|gatsby|nuxt|vue|hugo|jekyll|11ty|hexo
     \\                        (default: auto; use when detection is ambiguous)
     \\  -o, --output PATH      Report path (default: MIGRATION.md)
+    \\  --target DIR           Assemble a minimal Zigapagos project in a missing
+    \\                         or empty directory. Runs every deterministic step
+    \\                         supported for the detected source: content
+    \\                         conversion, React island scaffolding, and fixed-URL
+    \\                         asset copying. Writes the worklist to DIR/MIGRATION.md.
+    \\                         Mutually exclusive with --output, --scaffold,
+    \\                         --convert-content, and --copy-assets.
+    \\  --runtime-path PATH    With --target and React island candidates, set the
+    \\                         local @z/runtime package path. Otherwise the emitted
+    \\                         package.json contains a visible TODO placeholder.
     \\  --scaffold DIR         Write a starter TSX island per island into DIR.
     \\                         Supported for Astro, Next.js, and Gatsby React
     \\                         sources only.
@@ -494,6 +504,9 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8) bool {
     var scaffold_dir: ?[]const u8 = null;
     var content_dir: ?[]const u8 = null;
     var assets_dir: ?[]const u8 = null;
+    var target_dir: ?[]const u8 = null;
+    var runtime_path: ?[]const u8 = null;
+    var output_set = false;
     var doctor_path: ?[]const u8 = null;
     var json: bool = false;
 
@@ -510,6 +523,15 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8) bool {
             i += 1;
             if (i >= args.len) fatal.usageError("error: --output needs a path\n\n" ++ usage, .{});
             out_path = args[i];
+            output_set = true;
+        } else if (std.mem.eql(u8, a, "--target")) {
+            i += 1;
+            if (i >= args.len) fatal.usageError("error: --target needs a directory path\n\n" ++ usage, .{});
+            target_dir = args[i];
+        } else if (std.mem.eql(u8, a, "--runtime-path")) {
+            i += 1;
+            if (i >= args.len) fatal.usageError("error: --runtime-path needs a path\n\n" ++ usage, .{});
+            runtime_path = args[i];
         } else if (std.mem.eql(u8, a, "--scaffold")) {
             i += 1;
             if (i >= args.len) fatal.usageError("error: --scaffold needs a directory path\n\n" ++ usage, .{});
@@ -530,12 +552,26 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8) bool {
             json = true;
         } else if (a.len > 0 and a[0] != '-') {
             project_dir = a;
+        } else {
+            fatal.usageError("error: unknown option: {s}\n\n" ++ usage, .{a});
         }
     }
 
-    if (doctor_path != null and (scaffold_dir != null or content_dir != null or assets_dir != null)) {
-        fatal.usageError("error: --doctor is mutually exclusive with --scaffold, --convert-content, and --copy-assets\n\n" ++ usage, .{});
+    if (doctor_path != null and (scaffold_dir != null or content_dir != null or assets_dir != null or target_dir != null)) {
+        fatal.usageError("error: --doctor is mutually exclusive with --target, --scaffold, --convert-content, and --copy-assets\n\n" ++ usage, .{});
     }
+    if (target_dir != null and (output_set or scaffold_dir != null or content_dir != null or assets_dir != null)) fatal.usageError(
+        "error: --target is mutually exclusive with --output, --scaffold, --convert-content, and --copy-assets\n\n" ++ usage,
+        .{},
+    );
+    if (runtime_path != null and target_dir == null) fatal.usageError(
+        "error: --runtime-path is only valid with --target\n\n" ++ usage,
+        .{},
+    );
+    if (runtime_path) |path| if (!runtimePathIsJsonSafe(path)) fatal.usageError(
+        "error: --runtime-path may not contain quotes, backslashes, or control characters\n\n" ++ usage,
+        .{},
+    );
     if (doctor_path) |dp| return doctor(io, gpa, dp, json);
 
     const dir_path = project_dir orelse fatal.usageError("error: missing <project-dir>\n\n" ++ usage, .{});
@@ -556,10 +592,12 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8) bool {
     var res = if (source == .astro) scan(io, gpa, root) else scanOther(io, gpa, root, source);
     defer freeScanResult(gpa, &res);
 
+    if (target_dir) |target| return assembleTarget(io, gpa, root, dir_path, target, runtime_path, source, res);
+
     const report = if (source == .astro)
-        buildReport(gpa, dir_path, res.entries, res.has_config, scaffold_dir != null, res.has_astro_sitemap, assets_dir != null)
+        buildReport(gpa, dir_path, res.entries, res.has_config, scaffold_dir != null, res.has_astro_sitemap, assets_dir != null, null)
     else
-        buildOtherReport(gpa, source, dir_path, res.entries, scaffold_dir != null, content_dir != null, assets_dir != null);
+        buildOtherReport(gpa, source, dir_path, res.entries, scaffold_dir != null, content_dir != null, assets_dir != null, null);
     defer gpa.free(report);
 
     const f = Io.Dir.cwd().createFile(io, out_path, .{}) catch |err|
@@ -1070,14 +1108,21 @@ fn convertOneContent(
     return .converted;
 }
 
-fn convertContent(
+const ContentSummary = struct {
+    converted: usize = 0,
+    collisions: usize = 0,
+    non_markdown: usize = 0,
+    unreadable: usize = 0,
+};
+
+fn convertContentSummary(
     io: Io,
     gpa: Allocator,
     source_root: Io.Dir,
     out_root: []const u8,
     source: content_convert.Source,
     entries: []const Entry,
-) void {
+) ContentSummary {
     var out_dir = Io.Dir.cwd().createDirPathOpen(io, out_root, .{}) catch |err|
         fatal.dir(out_root, err);
     out_dir.close(io);
@@ -1099,6 +1144,23 @@ fn convertContent(
         "Content conversion: {d} written, {d} collision version(s), {d} non-Markdown skipped, {d} unreadable.\n",
         .{ converted, collisions, non_markdown, unreadable },
     );
+    return .{
+        .converted = converted,
+        .collisions = collisions,
+        .non_markdown = non_markdown,
+        .unreadable = unreadable,
+    };
+}
+
+fn convertContent(
+    io: Io,
+    gpa: Allocator,
+    source_root: Io.Dir,
+    out_root: []const u8,
+    source: content_convert.Source,
+    entries: []const Entry,
+) void {
+    _ = convertContentSummary(io, gpa, source_root, out_root, source, entries);
 }
 
 const AssetFilter = enum { all, jekyll_static, hexo_static };
@@ -1148,7 +1210,14 @@ fn skipAssetSource(filter: AssetFilter, path: []const u8) bool {
 /// Copy conventional source asset trees into a separate target. NO_SLOP.md
 /// section 2.2a contract 1 (self-freeing): all joined paths are released in
 /// the same iteration; no allocation escapes.
-fn copyAssets(io: Io, gpa: Allocator, source_root: Io.Dir, out_root: []const u8, source: Source) void {
+const AssetSummary = struct {
+    copied: usize = 0,
+    collisions: usize = 0,
+    skipped: usize = 0,
+    roots_found: usize = 0,
+};
+
+fn copyAssetsSummary(io: Io, gpa: Allocator, source_root: Io.Dir, out_root: []const u8, source: Source) AssetSummary {
     var target = Io.Dir.cwd().createDirPathOpen(io, out_root, .{}) catch |err| fatal.dir(out_root, err);
     target.close(io);
 
@@ -1225,6 +1294,261 @@ fn copyAssets(io: Io, gpa: Allocator, source_root: Io.Dir, out_root: []const u8,
         "  REVIEW no conventional public/static asset root was found; inspect framework config and copy its declared passthrough/static sources manually.\n",
         .{},
     );
+    return .{
+        .copied = copied,
+        .collisions = collisions,
+        .skipped = skipped,
+        .roots_found = roots_found,
+    };
+}
+
+fn copyAssets(io: Io, gpa: Allocator, source_root: Io.Dir, out_root: []const u8, source: Source) void {
+    _ = copyAssetsSummary(io, gpa, source_root, out_root, source);
+}
+
+const target_layout =
+    \\<!DOCTYPE html>
+    \\<html lang="en">
+    \\  <head>
+    \\    <meta charset="UTF-8">
+    \\    <meta name="viewport" content="width=device-width, initial-scale=1">
+    \\    <title :text="$page.title"></title>
+    \\  </head>
+    \\  <body>
+    \\    <main>
+    \\      <h1 :text="$page.title"></h1>
+    \\      <div :html="$page.content()"></div>
+    \\    </main>
+    \\  </body>
+    \\</html>
+    \\
+;
+
+const target_placeholder =
+    \\---
+    \\.title = "Migration placeholder",
+    \\.date = @date("1970-01-01T00:00:00"),
+    \\.layout = "index.shtml",
+    \\.draft = false,
+    \\---
+    \\The source routes need a semantic port. Start with `MIGRATION.md`.
+    \\
+;
+
+const target_tsconfig =
+    \\{
+    \\  "compilerOptions": {
+    \\    "jsx": "react-jsx",
+    \\    "jsxImportSource": "@z/runtime",
+    \\    "moduleResolution": "bundler",
+    \\    "strict": true,
+    \\    "skipLibCheck": true
+    \\  }
+    \\}
+    \\
+;
+
+const target_gitignore =
+    \\node_modules/
+    \\zig-out/
+    \\.zigapagos-cache/
+    \\
+;
+
+/// True when `child` is `parent` or is below it at a path-component boundary.
+fn pathIsInside(parent: []const u8, child: []const u8) bool {
+    if (std.mem.eql(u8, parent, child)) return true;
+    if (!std.mem.startsWith(u8, child, parent) or child.len <= parent.len) return false;
+    return std.fs.path.isSep(child[parent.len]);
+}
+
+fn targetHasEntries(io: Io, path: []const u8) bool {
+    var dir = Io.Dir.cwd().openDir(io, path, .{ .iterate = true }) catch |err| switch (err) {
+        error.FileNotFound => return false,
+        else => fatal.dir(path, err),
+    };
+    defer dir.close(io);
+    var it = dir.iterateAssumeFirstIteration();
+    return (it.next(io) catch |err| fatal.dir(path, err)) != null;
+}
+
+fn targetPathExists(io: Io, path: []const u8) bool {
+    Io.Dir.cwd().access(io, path, .{}) catch return false;
+    return true;
+}
+
+/// Canonicalize the deepest existing ancestor, then append the still-missing
+/// suffix. This catches a target reached through a symlink even before the
+/// final directory exists. NO_SLOP.md section 2.2a contract 2 (owned-result):
+/// the returned slice is `gpa`-owned; all non-result scratch is freed here.
+fn canonicalTargetPath(io: Io, gpa: Allocator, cwd_abs: []const u8, target: []const u8) []const u8 {
+    const target_abs = std.fs.path.resolve(gpa, &.{ cwd_abs, target }) catch fatal.oom();
+    var ancestor: []const u8 = target_abs;
+    while (true) {
+        if (Io.Dir.cwd().realPathFileAlloc(io, ancestor, gpa)) |real_ancestor| {
+            const suffix_with_sep = target_abs[ancestor.len..];
+            var suffix_start: usize = 0;
+            while (suffix_start < suffix_with_sep.len and std.fs.path.isSep(suffix_with_sep[suffix_start])) suffix_start += 1;
+            const suffix = suffix_with_sep[suffix_start..];
+            if (suffix.len == 0) {
+                gpa.free(target_abs);
+                return real_ancestor;
+            }
+            const result = std.fs.path.resolve(gpa, &.{ real_ancestor, suffix }) catch fatal.oom();
+            gpa.free(real_ancestor);
+            gpa.free(target_abs);
+            return result;
+        } else |err| switch (err) {
+            error.FileNotFound => {},
+            error.OutOfMemory => fatal.oom(),
+            else => fatal.file(ancestor, err),
+        }
+        ancestor = std.fs.path.dirname(ancestor) orelse return target_abs;
+    }
+}
+
+/// NO_SLOP.md section 2.2a contract 1 (self-freeing): `full` is temporary and
+/// released before return; `bytes` remains caller-owned.
+fn writeTargetFile(io: Io, gpa: Allocator, target: []const u8, relative: []const u8, bytes: []const u8) void {
+    const full = std.fs.path.join(gpa, &.{ target, relative }) catch fatal.oom();
+    defer gpa.free(full);
+    if (std.fs.path.dirname(full)) |parent| Io.Dir.cwd().createDirPath(io, parent) catch |err| fatal.dir(parent, err);
+    const file = Io.Dir.cwd().createFile(io, full, .{ .exclusive = true }) catch |err| fatal.file(full, err);
+    defer file.close(io);
+    var writer = file.writer(io, &.{});
+    writer.interface.writeAll(bytes) catch |err| fatal.file(full, err);
+}
+
+fn targetProjectName(gpa: Allocator, target: []const u8) []const u8 {
+    const base = std.fs.path.basename(target);
+    if (base.len == 0) return gpa.dupe(u8, "migrated_site") catch fatal.oom();
+    const result = gpa.alloc(u8, base.len) catch fatal.oom();
+    for (base, 0..) |c, i| result[i] = if (std.ascii.isAlphanumeric(c)) std.ascii.toLower(c) else '_';
+    if (std.ascii.isDigit(result[0])) result[0] = '_';
+    return result;
+}
+
+fn emitTargetConfig(gpa: Allocator, with_assets: bool) []const u8 {
+    return std.fmt.allocPrint(gpa,
+        \\Site {{
+        \\    .title = "Migrated site",
+        \\    .host_url = "https://example.com",
+        \\    .content_dir_path = "content",
+        \\    .layouts_dir_path = "layouts",
+        \\    .assets_dir_path = "assets",
+        \\{s}}}
+        \\
+    , .{if (with_assets) "    .static_assets = [\"**\"],\n" else ""}) catch fatal.oom();
+}
+
+fn emitTargetBuildSh(gpa: Allocator, has_islands: bool) []const u8 {
+    return std.fmt.allocPrint(gpa,
+        \\#!/usr/bin/env bash
+        \\set -euo pipefail
+        \\cd "$(dirname "$0")"
+        \\{s}exec "${{ZIGAPAGOS_BIN:-zigapagos}}" release --force --output=zig-out/site "$@"
+        \\
+    , .{if (has_islands) "bun install --frozen-lockfile 2>/dev/null || bun install\n" else ""}) catch fatal.oom();
+}
+
+fn runtimePathIsJsonSafe(runtime_path: []const u8) bool {
+    for (runtime_path) |c| if (c == '"' or c == '\\' or c < 0x20 or c == 0x7f) return false;
+    return true;
+}
+
+fn emitTargetPackage(gpa: Allocator, name: []const u8, runtime_path: []const u8) []const u8 {
+    std.debug.assert(runtimePathIsJsonSafe(runtime_path));
+    return std.fmt.allocPrint(gpa,
+        \\{{
+        \\  "name": "{s}",
+        \\  "private": true,
+        \\  "type": "module",
+        \\  "dependencies": {{ "@z/runtime": "file:{s}" }}
+        \\}}
+        \\
+    , .{ name, runtime_path }) catch fatal.oom();
+}
+
+/// Assemble a new target from deterministic transforms only. All generated
+/// strings and paths are arena-owned and released together on return.
+fn assembleTarget(
+    io: Io,
+    gpa: Allocator,
+    source_root: Io.Dir,
+    source_path: []const u8,
+    target: []const u8,
+    runtime_path: ?[]const u8,
+    source: Source,
+    res: ScanResult,
+) bool {
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const source_abs = Io.Dir.cwd().realPathFileAlloc(io, source_path, a) catch |err| fatal.dir(source_path, err);
+    const cwd_abs = Io.Dir.cwd().realPathFileAlloc(io, ".", a) catch |err| fatal.dir(".", err);
+    const target_abs = canonicalTargetPath(io, a, cwd_abs, target);
+    if (pathIsInside(source_abs, target_abs)) {
+        std.debug.print("error: migration target '{s}' must not be inside source '{s}'.\n", .{ target, source_path });
+        return true;
+    }
+    if (targetHasEntries(io, target)) {
+        std.debug.print("error: migration target '{s}' already exists and is non-empty.\n", .{target});
+        return true;
+    }
+
+    var target_root = Io.Dir.cwd().createDirPathOpen(io, target, .{}) catch |err| fatal.dir(target, err);
+    target_root.close(io);
+    for ([_][]const u8{ "assets", "components", "content", "layouts" }) |dir_name| {
+        const path = std.fs.path.join(a, &.{ target, dir_name }) catch fatal.oom();
+        Io.Dir.cwd().createDirPath(io, path) catch |err| fatal.dir(path, err);
+    }
+
+    const components = std.fs.path.join(a, &.{ target, "components" }) catch fatal.oom();
+    const content = std.fs.path.join(a, &.{ target, "content" }) catch fatal.oom();
+    const assets = std.fs.path.join(a, &.{ target, "assets" }) catch fatal.oom();
+    if (source.supportsScaffold()) scaffoldIslands(io, gpa, source_root, components, res.entries, false);
+    const content_summary = if (source.contentSource()) |content_source|
+        convertContentSummary(io, gpa, source_root, content, content_source, res.entries)
+    else
+        ContentSummary{};
+    const asset_summary = copyAssetsSummary(io, gpa, source_root, assets, source);
+
+    var island_count: usize = 0;
+    for (res.entries) |entry| if (entry.is_island) {
+        island_count += 1;
+    };
+    const root_content = std.fs.path.join(a, &.{ content, "index.smd" }) catch fatal.oom();
+    if (!targetPathExists(io, root_content)) writeTargetFile(io, gpa, target, "content/index.smd", target_placeholder);
+    if (asset_summary.copied == 0) writeTargetFile(io, gpa, target, "assets/.gitkeep", "");
+    writeTargetFile(io, gpa, target, "layouts/index.shtml", target_layout);
+    writeTargetFile(io, gpa, target, ".gitignore", target_gitignore);
+    writeTargetFile(io, gpa, target, "AGENTS.md", @embedFile("init/AGENTS.md"));
+    writeTargetFile(io, gpa, target, "CLAUDE.md", @embedFile("init/CLAUDE.md"));
+    writeTargetFile(io, gpa, target, "zigapagos.ziggy", emitTargetConfig(a, asset_summary.copied > 0));
+    writeTargetFile(io, gpa, target, "build.sh", emitTargetBuildSh(a, island_count > 0));
+    if (island_count > 0) {
+        const project_name = targetProjectName(a, target);
+        writeTargetFile(io, gpa, target, "package.json", emitTargetPackage(a, project_name, runtime_path orelse "TODO-SET-RUNTIME-PATH"));
+        writeTargetFile(io, gpa, target, "tsconfig.json", target_tsconfig);
+    }
+
+    const report = if (source == .astro)
+        buildReport(gpa, source_path, res.entries, res.has_config, island_count > 0, res.has_astro_sitemap, asset_summary.copied > 0, target)
+    else
+        buildOtherReport(gpa, source, source_path, res.entries, island_count > 0, content_summary.converted > 0, asset_summary.copied > 0, target);
+    defer gpa.free(report);
+    writeTargetFile(io, gpa, target, "MIGRATION.md", report);
+
+    std.debug.print(
+        "Assembled {s} from {s}: {d} converted content file(s), {d} island candidate(s), {d} copied asset(s).\nNext: cd {s} && zigapagos validate\n",
+        .{ target, source.name(), content_summary.converted, island_count, asset_summary.copied, target },
+    );
+    if (island_count > 0 and runtime_path == null) std.debug.print(
+        "  REVIEW set dependencies.@z/runtime in {s}/package.json before building island bundles.\n",
+        .{target},
+    );
+    return false;
 }
 
 /// Render the full MIGRATION.md worklist. NO_SLOP.md §2.2a contract 2
@@ -1235,9 +1559,14 @@ fn copyAssets(io: Io, gpa: Allocator, source_root: Io.Dir, out_root: []const u8,
 /// mismatches the allocator's tracked allocation size and panics ("Invalid
 /// free") under the debug allocator. No caller freed this before the
 /// pagination worklist test did, so the mismatch went unnoticed.
-fn buildOtherReport(gpa: Allocator, source: Source, dir_path: []const u8, entries: []const Entry, has_scaffold: bool, converted_content: bool, copied_assets: bool) []const u8 {
+fn buildOtherReport(gpa: Allocator, source: Source, dir_path: []const u8, entries: []const Entry, has_scaffold: bool, converted_content: bool, copied_assets: bool, assembled_target: ?[]const u8) []const u8 {
     var aw: std.Io.Writer.Allocating = .init(gpa);
     const w = &aw.writer;
+    const establish_target = if (assembled_target) |target|
+        std.fmt.allocPrint(gpa, "- [x] Minimal Zigapagos target assembled in `{s}` by `--target`.\n", .{target}) catch fatal.oom()
+    else
+        gpa.dupe(u8, "- [ ] Run `zigapagos init` in a separate target directory.\n") catch fatal.oom();
+    defer gpa.free(establish_target);
 
     w.print(
         \\# Migration worklist: {s} ({s}) → Zigapagos
@@ -1246,13 +1575,13 @@ fn buildOtherReport(gpa: Allocator, source: Source, dir_path: []const u8, entrie
         \\`--from {s}`. Follow the source-specific mapping in
         \\`docs/migration/other-frameworks.md`, then use `docs/migration/recipes.md` for TSX.
         \\
-        \\Source files are read-only. Deterministic conversions requested with
-        \\`--scaffold`, `--convert-content`, or `--copy-assets` are called out below; ambiguous framework
+        \\Source files are read-only. Deterministic conversions assembled by `--target`
+        \\or requested with `--scaffold`, `--convert-content`, or `--copy-assets` are called out below; ambiguous framework
         \\semantics stay review items.
         \\
         \\## 1. Establish the target
         \\
-        \\- [ ] Run `zigapagos init` in a separate target directory.
+        \\{s}
         \\{s}
         \\- [ ] Port the source config to `zigapagos.ziggy` and one `build.sh` invocation.
         \\
@@ -1265,7 +1594,12 @@ fn buildOtherReport(gpa: Allocator, source: Source, dir_path: []const u8, entrie
         .eleventy => "11ty",
         .hexo => "hexo",
         .astro => unreachable,
-    }, if (copied_assets)
+    }, establish_target, if (assembled_target != null)
+        if (copied_assets)
+            "- [x] Conventional fixed-URL assets copied to `assets/`; `zigapagos.ziggy` starts with `static_assets = [\"**\"]`. Review pipeline-managed and config-declared assets."
+        else
+            "- [ ] No conventional public/static asset files were copied. Review framework config for custom passthrough and pipeline-managed assets."
+    else if (copied_assets)
         "- [ ] Conventional public/static asset copy was requested; check the CLI summary for roots/files found. Review pipeline-managed and config-declared assets, then use `static_assets = [\"**\"]` initially if copied fixed URLs must all remain public."
     else
         "- [ ] Copy static assets without changing public URLs, or re-run with `--copy-assets <target-assets-dir>`." }) catch fatal.oom();
@@ -1346,9 +1680,14 @@ fn buildOtherReport(gpa: Allocator, source: Source, dir_path: []const u8, entrie
     return aw.toOwnedSlice() catch fatal.oom();
 }
 
-pub fn buildReport(gpa: Allocator, dir_path: []const u8, entries: []const Entry, has_config: bool, has_scaffold: bool, has_astro_sitemap: bool, copied_assets: bool) []const u8 {
+pub fn buildReport(gpa: Allocator, dir_path: []const u8, entries: []const Entry, has_config: bool, has_scaffold: bool, has_astro_sitemap: bool, copied_assets: bool, assembled_target: ?[]const u8) []const u8 {
     var aw: std.Io.Writer.Allocating = .init(gpa);
     const w = &aw.writer;
+    const scaffold_target = if (assembled_target) |target|
+        std.fmt.allocPrint(gpa, "- [x] Minimal target scaffold assembled in `{s}` by `--target`.\n", .{target}) catch fatal.oom()
+    else
+        gpa.dupe(u8, "- [ ] `zigapagos.ziggy` (begins with `Site {`), `content/`, `layouts/`, `assets/`, `components/`, `build.sh`\n") catch fatal.oom();
+    defer gpa.free(scaffold_target);
 
     w.print(
         \\# Migration worklist: {s} → Zigapagos
@@ -1358,13 +1697,21 @@ pub fn buildReport(gpa: Allocator, dir_path: []const u8, entries: []const Entry,
         \\
         \\## 1. Scaffold the target
         \\
-        \\- [ ] `zigapagos.ziggy` (begins with `Site {{`), `content/`, `layouts/`, `assets/`, `components/`, `build.sh`
-        \\{s}{s}{s}
+        \\{s}{s}{s}{s}
     , .{
         dir_path,
+        scaffold_target,
         if (has_config) "- [ ] Port `astro.config.*` → `zigapagos.ziggy` (site/host) + `build.sh` (islands)\n" else "",
         if (has_astro_sitemap) "- [ ] `@astrojs/sitemap` detected → mapped: set `sitemap = true` in `zigapagos.ziggy` (requires `host_url`, already required) — zigapagos generates `sitemap.xml` at release time\n" else "",
-        if (copied_assets) "- [ ] `public/` asset copy requested; check the CLI summary for roots/files found, then review pipeline-managed assets and preserve copied fixed URLs with `static_assets = [\"**\"]` initially\n" else "- [ ] Copy `public/` without changing URL paths, or re-run with `--copy-assets <target-assets-dir>`\n",
+        if (assembled_target != null)
+            if (copied_assets)
+                "- [x] `public/` copied to `assets/` and fixed URLs enabled with `static_assets = [\"**\"]`; review pipeline-managed assets\n"
+            else
+                "- [ ] No `public/` files were copied; review configured and pipeline-managed assets\n"
+        else if (copied_assets)
+            "- [ ] `public/` asset copy requested; check the CLI summary for roots/files found, then review pipeline-managed assets and preserve copied fixed URLs with `static_assets = [\"**\"]` initially\n"
+        else
+            "- [ ] Copy `public/` without changing URL paths, or re-run with `--copy-assets <target-assets-dir>`\n",
     }) catch fatal.oom();
 
     buildWiringSection(w, entries, has_scaffold);
@@ -1714,7 +2061,7 @@ test "non-Astro report names the source and marks ambiguous conversion for revie
         .{ .path = "src/pages/index.tsx", .kind = .page },
         .{ .path = "src/components/Counter.tsx", .kind = .component, .role = .island, .is_island = true },
     };
-    const report = buildOtherReport(gpa, .nextjs, "next-site", &entries, true, false, false);
+    const report = buildOtherReport(gpa, .nextjs, "next-site", &entries, true, false, false, null);
     defer gpa.free(report);
     try std.testing.expect(std.mem.indexOf(u8, report, "Next.js") != null);
     try std.testing.expect(std.mem.indexOf(u8, report, "src/pages/index.tsx") != null);
@@ -2017,7 +2364,7 @@ test "paginate: scan flags a paginated route and buildReport prescribes the conv
     }
     try std.testing.expect(found);
 
-    const report = buildReport(gpa, "astro-sample", res.entries, res.has_config, false, res.has_astro_sitemap, false);
+    const report = buildReport(gpa, "astro-sample", res.entries, res.has_config, false, res.has_astro_sitemap, false, null);
     defer gpa.free(report);
 
     try std.testing.expect(std.mem.indexOf(u8, report, "`src/pages/blog/[page].astro`") != null);
@@ -2055,7 +2402,7 @@ test "scan detects @astrojs/sitemap in package.json and buildReport flags it in 
     defer freeScanResult(gpa, &res);
     try std.testing.expect(res.has_astro_sitemap);
 
-    const report = buildReport(gpa, "astro-sample", res.entries, res.has_config, false, res.has_astro_sitemap, false);
+    const report = buildReport(gpa, "astro-sample", res.entries, res.has_config, false, res.has_astro_sitemap, false, null);
     defer gpa.free(report);
     try std.testing.expect(std.mem.indexOf(u8, report, "@astrojs/sitemap") != null);
     try std.testing.expect(std.mem.indexOf(u8, report, "sitemap = true") != null);
@@ -2073,7 +2420,7 @@ test "scan reports no @astrojs/sitemap when package.json is absent or silent abo
     defer freeScanResult(gpa, &res);
     try std.testing.expect(!res.has_astro_sitemap);
 
-    const report = buildReport(gpa, "astro-sample", res.entries, res.has_config, false, res.has_astro_sitemap, false);
+    const report = buildReport(gpa, "astro-sample", res.entries, res.has_config, false, res.has_astro_sitemap, false, null);
     defer gpa.free(report);
     try std.testing.expect(std.mem.indexOf(u8, report, "@astrojs/sitemap") == null);
 }
@@ -2085,5 +2432,33 @@ test "usage defines the read-only source and deterministic output contract" {
     try std.testing.expect(std.mem.indexOf(u8, usage_text, "Pages, layouts") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage_text, "--scaffold") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage_text, "--convert-content") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage_text, "--target") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage_text, "or empty directory") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage_text, "normalized to Ziggy") != null);
+}
+
+test "target containment uses path component boundaries" {
+    try std.testing.expect(pathIsInside("/work/source", "/work/source"));
+    try std.testing.expect(pathIsInside("/work/source", "/work/source/generated"));
+    try std.testing.expect(!pathIsInside("/work/source", "/work/source-copy"));
+    try std.testing.expect(!pathIsInside("/work/source", "/work/target"));
+}
+
+test "target config publishes copied assets only when the copy wrote files" {
+    const gpa = std.testing.allocator;
+    const with_assets = emitTargetConfig(gpa, true);
+    defer gpa.free(with_assets);
+    const without_assets = emitTargetConfig(gpa, false);
+    defer gpa.free(without_assets);
+    try std.testing.expect(std.mem.indexOf(u8, with_assets, ".static_assets = [\"**\"]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, without_assets, ".static_assets") == null);
+}
+
+test "runtime paths reject JSON-breaking characters" {
+    try std.testing.expect(runtimePathIsJsonSafe("../runtime"));
+    try std.testing.expect(!runtimePathIsJsonSafe("bad\"path"));
+    try std.testing.expect(!runtimePathIsJsonSafe("bad\\path"));
+    try std.testing.expect(!runtimePathIsJsonSafe("bad\npath"));
+    try std.testing.expect(!runtimePathIsJsonSafe("bad\tpath"));
+    try std.testing.expect(!runtimePathIsJsonSafe(&.{ 'b', 'a', 'd', 0x7f }));
 }

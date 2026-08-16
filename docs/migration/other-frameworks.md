@@ -15,6 +15,7 @@ zigapagos migrate path/to/site --from hugo --convert-content converted/content
 zigapagos migrate path/to/site --from 11ty --convert-content converted/content
 zigapagos migrate path/to/site --from hexo --convert-content converted/content
 zigapagos migrate path/to/site --copy-assets converted/assets
+zigapagos migrate path/to/site --target path/to/new-site
 ```
 
 The command auto-detects a source from its conventional config file. Use
@@ -67,11 +68,45 @@ asset pipelines remain deliberate ports: Hugo Pipes, Gatsby image processing,
 Nuxt modules, Jekyll plugins, Eleventy passthrough rules outside the conventional
 trees, and Hexo renderer/generator output are not reconstructed by a byte copy.
 
-This command is intentionally the shared migration entry point. Astro also has
-the deeper `zigapagos init --from-astro` whole-site scaffold; the other adapters
-do not currently claim that level of full-site generation. For them, start with
-`migrate`, place its generated content/components into a normal `zigapagos init`
-site, and use `MIGRATION.md` as the remaining parity checklist.
+## Assemble a target in one command
+
+`--target <new-site>` composes every deterministic adapter for the detected
+source into a minimal Zigapagos project:
+
+- conventional fixed-URL assets are copied to `assets/`; when at least one is
+  copied, the generated config starts with `.static_assets = ["**"]`;
+- Hugo, Jekyll, Eleventy, and Hexo Markdown is converted into `content/`;
+- Astro, Next.js, and Gatsby React candidates are scaffolded into `components/`;
+- a minimal `zigapagos.ziggy`, `layouts/index.shtml`, `build.sh`, agent guidance,
+  and `MIGRATION.md` are written;
+- a valid root placeholder is added only when conversion did not produce
+  `content/index.smd`.
+
+```sh
+zigapagos migrate path/to/old-site --target path/to/new-site
+cd path/to/new-site
+zigapagos validate
+```
+
+For a React source, pass `--runtime-path ../path/to/zigapagos/runtime` when that
+local package location is already known. Without it, the generated
+`package.json` contains the explicit `TODO-SET-RUNTIME-PATH` placeholder and the
+CLI prints a review warning. Static-only targets do not receive a JavaScript
+package graph.
+
+The target must be missing or empty. The command refuses a non-empty directory
+and any target nested inside the source tree; it never merges generated files
+into an existing project. This protects authored work and prevents a copied
+asset tree from recursively seeing its own output.
+
+Assembly does not change the semantic boundary described by the worklist.
+Next/Nuxt/Gatsby routes, Vue components, templates, loaders, plugins, image
+pipelines, redirects, and runtime behavior still need an explicit port. The
+root placeholder makes the target immediately valid; it is not a claim that a
+source route was converted. Astro also retains the deeper
+`zigapagos init --from-astro` scaffold, including Astro-specific wiring and
+tests; `migrate --target` is the smaller uniform workflow shared by every
+adapter.
 
 ## The shared target decision
 

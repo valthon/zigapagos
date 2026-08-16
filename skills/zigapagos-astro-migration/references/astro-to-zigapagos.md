@@ -22,6 +22,13 @@ time by a Bun sidecar, and hydrated client-side via an import map.
 > drop any third-party npm deps. Hooks, JSX, events, and component structure are
 > unchanged. See the [recipes](recipes.md) for the full authoring guide.
 
+For a quick, uniform baseline shared with every supported source framework,
+`zigapagos migrate old-site --target new-site` assembles a minimal valid target,
+scaffolds detected islands, copies `public/`, and leaves semantic page/layout
+work in `new-site/MIGRATION.md`. For the deepest Astro-specific scaffold,
+including Astro-aware layout wiring and smoke tests, continue to use
+`zigapagos init --from-astro old-site --out new-site`.
+
 ---
 
 ## 1. Project structure

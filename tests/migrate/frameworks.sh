@@ -71,6 +71,64 @@ if "$ZIGAPAGOS" migrate "$BAD_ASSET_ROOT" --copy-assets "$WORK/bad-assets" -o "$
 fi
 grep -q "error accessing dir 'public'" "$WORK/bad-assets.log" || fail "invalid asset root did not produce an actionable error"
 
+# Whole-target assembly composes the same deterministic steps into a minimal,
+# valid project and keeps route semantics visible as a placeholder/worklist.
+NEXT_TARGET="$WORK/next-target"
+"$ZIGAPAGOS" migrate "$NEXT" --target "$NEXT_TARGET" >"$WORK/next-target.log" 2>&1
+[[ -f "$NEXT_TARGET/zigapagos.ziggy" ]] || fail "target assembly omitted zigapagos.ziggy"
+[[ -f "$NEXT_TARGET/layouts/index.shtml" ]] || fail "target assembly omitted its minimal layout"
+[[ -f "$NEXT_TARGET/content/index.smd" ]] || fail "Next.js target omitted the semantic-port placeholder"
+[[ -f "$NEXT_TARGET/components/Chart.island.tsx" ]] || fail "Next.js target omitted deterministic island scaffolding"
+grep -q 'static_assets = \["\*\*"\]' "$NEXT_TARGET/zigapagos.ziggy" || fail "copied target assets were not made public at fixed URLs"
+grep -q 'TODO-SET-RUNTIME-PATH' "$NEXT_TARGET/package.json" || fail "unresolved island runtime path was not review-visible"
+grep -q 'src/app/dashboard/page.tsx' "$NEXT_TARGET/MIGRATION.md" || fail "assembled target omitted its source worklist"
+grep -Fq -- '- [x] Minimal Zigapagos target assembled' "$NEXT_TARGET/MIGRATION.md" || fail "assembled worklist still treats target creation as pending"
+! grep -Fq 'Run `zigapagos init`' "$NEXT_TARGET/MIGRATION.md" || fail "assembled worklist incorrectly asks for another scaffold"
+grep -xF 'next-logo' "$NEXT_TARGET/assets/img/logo.txt" || fail "assembled Next.js target lost fixed asset URLs"
+bash -n "$NEXT_TARGET/build.sh" || fail "assembled target build.sh is invalid shell"
+( cd "$NEXT_TARGET" && "$ZIGAPAGOS" validate ) || fail "assembled Next.js target is not valid Zigapagos input"
+
+mkdir -p "$WORK/nonempty-target"
+printf 'keep\n' > "$WORK/nonempty-target/owned.txt"
+if "$ZIGAPAGOS" migrate "$NEXT" --target "$WORK/nonempty-target" >"$WORK/nonempty-target.log" 2>&1; then
+  fail "target assembly accepted a non-empty directory"
+fi
+grep -q 'already exists and is non-empty' "$WORK/nonempty-target.log" || fail "non-empty target rejection was not actionable"
+grep -xF 'keep' "$WORK/nonempty-target/owned.txt" || fail "non-empty target rejection modified an owned file"
+
+printf 'not a directory\n' > "$WORK/file-target"
+if "$ZIGAPAGOS" migrate "$NEXT" --target "$WORK/file-target" >"$WORK/file-target.log" 2>&1; then
+  fail "target assembly accepted an existing file as a target directory"
+fi
+grep -q "error accessing dir '$WORK/file-target'" "$WORK/file-target.log" || fail "file target rejection was not actionable"
+grep -xF 'not a directory' "$WORK/file-target" || fail "file target rejection modified the existing file"
+
+mkdir -p "$WORK/blocked-target"
+printf 'not a directory\n' > "$WORK/blocked-target/parent"
+if "$ZIGAPAGOS" migrate "$NEXT" --target "$WORK/blocked-target/parent/child" >"$WORK/blocked-target.log" 2>&1; then
+  fail "target canonicalization ignored a non-directory ancestor"
+fi
+grep -q "error accessing file '$WORK/blocked-target/parent/child'" "$WORK/blocked-target.log" || fail "canonical target failure was not actionable"
+
+if "$ZIGAPAGOS" migrate "$NEXT" --target "$WORK/control-target" --runtime-path $'bad\npath' >"$WORK/control-runtime.log" 2>&1; then
+  fail "target assembly accepted a control character in --runtime-path"
+fi
+grep -q 'control characters' "$WORK/control-runtime.log" || fail "invalid runtime path rejection was not actionable"
+[[ ! -e "$WORK/control-target" ]] || fail "invalid runtime path created a partial target"
+
+if "$ZIGAPAGOS" migrate "$NEXT" --target "$NEXT/generated-target" >"$WORK/nested-target.log" 2>&1; then
+  fail "target assembly accepted an output nested in its source"
+fi
+grep -q 'must not be inside source' "$WORK/nested-target.log" || fail "nested target rejection was not actionable"
+[[ ! -e "$NEXT/generated-target" ]] || fail "nested target rejection created output before safety checks"
+
+ln -s "$NEXT" "$WORK/next-source-link"
+if "$ZIGAPAGOS" migrate "$NEXT" --target "$WORK/next-source-link/generated-via-link" >"$WORK/symlink-target.log" 2>&1; then
+  fail "target assembly accepted a source-nested output reached through a symlink"
+fi
+grep -q 'must not be inside source' "$WORK/symlink-target.log" || fail "symlink-nested target rejection was not actionable"
+[[ ! -e "$NEXT/generated-via-link" ]] || fail "symlink-nested target rejection created output before safety checks"
+
 # Gatsby: config detection and conventional React components share the real
 # scaffold path rather than receiving a placeholder-only implementation.
 GATSBY="$WORK/gatsby"
@@ -178,6 +236,16 @@ cp "$OUT" "$VALIDATE/content/blog/index.smd"
 HUGO_AFTER="$(sha256sum "$HUGO/content/blog/_index.md" | cut -d' ' -f1)"
 [[ "$HUGO_BEFORE" == "$HUGO_AFTER" ]] || fail "Hugo source was modified"
 
+HUGO_TARGET="$WORK/hugo-target"
+"$ZIGAPAGOS" migrate "$HUGO" --target "$HUGO_TARGET"
+[[ -f "$HUGO_TARGET/content/blog/index.smd" ]] || fail "assembled Hugo target omitted converted content"
+[[ -f "$HUGO_TARGET/content/index.smd" ]] || fail "assembled Hugo target omitted the required root page placeholder"
+[[ ! -f "$HUGO_TARGET/package.json" ]] || fail "static Hugo target gained an unnecessary JS package graph"
+grep -xF 'hugo-media' "$HUGO_TARGET/assets/media/photo.txt" || fail "assembled Hugo target lost fixed asset URLs"
+( cd "$HUGO_TARGET" && "$ZIGAPAGOS" validate ) || fail "assembled Hugo target is not valid Zigapagos input"
+( cd "$HUGO_TARGET" && ZIGAPAGOS_BIN="$ZIGAPAGOS" bash build.sh ) || fail "assembled static target build script failed"
+grep -xF 'hugo-media' "$HUGO_TARGET/zig-out/site/media/photo.txt" || fail "assembled target build did not publish copied fixed-URL assets"
+
 # Jekyll: dated post paths, published state, and unknown/invalid metadata are
 # all carried into a valid target instead of being silently discarded.
 JEKYLL="$WORK/jekyll"
@@ -223,6 +291,7 @@ MIGRATE_HELP="$WORK/migrate-help.txt"
 "$ZIGAPAGOS" migrate --help >"$MIGRATE_HELP" 2>&1
 grep -q 'nuxt|vue' "$MIGRATE_HELP" || fail "migrate help omits the supported --from vue alias"
 grep -q 'Astro, Next.js, and Gatsby React' "$MIGRATE_HELP" || fail "migrate help omits the --scaffold source constraint"
+grep -q -- '--target DIR' "$MIGRATE_HELP" || fail "migrate help omits whole-target assembly"
 
 # Eleventy: conventional config detection, private template inventory, and
 # Markdown conversion coexist without treating _includes/_layouts as pages.
