@@ -75,6 +75,16 @@ const usage =
     \\  --from SOURCE         astro|next|gatsby|nuxt|vue|hugo|jekyll|11ty|hexo
     \\                        (default: auto; use when detection is ambiguous)
     \\  -o, --output PATH      Report path (default: MIGRATION.md)
+    \\  --target DIR           Assemble a minimal Zigapagos project in a missing
+    \\                         or empty directory. Runs every deterministic step
+    \\                         supported for the detected source: content
+    \\                         conversion, React island scaffolding, and fixed-URL
+    \\                         asset copying. Writes the worklist to DIR/MIGRATION.md.
+    \\                         Mutually exclusive with --output, --scaffold,
+    \\                         --convert-content, and --copy-assets.
+    \\  --runtime-path PATH    With --target and React island candidates, set the
+    \\                         local @z/runtime package path. Otherwise the emitted
+    \\                         package.json contains a visible TODO placeholder.
     \\  --scaffold DIR         Write a starter TSX island per island into DIR.
     \\                         Supported for Astro, Next.js, and Gatsby React
     \\                         sources only.
@@ -94,6 +104,10 @@ const usage =
     \\                         Zigapagos content tree. Recognized frontmatter is
     \\                         normalized to Ziggy; Markdown bodies are preserved.
     \\                         Existing outputs are never clobbered.
+    \\  --copy-assets DIR      Copy conventional public/static asset trees into
+    \\                         a separate Zigapagos assets directory, preserving
+    \\                         public URL paths. Existing files are versioned as
+    \\                         `.new*`; source files are never modified.
     \\  --doctor PATH          Analyse a single island file: check its imports
     \\                         against the no-npm guardrail, enumerate the React
     \\                         hooks used, and list any host-binding smells.
@@ -489,6 +503,10 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8) bool {
     var out_path: []const u8 = "MIGRATION.md";
     var scaffold_dir: ?[]const u8 = null;
     var content_dir: ?[]const u8 = null;
+    var assets_dir: ?[]const u8 = null;
+    var target_dir: ?[]const u8 = null;
+    var runtime_path: ?[]const u8 = null;
+    var output_set = false;
     var doctor_path: ?[]const u8 = null;
     var json: bool = false;
 
@@ -505,6 +523,15 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8) bool {
             i += 1;
             if (i >= args.len) fatal.usageError("error: --output needs a path\n\n" ++ usage, .{});
             out_path = args[i];
+            output_set = true;
+        } else if (std.mem.eql(u8, a, "--target")) {
+            i += 1;
+            if (i >= args.len) fatal.usageError("error: --target needs a directory path\n\n" ++ usage, .{});
+            target_dir = args[i];
+        } else if (std.mem.eql(u8, a, "--runtime-path")) {
+            i += 1;
+            if (i >= args.len) fatal.usageError("error: --runtime-path needs a path\n\n" ++ usage, .{});
+            runtime_path = args[i];
         } else if (std.mem.eql(u8, a, "--scaffold")) {
             i += 1;
             if (i >= args.len) fatal.usageError("error: --scaffold needs a directory path\n\n" ++ usage, .{});
@@ -513,6 +540,10 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8) bool {
             i += 1;
             if (i >= args.len) fatal.usageError("error: --convert-content needs a directory path\n\n" ++ usage, .{});
             content_dir = args[i];
+        } else if (std.mem.eql(u8, a, "--copy-assets")) {
+            i += 1;
+            if (i >= args.len) fatal.usageError("error: --copy-assets needs a directory path\n\n" ++ usage, .{});
+            assets_dir = args[i];
         } else if (std.mem.eql(u8, a, "--doctor")) {
             i += 1;
             if (i >= args.len) fatal.usageError("error: --doctor needs a path\n\n" ++ usage, .{});
@@ -521,12 +552,26 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8) bool {
             json = true;
         } else if (a.len > 0 and a[0] != '-') {
             project_dir = a;
+        } else {
+            fatal.usageError("error: unknown option: {s}\n\n" ++ usage, .{a});
         }
     }
 
-    if (doctor_path != null and (scaffold_dir != null or content_dir != null)) {
-        fatal.usageError("error: --doctor is mutually exclusive with --scaffold and --convert-content\n\n" ++ usage, .{});
+    if (doctor_path != null and (scaffold_dir != null or content_dir != null or assets_dir != null or target_dir != null)) {
+        fatal.usageError("error: --doctor is mutually exclusive with --target, --scaffold, --convert-content, and --copy-assets\n\n" ++ usage, .{});
     }
+    if (target_dir != null and (output_set or scaffold_dir != null or content_dir != null or assets_dir != null)) fatal.usageError(
+        "error: --target is mutually exclusive with --output, --scaffold, --convert-content, and --copy-assets\n\n" ++ usage,
+        .{},
+    );
+    if (runtime_path != null and target_dir == null) fatal.usageError(
+        "error: --runtime-path is only valid with --target\n\n" ++ usage,
+        .{},
+    );
+    if (runtime_path) |path| if (!runtimePathIsJsonSafe(path)) fatal.usageError(
+        "error: --runtime-path may not contain quotes, backslashes, or control characters\n\n" ++ usage,
+        .{},
+    );
     if (doctor_path) |dp| return doctor(io, gpa, dp, json);
 
     const dir_path = project_dir orelse fatal.usageError("error: missing <project-dir>\n\n" ++ usage, .{});
@@ -547,10 +592,12 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8) bool {
     var res = if (source == .astro) scan(io, gpa, root) else scanOther(io, gpa, root, source);
     defer freeScanResult(gpa, &res);
 
+    if (target_dir) |target| return assembleTarget(io, gpa, root, dir_path, target, runtime_path, source, res);
+
     const report = if (source == .astro)
-        buildReport(gpa, dir_path, res.entries, res.has_config, scaffold_dir != null, res.has_astro_sitemap)
+        buildReport(gpa, dir_path, res.entries, res.has_config, scaffold_dir != null, res.has_astro_sitemap, assets_dir != null, null)
     else
-        buildOtherReport(gpa, source, dir_path, res.entries, scaffold_dir != null, content_dir != null);
+        buildOtherReport(gpa, source, dir_path, res.entries, scaffold_dir != null, content_dir != null, assets_dir != null, null);
     defer gpa.free(report);
 
     const f = Io.Dir.cwd().createFile(io, out_path, .{}) catch |err|
@@ -581,6 +628,7 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8) bool {
         scaffoldIslands(io, gpa, root, sdir, res.entries, false);
     }
     if (content_dir) |cdir| convertContent(io, gpa, root, cdir, source.contentSource().?, res.entries);
+    if (assets_dir) |adir| copyAssets(io, gpa, root, adir, source);
 
     return false;
 }
@@ -1060,14 +1108,21 @@ fn convertOneContent(
     return .converted;
 }
 
-fn convertContent(
+const ContentSummary = struct {
+    converted: usize = 0,
+    collisions: usize = 0,
+    non_markdown: usize = 0,
+    unreadable: usize = 0,
+};
+
+fn convertContentSummary(
     io: Io,
     gpa: Allocator,
     source_root: Io.Dir,
     out_root: []const u8,
     source: content_convert.Source,
     entries: []const Entry,
-) void {
+) ContentSummary {
     var out_dir = Io.Dir.cwd().createDirPathOpen(io, out_root, .{}) catch |err|
         fatal.dir(out_root, err);
     out_dir.close(io);
@@ -1089,6 +1144,565 @@ fn convertContent(
         "Content conversion: {d} written, {d} collision version(s), {d} non-Markdown skipped, {d} unreadable.\n",
         .{ converted, collisions, non_markdown, unreadable },
     );
+    return .{
+        .converted = converted,
+        .collisions = collisions,
+        .non_markdown = non_markdown,
+        .unreadable = unreadable,
+    };
+}
+
+fn convertContent(
+    io: Io,
+    gpa: Allocator,
+    source_root: Io.Dir,
+    out_root: []const u8,
+    source: content_convert.Source,
+    entries: []const Entry,
+) void {
+    _ = convertContentSummary(io, gpa, source_root, out_root, source, entries);
+}
+
+const AssetFilter = enum { all, vue_public, jekyll_static, hexo_static, hexo_theme_static };
+
+const AssetRoot = struct {
+    source_path: []const u8,
+    target_prefix: []const u8,
+    filter: AssetFilter = .all,
+};
+
+const HexoSettings = struct {
+    title: ?[]const u8 = null,
+    url: ?[]const u8 = null,
+    root: ?[]const u8 = null,
+    theme: ?[]const u8 = null,
+};
+
+fn yamlScalar(value: []const u8) []const u8 {
+    var trimmed = std.mem.trim(u8, value, " \t\r");
+    var quote: ?u8 = null;
+    var escaped = false;
+    for (trimmed, 0..) |c, i| {
+        if (quote) |active| {
+            if (active == '"' and c == '\\' and !escaped) {
+                escaped = true;
+                continue;
+            }
+            if (c == active and !escaped) quote = null;
+            escaped = false;
+            continue;
+        }
+        if (c == '"' or c == '\'') {
+            quote = c;
+        } else if (c == '#' and (i == 0 or trimmed[i - 1] == ' ' or trimmed[i - 1] == '\t')) {
+            trimmed = std.mem.trimEnd(u8, trimmed[0..i], " \t");
+            break;
+        }
+    }
+    if (trimmed.len >= 2 and
+        ((trimmed[0] == '"' and trimmed[trimmed.len - 1] == '"') or
+            (trimmed[0] == '\'' and trimmed[trimmed.len - 1] == '\'')))
+    {
+        return trimmed[1 .. trimmed.len - 1];
+    }
+    return trimmed;
+}
+
+/// Parse only Hexo's deterministic top-level scalar site settings. Nested YAML,
+/// aliases, and computed values remain migration review items.
+fn parseHexoSettings(src: []const u8) HexoSettings {
+    var result: HexoSettings = .{};
+    var lines = std.mem.splitScalar(u8, src, '\n');
+    while (lines.next()) |raw_line| {
+        if (raw_line.len == 0 or raw_line[0] == ' ' or raw_line[0] == '\t' or raw_line[0] == '#') continue;
+        const separator = std.mem.indexOfScalar(u8, raw_line, ':') orelse continue;
+        const key = std.mem.trim(u8, raw_line[0..separator], " \t\r");
+        const value = yamlScalar(raw_line[separator + 1 ..]);
+        if (value.len == 0) continue;
+        if (std.mem.eql(u8, key, "title")) result.title = value else if (std.mem.eql(u8, key, "url")) result.url = value else if (std.mem.eql(u8, key, "root")) result.root = value else if (std.mem.eql(u8, key, "theme")) result.theme = value;
+    }
+    return result;
+}
+
+/// NO_SLOP.md section 2.2a contract 2 (owned-result): the returned theme path,
+/// when present, belongs to the caller.
+fn hexoThemeSource(io: Io, gpa: Allocator, source_root: Io.Dir, theme: []const u8) ?[]const u8 {
+    var themes = source_root.openDir(io, "themes", .{ .iterate = true }) catch return null;
+    defer themes.close(io);
+    var it = themes.iterateAssumeFirstIteration();
+    while (it.next(io) catch return null) |entry| {
+        if (entry.kind != .directory or !std.ascii.eqlIgnoreCase(entry.name, theme)) continue;
+        return std.fs.path.join(gpa, &.{ "themes", entry.name, "source" }) catch fatal.oom();
+    }
+    return null;
+}
+
+fn assetRoots(source: Source) []const AssetRoot {
+    return switch (source) {
+        .astro, .nextjs => &.{.{ .source_path = "public", .target_prefix = "" }},
+        .gatsby => &.{.{ .source_path = "static", .target_prefix = "" }},
+        .nuxt => &.{
+            .{ .source_path = "public", .target_prefix = "", .filter = .vue_public },
+            .{ .source_path = "static", .target_prefix = "" },
+        },
+        .hugo => &.{.{ .source_path = "static", .target_prefix = "" }},
+        .jekyll => &.{
+            .{ .source_path = "assets", .target_prefix = "assets", .filter = .jekyll_static },
+            .{ .source_path = "images", .target_prefix = "images" },
+            .{ .source_path = "css", .target_prefix = "css" },
+            .{ .source_path = "js", .target_prefix = "js" },
+            .{ .source_path = "fonts", .target_prefix = "fonts" },
+        },
+        .eleventy => &.{
+            .{ .source_path = "public", .target_prefix = "" },
+            .{ .source_path = "assets", .target_prefix = "assets" },
+            .{ .source_path = "img", .target_prefix = "img" },
+            .{ .source_path = "images", .target_prefix = "images" },
+        },
+        .hexo => &.{.{ .source_path = "source", .target_prefix = "", .filter = .hexo_static }},
+    };
+}
+
+fn renderableAssetSource(path: []const u8) bool {
+    return hasAnyExtension(path, &.{ ".md", ".markdown", ".html", ".htm", ".ejs", ".njk", ".swig", ".pug" });
+}
+
+fn skipAssetSource(filter: AssetFilter, path: []const u8) bool {
+    return switch (filter) {
+        .all => false,
+        .vue_public => std.mem.eql(u8, path, "index.html"),
+        .jekyll_static => hasAnyExtension(path, &.{ ".scss", ".sass", ".coffee" }),
+        .hexo_static => renderableAssetSource(path),
+        .hexo_theme_static => renderableAssetSource(path) or hasAnyExtension(path, &.{ ".scss", ".sass", ".styl", ".less", ".coffee" }),
+    };
+}
+
+const AssetSummary = struct {
+    copied: usize = 0,
+    collisions: usize = 0,
+    skipped: usize = 0,
+    roots_found: usize = 0,
+};
+
+/// NO_SLOP.md section 2.2a contract 1 (self-freeing): all walker and joined
+/// path allocations are released before return; only the pointed-to counters
+/// are updated.
+fn copyAssetRoot(io: Io, gpa: Allocator, source_root: Io.Dir, out_root: []const u8, source: Source, asset_root: AssetRoot, summary: *AssetSummary) void {
+    var dir = source_root.openDir(io, asset_root.source_path, .{ .iterate = true }) catch |err| switch (err) {
+        error.FileNotFound => return,
+        else => fatal.dir(asset_root.source_path, err),
+    };
+    defer dir.close(io);
+    summary.roots_found += 1;
+    var walker = dir.walk(gpa) catch |err| {
+        if (err == error.OutOfMemory) fatal.oom();
+        fatal.msg("error: unable to walk asset tree {s}: {t}\n", .{ asset_root.source_path, err });
+    };
+    defer walker.deinit();
+    while (walker.next(io) catch |err| fatal.msg(
+        "error: failed scanning asset tree {s}: {t}\n",
+        .{ asset_root.source_path, err },
+    )) |entry| {
+        if (entry.kind != .file) {
+            if (entry.kind != .directory) summary.skipped += 1;
+            continue;
+        }
+        if (source == .hexo and asset_root.filter == .hexo_static and
+            (std.mem.startsWith(u8, entry.path, "_posts/") or
+                std.mem.startsWith(u8, entry.path, "_drafts/")))
+        {
+            // Hexo post-asset folders are relocated according to permalink
+            // and post_asset_folder configuration; copying them under
+            // /_posts or /_drafts would assert a URL we cannot infer.
+            continue;
+        }
+        if (skipAssetSource(asset_root.filter, entry.path)) {
+            if (asset_root.filter == .vue_public and std.mem.eql(u8, entry.path, "index.html")) std.debug.print(
+                "  REVIEW public/index.html is a framework HTML template and was not copied over the Zigapagos root page; port its head metadata manually.\n",
+                .{},
+            );
+            continue;
+        }
+
+        const relative = if (asset_root.target_prefix.len == 0)
+            gpa.dupe(u8, entry.path) catch fatal.oom()
+        else
+            std.fs.path.join(gpa, &.{ asset_root.target_prefix, entry.path }) catch fatal.oom();
+        defer gpa.free(relative);
+        const out_path = std.fs.path.join(gpa, &.{ out_root, relative }) catch fatal.oom();
+        defer gpa.free(out_path);
+        if (std.fs.path.dirname(out_path)) |parent| Io.Dir.cwd().createDirPath(io, parent) catch |err| fatal.dir(parent, err);
+
+        const input = entry.dir.openFile(io, entry.basename, .{}) catch |err| fatal.file(entry.path, err);
+        defer input.close(io);
+        var output = openMigrationOutput(io, gpa, out_path, false);
+        defer {
+            output.file.close(io);
+            if (output.path_owned) gpa.free(output.path);
+        }
+        var read_buf: [64 * 1024]u8 = undefined;
+        var reader = input.reader(io, &read_buf);
+        var writer = output.file.writer(io, &.{});
+        _ = reader.interface.streamRemaining(&writer.interface) catch |err| fatal.file(entry.path, err);
+        writer.interface.flush() catch |err| fatal.file(output.path, err);
+        if (output.collided) {
+            summary.collisions += 1;
+            std.debug.print("  preserve {s} -> copied asset to {s}\n", .{ out_path, output.path });
+        } else {
+            summary.copied += 1;
+            std.debug.print("  asset -> {s}\n", .{output.path});
+        }
+    }
+}
+
+/// Copy conventional source asset trees into a separate target. NO_SLOP.md
+/// section 2.2a contract 1 (self-freeing): no allocation escapes.
+fn copyAssetsSummary(io: Io, gpa: Allocator, source_root: Io.Dir, out_root: []const u8, source: Source) AssetSummary {
+    var target = Io.Dir.cwd().createDirPathOpen(io, out_root, .{}) catch |err| fatal.dir(out_root, err);
+    target.close(io);
+
+    var summary: AssetSummary = .{};
+    for (assetRoots(source)) |asset_root| copyAssetRoot(io, gpa, source_root, out_root, source, asset_root, &summary);
+    if (source == .hexo) {
+        const config = source_root.readFileAlloc(io, "_config.yml", gpa, .limited(1024 * 1024)) catch null;
+        if (config) |bytes| {
+            defer gpa.free(bytes);
+            if (parseHexoSettings(bytes).theme) |theme| {
+                if (hexoThemeSource(io, gpa, source_root, theme)) |theme_source| {
+                    defer gpa.free(theme_source);
+                    copyAssetRoot(io, gpa, source_root, out_root, source, .{
+                        .source_path = theme_source,
+                        .target_prefix = "",
+                        .filter = .hexo_theme_static,
+                    }, &summary);
+                } else {
+                    std.debug.print("  REVIEW configured Hexo theme '{s}' has no readable source asset tree.\n", .{theme});
+                }
+            }
+        }
+    }
+    std.debug.print(
+        "Asset copy: {d} written, {d} collision version(s), {d} non-file entry(s) skipped, {d} conventional root(s) found.\n",
+        .{ summary.copied, summary.collisions, summary.skipped, summary.roots_found },
+    );
+    if (summary.roots_found == 0) std.debug.print(
+        "  REVIEW no conventional public/static asset root was found; inspect framework config and copy its declared passthrough/static sources manually.\n",
+        .{},
+    );
+    return summary;
+}
+
+fn copyAssets(io: Io, gpa: Allocator, source_root: Io.Dir, out_root: []const u8, source: Source) void {
+    _ = copyAssetsSummary(io, gpa, source_root, out_root, source);
+}
+
+const target_layout =
+    \\<!DOCTYPE html>
+    \\<html lang="en">
+    \\  <head>
+    \\    <meta charset="UTF-8">
+    \\    <meta name="viewport" content="width=device-width, initial-scale=1">
+    \\    <title :text="$page.title"></title>
+    \\  </head>
+    \\  <body>
+    \\    <main>
+    \\      <h1 :text="$page.title"></h1>
+    \\      <div :html="$page.content()"></div>
+    \\    </main>
+    \\  </body>
+    \\</html>
+    \\
+;
+
+const target_placeholder =
+    \\---
+    \\.title = "Migration placeholder",
+    \\.date = @date("1970-01-01T00:00:00"),
+    \\.layout = "index.shtml",
+    \\.draft = false,
+    \\---
+    \\The source routes need a semantic port. Start with `MIGRATION.md`.
+    \\
+;
+
+const target_tsconfig =
+    \\{
+    \\  "compilerOptions": {
+    \\    "jsx": "react-jsx",
+    \\    "jsxImportSource": "@z/runtime",
+    \\    "moduleResolution": "bundler",
+    \\    "strict": true,
+    \\    "skipLibCheck": true
+    \\  }
+    \\}
+    \\
+;
+
+const target_gitignore =
+    \\node_modules/
+    \\zig-out/
+    \\.zigapagos-cache/
+    \\
+;
+
+/// True when `child` is `parent` or is below it at a path-component boundary.
+fn pathIsInside(parent: []const u8, child: []const u8) bool {
+    if (std.mem.eql(u8, parent, child)) return true;
+    if (!std.mem.startsWith(u8, child, parent) or child.len <= parent.len) return false;
+    return std.fs.path.isSep(child[parent.len]);
+}
+
+fn targetHasEntries(io: Io, path: []const u8) bool {
+    var dir = Io.Dir.cwd().openDir(io, path, .{ .iterate = true }) catch |err| switch (err) {
+        error.FileNotFound => return false,
+        else => fatal.dir(path, err),
+    };
+    defer dir.close(io);
+    var it = dir.iterateAssumeFirstIteration();
+    return (it.next(io) catch |err| fatal.dir(path, err)) != null;
+}
+
+fn targetPathExists(io: Io, path: []const u8) bool {
+    Io.Dir.cwd().access(io, path, .{}) catch return false;
+    return true;
+}
+
+/// Canonicalize the deepest existing ancestor, then append the still-missing
+/// suffix. This catches a target reached through a symlink even before the
+/// final directory exists. NO_SLOP.md section 2.2a contract 2 (owned-result):
+/// the returned slice is `gpa`-owned; all non-result scratch is freed here.
+fn canonicalTargetPath(io: Io, gpa: Allocator, cwd_abs: []const u8, target: []const u8) []const u8 {
+    const target_abs = std.fs.path.resolve(gpa, &.{ cwd_abs, target }) catch fatal.oom();
+    var ancestor: []const u8 = target_abs;
+    while (true) {
+        if (Io.Dir.cwd().realPathFileAlloc(io, ancestor, gpa)) |real_ancestor| {
+            const suffix_with_sep = target_abs[ancestor.len..];
+            var suffix_start: usize = 0;
+            while (suffix_start < suffix_with_sep.len and std.fs.path.isSep(suffix_with_sep[suffix_start])) suffix_start += 1;
+            const suffix = suffix_with_sep[suffix_start..];
+            if (suffix.len == 0) {
+                gpa.free(target_abs);
+                return real_ancestor;
+            }
+            const result = std.fs.path.resolve(gpa, &.{ real_ancestor, suffix }) catch fatal.oom();
+            gpa.free(real_ancestor);
+            gpa.free(target_abs);
+            return result;
+        } else |err| switch (err) {
+            error.FileNotFound => {},
+            error.OutOfMemory => fatal.oom(),
+            else => fatal.file(ancestor, err),
+        }
+        ancestor = std.fs.path.dirname(ancestor) orelse return target_abs;
+    }
+}
+
+/// NO_SLOP.md section 2.2a contract 1 (self-freeing): `full` is temporary and
+/// released before return; `bytes` remains caller-owned.
+fn writeTargetFile(io: Io, gpa: Allocator, target: []const u8, relative: []const u8, bytes: []const u8) void {
+    const full = std.fs.path.join(gpa, &.{ target, relative }) catch fatal.oom();
+    defer gpa.free(full);
+    if (std.fs.path.dirname(full)) |parent| Io.Dir.cwd().createDirPath(io, parent) catch |err| fatal.dir(parent, err);
+    const file = Io.Dir.cwd().createFile(io, full, .{ .exclusive = true }) catch |err| fatal.file(full, err);
+    defer file.close(io);
+    var writer = file.writer(io, &.{});
+    writer.interface.writeAll(bytes) catch |err| fatal.file(full, err);
+}
+
+fn targetProjectName(gpa: Allocator, target: []const u8) []const u8 {
+    const base = std.fs.path.basename(target);
+    if (base.len == 0) return gpa.dupe(u8, "migrated_site") catch fatal.oom();
+    const result = gpa.alloc(u8, base.len) catch fatal.oom();
+    for (base, 0..) |c, i| result[i] = if (std.ascii.isAlphanumeric(c)) std.ascii.toLower(c) else '_';
+    if (std.ascii.isDigit(result[0])) result[0] = '_';
+    return result;
+}
+
+const TargetMetadata = struct {
+    title: []const u8 = "Migrated site",
+    host_url: []const u8 = "https://example.com",
+    url_path_prefix: ?[]const u8 = null,
+};
+
+/// NO_SLOP.md section 2.2a contract 2 (owned-result): caller frees the escaped
+/// string.
+fn configEscape(gpa: Allocator, value: []const u8) []const u8 {
+    var aw: std.Io.Writer.Allocating = .init(gpa);
+    const w = &aw.writer;
+    for (value) |c| switch (c) {
+        '"' => w.writeAll("\\\"") catch fatal.oom(),
+        '\\' => w.writeAll("\\\\") catch fatal.oom(),
+        '\n' => w.writeAll("\\n") catch fatal.oom(),
+        '\r' => w.writeAll("\\r") catch fatal.oom(),
+        '\t' => w.writeAll("\\t") catch fatal.oom(),
+        else => w.writeByte(c) catch fatal.oom(),
+    };
+    return aw.toOwnedSlice() catch fatal.oom();
+}
+
+fn urlOrigin(url: []const u8) ?[]const u8 {
+    const authority_start = if (std.mem.startsWith(u8, url, "https://"))
+        "https://".len
+    else if (std.mem.startsWith(u8, url, "http://"))
+        "http://".len
+    else
+        return null;
+    const tail = url[authority_start..];
+    const authority_end = std.mem.indexOfAny(u8, tail, "/?#") orelse tail.len;
+    if (authority_end == 0) return null;
+    return url[0 .. authority_start + authority_end];
+}
+
+fn metadataFromHexoSettings(hexo: HexoSettings) TargetMetadata {
+    var result: TargetMetadata = .{};
+    if (hexo.title) |title| result.title = title;
+    if (hexo.url) |url| if (urlOrigin(url)) |origin| {
+        result.host_url = origin;
+    };
+    if (hexo.root) |root| {
+        const prefix = std.mem.trim(u8, root, "/ \t\r");
+        if (prefix.len > 0) result.url_path_prefix = prefix;
+    }
+    return result;
+}
+
+/// NO_SLOP.md section 2.2a contract 2 (owned-result): caller frees the emitted
+/// config. All escaping scratch is self-freed.
+fn emitTargetConfig(gpa: Allocator, metadata: TargetMetadata, with_assets: bool) []const u8 {
+    const title = configEscape(gpa, metadata.title);
+    defer gpa.free(title);
+    const host = configEscape(gpa, metadata.host_url);
+    defer gpa.free(host);
+    const prefix_line = if (metadata.url_path_prefix) |prefix| blk: {
+        const safe = configEscape(gpa, prefix);
+        defer gpa.free(safe);
+        break :blk std.fmt.allocPrint(gpa, "    .url_path_prefix = \"{s}\",\n", .{safe}) catch fatal.oom();
+    } else gpa.dupe(u8, "") catch fatal.oom();
+    defer gpa.free(prefix_line);
+    return std.fmt.allocPrint(gpa,
+        \\Site {{
+        \\    .title = "{s}",
+        \\    .host_url = "{s}",
+        \\    .content_dir_path = "content",
+        \\    .layouts_dir_path = "layouts",
+        \\    .assets_dir_path = "assets",
+        \\{s}{s}}}
+        \\
+    , .{ title, host, prefix_line, if (with_assets) "    .static_assets = [\"**\"],\n" else "" }) catch fatal.oom();
+}
+
+fn emitTargetBuildSh(gpa: Allocator, has_islands: bool) []const u8 {
+    return std.fmt.allocPrint(gpa,
+        \\#!/usr/bin/env bash
+        \\set -euo pipefail
+        \\cd "$(dirname "$0")"
+        \\{s}exec "${{ZIGAPAGOS_BIN:-zigapagos}}" release --force --output=zig-out/site "$@"
+        \\
+    , .{if (has_islands) "bun install --frozen-lockfile 2>/dev/null || bun install\n" else ""}) catch fatal.oom();
+}
+
+fn runtimePathIsJsonSafe(runtime_path: []const u8) bool {
+    for (runtime_path) |c| if (c == '"' or c == '\\' or c < 0x20 or c == 0x7f) return false;
+    return true;
+}
+
+fn emitTargetPackage(gpa: Allocator, name: []const u8, runtime_path: []const u8) []const u8 {
+    std.debug.assert(runtimePathIsJsonSafe(runtime_path));
+    return std.fmt.allocPrint(gpa,
+        \\{{
+        \\  "name": "{s}",
+        \\  "private": true,
+        \\  "type": "module",
+        \\  "dependencies": {{ "@z/runtime": "file:{s}" }}
+        \\}}
+        \\
+    , .{ name, runtime_path }) catch fatal.oom();
+}
+
+/// Assemble a new target from deterministic transforms only. All generated
+/// strings and paths are arena-owned and released together on return.
+fn assembleTarget(
+    io: Io,
+    gpa: Allocator,
+    source_root: Io.Dir,
+    source_path: []const u8,
+    target: []const u8,
+    runtime_path: ?[]const u8,
+    source: Source,
+    res: ScanResult,
+) bool {
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const source_abs = Io.Dir.cwd().realPathFileAlloc(io, source_path, a) catch |err| fatal.dir(source_path, err);
+    const cwd_abs = Io.Dir.cwd().realPathFileAlloc(io, ".", a) catch |err| fatal.dir(".", err);
+    const target_abs = canonicalTargetPath(io, a, cwd_abs, target);
+    if (pathIsInside(source_abs, target_abs)) {
+        std.debug.print("error: migration target '{s}' must not be inside source '{s}'.\n", .{ target, source_path });
+        return true;
+    }
+    if (targetHasEntries(io, target)) {
+        std.debug.print("error: migration target '{s}' already exists and is non-empty.\n", .{target});
+        return true;
+    }
+
+    var target_root = Io.Dir.cwd().createDirPathOpen(io, target, .{}) catch |err| fatal.dir(target, err);
+    target_root.close(io);
+    for ([_][]const u8{ "assets", "components", "content", "layouts" }) |dir_name| {
+        const path = std.fs.path.join(a, &.{ target, dir_name }) catch fatal.oom();
+        Io.Dir.cwd().createDirPath(io, path) catch |err| fatal.dir(path, err);
+    }
+
+    const components = std.fs.path.join(a, &.{ target, "components" }) catch fatal.oom();
+    const content = std.fs.path.join(a, &.{ target, "content" }) catch fatal.oom();
+    const assets = std.fs.path.join(a, &.{ target, "assets" }) catch fatal.oom();
+    if (source.supportsScaffold()) scaffoldIslands(io, gpa, source_root, components, res.entries, false);
+    const content_summary = if (source.contentSource()) |content_source|
+        convertContentSummary(io, gpa, source_root, content, content_source, res.entries)
+    else
+        ContentSummary{};
+    const asset_summary = copyAssetsSummary(io, gpa, source_root, assets, source);
+
+    var island_count: usize = 0;
+    for (res.entries) |entry| if (entry.is_island) {
+        island_count += 1;
+    };
+    const root_content = std.fs.path.join(a, &.{ content, "index.smd" }) catch fatal.oom();
+    if (!targetPathExists(io, root_content)) writeTargetFile(io, gpa, target, "content/index.smd", target_placeholder);
+    if (asset_summary.copied == 0) writeTargetFile(io, gpa, target, "assets/.gitkeep", "");
+    writeTargetFile(io, gpa, target, "layouts/index.shtml", target_layout);
+    writeTargetFile(io, gpa, target, ".gitignore", target_gitignore);
+    writeTargetFile(io, gpa, target, "AGENTS.md", @embedFile("init/AGENTS.md"));
+    writeTargetFile(io, gpa, target, "CLAUDE.md", @embedFile("init/CLAUDE.md"));
+    const metadata: TargetMetadata = if (source == .hexo) blk: {
+        const config = source_root.readFileAlloc(io, "_config.yml", a, .limited(1024 * 1024)) catch break :blk .{};
+        break :blk metadataFromHexoSettings(parseHexoSettings(config));
+    } else .{};
+    writeTargetFile(io, gpa, target, "zigapagos.ziggy", emitTargetConfig(a, metadata, asset_summary.copied > 0));
+    writeTargetFile(io, gpa, target, "build.sh", emitTargetBuildSh(a, island_count > 0));
+    if (island_count > 0) {
+        const project_name = targetProjectName(a, target);
+        writeTargetFile(io, gpa, target, "package.json", emitTargetPackage(a, project_name, runtime_path orelse "TODO-SET-RUNTIME-PATH"));
+        writeTargetFile(io, gpa, target, "tsconfig.json", target_tsconfig);
+    }
+
+    const report = if (source == .astro)
+        buildReport(gpa, source_path, res.entries, res.has_config, island_count > 0, res.has_astro_sitemap, asset_summary.copied > 0, target)
+    else
+        buildOtherReport(gpa, source, source_path, res.entries, island_count > 0, content_summary.converted > 0, asset_summary.copied > 0, target);
+    defer gpa.free(report);
+    writeTargetFile(io, gpa, target, "MIGRATION.md", report);
+
+    std.debug.print(
+        "Assembled {s} from {s}: {d} converted content file(s), {d} island candidate(s), {d} copied asset(s).\nNext: cd {s} && zigapagos validate\n",
+        .{ target, source.name(), content_summary.converted, island_count, asset_summary.copied, target },
+    );
+    if (island_count > 0 and runtime_path == null) std.debug.print(
+        "  REVIEW set dependencies.@z/runtime in {s}/package.json before building island bundles.\n",
+        .{target},
+    );
+    return false;
 }
 
 /// Render the full MIGRATION.md worklist. NO_SLOP.md §2.2a contract 2
@@ -1099,9 +1713,14 @@ fn convertContent(
 /// mismatches the allocator's tracked allocation size and panics ("Invalid
 /// free") under the debug allocator. No caller freed this before the
 /// pagination worklist test did, so the mismatch went unnoticed.
-fn buildOtherReport(gpa: Allocator, source: Source, dir_path: []const u8, entries: []const Entry, has_scaffold: bool, converted_content: bool) []const u8 {
+fn buildOtherReport(gpa: Allocator, source: Source, dir_path: []const u8, entries: []const Entry, has_scaffold: bool, converted_content: bool, copied_assets: bool, assembled_target: ?[]const u8) []const u8 {
     var aw: std.Io.Writer.Allocating = .init(gpa);
     const w = &aw.writer;
+    const establish_target = if (assembled_target) |target|
+        std.fmt.allocPrint(gpa, "- [x] Minimal Zigapagos target assembled in `{s}` by `--target`.\n", .{target}) catch fatal.oom()
+    else
+        gpa.dupe(u8, "- [ ] Run `zigapagos init` in a separate target directory.\n") catch fatal.oom();
+    defer gpa.free(establish_target);
 
     w.print(
         \\# Migration worklist: {s} ({s}) → Zigapagos
@@ -1110,14 +1729,14 @@ fn buildOtherReport(gpa: Allocator, source: Source, dir_path: []const u8, entrie
         \\`--from {s}`. Follow the source-specific mapping in
         \\`docs/migration/other-frameworks.md`, then use `docs/migration/recipes.md` for TSX.
         \\
-        \\Source files are read-only. Deterministic conversions requested with
-        \\`--scaffold` or `--convert-content` are called out below; ambiguous framework
+        \\Source files are read-only. Deterministic conversions assembled by `--target`
+        \\or requested with `--scaffold`, `--convert-content`, or `--copy-assets` are called out below; ambiguous framework
         \\semantics stay review items.
         \\
         \\## 1. Establish the target
         \\
-        \\- [ ] Run `zigapagos init` in a separate target directory.
-        \\- [ ] Copy static assets without changing public URLs.
+        \\{s}
+        \\{s}
         \\- [ ] Port the source config to `zigapagos.ziggy` and one `build.sh` invocation.
         \\
     , .{ dir_path, source.name(), switch (source) {
@@ -1129,7 +1748,15 @@ fn buildOtherReport(gpa: Allocator, source: Source, dir_path: []const u8, entrie
         .eleventy => "11ty",
         .hexo => "hexo",
         .astro => unreachable,
-    } }) catch fatal.oom();
+    }, establish_target, if (assembled_target != null)
+        if (copied_assets)
+            "- [x] Conventional fixed-URL assets copied to `assets/`; `zigapagos.ziggy` starts with `static_assets = [\"**\"]`. Review pipeline-managed and config-declared assets."
+        else
+            "- [ ] No conventional public/static asset files were copied. Review framework config for custom passthrough and pipeline-managed assets."
+    else if (copied_assets)
+        "- [ ] Conventional public/static asset copy was requested; check the CLI summary for roots/files found. Review pipeline-managed and config-declared assets, then use `static_assets = [\"**\"]` initially if copied fixed URLs must all remain public."
+    else
+        "- [ ] Copy static assets without changing public URLs, or re-run with `--copy-assets <target-assets-dir>`." }) catch fatal.oom();
 
     w.writeAll("## 2. Pages and data\n\n") catch fatal.oom();
     if (converted_content) {
@@ -1207,9 +1834,14 @@ fn buildOtherReport(gpa: Allocator, source: Source, dir_path: []const u8, entrie
     return aw.toOwnedSlice() catch fatal.oom();
 }
 
-pub fn buildReport(gpa: Allocator, dir_path: []const u8, entries: []const Entry, has_config: bool, has_scaffold: bool, has_astro_sitemap: bool) []const u8 {
+pub fn buildReport(gpa: Allocator, dir_path: []const u8, entries: []const Entry, has_config: bool, has_scaffold: bool, has_astro_sitemap: bool, copied_assets: bool, assembled_target: ?[]const u8) []const u8 {
     var aw: std.Io.Writer.Allocating = .init(gpa);
     const w = &aw.writer;
+    const scaffold_target = if (assembled_target) |target|
+        std.fmt.allocPrint(gpa, "- [x] Minimal target scaffold assembled in `{s}` by `--target`.\n", .{target}) catch fatal.oom()
+    else
+        gpa.dupe(u8, "- [ ] `zigapagos.ziggy` (begins with `Site {`), `content/`, `layouts/`, `assets/`, `components/`, `build.sh`\n") catch fatal.oom();
+    defer gpa.free(scaffold_target);
 
     w.print(
         \\# Migration worklist: {s} → Zigapagos
@@ -1219,12 +1851,21 @@ pub fn buildReport(gpa: Allocator, dir_path: []const u8, entries: []const Entry,
         \\
         \\## 1. Scaffold the target
         \\
-        \\- [ ] `zigapagos.ziggy` (begins with `Site {{`), `content/`, `layouts/`, `assets/`, `components/`, `build.sh`
-        \\{s}{s}
+        \\{s}{s}{s}{s}
     , .{
         dir_path,
+        scaffold_target,
         if (has_config) "- [ ] Port `astro.config.*` → `zigapagos.ziggy` (site/host) + `build.sh` (islands)\n" else "",
         if (has_astro_sitemap) "- [ ] `@astrojs/sitemap` detected → mapped: set `sitemap = true` in `zigapagos.ziggy` (requires `host_url`, already required) — zigapagos generates `sitemap.xml` at release time\n" else "",
+        if (assembled_target != null)
+            if (copied_assets)
+                "- [x] `public/` copied to `assets/` and fixed URLs enabled with `static_assets = [\"**\"]`; review pipeline-managed assets\n"
+            else
+                "- [ ] No `public/` files were copied; review configured and pipeline-managed assets\n"
+        else if (copied_assets)
+            "- [ ] `public/` asset copy requested; check the CLI summary for roots/files found, then review pipeline-managed assets and preserve copied fixed URLs with `static_assets = [\"**\"]` initially\n"
+        else
+            "- [ ] Copy `public/` without changing URL paths, or re-run with `--copy-assets <target-assets-dir>`\n",
     }) catch fatal.oom();
 
     buildWiringSection(w, entries, has_scaffold);
@@ -1574,7 +2215,7 @@ test "non-Astro report names the source and marks ambiguous conversion for revie
         .{ .path = "src/pages/index.tsx", .kind = .page },
         .{ .path = "src/components/Counter.tsx", .kind = .component, .role = .island, .is_island = true },
     };
-    const report = buildOtherReport(gpa, .nextjs, "next-site", &entries, true, false);
+    const report = buildOtherReport(gpa, .nextjs, "next-site", &entries, true, false, false, null);
     defer gpa.free(report);
     try std.testing.expect(std.mem.indexOf(u8, report, "Next.js") != null);
     try std.testing.expect(std.mem.indexOf(u8, report, "src/pages/index.tsx") != null);
@@ -1877,7 +2518,7 @@ test "paginate: scan flags a paginated route and buildReport prescribes the conv
     }
     try std.testing.expect(found);
 
-    const report = buildReport(gpa, "astro-sample", res.entries, res.has_config, false, res.has_astro_sitemap);
+    const report = buildReport(gpa, "astro-sample", res.entries, res.has_config, false, res.has_astro_sitemap, false, null);
     defer gpa.free(report);
 
     try std.testing.expect(std.mem.indexOf(u8, report, "`src/pages/blog/[page].astro`") != null);
@@ -1915,7 +2556,7 @@ test "scan detects @astrojs/sitemap in package.json and buildReport flags it in 
     defer freeScanResult(gpa, &res);
     try std.testing.expect(res.has_astro_sitemap);
 
-    const report = buildReport(gpa, "astro-sample", res.entries, res.has_config, false, res.has_astro_sitemap);
+    const report = buildReport(gpa, "astro-sample", res.entries, res.has_config, false, res.has_astro_sitemap, false, null);
     defer gpa.free(report);
     try std.testing.expect(std.mem.indexOf(u8, report, "@astrojs/sitemap") != null);
     try std.testing.expect(std.mem.indexOf(u8, report, "sitemap = true") != null);
@@ -1933,7 +2574,7 @@ test "scan reports no @astrojs/sitemap when package.json is absent or silent abo
     defer freeScanResult(gpa, &res);
     try std.testing.expect(!res.has_astro_sitemap);
 
-    const report = buildReport(gpa, "astro-sample", res.entries, res.has_config, false, res.has_astro_sitemap);
+    const report = buildReport(gpa, "astro-sample", res.entries, res.has_config, false, res.has_astro_sitemap, false, null);
     defer gpa.free(report);
     try std.testing.expect(std.mem.indexOf(u8, report, "@astrojs/sitemap") == null);
 }
@@ -1945,5 +2586,60 @@ test "usage defines the read-only source and deterministic output contract" {
     try std.testing.expect(std.mem.indexOf(u8, usage_text, "Pages, layouts") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage_text, "--scaffold") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage_text, "--convert-content") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage_text, "--target") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage_text, "or empty directory") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage_text, "normalized to Ziggy") != null);
+}
+
+test "target containment uses path component boundaries" {
+    try std.testing.expect(pathIsInside("/work/source", "/work/source"));
+    try std.testing.expect(pathIsInside("/work/source", "/work/source/generated"));
+    try std.testing.expect(!pathIsInside("/work/source", "/work/source-copy"));
+    try std.testing.expect(!pathIsInside("/work/source", "/work/target"));
+}
+
+test "target config publishes copied assets only when the copy wrote files" {
+    const gpa = std.testing.allocator;
+    const with_assets = emitTargetConfig(gpa, .{}, true);
+    defer gpa.free(with_assets);
+    const without_assets = emitTargetConfig(gpa, .{}, false);
+    defer gpa.free(without_assets);
+    try std.testing.expect(std.mem.indexOf(u8, with_assets, ".static_assets = [\"**\"]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, without_assets, ".static_assets") == null);
+}
+
+test "Hexo top-level settings produce safe target metadata" {
+    const settings = parseHexoSettings(
+        "title: 'Next Level Developer'\nurl: https://example.com/blog\nroot: /blog/\ntheme: daily # local theme\n",
+    );
+    try std.testing.expectEqualStrings("Next Level Developer", settings.title.?);
+    try std.testing.expectEqualStrings("https://example.com/blog", settings.url.?);
+    try std.testing.expectEqualStrings("daily", settings.theme.?);
+    try std.testing.expectEqualStrings("https://example.com", urlOrigin(settings.url.?).?);
+    const metadata = metadataFromHexoSettings(settings);
+    try std.testing.expectEqualStrings("Next Level Developer", metadata.title);
+    try std.testing.expectEqualStrings("https://example.com", metadata.host_url);
+    try std.testing.expectEqualStrings("blog", metadata.url_path_prefix.?);
+    const config = emitTargetConfig(std.testing.allocator, metadata, true);
+    defer std.testing.allocator.free(config);
+    try std.testing.expect(std.mem.indexOf(u8, config, ".url_path_prefix = \"blog\"") != null);
+}
+
+test "Hexo YAML comments respect whitespace and quoted hashes" {
+    const settings = parseHexoSettings(
+        "theme: # intentionally unset\nroot:\t# also unset\ntitle: \"Hash # inside\" # trailing comment\nurl: https://example.com/#fragment\n",
+    );
+    try std.testing.expectEqual(null, settings.theme);
+    try std.testing.expectEqual(null, settings.root);
+    try std.testing.expectEqualStrings("Hash # inside", settings.title.?);
+    try std.testing.expectEqualStrings("https://example.com/#fragment", settings.url.?);
+}
+
+test "runtime paths reject JSON-breaking characters" {
+    try std.testing.expect(runtimePathIsJsonSafe("../runtime"));
+    try std.testing.expect(!runtimePathIsJsonSafe("bad\"path"));
+    try std.testing.expect(!runtimePathIsJsonSafe("bad\\path"));
+    try std.testing.expect(!runtimePathIsJsonSafe("bad\npath"));
+    try std.testing.expect(!runtimePathIsJsonSafe("bad\tpath"));
+    try std.testing.expect(!runtimePathIsJsonSafe(&.{ 'b', 'a', 'd', 0x7f }));
 }

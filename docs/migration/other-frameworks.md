@@ -14,10 +14,12 @@ zigapagos migrate path/to/site --from gatsby --scaffold components
 zigapagos migrate path/to/site --from hugo --convert-content converted/content
 zigapagos migrate path/to/site --from 11ty --convert-content converted/content
 zigapagos migrate path/to/site --from hexo --convert-content converted/content
+zigapagos migrate path/to/site --copy-assets converted/assets
+zigapagos migrate path/to/site --target path/to/new-site
 ```
 
 The command auto-detects a source from its conventional config file. Use
-`--from astro|next|gatsby|nuxt|hugo|jekyll|11ty|hexo` when a monorepo contains
+`--from astro|next|gatsby|nuxt|vue|hugo|jekyll|11ty|hexo` when a monorepo contains
 multiple framework configs or its config has a nonstandard name. A bare
 `_config.yml` is not enough to distinguish Jekyll from Hexo; without supporting
 package or directory evidence, the command stops and asks the user or agent to
@@ -27,17 +29,95 @@ Source files are read-only. `migrate` always writes a worklist. For Astro,
 Next.js, and Gatsby, `--scaffold` additionally writes non-clobbering starter TSX
 islands. For Hugo, Jekyll, Eleventy, and Hexo, `--convert-content` writes a
 separate content tree with normalized Ziggy frontmatter and preserved Markdown
-bodies. Vue SFCs and static-template components are listed but never represented
-as successful automatic conversions.
+bodies. `--copy-assets` streams conventional public/static files into a separate
+Zigapagos assets tree while preserving their public URL-relative paths. Vue SFCs
+and static-template components are listed but never represented as successful
+automatic conversions.
 
 Generated files never overwrite earlier work: a collision is written beside it
 as `.new`, `.new.2`, and so on.
 
-This command is intentionally the shared migration entry point. Astro also has
-the deeper `zigapagos init --from-astro` whole-site scaffold; the other adapters
-do not currently claim that level of full-site generation. For them, start with
-`migrate`, place its generated content/components into a normal `zigapagos init`
-site, and use `MIGRATION.md` as the remaining parity checklist.
+## Deterministic asset copy
+
+`--copy-assets <target-assets-dir>` handles the conventional source trees whose
+URL mapping is deterministic:
+
+- Astro and Next.js `public/`, Gatsby and Hugo `static/`, and Nuxt/Vue
+  `public/` or legacy `static/` are copied from the root of those directories.
+  Nuxt/Vue `public/index.html` is an application bootstrap template, not a
+  fixed asset, so it is skipped with a review warning instead of replacing the
+  generated Zigapagos homepage.
+- Jekyll's conventional `assets/`, `images/`, `css/`, `js/`, and `fonts/` keep
+  those directory names, because they are part of the public URL. Known
+  pipeline inputs (`.scss`, `.sass`, and `.coffee`) are excluded.
+- Eleventy `public/` is copied at the URL root; conventional root `assets/`,
+  `img/`, and `images/` directories keep their prefixes. Configured
+  passthrough-copy sources with other names remain review items.
+- Hexo copies non-renderable files from `source/` at their URL-relative paths;
+  Markdown and template inputs are excluded rather than being mistaken for
+  static output. `_posts`/`_drafts` asset folders are also excluded because
+  Hexo relocates them using permalink and `post_asset_folder` configuration.
+  When `_config.yml` names a local theme, already-static files from that
+  theme's `source/` tree are copied too; stylesheet preprocessors and template
+  inputs remain review work.
+
+The copy is streamed, so large media does not need to fit in memory. Source
+files are opened read-only. Existing targets are preserved and the new copy is
+written as `.new`, `.new.2`, and so on for explicit review. Directory symlinks
+and other non-file entries are not followed; the CLI reports how many it
+skipped so linked asset trees remain visible review work.
+
+Zigapagos does not publish every file under `assets/` automatically. During
+initial parity work, add `.static_assets = ["**"]` to `zigapagos.ziggy` if all
+copied fixed URLs must remain public; later, narrow that list and link normal
+site assets from templates/content so unused files can be pruned. Framework
+asset pipelines remain deliberate ports: Hugo Pipes, Gatsby image processing,
+Nuxt modules, Jekyll plugins, Eleventy passthrough rules outside the conventional
+trees, and Hexo renderer/generator output are not reconstructed by a byte copy.
+
+## Assemble a target in one command
+
+`--target <new-site>` composes every deterministic adapter for the detected
+source into a minimal Zigapagos project:
+
+- conventional fixed-URL assets are copied to `assets/`; when at least one is
+  copied, the generated config starts with `.static_assets = ["**"]`;
+- Hugo, Jekyll, Eleventy, and Hexo Markdown is converted into `content/`;
+- Astro, Next.js, and Gatsby React candidates are scaffolded into `components/`;
+- a minimal `zigapagos.ziggy`, `layouts/index.shtml`, `build.sh`, agent guidance,
+  and `MIGRATION.md` are written;
+- a valid root placeholder is added only when conversion did not produce
+  `content/index.smd`.
+
+```sh
+zigapagos migrate path/to/old-site --target path/to/new-site
+cd path/to/new-site
+zigapagos validate
+```
+
+For a React source, pass `--runtime-path ../path/to/zigapagos/runtime` when that
+local package location is already known. Without it, the generated
+`package.json` contains the explicit `TODO-SET-RUNTIME-PATH` placeholder and the
+CLI prints a review warning. Static-only targets do not receive a JavaScript
+package graph.
+
+For Hexo, simple top-level `title`, `url`, and `root` values in `_config.yml`
+seed the generated site title, host URL, and URL path prefix. Complex YAML and
+plugin-derived configuration remain review items.
+
+The target must be missing or empty. The command refuses a non-empty directory
+and any target nested inside the source tree; it never merges generated files
+into an existing project. This protects authored work and prevents a copied
+asset tree from recursively seeing its own output.
+
+Assembly does not change the semantic boundary described by the worklist.
+Next/Nuxt/Gatsby routes, Vue components, templates, loaders, plugins, image
+pipelines, redirects, and runtime behavior still need an explicit port. The
+root placeholder makes the target immediately valid; it is not a claim that a
+source route was converted. Astro also retains the deeper
+`zigapagos init --from-astro` scaffold, including Astro-specific wiring and
+tests; `migrate --target` is the smaller uniform workflow shared by every
+adapter.
 
 ## The shared target decision
 
@@ -149,8 +229,11 @@ The scanner inventories `_posts`, `_pages`, `_layouts`, and `_includes`.
 `--convert-content DIR` converts root Markdown pages, `_pages`, and `_posts`.
 It recognizes `title`, `date`, `description`, `draft`, and `published: false`,
 preserves dated post filenames under `posts/`, and carries the same migration
-review metadata as Hugo output. Permalink rules, collection routing, Liquid,
-HTML bodies, and plugin fields remain explicit review work.
+review metadata as Hugo output. Jekyll `{% highlight language %}` blocks become
+ordinary fenced code blocks, preserving examples such as raw HTML without
+making them invalid SuperMD page markup. Permalink rules, collection routing,
+other Liquid constructs, HTML bodies, and plugin fields remain explicit review
+work.
 
 ## Eleventy (11ty)
 
@@ -188,11 +271,12 @@ theme EJS, Swig, or Nunjucks templates.
   source uses Markdown-it extensions or custom tags.
 
 `--convert-content DIR` converts Markdown content, preserves bodies and
-unconverted metadata, and normalizes `_posts`/`_drafts` paths. Theme templates,
-Hexo tag syntax, plugin output, and generated indexes remain review work. The
-converter removes the `<!-- more -->` excerpt marker and translates simple
-`<blockquote>`/`<footer>` blocks to Markdown outside fenced code; other raw HTML
-remains a validation-visible review item.
+unconverted metadata, and normalizes `_posts`/`_drafts` paths. ISO dates written
+with either dashes or Hexo's common `YYYY/MM/DD` form become Ziggy timestamps.
+Theme templates, Hexo tag syntax, plugin output, and generated indexes remain
+review work. The converter removes the `<!-- more -->` excerpt marker and
+translates simple `<blockquote>`/`<footer>` blocks to Markdown outside fenced
+code; other raw HTML remains a validation-visible review item.
 
 ## Verification loop
 

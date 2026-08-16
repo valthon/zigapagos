@@ -143,7 +143,9 @@ fn digits(value: []const u8) ?u32 {
 }
 
 fn validDate(value: []const u8) bool {
-    if (value.len < 10 or value[4] != '-' or value[7] != '-') return false;
+    if (value.len < 10) return false;
+    const separator = value[4];
+    if ((separator != '-' and separator != '/') or value[7] != separator) return false;
     const year = digits(value[0..4]) orelse return false;
     const month = digits(value[5..7]) orelse return false;
     const day = digits(value[8..10]) orelse return false;
@@ -167,7 +169,11 @@ fn writeDate(w: anytype, raw: ?[]const u8) !void {
         return;
     };
     if (validDate(value)) {
-        try w.writeAll(value[0..10]);
+        try w.writeAll(value[0..4]);
+        try w.writeByte('-');
+        try w.writeAll(value[5..7]);
+        try w.writeByte('-');
+        try w.writeAll(value[8..10]);
         if (value.len >= 19 and (value[10] == 'T' or value[10] == ' ')) {
             try w.writeByte('T');
             try w.writeAll(value[11..19]);
@@ -235,13 +241,55 @@ fn normalizeHexoBody(gpa: Allocator, body: []const u8) []const u8 {
     return aw.toOwnedSlice() catch fatal.oom();
 }
 
+/// Jekyll's highlight tag is a deterministic code-fence equivalent. Rewriting
+/// it keeps examples (including raw HTML examples) intact while producing
+/// SuperMD that does not interpret the example as page markup.
+fn normalizeJekyllBody(gpa: Allocator, body: []const u8) []const u8 {
+    var aw: std.Io.Writer.Allocating = .init(gpa);
+    const w = &aw.writer;
+    var lines = std.mem.splitScalar(u8, body, '\n');
+    var first = true;
+    var source_fence: ?u8 = null;
+    var highlight = false;
+    while (lines.next()) |line| {
+        if (!first) w.writeByte('\n') catch fatal.oom();
+        first = false;
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        if (!highlight) {
+            if (fenceMarker(line)) |marker| {
+                if (source_fence == null) source_fence = marker else if (source_fence.? == marker) source_fence = null;
+                w.writeAll(line) catch fatal.oom();
+                continue;
+            }
+            if (source_fence == null and std.mem.startsWith(u8, trimmed, "{% highlight ") and std.mem.endsWith(u8, trimmed, "%}")) {
+                const options = std.mem.trim(u8, trimmed["{% highlight ".len .. trimmed.len - "%}".len], " \t");
+                const language_end = std.mem.indexOfAny(u8, options, " \t") orelse options.len;
+                w.writeAll("```") catch fatal.oom();
+                w.writeAll(options[0..language_end]) catch fatal.oom();
+                highlight = true;
+                continue;
+            }
+        } else if (std.mem.eql(u8, trimmed, "{% endhighlight %}")) {
+            w.writeAll("```") catch fatal.oom();
+            highlight = false;
+            continue;
+        }
+        w.writeAll(line) catch fatal.oom();
+    }
+    return aw.toOwnedSlice() catch fatal.oom();
+}
+
 /// NO_SLOP.md section 2.2a contract 1 (self-freeing): all scratch is borrowed;
 /// the returned rendered document is the one allocation that escapes.
 pub fn render(gpa: Allocator, source: Source, source_path: []const u8, src: []const u8) Rendered {
     const fields = parseFields(src);
     const invalid_date = if (fields.date) |date| !validDate(date) else false;
     const draft = fields.draft or (source == .hexo and std.mem.startsWith(u8, source_path, "source/_drafts/"));
-    const normalized_body: ?[]const u8 = if (source == .hexo) normalizeHexoBody(gpa, fields.body) else null;
+    const normalized_body: ?[]const u8 = switch (source) {
+        .hexo => normalizeHexoBody(gpa, fields.body),
+        .jekyll => normalizeJekyllBody(gpa, fields.body),
+        else => null,
+    };
     defer if (normalized_body) |body| gpa.free(body);
     var aw: std.Io.Writer.Allocating = .init(gpa);
     const w = &aw.writer;
@@ -369,6 +417,14 @@ test "invalid source date falls back to a valid reviewable placeholder" {
     try std.testing.expect(std.mem.indexOf(u8, got, ".migration_invalid_date = \"2026-02-30\"") != null);
 }
 
+test "Hexo slash-form date normalizes to Ziggy ISO form" {
+    const gpa = std.testing.allocator;
+    const result = render(gpa, .hexo, "source/_posts/hello.md", "---\ndate: 2016/08/19\n---\nBody\n");
+    defer gpa.free(result.bytes);
+    try std.testing.expect(std.mem.indexOf(u8, result.bytes, "@date(\"2016-08-19T00:00:00\")") != null);
+    try std.testing.expect(!result.invalid_date);
+}
+
 test "non-scalar recognized fields retain the complete source frontmatter" {
     const gpa = std.testing.allocator;
     const result = render(gpa, .hugo, "content/complex.md", "---\ntitle: >\n  A multiline title\ndraft: yes\n---\nBody\n");
@@ -409,4 +465,11 @@ test "Hexo excerpt markers and simple blockquotes normalize outside code fences"
     try std.testing.expect(std.mem.indexOf(u8, result.bytes, "\n<!-- more -->\n<blockquote>") == null);
     try std.testing.expect(std.mem.indexOf(u8, result.bytes, "> Quoted\n> --Author") != null);
     try std.testing.expect(std.mem.indexOf(u8, result.bytes, "```html\n<!-- more -->\n```") != null);
+}
+
+test "Jekyll highlight tags become fenced code blocks" {
+    const gpa = std.testing.allocator;
+    const result = render(gpa, .jekyll, "_posts/example.md", "{% highlight html linenos %}\n<html>\n{% endhighlight %}\n");
+    defer gpa.free(result.bytes);
+    try std.testing.expect(std.mem.endsWith(u8, result.bytes, "```html\n<html>\n```\n"));
 }

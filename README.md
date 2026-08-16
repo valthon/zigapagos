@@ -65,21 +65,21 @@ map. No island on the page? Zero JavaScript shipped.
   `.pagination = { .page_size = 10 }` and is rendered once per window of
   subpages, in a choice of three URL styles; `$page.subpages()` returns the
   current window, so an existing layout loop paginates with no edit.
-- **LLM-native Astro migration** — `zigapagos migrate <astro-dir>` detects
-  `client:*` component usage and writes a `MIGRATION.md` worklist; opt into
-  `--scaffold` and it also emits a starter island per detected island with the
-  React → `@z/runtime` import swaps already applied. It converts no page, layout
-  or config itself — the docs are written as a deterministic mapping spec so an
-  AI agent can complete the migration unattended.
+- **First-class framework migration** — `zigapagos migrate <source>` detects
+  Astro, Next.js, Gatsby, Nuxt/Vue, Hugo, Jekyll, Eleventy, or Hexo and writes a
+  source-specific `MIGRATION.md` worklist. `--target <new-site>` assembles a
+  minimal valid Zigapagos project in one command, composing every safe
+  deterministic step: React → `@z/runtime` island scaffolding, Markdown/Ziggy
+  frontmatter conversion, and fixed-URL public/static asset copying. Routes,
+  loaders, templates, plugins, and runtime semantics stay explicit review work
+  for a human or AI agent.
   Ships as an installable [Agent Skill](skills/zigapagos-astro-migration/)
   (the open `SKILL.md` format read by Claude Code, Codex, Cursor, Gemini CLI,
   and others).
-  Astro remains the reference path; the same command also produces first-class,
-  source-specific worklists for Next.js, Gatsby, Nuxt/Vue, Hugo, Jekyll,
-  Eleventy, and Hexo via auto-detection or `--from`, with React scaffolding and
-  deterministic Markdown/frontmatter conversion where the port is mechanical. Astro alone currently
-  has the deeper whole-site `init --from-astro` scaffold; other sources use the
-  shared `migrate` workflow plus a normal `init` target site.
+  Generated targets must be missing or empty; source files are read-only and
+  nested targets are rejected. Astro remains the reference path and retains the
+  deeper `init --from-astro` scaffold, while `migrate --target` is the uniform
+  baseline for every supported adapter.
 - **Agent-legible diagnostics** — `--format=json` on `release`, `validate`,
   `doctor` and `explain-code` emits NDJSON with stable `ZP_*` codes, so an
   agent's build → fix → validate loop matches on codes instead of parsing
