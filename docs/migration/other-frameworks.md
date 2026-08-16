@@ -44,15 +44,22 @@ URL mapping is deterministic:
 
 - Astro and Next.js `public/`, Gatsby and Hugo `static/`, and Nuxt/Vue
   `public/` or legacy `static/` are copied from the root of those directories.
+  Nuxt/Vue `public/index.html` is an application bootstrap template, not a
+  fixed asset, so it is skipped with a review warning instead of replacing the
+  generated Zigapagos homepage.
 - Jekyll's conventional `assets/`, `images/`, `css/`, `js/`, and `fonts/` keep
   those directory names, because they are part of the public URL. Known
   pipeline inputs (`.scss`, `.sass`, and `.coffee`) are excluded.
-- Eleventy `public/` is copied at the URL root and `assets/` keeps its prefix.
-  Configured passthrough-copy sources with other names remain review items.
+- Eleventy `public/` is copied at the URL root; conventional root `assets/`,
+  `img/`, and `images/` directories keep their prefixes. Configured
+  passthrough-copy sources with other names remain review items.
 - Hexo copies non-renderable files from `source/` at their URL-relative paths;
   Markdown and template inputs are excluded rather than being mistaken for
   static output. `_posts`/`_drafts` asset folders are also excluded because
   Hexo relocates them using permalink and `post_asset_folder` configuration.
+  When `_config.yml` names a local theme, already-static files from that
+  theme's `source/` tree are copied too; stylesheet preprocessors and template
+  inputs remain review work.
 
 The copy is streamed, so large media does not need to fit in memory. Source
 files are opened read-only. Existing targets are preserved and the new copy is
@@ -93,6 +100,10 @@ local package location is already known. Without it, the generated
 `package.json` contains the explicit `TODO-SET-RUNTIME-PATH` placeholder and the
 CLI prints a review warning. Static-only targets do not receive a JavaScript
 package graph.
+
+For Hexo, simple top-level `title`, `url`, and `root` values in `_config.yml`
+seed the generated site title, host URL, and URL path prefix. Complex YAML and
+plugin-derived configuration remain review items.
 
 The target must be missing or empty. The command refuses a non-empty directory
 and any target nested inside the source tree; it never merges generated files
@@ -218,8 +229,11 @@ The scanner inventories `_posts`, `_pages`, `_layouts`, and `_includes`.
 `--convert-content DIR` converts root Markdown pages, `_pages`, and `_posts`.
 It recognizes `title`, `date`, `description`, `draft`, and `published: false`,
 preserves dated post filenames under `posts/`, and carries the same migration
-review metadata as Hugo output. Permalink rules, collection routing, Liquid,
-HTML bodies, and plugin fields remain explicit review work.
+review metadata as Hugo output. Jekyll `{% highlight language %}` blocks become
+ordinary fenced code blocks, preserving examples such as raw HTML without
+making them invalid SuperMD page markup. Permalink rules, collection routing,
+other Liquid constructs, HTML bodies, and plugin fields remain explicit review
+work.
 
 ## Eleventy (11ty)
 
@@ -257,11 +271,12 @@ theme EJS, Swig, or Nunjucks templates.
   source uses Markdown-it extensions or custom tags.
 
 `--convert-content DIR` converts Markdown content, preserves bodies and
-unconverted metadata, and normalizes `_posts`/`_drafts` paths. Theme templates,
-Hexo tag syntax, plugin output, and generated indexes remain review work. The
-converter removes the `<!-- more -->` excerpt marker and translates simple
-`<blockquote>`/`<footer>` blocks to Markdown outside fenced code; other raw HTML
-remains a validation-visible review item.
+unconverted metadata, and normalizes `_posts`/`_drafts` paths. ISO dates written
+with either dashes or Hexo's common `YYYY/MM/DD` form become Ziggy timestamps.
+Theme templates, Hexo tag syntax, plugin output, and generated indexes remain
+review work. The converter removes the `<!-- more -->` excerpt marker and
+translates simple `<blockquote>`/`<footer>` blocks to Markdown outside fenced
+code; other raw HTML remains a validation-visible review item.
 
 ## Verification loop
 

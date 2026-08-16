@@ -1163,7 +1163,7 @@ fn convertContent(
     _ = convertContentSummary(io, gpa, source_root, out_root, source, entries);
 }
 
-const AssetFilter = enum { all, jekyll_static, hexo_static };
+const AssetFilter = enum { all, vue_public, jekyll_static, hexo_static, hexo_theme_static };
 
 const AssetRoot = struct {
     source_path: []const u8,
@@ -1171,12 +1171,78 @@ const AssetRoot = struct {
     filter: AssetFilter = .all,
 };
 
+const HexoSettings = struct {
+    title: ?[]const u8 = null,
+    url: ?[]const u8 = null,
+    root: ?[]const u8 = null,
+    theme: ?[]const u8 = null,
+};
+
+fn yamlScalar(value: []const u8) []const u8 {
+    var trimmed = std.mem.trim(u8, value, " \t\r");
+    var quote: ?u8 = null;
+    var escaped = false;
+    for (trimmed, 0..) |c, i| {
+        if (quote) |active| {
+            if (active == '"' and c == '\\' and !escaped) {
+                escaped = true;
+                continue;
+            }
+            if (c == active and !escaped) quote = null;
+            escaped = false;
+            continue;
+        }
+        if (c == '"' or c == '\'') {
+            quote = c;
+        } else if (c == '#' and (i == 0 or trimmed[i - 1] == ' ' or trimmed[i - 1] == '\t')) {
+            trimmed = std.mem.trimEnd(u8, trimmed[0..i], " \t");
+            break;
+        }
+    }
+    if (trimmed.len >= 2 and
+        ((trimmed[0] == '"' and trimmed[trimmed.len - 1] == '"') or
+            (trimmed[0] == '\'' and trimmed[trimmed.len - 1] == '\'')))
+    {
+        return trimmed[1 .. trimmed.len - 1];
+    }
+    return trimmed;
+}
+
+/// Parse only Hexo's deterministic top-level scalar site settings. Nested YAML,
+/// aliases, and computed values remain migration review items.
+fn parseHexoSettings(src: []const u8) HexoSettings {
+    var result: HexoSettings = .{};
+    var lines = std.mem.splitScalar(u8, src, '\n');
+    while (lines.next()) |raw_line| {
+        if (raw_line.len == 0 or raw_line[0] == ' ' or raw_line[0] == '\t' or raw_line[0] == '#') continue;
+        const separator = std.mem.indexOfScalar(u8, raw_line, ':') orelse continue;
+        const key = std.mem.trim(u8, raw_line[0..separator], " \t\r");
+        const value = yamlScalar(raw_line[separator + 1 ..]);
+        if (value.len == 0) continue;
+        if (std.mem.eql(u8, key, "title")) result.title = value else if (std.mem.eql(u8, key, "url")) result.url = value else if (std.mem.eql(u8, key, "root")) result.root = value else if (std.mem.eql(u8, key, "theme")) result.theme = value;
+    }
+    return result;
+}
+
+/// NO_SLOP.md section 2.2a contract 2 (owned-result): the returned theme path,
+/// when present, belongs to the caller.
+fn hexoThemeSource(io: Io, gpa: Allocator, source_root: Io.Dir, theme: []const u8) ?[]const u8 {
+    var themes = source_root.openDir(io, "themes", .{ .iterate = true }) catch return null;
+    defer themes.close(io);
+    var it = themes.iterateAssumeFirstIteration();
+    while (it.next(io) catch return null) |entry| {
+        if (entry.kind != .directory or !std.ascii.eqlIgnoreCase(entry.name, theme)) continue;
+        return std.fs.path.join(gpa, &.{ "themes", entry.name, "source" }) catch fatal.oom();
+    }
+    return null;
+}
+
 fn assetRoots(source: Source) []const AssetRoot {
     return switch (source) {
         .astro, .nextjs => &.{.{ .source_path = "public", .target_prefix = "" }},
         .gatsby => &.{.{ .source_path = "static", .target_prefix = "" }},
         .nuxt => &.{
-            .{ .source_path = "public", .target_prefix = "" },
+            .{ .source_path = "public", .target_prefix = "", .filter = .vue_public },
             .{ .source_path = "static", .target_prefix = "" },
         },
         .hugo => &.{.{ .source_path = "static", .target_prefix = "" }},
@@ -1190,6 +1256,8 @@ fn assetRoots(source: Source) []const AssetRoot {
         .eleventy => &.{
             .{ .source_path = "public", .target_prefix = "" },
             .{ .source_path = "assets", .target_prefix = "assets" },
+            .{ .source_path = "img", .target_prefix = "img" },
+            .{ .source_path = "images", .target_prefix = "images" },
         },
         .hexo => &.{.{ .source_path = "source", .target_prefix = "", .filter = .hexo_static }},
     };
@@ -1202,14 +1270,13 @@ fn renderableAssetSource(path: []const u8) bool {
 fn skipAssetSource(filter: AssetFilter, path: []const u8) bool {
     return switch (filter) {
         .all => false,
+        .vue_public => std.mem.eql(u8, path, "index.html"),
         .jekyll_static => hasAnyExtension(path, &.{ ".scss", ".sass", ".coffee" }),
         .hexo_static => renderableAssetSource(path),
+        .hexo_theme_static => renderableAssetSource(path) or hasAnyExtension(path, &.{ ".scss", ".sass", ".styl", ".less", ".coffee" }),
     };
 }
 
-/// Copy conventional source asset trees into a separate target. NO_SLOP.md
-/// section 2.2a contract 1 (self-freeing): all joined paths are released in
-/// the same iteration; no allocation escapes.
 const AssetSummary = struct {
     copied: usize = 0,
     collisions: usize = 0,
@@ -1217,89 +1284,112 @@ const AssetSummary = struct {
     roots_found: usize = 0,
 };
 
+/// NO_SLOP.md section 2.2a contract 1 (self-freeing): all walker and joined
+/// path allocations are released before return; only the pointed-to counters
+/// are updated.
+fn copyAssetRoot(io: Io, gpa: Allocator, source_root: Io.Dir, out_root: []const u8, source: Source, asset_root: AssetRoot, summary: *AssetSummary) void {
+    var dir = source_root.openDir(io, asset_root.source_path, .{ .iterate = true }) catch |err| switch (err) {
+        error.FileNotFound => return,
+        else => fatal.dir(asset_root.source_path, err),
+    };
+    defer dir.close(io);
+    summary.roots_found += 1;
+    var walker = dir.walk(gpa) catch |err| {
+        if (err == error.OutOfMemory) fatal.oom();
+        fatal.msg("error: unable to walk asset tree {s}: {t}\n", .{ asset_root.source_path, err });
+    };
+    defer walker.deinit();
+    while (walker.next(io) catch |err| fatal.msg(
+        "error: failed scanning asset tree {s}: {t}\n",
+        .{ asset_root.source_path, err },
+    )) |entry| {
+        if (entry.kind != .file) {
+            if (entry.kind != .directory) summary.skipped += 1;
+            continue;
+        }
+        if (source == .hexo and asset_root.filter == .hexo_static and
+            (std.mem.startsWith(u8, entry.path, "_posts/") or
+                std.mem.startsWith(u8, entry.path, "_drafts/")))
+        {
+            // Hexo post-asset folders are relocated according to permalink
+            // and post_asset_folder configuration; copying them under
+            // /_posts or /_drafts would assert a URL we cannot infer.
+            continue;
+        }
+        if (skipAssetSource(asset_root.filter, entry.path)) {
+            if (asset_root.filter == .vue_public and std.mem.eql(u8, entry.path, "index.html")) std.debug.print(
+                "  REVIEW public/index.html is a framework HTML template and was not copied over the Zigapagos root page; port its head metadata manually.\n",
+                .{},
+            );
+            continue;
+        }
+
+        const relative = if (asset_root.target_prefix.len == 0)
+            gpa.dupe(u8, entry.path) catch fatal.oom()
+        else
+            std.fs.path.join(gpa, &.{ asset_root.target_prefix, entry.path }) catch fatal.oom();
+        defer gpa.free(relative);
+        const out_path = std.fs.path.join(gpa, &.{ out_root, relative }) catch fatal.oom();
+        defer gpa.free(out_path);
+        if (std.fs.path.dirname(out_path)) |parent| Io.Dir.cwd().createDirPath(io, parent) catch |err| fatal.dir(parent, err);
+
+        const input = entry.dir.openFile(io, entry.basename, .{}) catch |err| fatal.file(entry.path, err);
+        defer input.close(io);
+        var output = openMigrationOutput(io, gpa, out_path, false);
+        defer {
+            output.file.close(io);
+            if (output.path_owned) gpa.free(output.path);
+        }
+        var read_buf: [64 * 1024]u8 = undefined;
+        var reader = input.reader(io, &read_buf);
+        var writer = output.file.writer(io, &.{});
+        _ = reader.interface.streamRemaining(&writer.interface) catch |err| fatal.file(entry.path, err);
+        writer.interface.flush() catch |err| fatal.file(output.path, err);
+        if (output.collided) {
+            summary.collisions += 1;
+            std.debug.print("  preserve {s} -> copied asset to {s}\n", .{ out_path, output.path });
+        } else {
+            summary.copied += 1;
+            std.debug.print("  asset -> {s}\n", .{output.path});
+        }
+    }
+}
+
+/// Copy conventional source asset trees into a separate target. NO_SLOP.md
+/// section 2.2a contract 1 (self-freeing): no allocation escapes.
 fn copyAssetsSummary(io: Io, gpa: Allocator, source_root: Io.Dir, out_root: []const u8, source: Source) AssetSummary {
     var target = Io.Dir.cwd().createDirPathOpen(io, out_root, .{}) catch |err| fatal.dir(out_root, err);
     target.close(io);
 
-    var copied: usize = 0;
-    var collisions: usize = 0;
-    var skipped: usize = 0;
-    var roots_found: usize = 0;
-    for (assetRoots(source)) |asset_root| {
-        var dir = source_root.openDir(io, asset_root.source_path, .{ .iterate = true }) catch |err| switch (err) {
-            error.FileNotFound => continue,
-            else => fatal.dir(asset_root.source_path, err),
-        };
-        defer dir.close(io);
-        roots_found += 1;
-        var walker = dir.walk(gpa) catch |err| {
-            if (err == error.OutOfMemory) fatal.oom();
-            fatal.msg("error: unable to walk asset tree {s}: {t}\n", .{ asset_root.source_path, err });
-        };
-        defer walker.deinit();
-        while (walker.next(io) catch |err| fatal.msg(
-            "error: failed scanning asset tree {s}: {t}\n",
-            .{ asset_root.source_path, err },
-        )) |entry| {
-            if (entry.kind != .file) {
-                if (entry.kind != .directory) skipped += 1;
-                continue;
-            }
-            if (source == .hexo and
-                (std.mem.startsWith(u8, entry.path, "_posts/") or
-                    std.mem.startsWith(u8, entry.path, "_drafts/")))
-            {
-                // Hexo post-asset folders are relocated according to permalink
-                // and post_asset_folder configuration; copying them under
-                // /_posts or /_drafts would assert a URL we cannot infer.
-                continue;
-            }
-            if (skipAssetSource(asset_root.filter, entry.path)) continue;
-
-            const relative = if (asset_root.target_prefix.len == 0)
-                gpa.dupe(u8, entry.path) catch fatal.oom()
-            else
-                std.fs.path.join(gpa, &.{ asset_root.target_prefix, entry.path }) catch fatal.oom();
-            defer gpa.free(relative);
-            const out_path = std.fs.path.join(gpa, &.{ out_root, relative }) catch fatal.oom();
-            defer gpa.free(out_path);
-            if (std.fs.path.dirname(out_path)) |parent| Io.Dir.cwd().createDirPath(io, parent) catch |err| fatal.dir(parent, err);
-
-            const input = entry.dir.openFile(io, entry.basename, .{}) catch |err| fatal.file(entry.path, err);
-            defer input.close(io);
-            var output = openMigrationOutput(io, gpa, out_path, false);
-            defer {
-                output.file.close(io);
-                if (output.path_owned) gpa.free(output.path);
-            }
-            var read_buf: [64 * 1024]u8 = undefined;
-            var reader = input.reader(io, &read_buf);
-            var writer = output.file.writer(io, &.{});
-            _ = reader.interface.streamRemaining(&writer.interface) catch |err| fatal.file(entry.path, err);
-            writer.interface.flush() catch |err| fatal.file(output.path, err);
-            if (output.collided) {
-                collisions += 1;
-                std.debug.print("  preserve {s} -> copied asset to {s}\n", .{ out_path, output.path });
-            } else {
-                copied += 1;
-                std.debug.print("  asset -> {s}\n", .{output.path});
+    var summary: AssetSummary = .{};
+    for (assetRoots(source)) |asset_root| copyAssetRoot(io, gpa, source_root, out_root, source, asset_root, &summary);
+    if (source == .hexo) {
+        const config = source_root.readFileAlloc(io, "_config.yml", gpa, .limited(1024 * 1024)) catch null;
+        if (config) |bytes| {
+            defer gpa.free(bytes);
+            if (parseHexoSettings(bytes).theme) |theme| {
+                if (hexoThemeSource(io, gpa, source_root, theme)) |theme_source| {
+                    defer gpa.free(theme_source);
+                    copyAssetRoot(io, gpa, source_root, out_root, source, .{
+                        .source_path = theme_source,
+                        .target_prefix = "",
+                        .filter = .hexo_theme_static,
+                    }, &summary);
+                } else {
+                    std.debug.print("  REVIEW configured Hexo theme '{s}' has no readable source asset tree.\n", .{theme});
+                }
             }
         }
     }
     std.debug.print(
         "Asset copy: {d} written, {d} collision version(s), {d} non-file entry(s) skipped, {d} conventional root(s) found.\n",
-        .{ copied, collisions, skipped, roots_found },
+        .{ summary.copied, summary.collisions, summary.skipped, summary.roots_found },
     );
-    if (roots_found == 0) std.debug.print(
+    if (summary.roots_found == 0) std.debug.print(
         "  REVIEW no conventional public/static asset root was found; inspect framework config and copy its declared passthrough/static sources manually.\n",
         .{},
     );
-    return .{
-        .copied = copied,
-        .collisions = collisions,
-        .skipped = skipped,
-        .roots_found = roots_found,
-    };
+    return summary;
 }
 
 fn copyAssets(io: Io, gpa: Allocator, source_root: Io.Dir, out_root: []const u8, source: Source) void {
@@ -1428,17 +1518,77 @@ fn targetProjectName(gpa: Allocator, target: []const u8) []const u8 {
     return result;
 }
 
-fn emitTargetConfig(gpa: Allocator, with_assets: bool) []const u8 {
+const TargetMetadata = struct {
+    title: []const u8 = "Migrated site",
+    host_url: []const u8 = "https://example.com",
+    url_path_prefix: ?[]const u8 = null,
+};
+
+/// NO_SLOP.md section 2.2a contract 2 (owned-result): caller frees the escaped
+/// string.
+fn configEscape(gpa: Allocator, value: []const u8) []const u8 {
+    var aw: std.Io.Writer.Allocating = .init(gpa);
+    const w = &aw.writer;
+    for (value) |c| switch (c) {
+        '"' => w.writeAll("\\\"") catch fatal.oom(),
+        '\\' => w.writeAll("\\\\") catch fatal.oom(),
+        '\n' => w.writeAll("\\n") catch fatal.oom(),
+        '\r' => w.writeAll("\\r") catch fatal.oom(),
+        '\t' => w.writeAll("\\t") catch fatal.oom(),
+        else => w.writeByte(c) catch fatal.oom(),
+    };
+    return aw.toOwnedSlice() catch fatal.oom();
+}
+
+fn urlOrigin(url: []const u8) ?[]const u8 {
+    const authority_start = if (std.mem.startsWith(u8, url, "https://"))
+        "https://".len
+    else if (std.mem.startsWith(u8, url, "http://"))
+        "http://".len
+    else
+        return null;
+    const tail = url[authority_start..];
+    const authority_end = std.mem.indexOfAny(u8, tail, "/?#") orelse tail.len;
+    if (authority_end == 0) return null;
+    return url[0 .. authority_start + authority_end];
+}
+
+fn metadataFromHexoSettings(hexo: HexoSettings) TargetMetadata {
+    var result: TargetMetadata = .{};
+    if (hexo.title) |title| result.title = title;
+    if (hexo.url) |url| if (urlOrigin(url)) |origin| {
+        result.host_url = origin;
+    };
+    if (hexo.root) |root| {
+        const prefix = std.mem.trim(u8, root, "/ \t\r");
+        if (prefix.len > 0) result.url_path_prefix = prefix;
+    }
+    return result;
+}
+
+/// NO_SLOP.md section 2.2a contract 2 (owned-result): caller frees the emitted
+/// config. All escaping scratch is self-freed.
+fn emitTargetConfig(gpa: Allocator, metadata: TargetMetadata, with_assets: bool) []const u8 {
+    const title = configEscape(gpa, metadata.title);
+    defer gpa.free(title);
+    const host = configEscape(gpa, metadata.host_url);
+    defer gpa.free(host);
+    const prefix_line = if (metadata.url_path_prefix) |prefix| blk: {
+        const safe = configEscape(gpa, prefix);
+        defer gpa.free(safe);
+        break :blk std.fmt.allocPrint(gpa, "    .url_path_prefix = \"{s}\",\n", .{safe}) catch fatal.oom();
+    } else gpa.dupe(u8, "") catch fatal.oom();
+    defer gpa.free(prefix_line);
     return std.fmt.allocPrint(gpa,
         \\Site {{
-        \\    .title = "Migrated site",
-        \\    .host_url = "https://example.com",
+        \\    .title = "{s}",
+        \\    .host_url = "{s}",
         \\    .content_dir_path = "content",
         \\    .layouts_dir_path = "layouts",
         \\    .assets_dir_path = "assets",
-        \\{s}}}
+        \\{s}{s}}}
         \\
-    , .{if (with_assets) "    .static_assets = [\"**\"],\n" else ""}) catch fatal.oom();
+    , .{ title, host, prefix_line, if (with_assets) "    .static_assets = [\"**\"],\n" else "" }) catch fatal.oom();
 }
 
 fn emitTargetBuildSh(gpa: Allocator, has_islands: bool) []const u8 {
@@ -1525,7 +1675,11 @@ fn assembleTarget(
     writeTargetFile(io, gpa, target, ".gitignore", target_gitignore);
     writeTargetFile(io, gpa, target, "AGENTS.md", @embedFile("init/AGENTS.md"));
     writeTargetFile(io, gpa, target, "CLAUDE.md", @embedFile("init/CLAUDE.md"));
-    writeTargetFile(io, gpa, target, "zigapagos.ziggy", emitTargetConfig(a, asset_summary.copied > 0));
+    const metadata: TargetMetadata = if (source == .hexo) blk: {
+        const config = source_root.readFileAlloc(io, "_config.yml", a, .limited(1024 * 1024)) catch break :blk .{};
+        break :blk metadataFromHexoSettings(parseHexoSettings(config));
+    } else .{};
+    writeTargetFile(io, gpa, target, "zigapagos.ziggy", emitTargetConfig(a, metadata, asset_summary.copied > 0));
     writeTargetFile(io, gpa, target, "build.sh", emitTargetBuildSh(a, island_count > 0));
     if (island_count > 0) {
         const project_name = targetProjectName(a, target);
@@ -2446,12 +2600,39 @@ test "target containment uses path component boundaries" {
 
 test "target config publishes copied assets only when the copy wrote files" {
     const gpa = std.testing.allocator;
-    const with_assets = emitTargetConfig(gpa, true);
+    const with_assets = emitTargetConfig(gpa, .{}, true);
     defer gpa.free(with_assets);
-    const without_assets = emitTargetConfig(gpa, false);
+    const without_assets = emitTargetConfig(gpa, .{}, false);
     defer gpa.free(without_assets);
     try std.testing.expect(std.mem.indexOf(u8, with_assets, ".static_assets = [\"**\"]") != null);
     try std.testing.expect(std.mem.indexOf(u8, without_assets, ".static_assets") == null);
+}
+
+test "Hexo top-level settings produce safe target metadata" {
+    const settings = parseHexoSettings(
+        "title: 'Next Level Developer'\nurl: https://example.com/blog\nroot: /blog/\ntheme: daily # local theme\n",
+    );
+    try std.testing.expectEqualStrings("Next Level Developer", settings.title.?);
+    try std.testing.expectEqualStrings("https://example.com/blog", settings.url.?);
+    try std.testing.expectEqualStrings("daily", settings.theme.?);
+    try std.testing.expectEqualStrings("https://example.com", urlOrigin(settings.url.?).?);
+    const metadata = metadataFromHexoSettings(settings);
+    try std.testing.expectEqualStrings("Next Level Developer", metadata.title);
+    try std.testing.expectEqualStrings("https://example.com", metadata.host_url);
+    try std.testing.expectEqualStrings("blog", metadata.url_path_prefix.?);
+    const config = emitTargetConfig(std.testing.allocator, metadata, true);
+    defer std.testing.allocator.free(config);
+    try std.testing.expect(std.mem.indexOf(u8, config, ".url_path_prefix = \"blog\"") != null);
+}
+
+test "Hexo YAML comments respect whitespace and quoted hashes" {
+    const settings = parseHexoSettings(
+        "theme: # intentionally unset\nroot:\t# also unset\ntitle: \"Hash # inside\" # trailing comment\nurl: https://example.com/#fragment\n",
+    );
+    try std.testing.expectEqual(null, settings.theme);
+    try std.testing.expectEqual(null, settings.root);
+    try std.testing.expectEqualStrings("Hash # inside", settings.title.?);
+    try std.testing.expectEqualStrings("https://example.com/#fragment", settings.url.?);
 }
 
 test "runtime paths reject JSON-breaking characters" {

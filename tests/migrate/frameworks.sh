@@ -176,7 +176,7 @@ grep -xF 'nuxt-robots' "$WORK/nuxt-assets/robots.txt" || fail "Nuxt public asset
 # Plain Vue has no Nuxt directory contract. Its complete src/**/*.vue tree,
 # including a root-level App.vue, must still be visible in the worklist.
 VUE="$WORK/vue"
-mkdir -p "$VUE/src/features"
+mkdir -p "$VUE/src/features" "$VUE/public"
 cat > "$VUE/package.json" <<'JSON'
 {"dependencies":{"vue":"3.5.0"}}
 JSON
@@ -186,10 +186,19 @@ VUE
 cat > "$VUE/src/features/Room.vue" <<'VUE'
 <template><section>Room</section></template>
 VUE
+cat > "$VUE/public/index.html" <<'HTML'
+<div id="app"><%= BASE_URL %></div>
+HTML
 "$ZIGAPAGOS" migrate "$VUE" --copy-assets "$WORK/vue-assets" -o "$WORK/VUE-MIGRATION.md" >"$WORK/vue.log" 2>&1
 grep -q 'src/App.vue' "$WORK/VUE-MIGRATION.md" || fail "plain Vue App.vue missing from worklist"
 grep -q 'src/features/Room.vue' "$WORK/VUE-MIGRATION.md" || fail "plain Vue nested SFC missing from worklist"
-grep -q 'REVIEW no conventional public/static asset root was found' "$WORK/vue.log" || fail "missing Vue asset root was not made review-visible"
+[[ ! -e "$WORK/vue-assets/index.html" ]] || fail "Vue application template was published as a static homepage"
+grep -q 'REVIEW .*public/index.html.*framework HTML template' "$WORK/vue.log" || fail "skipped Vue application template was not made review-visible"
+VUE_TARGET="$WORK/vue-target"
+"$ZIGAPAGOS" migrate "$VUE" --target "$VUE_TARGET" >"$WORK/vue-target.log" 2>&1
+( cd "$VUE_TARGET" && ZIGAPAGOS_BIN="$ZIGAPAGOS" bash build.sh ) || fail "assembled Vue target build failed"
+grep -q 'Migration placeholder' "$VUE_TARGET/zig-out/site/index.html" || fail "Vue application template replaced the assembled homepage"
+! grep -q '<%= BASE_URL %>' "$VUE_TARGET/zig-out/site/index.html" || fail "Vue template syntax leaked into the assembled homepage"
 if "$ZIGAPAGOS" migrate "$VUE" --scaffold "$WORK/vue-components" -o "$WORK/VUE-SCAFFOLD.md" >"$WORK/vue-scaffold.log" 2>&1; then
   fail "Vue accepted unsupported --scaffold conversion"
 fi
@@ -260,6 +269,9 @@ permalink: /hello/
 tags: [news]
 ---
 # Jekyll body
+{% highlight html linenos %}
+<html><body>Example markup</body></html>
+{% endhighlight %}
 MD
 cat > "$JEKYLL/_includes/card.html" <<'HTML'
 <article>{{ include.title }}</article>
@@ -275,6 +287,8 @@ grep -xF '.draft = true,' "$JEKYLL_OUT" || fail "Jekyll published state was not 
 grep -q 'migration_frontmatter' "$JEKYLL_OUT" || fail "unconverted Jekyll frontmatter was discarded"
 grep -q 'permalink: /hello/' "$JEKYLL_OUT" || fail "Jekyll permalink was not preserved for review"
 grep -q 'migration_invalid_date = "2026-02-30"' "$JEKYLL_OUT" || fail "invalid Jekyll date was not preserved"
+grep -q '^```html$' "$JEKYLL_OUT" || fail "Jekyll highlight tag was not converted to a code fence"
+[[ "$(grep -c '<html><body>Example markup</body></html>' "$JEKYLL_OUT")" == 1 ]] || fail "Jekyll highlighted code was not preserved"
 grep -q 'REVIEW .*unconverted frontmatter' "$JEKYLL_LOG" || fail "unconverted frontmatter warning was not printed"
 grep -q 'REVIEW .*invalid date' "$JEKYLL_LOG" || fail "invalid date warning was not printed"
 grep -xF 'jekyll-image' "$WORK/jekyll-assets/assets/img/card.txt" || fail "Jekyll asset path lost its public assets/ prefix"
@@ -296,7 +310,7 @@ grep -q -- '--target DIR' "$MIGRATE_HELP" || fail "migrate help omits whole-targ
 # Eleventy: conventional config detection, private template inventory, and
 # Markdown conversion coexist without treating _includes/_layouts as pages.
 ELEVENTY="$WORK/eleventy"
-mkdir -p "$ELEVENTY/src/_includes" "$ELEVENTY/src/_layouts" "$ELEVENTY/src/_data" "$ELEVENTY/src/writing" "$ELEVENTY/public"
+mkdir -p "$ELEVENTY/src/_includes" "$ELEVENTY/src/_layouts" "$ELEVENTY/src/_data" "$ELEVENTY/src/writing" "$ELEVENTY/public" "$ELEVENTY/img"
 : > "$ELEVENTY/.eleventy.js"
 cat > "$ELEVENTY/package.json" <<'JSON'
 {"devDependencies":{"@11ty/eleventy":"3.1.5"}}
@@ -313,6 +327,7 @@ MD
 : > "$ELEVENTY/src/_layouts/base.njk"
 echo '{"siteName":"Example"}' > "$ELEVENTY/src/_data/site.json"
 printf 'eleventy-icon\n' > "$ELEVENTY/public/favicon.ico"
+printf 'eleventy-logo\n' > "$ELEVENTY/img/logo.txt"
 "$ZIGAPAGOS" migrate "$ELEVENTY" --convert-content "$WORK/eleventy-content" --copy-assets "$WORK/eleventy-assets" -o "$WORK/ELEVENTY-MIGRATION.md"
 ELEVENTY_OUT="$WORK/eleventy-content/writing/hello.smd"
 grep -q 'Eleventy (11ty)' "$WORK/ELEVENTY-MIGRATION.md" || fail "Eleventy was not auto-detected"
@@ -323,19 +338,26 @@ grep -q 'src/_data/site.json' "$WORK/ELEVENTY-MIGRATION.md" || fail "Eleventy da
 grep -q 'permalink: /hello/' "$ELEVENTY_OUT" || fail "Eleventy permalink was not preserved for review"
 grep -xF '# Eleventy body' "$ELEVENTY_OUT" || fail "Eleventy Markdown body was not preserved"
 grep -xF 'eleventy-icon' "$WORK/eleventy-assets/favicon.ico" || fail "Eleventy public asset was not copied at its URL path"
+grep -xF 'eleventy-logo' "$WORK/eleventy-assets/img/logo.txt" || fail "Eleventy root img asset was not copied at its URL path"
 
 # Hexo: package/structure disambiguates its shared _config.yml name from
 # Jekyll, source/_posts paths normalize, drafts stay drafts, and theme EJS is
 # inventoried without claiming template conversion.
 HEXO="$WORK/hexo"
-mkdir -p "$HEXO/source/_posts" "$HEXO/source/_drafts" "$HEXO/source/images" "$HEXO/themes/daily/layout"
-: > "$HEXO/_config.yml"
+mkdir -p "$HEXO/source/_posts" "$HEXO/source/_drafts" "$HEXO/source/images" "$HEXO/themes/Daily/layout" "$HEXO/themes/Daily/source/images" "$HEXO/themes/Daily/source/js" "$HEXO/themes/Daily/source/css"
+cat > "$HEXO/_config.yml" <<'YML'
+title: Next Level Developer
+url: https://nextleveldeveloper.com
+root: /
+theme: daily
+YML
 cat > "$HEXO/package.json" <<'JSON'
 {"dependencies":{"hexo":"7.3.0"}}
 JSON
 cat > "$HEXO/source/_posts/hello.md" <<'MD'
 ---
 title: Hello Hexo
+date: 2016/08/19
 tags: [news]
 categories: [writing]
 ---
@@ -355,17 +377,29 @@ MD
 printf 'hexo-image\n' > "$HEXO/source/images/photo.txt"
 mkdir -p "$HEXO/source/_posts/hello"
 printf 'relocated-post-image\n' > "$HEXO/source/_posts/hello/photo.txt"
-: > "$HEXO/themes/daily/layout/post.ejs"
+: > "$HEXO/themes/Daily/layout/post.ejs"
+printf 'theme-image\n' > "$HEXO/themes/Daily/source/images/theme.txt"
+printf 'theme-js\n' > "$HEXO/themes/Daily/source/js/app.js"
+printf '.theme {}\n' > "$HEXO/themes/Daily/source/css/style.scss"
 "$ZIGAPAGOS" migrate "$HEXO" --convert-content "$WORK/hexo-content" --copy-assets "$WORK/hexo-assets" -o "$WORK/HEXO-MIGRATION.md"
 grep -q 'Hexo' "$WORK/HEXO-MIGRATION.md" || fail "Hexo was not auto-detected"
-grep -q 'themes/daily/layout/post.ejs' "$WORK/HEXO-MIGRATION.md" || fail "Hexo theme layout missing from worklist"
+grep -q 'themes/Daily/layout/post.ejs' "$WORK/HEXO-MIGRATION.md" || fail "Hexo theme layout missing from worklist"
 grep -q 'tags: \[news\]' "$WORK/hexo-content/posts/hello.smd" || fail "Hexo tags were not preserved for review"
+grep -xF '.date = @date("2016-08-19T00:00:00"),' "$WORK/hexo-content/posts/hello.smd" || fail "Hexo slash-form date was not normalized"
 grep -xF '.draft = true,' "$WORK/hexo-content/drafts/idea.smd" || fail "Hexo draft directory was not preserved"
 ! grep -q '<!-- more -->' "$WORK/hexo-content/posts/hello.smd" || fail "Hexo excerpt marker survived conversion"
 grep -xF '> A quotation' "$WORK/hexo-content/posts/hello.smd" || fail "Hexo blockquote was not normalized"
 grep -xF 'hexo-image' "$WORK/hexo-assets/images/photo.txt" || fail "Hexo static source asset was not copied at its URL path"
 [[ ! -e "$WORK/hexo-assets/_posts/hello.md" ]] || fail "Hexo Markdown source was copied as a static asset"
 [[ ! -e "$WORK/hexo-assets/_posts/hello/photo.txt" ]] || fail "Hexo config-routed post asset was copied at a false /_posts URL"
+grep -xF 'theme-image' "$WORK/hexo-assets/images/theme.txt" || fail "configured Hexo theme image was not copied"
+grep -xF 'theme-js' "$WORK/hexo-assets/js/app.js" || fail "configured Hexo theme JavaScript was not copied"
+[[ ! -e "$WORK/hexo-assets/css/style.scss" ]] || fail "Hexo theme pipeline SCSS was copied as a public static asset"
+HEXO_TARGET="$WORK/hexo-target"
+"$ZIGAPAGOS" migrate "$HEXO" --target "$HEXO_TARGET"
+grep -xF '    .title = "Next Level Developer",' "$HEXO_TARGET/zigapagos.ziggy" || fail "Hexo title was not carried into the target config"
+grep -xF '    .host_url = "https://nextleveldeveloper.com",' "$HEXO_TARGET/zigapagos.ziggy" || fail "Hexo URL was not carried into the target config"
+( cd "$HEXO_TARGET" && "$ZIGAPAGOS" validate ) || fail "assembled Hexo target is not valid Zigapagos input"
 mkdir -p "$VALIDATE/content/writing" "$VALIDATE/content/drafts"
 cp tests/rendering/simple/content/index.smd "$VALIDATE/content/writing/index.smd"
 cp tests/rendering/simple/content/index.smd "$VALIDATE/content/drafts/index.smd"
