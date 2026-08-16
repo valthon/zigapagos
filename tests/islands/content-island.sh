@@ -9,7 +9,7 @@
 # hyphenated alias the islands pass (src/islands/pass.zig) recognizes
 # identically to `<island>`, and it sails through validation unmodified.
 #
-# The check is deliberately three-part, exactly mirroring
+# The check is deliberately multi-part, exactly mirroring
 # tests/islands/undeclared-island.sh's discipline, so a broken fixture cannot
 # make any one part look like it proves something it doesn't:
 #   (1) POSITIVE: a page with a `<z-island>` in an `=html` fence builds
@@ -28,6 +28,13 @@
 #   (5) CONTROL: the same fixture with the fence removed entirely builds
 #       clean — so (1) and (2) are attributable to the fence content, not to
 #       some unrelated break in the shared fixture.
+#   (6) MARKDOWN SLOTS: `markdown-slot-NAME="section-id"` moves native
+#       SuperMD sections into named island slots, preserving Markdown rendering
+#       and fenced-code highlighting without leaking the source sections.
+#   (7) MISSING SLOT SECTION: a reference to an unknown section fails loudly
+#       with the component and missing section id in the diagnostic.
+#   (8) UNUSED SLOT SECTION: a marked section that no island references fails
+#       instead of silently disappearing from the page.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 REPO="$(pwd)"
@@ -100,6 +107,21 @@ EOF
 export interface Props { start: number; page_title: string; site_title: string }
 export default function Counter({ start, page_title, site_title }: Props) {
   return `CONTENT-ISLAND-SSR-${start}-${page_title}-${site_title}`;
+}
+EOF
+  cat > "$dir/components/Tabs.island.tsx" <<'EOF'
+import type { ComponentChildren } from "preact";
+export interface Props { label: string }
+type SlotProps = Props & {
+  children?: ComponentChildren;
+  slots?: Record<string, ComponentChildren>;
+};
+export default function Tabs({ label, children, slots }: SlotProps) {
+  return <section data-tabs={label}>
+    <div data-panel="default">{children}</div>
+    <div data-panel="admin">{slots?.admin}</div>
+    <div data-panel="terminal">{slots?.terminal}</div>
+  </section>;
 }
 EOF
   {
@@ -221,4 +243,106 @@ release "$SITE_CTRL" "$OUT_CTRL" >"$WORK/ctrl.log" 2>&1 \
 [[ -f "$OUT_CTRL/index.html" ]] || fail "control build did not emit index.html"
 echo "PASS: the same fixture with the fence removed builds clean (control)"
 
-echo "ALL PASS: islands in content via a hyphenated <z-island> inside an =html fence"
+# --- (6) native SuperMD sections become rendered island slots ---------------
+SITE_SLOTS="$WORK/slots"; OUT_SLOTS="$WORK/out-slots"
+write_site "$SITE_SLOTS" '```=html
+<z-island src="components/Tabs.island.tsx" client:load
+          :props='"'"'{ .label = "Setup" }'"'"'
+          markdown-slot="intro"
+          markdown-slot-admin="admin-steps"
+          markdown-slot-terminal="terminal-steps"></z-island>
+```
+
+[]($section.id('"'"'intro'"'"').attrs('"'"'island-slot'"'"'))
+
+Start with the **shared prerequisites**.
+
+[]($section.id('"'"'admin-steps'"'"').attrs('"'"'island-slot'"'"'))
+
+**Use the admin UI.**
+
+```zig
+const admin_answer: u8 = 42;
+```
+
+[]($section.id('"'"'terminal-steps'"'"').attrs('"'"'island-slot'"'"'))
+
+_Use the terminal._
+
+```js
+const terminalAnswer = 42;
+```
+
+[]($section.attrs('"'"'island-slot-end'"'"'))'
+release "$SITE_SLOTS" "$OUT_SLOTS" >"$WORK/slots.log" 2>&1 \
+  || { sed -n '1,80p' "$WORK/slots.log"; fail "rendered-Markdown slot build failed"; }
+INDEX_SLOTS="$OUT_SLOTS/index.html"
+grep -q 'data-z-slot="admin"' "$INDEX_SLOTS" \
+  || { cat "$INDEX_SLOTS"; fail "admin named slot was not SSR'd"; }
+grep -q 'data-z-slot="terminal"' "$INDEX_SLOTS" \
+  || { cat "$INDEX_SLOTS"; fail "terminal named slot was not SSR'd"; }
+grep -q 'data-z-slot="default"' "$INDEX_SLOTS" \
+  || { cat "$INDEX_SLOTS"; fail "default Markdown slot was not SSR'd as children"; }
+grep -q 'shared prerequisites' "$INDEX_SLOTS" \
+  || { cat "$INDEX_SLOTS"; fail "default slot Markdown was not rendered"; }
+grep -q '<strong>Use the admin UI.</strong>' "$INDEX_SLOTS" \
+  || { cat "$INDEX_SLOTS"; fail "admin slot Markdown was not rendered"; }
+grep -q '<em>Use the terminal.</em>' "$INDEX_SLOTS" \
+  || { cat "$INDEX_SLOTS"; fail "terminal slot Markdown was not rendered"; }
+grep -q 'admin_answer' "$INDEX_SLOTS" \
+  || { cat "$INDEX_SLOTS"; fail "admin slot fenced code was not rendered"; }
+grep -q 'terminalAnswer' "$INDEX_SLOTS" \
+  || { cat "$INDEX_SLOTS"; fail "terminal slot fenced code was not rendered"; }
+grep -q '<code class="zig"><span class="keyword">const</span>' "$INDEX_SLOTS" \
+  || { cat "$INDEX_SLOTS"; fail "admin slot Zig fence did not receive tree-sitter highlighting"; }
+grep -q '<code class="js"><span class="keyword">const</span>' "$INDEX_SLOTS" \
+  || { cat "$INDEX_SLOTS"; fail "terminal slot JS fence did not receive tree-sitter highlighting"; }
+grep -q 'data-z-slots="z-island-0"' "$INDEX_SLOTS" \
+  || { cat "$INDEX_SLOTS"; fail "named slots are missing from the hydration payload"; }
+if grep -q '<z-markdown-slot-source' "$INDEX_SLOTS"; then
+  cat "$INDEX_SLOTS"
+  fail "a Markdown slot source reservoir leaked into emitted HTML"
+fi
+grep -q '<p>More prose.</p>' "$INDEX_SLOTS" \
+  || { cat "$INDEX_SLOTS"; fail "ordinary prose after island-slot-end was not rendered"; }
+if grep 'data-z-slots="z-island-0"' "$INDEX_SLOTS" | grep -q 'More prose'; then
+  cat "$INDEX_SLOTS"
+  fail "island-slot-end left following page prose inside the final slot"
+fi
+echo "PASS: named island slots receive native rendered Markdown and highlighted code fences"
+
+# --- (7) unknown referenced section: actionable build failure --------------
+SITE_MISSING="$WORK/missing-slot"; OUT_MISSING="$WORK/out-missing-slot"
+write_site "$SITE_MISSING" '```=html
+<z-island src="components/Tabs.island.tsx" client:load
+          :props='"'"'{ .label = "Setup" }'"'"'
+          markdown-slot-admin="does-not-exist"></z-island>
+```'
+set +e
+release "$SITE_MISSING" "$OUT_MISSING" >"$WORK/missing-slot.log" 2>&1
+MISSING_RC=$?
+set -e
+[[ "$MISSING_RC" -ne 0 ]] || fail "an unknown markdown-slot section built successfully"
+grep -q "components/Tabs.island.tsx" "$WORK/missing-slot.log" \
+  || { sed -n '1,80p' "$WORK/missing-slot.log"; fail "missing-section diagnostic lacks component source"; }
+grep -q "does-not-exist" "$WORK/missing-slot.log" \
+  || { sed -n '1,80p' "$WORK/missing-slot.log"; fail "missing-section diagnostic lacks section id"; }
+echo "PASS: an unknown markdown-slot section fails with component and section context"
+
+# --- (8) unreferenced marked section: never silently drop page content ------
+SITE_UNUSED="$WORK/unused-slot"; OUT_UNUSED="$WORK/out-unused-slot"
+write_site "$SITE_UNUSED" '[]($section.id('"'"'orphaned-steps'"'"').attrs('"'"'island-slot'"'"'))
+
+This content must not disappear silently.'
+set +e
+release "$SITE_UNUSED" "$OUT_UNUSED" >"$WORK/unused-slot.log" 2>&1
+UNUSED_RC=$?
+set -e
+[[ "$UNUSED_RC" -ne 0 ]] || fail "an unreferenced island-slot section built successfully"
+grep -q "orphaned-steps" "$WORK/unused-slot.log" \
+  || { sed -n '1,80p' "$WORK/unused-slot.log"; fail "unused-section diagnostic lacks section id"; }
+grep -q "not referenced" "$WORK/unused-slot.log" \
+  || { sed -n '1,80p' "$WORK/unused-slot.log"; fail "unused-section diagnostic is not actionable"; }
+echo "PASS: an unused island-slot section fails instead of silently dropping content"
+
+echo "ALL PASS: content islands support Scripty props and rendered-Markdown slots"

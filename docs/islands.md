@@ -326,7 +326,68 @@ the page, component, and expression in the diagnostic.
 Everything else about authoring an island — static Ziggy props, literal
 `prop-NAME` overrides, and raw-HTML slots (`<template slot="…">` children
 inside the fence, exactly as in a layout) — works the same in content as it does
-in a layout. The slot body is still raw HTML, not rendered Markdown.
+in a layout.
+
+### Rendered Markdown children and named slots
+
+Keep the island itself in its validated `=html` fence, then reference native
+SuperMD content sections with `markdown-slot="SECTION_ID"` for `children` or
+`markdown-slot-NAME="SECTION_ID"` for a named slot. Mark each source section
+with the reserved `island-slot` attribute:
+
+`````markdown
+```=html
+<z-island src="components/SetupTabs.island.tsx" client:load
+          markdown-slot="intro"
+          markdown-slot-admin="admin-steps"
+          markdown-slot-terminal="terminal-steps"></z-island>
+```
+
+[]($section.id('intro').attrs('island-slot'))
+
+Start with the **shared prerequisites**.
+
+[]($section.id('admin-steps').attrs('island-slot'))
+
+Use the admin UI:
+
+```zig
+const answer: u8 = 42;
+```
+
+[]($section.id('terminal-steps').attrs('island-slot'))
+
+Use the terminal:
+
+```sh
+zig build
+```
+
+[]($section.attrs('island-slot-end'))
+
+Ordinary page prose resumes here.
+`````
+
+The unadorned `markdown-slot` becomes the component's `children`;
+`markdown-slot-admin` and `markdown-slot-terminal` become `slots.admin` and
+`slots.terminal`. The section bodies go through the ordinary SuperMD pipeline,
+so links, emphasis, content directives, fenced-code language checking, and
+tree-sitter highlighting all behave exactly as they do in page prose.
+
+An `island-slot` section is a source reservoir, not standalone page content: it
+is removed from its original position and emitted only through the island slot.
+Every marked section must be referenced, and every reference must name a marked
+section; either mismatch fails the build instead of silently dropping or
+duplicating content. Each island may reference a logical slot name only once;
+`markdown-slot` and `markdown-slot-default` both mean the reserved `default`
+slot and therefore conflict. A source may be referenced by more than one island.
+
+Use the heading-less section form above when the heading is only an authoring
+label. A heading section such as
+`## [Admin]($section.id('admin').attrs('island-slot'))` includes that rendered
+heading in the slot. A source ends when the next section starts. Use the
+heading-less `island-slot-end` marker after the final source when ordinary page
+prose follows; the marker emits no wrapper or content of its own.
 
 ## Typed props contract (build-time)
 
