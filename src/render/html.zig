@@ -19,6 +19,63 @@ const HtmlSafe = @import("superhtml").HtmlSafe;
 
 const log = std.log.scoped(.render);
 
+const OpenSection = enum { none, div, markdown_slot_source };
+
+fn closeSection(w: *Writer, open: *OpenSection) !void {
+    switch (open.*) {
+        .none => {},
+        .div => try w.writeAll("</div>"),
+        .markdown_slot_source => try w.writeAll("</z-markdown-slot-source>"),
+    }
+    open.* = .none;
+}
+
+fn hasDirectiveAttr(d: *const supermd.Directive, name: []const u8) bool {
+    if (d.attrs) |attrs| {
+        for (attrs) |attr| {
+            if (std.mem.eql(u8, attr, name)) return true;
+        }
+    }
+    return false;
+}
+
+fn isMarkdownSlotSource(d: *const supermd.Directive, full_page: bool) bool {
+    return full_page and d.kind == .section and d.id != null and
+        hasDirectiveAttr(d, "island-slot");
+}
+
+fn isMarkdownSlotEnd(d: *const supermd.Directive, full_page: bool) bool {
+    return full_page and d.kind == .section and
+        hasDirectiveAttr(d, "island-slot-end");
+}
+
+fn openSection(
+    w: *Writer,
+    d: *const supermd.Directive,
+    full_page: bool,
+    open: *OpenSection,
+) !void {
+    try closeSection(w, open);
+    if (isMarkdownSlotEnd(d, full_page)) return;
+    if (isMarkdownSlotSource(d, full_page)) {
+        open.* = .markdown_slot_source;
+        try w.print("<z-markdown-slot-source data-z-id=\"{f}\">", .{
+            HtmlSafe{ .bytes = d.id.? },
+        });
+        return;
+    }
+
+    open.* = .div;
+    try w.writeAll("<div");
+    if (d.id) |id| try w.print(" id=\"{f}\"", .{HtmlSafe{ .bytes = id }});
+    if (d.attrs) |attrs| {
+        try w.writeAll(" class=\"");
+        for (attrs) |attr| try w.print("{f} ", .{HtmlSafe{ .bytes = attr }});
+        try w.writeAll("\"");
+    }
+    try w.writeAll(">");
+}
+
 pub fn html(
     gpa: std.mem.Allocator,
     ctx: *const context.Root,
@@ -43,7 +100,7 @@ pub fn html(
         break :blk .{ .node = start, .dir = .enter };
     } else it.next();
 
-    var open_div = false;
+    var open_section: OpenSection = .none;
     var table_in_header = false;
     var table_alignments: []const u8 = &.{};
     var table_cell_id: usize = 0;
@@ -146,19 +203,7 @@ pub fn html(
                 switch (ev.dir) {
                     .enter => {
                         if (node.getDirective()) |d| {
-                            if (open_div) {
-                                try w.print("</div>", .{});
-                            }
-                            open_div = true;
-                            try w.print("<div", .{});
-                            if (d.id) |id| try w.print(" id=\"{f}\"", .{HtmlSafe{ .bytes = id }});
-                            if (d.attrs) |attrs| {
-                                try w.print(" class=\"", .{});
-                                for (attrs) |attr| try w.print("{f} ", .{HtmlSafe{ .bytes = attr }});
-                                try w.print("\"", .{});
-                            }
-
-                            try w.print(">", .{});
+                            try openSection(w, d, full_page, &open_section);
                             _ = it.next();
                             _ = it.next();
                             if (node.firstChild().?.nextSibling() == null) {
@@ -204,19 +249,7 @@ pub fn html(
                             continue;
                         },
                         .section => {
-                            if (open_div) {
-                                try w.print("</div>", .{});
-                            }
-                            open_div = true;
-                            try w.print("<div", .{});
-                            if (d.id) |id| try w.print(" id=\"{f}\"", .{HtmlSafe{ .bytes = id }});
-                            if (d.attrs) |attrs| {
-                                try w.print(" class=\"", .{});
-                                for (attrs) |attr| try w.print("{f} ", .{HtmlSafe{ .bytes = attr }});
-                                try w.print("\"", .{});
-                            }
-
-                            try w.print(">", .{});
+                            try openSection(w, d, full_page, &open_section);
                         },
                     };
 
@@ -411,9 +444,7 @@ pub fn html(
             ),
         }
     }
-    if (open_div) {
-        try w.writeAll("</div>");
-    }
+    try closeSection(w, &open_section);
 }
 
 fn renderDirective(

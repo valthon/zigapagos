@@ -401,6 +401,8 @@ default slot (`children`).
 | `<slot>fallback</slot>` (fallback content) | `{children ?? <p>fallback</p>}` / `{slots?.heading ?? <h2>{title}</h2>}` |
 | `<C><div slot="heading">…</div></C>` (usage) | `<island …><template slot="heading">…</template></island>` |
 | `<C>default content</C>` (usage) | `<island …>default content</island>` |
+| MDX `<C>{/* Markdown children */}</C>` in `.smd` content | `<z-island … markdown-slot="body">` plus `[]($section.id('body').attrs('island-slot'))` |
+| MDX named Markdown children in `.smd` content | `markdown-slot-NAME="section-id"` plus a marked SuperMD section |
 
 ```html
 <island src="components/Panel.island.tsx" client:load :props='{ .title = "Panel" }'>
@@ -436,6 +438,15 @@ export default function Panel({ title, children, slots }: Props) {
   back gracefully (`?? <Default/>`).
 - Nested `<island>` tags inside slot content work: they SSR in place and hydrate
   independently.
+- For a content-authored `<z-island>`, use `markdown-slot="section-id"` for
+  rendered Markdown `children`, or `markdown-slot-NAME="section-id"` for a
+  named rendered-Markdown slot. The referenced SuperMD section must carry
+  `.attrs('island-slot')`; it is moved into the island rather than duplicated in
+  the page. Code fences retain language validation and tree-sitter highlighting.
+  Reference each logical slot name only once; `markdown-slot` and
+  `markdown-slot-default` are the same reserved default slot.
+  After the final source, `[]($section.attrs('island-slot-end'))` resumes normal
+  page prose without including it in the slot.
 
 See [recipes — slot composition](recipes.md#slot-composition-named--default-slots)
 for the full rules (whitespace trimming, `slot="default"`, hydration mechanics).

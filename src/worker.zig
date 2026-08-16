@@ -1557,12 +1557,12 @@ fn renderPage(
     var rendered_html_is_gpa_owned = false;
     var rendered_html: []const u8 = blk: {
         const raw = out_aw.written();
-        // Fast path: a page with no `<island` AND no `<z-island` tag has nothing
-        // to rewrite and no runtime script to inject (`process` only injects when
-        // instances are present). Skip the whole-page alloc+memcpy `rewrite`
-        // would otherwise do (AUD-027). A false positive (e.g. the literal text
-        // "<island" in content, or `<islandish>`) just falls through to the full
-        // pass, which is a no-op rewrite — correct.
+        // Fast path: a page with no `<island`, `<z-island`, or rendered-Markdown
+        // slot-source reservoir has nothing to rewrite and no runtime script to
+        // inject (`process` only injects when instances are present). Skip the
+        // whole-page alloc+memcpy `rewrite` would otherwise do (AUD-027). A false
+        // positive (e.g. literal text "<island" or `<islandish>`) just falls
+        // through to the full pass, which is a no-op rewrite — correct.
         //
         // `<z-island>` is the content-authoring alias recognized inside a `.smd`
         // page's `=html` fence (see docs/islands.md "Islands in content") — the
@@ -1585,7 +1585,9 @@ fn renderPage(
         // build error, not a pass-through. Cost of the reordering: one memchr per
         // page on sites that use no islands at all, which is noise next to
         // rendering the page.
-        if (std.mem.indexOf(u8, raw, "<island") == null and std.mem.indexOf(u8, raw, "<z-island") == null) break :blk raw;
+        if (std.mem.indexOf(u8, raw, "<island") == null and
+            std.mem.indexOf(u8, raw, "<z-island") == null and
+            std.mem.indexOf(u8, raw, "<z-markdown-slot-source ") == null) break :blk raw;
         // build is *Build (non-const), so |*s| yields a *Sidecar into the real field
         // (not a copy). If renderPage's `build` ever becomes *const, this capture fails.
         const sc: *@import("islands/sidecar.zig").Sidecar = if (build.island_sidecar) |*s| s else {

@@ -384,6 +384,182 @@ fn appendHtmlEscaped(gpa: std.mem.Allocator, out: *std.ArrayListUnmanaged(u8), s
 
 // --- implementation ---
 
+const MarkdownSlotSource = struct {
+    id: []const u8,
+    html: []const u8,
+    used: bool = false,
+};
+
+const ExtractedMarkdownSlots = struct {
+    html: []const u8,
+    owned_html: ?[]u8,
+    sources: []MarkdownSlotSource,
+
+    fn deinit(self: ExtractedMarkdownSlots, gpa: std.mem.Allocator) void {
+        if (self.owned_html) |owned| gpa.free(owned);
+        if (self.sources.len > 0) gpa.free(self.sources);
+    }
+};
+
+/// Remove the inert reservoirs emitted by `render/html.zig` for SuperMD
+/// sections marked with `.attrs('island-slot')`, retaining their rendered HTML
+/// for `markdown-slot[-NAME]="section-id"` island attributes to consume.
+/// Contract 2: `owned_html` explicitly records whether `html` is the gpa-owned
+/// filtered buffer or the unchanged caller buffer; the source table is gpa-owned
+/// whenever non-empty. `ExtractedMarkdownSlots.deinit` releases both owned
+/// buffers. Source string fields borrow from the input HTML, which outlives this
+/// pass. With no marker, the function allocates nothing and returns the input.
+fn extractMarkdownSlotSources(
+    gpa: std.mem.Allocator,
+    html: []const u8,
+) !ExtractedMarkdownSlots {
+    const open_marker = "<z-markdown-slot-source ";
+    const close_marker = "</z-markdown-slot-source>";
+    if (std.mem.indexOf(u8, html, open_marker) == null) return .{
+        .html = html,
+        .owned_html = null,
+        .sources = &.{},
+    };
+
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(gpa);
+    var sources: std.ArrayListUnmanaged(MarkdownSlotSource) = .empty;
+    errdefer sources.deinit(gpa);
+
+    var cursor: usize = 0;
+    while (std.mem.indexOfPos(u8, html, cursor, open_marker)) |start| {
+        try out.appendSlice(gpa, html[cursor..start]);
+        const open_end = std.mem.indexOfScalarPos(u8, html, start + open_marker.len, '>') orelse
+            return error.MalformedMarkdownSlotSource;
+        const tag_text = html[start .. open_end + 1];
+        const id = attrDouble(tag_text, "data-z-id") orelse
+            return error.MalformedMarkdownSlotSource;
+        const close = std.mem.indexOfPos(u8, html, open_end + 1, close_marker) orelse
+            return error.MalformedMarkdownSlotSource;
+
+        for (sources.items) |source| {
+            if (std.mem.eql(u8, source.id, id)) {
+                if (!builtin.is_test) std.log.err(
+                    "rendered-Markdown island slot section id '{s}' is defined more than once",
+                    .{id},
+                );
+                return error.DuplicateMarkdownSlotSource;
+            }
+        }
+        try sources.append(gpa, .{
+            .id = id,
+            .html = html[open_end + 1 .. close],
+        });
+        cursor = close + close_marker.len;
+    }
+    try out.appendSlice(gpa, html[cursor..]);
+    const out_html = try out.toOwnedSlice(gpa);
+    errdefer gpa.free(out_html);
+    const out_sources = try sources.toOwnedSlice(gpa);
+    return .{
+        .html = out_html,
+        .owned_html = out_html,
+        .sources = out_sources,
+    };
+}
+
+fn markdownSlotSource(
+    sources: []MarkdownSlotSource,
+    id: []const u8,
+) ?*MarkdownSlotSource {
+    for (sources) |*source| {
+        if (std.mem.eql(u8, source.id, id)) return source;
+    }
+    return null;
+}
+
+fn validSlotName(name: []const u8) bool {
+    if (name.len == 0) return false;
+    for (name) |c| switch (c) {
+        'a'...'z', 'A'...'Z', '0'...'9', '_', '-' => {},
+        else => return false,
+    };
+    return true;
+}
+
+fn markdownSlotName(attr_name: []const u8) ?[]const u8 {
+    if (std.mem.eql(u8, attr_name, "markdown-slot")) return "default";
+    if (std.mem.startsWith(u8, attr_name, "markdown-slot-"))
+        return attr_name["markdown-slot-".len..];
+    return null;
+}
+
+/// Expand an island's `markdown-slot="id"` (default) and
+/// `markdown-slot-NAME="id"` (named) references into the same HTML shape the
+/// existing slot partitioner consumes. Null means the tag had no references;
+/// otherwise the returned buffer is gpa-owned.
+fn expandMarkdownSlots(
+    gpa: std.mem.Allocator,
+    tag_text: []const u8,
+    raw_slot_html: []const u8,
+    src: []const u8,
+    sources: []MarkdownSlotSource,
+) !?[]u8 {
+    var refs: std.ArrayListUnmanaged(Attr) = .empty;
+    defer refs.deinit(gpa);
+    var attrs = AttrIterator.init(tag_text);
+    while (attrs.next()) |attr| {
+        const name = markdownSlotName(attr.name) orelse continue;
+        if (!validSlotName(name)) {
+            if (!builtin.is_test) std.log.err(
+                "island '{s}': invalid rendered-Markdown slot name '{s}'",
+                .{ src, name },
+            );
+            return error.InvalidMarkdownSlotName;
+        }
+        for (refs.items) |previous| {
+            if (std.mem.eql(u8, markdownSlotName(previous.name).?, name)) {
+                if (!builtin.is_test) std.log.err(
+                    "island '{s}': rendered-Markdown slot '{s}' is referenced more than once",
+                    .{ src, name },
+                );
+                return error.DuplicateMarkdownSlotReference;
+            }
+        }
+        try refs.append(gpa, attr);
+    }
+    if (refs.items.len == 0) return null;
+
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(gpa);
+    try out.appendSlice(gpa, raw_slot_html);
+    for (refs.items) |ref| {
+        const section_id = ref.value orelse {
+            if (!builtin.is_test) std.log.err(
+                "island '{s}': attribute '{s}' requires a content-section id",
+                .{ src, ref.name },
+            );
+            return error.MarkdownSlotMissingSectionId;
+        };
+        const source = markdownSlotSource(sources, section_id) orelse {
+            if (!builtin.is_test) std.log.err(
+                "island '{s}': rendered-Markdown slot references unknown content section '{s}'",
+                .{ src, section_id },
+            );
+            return error.UnknownMarkdownSlotSource;
+        };
+        source.used = true;
+        const source_html = source.html;
+
+        if (std.mem.eql(u8, ref.name, "markdown-slot")) {
+            try out.appendSlice(gpa, source_html);
+            continue;
+        }
+        const name = markdownSlotName(ref.name).?;
+        try out.appendSlice(gpa, "<template slot=\"");
+        try out.appendSlice(gpa, name);
+        try out.appendSlice(gpa, "\">");
+        try out.appendSlice(gpa, source_html);
+        try out.appendSlice(gpa, "</template>");
+    }
+    return try out.toOwnedSlice(gpa);
+}
+
 /// Rewrite every <island ...>...</island> (or self-closing <island ... />) —
 /// or its content-authoring alias <z-island ...>...</z-island> (see
 /// `nextIslandStart`) — in `html` to the ratified placeholder markup with
@@ -425,11 +601,14 @@ pub fn process(
     // instances items are arena-owned; the slice itself is too
     errdefer instances.deinit(arena.a);
 
+    const extracted = try extractMarkdownSlotSources(gpa, html);
+    defer extracted.deinit(gpa);
+
     var counter: usize = 0;
     var body = try rewrite(
         gpa,
         arena,
-        html,
+        extracted.html,
         renderer,
         page_url,
         &instances,
@@ -439,7 +618,19 @@ pub fn process(
         opts.render_errors,
         opts.content_prop_evaluator,
         opts.content_prop_eval_errors,
+        extracted.sources,
     );
+
+    for (extracted.sources) |source| {
+        if (!source.used) {
+            if (!builtin.is_test) std.log.err(
+                "rendered-Markdown island slot section '{s}' is not referenced by any island",
+                .{source.id},
+            );
+            gpa.free(body);
+            return error.UnusedMarkdownSlotSource;
+        }
+    }
 
     // If the page has islands, inject the hydration runtime <script> before
     // </head> (build-output injection: the static output is self-contained).
@@ -534,6 +725,7 @@ fn rewrite(
     render_errors: ?*std.ArrayListUnmanaged(RenderErrorReport),
     content_prop_evaluator: ?ContentPropEvaluator,
     content_prop_eval_errors: ?*std.ArrayListUnmanaged(ContentPropEvalErrorReport),
+    markdown_slot_sources: []MarkdownSlotSource,
 ) anyerror![]u8 {
     // anyerror: this function is recursive (slot content is re-processed), which
     // rules out an inferred error set; the union of renderer/print/ziggy errors is
@@ -603,7 +795,7 @@ fn rewrite(
         const tag_text = html[start .. ext.open_end + 1];
 
         // Inner HTML (already rendered by SuperHTML) is this island's slot content.
-        const slot_html = std.mem.trim(u8, ext.inner, " \t\r\n");
+        const raw_slot_html = std.mem.trim(u8, ext.inner, " \t\r\n");
         const consume_end = ext.end;
 
         // Extract attributes.
@@ -615,6 +807,16 @@ fn rewrite(
         try validateClientDirective(cd);
         // :props uses single-quote delimiters to allow inner double-quotes.
         const props_src = attrSingle(tag_text, ":props") orelse "";
+
+        const expanded_markdown_slots = try expandMarkdownSlots(
+            gpa,
+            tag_text,
+            raw_slot_html,
+            src_raw,
+            markdown_slot_sources,
+        );
+        defer if (expanded_markdown_slots) |owned| gpa.free(owned);
+        const slot_html = if (expanded_markdown_slots) |owned| owned else raw_slot_html;
 
         const id = try std.fmt.allocPrint(arena.a, "z-island-{d}", .{counter.*});
         counter.* += 1;
@@ -698,6 +900,7 @@ fn rewrite(
                 render_errors,
                 content_prop_evaluator,
                 content_prop_eval_errors,
+                markdown_slot_sources,
             )
         else
             try gpa.dupe(u8, "");
@@ -2762,7 +2965,7 @@ test "rewrite fails loudly on an unknown client directive" {
     var instances: std.ArrayListUnmanaged(IslandInstance) = .empty;
     var counter: usize = 0;
     const html = "<island src=\"components/A.island.tsx\" client:visable></island>";
-    try std.testing.expectError(error.UnknownClientDirective, rewrite(gpa, arena, html, &stub, "/", &instances, &counter, "", .fail, null, null, null));
+    try std.testing.expectError(error.UnknownClientDirective, rewrite(gpa, arena, html, &stub, "/", &instances, &counter, "", .fail, null, null, null, &.{}));
 }
 
 test "attribute extraction is boundary-aware (AUD-005): prop-src, quoted client:, phantom directive" {
@@ -2805,6 +3008,103 @@ test "attribute extraction is boundary-aware (AUD-005): prop-src, quoted client:
         const cd = clientDirective(tag).?;
         try std.testing.expectEqualStrings("load", cd.name);
     }
+}
+
+test "rendered-Markdown slot reservoirs expand default and named references" {
+    const gpa = std.testing.allocator;
+    const input = "before" ++
+        "<z-markdown-slot-source data-z-id=\"intro\"><p>Intro</p></z-markdown-slot-source>" ++
+        "middle" ++
+        "<z-markdown-slot-source data-z-id=\"steps\"><pre>zig</pre></z-markdown-slot-source>" ++
+        "after";
+    const extracted = try extractMarkdownSlotSources(gpa, input);
+    defer extracted.deinit(gpa);
+
+    try std.testing.expectEqualStrings("beforemiddleafter", extracted.html);
+    try std.testing.expectEqual(@as(usize, 2), extracted.sources.len);
+
+    const tag = "<z-island src=\"Tabs.tsx\" markdown-slot=\"intro\" markdown-slot-admin=\"steps\">";
+    const expanded = (try expandMarkdownSlots(
+        gpa,
+        tag,
+        "<p>raw</p>",
+        "Tabs.tsx",
+        extracted.sources,
+    )).?;
+    defer gpa.free(expanded);
+    try std.testing.expectEqualStrings(
+        "<p>raw</p><p>Intro</p><template slot=\"admin\"><pre>zig</pre></template>",
+        expanded,
+    );
+    for (extracted.sources) |source| try std.testing.expect(source.used);
+}
+
+test "rendered-Markdown slot extraction allocates nothing without a reservoir" {
+    const gpa = std.testing.allocator;
+    const input = "<main><island src=\"Counter.tsx\"></island></main>";
+    const extracted = try extractMarkdownSlotSources(gpa, input);
+    defer extracted.deinit(gpa);
+    try std.testing.expect(extracted.owned_html == null);
+    try std.testing.expectEqual(@intFromPtr(input.ptr), @intFromPtr(extracted.html.ptr));
+    try std.testing.expectEqualStrings(input, extracted.html);
+    try std.testing.expectEqual(@as(usize, 0), extracted.sources.len);
+}
+
+test "rendered-Markdown slot reservoir diagnostics reject ambiguous references" {
+    const gpa = std.testing.allocator;
+    const duplicate =
+        "<z-markdown-slot-source data-z-id=\"same\">a</z-markdown-slot-source>" ++
+        "<z-markdown-slot-source data-z-id=\"same\">b</z-markdown-slot-source>";
+    try std.testing.expectError(
+        error.DuplicateMarkdownSlotSource,
+        extractMarkdownSlotSources(gpa, duplicate),
+    );
+
+    const input = "<z-markdown-slot-source data-z-id=\"known\">ok</z-markdown-slot-source>";
+    const extracted = try extractMarkdownSlotSources(gpa, input);
+    defer extracted.deinit(gpa);
+    try std.testing.expectError(
+        error.UnknownMarkdownSlotSource,
+        expandMarkdownSlots(
+            gpa,
+            "<z-island src=\"Tabs.tsx\" markdown-slot=\"missing\">",
+            "",
+            "Tabs.tsx",
+            extracted.sources,
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidMarkdownSlotName,
+        expandMarkdownSlots(
+            gpa,
+            "<z-island src=\"Tabs.tsx\" markdown-slot-bad!=\"known\">",
+            "",
+            "Tabs.tsx",
+            extracted.sources,
+        ),
+    );
+    try std.testing.expectError(
+        error.DuplicateMarkdownSlotReference,
+        expandMarkdownSlots(
+            gpa,
+            "<z-island src=\"Tabs.tsx\" markdown-slot-admin=\"known\" markdown-slot-admin=\"known\">",
+            "",
+            "Tabs.tsx",
+            extracted.sources,
+        ),
+    );
+    // `markdown-slot-default` addresses the same reserved wire slot as the
+    // unadorned default-children form, so this is a duplicate too.
+    try std.testing.expectError(
+        error.DuplicateMarkdownSlotReference,
+        expandMarkdownSlots(
+            gpa,
+            "<z-island src=\"Tabs.tsx\" markdown-slot=\"known\" markdown-slot-default=\"known\">",
+            "",
+            "Tabs.tsx",
+            extracted.sources,
+        ),
+    );
 }
 
 test "a commented-out island is not processed and the comment survives byte-identical" {
