@@ -6,6 +6,7 @@ const Writer = std.Io.Writer;
 const builtin = @import("builtin");
 const supermd = @import("supermd");
 const superhtml = @import("superhtml");
+const scripty = @import("scripty");
 const ziggy = @import("ziggy");
 const tracy = @import("tracy");
 const syntax = @import("syntax");
@@ -1346,6 +1347,36 @@ pub fn paginationPruneDir(
 
 pub const RenderJobKind = union(enum) { main, alternative: u32, pagination: u32 };
 const SuperVM = superhtml.VM(context.Value);
+const ContentPropScriptyVM = scripty.VM(context.Value);
+
+const ContentPropEvalContext = struct {
+    root: *context.Root,
+    vm: ContentPropScriptyVM = .{},
+};
+
+fn evalContentIslandProp(
+    opaque_context: *anyopaque,
+    arena: RenderArena,
+    expression: []const u8,
+) error{OutOfMemory}!islands.ContentPropEvalResult {
+    const eval_ctx: *ContentPropEvalContext = @ptrCast(@alignCast(opaque_context));
+    eval_ctx.vm.reset();
+    const result = eval_ctx.vm.run(arena.a, eval_ctx.root, expression, .{}) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.Quota => return .{ .err = "expression evaluation quota exceeded" },
+    };
+    return switch (result.value) {
+        .string => |value| .{ .value = try arena.a.dupe(u8, value.value) },
+        .int => |value| .{ .value = try std.fmt.allocPrint(arena.a, "{d}", .{value.value}) },
+        .err => |message| .{ .err = try arena.a.dupe(u8, message) },
+        else => .{ .err = try std.fmt.allocPrint(
+            arena.a,
+            "expression must evaluate to a string or integer, got {s}",
+            .{@tagName(result.value)},
+        ) },
+    };
+}
+
 fn renderPage(
     io: Io,
     /// NO_SLOP.md §2.2a contract 4: the per-job arena, reset after every job.
@@ -1630,10 +1661,18 @@ fn renderPage(
         // Reports are logged synchronously below; the list backing (gpa) is freed
         // here — the string fields it points at are arena-owned (per-page arena).
         defer render_errors.deinit(gpa);
+        var content_prop_eval_errors: std.ArrayListUnmanaged(islands.ContentPropEvalErrorReport) = .empty;
+        defer content_prop_eval_errors.deinit(gpa);
+        var content_prop_eval_ctx: ContentPropEvalContext = .{ .root = &ctx };
         const result = islands.process(gpa, arena, raw, island_pathname, sc, .{
             .url_prefix = url_prefix,
             .on_render_error = on_render_error,
             .render_errors = &render_errors,
+            .content_prop_evaluator = .{
+                .context = &content_prop_eval_ctx,
+                .eval_fn = evalContentIslandProp,
+            },
+            .content_prop_eval_errors = &content_prop_eval_errors,
             // Null/empty on every build that produced no slice, which makes this
             // page's <head> byte-identical to the pre-slicing output.
             .sliced_runtime_url = build.islands_slice.url,
@@ -1644,7 +1683,14 @@ fn renderPage(
             // (the render that aborted the pass); fall back to the bare name only
             // if the failure was something other than a render (e.g. malformed
             // markup) that left no report.
-            if (render_errors.items.len == 0) {
+            if (content_prop_eval_errors.items.len > 0) {
+                for (content_prop_eval_errors.items) |report| {
+                    log.err(
+                        "content-island prop evaluation failed on {s}: {s} in '{s}': {s}",
+                        .{ page_path, report.src, report.expression, report.message },
+                    );
+                }
+            } else if (render_errors.items.len == 0) {
                 log.err("island rendering error on {s}: {s}", .{ page_path, @errorName(err) });
             } else for (render_errors.items) |re| {
                 log.err(

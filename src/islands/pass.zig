@@ -99,6 +99,32 @@ pub const RenderErrorReport = struct {
     stack: ?[]const u8,
 };
 
+/// Result of evaluating one content-island `prop-NAME="$expr"` value. The
+/// caller supplies the evaluator because only the page renderer owns the live
+/// Scripty root context; the islands pass deliberately knows nothing about
+/// `$page`, `$site`, or the rest of that context graph.
+pub const ContentPropEvalResult = union(enum) {
+    value: []const u8,
+    err: []const u8,
+};
+
+pub const ContentPropEvaluator = struct {
+    context: *anyopaque,
+    eval_fn: *const fn (*anyopaque, RenderArena, []const u8) error{OutOfMemory}!ContentPropEvalResult,
+
+    pub fn eval(self: ContentPropEvaluator, arena: RenderArena, expression: []const u8) error{OutOfMemory}!ContentPropEvalResult {
+        return self.eval_fn(self.context, arena, expression);
+    }
+};
+
+/// One failed `scripty:props` expression. String fields are arena-owned and
+/// are read by the page renderer before the per-render arena is reclaimed.
+pub const ContentPropEvalErrorReport = struct {
+    src: []const u8,
+    expression: []const u8,
+    message: []const u8,
+};
+
 /// How the island pass reacts when an island's SSR render throws.
 /// The build picks the policy by mode: a release/deploy build FAILS so broken
 /// output never ships; a dev build keeps going with a visible placeholder so
@@ -129,6 +155,12 @@ pub const ProcessOptions = struct {
     /// .err, with page context) instead of pass.zig logging directly. Appended
     /// with `gpa`; string fields are owned by the `arena` passed to `process`.
     render_errors: ?*std.ArrayListUnmanaged(RenderErrorReport) = null,
+    /// Evaluates `prop-NAME="$expr"` attributes only on islands carrying the
+    /// explicit `scripty:props` marker. Null preserves verbatim content-fence
+    /// behavior and is the default for non-page-renderer callers and tests.
+    content_prop_evaluator: ?ContentPropEvaluator = null,
+    /// Optional caller-owned sink for failed marked expressions.
+    content_prop_eval_errors: ?*std.ArrayListUnmanaged(ContentPropEvalErrorReport) = null,
     /// The per-site SLICED islands runtime URL (`/islands/_runtime.js`), or null
     /// when this build produced no slice — which is also the default, so every
     /// existing caller keeps the shared runtime byte-identically. Un-prefixed:
@@ -394,7 +426,20 @@ pub fn process(
     errdefer instances.deinit(arena.a);
 
     var counter: usize = 0;
-    var body = try rewrite(gpa, arena, html, renderer, page_url, &instances, &counter, opts.url_prefix, opts.on_render_error, opts.render_errors);
+    var body = try rewrite(
+        gpa,
+        arena,
+        html,
+        renderer,
+        page_url,
+        &instances,
+        &counter,
+        opts.url_prefix,
+        opts.on_render_error,
+        opts.render_errors,
+        opts.content_prop_evaluator,
+        opts.content_prop_eval_errors,
+    );
 
     // If the page has islands, inject the hydration runtime <script> before
     // </head> (build-output injection: the static output is self-contained).
@@ -487,6 +532,8 @@ fn rewrite(
     url_prefix: []const u8,
     on_render_error: OnRenderError,
     render_errors: ?*std.ArrayListUnmanaged(RenderErrorReport),
+    content_prop_evaluator: ?ContentPropEvaluator,
+    content_prop_eval_errors: ?*std.ArrayListUnmanaged(ContentPropEvalErrorReport),
 ) anyerror![]u8 {
     // anyerror: this function is recursive (slot content is re-processed), which
     // rules out an inferred error set; the union of renderer/print/ziggy errors is
@@ -638,7 +685,20 @@ fn rewrite(
         // rewritten slot is what goes into the slots_json / the sidecar slots
         // argument; the runtime hydrates the nested island independently.
         const slot_rewritten = if (slot_html.len > 0)
-            try rewrite(gpa, arena, slot_html, renderer, page_url, instances, counter, url_prefix, on_render_error, render_errors)
+            try rewrite(
+                gpa,
+                arena,
+                slot_html,
+                renderer,
+                page_url,
+                instances,
+                counter,
+                url_prefix,
+                on_render_error,
+                render_errors,
+                content_prop_evaluator,
+                content_prop_eval_errors,
+            )
         else
             try gpa.dupe(u8, "");
         defer gpa.free(slot_rewritten);
@@ -679,7 +739,17 @@ fn rewrite(
         };
         // Dynamic props: prop-NAME="value" attrs (SuperHTML already evaluated any
         // $scripty values), coerced to the Props field types, override :props.
-        const dyn = try collectDynProps(arena, tag_text);
+        var dyn = try collectDynProps(arena, tag_text);
+        if (hasAttr(tag_text, "scripty:props") and content_prop_evaluator != null) {
+            dyn = try evaluateContentProps(
+                gpa,
+                arena,
+                src,
+                dyn,
+                content_prop_evaluator.?,
+                content_prop_eval_errors,
+            );
+        }
 
         // Resolve props ONCE (type-erased) — used for both the SSR call and the
         // client <script>.
@@ -1101,6 +1171,49 @@ fn collectDynProps(arena: RenderArena, tag_text: []const u8) ![]const props.Pair
     return pairs.toOwnedSlice(arena.a);
 }
 
+/// Evaluate the Scripty-valued members of a marked content island. Literal
+/// values remain literal even when the marker is present, matching
+/// SuperHTML's ordinary dynamic-attribute rule: only values beginning with
+/// `$` are expressions.
+///
+/// Contract 4 (`RenderArena`): the returned pair slice and evaluated values
+/// form the same short-lived per-island graph as `collectDynProps`; they are
+/// consumed immediately by `props.resolveToJson` and die with the render.
+fn evaluateContentProps(
+    gpa: std.mem.Allocator,
+    arena: RenderArena,
+    src: []const u8,
+    pairs: []const props.Pair,
+    evaluator: ContentPropEvaluator,
+    errors: ?*std.ArrayListUnmanaged(ContentPropEvalErrorReport),
+) ![]const props.Pair {
+    var evaluated: std.ArrayListUnmanaged(props.Pair) = .empty;
+    errdefer evaluated.deinit(arena.a);
+    for (pairs) |pair| {
+        if (!std.mem.startsWith(u8, pair.value, "$")) {
+            try evaluated.append(arena.a, pair);
+            continue;
+        }
+
+        const result = try evaluator.eval(arena, pair.value);
+        switch (result) {
+            .value => |value| try evaluated.append(arena.a, .{
+                .name = pair.name,
+                .value = value,
+            }),
+            .err => |message| {
+                if (errors) |sink| try sink.append(gpa, .{
+                    .src = try arena.a.dupe(u8, src),
+                    .expression = try arena.a.dupe(u8, pair.value),
+                    .message = try arena.a.dupe(u8, message),
+                });
+                return error.ContentPropEvaluationFailed;
+            },
+        }
+    }
+    return evaluated.toOwnedSlice(arena.a);
+}
+
 /// Decode the HTML entities SuperHTML emits when escaping a double-quoted
 /// attribute value (`&amp; &gt; &lt; &apos; &quot;`, plus the numeric `&#39;`/
 /// `&#34;`).
@@ -1390,6 +1503,14 @@ const AttrIterator = struct {
     }
 };
 
+fn hasAttr(tag_text: []const u8, name: []const u8) bool {
+    var it = AttrIterator.init(tag_text);
+    while (it.next()) |attr| {
+        if (std.mem.eql(u8, attr.name, name)) return true;
+    }
+    return false;
+}
+
 /// Extract the value of a double-quoted attribute: `name="value"`.
 /// Only a real attribute (at an attribute-name boundary) matches — a substring
 /// match inside another attribute's name or value is ignored (AUD-005).
@@ -1508,6 +1629,17 @@ const StubRenderer = struct {
         return std.fmt.allocPrint(arena.a, "<stub data-src=\"{s}\">{s}</stub>", .{ name, props_json });
     }
 };
+
+fn testContentPropEval(
+    opaque_context: *anyopaque,
+    _: RenderArena,
+    expression: []const u8,
+) error{OutOfMemory}!ContentPropEvalResult {
+    const calls: *usize = @ptrCast(@alignCast(opaque_context));
+    calls.* += 1;
+    if (std.mem.eql(u8, expression, "$page.title")) return .{ .value = "Evaluated title" };
+    return .{ .err = "test expression failed" };
+}
 
 test "structured prop-NAME (HTML-escaped JSON) deserializes into a typed collection and SSRs" {
     const gpa = std.testing.allocator;
@@ -2198,6 +2330,68 @@ test "dynamic props: prop-NAME attrs override :props and are coerced to field ty
     try std.testing.expect(std.mem.indexOf(u8, result.html, "{\"start\":3,\"label\":\"Hello\"}") != null);
 }
 
+test "content prop evaluator resolves expressions and preserves literals" {
+    const gpa = std.testing.allocator;
+    const arena = RenderArena.forTest(gpa);
+
+    var calls: usize = 0;
+    const input = [_]props.Pair{
+        .{ .name = "title", .value = "$page.title" },
+        .{ .name = "static", .value = "literal" },
+    };
+    const result = try evaluateContentProps(
+        gpa,
+        arena,
+        "components/Title.zig",
+        &input,
+        .{ .context = &calls, .eval_fn = testContentPropEval },
+        null,
+    );
+    defer gpa.free(result);
+
+    try std.testing.expectEqual(@as(usize, 1), calls);
+    try std.testing.expectEqualStrings("title", result[0].name);
+    try std.testing.expectEqualStrings("Evaluated title", result[0].value);
+    try std.testing.expectEqualStrings("static", result[1].name);
+    try std.testing.expectEqualStrings("literal", result[1].value);
+}
+
+test "scripty:props marker detection is attribute-boundary aware" {
+    try std.testing.expect(hasAttr("<z-island scripty:props prop-x=\"$page.title\">", "scripty:props"));
+    try std.testing.expect(!hasAttr("<z-island data-scripty:props=\"yes\">", "scripty:props"));
+    try std.testing.expect(!hasAttr("<z-island prop-note=\"scripty:props\">", "scripty:props"));
+}
+
+test "failed content prop expressions are reported" {
+    const gpa = std.testing.allocator;
+    const arena = RenderArena.forTest(gpa);
+
+    const input = [_]props.Pair{.{ .name = "title", .value = "$page.missing" }};
+    var calls: usize = 0;
+    var reports: std.ArrayListUnmanaged(ContentPropEvalErrorReport) = .empty;
+    defer {
+        for (reports.items) |report| {
+            gpa.free(report.src);
+            gpa.free(report.expression);
+            gpa.free(report.message);
+        }
+        reports.deinit(gpa);
+    }
+    try std.testing.expectError(error.ContentPropEvaluationFailed, evaluateContentProps(
+        gpa,
+        arena,
+        "components/Title.zig",
+        &input,
+        .{ .context = &calls, .eval_fn = testContentPropEval },
+        &reports,
+    ));
+
+    try std.testing.expectEqual(@as(usize, 1), reports.items.len);
+    try std.testing.expectEqualStrings("components/Title.zig", reports.items[0].src);
+    try std.testing.expectEqualStrings("$page.missing", reports.items[0].expression);
+    try std.testing.expectEqualStrings("test expression failed", reports.items[0].message);
+}
+
 test "client:only is not server-rendered (empty placeholder) but keeps props" {
     const gpa = std.testing.allocator;
     var arena_state = std.heap.ArenaAllocator.init(gpa);
@@ -2568,7 +2762,7 @@ test "rewrite fails loudly on an unknown client directive" {
     var instances: std.ArrayListUnmanaged(IslandInstance) = .empty;
     var counter: usize = 0;
     const html = "<island src=\"components/A.island.tsx\" client:visable></island>";
-    try std.testing.expectError(error.UnknownClientDirective, rewrite(gpa, arena, html, &stub, "/", &instances, &counter, "", .fail, null));
+    try std.testing.expectError(error.UnknownClientDirective, rewrite(gpa, arena, html, &stub, "/", &instances, &counter, "", .fail, null, null, null));
 }
 
 test "attribute extraction is boundary-aware (AUD-005): prop-src, quoted client:, phantom directive" {
