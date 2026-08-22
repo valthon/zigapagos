@@ -40,3 +40,9 @@ npm/zigapagos/package.json
 npm/zigapagos/README.md
 npm/cli-*/
 *.tgz
+
+# The bare `public` rule above matches any directory named public at any
+# depth, which silently swallows this Rails fixture's public asset tree.
+# The fixture needs it: inventory.zig walks `app` and `public` as its two
+# roots, so without it the public-asset path is untested entirely.
+!tests/migrate/rails-sample/public/
