@@ -103,6 +103,15 @@ const standalone: []const Standalone = &.{
         .root_source_file = "src/image/tests.zig",
         .image_deps = true,
     },
+    // Rails source-discovery adapter (issue #166 stage 1): detection,
+    // presentation inventory, integration detection, and MIGRATION.md
+    // rendering. Std-only by design -- no import escapes `src/cli/rails/` --
+    // so it belongs in `standalone` like `test-diag`/`test-summary`.
+    .{
+        .step_name = "test-rails",
+        .description = "Run Rails migration adapter unit tests",
+        .root_source_file = "src/cli/rails/rails.zig",
+    },
 };
 
 /// A suite compiled from `zigapagos_exe.root_module`.
