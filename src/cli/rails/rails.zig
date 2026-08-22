@@ -1,0 +1,85 @@
+//! Package root for the Rails migration adapter, and the `standalone` test
+//! suite root for `zig build test-rails`.
+//!
+//! Everything below is std-only: no import escapes `src/cli/rails/`, so this
+//! compiles as its own module. `fatal.*` handling belongs to migrate.zig.
+
+const std = @import("std");
+const Io = std.Io;
+const Allocator = std.mem.Allocator;
+
+pub const blockers = @import("blockers.zig");
+pub const detect = @import("detect.zig");
+pub const inventory = @import("inventory.zig");
+pub const integrations = @import("integrations.zig");
+pub const report = @import("report.zig");
+
+// Pulls the suites of every sibling file into this module so `test-rails`
+// runs them all. Without this the standalone binary only sees this file.
+test {
+    std.testing.refAllDecls(@This());
+    _ = blockers;
+    _ = detect;
+    _ = inventory;
+    _ = integrations;
+    _ = report;
+}
+
+/// Discovery's result: the rendered report plus how many of its blockers mean
+/// the inventory itself can't be trusted (`Blocker.integrity`).
+/// `src/cli/migrate.zig`'s Rails block turns a nonzero
+/// `integrity_blocker_count` into a non-zero exit -- the report is still
+/// written either way, per the "report, never omit silently" rule; only the
+/// process exit status changes.
+pub const Discovery = struct {
+    report: []const u8,
+    integrity_blocker_count: usize,
+};
+
+/// Contract 1 (self-freeing): every intermediate (entries, blockers,
+/// integrations, file reads) is released here; the returned markdown is the
+/// single escaping allocation and belongs to the caller.
+pub fn discover(
+    io: Io,
+    gpa: Allocator,
+    root: Io.Dir,
+    app_path: []const u8,
+) Allocator.Error!Discovery {
+    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    defer {
+        for (blocker_list.items) |b| {
+            gpa.free(b.path);
+            gpa.free(b.detail);
+        }
+        blocker_list.deinit(gpa);
+    }
+
+    const wr = try inventory.walk(io, gpa, root);
+    defer inventory.freeWalkResult(gpa, wr);
+    // `wr.blockers` is owned by `wr` and freed by `freeWalkResult` above, so
+    // its contents are copied into the run's single blocker list rather than
+    // the slice being adopted directly.
+    for (wr.blockers) |b| try blockers.appendCopy(gpa, &blocker_list, b);
+    try inventory.appendUnsupportedEngineBlockers(gpa, wr.entries, &blocker_list);
+
+    const gemfile = try detect.readCapped(io, gpa, root, "Gemfile", "RAILS_GEMFILE_UNREADABLE", &blocker_list);
+    defer if (gemfile) |g| gpa.free(g);
+    const pkg = try detect.readCapped(io, gpa, root, "package.json", "RAILS_PACKAGE_JSON_UNREADABLE", &blocker_list);
+    defer if (pkg) |p| gpa.free(p);
+
+    const ints = try integrations.scan(gpa, gemfile, pkg, &blocker_list);
+    defer integrations.freeIntegrations(gpa, ints);
+
+    var integrity_blocker_count: usize = 0;
+    for (blocker_list.items) |b| {
+        if (b.integrity) integrity_blocker_count += 1;
+    }
+
+    const body = try report.build(gpa, .{
+        .app_path = app_path,
+        .entries = wr.entries,
+        .integrations = ints,
+        .blockers = blocker_list.items,
+    });
+    return .{ .report = body, .integrity_blocker_count = integrity_blocker_count };
+}

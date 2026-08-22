@@ -3,6 +3,7 @@ const Io = std.Io;
 const fatal = @import("../fatal.zig");
 const detect = @import("migrate_detect.zig");
 const content_convert = @import("migrate_content.zig");
+const rails = @import("rails/rails.zig");
 const Allocator = std.mem.Allocator;
 
 const Role = detect.Role;
@@ -16,6 +17,7 @@ const Source = enum {
     jekyll,
     eleventy,
     hexo,
+    rails,
 
     fn parse(value: []const u8) ?Source {
         if (std.mem.eql(u8, value, "astro")) return .astro;
@@ -26,6 +28,7 @@ const Source = enum {
         if (std.mem.eql(u8, value, "jekyll")) return .jekyll;
         if (std.mem.eql(u8, value, "eleventy") or std.mem.eql(u8, value, "11ty")) return .eleventy;
         if (std.mem.eql(u8, value, "hexo")) return .hexo;
+        if (std.mem.eql(u8, value, "rails")) return .rails;
         return null;
     }
 
@@ -39,6 +42,7 @@ const Source = enum {
             .jekyll => "Jekyll",
             .eleventy => "Eleventy (11ty)",
             .hexo => "Hexo",
+            .rails => "Rails",
         };
     }
 
@@ -60,10 +64,14 @@ const Source = enum {
 const usage =
     \\Usage: zigapagos migrate <project-dir> [OPTIONS]
     \\
-    \\Scans an Astro, Next.js, Gatsby, Nuxt/Vue, Hugo, Jekyll, Eleventy, or
-    \\Hexo project and
-    \\writes MIGRATION.md: a source-specific worklist mapping files to their
-    \\Zigapagos targets. The source is auto-detected or selected with --from.
+    \\Scans an Astro, Next.js, Gatsby, Nuxt/Vue, Hugo, Jekyll, Eleventy, Hexo, or
+    \\Rails project and writes MIGRATION.md: a source-specific worklist mapping
+    \\files to their Zigapagos targets. The source is auto-detected or selected
+    \\with --from.
+    \\
+    \\Rails is discovery-only: its MIGRATION.md is a presentation inventory
+    \\with no target mapping, and --target, --scaffold, --copy-assets and
+    \\--convert-content are all rejected for it.
     \\
     \\Source files are read-only. The command always writes a MIGRATION.md
     \\worklist. With --scaffold it also performs the deterministic React part of
@@ -72,7 +80,7 @@ const usage =
     \\data loaders, plugins, and framework config remain explicit worklist items.
     \\
     \\Options:
-    \\  --from SOURCE         astro|next|gatsby|nuxt|vue|hugo|jekyll|11ty|hexo
+    \\  --from SOURCE         astro|next|gatsby|nuxt|vue|hugo|jekyll|11ty|hexo|rails
     \\                        (default: auto; use when detection is ambiguous)
     \\  -o, --output PATH      Report path (default: MIGRATION.md)
     \\  --target DIR           Assemble a minimal Zigapagos project in a missing
@@ -226,7 +234,23 @@ fn packageDeclares(io: Io, gpa: Allocator, root: Io.Dir, dependency: []const u8)
     return std.mem.indexOf(u8, package, quoted) != null;
 }
 
-fn configMarker(io: Io, root: Io.Dir, source: Source) bool {
+fn configMarker(io: Io, gpa: Allocator, root: Io.Dir, source: Source) bool {
+    // Rails detection is evidence-based, not marker-file-based: one of its two
+    // conclusive branches has no marker file to test for, so routing it through
+    // the `markers` loop below would silently defeat that branch.
+    if (source == .rails) {
+        const v = rails.detect.verdict(rails.detect.collect(io, gpa, root) catch |err| switch (err) {
+            error.OutOfMemory => fatal.oom(),
+        });
+        // `.indeterminate` (structural evidence Rails-shaped, but a piece
+        // needed to confirm it was unreadable rather than absent) counts as
+        // Rails for auto-detection too: routing it through discovery is what
+        // lets `RAILS_GEMFILE_UNREADABLE` (or the analogous inventory
+        // blocker) actually surface, instead of the unreadable evidence
+        // silently sinking this candidate and auto-detection falling
+        // through to "could not confidently detect a source framework".
+        return v == .rails or v == .indeterminate;
+    }
     const markers: []const []const u8 = switch (source) {
         .astro => &.{ "astro.config.mjs", "astro.config.ts", "astro.config.js", "astro.config.json" },
         .nextjs => &.{ "next.config.js", "next.config.mjs", "next.config.ts" },
@@ -241,6 +265,7 @@ fn configMarker(io: Io, root: Io.Dir, source: Source) bool {
             &.{},
         .eleventy => &.{ ".eleventy.js", ".eleventy.cjs", ".eleventy.mjs", "eleventy.config.js", "eleventy.config.cjs", "eleventy.config.mjs" },
         .hexo => if (dirExists(io, root, "source") and dirExists(io, root, "themes")) &.{ "_config.yml", "_config.yaml" } else &.{},
+        .rails => &.{},
     };
     for (markers) |marker| if (fileExists(io, root, marker)) return true;
     if (source == .hugo and dirExists(io, root, "content") and dirExists(io, root, "layouts")) {
@@ -252,7 +277,7 @@ fn configMarker(io: Io, root: Io.Dir, source: Source) bool {
 }
 
 fn sourceMarker(io: Io, gpa: Allocator, root: Io.Dir, source: Source) bool {
-    if (configMarker(io, root, source)) return true;
+    if (configMarker(io, gpa, root, source)) return true;
     return switch (source) {
         .astro => packageDeclares(io, gpa, root, "astro"),
         .nextjs => packageDeclares(io, gpa, root, "next"),
@@ -261,13 +286,14 @@ fn sourceMarker(io: Io, gpa: Allocator, root: Io.Dir, source: Source) bool {
         .hugo, .jekyll => false,
         .eleventy => packageDeclares(io, gpa, root, "@11ty/eleventy"),
         .hexo => packageDeclares(io, gpa, root, "hexo"),
+        .rails => false,
     };
 }
 
 fn detectSource(io: Io, gpa: Allocator, root: Io.Dir) Source {
     var found: ?Source = null;
-    for ([_]Source{ .astro, .nextjs, .gatsby, .nuxt, .hugo, .jekyll, .eleventy, .hexo }) |candidate| {
-        if (!configMarker(io, root, candidate)) continue;
+    for ([_]Source{ .astro, .nextjs, .gatsby, .nuxt, .hugo, .jekyll, .eleventy, .hexo, .rails }) |candidate| {
+        if (!configMarker(io, gpa, root, candidate)) continue;
         if (found != null) fatal.usageError(
             "error: multiple source frameworks detected ({s} and {s}); select one with --from\n\n" ++ usage,
             .{ found.?.name(), candidate.name() },
@@ -285,7 +311,7 @@ fn detectSource(io: Io, gpa: Allocator, root: Io.Dir) Source {
         found = candidate;
     }
     return found orelse fatal.usageError(
-        "error: could not confidently detect a supported source framework; ask the project owner or pass --from astro|next|gatsby|nuxt|vue|hugo|jekyll|11ty|hexo\n\n" ++ usage,
+        "error: could not confidently detect a supported source framework; ask the project owner or pass --from astro|next|gatsby|nuxt|vue|hugo|jekyll|11ty|hexo|rails\n\n" ++ usage,
         .{},
     );
 }
@@ -304,6 +330,11 @@ fn sourceFile(source: Source, path: []const u8) bool {
         .jekyll => hasAnyExtension(path, &.{ ".md", ".markdown", ".html", ".liquid" }),
         .eleventy => hasAnyExtension(path, &.{ ".md", ".markdown", ".html", ".liquid", ".njk", ".11ty.js" }),
         .hexo => hasAnyExtension(path, &.{ ".md", ".markdown", ".html", ".ejs", ".swig", ".njk" }),
+        // Rails never reaches scanOther: `migrate()` dispatches `source ==
+        // .rails` straight to `rails.discover` and returns before the
+        // scan/scanOther split below. This arm exists only because the
+        // switch on `Source` must be exhaustive.
+        .rails => false,
     };
 }
 
@@ -389,7 +420,7 @@ fn scanOther(io: Io, gpa: Allocator, root: Io.Dir, source: Source) ScanResult {
             scanDir(io, gpa, root, "src/components", .component, &entries, &names);
         },
         .nuxt => {
-            const is_nuxt = configMarker(io, root, .nuxt) or packageDeclares(io, gpa, root, "nuxt");
+            const is_nuxt = configMarker(io, gpa, root, .nuxt) or packageDeclares(io, gpa, root, "nuxt");
             if (is_nuxt) {
                 scanDir(io, gpa, root, "pages", .page, &entries, &names);
                 scanDir(io, gpa, root, "layouts", .layout, &entries, &names);
@@ -432,6 +463,20 @@ fn scanOther(io: Io, gpa: Allocator, root: Io.Dir, source: Source) ScanResult {
             scanDir(io, gpa, root, "themes", .layout, &entries, &names);
             scanDir(io, gpa, root, "scripts", .other, &entries, &names);
         },
+        // Inventory *is* implemented for Rails (src/cli/rails/inventory.zig)
+        // -- but `migrate()` dispatches `source == .rails` to
+        // `rails.discover` and returns before ever calling `scanOther`, so
+        // this arm is unreachable in practice. Kept as a loud `fatal` rather
+        // than `unreachable` because, unlike `.astro` (whose `unreachable`
+        // is safe under the `source == .astro` guard at the call site),
+        // Rails has no such guard here: if the dispatch in `migrate()` were
+        // ever moved or removed, both `--from rails` and successful
+        // auto-detection would flow straight to this line, and a silent
+        // trap is worse than a clear error.
+        .rails => fatal.usageError(
+            "internal error: Rails is dispatched before scanOther; reaching here means the dispatch in migrate() was moved or removed\n\n" ++ usage,
+            .{},
+        ),
     }
 
     var kept: usize = 0;
@@ -589,6 +634,94 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8) bool {
         "error: --convert-content supports Hugo, Jekyll, Eleventy, and Hexo Markdown sources; got {s}\n\n" ++ usage,
         .{source.name()},
     );
+    if (source == .rails) {
+        // scanOther is Astro-shaped (it walks and classifies content dirs
+        // that don't exist in a Rails tree) and must never see a Rails
+        // project, so this stage's whole dispatch lives here, before it.
+        //
+        // Target assembly and asset copying both run downstream of the
+        // scan/scanOther split this dispatch preempts, so a Rails source
+        // hitting either flag here would otherwise silently produce a
+        // MIGRATION.md and a no-op instead of an error -- reject them
+        // before doing any Rails work, per the "report, never omit
+        // silently" rule.
+        if (target_dir != null) fatal.usageError(
+            "error: --target is not yet supported for Rails sources; target assembly lands in a later stage\n\n" ++ usage,
+            .{},
+        );
+        if (assets_dir != null) fatal.usageError(
+            "error: --copy-assets is not yet supported for Rails sources; asset copying lands in a later stage\n\n" ++ usage,
+            .{},
+        );
+
+        // `--from rails` bypasses `detectSource` (and therefore the
+        // `verdict` check `configMarker` runs for auto-detection), so an
+        // explicit request against a non-Rails tree would otherwise reach
+        // `rails.discover` unchecked and write a confident-looking, entirely
+        // empty report ("Blockers: None.") for a directory that isn't a
+        // Rails app at all -- the exact silent-success failure mode this
+        // adapter exists to prevent. Gated on `requested_source` rather than
+        // re-running the check unconditionally: the auto-detected path
+        // already validated this via `detectSource` -> `configMarker`.
+        //
+        // Only `.not_rails` is fatal here. `.indeterminate` (structural
+        // evidence Rails-shaped, but a piece needed to confirm it was
+        // unreadable rather than absent -- e.g. routes.rb + app/views
+        // present with an unreadable Gemfile) proceeds on purpose: an
+        // explicit `--from rails` should let discovery run and report the
+        // unreadable evidence as an integrity blocker
+        // (`RAILS_GEMFILE_UNREADABLE`), which fails the run via a non-zero
+        // exit anyway -- rejecting it here instead would hide *why* with a
+        // usage error the operator can't act on.
+        if (requested_source == .rails) {
+            const v = rails.detect.verdict(rails.detect.collect(io, gpa, root) catch |err| switch (err) {
+                error.OutOfMemory => fatal.oom(),
+            });
+            if (v == .not_rails) fatal.usageError(
+                "error: --from rails but {s} is not a Rails app (no config/application.rb, or no routes.rb + app/views + a rails gem)\n\n" ++ usage,
+                .{dir_path},
+            );
+        }
+
+        const discovery = rails.discover(io, gpa, root, dir_path) catch |err| switch (err) {
+            error.OutOfMemory => fatal.oom(),
+        };
+        defer gpa.free(discovery.report);
+
+        const rf = Io.Dir.cwd().createFile(io, out_path, .{}) catch |err|
+            fatal.file(out_path, err);
+        defer rf.close(io);
+        var rfw = rf.writer(io, &.{});
+        rfw.interface.writeAll(discovery.report) catch |err| fatal.file(out_path, err);
+
+        std.debug.print(
+            "Wrote {s}: Rails, inventory only (no routes at this stage).\n" ++
+                "Next: follow MIGRATION.md.\n",
+            .{out_path},
+        );
+
+        // An integrity blocker (an unreadable/truncated inventory root, an
+        // unreadable Gemfile or package.json) means the report was written
+        // -- "report, never omit silently" -- but its counts can't be
+        // trusted. Say so on stderr and signal failure via the exit code
+        // separately from the report itself, so a script driving this
+        // command doesn't have to grep MIGRATION.md to notice.
+        if (discovery.integrity_blocker_count > 0) {
+            std.debug.print(
+                "warning: {s} was written, but {d} part(s) of the Rails inventory could not be read; treat its counts as incomplete.\n",
+                .{ out_path, discovery.integrity_blocker_count },
+            );
+        }
+        // migrate()'s bool is `any_error` (main.zig: `@intFromBool(any_error)`);
+        // the astro/other success path a few lines below returns `false` for
+        // the same reason. The brief's snippet had `return true` unconditionally
+        // here, which would have exited 1 on every successful Rails run --
+        // deviation, not the brief's intent, caught by the end-to-end fixture
+        // run. `integrity_blocker_count > 0` is the actual signal for a
+        // non-zero exit.
+        return discovery.integrity_blocker_count > 0;
+    }
+
     var res = if (source == .astro) scan(io, gpa, root) else scanOther(io, gpa, root, source);
     defer freeScanResult(gpa, &res);
 
@@ -1260,6 +1393,11 @@ fn assetRoots(source: Source) []const AssetRoot {
             .{ .source_path = "images", .target_prefix = "images" },
         },
         .hexo => &.{.{ .source_path = "source", .target_prefix = "", .filter = .hexo_static }},
+        // `--copy-assets` is rejected outright for Rails sources (see the
+        // dispatch in `migrate()`), so this table is never consulted for
+        // `.rails`; asset-root conventions for Rails land in a later stage
+        // alongside `--target` assembly.
+        .rails => &.{},
     };
 }
 
@@ -1747,6 +1885,7 @@ fn buildOtherReport(gpa: Allocator, source: Source, dir_path: []const u8, entrie
         .jekyll => "jekyll",
         .eleventy => "11ty",
         .hexo => "hexo",
+        .rails => "rails",
         .astro => unreachable,
     }, establish_target, if (assembled_target != null)
         if (copied_assets)
@@ -2155,6 +2294,37 @@ test "source config wins over a component-framework package dependency" {
     try package.writeStreamingAll(testing_io, "{\"dependencies\":{\"astro\":\"6.0.0\",\"vue\":\"4.0.0\"}}");
     package.close(testing_io);
     try std.testing.expectEqual(Source.astro, detectSource(testing_io, gpa, tmp.dir));
+}
+
+test "source auto-detection recognizes a Rails app via application.rb (branch A)" {
+    const gpa = std.testing.allocator;
+    const testing_io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var config_dir = try tmp.dir.createDirPathOpen(testing_io, "config", .{});
+    config_dir.close(testing_io);
+    const app_rb = try tmp.dir.createFile(testing_io, "config/application.rb", .{});
+    app_rb.close(testing_io);
+    var views = try tmp.dir.createDirPathOpen(testing_io, "app/views", .{});
+    views.close(testing_io);
+    try std.testing.expectEqual(Source.rails, detectSource(testing_io, gpa, tmp.dir));
+}
+
+test "source auto-detection recognizes a Rails app via routes.rb plus a rails Gemfile (branch B)" {
+    const gpa = std.testing.allocator;
+    const testing_io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var config_dir = try tmp.dir.createDirPathOpen(testing_io, "config", .{});
+    config_dir.close(testing_io);
+    const routes_rb = try tmp.dir.createFile(testing_io, "config/routes.rb", .{});
+    routes_rb.close(testing_io);
+    var views = try tmp.dir.createDirPathOpen(testing_io, "app/views", .{});
+    views.close(testing_io);
+    const gemfile = try tmp.dir.createFile(testing_io, "Gemfile", .{});
+    try gemfile.writeStreamingAll(testing_io, "gem \"rails\", \"~> 7.1\"\n");
+    gemfile.close(testing_io);
+    try std.testing.expectEqual(Source.rails, detectSource(testing_io, gpa, tmp.dir));
 }
 
 test "Next scanner inventories routes and conservative React island candidates" {
