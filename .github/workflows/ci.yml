@@ -296,12 +296,12 @@ jobs:
       # the same compiler, and setup-zig is still a Node 20 action (there is no
       # v3; upstream has moved to Codeberg), so it was one of the four actions
       # GitHub was force-running on Node 24 with a deprecation annotation.
-      # mise.toml is already the repo's single source of truth for both tools
-      # (zig 0.16.0 + bun 1.3.14) and the e2e scripts already shell out through
-      # `mise exec`, so dropping setup-zig removes a duplicate install AND the
-      # deprecation, and guarantees the compiler CI gates with is the exact one
-      # the scripts build with.
-      - name: Setup toolchain (mise — zig 0.16.0 + bun 1.3.14)
+      # mise.toml is already the repo's single source of truth for these tools
+      # (zig 0.16.0 + bun 1.3.14 + ruby 3.4.10) and the e2e scripts already
+      # shell out through `mise exec`, so dropping setup-zig removes a
+      # duplicate install AND the deprecation, and guarantees the compiler CI
+      # gates with is the exact one the scripts build with.
+      - name: Setup toolchain (mise — zig 0.16.0 + bun 1.3.14 + ruby 3.4.10)
         uses: jdx/mise-action@v4
         with:
           cache: true
@@ -314,15 +314,22 @@ jobs:
       # apply. Without a global default the shim aborts with
       # "No version is set for shim: bun", the stub server never answers, and the
       # dev-loop scripts fail with "dev never became ready", which reads as a
-      # server bug rather than a toolchain one.
+      # server bug rather than a toolchain one. `zig build test-rails` now
+      # spawns the Ruby route sidecar too (src/cli/rails/routes.zig, Stage 2),
+      # but from the repo root against an IN-repo fixture
+      # (tests/migrate/rails-sample/), where mise.toml already applies — that
+      # one alone would not need the global pin. `tests/migrate/rails.sh`
+      # (below, in the e2e-rest job) is the one that spawns Ruby against a
+      # Rails app's TEMP checkout, outside this repo, which is what actually
+      # needs it — `ruby` is pinned globally here too for that.
       #
       # Pinning the same versions globally makes the shims resolve from any cwd.
       # Keep these in lockstep with mise.toml.
       - name: Pin tool versions globally (shims must resolve outside the repo)
         run: |
-          mise use -g zig@0.16.0 bun@1.3.14
+          mise use -g zig@0.16.0 bun@1.3.14 ruby@3.4.10
           echo "resolving from a directory with no mise config:"
-          ( cd "$(mktemp -d)" && bun --version && zig version )
+          ( cd "$(mktemp -d)" && bun --version && zig version && ruby --version )
 
       # Runs immediately after the toolchain is available and before any build:
       # `zig fmt --check` needs only the compiler, no dependency fetch, so a
@@ -425,6 +432,24 @@ jobs:
             test-release test-debug test-spa test-assets test-e2e test-dev \
             test-doctor test-slugs test-validate test-explain test-diag \
             test-summary test-images test-sitemap test-rails
+
+      # `test-rails` above exercises the Zig CLIENT side of the Rails route
+      # sidecar (spawn, NDJSON decode, blocker folding) against the real Ruby
+      # process, but it never runs the sidecar's OWN Ruby test suites --
+      # runtime/sidecar/rails/test/*.rb pins 556 lines of the parser's actual
+      # behavioral contract (certain/uncertain marking, custom-router vs.
+      # `.routes.draw` discrimination, literal-array tainting, concern-cycle
+      # detection, AS-faithful inflection) that nothing in ci.yml exercised
+      # before this step existed: a routes.rb/inflect.rb edit that broke any
+      # of it could merge green. `version_check.rb` runs first, deliberately
+      # -- it exists specifically to turn a broken/mismatched Ruby toolchain
+      # into a loud, red failure here instead of the suites below silently
+      # passing (or silently no-op'ing) against an interpreter that can't
+      # actually run them.
+      - name: Rails sidecar (Ruby) suites
+        run: |
+          ruby runtime/sidecar/rails/version_check.rb
+          for t in runtime/sidecar/rails/test/*.rb; do ruby "$t" || exit 1; done
 
       - name: Runtime TypeScript tests (Bun)
         working-directory: runtime
@@ -1114,15 +1139,20 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup toolchain (mise — zig 0.16.0 + bun 1.3.14)
+      - name: Setup toolchain (mise — zig 0.16.0 + bun 1.3.14 + ruby 3.4.10)
         uses: jdx/mise-action@v4
         with:
           cache: true
 
+      # tests/migrate/rails.sh lands here (it is not in SHARDED_OUT), and its
+      # `zigapagos migrate` invocations run with a temp-dir Rails app as their
+      # subject — outside this repo's mise.toml — so once the Rails route
+      # sidecar spawns Ruby against that app (Stage 2), the shim needs a global
+      # default the same way bun already does. See build-test's longer note.
       - name: Pin tool versions globally (shims must resolve outside the repo)
         run: |
-          mise use -g zig@0.16.0 bun@1.3.14
-          ( cd "$(mktemp -d)" && bun --version && zig version )
+          mise use -g zig@0.16.0 bun@1.3.14 ruby@3.4.10
+          ( cd "$(mktemp -d)" && bun --version && zig version && ruby --version )
 
       - name: Get Zig version
         id: zig-version

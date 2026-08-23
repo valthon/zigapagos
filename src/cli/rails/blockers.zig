@@ -73,6 +73,58 @@ pub fn free(gpa: Allocator, items: []Blocker) void {
     gpa.free(items);
 }
 
+/// True when `code` names a blocker `routes.discoverRoutes` (or its callee
+/// `decodeResponse`) can append: every route-discovery degradation path
+/// (`RAILS_RUBY_UNAVAILABLE`, `RAILS_SIDECAR_MISSING`, `RAILS_SIDECAR_
+/// FAILED`, `RAILS_ROUTES_MISSING`) plus every `unresolved[].code` `routes.
+/// rb` emits (`RAILS_ROUTES_PARSE_ERROR`, and the `RAILS_ROUTE_*` family --
+/// see `routes.zig`'s `known_unresolved_codes` and its `RAILS_ROUTE_
+/// UNRESOLVED` fallback).
+///
+/// Matched by PREFIX rather than an exhaustive list, so a new `RAILS_ROUTE_*`
+/// unresolved code lands covered without a second edit here. `"RAILS_ROUTE"`
+/// alone already covers `RAILS_ROUTES_MISSING`/`RAILS_ROUTES_PARSE_ERROR`
+/// (`"RAILS_ROUTES_..."` starts with `"RAILS_ROUTE"`); `"RAILS_SIDECAR"` and
+/// `"RAILS_RUBY"` are listed separately because those two codes don't share
+/// that stem.
+///
+/// Used by `report.zig` (to decide whether a zero-route run legitimately
+/// found nothing, vs. found something it couldn't resolve) and by `rails.
+/// zig`'s `discover` (to hand `migrate.zig` the same signal via `Discovery.
+/// route_blocker`, so the CLI summary and the report never disagree about
+/// which of those two zero-route stories is true).
+pub fn isRouteRelated(code: []const u8) bool {
+    const prefixes = [_][]const u8{ "RAILS_ROUTE", "RAILS_SIDECAR", "RAILS_RUBY" };
+    for (prefixes) |p| {
+        if (std.mem.startsWith(u8, code, p)) return true;
+    }
+    return false;
+}
+
+test "isRouteRelated matches every route-discovery degradation and unresolved code" {
+    const yes = [_][]const u8{
+        "RAILS_ROUTES_MISSING",
+        "RAILS_ROUTES_PARSE_ERROR",
+        "RAILS_ROUTE_CONDITIONAL",
+        "RAILS_ROUTE_ENGINE_MOUNT",
+        "RAILS_ROUTE_UNRESOLVED",
+        "RAILS_SIDECAR_MISSING",
+        "RAILS_SIDECAR_FAILED",
+        "RAILS_RUBY_UNAVAILABLE",
+    };
+    for (yes) |c| try std.testing.expect(isRouteRelated(c));
+
+    const no = [_][]const u8{
+        "RAILS_TEMPLATE_ENGINE_UNSUPPORTED",
+        "RAILS_INVENTORY_UNREADABLE",
+        "RAILS_INVENTORY_TRUNCATED",
+        "RAILS_GEMFILE_UNREADABLE",
+        "RAILS_PACKAGE_JSON_UNREADABLE",
+        "RAILS_PACKAGE_JSON_MALFORMED",
+    };
+    for (no) |c| try std.testing.expect(!isRouteRelated(c));
+}
+
 fn expectBlockers(items: []const Blocker, want: []const Blocker) !void {
     try std.testing.expectEqual(want.len, items.len);
     for (items, want) |got, expected| {

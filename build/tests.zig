@@ -111,6 +111,16 @@ const standalone: []const Standalone = &.{
         .step_name = "test-rails",
         .description = "Run Rails migration adapter unit tests",
         .root_source_file = "src/cli/rails/rails.zig",
+        // Stage 2 (issue #166) added a Ruby-spawning suite
+        // (src/cli/rails/routes.zig) alongside the std-only Stage 1 files:
+        // it exec's the host `ruby` (or `$ZIGAPAGOS_RUBY`), same reason
+        // `test-props` above pins the host target for `bun`. Its
+        // live-spawn test resolves `runtime/sidecar/rails/analyze.rb` and
+        // `tests/migrate/rails-sample/` as repo-relative paths, so this
+        // needs `repo_root_cwd` for the same reason `test-sidecar` above
+        // does for `runtime/sidecar/render.ts`.
+        .host_target = true,
+        .repo_root_cwd = true,
     },
 };
 

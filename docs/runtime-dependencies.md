@@ -12,7 +12,7 @@ not build websites. Nothing in a Zigapagos project is a Zig build graph, and
 curl -fsSL https://valthon.github.io/zigapagos/install.sh | sh
 ```
 
-What the binary does need at run time is two external programs, and it needs
+What the binary does need at run time is three external programs, and it needs
 each of them only for specific work:
 
 - **[Bun](https://bun.sh)** — server-renders islands and SPAs, bundles their
@@ -20,6 +20,11 @@ each of them only for specific work:
   out to it (and `dev`, through the `release` it re-runs).
 - **[ZigBase](https://github.com/valthon/zigbase)** — the HTTP server `dev` and
   `e2e` serve the built tree with. Zigapagos has no bundled server of its own.
+- **Ruby ≥ 3.3** — parses `config/routes.rb` with the stdlib `prism` gem (no
+  third-party gems) to recover a route table. Only `migrate` on a Rails source
+  shells out to it, and only for that one step: an app the parser cannot read
+  degrades to `RAILS_RUBY_UNAVAILABLE`/`RAILS_SIDECAR_FAILED` and the rest of
+  the inventory still writes, rather than failing the run.
 
 Plus one thing that is not a program: the **`@z/runtime` source tree**, which
 the Bun sidecar and the bundlers are scripts *inside*. See
@@ -35,7 +40,7 @@ help menu and exits 0, and needs nothing.
 | Command | Bun | ZigBase | Notes |
 | --- | --- | --- | --- |
 | `zigapagos init` | no | no | Writes a sample site. Pure file I/O. |
-| `zigapagos migrate` | no | no | Writes a source-specific worklist; can also scaffold React islands, convert Hugo/Jekyll/Eleventy/Hexo Markdown, or stream conventional static assets without running source code. |
+| `zigapagos migrate` | no | no | Writes a source-specific worklist; can also scaffold React islands, convert Hugo/Jekyll/Eleventy/Hexo Markdown, or stream conventional static assets without running source code. On a Rails source it additionally needs Ruby ≥ 3.3 on PATH and `ZIGAPAGOS_RUNTIME_DIR` pointed at the `@z/runtime` tree to recover routes from `config/routes.rb`; neither is required for any other source, and a missing/failing Ruby degrades the run rather than failing it. |
 | `zigapagos doctor` | no | no | Reads a built tree. |
 | `zigapagos validate` | no | no | Parse + analyze in memory, deliberately without a sidecar. |
 | `zigapagos explain` | no | no | Route introspection, same memory build. |

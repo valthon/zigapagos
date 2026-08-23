@@ -1,11 +1,13 @@
 //! Renders the human MIGRATION.md worklist. Pure: takes in-memory inventory
-//! data and returns markdown, so it is testable without a filesystem.
+//! and route data and returns markdown, so it is testable without a
+//! filesystem.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const inventory = @import("inventory.zig");
 const integrations = @import("integrations.zig");
 const blockers = @import("blockers.zig");
+const routes = @import("routes.zig");
 
 pub const Input = struct {
     app_path: []const u8,
@@ -18,7 +20,211 @@ pub const Input = struct {
     /// callers of `build`) rather than the report special-casing template
     /// engines on top of a separately populated list.
     blockers: []const blockers.Blocker,
+    /// Every route the sidecar recovered (Task 5's `routes.discoverRoutes`).
+    /// Defaulted to empty so the existing report tests above, written before
+    /// this field existed, keep compiling unchanged.
+    routes: []const routes.Route = &.{},
+    /// `routes.Result.mode` passed straight through: `"static_ast"` when the
+    /// sidecar answered, `"none"` on every degradation path. Defaulted to
+    /// `"none"` for the same reason as `routes`.
+    route_mode: []const u8 = "none",
 };
+
+test "routes render with their origin, and uncertain ones are marked" {
+    const rs = [_]routes.Route{
+        .{ .verb = "GET", .path = "/", .controller = "home", .action = "index", .name = "root", .certain = true, .origin = .static_ast },
+        .{ .verb = "GET", .path = "/x", .controller = null, .action = null, .name = null, .certain = false, .origin = .static_ast },
+    };
+    const md = try build(std.testing.allocator, .{
+        .app_path = "app",
+        .entries = &.{},
+        .integrations = &.{},
+        .blockers = &.{},
+        .routes = &rs,
+        .route_mode = "static_ast",
+    });
+    defer std.testing.allocator.free(md);
+
+    try std.testing.expect(std.mem.indexOf(u8, md, "## Routes") != null);
+    try std.testing.expect(std.mem.indexOf(u8, md, "static_ast") != null);
+    // Pin the exact rendered LINE for each route, not just "the word
+    // 'uncertain' appears somewhere in the document". The section's
+    // unconditional intro sentence explains the marker using that same
+    // word, so a substring check against the whole document passes even
+    // with the per-route marker deleted entirely -- this caught a review
+    // finding that the original version of this assertion was vacuous.
+    // The certain route's line must end right after its controller#action
+    // with nothing appended; the uncertain route's line must carry the
+    // marker. This also pins that the root route ("/") actually rendered,
+    // rather than "GET /" merely being a substring of "GET /x".
+    try std.testing.expect(std.mem.indexOf(u8, md, "- `GET /` → `home#index`\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, md, "- `GET /x` — **uncertain**\n") != null);
+}
+
+test "a known controller with no action still renders, not silently dropped" {
+    // `get "/x", controller: "a"` parses to controller="a", action=null (no
+    // unresolved entry -- the earlier `action ||= seg` narrowing on this
+    // branch deliberately stopped inventing actions from path strings).
+    // Rendering nothing here would drop known information from the
+    // worklist, which is the opposite of what this report is for.
+    const rs = [_]routes.Route{
+        .{ .verb = "GET", .path = "/x", .controller = "a", .action = null, .name = null, .certain = true, .origin = .static_ast },
+    };
+    const md = try build(std.testing.allocator, .{
+        .app_path = "app",
+        .entries = &.{},
+        .integrations = &.{},
+        .blockers = &.{},
+        .routes = &rs,
+        .route_mode = "static_ast",
+    });
+    defer std.testing.allocator.free(md);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        md,
+        "- `GET /x` → controller `a`, action unknown\n",
+    ) != null);
+}
+
+test "a known action with no controller still renders, not silently dropped" {
+    const rs = [_]routes.Route{
+        .{ .verb = "GET", .path = "/x", .controller = null, .action = "show", .name = null, .certain = true, .origin = .static_ast },
+    };
+    const md = try build(std.testing.allocator, .{
+        .app_path = "app",
+        .entries = &.{},
+        .integrations = &.{},
+        .blockers = &.{},
+        .routes = &rs,
+        .route_mode = "static_ast",
+    });
+    defer std.testing.allocator.free(md);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        md,
+        "- `GET /x` → action `show`, controller unknown\n",
+    ) != null);
+}
+
+// Three genuinely different zero-route situations (finding: "See Blockers
+// for why" must not point at a section that says nothing about routes).
+// `route_mode == "none"` means discovery never ran at all, so a degradation
+// blocker is guaranteed; `route_mode == "static_ast"` means the sidecar DID
+// run, and then the only question is whether it hit something unresolvable
+// (a route-related blocker exists) or `config/routes.rb` genuinely declares
+// no routes (no such blocker). Each test pins the exact rendered line, not
+// a document-level substring -- see the "uncertain" marker test above for
+// why that matters on this branch specifically.
+
+test "zero routes, mode none: discovery did not run, points at Blockers" {
+    const md = try build(std.testing.allocator, .{
+        .app_path = "app",
+        .entries = &.{},
+        .integrations = &.{},
+        .blockers = &.{
+            .{ .code = "RAILS_SIDECAR_MISSING", .path = "sidecar/rails/analyze.rb", .detail = "ZIGAPAGOS_RUNTIME_DIR is not set" },
+        },
+        .routes = &.{},
+        .route_mode = "none",
+    });
+    defer std.testing.allocator.free(md);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        md,
+        "No routes were recovered (route_mode: `none`). See Blockers below for why.\n",
+    ) != null);
+}
+
+test "zero routes, mode static_ast with a route blocker: points at Blockers" {
+    const md = try build(std.testing.allocator, .{
+        .app_path = "app",
+        .entries = &.{},
+        .integrations = &.{},
+        .blockers = &.{
+            .{ .code = "RAILS_ROUTE_ENGINE_MOUNT", .path = "config/routes.rb", .detail = "mount is not evaluated" },
+        },
+        .routes = &.{},
+        .route_mode = "static_ast",
+    });
+    defer std.testing.allocator.free(md);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        md,
+        "No routes were recovered (route_mode: `static_ast`). See Blockers below for why.\n",
+    ) != null);
+}
+
+test "zero routes, mode static_ast with no route blocker: says routes.rb declares none" {
+    // No blockers at all -- discovery ran cleanly and config/routes.rb is
+    // simply empty (`Rails.application.routes.draw do end`). Pointing this
+    // at Blockers would misdirect: there is nothing there about routes.
+    const md = try build(std.testing.allocator, .{
+        .app_path = "app",
+        .entries = &.{},
+        .integrations = &.{},
+        .blockers = &.{},
+        .routes = &.{},
+        .route_mode = "static_ast",
+    });
+    defer std.testing.allocator.free(md);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        md,
+        "`config/routes.rb` declares no routes.\n",
+    ) != null);
+    // Must NOT point at a Blockers section that says nothing about routes.
+    try std.testing.expect(std.mem.indexOf(u8, md, "See Blockers below for why") == null);
+}
+
+test "zero routes, mode static_ast, an unrelated blocker present: still says routes.rb declares none" {
+    // A non-route blocker (e.g. an unsupported template engine) must not be
+    // mistaken for a route-related one -- the route section's conclusion
+    // depends only on route-related blockers.
+    const md = try build(std.testing.allocator, .{
+        .app_path = "app",
+        .entries = &.{},
+        .integrations = &.{},
+        .blockers = &.{
+            .{ .code = "RAILS_TEMPLATE_ENGINE_UNSUPPORTED", .path = "app/views/x.html.haml", .detail = "Haml template is not converted" },
+        },
+        .routes = &.{},
+        .route_mode = "static_ast",
+    });
+    defer std.testing.allocator.free(md);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        md,
+        "`config/routes.rb` declares no routes.\n",
+    ) != null);
+}
+
+test "routes render in (path, verb) order regardless of input order" {
+    // Mirrors "blockers render in (code, path) order regardless of input
+    // order" below: the analogous guardrail was missing for routes, so a
+    // future change to the sort call site in `build` had no test pinning
+    // it -- only out-of-band review verification did.
+    const unsorted = [_]routes.Route{
+        .{ .verb = "POST", .path = "/posts", .controller = "posts", .action = "create", .name = null, .certain = true, .origin = .static_ast },
+        .{ .verb = "GET", .path = "/", .controller = "home", .action = "index", .name = null, .certain = true, .origin = .static_ast },
+        .{ .verb = "GET", .path = "/posts", .controller = "posts", .action = "index", .name = null, .certain = true, .origin = .static_ast },
+    };
+    const md = try build(std.testing.allocator, .{
+        .app_path = "x",
+        .entries = &.{},
+        .integrations = &.{},
+        .blockers = &.{},
+        .routes = &unsorted,
+        .route_mode = "static_ast",
+    });
+    defer std.testing.allocator.free(md);
+
+    const root_pos = std.mem.indexOf(u8, md, "`GET /`").?;
+    const posts_get_pos = std.mem.indexOf(u8, md, "`GET /posts`").?;
+    const posts_post_pos = std.mem.indexOf(u8, md, "`POST /posts`").?;
+    // "/" < "/posts" lexically, and within "/posts", GET < POST.
+    try std.testing.expect(root_pos < posts_get_pos);
+    try std.testing.expect(posts_get_pos < posts_post_pos);
+}
 
 test "report lists counts, integrations, and flags unsupported engines" {
     const entries = [_]inventory.Entry{
@@ -95,6 +301,17 @@ test "report is byte-identical across runs" {
     try std.testing.expectEqualStrings(a, b);
 }
 
+/// True when `list` contains at least one route-discovery-related blocker
+/// (see `blockers.isRouteRelated`). Linear scan over the caller's own list,
+/// not a sorted/deduped structure -- `list` is at most a handful of entries
+/// per run and this is called once per `build`.
+fn hasRouteBlocker(list: []const Blocker) bool {
+    for (list) |b| {
+        if (blockers.isRouteRelated(b.code)) return true;
+    }
+    return false;
+}
+
 fn countOf(entries: []const inventory.Entry, kind: inventory.Kind) usize {
     var n: usize = 0;
     for (entries) |e| {
@@ -128,7 +345,7 @@ pub fn build(gpa: Allocator, in: Input) Allocator.Error![]const u8 {
     w.print("# Migrating {s} to Zigapagos\n\n", .{in.app_path}) catch return error.OutOfMemory;
     w.writeAll(
         \\Rails source discovery. This worklist inventories the presentation
-        \\layer; it converts nothing. Routes are not included at this stage.
+        \\layer and the recovered route graph; it converts nothing.
         \\
         \\## Inventory
         \\
@@ -146,6 +363,75 @@ pub fn build(gpa: Allocator, in: Input) Allocator.Error![]const u8 {
     w.print("| JS entrypoints | {d} |\n", .{countOf(in.entries, .js_entry)}) catch return error.OutOfMemory;
     w.print("| JS modules | {d} |\n", .{countOf(in.entries, .js_module)}) catch return error.OutOfMemory;
     w.print("| Assets | {d} |\n", .{countOf(in.entries, .asset)}) catch return error.OutOfMemory;
+
+    w.writeAll("\n## Routes\n\n") catch return error.OutOfMemory;
+    if (in.routes.len == 0) {
+        // An empty section here would read as "this app has no routes",
+        // which is true in exactly one of three situations -- conflating
+        // them was the bug (see the "zero routes, ..." tests above):
+        //
+        //   1. route_mode == "none": discovery never ran (no Ruby, no
+        //      sidecar, no config/routes.rb) -- a degradation blocker is
+        //      guaranteed to exist, so pointing at Blockers is correct.
+        //   2. route_mode == "static_ast" and a route-related blocker
+        //      exists: the sidecar ran but everything it found was
+        //      unresolvable -- Blockers is still the right pointer.
+        //   3. route_mode == "static_ast" and no route-related blocker:
+        //      config/routes.rb genuinely declares no routes. Pointing at
+        //      Blockers here would misdirect the reader to a section that
+        //      says nothing about routes, so this says the plain thing
+        //      instead of promising an explanation that isn't there.
+        const discovery_ran = std.mem.eql(u8, in.route_mode, "static_ast");
+        if (!discovery_ran or hasRouteBlocker(in.blockers)) {
+            w.print(
+                "No routes were recovered (route_mode: `{s}`). See Blockers below for why.\n",
+                .{in.route_mode},
+            ) catch return error.OutOfMemory;
+        } else {
+            w.writeAll("`config/routes.rb` declares no routes.\n") catch return error.OutOfMemory;
+        }
+    } else {
+        w.print(
+            "Recovered via `{s}`. Routes marked **uncertain** were found through a construct the parser could not fully evaluate -- treat them as leads, not settled facts.\n\n",
+            .{in.route_mode},
+        ) catch return error.OutOfMemory;
+
+        // Sorted in a private copy for the same reason the blockers section
+        // below sorts its own copy: determinism is `build`'s responsibility,
+        // independent of whatever order the caller's route discovery
+        // produced (`discoverRoutes` already sorts, but this report must not
+        // depend on that -- an artifact people diff has to be stable on its
+        // own terms).
+        const sorted_routes = try gpa.dupe(Route, in.routes);
+        defer gpa.free(sorted_routes);
+        std.mem.sort(Route, sorted_routes, {}, routeLessThan);
+        for (sorted_routes) |r| {
+            w.print("- `{s} {s}`", .{ r.verb, r.path }) catch return error.OutOfMemory;
+            // Render whatever half of the destination is actually known --
+            // dropping a known controller (or action) because the other
+            // half is unknown throws away real information from a
+            // migration worklist. `controller#action` is reserved for the
+            // case both halves are known, so a reader can never mistake a
+            // half-known destination for a complete one.
+            if (r.controller) |c| {
+                if (r.action) |a| {
+                    w.print(" → `{s}#{s}`", .{ c, a }) catch return error.OutOfMemory;
+                } else {
+                    w.print(" → controller `{s}`, action unknown", .{c}) catch return error.OutOfMemory;
+                }
+            } else if (r.action) |a| {
+                w.print(" → action `{s}`, controller unknown", .{a}) catch return error.OutOfMemory;
+            }
+            // `certain == false` must be visibly distinguished at a glance,
+            // not just on close reading -- a route recovered from a
+            // construct the parser could not evaluate is a materially
+            // weaker claim than one read straight out of the DSL.
+            if (!r.certain) {
+                w.writeAll(" — **uncertain**") catch return error.OutOfMemory;
+            }
+            w.writeAll("\n") catch return error.OutOfMemory;
+        }
+    }
 
     w.writeAll("\n## Detected integrations\n\n") catch return error.OutOfMemory;
     if (in.integrations.len == 0) {
@@ -181,5 +467,19 @@ fn blockerLessThan(_: void, a: Blocker, b: Blocker) bool {
         .lt => true,
         .gt => false,
         .eq => std.mem.lessThan(u8, a.path, b.path),
+    };
+}
+
+const Route = routes.Route;
+
+/// Not imported from routes.zig: `routes.routeLessThan` is private (that
+/// module sorts its own decoded result before returning it), and this file
+/// must not depend on the caller having already sorted -- see the
+/// "byte-identical across runs" test and this section's own comment.
+fn routeLessThan(_: void, a: Route, b: Route) bool {
+    return switch (std.mem.order(u8, a.path, b.path)) {
+        .lt => true,
+        .gt => false,
+        .eq => std.mem.order(u8, a.verb, b.verb) == .lt,
     };
 }
