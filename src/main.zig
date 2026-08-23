@@ -172,7 +172,7 @@ pub fn main(init: std.process.Init) u8 {
 
     const any_error = switch (cmd) {
         .init => @import("cli/init.zig").init(io, gpa, args[2..]),
-        .migrate => @import("cli/migrate.zig").migrate(io, gpa, args[2..]),
+        .migrate => @import("cli/migrate.zig").migrate(io, gpa, args[2..], init.environ_map),
         .doctor => @import("cli/doctor.zig").doctor(io, gpa, args[2..]),
         .validate => @import("cli/validate.zig").validate(io, gpa, args[2..]),
         .explain => @import("cli/explain.zig").explain(io, gpa, args[2..]),

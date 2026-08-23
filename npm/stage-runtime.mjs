@@ -14,11 +14,16 @@
 // reproduce. Hence this module rather than a second list.
 //
 // What is excluded is excluded on purpose, not to save bytes:
-//   - `test/`, `*.test.ts` — the bun-test suite and its fixtures. Those fixtures
-//     import `react`, `@acme/greeting` and `my-store`, none of which are
-//     dependencies of anything we ship; packing them would put unresolvable bare
-//     imports inside the tarball and invite exactly the "why does this package
-//     need React?" question, with no upside.
+//   - `test/`, `*.test.ts` — the bun-test suite and its fixtures, wherever they
+//     sit in the tree: the top-level `runtime/test/` is excluded structurally
+//     (RUNTIME_ENTRIES below never lists it), but a nested `test/` directory
+//     inside an entry that IS copied recursively (e.g.
+//     `sidecar/rails/test/*.rb`, the Rails route-sidecar's own suite) is not
+//     caught by that and needs the explicit path-segment filter below. Those
+//     fixtures import `react`, `@acme/greeting` and `my-store`, none of which
+//     are dependencies of anything we ship; packing them would put unresolvable
+//     bare imports inside the tarball and invite exactly the "why does this
+//     package need React?" question, with no upside.
 //   - `node_modules/` — the two consumers resolve it differently and neither
 //     wants the checkout's copy. npm declares the dependencies and lets the
 //     consumer's own install place them; the release asset vendors a freshly
@@ -50,6 +55,15 @@ export const RUNTIME_REQUIRED = [
   "src/spa-entry.ts",
   "src/host.ts",
   "src/ssr-env.ts",
+  // src/cli/rails/routes.zig:213 joins ZIGAPAGOS_RUNTIME_DIR + this path by
+  // name to spawn the Rails route sidecar; routes.rb/inflect.rb are its
+  // require_relative dependencies (analyze.rb -> routes.rb -> inflect.rb).
+  // These shipped correctly before this row existed only because
+  // RUNTIME_ENTRIES copies `sidecar/` recursively -- correct by accident,
+  // not by the assertion this list exists to provide.
+  "sidecar/rails/analyze.rb",
+  "sidecar/rails/routes.rb",
+  "sidecar/rails/inflect.rb",
 ];
 
 /**
@@ -73,7 +87,13 @@ export function stageRuntime(repoRoot, dest) {
       filter: (from) => {
         const rel = from.slice(src.length + 1);
         if (rel.endsWith(".test.ts")) return false;
-        return !rel.split(/[\\/]/).includes("node_modules");
+        const segments = rel.split(/[\\/]/);
+        // Exact segment "test" only -- NOT "testing": `src/testing/` is a
+        // real export target (see the module doc above) and must still
+        // ship. This is what actually excludes `sidecar/rails/test/*.rb`,
+        // which `.test.ts`/node_modules filtering above never touched.
+        if (segments.includes("test")) return false;
+        return !segments.includes("node_modules");
       },
     });
   }

@@ -13,6 +13,7 @@ pub const detect = @import("detect.zig");
 pub const inventory = @import("inventory.zig");
 pub const integrations = @import("integrations.zig");
 pub const report = @import("report.zig");
+pub const routes = @import("routes.zig");
 
 // Pulls the suites of every sibling file into this module so `test-rails`
 // runs them all. Without this the standalone binary only sees this file.
@@ -23,6 +24,7 @@ test {
     _ = inventory;
     _ = integrations;
     _ = report;
+    _ = routes;
 }
 
 /// Discovery's result: the rendered report plus how many of its blockers mean
@@ -34,6 +36,13 @@ test {
 pub const Discovery = struct {
     report: []const u8,
     integrity_blocker_count: usize,
+    /// Count of routes actually rendered into `report`
+    /// (`route_result.routes.len`). `src/cli/migrate.zig`'s CLI summary line
+    /// reads this to say accurately whether any routes were recovered,
+    /// rather than re-parsing `report`'s markdown or hardcoding either
+    /// story -- a run with no Ruby/sidecar/`config/routes.rb` recovers zero
+    /// routes just as validly as one that ran the sidecar and found none.
+    route_count: usize,
 };
 
 /// Contract 1 (self-freeing): every intermediate (entries, blockers,
@@ -44,6 +53,7 @@ pub fn discover(
     gpa: Allocator,
     root: Io.Dir,
     app_path: []const u8,
+    environ_map: *const std.process.Environ.Map,
 ) Allocator.Error!Discovery {
     var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
     defer {
@@ -70,6 +80,13 @@ pub fn discover(
     const ints = try integrations.scan(gpa, gemfile, pkg, &blocker_list);
     defer integrations.freeIntegrations(gpa, ints);
 
+    // Route discovery threads the SAME blocker_list: every degradation path
+    // it can hit (missing Ruby, missing sidecar, a spawn/response failure,
+    // no config/routes.rb) appends here rather than failing this function,
+    // so `integrity_blocker_count` below already accounts for it.
+    const route_result = try routes.discoverRoutes(io, gpa, root, app_path, &blocker_list, environ_map);
+    defer routes.freeRoutes(gpa, route_result.routes);
+
     var integrity_blocker_count: usize = 0;
     for (blocker_list.items) |b| {
         if (b.integrity) integrity_blocker_count += 1;
@@ -80,6 +97,12 @@ pub fn discover(
         .entries = wr.entries,
         .integrations = ints,
         .blockers = blocker_list.items,
+        .routes = route_result.routes,
+        .route_mode = route_result.mode,
     });
-    return .{ .report = body, .integrity_blocker_count = integrity_blocker_count };
+    return .{
+        .report = body,
+        .integrity_blocker_count = integrity_blocker_count,
+        .route_count = route_result.routes.len,
+    };
 }

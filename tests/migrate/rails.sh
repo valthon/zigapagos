@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
 # End-to-end contract for the Rails adapter: detection, source immutability,
-# determinism, non-clobbering repeat runs, and blocker honesty.
+# determinism, non-clobbering repeat runs, blocker honesty, and route
+# recovery.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 REPO="$(pwd)"
 ZIGAPAGOS="${ZIGAPAGOS:-$REPO/zig-out/bin/zigapagos}"
+# Route discovery spawns the Ruby sidecar under runtime/sidecar/rails; without
+# this, discoverRoutes degrades to RAILS_SIDECAR_MISSING before ever looking
+# for `ruby` on PATH (see src/cli/rails/routes.zig), which would make every
+# route assertion below fail regardless of the `command -v ruby` guard.
+export ZIGAPAGOS_RUNTIME_DIR="$REPO/runtime"
 
 fail() { echo "FAIL: $*"; exit 1; }
 if [[ ! -x "$ZIGAPAGOS" ]]; then
@@ -53,6 +59,47 @@ grep -q "Stimulus controllers | 2" "$WORK/one.md" || fail "expected 2 stimulus c
 grep -q "JS entrypoints | 1" "$WORK/one.md" || fail "expected 1 JS entrypoint (app/javascript/application.js)"
 grep -q "JS modules | 1" "$WORK/one.md" || fail "expected 1 JS module (app/javascript/components/Button.jsx)"
 grep -q "Assets | 2" "$WORK/one.md" || fail "expected 2 assets (app/assets/images/logo.png, public/favicon.ico)"
+
+# --- routes -------------------------------------------------------------
+# Route recovery needs `ruby` on PATH (the sidecar statically parses
+# config/routes.rb) -- unlike every assertion above, which only exercises
+# the Zig-side inventory/integration/blocker code. Skip loudly rather than
+# silently passing when it's absent, mirroring the permission-check pattern
+# further down this file.
+if command -v ruby >/dev/null 2>&1; then
+  grep -q "## Routes" "$WORK/one.md" || fail "no Routes section"
+  grep -q "static_ast" "$WORK/one.md" || fail "route mode not stated"
+
+  # resources :posts expands to the full CRUD set. Matched against the
+  # exact rendered line (-Fx), not a loose substring: this doubles as proof
+  # that a genuine, certain route carries no uncertainty marker.
+  grep -Fxq -- '- `GET /posts` → `posts#index`' "$WORK/one.md" \
+    || fail "resources :posts did not expand, or a certain route gained a spurious uncertainty marker"
+  # member { post :publish } nests under the resource's :id.
+  grep -Fxq -- '- `POST /posts/:id/publish` → `posts#publish`' "$WORK/one.md" \
+    || fail "member route missing"
+  # namespace :admin prefixes both the path and the controller module.
+  grep -Fxq -- '- `GET /admin/users` → `admin/users#index`' "$WORK/one.md" \
+    || fail "namespaced route missing"
+
+  # The engine mount is a construct the parser cannot evaluate at all -- it
+  # must surface as a coded blocker, never as a silently-dropped route.
+  grep -q "RAILS_ROUTE_ENGINE_MOUNT" "$WORK/one.md" || fail "mount not reported as a blocker"
+
+  # A route inside a conditional IS emitted (its shape is fully known from
+  # the source) but flagged uncertain (its activation is not). Asserted on
+  # the exact rendered line, not on "the word uncertain appears somewhere"
+  # -- this section's own unconditional intro sentence uses that word to
+  # explain the marker, so a document-level substring check would still
+  # pass with the per-route marker deleted entirely. That exact vacuous
+  # assertion is what Task 6's review caught and rejected; this pins the
+  # marker to the one route that must carry it.
+  grep -Fxq -- '- `GET /admin/health` → `admin#health` — **uncertain**' "$WORK/one.md" \
+    || fail "conditional route missing its uncertainty marker"
+  grep -q "RAILS_ROUTE_CONDITIONAL" "$WORK/one.md" || fail "conditional route not reported as a blocker"
+else
+  echo "SKIP: route assertions (no ruby on PATH)"
+fi
 
 # --- integrations ------------------------------------------------------------
 grep -q "propshaft" "$WORK/one.md" || fail "propshaft not detected"

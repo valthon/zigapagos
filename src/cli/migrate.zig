@@ -69,9 +69,11 @@ const usage =
     \\files to their Zigapagos targets. The source is auto-detected or selected
     \\with --from.
     \\
-    \\Rails is discovery-only: its MIGRATION.md is a presentation inventory
-    \\with no target mapping, and --target, --scaffold, --copy-assets and
-    \\--convert-content are all rejected for it.
+    \\Rails is discovery-only: its MIGRATION.md is a presentation-and-route
+    \\inventory (recovered routes come from a static AST walk of
+    \\config/routes.rb, never by booting the app) with no target mapping, and
+    \\--target, --scaffold, --copy-assets and --convert-content are all
+    \\rejected for it.
     \\
     \\Source files are read-only. The command always writes a MIGRATION.md
     \\worklist. With --scaffold it also performs the deterministic React part of
@@ -542,7 +544,7 @@ fn scanOther(io: Io, gpa: Allocator, root: Io.Dir, source: Source) ScanResult {
     };
 }
 
-pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8) bool {
+pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *const std.process.Environ.Map) bool {
     var project_dir: ?[]const u8 = null;
     var requested_source: ?Source = null;
     var out_path: []const u8 = "MIGRATION.md";
@@ -683,7 +685,7 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8) bool {
             );
         }
 
-        const discovery = rails.discover(io, gpa, root, dir_path) catch |err| switch (err) {
+        const discovery = rails.discover(io, gpa, root, dir_path, environ_map) catch |err| switch (err) {
             error.OutOfMemory => fatal.oom(),
         };
         defer gpa.free(discovery.report);
@@ -694,11 +696,25 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8) bool {
         var rfw = rf.writer(io, &.{});
         rfw.interface.writeAll(discovery.report) catch |err| fatal.file(out_path, err);
 
-        std.debug.print(
-            "Wrote {s}: Rails, inventory only (no routes at this stage).\n" ++
-                "Next: follow MIGRATION.md.\n",
-            .{out_path},
-        );
+        // `route_count` (not `route_mode`, which this scope doesn't have --
+        // see rails.Discovery's doc) is the accurate signal here: a run with
+        // no Ruby/sidecar/config/routes.rb recovers zero routes exactly as
+        // validly as one that ran the sidecar and genuinely found none, so
+        // this message must not hardcode either story -- it says what
+        // actually happened.
+        if (discovery.route_count > 0) {
+            std.debug.print(
+                "Wrote {s}: Rails, inventory plus {d} recovered route(s).\n" ++
+                    "Next: follow MIGRATION.md.\n",
+                .{ out_path, discovery.route_count },
+            );
+        } else {
+            std.debug.print(
+                "Wrote {s}: Rails, inventory only (no routes recovered -- see Blockers in the report).\n" ++
+                    "Next: follow MIGRATION.md.\n",
+                .{out_path},
+            );
+        }
 
         // An integrity blocker (an unreadable/truncated inventory root, an
         // unreadable Gemfile or package.json) means the report was written
