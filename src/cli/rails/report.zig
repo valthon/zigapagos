@@ -8,6 +8,7 @@ const inventory = @import("inventory.zig");
 const integrations = @import("integrations.zig");
 const blockers = @import("blockers.zig");
 const routes = @import("routes.zig");
+const classify = @import("classify.zig");
 
 pub const Input = struct {
     app_path: []const u8,
@@ -28,13 +29,26 @@ pub const Input = struct {
     /// sidecar answered, `"none"` on every degradation path. Defaulted to
     /// `"none"` for the same reason as `routes`.
     route_mode: []const u8 = "none",
+    /// Task 5's join: `classifications[i]` is `routes[i]`'s
+    /// `classify.Verdict` (`rails.zig`'s `discover` calls `classifyRoutes`
+    /// to build this, index-aligned with `routes`). Defaulted to empty
+    /// alongside `routes` for the same reason `routes` defaults empty --
+    /// but whenever `routes` is non-empty, the caller must supply exactly
+    /// one classification per route; `build` asserts the lengths match
+    /// rather than silently rendering an unclassified route or
+    /// misaligning the pairing.
+    classifications: []const classify.Verdict = &.{},
 };
+
+const unresolved_verdict: classify.Verdict = .{ .class = .unresolved, .reason = "test stub", .candidates = &.{} };
+const content_verdict: classify.Verdict = .{ .class = .content, .reason = "test stub", .candidates = &.{} };
 
 test "routes render with their origin, and uncertain ones are marked" {
     const rs = [_]routes.Route{
         .{ .verb = "GET", .path = "/", .controller = "home", .action = "index", .name = "root", .certain = true, .origin = .static_ast },
         .{ .verb = "GET", .path = "/x", .controller = null, .action = null, .name = null, .certain = false, .origin = .static_ast },
     };
+    const vs = [_]classify.Verdict{ content_verdict, unresolved_verdict };
     const md = try build(std.testing.allocator, .{
         .app_path = "app",
         .entries = &.{},
@@ -42,6 +56,7 @@ test "routes render with their origin, and uncertain ones are marked" {
         .blockers = &.{},
         .routes = &rs,
         .route_mode = "static_ast",
+        .classifications = &vs,
     });
     defer std.testing.allocator.free(md);
 
@@ -53,12 +68,13 @@ test "routes render with their origin, and uncertain ones are marked" {
     // word, so a substring check against the whole document passes even
     // with the per-route marker deleted entirely -- this caught a review
     // finding that the original version of this assertion was vacuous.
-    // The certain route's line must end right after its controller#action
-    // with nothing appended; the uncertain route's line must carry the
-    // marker. This also pins that the root route ("/") actually rendered,
-    // rather than "GET /" merely being a substring of "GET /x".
-    try std.testing.expect(std.mem.indexOf(u8, md, "- `GET /` → `home#index`\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, md, "- `GET /x` — **uncertain**\n") != null);
+    // The certain route's line must end right after its class with nothing
+    // else appended; the uncertain route's line must carry both the
+    // uncertainty marker AND its class -- they are independent claims. This
+    // also pins that the root route ("/") actually rendered, rather than
+    // "GET /" merely being a substring of "GET /x".
+    try std.testing.expect(std.mem.indexOf(u8, md, "- `GET /` → `home#index` — content\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, md, "- `GET /x` — **uncertain** — unresolved\n") != null);
 }
 
 test "a known controller with no action still renders, not silently dropped" {
@@ -70,6 +86,7 @@ test "a known controller with no action still renders, not silently dropped" {
     const rs = [_]routes.Route{
         .{ .verb = "GET", .path = "/x", .controller = "a", .action = null, .name = null, .certain = true, .origin = .static_ast },
     };
+    const vs = [_]classify.Verdict{unresolved_verdict};
     const md = try build(std.testing.allocator, .{
         .app_path = "app",
         .entries = &.{},
@@ -77,12 +94,13 @@ test "a known controller with no action still renders, not silently dropped" {
         .blockers = &.{},
         .routes = &rs,
         .route_mode = "static_ast",
+        .classifications = &vs,
     });
     defer std.testing.allocator.free(md);
     try std.testing.expect(std.mem.indexOf(
         u8,
         md,
-        "- `GET /x` → controller `a`, action unknown\n",
+        "- `GET /x` → controller `a`, action unknown — unresolved\n",
     ) != null);
 }
 
@@ -90,6 +108,7 @@ test "a known action with no controller still renders, not silently dropped" {
     const rs = [_]routes.Route{
         .{ .verb = "GET", .path = "/x", .controller = null, .action = "show", .name = null, .certain = true, .origin = .static_ast },
     };
+    const vs = [_]classify.Verdict{unresolved_verdict};
     const md = try build(std.testing.allocator, .{
         .app_path = "app",
         .entries = &.{},
@@ -97,12 +116,13 @@ test "a known action with no controller still renders, not silently dropped" {
         .blockers = &.{},
         .routes = &rs,
         .route_mode = "static_ast",
+        .classifications = &vs,
     });
     defer std.testing.allocator.free(md);
     try std.testing.expect(std.mem.indexOf(
         u8,
         md,
-        "- `GET /x` → action `show`, controller unknown\n",
+        "- `GET /x` → action `show`, controller unknown — unresolved\n",
     ) != null);
 }
 
@@ -208,6 +228,14 @@ test "routes render in (path, verb) order regardless of input order" {
         .{ .verb = "GET", .path = "/", .controller = "home", .action = "index", .name = null, .certain = true, .origin = .static_ast },
         .{ .verb = "GET", .path = "/posts", .controller = "posts", .action = "index", .name = null, .certain = true, .origin = .static_ast },
     };
+    // Index-aligned with `unsorted`, not with the sorted render order --
+    // `build` is responsible for keeping each verdict paired with its own
+    // route through the sort (see `RouteVerdict`).
+    const vs = [_]classify.Verdict{
+        .{ .class = .backend, .reason = "test stub", .candidates = &.{} },
+        content_verdict,
+        content_verdict,
+    };
     const md = try build(std.testing.allocator, .{
         .app_path = "x",
         .entries = &.{},
@@ -215,6 +243,7 @@ test "routes render in (path, verb) order regardless of input order" {
         .blockers = &.{},
         .routes = &unsorted,
         .route_mode = "static_ast",
+        .classifications = &vs,
     });
     defer std.testing.allocator.free(md);
 
@@ -224,6 +253,117 @@ test "routes render in (path, verb) order regardless of input order" {
     // "/" < "/posts" lexically, and within "/posts", GET < POST.
     try std.testing.expect(root_pos < posts_get_pos);
     try std.testing.expect(posts_get_pos < posts_post_pos);
+}
+
+test "routes tying on (path, verb) still sort deterministically, by controller/action (B7)" {
+    // Two rows identical in the OLD comparator's only two compared fields
+    // (path, verb) -- exactly the shape fix round B / B7 closes: `std.mem.
+    // sort` is not stable, so a comparator returning `lessThan(a,b) ==
+    // lessThan(b,a) == false` for a tied pair leaves their relative render
+    // order dependent on INPUT order, not on any property of the rows.
+    // Feeding the SAME two rows in both orders and requiring the SAME
+    // render order both times is what actually catches that: asserting the
+    // order once would pass by accident on whichever order this build
+    // happens to already produce for one fixed input.
+    const zebra = routes.Route{ .verb = "GET", .path = "/x", .controller = "zebra", .action = "show", .name = null, .certain = true, .origin = .static_ast };
+    const alpha = routes.Route{ .verb = "GET", .path = "/x", .controller = "alpha", .action = "show", .name = null, .certain = true, .origin = .static_ast };
+    const vs = [_]classify.Verdict{ content_verdict, content_verdict };
+
+    const forward = [_]routes.Route{ zebra, alpha };
+    const md_forward = try build(std.testing.allocator, .{
+        .app_path = "x",
+        .entries = &.{},
+        .integrations = &.{},
+        .blockers = &.{},
+        .routes = &forward,
+        .route_mode = "static_ast",
+        .classifications = &vs,
+    });
+    defer std.testing.allocator.free(md_forward);
+
+    const reverse = [_]routes.Route{ alpha, zebra };
+    const md_reverse = try build(std.testing.allocator, .{
+        .app_path = "x",
+        .entries = &.{},
+        .integrations = &.{},
+        .blockers = &.{},
+        .routes = &reverse,
+        .route_mode = "static_ast",
+        .classifications = &vs,
+    });
+    defer std.testing.allocator.free(md_reverse);
+
+    const alpha_pos_fwd = std.mem.indexOf(u8, md_forward, "alpha#show").?;
+    const zebra_pos_fwd = std.mem.indexOf(u8, md_forward, "zebra#show").?;
+    const alpha_pos_rev = std.mem.indexOf(u8, md_reverse, "alpha#show").?;
+    const zebra_pos_rev = std.mem.indexOf(u8, md_reverse, "zebra#show").?;
+
+    // "alpha" < "zebra" lexically: alpha must render first regardless of
+    // which order the two rows were PASSED in.
+    try std.testing.expect(alpha_pos_fwd < zebra_pos_fwd);
+    try std.testing.expect(alpha_pos_rev < zebra_pos_rev);
+}
+
+test "each route renders with its classification, and an uncertain route still names its class" {
+    // Task 5 brief's exact required line for the content route (verbatim).
+    const rs = [_]routes.Route{
+        .{ .verb = "GET", .path = "/posts", .controller = "posts", .action = "index", .name = null, .certain = true, .origin = .static_ast },
+        .{ .verb = "GET", .path = "/mystery", .controller = null, .action = null, .name = null, .certain = true, .origin = .static_ast },
+    };
+    const vs = [_]classify.Verdict{ content_verdict, unresolved_verdict };
+    const md = try build(std.testing.allocator, .{
+        .app_path = "app",
+        .entries = &.{},
+        .integrations = &.{},
+        .blockers = &.{},
+        .routes = &rs,
+        .route_mode = "static_ast",
+        .classifications = &vs,
+    });
+    defer std.testing.allocator.free(md);
+
+    try std.testing.expect(std.mem.indexOf(u8, md, "- `GET /posts` → `posts#index` — content\n") != null);
+    // The brief's sketch for the second route only checked
+    // `indexOf(md, "unresolved") != null` -- that passes even if the
+    // classification summary table (added by this same task, a few lines
+    // above the route list) is the only place "unresolved" appears, or if
+    // a WRONG route were the one marked unresolved. Pinning the exact
+    // rendered line for /mystery is what actually proves THIS route's join
+    // produced `unresolved`, not merely that the word occurs somewhere in
+    // the document.
+    try std.testing.expect(std.mem.indexOf(u8, md, "- `GET /mystery` — unresolved\n") != null);
+}
+
+test "a classification summary counts every class" {
+    // Three routes: two backend, one content, zero of everything else. The
+    // table must account for every route -- a class silently dropped from
+    // the render loop (e.g. a `Class` tag added to the enum but not to
+    // `build`'s summary loop) shows up here as a count mismatch, the same
+    // property "report lists counts... " pins for the Inventory table.
+    const rs = [_]routes.Route{
+        .{ .verb = "POST", .path = "/posts", .controller = "posts", .action = "create", .name = null, .certain = true, .origin = .static_ast },
+        .{ .verb = "GET", .path = "/posts", .controller = "posts", .action = "index", .name = null, .certain = true, .origin = .static_ast },
+        .{ .verb = "DELETE", .path = "/posts/:id", .controller = "posts", .action = "destroy", .name = null, .certain = true, .origin = .static_ast },
+    };
+    const backend_verdict: classify.Verdict = .{ .class = .backend, .reason = "test stub", .candidates = &.{} };
+    const vs = [_]classify.Verdict{ backend_verdict, content_verdict, backend_verdict };
+    const md = try build(std.testing.allocator, .{
+        .app_path = "app",
+        .entries = &.{},
+        .integrations = &.{},
+        .blockers = &.{},
+        .routes = &rs,
+        .route_mode = "static_ast",
+        .classifications = &vs,
+    });
+    defer std.testing.allocator.free(md);
+
+    try std.testing.expect(std.mem.indexOf(u8, md, "| content | 1 |\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, md, "| island | 0 |\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, md, "| spa | 0 |\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, md, "| backend | 2 |\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, md, "| redirect | 0 |\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, md, "| unresolved | 0 |\n") != null);
 }
 
 test "report lists counts, integrations, and flags unsupported engines" {
@@ -290,6 +430,42 @@ test "blockers render in (code, path) order regardless of input order" {
     try std.testing.expect(first_haml_pos < second_haml_pos);
 }
 
+test "blockers tying on (code, path) still sort deterministically, by detail (B7)" {
+    // Same shape as the routes test above, for `blockerLessThan`: two rows
+    // tied on the OLD comparator's only two compared fields (code, path),
+    // fed in both input orders, must render in the SAME order both times.
+    const zebra = Blocker{ .code = "RAILS_CONTROLLER_PARSE_ERROR", .path = "app/controllers/x_controller.rb", .detail = "zebra reason" };
+    const alpha = Blocker{ .code = "RAILS_CONTROLLER_PARSE_ERROR", .path = "app/controllers/x_controller.rb", .detail = "alpha reason" };
+
+    const forward = [_]Blocker{ zebra, alpha };
+    const md_forward = try build(std.testing.allocator, .{
+        .app_path = "x",
+        .entries = &.{},
+        .integrations = &.{},
+        .blockers = &forward,
+    });
+    defer std.testing.allocator.free(md_forward);
+
+    const reverse = [_]Blocker{ alpha, zebra };
+    const md_reverse = try build(std.testing.allocator, .{
+        .app_path = "x",
+        .entries = &.{},
+        .integrations = &.{},
+        .blockers = &reverse,
+    });
+    defer std.testing.allocator.free(md_reverse);
+
+    const alpha_pos_fwd = std.mem.indexOf(u8, md_forward, "alpha reason").?;
+    const zebra_pos_fwd = std.mem.indexOf(u8, md_forward, "zebra reason").?;
+    const alpha_pos_rev = std.mem.indexOf(u8, md_reverse, "alpha reason").?;
+    const zebra_pos_rev = std.mem.indexOf(u8, md_reverse, "zebra reason").?;
+
+    // "alpha reason" < "zebra reason" lexically: alpha must render first
+    // regardless of which order the two rows were PASSED in.
+    try std.testing.expect(alpha_pos_fwd < zebra_pos_fwd);
+    try std.testing.expect(alpha_pos_rev < zebra_pos_rev);
+}
+
 test "report is byte-identical across runs" {
     const entries = [_]inventory.Entry{
         .{ .path = "app/views/posts/show.html.erb", .kind = .view, .engine = .erb },
@@ -338,6 +514,13 @@ fn countOf(entries: []const inventory.Entry, kind: inventory.Kind) usize {
 /// path; `migrate.zig` skips it because its caller (`fatal.oom()`) never
 /// returns, but this module is std-only and must actually free on error.
 pub fn build(gpa: Allocator, in: Input) Allocator.Error![]const u8 {
+    // `classifications` is index-aligned with `routes` -- see `Input`'s doc.
+    // Every production caller (`rails.zig`'s `discover`) builds one via
+    // `classifyRoutes`, one verdict per route; a mismatch here is a defect
+    // in the caller, not a malformed input this function should degrade
+    // around silently.
+    std.debug.assert(in.classifications.len == in.routes.len);
+
     var aw: std.Io.Writer.Allocating = .init(gpa);
     errdefer aw.deinit();
     const w = &aw.writer;
@@ -396,16 +579,32 @@ pub fn build(gpa: Allocator, in: Input) Allocator.Error![]const u8 {
             .{in.route_mode},
         ) catch return error.OutOfMemory;
 
-        // Sorted in a private copy for the same reason the blockers section
-        // below sorts its own copy: determinism is `build`'s responsibility,
-        // independent of whatever order the caller's route discovery
-        // produced (`discoverRoutes` already sorts, but this report must not
-        // depend on that -- an artifact people diff has to be stable on its
-        // own terms).
-        const sorted_routes = try gpa.dupe(Route, in.routes);
-        defer gpa.free(sorted_routes);
-        std.mem.sort(Route, sorted_routes, {}, routeLessThan);
-        for (sorted_routes) |r| {
+        // The classification summary: one row per `classify.Class` value,
+        // counts summing to the route total -- the same "a kind silently
+        // dropped shows up as a count mismatch" property the Inventory
+        // table above has. Iterates `std.meta.tags` (declaration order), not
+        // a hand-picked subset, so a future `Class` addition is covered
+        // without a second edit here.
+        w.writeAll("| Class | Count |\n| --- | --- |\n") catch return error.OutOfMemory;
+        for (std.meta.tags(classify.Class)) |c| {
+            w.print("| {s} | {d} |\n", .{ @tagName(c), classCount(in.classifications, c) }) catch return error.OutOfMemory;
+        }
+        w.writeAll("\n") catch return error.OutOfMemory;
+
+        // Paired and sorted in a private copy for the same reason the
+        // blockers section below sorts its own copy: determinism is
+        // `build`'s responsibility, independent of whatever order the
+        // caller's route discovery produced (`discoverRoutes` already
+        // sorts, but this report must not depend on that -- an artifact
+        // people diff has to be stable on its own terms). Paired (not two
+        // parallel sorts) so each route's classification travels with it
+        // through the reorder.
+        const paired = try gpa.alloc(RouteVerdict, in.routes.len);
+        defer gpa.free(paired);
+        for (in.routes, in.classifications, 0..) |r, v, i| paired[i] = .{ .route = r, .verdict = v };
+        std.mem.sort(RouteVerdict, paired, {}, routeVerdictLessThan);
+        for (paired) |rv| {
+            const r = rv.route;
             w.print("- `{s} {s}`", .{ r.verb, r.path }) catch return error.OutOfMemory;
             // Render whatever half of the destination is actually known --
             // dropping a known controller (or action) because the other
@@ -425,11 +624,13 @@ pub fn build(gpa: Allocator, in: Input) Allocator.Error![]const u8 {
             // `certain == false` must be visibly distinguished at a glance,
             // not just on close reading -- a route recovered from a
             // construct the parser could not evaluate is a materially
-            // weaker claim than one read straight out of the DSL.
+            // weaker claim than one read straight out of the DSL. This is
+            // independent of the classification appended below: a route can
+            // be uncertain AND classified -- those are separate claims.
             if (!r.certain) {
                 w.writeAll(" — **uncertain**") catch return error.OutOfMemory;
             }
-            w.writeAll("\n") catch return error.OutOfMemory;
+            w.print(" — {s}\n", .{@tagName(rv.verdict.class)}) catch return error.OutOfMemory;
         }
     }
 
@@ -462,24 +663,94 @@ pub fn build(gpa: Allocator, in: Input) Allocator.Error![]const u8 {
 
 const Blocker = blockers.Blocker;
 
+/// `std.mem.sort` (used by both sort call sites below) is NOT stable, so a
+/// comparator that ever returns `false` for BOTH `lessThan(a, b)` and
+/// `lessThan(b, a)` on two rows whose RENDERED text differs leaves that
+/// pair's relative order unspecified -- a determinism violation the report's
+/// own "byte-identical across runs" guarantee (and Stage 4's drift gate)
+/// depend on not happening (fix round B / B7). `blockerLessThan` and
+/// `routeLessThan` below are both extended with one more tiebreak field so
+/// that any two rows differing in what actually gets PRINTED also differ
+/// under the comparator; `std.mem.order`'s `.eq` case chaining into the next
+/// field (rather than an early truthy return) is what makes each one a
+/// total order over the fields the render loop reads, not three independent
+/// partial checks.
 fn blockerLessThan(_: void, a: Blocker, b: Blocker) bool {
+    // Rendered as `- \`{code}\` {path}: {detail}\n` (see the Blockers
+    // section below) -- `code`, `path`, `detail` is exactly the field order
+    // that determines the printed line, so it is the tiebreak order here.
     return switch (std.mem.order(u8, a.code, b.code)) {
         .lt => true,
         .gt => false,
-        .eq => std.mem.lessThan(u8, a.path, b.path),
+        .eq => switch (std.mem.order(u8, a.path, b.path)) {
+            .lt => true,
+            .gt => false,
+            .eq => std.mem.order(u8, a.detail, b.detail) == .lt,
+        },
     };
 }
 
 const Route = routes.Route;
 
+/// `?[]const u8` order for `Route.controller`/`.action`: `null` sorts before
+/// every string (an unresolved half of a destination is "less than" any
+/// known one), and two non-null values compare byte-wise. Contract 3
+/// (caller-buffer): no allocation.
+fn orderOptionalString(a: ?[]const u8, b: ?[]const u8) std.math.Order {
+    const av = a orelse return if (b == null) .eq else .lt;
+    const bv = b orelse return .gt;
+    return std.mem.order(u8, av, bv);
+}
+
 /// Not imported from routes.zig: `routes.routeLessThan` is private (that
 /// module sorts its own decoded result before returning it), and this file
 /// must not depend on the caller having already sorted -- see the
 /// "byte-identical across runs" test and this section's own comment.
+///
+/// `controller`/`action` are the third and fourth tiebreak keys (fix round
+/// B / B7), after `path` and `verb`: two routes that tie on `(path, verb)`
+/// but differ in `controller`/`action` render DIFFERENT text (see the
+/// route-line loop below, which prints both), so the pre-B7 two-key
+/// comparator left their relative order to `std.mem.sort`'s instability. Two
+/// routes tying on all four are indistinguishable in what actually gets
+/// printed on this line (verdict class/reason are rendered too, but those
+/// are a pure function of verb/view/action -- identical verb+controller+
+/// action routes cannot classify differently), so four keys are already a
+/// total order over the rendered output, not merely "more tiebreaks".
 fn routeLessThan(_: void, a: Route, b: Route) bool {
     return switch (std.mem.order(u8, a.path, b.path)) {
         .lt => true,
         .gt => false,
-        .eq => std.mem.order(u8, a.verb, b.verb) == .lt,
+        .eq => switch (std.mem.order(u8, a.verb, b.verb)) {
+            .lt => true,
+            .gt => false,
+            .eq => switch (orderOptionalString(a.controller, b.controller)) {
+                .lt => true,
+                .gt => false,
+                .eq => orderOptionalString(a.action, b.action) == .lt,
+            },
+        },
     };
+}
+
+/// A route paired with its `classify.Verdict`, so the two travel together
+/// through `build`'s private sort -- see `Input.classifications`'s doc for
+/// the index-alignment this pairing exists to preserve once the caller's
+/// order is discarded.
+const RouteVerdict = struct { route: Route, verdict: classify.Verdict };
+
+fn routeVerdictLessThan(_: void, a: RouteVerdict, b: RouteVerdict) bool {
+    return routeLessThan({}, a.route, b.route);
+}
+
+/// Counts how many of `classifications` carry `class`. Linear scan, not a
+/// precomputed histogram: `classifications` is at most a handful of routes
+/// per run and this runs once per `classify.Class` tag (six calls), not
+/// once per route.
+fn classCount(classifications: []const classify.Verdict, class: classify.Class) usize {
+    var n: usize = 0;
+    for (classifications) |v| {
+        if (v.class == class) n += 1;
+    }
+    return n;
 }

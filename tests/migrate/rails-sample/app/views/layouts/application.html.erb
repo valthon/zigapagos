@@ -1,2 +1,8 @@
 <!DOCTYPE html>
-<html><body><%= yield %></body></html>
+<!-- A1 fixture: this is the app-WIDE fallback layout (used by any
+     controller with no layout of its own -- posts/ has its own clean one,
+     see layouts/posts.html.erb). csrf_meta_tags here proves the transitive
+     scan reads the resolved LAYOUT, not just the view: pages#about's own
+     view is entirely static, yet must classify unresolved because of this
+     file alone. -->
+<html><head><%= csrf_meta_tags %></head><body><%= yield %></body></html>

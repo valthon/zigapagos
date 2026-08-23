@@ -219,6 +219,23 @@ languages from ever being reported as converted. Rule 5 is what stops the
 adapter claiming false parity on a page that merely *looks* static; resolving
 those routes is #167's job.
 
+Rule 5 (and rule 7's `content`) read the view's evidence TRANSITIVELY, not
+from the view file alone: the resolved layout (by convention -- a
+per-controller layout, else `application`) and any partial the view or
+layout renders (resolved from a literal `render partial:`/bare-string
+target, followed up to a bounded depth) are scanned too, and their markers
+are merged in (fix round A / A1). A `render` target this scan cannot prove
+safe -- a dynamic expression like `render @post`, a literal matching no
+known template, or a chain past the depth bound -- is evidence not in hand,
+so a route touching one may reach every result above EXCEPT `content`: rule
+7 requires proof, and unscanned content is not proof. Rule 2's first
+sub-clause (`no view template ... action ... is absent`) additionally
+requires that controller-shape discovery itself succeeded at least in part:
+under a wholesale `RAILS_CONTROLLERS_MISSING`/`RAILS_CONTROLLERS_UNAVAILABLE`
+run, `action == null` is the same non-signal for every route in the app, so
+it may not produce `backend` either -- that case falls to `unresolved`
+instead (fix round A / A3).
+
 `spa` is assigned only on positive evidence — a component root that owns
 routing — never as a default. Statically inferring "this should be an SPA" is
 precisely the false confidence the issue warns against.
@@ -228,14 +245,51 @@ precisely the false confidence the issue warns against.
 Stable and additive-only within schema v1. Every blocker carries a source
 location; that is what makes it reviewable instead of a summary count.
 
-`RAILS_ROUTE_DYNAMIC_PATH`, `RAILS_ROUTE_LOOP`, `RAILS_ROUTE_CONDITIONAL`,
-`RAILS_ROUTE_CONCERN_CYCLE`, `RAILS_ROUTE_ENGINE_MOUNT`,
-`RAILS_ROUTE_CUSTOM_ROUTER`, `RAILS_ROUTE_EXTERNAL_FILE`,
-`RAILS_ROUTE_GEM_GENERATED`, `RAILS_TEMPLATE_ENGINE_UNSUPPORTED`,
-`RAILS_REQUEST_TIME_STATE`, `RAILS_HELPER_UNKNOWN`, `RAILS_ASSET_TRANSFORM`,
-`RAILS_NO_TEMPLATE`, `RAILS_RUBY_UNAVAILABLE`, `RAILS_SIDECAR_FAILED`,
-`RAILS_SIDECAR_MISSING`, `RAILS_ROUTES_MISSING`, `RAILS_ROUTES_PARSE_ERROR`,
-`RAILS_ROUTE_UNRESOLVED`.
+**Emitted today** (Stages 1-3):
+
+- *Inventory* -- `RAILS_INVENTORY_UNREADABLE`, `RAILS_INVENTORY_TRUNCATED`,
+  `RAILS_GEMFILE_UNREADABLE`, `RAILS_PACKAGE_JSON_UNREADABLE`,
+  `RAILS_PACKAGE_JSON_MALFORMED`, `RAILS_TEMPLATE_ENGINE_UNSUPPORTED`.
+- *Route discovery* -- `RAILS_ROUTE_DYNAMIC_PATH`, `RAILS_ROUTE_LOOP`,
+  `RAILS_ROUTE_CONDITIONAL`, `RAILS_ROUTE_CONCERN_CYCLE`,
+  `RAILS_ROUTE_ENGINE_MOUNT`, `RAILS_ROUTE_CUSTOM_ROUTER`,
+  `RAILS_ROUTE_EXTERNAL_FILE`, `RAILS_ROUTE_GEM_GENERATED`,
+  `RAILS_ROUTE_UNRESOLVED`, `RAILS_ROUTES_MISSING`,
+  `RAILS_ROUTES_PARSE_ERROR`, `RAILS_RUBY_UNAVAILABLE`,
+  `RAILS_SIDECAR_MISSING`, `RAILS_SIDECAR_FAILED`.
+- *Controller shape* -- `RAILS_CONTROLLERS_MISSING`,
+  `RAILS_CONTROLLERS_UNAVAILABLE`, `RAILS_CONTROLLER_PARSE_ERROR`,
+  `RAILS_CONTROLLER_UNREADABLE` (fix round B / B2: a controller file
+  `Dir.glob` found but could not READ -- permissions, a symlink race --
+  distinct from `RAILS_CONTROLLER_PARSE_ERROR`, which means the file WAS
+  read and Prism rejected its contents; the same read/parse distinction
+  `RAILS_TEMPLATE_UNREADABLE` already draws for templates),
+  `RAILS_CONTROLLER_UNRESOLVED`.
+- *Classification* -- `RAILS_TEMPLATE_UNREADABLE`, `RAILS_TEMPLATE_RENDER_DEPTH_EXCEEDED`
+  (fix round A / A1: a `render partial:`/bare-string/`render @x` chain nests
+  deeper than the transitive template scan follows -- see `rails.zig`'s
+  `max_partial_depth`. The route the deep chain belongs to still classifies,
+  never higher than `unresolved`, the same "unscanned content is evidence
+  not in hand" rule an unresolvable render target follows without its own
+  blocker; the depth cutoff gets one because it names an unusual STRUCTURAL
+  shape a human may want to simplify, not a per-route classification fact
+  already carried in that route's `reason`).
+
+**Declared, not yet emitted** -- reserved for #167 and the target-assembly
+stage, which is what "additive-only" protects: `RAILS_REQUEST_TIME_STATE`,
+`RAILS_HELPER_UNKNOWN`, `RAILS_ASSET_TRANSFORM`, `RAILS_NO_TEMPLATE`.
+
+Stage 3 reads request-time state and a missing template as *classification
+evidence* (rule 5 and rule 2) rather than as blockers, so
+`RAILS_REQUEST_TIME_STATE` and `RAILS_NO_TEMPLATE` stay unemitted here: the
+route's verdict and its `reason` already carry that finding, and emitting a
+blocker as well would double-report the same fact in two places that could
+then disagree.
+
+`RAILS_ROUTE_UNRESOLVED` and `RAILS_CONTROLLER_UNRESOLVED` are the fallbacks
+for an `unresolved[].code` the Zig client does not recognize; the original code
+is preserved in the blocker's `detail`. That is what lets the Ruby side add a
+code without the Zig side dropping it on the floor.
 
 The five route-specific codes above were drafted here as
 `RAILS_DYNAMIC_ROUTE_PATH`/`RAILS_ENGINE_MOUNT`/`RAILS_CUSTOM_ROUTER`/
