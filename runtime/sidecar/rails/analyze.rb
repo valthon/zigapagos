@@ -26,6 +26,7 @@
 # inherit this exemption and should add its own cap.
 require "json"
 require_relative "routes"
+require_relative "controllers"
 
 module RailsAnalyze
   # RailsRoutes.parse already rescues StandardError internally (routes.rb's
@@ -61,8 +62,129 @@ module RailsAnalyze
         return { ok: false, error: "could not read #{routes_path}: #{e.class}: #{e.message}" }
       end
 
-    result = RailsRoutes.parse(source, path: routes_path)
+    # `path:` is the location `.parse` bakes into every unresolved entry's
+    # `detail` -- the literal relative path, NOT `routes_path` (absolute:
+    # `File.join(root, ...)`). Passing the absolute path here used to mean
+    # the SAME app, analyzed at two different checkout directories, produced
+    # two different report byte sequences: a determinism violation the
+    # spec's Determinism section forbids, and one Stage 4's manifest drift
+    # gate cannot tolerate (fix round B / B1). `config/routes.rb` is always
+    # at this one fixed location relative to `root`, so the relative path is
+    # a literal, not a computed one.
+    result = RailsRoutes.parse(source, path: "config/routes.rb")
     { ok: true, routes: result[:routes], unresolved: result[:unresolved] }
+  end
+
+  # Walks every `app/controllers/**/*.rb` file under the request's `root`
+  # and answers one flattened `actions` array plus one flattened
+  # `unresolved` array (each entry carries the offending file's path
+  # separately, in its own `path:` key -- see the note below on relative
+  # paths).
+  #
+  # `Dir.glob` against a nonexistent `app/controllers` simply returns `[]`
+  # -- no special-casing needed to answer `{"actions":[],"unresolved":[]}`
+  # structurally for that case, which is exactly the "answer structurally;
+  # do not crash" contract the brief asks for. (The Zig client separately
+  # decides -- BEFORE it ever sends this request -- whether an absent
+  # `app/controllers/` warrants its own `RAILS_CONTROLLERS_MISSING`
+  # blocker, the same way `routes.zig` short-circuits on a missing
+  # `config/routes.rb`; this handler's job is only to answer honestly about
+  # whatever `root` it is actually given.)
+  #
+  # A single file's UNREADABLE (could not even be opened -- permissions, a
+  # symlink race) is degraded to one `RAILS_CONTROLLER_UNREADABLE` entry for
+  # that file rather than failing the whole batch, the same "one bad file
+  # must not take down the request" argument `controllers.rb`'s own module
+  # doc makes for its per-file `SystemStackError` rescue. This is a
+  # DIFFERENT code from `RAILS_CONTROLLER_PARSE_ERROR` (fix round B / B2):
+  # a file this handler never managed to READ has told this adapter nothing
+  # about its Ruby syntax, so reusing the parse-error code sent a human
+  # looking for a syntax error in a file whose real problem is permissions
+  # -- the identical read/parse distinction `RAILS_TEMPLATE_UNREADABLE`
+  # already draws for templates, now drawn here too.
+  #
+  # Every `unresolved` entry -- from this handler's own read-failure branch
+  # and from `RailsControllers.parse`'s two failure branches -- carries the
+  # file's path RELATIVE TO `root`, never the absolute glob result: passing
+  # an absolute path here used to mean the SAME app, analyzed at two
+  # different checkout directories, produced two different report byte
+  # sequences (fix round B / B1). It also names the FILE (not the
+  # `app/controllers` directory every finding shares) so the blocker's
+  # `path` field -- not just its `detail` -- says which file is at fault.
+  def self.handle_controllers(req)
+    root = req["root"]
+    if !root.is_a?(String) || root.empty?
+      return { ok: false, error: "controllers: \"root\" must be a non-empty string" }
+    end
+
+    controllers_root = File.join(root, "app/controllers")
+    actions = []
+    unresolved = []
+
+    Dir.glob(File.join(controllers_root, "**", "*.rb")).sort.each do |file|
+      rel_file = file.delete_prefix("#{root}/")
+      source =
+        begin
+          File.read(file)
+        rescue SystemCallError, IOError => e
+          # `e.message` is Ruby's own Errno formatting, generated from
+          # whatever path `File.read` was actually given -- the ABSOLUTE
+          # `file`, since reading from disk needs a real path. That means
+          # `e.message` bakes the absolute path in on its own, independent
+          # of the `path:`/`detail:` fix above; `gsub` is what keeps THIS
+          # code path deterministic too (fix round B / B1 note: the review's
+          # own repro called this "the unreadable-file variant is worse: it
+          # prints the absolute path twice").
+          unresolved << {
+            code: "RAILS_CONTROLLER_UNREADABLE",
+            path: rel_file,
+            detail: "#{e.class}: #{e.message.gsub(file, rel_file)}",
+            line: 1,
+          }
+          next
+        end
+
+      result = RailsControllers.parse(source, path: rel_file)
+      unresolved.concat(result[:unresolved])
+      # `result[:actions]` is empty both for a bare concern module (Task 1's
+      # documented "nothing found" case) and for a controller class with no
+      # public methods -- either way there is nothing to derive a
+      # controller-path key FOR, so the file is skipped rather than emitting
+      # a key computed from its path alone.
+      next if result[:actions].empty?
+
+      controller_key = controller_path_key(file, controllers_root)
+      result[:actions].each do |name, shape|
+        actions << {
+          controller: controller_key,
+          action: name,
+          only_redirect: shape[:only_redirect],
+          renders_json: shape[:renders_json],
+          line: shape[:line],
+        }
+      end
+    end
+
+    { ok: true, actions: actions, unresolved: unresolved }
+  end
+
+  # The Rails controller PATH key a route's `controller` field holds --
+  # `admin/users` for `app/controllers/admin/users_controller.rb` -- derived
+  # from the FILE PATH, never from `RailsControllers.parse`'s `controller:`
+  # field (that field is the Ruby CLASS name, e.g. `"Admin::UsersController"`,
+  # which cannot express nesting reliably without evaluating the file: a
+  # class can be reopened, aliased, or (as `controllers.rb`'s own doc notes)
+  # simply not match Rails' directory-based naming convention at all).
+  #
+  # Only the LAST path segment loses its `_controller` suffix -- an
+  # intermediate namespace segment (`admin/` above) is never itself
+  # `..._controller`-suffixed by Rails' own convention, so stripping only the
+  # last segment is not a partial fix, it is the whole rule.
+  def self.controller_path_key(file, controllers_root)
+    rel = file.delete_prefix("#{controllers_root}/").sub(/\.rb\z/, "")
+    parts = rel.split("/")
+    parts[-1] = parts[-1].sub(/_controller\z/, "")
+    parts.join("/")
   end
 
   # Dispatch one already-parsed request hash to its op. Broad `rescue
@@ -74,6 +196,8 @@ module RailsAnalyze
     case op
     when "routes"
       handle_routes(req)
+    when "controllers"
+      handle_controllers(req)
     else
       { ok: false, error: "unknown op: #{op.inspect}" }
     end
