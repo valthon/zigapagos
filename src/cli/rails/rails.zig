@@ -43,6 +43,21 @@ pub const Discovery = struct {
     /// story -- a run with no Ruby/sidecar/`config/routes.rb` recovers zero
     /// routes just as validly as one that ran the sidecar and found none.
     route_count: usize,
+    /// `routes.Result.mode` passed straight through (`"static_ast"` when
+    /// the sidecar answered, `"none"` on every degradation path).
+    /// `migrate.zig`'s CLI summary needs this -- alongside `route_blocker`
+    /// below -- to reach the SAME three-way zero-route conclusion
+    /// `report.zig`'s Routes section reaches, so the report and the
+    /// one-line CLI summary a user sees never disagree about why zero
+    /// routes were recovered.
+    route_mode: []const u8,
+    /// True when `blocker_list` (freed before this struct is returned)
+    /// contained at least one route-discovery-related blocker
+    /// (`blockers.isRouteRelated`) -- i.e. discovery ran but hit a
+    /// construct it could not resolve, as opposed to `config/routes.rb`
+    /// genuinely declaring no routes. Computed here because `migrate.zig`
+    /// only ever receives this `Discovery`, never the blocker list itself.
+    route_blocker: bool,
 };
 
 /// Contract 1 (self-freeing): every intermediate (entries, blockers,
@@ -88,8 +103,10 @@ pub fn discover(
     defer routes.freeRoutes(gpa, route_result.routes);
 
     var integrity_blocker_count: usize = 0;
+    var route_blocker = false;
     for (blocker_list.items) |b| {
         if (b.integrity) integrity_blocker_count += 1;
+        if (blockers.isRouteRelated(b.code)) route_blocker = true;
     }
 
     const body = try report.build(gpa, .{
@@ -104,5 +121,7 @@ pub fn discover(
         .report = body,
         .integrity_blocker_count = integrity_blocker_count,
         .route_count = route_result.routes.len,
+        .route_mode = route_result.mode,
+        .route_blocker = route_blocker,
     };
 }

@@ -696,21 +696,27 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
         var rfw = rf.writer(io, &.{});
         rfw.interface.writeAll(discovery.report) catch |err| fatal.file(out_path, err);
 
-        // `route_count` (not `route_mode`, which this scope doesn't have --
-        // see rails.Discovery's doc) is the accurate signal here: a run with
-        // no Ruby/sidecar/config/routes.rb recovers zero routes exactly as
-        // validly as one that ran the sidecar and genuinely found none, so
-        // this message must not hardcode either story -- it says what
-        // actually happened.
+        // Mirrors report.zig's own three-way Routes-section conclusion
+        // exactly (same predicate: `route_mode == "static_ast"` and no
+        // route-related blocker means config/routes.rb genuinely declares
+        // no routes) so this one-line CLI summary and the report a user
+        // opens right after never disagree about why zero routes were
+        // recovered. See rails.Discovery's `route_mode`/`route_blocker` doc.
         if (discovery.route_count > 0) {
             std.debug.print(
                 "Wrote {s}: Rails, inventory plus {d} recovered route(s).\n" ++
                     "Next: follow MIGRATION.md.\n",
                 .{ out_path, discovery.route_count },
             );
-        } else {
+        } else if (!std.mem.eql(u8, discovery.route_mode, "static_ast") or discovery.route_blocker) {
             std.debug.print(
                 "Wrote {s}: Rails, inventory only (no routes recovered -- see Blockers in the report).\n" ++
+                    "Next: follow MIGRATION.md.\n",
+                .{out_path},
+            );
+        } else {
+            std.debug.print(
+                "Wrote {s}: Rails, inventory only (config/routes.rb declares no routes).\n" ++
                     "Next: follow MIGRATION.md.\n",
                 .{out_path},
             );

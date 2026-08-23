@@ -61,17 +61,96 @@ test "routes render with their origin, and uncertain ones are marked" {
     try std.testing.expect(std.mem.indexOf(u8, md, "- `GET /x` — **uncertain**\n") != null);
 }
 
-test "a run with no routes says why rather than showing an empty section" {
+// Three genuinely different zero-route situations (finding: "See Blockers
+// for why" must not point at a section that says nothing about routes).
+// `route_mode == "none"` means discovery never ran at all, so a degradation
+// blocker is guaranteed; `route_mode == "static_ast"` means the sidecar DID
+// run, and then the only question is whether it hit something unresolvable
+// (a route-related blocker exists) or `config/routes.rb` genuinely declares
+// no routes (no such blocker). Each test pins the exact rendered line, not
+// a document-level substring -- see the "uncertain" marker test above for
+// why that matters on this branch specifically.
+
+test "zero routes, mode none: discovery did not run, points at Blockers" {
+    const md = try build(std.testing.allocator, .{
+        .app_path = "app",
+        .entries = &.{},
+        .integrations = &.{},
+        .blockers = &.{
+            .{ .code = "RAILS_SIDECAR_MISSING", .path = "sidecar/rails/analyze.rb", .detail = "ZIGAPAGOS_RUNTIME_DIR is not set" },
+        },
+        .routes = &.{},
+        .route_mode = "none",
+    });
+    defer std.testing.allocator.free(md);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        md,
+        "No routes were recovered (route_mode: `none`). See Blockers below for why.\n",
+    ) != null);
+}
+
+test "zero routes, mode static_ast with a route blocker: points at Blockers" {
+    const md = try build(std.testing.allocator, .{
+        .app_path = "app",
+        .entries = &.{},
+        .integrations = &.{},
+        .blockers = &.{
+            .{ .code = "RAILS_ROUTE_ENGINE_MOUNT", .path = "config/routes.rb", .detail = "mount is not evaluated" },
+        },
+        .routes = &.{},
+        .route_mode = "static_ast",
+    });
+    defer std.testing.allocator.free(md);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        md,
+        "No routes were recovered (route_mode: `static_ast`). See Blockers below for why.\n",
+    ) != null);
+}
+
+test "zero routes, mode static_ast with no route blocker: says routes.rb declares none" {
+    // No blockers at all -- discovery ran cleanly and config/routes.rb is
+    // simply empty (`Rails.application.routes.draw do end`). Pointing this
+    // at Blockers would misdirect: there is nothing there about routes.
     const md = try build(std.testing.allocator, .{
         .app_path = "app",
         .entries = &.{},
         .integrations = &.{},
         .blockers = &.{},
         .routes = &.{},
-        .route_mode = "none",
+        .route_mode = "static_ast",
     });
     defer std.testing.allocator.free(md);
-    try std.testing.expect(std.mem.indexOf(u8, md, "No routes were recovered") != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        md,
+        "`config/routes.rb` declares no routes.\n",
+    ) != null);
+    // Must NOT point at a Blockers section that says nothing about routes.
+    try std.testing.expect(std.mem.indexOf(u8, md, "See Blockers below for why") == null);
+}
+
+test "zero routes, mode static_ast, an unrelated blocker present: still says routes.rb declares none" {
+    // A non-route blocker (e.g. an unsupported template engine) must not be
+    // mistaken for a route-related one -- the route section's conclusion
+    // depends only on route-related blockers.
+    const md = try build(std.testing.allocator, .{
+        .app_path = "app",
+        .entries = &.{},
+        .integrations = &.{},
+        .blockers = &.{
+            .{ .code = "RAILS_TEMPLATE_ENGINE_UNSUPPORTED", .path = "app/views/x.html.haml", .detail = "Haml template is not converted" },
+        },
+        .routes = &.{},
+        .route_mode = "static_ast",
+    });
+    defer std.testing.allocator.free(md);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        md,
+        "`config/routes.rb` declares no routes.\n",
+    ) != null);
 }
 
 test "routes render in (path, verb) order regardless of input order" {
@@ -177,6 +256,17 @@ test "report is byte-identical across runs" {
     try std.testing.expectEqualStrings(a, b);
 }
 
+/// True when `list` contains at least one route-discovery-related blocker
+/// (see `blockers.isRouteRelated`). Linear scan over the caller's own list,
+/// not a sorted/deduped structure -- `list` is at most a handful of entries
+/// per run and this is called once per `build`.
+fn hasRouteBlocker(list: []const Blocker) bool {
+    for (list) |b| {
+        if (blockers.isRouteRelated(b.code)) return true;
+    }
+    return false;
+}
+
 fn countOf(entries: []const inventory.Entry, kind: inventory.Kind) usize {
     var n: usize = 0;
     for (entries) |e| {
@@ -232,14 +322,29 @@ pub fn build(gpa: Allocator, in: Input) Allocator.Error![]const u8 {
     w.writeAll("\n## Routes\n\n") catch return error.OutOfMemory;
     if (in.routes.len == 0) {
         // An empty section here would read as "this app has no routes",
-        // which is never the true reason -- the cause (no Ruby, no sidecar,
-        // no config/routes.rb, or a parse failure) is always in the
-        // Blockers section below, so this line points there instead of
-        // leaving a bare heading.
-        w.print(
-            "No routes were recovered (route_mode: `{s}`). See Blockers below for why.\n",
-            .{in.route_mode},
-        ) catch return error.OutOfMemory;
+        // which is true in exactly one of three situations -- conflating
+        // them was the bug (see the "zero routes, ..." tests above):
+        //
+        //   1. route_mode == "none": discovery never ran (no Ruby, no
+        //      sidecar, no config/routes.rb) -- a degradation blocker is
+        //      guaranteed to exist, so pointing at Blockers is correct.
+        //   2. route_mode == "static_ast" and a route-related blocker
+        //      exists: the sidecar ran but everything it found was
+        //      unresolvable -- Blockers is still the right pointer.
+        //   3. route_mode == "static_ast" and no route-related blocker:
+        //      config/routes.rb genuinely declares no routes. Pointing at
+        //      Blockers here would misdirect the reader to a section that
+        //      says nothing about routes, so this says the plain thing
+        //      instead of promising an explanation that isn't there.
+        const discovery_ran = std.mem.eql(u8, in.route_mode, "static_ast");
+        if (!discovery_ran or hasRouteBlocker(in.blockers)) {
+            w.print(
+                "No routes were recovered (route_mode: `{s}`). See Blockers below for why.\n",
+                .{in.route_mode},
+            ) catch return error.OutOfMemory;
+        } else {
+            w.writeAll("`config/routes.rb` declares no routes.\n") catch return error.OutOfMemory;
+        }
     } else {
         w.print(
             "Recovered via `{s}`. Routes marked **uncertain** were found through a construct the parser could not fully evaluate -- treat them as leads, not settled facts.\n\n",

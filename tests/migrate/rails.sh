@@ -101,6 +101,40 @@ else
   echo "SKIP: route assertions (no ruby on PATH)"
 fi
 
+# --- empty routes.rb: a legitimate zero-route result, not a degraded one ----
+# Regression for the "See Blockers for why" finding (PR #169): discovery can
+# run cleanly and genuinely recover zero routes (an empty
+# `Rails.application.routes.draw do end`). That must read as "routes.rb
+# declares no routes", never point at a Blockers section that has nothing to
+# say about routes -- and the run must still exit 0, since nothing failed.
+# Same ruby-on-PATH guard as the block above: the sidecar has to actually run
+# for route_mode to reach "static_ast" rather than degrading to "none".
+if command -v ruby >/dev/null 2>&1; then
+  EMPTY_ROUTES="$WORK/empty-routes-app"
+  cp -R "$REPO/tests/migrate/rails-sample" "$EMPTY_ROUTES"
+  cat >"$EMPTY_ROUTES/config/routes.rb" <<'EOF'
+Rails.application.routes.draw do
+end
+EOF
+  set +e
+  "$ZIGAPAGOS" migrate "$EMPTY_ROUTES" -o "$WORK/empty-routes.md" >"$WORK/empty-routes.out" 2>"$WORK/empty-routes.err"
+  rc=$?
+  set -e
+  [[ $rc -eq 0 ]] || fail "an empty routes.rb is a legitimate result and must exit 0, not $rc"
+  grep -Fxq -- '`config/routes.rb` declares no routes.' "$WORK/empty-routes.md" \
+    || fail "empty routes.rb must say routes.rb declares no routes"
+  grep -q "See Blockers below for why" "$WORK/empty-routes.md" \
+    && fail "empty routes.rb must not point readers at Blockers -- nothing there explains routes"
+  # std.debug.print writes to stderr (see the "could not be read" assertion
+  # against perm.err above), not stdout -- hence .err here, not .out.
+  grep -q "config/routes.rb declares no routes" "$WORK/empty-routes.err" \
+    || fail "the CLI summary must state the same conclusion as the report, not just the report itself"
+  grep -q "no routes recovered -- see Blockers" "$WORK/empty-routes.err" \
+    && fail "the CLI summary must not point at Blockers for a genuinely-empty routes.rb"
+else
+  echo "SKIP: empty routes.rb assertions (no ruby on PATH)"
+fi
+
 # --- integrations ------------------------------------------------------------
 grep -q "propshaft" "$WORK/one.md" || fail "propshaft not detected"
 grep -q "turbo" "$WORK/one.md" || fail "turbo not detected"
