@@ -1,5 +1,35 @@
 require_relative "../controllers"
 
+# Both SystemStackError checks below drive `.parse`'s rescue by RAISING the
+# error, rather than by feeding Prism deeply-nested source to provoke it.
+#
+# The original form built 20,000 nested `[` and relied on the resulting
+# native-stack exhaustion arriving as a catchable SystemStackError. It does on
+# Linux. On the macOS arm64 CI runner the same input aborts the interpreter --
+# `Illegal instruction: 4`, a SIGILL inside Prism's C parser -- which kills the
+# process before ANY Ruby rescue runs, including the one these checks exist to
+# exercise. It turned main red while passing everywhere it was developed.
+#
+# Producing the error is the platform-dependent part; catching it is not, and
+# catching it is all these checks were ever about. See controllers.rb's rescue
+# for the behavioural limit that follows.
+FORCE_SYSTEM_STACK_ERROR = "__FORCE_SYSTEM_STACK_ERROR__"
+
+def with_stack_overflow_on_parse
+  Prism.singleton_class.alias_method(:__parse_before_stub, :parse)
+  Prism.define_singleton_method(:parse) do |source, **kwargs|
+    raise SystemStackError, "stack level too deep" if source == FORCE_SYSTEM_STACK_ERROR
+    __parse_before_stub(source, **kwargs)
+  end
+  yield
+ensure
+  # `ensure`, not a trailing restore: if the rescue under test ever regresses
+  # and the block raises, a leaked stub would silently corrupt every later
+  # check in this file.
+  Prism.singleton_class.alias_method(:parse, :__parse_before_stub)
+  Prism.singleton_class.remove_method(:__parse_before_stub)
+end
+
 $failures = 0
 def check(label, src, expected)
   got = RailsControllers.parse(src, path: "app/controllers/x_controller.rb")
@@ -74,14 +104,15 @@ end
 # for that one file, never raise -- a persistent sidecar walking many files
 # per request cannot let one file's stack overflow take down the batch.
 begin
-  deep = "class C\n def a\n  x = " + ("[" * 20_000) + ("]" * 20_000) + "\n end\nend"
-  got = RailsControllers.parse(deep, path: "app/controllers/deep_controller.rb")
+  got = with_stack_overflow_on_parse do
+    RailsControllers.parse(FORCE_SYSTEM_STACK_ERROR, path: "app/controllers/deep_controller.rb")
+  end
   unless got[:unresolved].any? { |u| u[:code] == "RAILS_CONTROLLER_PARSE_ERROR" }
-    warn "FAIL deeply-nested source should report RAILS_CONTROLLER_PARSE_ERROR, got #{got.inspect}"
+    warn "FAIL a stack-overflowing parse should report RAILS_CONTROLLER_PARSE_ERROR, got #{got.inspect}"
     $failures += 1
   end
 rescue SystemStackError => e
-  warn "FAIL deeply-nested source raised #{e.class}: #{e.message} -- .parse must never raise"
+  warn "FAIL a stack-overflowing parse raised #{e.class}: #{e.message} -- .parse must never raise"
   $failures += 1
 end
 
@@ -201,40 +232,11 @@ if genuine_entry.nil? || genuine_entry[:path] != "app/controllers/x_controller.r
   $failures += 1
 end
 
-# Proves the `SystemStackError` arm of `.parse`'s rescue degrades to a
-# structured entry rather than propagating.
-#
-# This RAISES the error directly instead of feeding Prism deeply-nested source
-# to provoke it. The original version built 20,000 nested `[` and relied on
-# `Prism.parse` turning the resulting native-stack exhaustion into a catchable
-# `SystemStackError`. That holds on Linux, but on the macOS arm64 CI runner the
-# same input aborts the interpreter outright -- `Illegal instruction: 4`, a
-# native SIGILL raised inside Prism's C parser, which kills the process before
-# ANY Ruby rescue runs, including the one this check exists to exercise. It
-# turned main red while passing everywhere it was developed (see
-# controllers.rb's rescue for the behavioural caveat that follows from it).
-#
-# Injecting the exception tests the rescue clause itself, deterministically and
-# on every platform, which is what the check was ever actually about.
-module Prism
-  class << self
-    alias_method :__parse_before_stub, :parse
-    def parse(source, **kwargs)
-      raise SystemStackError, "stack level too deep" if source == "__FORCE_SYSTEM_STACK_ERROR__"
-      __parse_before_stub(source, **kwargs)
-    end
-  end
+# Same rescue arm, checked for the OTHER property: that the degraded entry
+# carries the caller's literal path and an unprefixed detail (see B1).
+deep = with_stack_overflow_on_parse do
+  RailsControllers.parse(FORCE_SYSTEM_STACK_ERROR, path: "app/controllers/deep_controller.rb")
 end
-
-deep = RailsControllers.parse("__FORCE_SYSTEM_STACK_ERROR__", path: "app/controllers/deep_controller.rb")
-
-module Prism
-  class << self
-    alias_method :parse, :__parse_before_stub
-    remove_method :__parse_before_stub
-  end
-end
-
 deep_entry = deep[:unresolved].first
 if deep_entry.nil? || deep_entry[:path] != "app/controllers/deep_controller.rb" ||
    deep_entry[:detail].start_with?("app/controllers/")
