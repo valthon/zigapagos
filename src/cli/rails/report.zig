@@ -61,6 +61,51 @@ test "routes render with their origin, and uncertain ones are marked" {
     try std.testing.expect(std.mem.indexOf(u8, md, "- `GET /x` — **uncertain**\n") != null);
 }
 
+test "a known controller with no action still renders, not silently dropped" {
+    // `get "/x", controller: "a"` parses to controller="a", action=null (no
+    // unresolved entry -- the earlier `action ||= seg` narrowing on this
+    // branch deliberately stopped inventing actions from path strings).
+    // Rendering nothing here would drop known information from the
+    // worklist, which is the opposite of what this report is for.
+    const rs = [_]routes.Route{
+        .{ .verb = "GET", .path = "/x", .controller = "a", .action = null, .name = null, .certain = true, .origin = .static_ast },
+    };
+    const md = try build(std.testing.allocator, .{
+        .app_path = "app",
+        .entries = &.{},
+        .integrations = &.{},
+        .blockers = &.{},
+        .routes = &rs,
+        .route_mode = "static_ast",
+    });
+    defer std.testing.allocator.free(md);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        md,
+        "- `GET /x` → controller `a`, action unknown\n",
+    ) != null);
+}
+
+test "a known action with no controller still renders, not silently dropped" {
+    const rs = [_]routes.Route{
+        .{ .verb = "GET", .path = "/x", .controller = null, .action = "show", .name = null, .certain = true, .origin = .static_ast },
+    };
+    const md = try build(std.testing.allocator, .{
+        .app_path = "app",
+        .entries = &.{},
+        .integrations = &.{},
+        .blockers = &.{},
+        .routes = &rs,
+        .route_mode = "static_ast",
+    });
+    defer std.testing.allocator.free(md);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        md,
+        "- `GET /x` → action `show`, controller unknown\n",
+    ) != null);
+}
+
 // Three genuinely different zero-route situations (finding: "See Blockers
 // for why" must not point at a section that says nothing about routes).
 // `route_mode == "none"` means discovery never ran at all, so a degradation
@@ -362,10 +407,20 @@ pub fn build(gpa: Allocator, in: Input) Allocator.Error![]const u8 {
         std.mem.sort(Route, sorted_routes, {}, routeLessThan);
         for (sorted_routes) |r| {
             w.print("- `{s} {s}`", .{ r.verb, r.path }) catch return error.OutOfMemory;
+            // Render whatever half of the destination is actually known --
+            // dropping a known controller (or action) because the other
+            // half is unknown throws away real information from a
+            // migration worklist. `controller#action` is reserved for the
+            // case both halves are known, so a reader can never mistake a
+            // half-known destination for a complete one.
             if (r.controller) |c| {
                 if (r.action) |a| {
                     w.print(" → `{s}#{s}`", .{ c, a }) catch return error.OutOfMemory;
+                } else {
+                    w.print(" → controller `{s}`, action unknown", .{c}) catch return error.OutOfMemory;
                 }
+            } else if (r.action) |a| {
+                w.print(" → action `{s}`, controller unknown", .{a}) catch return error.OutOfMemory;
             }
             // `certain == false` must be visibly distinguished at a glance,
             // not just on close reading -- a route recovered from a
