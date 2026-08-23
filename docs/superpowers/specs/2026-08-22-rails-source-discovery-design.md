@@ -228,12 +228,32 @@ precisely the false confidence the issue warns against.
 Stable and additive-only within schema v1. Every blocker carries a source
 location; that is what makes it reviewable instead of a summary count.
 
-`RAILS_DYNAMIC_ROUTE_PATH`, `RAILS_ROUTE_LOOP`, `RAILS_ROUTE_CONDITIONAL`,
-`RAILS_ENGINE_MOUNT`, `RAILS_CUSTOM_ROUTER`, `RAILS_EXTERNAL_ROUTE_FILE`,
-`RAILS_GEM_GENERATED_ROUTES`, `RAILS_TEMPLATE_ENGINE_UNSUPPORTED`,
+`RAILS_ROUTE_DYNAMIC_PATH`, `RAILS_ROUTE_LOOP`, `RAILS_ROUTE_CONDITIONAL`,
+`RAILS_ROUTE_CONCERN_CYCLE`, `RAILS_ROUTE_ENGINE_MOUNT`,
+`RAILS_ROUTE_CUSTOM_ROUTER`, `RAILS_ROUTE_EXTERNAL_FILE`,
+`RAILS_ROUTE_GEM_GENERATED`, `RAILS_TEMPLATE_ENGINE_UNSUPPORTED`,
 `RAILS_REQUEST_TIME_STATE`, `RAILS_HELPER_UNKNOWN`, `RAILS_ASSET_TRANSFORM`,
 `RAILS_NO_TEMPLATE`, `RAILS_RUBY_UNAVAILABLE`, `RAILS_SIDECAR_FAILED`,
-`RAILS_ROUTES_PARSE_ERROR`.
+`RAILS_SIDECAR_MISSING`, `RAILS_ROUTES_MISSING`, `RAILS_ROUTES_PARSE_ERROR`,
+`RAILS_ROUTE_UNRESOLVED`.
+
+The five route-specific codes above were drafted here as
+`RAILS_DYNAMIC_ROUTE_PATH`/`RAILS_ENGINE_MOUNT`/`RAILS_CUSTOM_ROUTER`/
+`RAILS_EXTERNAL_ROUTE_FILE`/`RAILS_GEM_GENERATED_ROUTES`; Stage 2's
+implementation shipped them under the `RAILS_ROUTE_*` prefix instead (this
+list has been updated to match the code, not the other way around) because
+grouping every route-discovery code under one shared prefix keeps the whole
+vocabulary sorting and `grep`-ing together as Stage 3/4 add template- and
+asset-layer codes alongside it. `RAILS_SIDECAR_MISSING`, `RAILS_ROUTES_
+MISSING`, and `RAILS_ROUTE_UNRESOLVED` (the Zig client's fallback for a code
+it does not yet recognize, so a future Ruby-side addition degrades instead
+of being dropped) were likewise added during Stage 2 for cases this draft
+had not anticipated. `RAILS_ROUTE_CONCERN_CYCLE` is a Stage 2 split off
+`RAILS_ROUTE_LOOP`: `LOOP` means a runtime-bounded loop (`Model.all.each` --
+the count is unknown until boot), while a self-referential `concern` is
+structurally unresolvable regardless of runtime data; reusing `LOOP` for it
+would send a consumer looking for dynamically generated routes that do not
+exist.
 
 ## Determinism
 
