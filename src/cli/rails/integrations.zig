@@ -106,6 +106,7 @@ test "malformed package.json emits a blocker, not a silent zero integrations" {
     // Malformed JSON is an expected finding to report, not evidence the rest
     // of the inventory (which never touched package.json) is untrustworthy.
     try std.testing.expect(!list.items[0].integrity);
+    try std.testing.expectEqual(blockers.Severity.warn, list.items[0].severity);
 }
 
 test "a commented gem is not an integration" {
@@ -211,7 +212,13 @@ pub fn scan(
         var parsed = std.json.parseFromSlice(std.json.Value, gpa, src, .{}) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => {
-                try blockers.append(gpa, blocker_list, "RAILS_PACKAGE_JSON_MALFORMED", "package.json", @errorName(err), false);
+                // `.warn`: package.json was read fine; its JSON just doesn't
+                // parse. That is a fact about the app's own file, correctly
+                // detected and reported -- not evidence anything ELSE this
+                // scan produced (the Gemfile-derived integrations above, or
+                // the walked inventory, which never touched package.json) is
+                // untrustworthy. See this function's own doc comment.
+                try blockers.append(gpa, blocker_list, "RAILS_PACKAGE_JSON_MALFORMED", "package.json", @errorName(err), false, .warn, null);
                 break :pkg_blk;
             },
         };

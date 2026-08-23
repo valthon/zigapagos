@@ -688,7 +688,11 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
         const discovery = rails.discover(io, gpa, root, dir_path, environ_map) catch |err| switch (err) {
             error.OutOfMemory => fatal.oom(),
         };
-        defer gpa.free(discovery.report);
+        // Stage 4 Task 4 widened `Discovery` to own the template graph
+        // (`route_templates`/`templates`) alongside `report` -- a bare
+        // `gpa.free(discovery.report)` would now leak both. `freeDiscovery`
+        // is `rails.Discovery`'s own paired release.
+        defer rails.freeDiscovery(gpa, discovery);
 
         const rf = Io.Dir.cwd().createFile(io, out_path, .{}) catch |err|
             fatal.file(out_path, err);

@@ -40,6 +40,33 @@ module RailsAnalyze
   # it) to an exception class nobody enumerated in advance. This is the one
   # place in the codebase that should catch that broadly, precisely because
   # it is the outermost boundary of a persistent process.
+  # Stage 4's manifest wants `discovery.ruby: {available, version}` next to
+  # the recovered route/action graphs. `version_check.rb` already knows how
+  # to answer that question, but it is a SEPARATE one-shot script (Stage 2's
+  # toolchain-bootstrap check) -- spawning it here would mean a second Ruby
+  # process, on top of the one already running this very handler, just to
+  # ask a question this process can answer about itself via `RUBY_VERSION`.
+  # That second spawn could also disagree with this one (a `PATH`/`rbenv`
+  # shim resolving differently between two spawns is not hypothetical), so
+  # this handler answers from its own interpreter instead. `available` is
+  # always `true` here: reaching this line means a Ruby process is, by
+  # definition, running and answering requests -- the `false` case belongs
+  # entirely to the Zig client, which sets it when Ruby (or the sidecar)
+  # never got a chance to run in the first place.
+  #
+  # Stamped on BOTH `handle_routes`'s and `handle_controllers`'s responses
+  # (Stage 4's task-2-fixes.md item 1): each op spawns its own, separate
+  # Ruby process (`routes.zig`/`controllers.zig`'s module docs), so each is
+  # independently the ONLY evidence that op's own interpreter ran. Stamping
+  # `routes` alone meant an app with `app/controllers/` but no
+  # `config/routes.rb` published `discovery.ruby.available: false` even
+  # though the `controllers` op's sidecar answered successfully in the same
+  # run -- Ruby was demonstrably available, just not asked about by the one
+  # op this field happened to read. The Zig side (`rails.zig`'s
+  # `combineRuby`) ORs the two ops' own answers together rather than one op
+  # silently speaking for both.
+  RUBY_INFO = { available: true, version: RUBY_VERSION }.freeze
+
   def self.handle_routes(req)
     root = req["root"]
     # Contract: the client sends an absolute path (the brief's example
@@ -49,7 +76,7 @@ module RailsAnalyze
     # Zig client (Task 5) is responsible for always sending an absolute
     # path rather than this script guessing or normalizing one.
     if !root.is_a?(String) || root.empty?
-      return { ok: false, error: "routes: \"root\" must be a non-empty string" }
+      return { ok: false, error: "routes: \"root\" must be a non-empty string", ruby: RUBY_INFO }
     end
 
     routes_path = File.join(root, "config/routes.rb")
@@ -57,9 +84,9 @@ module RailsAnalyze
       begin
         File.read(routes_path)
       rescue Errno::ENOENT, Errno::EISDIR
-        return { ok: false, error: "no config/routes.rb at #{routes_path}" }
+        return { ok: false, error: "no config/routes.rb at #{routes_path}", ruby: RUBY_INFO }
       rescue SystemCallError, IOError => e
-        return { ok: false, error: "could not read #{routes_path}: #{e.class}: #{e.message}" }
+        return { ok: false, error: "could not read #{routes_path}: #{e.class}: #{e.message}", ruby: RUBY_INFO }
       end
 
     # `path:` is the location `.parse` bakes into every unresolved entry's
@@ -72,7 +99,7 @@ module RailsAnalyze
     # at this one fixed location relative to `root`, so the relative path is
     # a literal, not a computed one.
     result = RailsRoutes.parse(source, path: "config/routes.rb")
-    { ok: true, routes: result[:routes], unresolved: result[:unresolved] }
+    { ok: true, routes: result[:routes], unresolved: result[:unresolved], ruby: RUBY_INFO }
   end
 
   # Walks every `app/controllers/**/*.rb` file under the request's `root`
@@ -114,7 +141,7 @@ module RailsAnalyze
   def self.handle_controllers(req)
     root = req["root"]
     if !root.is_a?(String) || root.empty?
-      return { ok: false, error: "controllers: \"root\" must be a non-empty string" }
+      return { ok: false, error: "controllers: \"root\" must be a non-empty string", ruby: RUBY_INFO }
     end
 
     controllers_root = File.join(root, "app/controllers")
@@ -165,7 +192,7 @@ module RailsAnalyze
       end
     end
 
-    { ok: true, actions: actions, unresolved: unresolved }
+    { ok: true, actions: actions, unresolved: unresolved, ruby: RUBY_INFO }
   end
 
   # The Rails controller PATH key a route's `controller` field holds --

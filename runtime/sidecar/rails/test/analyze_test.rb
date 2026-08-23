@@ -45,6 +45,20 @@ Dir.mktmpdir do |dir|
     paths = res[:routes].map { |r| "#{r[:verb]} #{r[:path]}" }.sort
     check("routes", paths == ["GET /", "GET /posts"])
 
+    # `ruby` rides the "routes" response -- the sidecar answering with its
+    # OWN interpreter's identity, not a second `version_check.rb` spawn.
+    check("ruby.available", res[:ruby][:available] == true)
+    check("ruby.version matches this process's own interpreter", res[:ruby][:version] == RUBY_VERSION)
+
+    # Each route's `:line` is ITS OWN declaration line, not a constant and
+    # not the enclosing `draw` block's (line 1): `root` is on line 2,
+    # `resources :posts, only: [:index]` (which expands `GET /posts`) is on
+    # line 3.
+    by_path = res[:routes].each_with_object({}) { |r, h| h["#{r[:verb]} #{r[:path]}"] = r[:line] }
+    check("root's line is its own declaration line, not the draw block's", by_path["GET /"] == 2)
+    check("resources-expanded route's line is its own declaration line", by_path["GET /posts"] == 3)
+    check("two routes at different source lines report different :line values", by_path["GET /"] != by_path["GET /posts"])
+
     # A second request on the SAME process: the sidecar is persistent.
     stdin.puts JSON.generate({ op: "routes", root: dir })
     stdin.flush
@@ -82,6 +96,12 @@ Dir.mktmpdir do |dir|
       controller: "admin/users", action: "create", only_redirect: true, renders_json: false, line: 2,
     })
     check("controllers: exactly the two actions above, nothing else", res5[:actions].length == 2)
+    # Fix round 1 (task-2-fixes.md item 1): `RUBY_INFO` used to ride only
+    # the "routes" response -- an app with `app/controllers/` but no
+    # `config/routes.rb` then reported ruby.available: false even though
+    # THIS very response proves Ruby ran and answered. Now stamped here too.
+    check("controllers: ruby.available", res5[:ruby][:available] == true)
+    check("controllers: ruby.version matches this process's own interpreter", res5[:ruby][:version] == RUBY_VERSION)
 
     # An absent `app/controllers/` must answer structurally, not crash --
     # and specifically with ZERO actions found, not merely `ok: true` (which

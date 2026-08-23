@@ -46,13 +46,20 @@ set -e
 rm -rf "$EMPTY"
 
 # --- inventory counts --------------------------------------------------------
-# Full accounting of the fixture's 10 non-.other rows: 22 files walked
-# (21 under app/, 1 under public/), 22 counted across these 10 rows — so a
+# Full accounting of the fixture's 10 non-.other rows: 24 files walked
+# (22 under app/, 2 under public/), 24 counted across these 10 rows — so a
 # kind silently dropped from the table shows up here as a count mismatch.
 # A1's fixture additions (transitive template scanning) contribute 3 views
 # (recent.html.erb, featured.html.erb, pages/about.html.erb), 1 layout
 # (layouts/posts.html.erb), 1 partial (posts/_meta.html.erb), and 1
-# controller (pages_controller.rb) on top of the pre-A1 counts.
+# controller (pages_controller.rb) on top of the pre-A1 counts. Task 6 (the
+# asset inventory) adds app/assets/stylesheets/application.css.erb, an
+# ERB-preprocessed asset the fixture's compiled manifest does not list under
+# its own (pre-ERB) filename -- the fixture's `deterministic: false` case
+# (see rails.sh's asset-blocker assertions below). Fix round 1 adds
+# public/assets/.manifest.json itself, Propshaft's real compiled manifest --
+# logo.png's `deterministic: true` counterpart is now read verbatim from
+# this file, not computed by this stage.
 grep -q "Views | 7" "$WORK/one.md" || fail "expected 7 views"
 grep -q "Layouts | 2" "$WORK/one.md" || fail "expected 2 layouts (application, posts)"
 grep -q "Partials | 3" "$WORK/one.md" || fail "expected 3 partials (incl. layouts/_nav, posts/_meta)"
@@ -62,7 +69,8 @@ grep -q "Helpers | 1" "$WORK/one.md" || fail "expected 1 helper"
 grep -q "Stimulus controllers | 2" "$WORK/one.md" || fail "expected 2 stimulus controllers (reveal_controller.js, toggle_controller.ts)"
 grep -q "JS entrypoints | 1" "$WORK/one.md" || fail "expected 1 JS entrypoint (app/javascript/application.js)"
 grep -q "JS modules | 1" "$WORK/one.md" || fail "expected 1 JS module (app/javascript/components/Button.jsx)"
-grep -q "Assets | 2" "$WORK/one.md" || fail "expected 2 assets (app/assets/images/logo.png, public/favicon.ico)"
+grep -q "Assets | 4" "$WORK/one.md" \
+  || fail "expected 4 assets (app/assets/images/logo.png, app/assets/stylesheets/application.css.erb, public/favicon.ico, public/assets/.manifest.json)"
 
 # --- routes -------------------------------------------------------------
 # Route recovery needs `ruby` on PATH (the sidecar statically parses
@@ -254,6 +262,24 @@ grep -q "sprockets" "$WORK/one.md" && fail "commented-out gem must not be detect
 grep -q "RAILS_TEMPLATE_ENGINE_UNSUPPORTED" "$WORK/one.md" \
   || fail "Haml view was not reported as a blocker"
 grep -q "legacy.html.haml" "$WORK/one.md" || fail "blocker missing its source path"
+
+# --- Task 6 / fix round 1: asset determinism honesty -------------------------
+# Every app/assets/ URL is read verbatim from Propshaft's real compiled
+# manifest (public/assets/.manifest.json, added to the fixture in fix round
+# 1) -- never derived by re-implementing a digest scheme this stage cannot
+# verify. The ERB-preprocessed stylesheet legitimately never appears under
+# its own (pre-ERB) filename in that manifest, so it must be reported as
+# exactly that -- never a guessed /assets/... URL that would 404 in
+# production. The rendered report only surfaces this via the Blockers
+# section (Task 8's manifest -- not yet built -- is what will list
+# `assets[]` itself, incl. the deterministic counterpart, logo.png; that
+# per-asset discrimination is pinned at the Zig level in rails.zig's
+# "discover: the fixture's assets discriminate" test, which reads
+# Discovery.assets directly).
+grep -q "RAILS_ASSET_DIGEST_UNAVAILABLE" "$WORK/one.md" \
+  || fail "the manifest-unlisted ERB-preprocessed asset was not reported as a blocker"
+grep -q "app/assets/stylesheets/application.css.erb" "$WORK/one.md" \
+  || fail "asset blocker missing its source path"
 
 # --- determinism -------------------------------------------------------------
 "$ZIGAPAGOS" migrate "$APP" -o "$WORK/two.md" >/dev/null 2>&1

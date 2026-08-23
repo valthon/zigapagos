@@ -44,6 +44,16 @@
 //! 3's rules 2/3), never whether `inventory.walk`'s presentation-layer
 //! findings are trustworthy.
 //!
+//! `RAILS_CONTROLLERS_MISSING`/`RAILS_CONTROLLERS_UNAVAILABLE` are
+//! `severity = .@"error"` (Stage 4 Task 1), same reasoning as `routes.zig`'s
+//! four wholesale codes: nothing here ran, so every route this run would
+//! otherwise resolve a controller action for is missing that evidence
+//! entirely. Contrast the per-file `unresolved[].code` family below
+//! (`RAILS_CONTROLLER_PARSE_ERROR`, `RAILS_CONTROLLER_UNREADABLE`, and the
+//! `RAILS_CONTROLLER_UNRESOLVED` fallback), which name ONE controller file
+//! the walk correctly identified as unreadable/unparseable while the rest of
+//! the recovered action set came back intact -- those are `severity = .warn`.
+//!
 //! std-only, like every file in `src/cli/rails/`: no `@import` escapes this
 //! directory, and `fatal.*` handling stays migrate.zig's job. The spawn/
 //! resolve/watchdog/query plumbing (`resolveAbsRoot`, `killOnTimeout`,
@@ -125,6 +135,11 @@ const WireResponse = struct {
     actions: []const WireAction = &.{},
     unresolved: []const WireUnresolved = &.{},
     @"error": ?[]const u8 = null,
+    // This op's own half of `discovery.ruby` -- see `routes.zig`'s `Ruby`
+    // doc for why the type/decode logic is shared (`sidecar_client.zig`)
+    // rather than a second hand copy. Optional so a hand-written `"ok":
+    // false`/malformed test literal that predates this field still decodes.
+    ruby: ?sidecar_client.WireRuby = null,
 };
 
 /// The known `unresolved[].code` vocabulary `runtime/sidecar/rails/
@@ -200,25 +215,41 @@ fn freeActionFields(gpa: Allocator, a: ActionInfo) void {
 /// the fallback for an entry with no `path` (an older sidecar build, or the
 /// `RAILS_CONTROLLERS_UNAVAILABLE` cases above that have no single file to
 /// name).
+///
+/// `ruby` is decoded independent of `ok`, same reasoning as `routes.zig`'s
+/// `decodeResponse`: even an `{"ok":false,...}` response still comes from a
+/// Ruby process that genuinely ran and answered, so `analyze.rb` stamps
+/// `RUBY_INFO` on every `handle_controllers` response, success or not
+/// (Stage 4's task-2-fixes.md item 1). Only a response this function could
+/// not decode AT ALL (the malformed-line branch below) has no `ruby` to
+/// read, and falls back to `available: false`.
+const Decoded = struct {
+    actions: []ActionInfo,
+    ruby: sidecar_client.Ruby,
+};
+
 fn decodeResponse(
     gpa: Allocator,
     line: []const u8,
     src_path: []const u8,
     blocker_list: *std.ArrayListUnmanaged(blockers.Blocker),
-) Allocator.Error![]ActionInfo {
+) Allocator.Error!Decoded {
     var parsed = std.json.parseFromSlice(WireResponse, gpa, line, .{ .ignore_unknown_fields = true }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => {
-            try blockers.append(gpa, blocker_list, "RAILS_CONTROLLERS_UNAVAILABLE", src_path, @errorName(err), false);
-            return &.{};
+            try blockers.append(gpa, blocker_list, "RAILS_CONTROLLERS_UNAVAILABLE", src_path, @errorName(err), false, .@"error", null);
+            return .{ .actions = &.{}, .ruby = .{ .available = false, .version = null } };
         },
     };
     defer parsed.deinit();
     const resp = parsed.value;
 
+    const ruby = try sidecar_client.decodeRuby(gpa, resp.ruby);
+    errdefer sidecar_client.freeRuby(gpa, ruby);
+
     if (!resp.ok) {
-        try blockers.append(gpa, blocker_list, "RAILS_CONTROLLERS_UNAVAILABLE", src_path, resp.@"error" orelse "sidecar reported failure", false);
-        return &.{};
+        try blockers.append(gpa, blocker_list, "RAILS_CONTROLLERS_UNAVAILABLE", src_path, resp.@"error" orelse "sidecar reported failure", false, .@"error", null);
+        return .{ .actions = &.{}, .ruby = ruby };
     }
 
     var actions = try gpa.alloc(ActionInfo, resp.actions.len);
@@ -232,6 +263,13 @@ fn decodeResponse(
         filled = i + 1;
     }
 
+    // `route_id` stays `null` here, deliberately (Stage 4 Task 5): each `u`
+    // describes an action shape one controller FILE's parse could not
+    // resolve, before this run has joined controller/action pairs to any
+    // route at all (that join is `rails.zig`'s `actionFor`, which runs
+    // later against `route_result.routes`) -- the same "a construct, not a
+    // recovered route" reasoning `routes.zig`'s own `resp.unresolved` loop
+    // documents.
     for (resp.unresolved) |u| {
         const code = staticUnresolvedCode(u.code);
         const recognized = !std.mem.eql(u8, code, unrecognized_unresolved_code);
@@ -246,10 +284,10 @@ fn decodeResponse(
             std.fmt.bufPrint(&detail_buf, "unrecognized code {s}: {s} (line {d})", .{ u.code, u.detail, ln }) catch u.detail
         else
             std.fmt.bufPrint(&detail_buf, "unrecognized code {s}: {s}", .{ u.code, u.detail }) catch u.detail;
-        try blockers.append(gpa, blocker_list, code, blocker_path, detail, false);
+        try blockers.append(gpa, blocker_list, code, blocker_path, detail, false, .warn, null);
     }
 
-    return actions;
+    return .{ .actions = actions, .ruby = ruby };
 }
 
 /// Contract 2 counterpart to `discoverControllers`/`decodeResponse`:
@@ -261,6 +299,25 @@ fn decodeResponse(
 pub fn freeActions(gpa: Allocator, actions: []ActionInfo) void {
     for (actions) |a| freeActionFields(gpa, a);
     gpa.free(actions);
+}
+
+/// `discoverControllers`'s return: the recovered action shapes plus this
+/// op's own half of `discovery.ruby` (see `routes.zig`'s `Result.ruby` doc
+/// for why this is only a HALF -- `rails.zig`'s `combineRuby` ORs it
+/// together with `routes.Result.ruby` before either reaches a consumer).
+pub const Result = struct {
+    /// Owned; release with `freeActions`.
+    actions: []ActionInfo,
+    ruby: sidecar_client.Ruby,
+};
+
+/// Contract 2 counterpart to `discoverControllers`: releases both owned
+/// pieces of a `Result` (`actions` via `freeActions`, `ruby.version` via
+/// `sidecar_client.freeRuby`) in one call, mirroring `routes.zig`'s
+/// `freeResult`.
+pub fn freeResult(gpa: Allocator, result: Result) void {
+    freeActions(gpa, result.actions);
+    sidecar_client.freeRuby(gpa, result.ruby);
 }
 
 /// Plain linear lookup, no allocation -- not one of NO_SLOP.md's §2.2a
@@ -280,13 +337,19 @@ pub fn find(actions: []const ActionInfo, controller: []const u8, action: []const
 /// Contract 2 (owned-result): every `ActionInfo.controller`/`.action` string
 /// is a fresh `gpa`-owned allocation (see `dupeAction`'s doc); `freeActions`
 /// is the matching release. `only_redirect`/`renders_json` are plain values.
+/// `Result.ruby.version`, when present, is a SEPARATE `gpa`-owned
+/// allocation released by `sidecar_client.freeRuby` -- `freeResult` frees
+/// both in one call (Stage 4's task-2-fixes.md item 1 added this half of
+/// `Result`; before it, this function returned a bare `[]ActionInfo`).
 ///
 /// Every failure mode -- Ruby not found, the sidecar script/runtime dir not
 /// found, a spawn/exit/response failure, or no `app/controllers/` -- appends
 /// exactly one blocker with `integrity = false` (see the module doc) and
-/// returns an empty slice. This function's own error return stays
-/// `Allocator.Error` only: every other failure degrades instead of
-/// propagating, matching `routes.zig`'s `discoverRoutes`.
+/// returns a `Result` with an empty slice and `ruby.available = false`
+/// (there is no interpreter to ask on any of those paths). This function's
+/// own error return stays `Allocator.Error` only: every other failure
+/// degrades instead of propagating, matching `routes.zig`'s
+/// `discoverRoutes`.
 ///
 /// `app/controllers/`'s absence -- and, since fix round B / B3, its being
 /// PRESENT but unreadable -- is detected HERE, client-side, via `openDir`
@@ -325,12 +388,17 @@ pub fn discoverControllers(
     root_path: []const u8,
     blocker_list: *std.ArrayListUnmanaged(blockers.Blocker),
     environ_map: *const std.process.Environ.Map,
-) Allocator.Error![]ActionInfo {
-    const none: []ActionInfo = &.{};
+) Allocator.Error!Result {
+    // Every degradation branch below returns this literally -- Ruby/the
+    // sidecar never ran, so there is no interpreter to ask and `ruby.
+    // available` is unconditionally `false` here, same as `routes.zig`'s
+    // identical `none`. The success path (the final `decodeResponse` call)
+    // overrides `.ruby` with whatever the sidecar's own response reported.
+    const none: Result = .{ .actions = &.{}, .ruby = .{ .available = false, .version = null } };
 
     var controllers_dir = root.openDir(io, "app/controllers", .{ .iterate = true }) catch |err| {
         const code = if (err == error.FileNotFound) "RAILS_CONTROLLERS_MISSING" else "RAILS_CONTROLLERS_UNAVAILABLE";
-        try blockers.append(gpa, blocker_list, code, "app/controllers", @errorName(err), false);
+        try blockers.append(gpa, blocker_list, code, "app/controllers", @errorName(err), false, .@"error", null);
         return none;
     };
     // Only a readability probe -- the actual walk happens Ruby-side via
@@ -343,7 +411,7 @@ pub fn discoverControllers(
     const runtime_dir_raw = environ_map.get(runtime_dir_env);
     const runtime_dir = if (runtime_dir_raw) |v| std.mem.trim(u8, v, " \t\r\n") else "";
     if (runtime_dir.len == 0) {
-        try blockers.append(gpa, blocker_list, "RAILS_CONTROLLERS_UNAVAILABLE", "sidecar/rails/analyze.rb", "ZIGAPAGOS_RUNTIME_DIR is not set", false);
+        try blockers.append(gpa, blocker_list, "RAILS_CONTROLLERS_UNAVAILABLE", "sidecar/rails/analyze.rb", "ZIGAPAGOS_RUNTIME_DIR is not set", false, .@"error", null);
         return none;
     }
 
@@ -352,7 +420,7 @@ pub fn discoverControllers(
 
     var script_abs_buf: [Io.Dir.max_path_bytes]u8 = undefined;
     const script_abs_n = Io.Dir.cwd().realPathFile(io, script_path, &script_abs_buf) catch |err| {
-        try blockers.append(gpa, blocker_list, "RAILS_CONTROLLERS_UNAVAILABLE", script_path, @errorName(err), false);
+        try blockers.append(gpa, blocker_list, "RAILS_CONTROLLERS_UNAVAILABLE", script_path, @errorName(err), false, .@"error", null);
         return none;
     };
     const script_abs = script_abs_buf[0..script_abs_n];
@@ -360,7 +428,7 @@ pub fn discoverControllers(
     const abs_root = sidecar_client.resolveAbsRoot(io, gpa, root_path) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => {
-            try blockers.append(gpa, blocker_list, "RAILS_CONTROLLERS_UNAVAILABLE", root_path, @errorName(err), false);
+            try blockers.append(gpa, blocker_list, "RAILS_CONTROLLERS_UNAVAILABLE", root_path, @errorName(err), false, .@"error", null);
             return none;
         },
     };
@@ -376,7 +444,7 @@ pub fn discoverControllers(
     }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => {
-            try blockers.append(gpa, blocker_list, "RAILS_CONTROLLERS_UNAVAILABLE", ruby_path, @errorName(err), false);
+            try blockers.append(gpa, blocker_list, "RAILS_CONTROLLERS_UNAVAILABLE", ruby_path, @errorName(err), false, .@"error", null);
             return none;
         },
     };
@@ -399,30 +467,31 @@ pub fn discoverControllers(
         error.OutOfMemory => return error.OutOfMemory,
         else => {
             child.kill(io);
-            try blockers.append(gpa, blocker_list, "RAILS_CONTROLLERS_UNAVAILABLE", ruby_path, @errorName(err), false);
+            try blockers.append(gpa, blocker_list, "RAILS_CONTROLLERS_UNAVAILABLE", ruby_path, @errorName(err), false, .@"error", null);
             return none;
         },
     };
     defer gpa.free(line);
 
     const term = child.wait(io) catch |err| {
-        try blockers.append(gpa, blocker_list, "RAILS_CONTROLLERS_UNAVAILABLE", ruby_path, @errorName(err), false);
+        try blockers.append(gpa, blocker_list, "RAILS_CONTROLLERS_UNAVAILABLE", ruby_path, @errorName(err), false, .@"error", null);
         return none;
     };
     switch (term) {
         .exited => |code| if (code != 0) {
             var buf: [48]u8 = undefined;
             const detail = std.fmt.bufPrint(&buf, "ruby exited {d}", .{code}) catch "ruby exited nonzero";
-            try blockers.append(gpa, blocker_list, "RAILS_CONTROLLERS_UNAVAILABLE", ruby_path, detail, false);
+            try blockers.append(gpa, blocker_list, "RAILS_CONTROLLERS_UNAVAILABLE", ruby_path, detail, false, .@"error", null);
             return none;
         },
         .signal, .stopped, .unknown => {
-            try blockers.append(gpa, blocker_list, "RAILS_CONTROLLERS_UNAVAILABLE", ruby_path, "sidecar terminated abnormally", false);
+            try blockers.append(gpa, blocker_list, "RAILS_CONTROLLERS_UNAVAILABLE", ruby_path, "sidecar terminated abnormally", false, .@"error", null);
             return none;
         },
     }
 
-    return try decodeResponse(gpa, line, "app/controllers", blocker_list);
+    const decoded = try decodeResponse(gpa, line, "app/controllers", blocker_list);
+    return .{ .actions = decoded.actions, .ruby = decoded.ruby };
 }
 
 test "a sidecar response decodes into actions, preserving redirect/json flags" {
@@ -430,22 +499,27 @@ test "a sidecar response decodes into actions, preserving redirect/json flags" {
         \\{"ok":true,"actions":[
         \\{"controller":"posts","action":"index","only_redirect":false,"renders_json":false,"line":2},
         \\{"controller":"admin/users","action":"create","only_redirect":true,"renders_json":false,"line":3}],
-        \\"unresolved":[]}
+        \\"unresolved":[],
+        \\"ruby":{"available":true,"version":"3.3.6"}}
     ;
     var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const res = try decodeResponse(std.testing.allocator, line, "app/controllers", &blocker_list);
-    defer freeActions(std.testing.allocator, res);
+    defer freeActions(std.testing.allocator, res.actions);
+    defer sidecar_client.freeRuby(std.testing.allocator, res.ruby);
 
-    try std.testing.expectEqual(@as(usize, 2), res.len);
-    try std.testing.expectEqualStrings("posts", res[0].controller);
-    try std.testing.expectEqualStrings("index", res[0].action);
-    try std.testing.expect(!res[0].only_redirect);
-    try std.testing.expect(!res[0].renders_json);
-    try std.testing.expectEqualStrings("admin/users", res[1].controller);
-    try std.testing.expect(res[1].only_redirect);
+    try std.testing.expectEqual(@as(usize, 2), res.actions.len);
+    try std.testing.expectEqualStrings("posts", res.actions[0].controller);
+    try std.testing.expectEqualStrings("index", res.actions[0].action);
+    try std.testing.expect(!res.actions[0].only_redirect);
+    try std.testing.expect(!res.actions[0].renders_json);
+    try std.testing.expectEqualStrings("admin/users", res.actions[1].controller);
+    try std.testing.expect(res.actions[1].only_redirect);
     try std.testing.expectEqual(@as(usize, 0), blocker_list.items.len);
+    // The sidecar's own response, not a second `version_check.rb` spawn.
+    try std.testing.expect(res.ruby.available);
+    try std.testing.expectEqualStrings("3.3.6", res.ruby.version.?);
 }
 
 test "decodeResponse: an OOM at any point in a multi-row decode leaves no leak" {
@@ -469,12 +543,22 @@ test "decodeResponse: an OOM at any point in a multi-row decode leaves no leak" 
     // fails the WHOLE TEST through that detector -- not through an explicit
     // assertion this test has to write itself. See the mutation note in
     // task-2-fix-report.md for the observed red/green.
+    // Includes a non-null "ruby" key (fix round, task-2-3-fixes.md item 1):
+    // without one, `decodeRuby`'s `ruby.version` is always null and
+    // `sidecar_client.freeRuby` -- called both by this test's own success
+    // path AND by decodeResponse's `errdefer sidecar_client.freeRuby(gpa,
+    // ruby);` on every later-allocation failure -- has nothing to release
+    // either way, so a deleted `errdefer` would leak nothing and this sweep
+    // would stay green regardless. A real version string gives every
+    // failure index AFTER the ruby dupe (but before the sweep succeeds)
+    // something the errdefer must actually free.
     const line =
         \\{"ok":true,"actions":[
         \\{"controller":"posts","action":"index","only_redirect":false,"renders_json":false,"line":2},
         \\{"controller":"admin/users","action":"create","only_redirect":true,"renders_json":false,"line":3},
         \\{"controller":"comments","action":"destroy","only_redirect":false,"renders_json":true,"line":9}],
-        \\"unresolved":[]}
+        \\"unresolved":[],
+        \\"ruby":{"available":true,"version":"3.3.6"}}
     ;
 
     var fail_index: usize = 0;
@@ -492,13 +576,14 @@ test "decodeResponse: an OOM at any point in a multi-row decode leaves no leak" 
         var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
         defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
-        if (decodeResponse(failing.allocator(), line, "app/controllers", &blocker_list)) |actions| {
-            defer freeActions(std.testing.allocator, actions);
+        if (decodeResponse(failing.allocator(), line, "app/controllers", &blocker_list)) |decoded| {
+            defer freeActions(std.testing.allocator, decoded.actions);
+            defer sidecar_client.freeRuby(std.testing.allocator, decoded.ruby);
             // `fail_index` finally exceeded every allocation this decode
             // needs: confirm it decoded correctly one last time, then the
             // sweep is done -- every earlier index already ran under the
             // leak detector above.
-            try std.testing.expectEqual(@as(usize, 3), actions.len);
+            try std.testing.expectEqual(@as(usize, 3), decoded.actions.len);
             break;
         } else |err| {
             try std.testing.expectEqual(error.OutOfMemory, err);
@@ -514,9 +599,10 @@ test "an ok:false response becomes one RAILS_CONTROLLERS_UNAVAILABLE blocker and
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const res = try decodeResponse(std.testing.allocator, line, "app/controllers", &blocker_list);
-    defer freeActions(std.testing.allocator, res);
+    defer freeActions(std.testing.allocator, res.actions);
+    defer sidecar_client.freeRuby(std.testing.allocator, res.ruby);
 
-    try std.testing.expectEqual(@as(usize, 0), res.len);
+    try std.testing.expectEqual(@as(usize, 0), res.actions.len);
     try std.testing.expectEqual(@as(usize, 1), blocker_list.items.len);
     try std.testing.expectEqualStrings("RAILS_CONTROLLERS_UNAVAILABLE", blocker_list.items[0].code);
     try std.testing.expect(!blocker_list.items[0].integrity);
@@ -528,9 +614,10 @@ test "a malformed response line becomes one RAILS_CONTROLLERS_UNAVAILABLE blocke
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const res = try decodeResponse(std.testing.allocator, line, "app/controllers", &blocker_list);
-    defer freeActions(std.testing.allocator, res);
+    defer freeActions(std.testing.allocator, res.actions);
+    defer sidecar_client.freeRuby(std.testing.allocator, res.ruby);
 
-    try std.testing.expectEqual(@as(usize, 0), res.len);
+    try std.testing.expectEqual(@as(usize, 0), res.actions.len);
     try std.testing.expectEqual(@as(usize, 1), blocker_list.items.len);
     try std.testing.expectEqualStrings("RAILS_CONTROLLERS_UNAVAILABLE", blocker_list.items[0].code);
 }
@@ -543,12 +630,14 @@ test "an unrecognized unresolved code is not dropped: it folds into detail under
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const res = try decodeResponse(std.testing.allocator, line, "app/controllers", &blocker_list);
-    defer freeActions(std.testing.allocator, res);
+    defer freeActions(std.testing.allocator, res.actions);
+    defer sidecar_client.freeRuby(std.testing.allocator, res.ruby);
 
     try std.testing.expectEqual(@as(usize, 1), blocker_list.items.len);
     try std.testing.expectEqualStrings("RAILS_CONTROLLER_UNRESOLVED", blocker_list.items[0].code);
     try std.testing.expect(std.mem.indexOf(u8, blocker_list.items[0].detail, "RAILS_CONTROLLER_FUTURE_THING") != null);
     try std.testing.expect(!blocker_list.items[0].integrity);
+    try std.testing.expectEqual(blockers.Severity.warn, blocker_list.items[0].severity);
 }
 
 test "a recognized unresolved code (RAILS_CONTROLLER_PARSE_ERROR) becomes a blocker with that exact code" {
@@ -559,10 +648,12 @@ test "a recognized unresolved code (RAILS_CONTROLLER_PARSE_ERROR) becomes a bloc
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const res = try decodeResponse(std.testing.allocator, line, "app/controllers", &blocker_list);
-    defer freeActions(std.testing.allocator, res);
+    defer freeActions(std.testing.allocator, res.actions);
+    defer sidecar_client.freeRuby(std.testing.allocator, res.ruby);
 
     try std.testing.expectEqual(@as(usize, 1), blocker_list.items.len);
     try std.testing.expectEqualStrings("RAILS_CONTROLLER_PARSE_ERROR", blocker_list.items[0].code);
+    try std.testing.expectEqual(blockers.Severity.warn, blocker_list.items[0].severity);
 }
 
 test "B1: an unresolved entry's own `path` becomes the blocker's `path`, not the shared directory `src_path`" {
@@ -582,7 +673,8 @@ test "B1: an unresolved entry's own `path` becomes the blocker's `path`, not the
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const res = try decodeResponse(std.testing.allocator, line, "app/controllers", &blocker_list);
-    defer freeActions(std.testing.allocator, res);
+    defer freeActions(std.testing.allocator, res.actions);
+    defer sidecar_client.freeRuby(std.testing.allocator, res.ruby);
 
     try std.testing.expectEqual(@as(usize, 1), blocker_list.items.len);
     try std.testing.expectEqualStrings("app/controllers/posts_controller.rb", blocker_list.items[0].path);
@@ -597,7 +689,8 @@ test "an unresolved entry with no `path` (older sidecar shape) falls back to the
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const res = try decodeResponse(std.testing.allocator, line, "app/controllers", &blocker_list);
-    defer freeActions(std.testing.allocator, res);
+    defer freeActions(std.testing.allocator, res.actions);
+    defer sidecar_client.freeRuby(std.testing.allocator, res.ruby);
 
     try std.testing.expectEqualStrings("app/controllers", blocker_list.items[0].path);
 }
@@ -612,13 +705,15 @@ test "B2: RAILS_CONTROLLER_UNREADABLE is a recognized code, distinct from RAILS_
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const res = try decodeResponse(std.testing.allocator, line, "app/controllers", &blocker_list);
-    defer freeActions(std.testing.allocator, res);
+    defer freeActions(std.testing.allocator, res.actions);
+    defer sidecar_client.freeRuby(std.testing.allocator, res.ruby);
 
     try std.testing.expectEqual(@as(usize, 1), blocker_list.items.len);
     // Exact code, not the `RAILS_CONTROLLER_UNRESOLVED` fallback -- proves
     // this code is in `known_unresolved_codes`, not merely tolerated.
     try std.testing.expectEqualStrings("RAILS_CONTROLLER_UNREADABLE", blocker_list.items[0].code);
     try std.testing.expectEqualStrings("app/controllers/broken_controller.rb", blocker_list.items[0].path);
+    try std.testing.expectEqual(blockers.Severity.warn, blocker_list.items[0].severity);
 }
 
 test "find matches on (controller, action) pair, not either alone" {
@@ -633,21 +728,22 @@ test "find matches on (controller, action) pair, not either alone" {
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const res = try decodeResponse(std.testing.allocator, line, "app/controllers", &blocker_list);
-    defer freeActions(std.testing.allocator, res);
+    defer freeActions(std.testing.allocator, res.actions);
+    defer sidecar_client.freeRuby(std.testing.allocator, res.ruby);
 
-    const show = find(res, "posts", "show");
+    const show = find(res.actions, "posts", "show");
     try std.testing.expect(show != null);
     try std.testing.expect(show.?.only_redirect);
 
-    const comments_index = find(res, "comments", "index");
+    const comments_index = find(res.actions, "comments", "index");
     try std.testing.expect(comments_index != null);
     try std.testing.expect(comments_index.?.renders_json);
 
     // Same action name under a different controller must NOT match --
     // pins that the lookup keys on the PAIR, not `action` alone.
-    try std.testing.expect(find(res, "comments", "show") == null);
+    try std.testing.expect(find(res.actions, "comments", "show") == null);
     // Same controller, nonexistent action.
-    try std.testing.expect(find(res, "posts", "destroy") == null);
+    try std.testing.expect(find(res.actions, "posts", "destroy") == null);
 }
 
 test "discoverControllers spawns the real Ruby sidecar and recovers PostsController#index" {
@@ -673,10 +769,10 @@ test "discoverControllers spawns the real Ruby sidecar and recovers PostsControl
     var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
-    const actions = try discoverControllers(io, gpa, app_dir, "tests/migrate/rails-sample", &blocker_list, &env_map);
-    defer freeActions(gpa, actions);
+    const result = try discoverControllers(io, gpa, app_dir, "tests/migrate/rails-sample", &blocker_list, &env_map);
+    defer freeResult(gpa, result);
 
-    if (actions.len == 0 and blocker_list.items.len > 0) {
+    if (result.actions.len == 0 and blocker_list.items.len > 0) {
         if (blocker_list.items.len == 1 and
             std.mem.eql(u8, blocker_list.items[0].code, "RAILS_CONTROLLERS_UNAVAILABLE") and
             std.mem.eql(u8, blocker_list.items[0].detail, "FileNotFound"))
@@ -689,10 +785,17 @@ test "discoverControllers spawns the real Ruby sidecar and recovers PostsControl
     }
 
     try std.testing.expectEqual(@as(usize, 0), blocker_list.items.len);
-    const posts_index = find(actions, "posts", "index");
+    const posts_index = find(result.actions, "posts", "index");
     try std.testing.expect(posts_index != null);
     try std.testing.expect(!posts_index.?.only_redirect);
     try std.testing.expect(!posts_index.?.renders_json);
+
+    // The real Ruby process that answered this request knows its own
+    // version -- see `sidecar_client.zig`'s module doc on why this is
+    // captured from the sidecar's own response rather than a second spawn.
+    try std.testing.expect(result.ruby.available);
+    try std.testing.expect(result.ruby.version != null);
+    try std.testing.expect(result.ruby.version.?.len > 0);
 }
 
 test "discoverControllers: no app/controllers/ appends RAILS_CONTROLLERS_MISSING and finds zero actions" {
@@ -711,13 +814,17 @@ test "discoverControllers: no app/controllers/ appends RAILS_CONTROLLERS_MISSING
     var env_map: std.process.Environ.Map = .init(gpa);
     defer env_map.deinit();
 
-    const actions = try discoverControllers(io, gpa, tmp.dir, ".", &blocker_list, &env_map);
-    defer freeActions(gpa, actions);
+    const result = try discoverControllers(io, gpa, tmp.dir, ".", &blocker_list, &env_map);
+    defer freeResult(gpa, result);
 
-    try std.testing.expectEqual(@as(usize, 0), actions.len);
+    try std.testing.expectEqual(@as(usize, 0), result.actions.len);
     try std.testing.expectEqual(@as(usize, 1), blocker_list.items.len);
     try std.testing.expectEqualStrings("RAILS_CONTROLLERS_MISSING", blocker_list.items[0].code);
     try std.testing.expect(!blocker_list.items[0].integrity);
+    try std.testing.expectEqual(blockers.Severity.@"error", blocker_list.items[0].severity);
+    // `app/controllers/` absence is caught client-side (openDir) before
+    // Ruby ever spawns -- no interpreter to vouch for.
+    try std.testing.expect(!result.ruby.available);
 }
 
 test "discoverControllers: app/controllers/ present but unreadable yields RAILS_CONTROLLERS_UNAVAILABLE, not silence" {
@@ -755,8 +862,8 @@ test "discoverControllers: app/controllers/ present but unreadable yields RAILS_
     var env_map: std.process.Environ.Map = .init(gpa);
     defer env_map.deinit();
 
-    const actions = try discoverControllers(io, gpa, tmp.dir, ".", &blocker_list, &env_map);
-    defer freeActions(gpa, actions);
+    const result = try discoverControllers(io, gpa, tmp.dir, ".", &blocker_list, &env_map);
+    defer freeResult(gpa, result);
 
     if (blocker_list.items.len == 0) {
         // Permission enforcement didn't actually block the open in this
@@ -764,11 +871,13 @@ test "discoverControllers: app/controllers/ present but unreadable yields RAILS_
         return error.SkipZigTest;
     }
 
-    try std.testing.expectEqual(@as(usize, 0), actions.len);
+    try std.testing.expectEqual(@as(usize, 0), result.actions.len);
     try std.testing.expectEqual(@as(usize, 1), blocker_list.items.len);
     try std.testing.expectEqualStrings("RAILS_CONTROLLERS_UNAVAILABLE", blocker_list.items[0].code);
     try std.testing.expectEqualStrings("app/controllers", blocker_list.items[0].path);
     try std.testing.expect(!blocker_list.items[0].integrity);
+    try std.testing.expectEqual(blockers.Severity.@"error", blocker_list.items[0].severity);
+    try std.testing.expect(!result.ruby.available);
 }
 
 test "discoverControllers: ZIGAPAGOS_RUBY pointing at a nonexistent binary yields RAILS_CONTROLLERS_UNAVAILABLE" {
@@ -786,13 +895,15 @@ test "discoverControllers: ZIGAPAGOS_RUBY pointing at a nonexistent binary yield
     var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
-    const actions = try discoverControllers(io, gpa, app_dir, "tests/migrate/rails-sample", &blocker_list, &env_map);
-    defer freeActions(gpa, actions);
+    const result = try discoverControllers(io, gpa, app_dir, "tests/migrate/rails-sample", &blocker_list, &env_map);
+    defer freeResult(gpa, result);
 
-    try std.testing.expectEqual(@as(usize, 0), actions.len);
+    try std.testing.expectEqual(@as(usize, 0), result.actions.len);
     try std.testing.expectEqual(@as(usize, 1), blocker_list.items.len);
     try std.testing.expectEqualStrings("RAILS_CONTROLLERS_UNAVAILABLE", blocker_list.items[0].code);
     try std.testing.expect(!blocker_list.items[0].integrity);
+    // The spawn itself failed (ENOENT) -- no interpreter ever ran.
+    try std.testing.expect(!result.ruby.available);
 }
 
 test "discoverControllers: ZIGAPAGOS_RUNTIME_DIR with no sidecar/rails/analyze.rb yields RAILS_CONTROLLERS_UNAVAILABLE" {
@@ -815,11 +926,12 @@ test "discoverControllers: ZIGAPAGOS_RUNTIME_DIR with no sidecar/rails/analyze.r
     var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
-    const actions = try discoverControllers(io, gpa, app_dir, "tests/migrate/rails-sample", &blocker_list, &env_map);
-    defer freeActions(gpa, actions);
+    const result = try discoverControllers(io, gpa, app_dir, "tests/migrate/rails-sample", &blocker_list, &env_map);
+    defer freeResult(gpa, result);
 
-    try std.testing.expectEqual(@as(usize, 0), actions.len);
+    try std.testing.expectEqual(@as(usize, 0), result.actions.len);
     try std.testing.expectEqual(@as(usize, 1), blocker_list.items.len);
     try std.testing.expectEqualStrings("RAILS_CONTROLLERS_UNAVAILABLE", blocker_list.items[0].code);
     try std.testing.expect(!blocker_list.items[0].integrity);
+    try std.testing.expect(!result.ruby.available);
 }
