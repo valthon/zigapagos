@@ -301,13 +301,21 @@ pub fn classify(in: Input) Verdict {
     // React/Vue component root. Deliberately UNGATED on `in.action` --
     // unlike rule 7 below, this is positive evidence of interactivity that
     // stands on its own, and `island` is a narrower claim than `content`
-    // (see module doc).
-    if (view.markers.stimulus or view.markers.component_root != null) {
+    // (see module doc). `malformed_stimulus_attr` (fix round 2,
+    // phase-1-review.md's challenge to Ruling 7) is OR'd in alongside the
+    // two list-length checks: a `data-controller=` attribute this scan
+    // could not parse a name out of is still evidence SOME interactivity
+    // marker is present -- the same fact the old `stimulus: bool` carried
+    // via a fabricated list entry -- so this rule's verdict must not change
+    // now that the fabricated entry is gone (`Markers.malformed_stimulus_
+    // attr`'s doc).
+    const has_stimulus_evidence = view.markers.stimulus_controllers.len > 0 or view.markers.malformed_stimulus_attr;
+    if (has_stimulus_evidence or view.markers.component_roots.len > 0) {
         // `content` rides along as a second candidate only when Stimulus
         // is the ONLY interactivity found: a Stimulus behavior may be
         // portable to plain static content, but a mounted JS component
         // root is not (per the design doc's `candidates[]` addition).
-        const only_stimulus = view.markers.stimulus and view.markers.component_root == null;
+        const only_stimulus = has_stimulus_evidence and view.markers.component_roots.len == 0;
         const island_candidates: []const Candidate = if (only_stimulus)
             &[_]Candidate{
                 .{ .target = "island", .evidence = "stimulus controller marker" },
@@ -460,14 +468,37 @@ test "rule 5 beats rule 6: request state wins over an island marker" {
     const got = v(.{
         .verb = "GET",
         .action = .{},
-        .view = erbView(.{ .request_state = "session", .stimulus = true }),
+        .view = erbView(.{ .request_state = "session", .stimulus_controllers = template_scan.StimulusControllers.one("reveal") }),
     });
     try std.testing.expectEqual(Class.unresolved, got.class);
 }
 
 test "rule 6: a stimulus marker makes it an island" {
-    const got = v(.{ .verb = "GET", .action = .{}, .view = erbView(.{ .stimulus = true }) });
+    const got = v(.{ .verb = "GET", .action = .{}, .view = erbView(.{ .stimulus_controllers = template_scan.StimulusControllers.one("reveal") }) });
     try std.testing.expectEqual(Class.island, got.class);
+}
+
+test "rule 6: malformed_stimulus_attr ALONE (no real name in the list) still makes it an island (fix round 2 / Ruling 7 reversal)" {
+    // phase-1-review.md's challenge to Ruling 7: the OLD scanner added the
+    // literal malformed match text as a fake "name" to `stimulus_
+    // controllers`, so `.len > 0` alone used to carry this signal. Now the
+    // list stays EMPTY on a malformed attribute and `malformed_stimulus_
+    // attr` carries the fact instead -- Rule 6 must still fire, with the
+    // SAME evidence/candidates shape as a real single controller name (see
+    // the sibling test below), on THIS input alone: an implementation that
+    // dropped the `or view.markers.malformed_stimulus_attr` disjunct from
+    // Rule 6's gate (reverting to pre-fix behavior under the new,
+    // list-stays-empty scanner) would wrongly fall through to `content`
+    // here, since `stimulus_controllers.len == 0` and `component_roots.len
+    // == 0` both hold.
+    const got = v(.{ .verb = "GET", .action = .{}, .view = erbView(.{ .malformed_stimulus_attr = true }) });
+    try std.testing.expectEqual(Class.island, got.class);
+    // Evidence text must match the REAL-stimulus-controller shape (rides
+    // `content` as a second candidate), not the component-root shape --
+    // proving `only_stimulus` still treats the flag as stimulus evidence.
+    try std.testing.expectEqual(@as(usize, 2), got.candidates.len);
+    try std.testing.expectEqualStrings("island", got.candidates[0].target);
+    try std.testing.expectEqualStrings("content", got.candidates[1].target);
 }
 
 test "rule 7: a static-safe view is content, and content is the last resort" {
@@ -483,14 +514,14 @@ test "spa is never assigned without positive evidence" {
     const got = v(.{
         .verb = "GET",
         .action = .{},
-        .view = erbView(.{ .component_root = "react_component" }),
+        .view = erbView(.{ .component_roots = template_scan.ComponentRoots.one("react_component") }),
     });
     try std.testing.expect(got.class != Class.spa);
     try std.testing.expectEqual(Class.island, got.class);
 }
 
 test "island candidates include content only when the sole interactivity is Stimulus" {
-    const stimulus_only = v(.{ .verb = "GET", .action = .{}, .view = erbView(.{ .stimulus = true }) });
+    const stimulus_only = v(.{ .verb = "GET", .action = .{}, .view = erbView(.{ .stimulus_controllers = template_scan.StimulusControllers.one("reveal") }) });
     try std.testing.expectEqual(@as(usize, 2), stimulus_only.candidates.len);
     try std.testing.expectEqualStrings("island", stimulus_only.candidates[0].target);
     try std.testing.expectEqualStrings("stimulus controller marker", stimulus_only.candidates[0].evidence);
@@ -503,11 +534,35 @@ test "island candidates include content only when the sole interactivity is Stim
     const component = v(.{
         .verb = "GET",
         .action = .{},
-        .view = erbView(.{ .component_root = "react_component" }),
+        .view = erbView(.{ .component_roots = template_scan.ComponentRoots.one("react_component") }),
     });
     try std.testing.expectEqual(@as(usize, 1), component.candidates.len);
     try std.testing.expectEqualStrings("island", component.candidates[0].target);
     try std.testing.expectEqualStrings("component root marker", component.candidates[0].evidence);
+}
+
+test "island candidates: BOTH a stimulus controller and a component root present is not stimulus-only" {
+    // Distinguishes `only_stimulus = stimulus_controllers.len > 0 and
+    // component_roots.len == 0` from a defect that drops the second
+    // conjunct (`only_stimulus = stimulus_controllers.len > 0`): a view
+    // with both must NOT get the "content" fallback candidate, because a
+    // mounted component root is not portable to static content the way a
+    // bare Stimulus controller might be. A test that only ever supplies
+    // one marker or the other cannot tell these two conditions apart --
+    // this was verified by mutation: dropping the `component_roots.len ==
+    // 0` conjunct passed every OTHER test in this file unchanged.
+    const both = v(.{
+        .verb = "GET",
+        .action = .{},
+        .view = erbView(.{
+            .stimulus_controllers = template_scan.StimulusControllers.one("reveal"),
+            .component_roots = template_scan.ComponentRoots.one("react_component"),
+        }),
+    });
+    try std.testing.expectEqual(Class.island, both.class);
+    try std.testing.expectEqual(@as(usize, 1), both.candidates.len);
+    try std.testing.expectEqualStrings("island", both.candidates[0].target);
+    try std.testing.expectEqualStrings("component root marker", both.candidates[0].evidence);
 }
 
 test "no view and a non-redirect action is unresolved, not content" {
@@ -532,7 +587,7 @@ test "degradation: view + static markers, action absent -> unresolved (not backe
 }
 
 test "degradation: view + stimulus, action absent -> island (rule 6 stays ungated)" {
-    const got = v(.{ .verb = "GET", .view = erbView(.{ .stimulus = true }), .action = null });
+    const got = v(.{ .verb = "GET", .view = erbView(.{ .stimulus_controllers = template_scan.StimulusControllers.one("reveal") }), .action = null });
     try std.testing.expectEqual(Class.island, got.class);
     try std.testing.expectEqualStrings("view has an interactive Stimulus controller or component root", got.reason);
 }

@@ -1,0 +1,8 @@
+/* Propshaft/Sprockets both support ERB preprocessing for CSS that needs
+ * asset_path/asset_url resolved before being served. The final bytes (and
+ * therefore the digest computed over them) are only known after Ruby
+ * evaluates this file -- Stage 4 Task 6's fixture case for a real,
+ * non-guessable asset URL. */
+.logo {
+  background-image: url(<%= asset_path('logo.png') %>);
+}

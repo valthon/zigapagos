@@ -8,14 +8,113 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-/// Markers `scan` found in one template's raw text. `request_state` and
-/// `component_root`, when set, name themselves with the marker that
-/// matched (e.g. `"current_user"`, `"react_component"`) -- see `scan`'s
-/// doc comment for where that string lives.
+/// Fixed-capacity, allocation-free set of borrowed name slices -- the
+/// storage `Markers.stimulus_controllers`/`.component_roots` need to stay
+/// contract 3 (caller-buffer: `scan` allocates nothing) while returning
+/// more than one name. `names[0..len]` holds the slices; anything beyond
+/// `cap` is documented truncation, not silent data loss: `addUnique` is a
+/// no-op once `len == cap`, and every caller of `scan` can tell truncation
+/// happened for a name it expected by checking `len == cap` itself (the
+/// list is never partially deduped -- a full list is either exactly `cap`
+/// distinct names, or fewer because there genuinely were fewer). See each
+/// field's own doc for why its `cap` is never actually reachable in
+/// practice.
+fn BoundedNames(comptime cap: usize) type {
+    return struct {
+        const Self = @This();
+        pub const capacity = cap;
+
+        names: [cap][]const u8 = undefined,
+        len: usize = 0,
+
+        pub fn slice(self: *const Self) []const []const u8 {
+            return self.names[0..self.len];
+        }
+
+        pub fn contains(self: *const Self, name: []const u8) bool {
+            for (self.slice()) |n| {
+                if (std.mem.eql(u8, n, name)) return true;
+            }
+            return false;
+        }
+
+        /// Adds `name` if it isn't already present. Silently a no-op past
+        /// `cap` -- see this type's doc comment for why that is a
+        /// documented rule, not a hidden one, and why it never fires for
+        /// either field `scan` actually returns.
+        pub fn addUnique(self: *Self, name: []const u8) void {
+            if (self.contains(name)) return;
+            if (self.len >= cap) return;
+            self.names[self.len] = name;
+            self.len += 1;
+        }
+
+        /// Test/literal convenience: a list holding exactly one name.
+        pub fn one(name: []const u8) Self {
+            var s: Self = .{};
+            s.addUnique(name);
+            return s;
+        }
+    };
+}
+
+/// Generous headroom for the number of DISTINCT Stimulus controller names
+/// one template can name across every `data-controller="..."` attribute it
+/// contains (each attribute itself can list several, space-separated).
+/// Unlike `ComponentRoots` below, this is not tied to a comptime table, so
+/// it is in principle reachable by a template with many distinct
+/// controllers wired up -- 16 is chosen as comfortably beyond any real
+/// Rails view this scanner has been run against. Reaching it does not
+/// change classify.zig's Rule 6 verdict: that rule only asks whether the
+/// list is non-empty, and the FIRST name found (real or, per `scan`'s doc,
+/// the fallback name for a malformed attribute) always fits because the
+/// list starts empty.
+pub const max_stimulus_controllers: usize = 16;
+
+pub const StimulusControllers = BoundedNames(max_stimulus_controllers);
+
+/// One list slot per entry in `component_root_markers` -- never more,
+/// because `scan` adds at most one name per TABLE ENTRY (not one per
+/// occurrence in the source), so this capacity can never be exceeded and
+/// `ComponentRoots.addUnique`'s truncation path is unreachable for this
+/// field specifically.
+pub const ComponentRoots = BoundedNames(component_root_markers.len);
+
+/// Markers `scan` found in one template's raw text. `request_state`, when
+/// set, names itself with the marker that matched (e.g. `"current_user"`)
+/// -- see `scan`'s doc comment for where that string lives.
+/// `stimulus_controllers` and `component_roots` are the NAMES the marker
+/// text yielded (Stimulus controller identifiers off `data-controller`;
+/// which component-mount technologies -- `react_component`,
+/// `data-react-class`, `data-vue-component` -- appear at all), not just
+/// whether either exists; classify.zig's Rule 6 asks whether either list
+/// is non-empty, which is information-preserving relative to the bool/
+/// single-optional shape this replaced.
 pub const Markers = struct {
     request_state: ?[]const u8 = null,
-    stimulus: bool = false,
-    component_root: ?[]const u8 = null,
+    stimulus_controllers: StimulusControllers = .{},
+    component_roots: ComponentRoots = .{},
+    /// Fix round 2 (phase-1-review.md's challenge to Ruling 7 /
+    /// phase-1-fixes.md section 4): set when `scanStimulusControllers` finds
+    /// a `data-controller=` attribute it cannot parse a real name out of
+    /// (missing/unterminated quotes, an empty value) -- see that function's
+    /// doc for the exact shapes. The ORIGINAL rule for this case added the
+    /// literal, malformed match text (`"data-controller="`) to
+    /// `stimulus_controllers` itself, on the reasoning that every name in
+    /// that list must be a slice of `src` and a static placeholder would
+    /// break that invariant. Reversed: a non-name string is a PRESENT AND
+    /// WRONG value in a list `templates[].stimulus_controllers[]` a
+    /// consumer reads as "the identifiers of the Stimulus controllers wired
+    /// to this template" -- exactly the failure shape this whole feature
+    /// exists to refuse, and the drift gate / `--target` assembly reading
+    /// this list are not human readers who can tell an odd string apart at
+    /// a glance. This flag carries the SAME fact (rule 6's "was there any
+    /// interactivity marker at all, even a malformed one") without adding a
+    /// non-name to the list: `stimulus_controllers` stays all-`src`-slices
+    /// (just possibly empty), and rule 6's verdict is unchanged -- see
+    /// `classify.zig`'s Rule 6, which now ORs this flag in alongside the
+    /// two list-length checks.
+    malformed_stimulus_attr: bool = false,
 };
 
 /// Request-time-state markers, in return-priority order. `scan` walks THIS
@@ -96,10 +195,15 @@ const component_root_markers = [_]ComponentRootMarker{
 };
 
 /// Contract 3 (caller-buffer): `scan` allocates nothing. `request_state`
-/// and `component_root`, when non-null, are slices *into `src`* -- never
-/// a stack temporary, never a static buffer this function fills -- so a
-/// `Markers` value is only valid as long as `src` stays alive, exactly
-/// like any other borrow of it.
+/// and every name in `stimulus_controllers`/`component_roots` are slices
+/// *into `src`* -- never a stack temporary, never a static buffer this
+/// function fills -- so a `Markers` value is only valid as long as `src`
+/// stays alive, exactly like any other borrow of it. `stimulus_controllers`
+/// and `component_roots` are themselves inline, fixed-capacity storage
+/// (`BoundedNames`, above) rather than a `[]const` slice from an
+/// allocation, so a `Markers` value can be copied and returned by value
+/// with no `deinit` -- see `BoundedNames`'s doc for the truncation rule
+/// that keeps this allocation-free even though it now returns lists.
 ///
 /// This is a substring scan, not an ERB parse, and deliberately so: it
 /// does not strip `<%# ... %>` comments or string literals before
@@ -128,16 +232,76 @@ pub fn scan(src: []const u8) Markers {
         }
     }
 
-    markers.stimulus = std.mem.indexOf(u8, src, "data-controller=") != null;
+    scanStimulusControllers(src, &markers.stimulus_controllers, &markers.malformed_stimulus_attr);
 
+    // Unlike the request-state table above, every entry here is checked --
+    // no `break` -- because the manifest wants to know EVERY component
+    // technology a template mounts (a page could use `react_component` and
+    // `data-vue-component` together), not just the first table entry that
+    // happens to match. This can add at most `component_root_markers.len`
+    // names (one per table entry, deduplicated by construction since each
+    // entry contributes a distinct `name`), which is exactly `ComponentRoots`'
+    // capacity -- see that type's doc.
     for (component_root_markers) |marker| {
-        if (std.mem.indexOf(u8, src, marker.needle)) |idx| {
-            markers.component_root = src[idx .. idx + marker.name.len];
-            break;
+        if (std.mem.indexOf(u8, src, marker.needle) != null) {
+            markers.component_roots.addUnique(marker.name);
         }
     }
 
     return markers;
+}
+
+/// Finds every `data-controller="..."` (or `'...'`) attribute in `src` and
+/// adds each space-separated name in its value to `out` (Stimulus allows
+/// wiring several controllers to one element, e.g.
+/// `data-controller="reveal modal"` -- two names, not one).
+///
+/// Safety property this preserves: the OLD `stimulus: bool` was
+/// `indexOf(src, "data-controller=") != null`, i.e. true on ANY occurrence
+/// regardless of what followed. classify.zig's Rule 6 must not change
+/// verdict on any input (see this file's module doc / the brief this
+/// implements), so this function guarantees EITHER `out.len > 0` OR
+/// `malformed.* = true` after scanning whenever that substring appears
+/// anywhere in `src` -- including when the attribute value is missing its
+/// closing quote, unquoted, or empty. In the well-formed case that
+/// guarantee is met by the real controller names; in a malformed case
+/// (fix round 2, phase-1-review.md's challenge to Ruling 7) it sets
+/// `malformed.*` instead of adding a non-name string to `out` -- see
+/// `Markers.malformed_stimulus_attr`'s doc for why a fabricated "name" in
+/// this list is worse than a separate flag. `malformed.*` is OR-accumulated
+/// (never cleared back to `false`) so multiple calls across one scan (this
+/// function only ever sees one call per `scan`, but the flag itself is also
+/// unioned across a whole route's template chain by `rails.zig`'s
+/// `transitiveScan` the same way `stimulus_controllers`/`component_roots`
+/// are) never lose an earlier true.
+fn scanStimulusControllers(src: []const u8, out: *StimulusControllers, malformed: *bool) void {
+    const needle = "data-controller=";
+    var i: usize = 0;
+    while (std.mem.indexOfPos(u8, src, i, needle)) |idx| {
+        const after_eq = idx + needle.len;
+        i = after_eq;
+        var found_name = false;
+
+        if (after_eq < src.len and (src[after_eq] == '"' or src[after_eq] == '\'')) {
+            const quote = src[after_eq];
+            if (std.mem.indexOfScalarPos(u8, src, after_eq + 1, quote)) |close| {
+                const value = src[after_eq + 1 .. close];
+                var it = std.mem.tokenizeAny(u8, value, " \t\r\n");
+                while (it.next()) |name| {
+                    out.addUnique(name);
+                    found_name = true;
+                }
+                i = close + 1;
+            }
+        }
+
+        if (!found_name) {
+            // Malformed or empty attribute value: record that this
+            // occurrence existed WITHOUT adding a non-name to `out` -- see
+            // `Markers.malformed_stimulus_attr`'s doc.
+            malformed.* = true;
+        }
+    }
 }
 
 /// One `render` call `scanRenders` found in a template's raw text, naming
@@ -323,8 +487,9 @@ test "a static template has no markers" {
     // scope, not the whole classification story.
     const m = scan("<h1>Posts</h1>\n<%= render partial: \"post\" %>\n");
     try std.testing.expect(m.request_state == null);
-    try std.testing.expect(!m.stimulus);
-    try std.testing.expect(m.component_root == null);
+    try std.testing.expectEqual(@as(usize, 0), m.stimulus_controllers.len);
+    try std.testing.expectEqual(@as(usize, 0), m.component_roots.len);
+    try std.testing.expect(!m.malformed_stimulus_attr);
 }
 
 test "over-detection is deliberate: a marker in a comment still counts" {
@@ -335,17 +500,78 @@ test "over-detection is deliberate: a marker in a comment still counts" {
 }
 
 test "stimulus and component roots are distinguished" {
-    try std.testing.expect(scan("<div data-controller=\"reveal\"></div>").stimulus);
+    const stimulus = scan("<div data-controller=\"reveal\"></div>");
+    try std.testing.expectEqual(@as(usize, 1), stimulus.stimulus_controllers.len);
+    try std.testing.expectEqualStrings("reveal", stimulus.stimulus_controllers.slice()[0]);
+
+    try std.testing.expectEqual(@as(usize, 1), scan("<%= react_component(\"Chart\") %>").component_roots.len);
     try std.testing.expectEqualStrings(
         "react_component",
-        scan("<%= react_component(\"Chart\") %>").component_root.?,
+        scan("<%= react_component(\"Chart\") %>").component_roots.slice()[0],
     );
+    try std.testing.expectEqual(@as(usize, 1), scan("<div data-react-class=\"Chart\"></div>").component_roots.len);
     try std.testing.expectEqualStrings(
         "data-react-class",
-        scan("<div data-react-class=\"Chart\"></div>").component_root.?,
+        scan("<div data-react-class=\"Chart\"></div>").component_roots.slice()[0],
     );
     // A bare mount div is NOT evidence -- every app has a <div id="app">.
-    try std.testing.expect(scan("<div id=\"app\"></div>").component_root == null);
+    try std.testing.expectEqual(@as(usize, 0), scan("<div id=\"app\"></div>").component_roots.len);
+}
+
+test "data-controller with several space-separated names yields one name per controller" {
+    // The brief's discriminator: a single-controller test passes against an
+    // implementation that never splits the attribute value. `data-controller=
+    // "reveal modal"` is ONE attribute naming TWO Stimulus controllers, and
+    // `stimulus_controllers` must contain both names -- not the raw
+    // "reveal modal" string, and not just "reveal".
+    const m = scan("<div data-controller=\"reveal modal\"></div>");
+    try std.testing.expectEqual(@as(usize, 2), m.stimulus_controllers.len);
+    try std.testing.expectEqualStrings("reveal", m.stimulus_controllers.slice()[0]);
+    try std.testing.expectEqualStrings("modal", m.stimulus_controllers.slice()[1]);
+    // Neither the whole attribute value nor a comma-joined form is present.
+    try std.testing.expect(!m.stimulus_controllers.contains("reveal modal"));
+}
+
+test "data-controller names are deduplicated across repeated attributes" {
+    const m = scan(
+        "<div data-controller=\"reveal\"></div><div data-controller=\"reveal modal\"></div>",
+    );
+    try std.testing.expectEqual(@as(usize, 2), m.stimulus_controllers.len);
+    try std.testing.expect(m.stimulus_controllers.contains("reveal"));
+    try std.testing.expect(m.stimulus_controllers.contains("modal"));
+}
+
+test "a template using both react_component and data-vue-component reports both roots" {
+    const m = scan("<%= react_component(\"Chart\") %><div data-vue-component=\"Widget\"></div>");
+    try std.testing.expectEqual(@as(usize, 2), m.component_roots.len);
+    try std.testing.expect(m.component_roots.contains("react_component"));
+    try std.testing.expect(m.component_roots.contains("data-vue-component"));
+}
+
+test "a malformed data-controller attribute sets malformed_stimulus_attr, WITHOUT adding a non-name to the list (Rule 6 safety, fix round 2)" {
+    // Preserves the OLD bool's over-detection guarantee -- `indexOf(src,
+    // "data-controller=") != null` was true here too -- via the SEPARATE
+    // `malformed_stimulus_attr` flag rather than a fabricated list entry
+    // (fix round 2, phase-1-review.md's challenge to Ruling 7). Missing the
+    // flag in the safe direction would flip Rule 6's verdict from island to
+    // something else on an input the old scanner correctly flagged; adding
+    // a non-name string to `stimulus_controllers` would publish
+    // "data-controller=" as though it were a real Stimulus identifier.
+    const unquoted = scan("<div data-controller=reveal></div>");
+    try std.testing.expectEqual(@as(usize, 0), unquoted.stimulus_controllers.len);
+    try std.testing.expect(unquoted.malformed_stimulus_attr);
+
+    const unterminated = scan("<div data-controller=\"reveal");
+    try std.testing.expectEqual(@as(usize, 0), unterminated.stimulus_controllers.len);
+    try std.testing.expect(unterminated.malformed_stimulus_attr);
+
+    const empty_value = scan("<div data-controller=\"\"></div>");
+    try std.testing.expectEqual(@as(usize, 0), empty_value.stimulus_controllers.len);
+    try std.testing.expect(empty_value.malformed_stimulus_attr);
+
+    // The well-formed sibling tests above this one still see the flag
+    // false -- a real, parsed name never sets it.
+    try std.testing.expect(!scan("<div data-controller=\"reveal\"></div>").malformed_stimulus_attr);
 }
 
 fn expectTargets(src: []const u8, want: []const RenderTarget) !void {

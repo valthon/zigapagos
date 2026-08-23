@@ -201,10 +201,14 @@ pub fn walk(io: Io, gpa: Allocator, root: Io.Dir) Allocator.Error!WalkResult {
     errdefer {
         for (list.items) |e| gpa.free(e.path);
         list.deinit(gpa);
-        for (blocker_list.items) |b| {
-            gpa.free(b.path);
-            gpa.free(b.detail);
-        }
+        // Fix round 2 (phase-1-review.md finding 14 / phase-1-fixes.md
+        // section 3): this used to hand-roll `gpa.free(b.path)`/
+        // `gpa.free(b.detail)` here and miss `route_id` (Task 1 added it to
+        // `Blocker`; latent today since every `append` in this function
+        // passes `null`, but a silent gap all the same). `blockers.
+        // freeItems` is the one place that free logic lives now, the same
+        // fix `discover`'s own top-level `defer` already applied to itself.
+        blockers.freeItems(gpa, blocker_list.items);
         blocker_list.deinit(gpa);
     }
 
@@ -218,7 +222,11 @@ pub fn walk(io: Io, gpa: Allocator, root: Io.Dir) Allocator.Error!WalkResult {
             // exist" is what let a permission error produce a confident,
             // undercounted "Blockers: None." report (P1 in the PR review).
             if (err == error.FileNotFound) continue;
-            try blockers.append(gpa, &blocker_list, "RAILS_INVENTORY_UNREADABLE", top, @errorName(err), true);
+            // `.@"error"`: part of the app tree could not even be opened, so
+            // the inventory this walk produces is missing an unknown amount
+            // of content -- the brief's own canonical example of an
+            // untrustworthy inventory.
+            try blockers.append(gpa, &blocker_list, "RAILS_INVENTORY_UNREADABLE", top, @errorName(err), true, .@"error", null);
             continue;
         };
         defer dir.close(io);
@@ -236,7 +244,10 @@ pub fn walk(io: Io, gpa: Allocator, root: Io.Dir) Allocator.Error!WalkResult {
                 // but the blocker says so explicitly rather than leaving an
                 // undercounted report with no indication anything was
                 // skipped.
-                try blockers.append(gpa, &blocker_list, "RAILS_INVENTORY_TRUNCATED", top, @errorName(err), true);
+                // `.@"error"`: same reasoning as `RAILS_INVENTORY_UNREADABLE`
+                // above -- a mid-walk failure means an unknown slice of this
+                // root's contents never made it into `list`.
+                try blockers.append(gpa, &blocker_list, "RAILS_INVENTORY_TRUNCATED", top, @errorName(err), true, .@"error", null);
                 break;
             };
             const entry = maybe_entry orelse break;
@@ -317,7 +328,10 @@ pub fn appendUnsupportedEngineBlockers(
         };
         var buf: [64]u8 = undefined;
         const detail = std.fmt.bufPrint(&buf, "{s} template is not converted", .{label}) catch unreachable;
-        try blockers.append(gpa, blocker_list, "RAILS_TEMPLATE_ENGINE_UNSUPPORTED", e.path, detail, false);
+        // `.warn`: the brief's own canonical example of an expected,
+        // correctly-detected finding -- a Haml/Slim view is a fact about
+        // this one file, not evidence the rest of the inventory is wrong.
+        try blockers.append(gpa, blocker_list, "RAILS_TEMPLATE_ENGINE_UNSUPPORTED", e.path, detail, false, .warn, null);
     }
 }
 
@@ -440,6 +454,7 @@ test "an unreadable app/ root produces an integrity blocker, not a silent empty 
     try std.testing.expectEqualStrings("RAILS_INVENTORY_UNREADABLE", wr.blockers[0].code);
     try std.testing.expectEqualStrings("app", wr.blockers[0].path);
     try std.testing.expect(wr.blockers[0].integrity);
+    try std.testing.expectEqual(blockers.Severity.@"error", wr.blockers[0].severity);
 }
 
 test "an unreadable nested directory truncates that root's walk but keeps what was already found" {
@@ -487,6 +502,7 @@ test "an unreadable nested directory truncates that root's walk but keeps what w
     try std.testing.expectEqualStrings("RAILS_INVENTORY_TRUNCATED", wr.blockers[0].code);
     try std.testing.expectEqualStrings("app", wr.blockers[0].path);
     try std.testing.expect(wr.blockers[0].integrity);
+    try std.testing.expectEqual(blockers.Severity.@"error", wr.blockers[0].severity);
 }
 
 test "appendUnsupportedEngineBlockers flags Haml and Slim template kinds but not erb, non-template kinds, or other kinds" {
@@ -517,6 +533,7 @@ test "appendUnsupportedEngineBlockers flags Haml and Slim template kinds but not
     try std.testing.expectEqualStrings("app/views/posts/index.html.haml", list.items[0].path);
     try std.testing.expectEqualStrings("Haml template is not converted", list.items[0].detail);
     try std.testing.expect(!list.items[0].integrity);
+    try std.testing.expectEqual(blockers.Severity.warn, list.items[0].severity);
 
     try std.testing.expectEqualStrings("app/views/posts/_post.html.slim", list.items[1].path);
     try std.testing.expectEqualStrings("Slim template is not converted", list.items[1].detail);

@@ -45,6 +45,20 @@ def check_full(label, src, expected)
   end
 end
 
+# None of `check`/`check_certainty`/`check_full` inspect :line. This checks
+# EXACTLY that -- each route's :line against the route's own known source
+# line, not the enclosing `draw` block's line and not a constant reused for
+# every route.
+def check_lines(label, src, expected)
+  got = RailsRoutes.parse(src, path: "config/routes.rb")
+  actual = got[:routes].map { |r| [r[:verb], r[:path], r[:line]] }.sort
+  want = expected.sort
+  if actual != want
+    warn "FAIL #{label}\n  got:  #{actual.inspect}\n  want: #{want.inspect}"
+    $failures += 1
+  end
+end
+
 check "root", 'Rails.application.routes.draw do
   root "home#index"
 end', ["GET /"]
@@ -401,6 +415,38 @@ end', [
   { verb: "PUT",    path: "/profile",      controller: "profile", action: "update" },
   { verb: "DELETE", path: "/profile",      controller: "profile", action: "destroy" },
 ]
+
+# Discriminates that :line is the ROUTE's own line, not the enclosing
+# `draw` block's (line 1) and not the file's last line (line 4): two routes
+# declared on two DIFFERENT lines must report two DIFFERENT numbers. An
+# implementation that hardcoded a constant, or reused `line_of(node)` from
+# the wrong node (the `draw` call, or the block itself), would pass every
+# other check in this file -- none of the checks above inspect :line at
+# all -- but fails this one.
+check_lines "each route reports its OWN declaration line, not the draw block's or a constant",
+            "Rails.application.routes.draw do\n" \
+            "  get \"/a\", to: \"a#index\"\n" \
+            "  get \"/b\", to: \"b#index\"\n" \
+            "end\n",
+            [
+              ["GET", "/a", 2],
+              ["GET", "/b", 3],
+            ]
+
+# Same property, but through `resources` expansion: `only: [:index]` keeps
+# this to one emitted route, on the `resources` call's own line (2), and a
+# bare `get` right after it lands on a DIFFERENT line (3) -- pinning that
+# expansion doesn't collapse the resource's line to the enclosing block's
+# either.
+check_lines "a resources-expanded route and a sibling bare route report different lines",
+            "Rails.application.routes.draw do\n" \
+            "  resources :posts, only: [:index]\n" \
+            "  get \"/about\", to: \"pages#about\"\n" \
+            "end\n",
+            [
+              ["GET", "/posts", 2],
+              ["GET", "/about", 3],
+            ]
 
 abort "#{$failures} routes failure(s)" if $failures > 0
 puts "PASS: routes_test.rb"

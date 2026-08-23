@@ -31,6 +31,21 @@
 //! `tests/migrate/rails.sh` failing after these were first shipped as
 //! `integrity = true`, which was simply wrong).
 //!
+//! Those same four codes are `severity = .@"error"` (Stage 4 Task 1),
+//! DESPITE the paragraph above likening them to `RAILS_TEMPLATE_ENGINE_
+//! UNSUPPORTED`. That comparison is about `integrity`/`--strict`, not
+//! `severity`, and the two axes point opposite ways here on purpose: an
+//! unsupported template engine is one file among many, correctly identified
+//! -- the rest of the route graph is untouched. `RAILS_RUBY_UNAVAILABLE`/
+//! `RAILS_SIDECAR_MISSING`/`RAILS_SIDECAR_FAILED`/`RAILS_ROUTES_MISSING`
+//! mean route discovery never produced ANY graph at all -- every route this
+//! run would otherwise classify is unresolved for lack of evidence, not
+//! flagged as a scoped, known exception. A manifest consumer reading
+//! `severity` needs that told apart from the `unresolved[].code` family
+//! below (`RAILS_ROUTES_PARSE_ERROR` and the `RAILS_ROUTE_*` codes,
+//! `severity = .warn`), which name ONE route the static walk correctly
+//! identified as unresolvable while the rest of the graph came back intact.
+//!
 //! std-only, like every file in `src/cli/rails/`: no `@import` escapes this
 //! directory, and `fatal.*` handling stays migrate.zig's job. The spawn/
 //! resolve/watchdog/query plumbing (`resolveAbsRoot`, `killOnTimeout`,
@@ -48,6 +63,22 @@ const sidecar_client = @import("sidecar_client.zig");
 
 pub const Origin = enum { static_ast, actiondispatch, routes_import };
 
+/// Where a route was declared -- the manifest's `routes[].source`
+/// (spec, "The manifest"). `file` is always `"config/routes.rb"` today: the
+/// only source this discovery stage reads (a `draw(:file)` reference to an
+/// external routes file stays an `unresolved` entry rather than being
+/// followed -- see `routes.rb`'s `draw_call`).
+pub const Source = struct {
+    file: []const u8,
+    /// 1-based line of the route's OWN DSL call (`get`/`post`/the action
+    /// expanded from a `resources` block/...), not the enclosing `draw`
+    /// block's line and not the file's first/last line -- `routes.rb`'s
+    /// `emit` passes `line_of(node)` for the specific call node each route
+    /// came from, so two routes declared on different lines report
+    /// different numbers.
+    line: u64,
+};
+
 pub const Route = struct {
     verb: []const u8,
     path: []const u8,
@@ -64,7 +95,54 @@ pub const Route = struct {
     /// this route being complete/accurate.
     certain: bool,
     origin: Origin,
+    /// Defaults to a placeholder (`config/routes.rb` line 0) so the many
+    /// hand-built `Route` literals in `rails.zig`'s and `report.zig`'s own
+    /// tests -- which predate this field, exercise classification/reporting
+    /// behavior that has nothing to do with source location, and are never
+    /// routed through `freeRoutes` -- keep compiling without unrelated
+    /// churn. Verified (Stage 4's task-2-fixes.md item 2), not merely
+    /// assumed: `dupeRoute` is the ONLY site in this file that produces a
+    /// `Route` ever passed to `freeRoutes`, and it sets `source` from the
+    /// wire unconditionally -- so today, the default reaches test literals
+    /// only.
+    ///
+    /// That is NOT a guarantee the type system enforces going forward. A
+    /// second real producer -- `origin = .actiondispatch` or `.
+    /// routes_import` (both currently unimplemented placeholders in
+    /// `Origin`) are the likely candidates -- could construct a `Route`
+    /// literal, omit `.source`, and silently inherit `line = 0` with no
+    /// compile error: the default exists for TESTS, and nothing distinguishes
+    /// a test literal from a future producer's literal at the type level.
+    /// `line = 0` would then flow straight into the manifest (spec: every
+    /// route's `source` is documented as present, not optional) as a
+    /// plausible-looking but fabricated line number -- worse than an
+    /// obviously-missing field, because nothing about it looks wrong. Any
+    /// new `Route` producer MUST set `.source` explicitly from real
+    /// evidence; this default is not a value to rely on outside a test.
+    source: Source = .{ .file = "config/routes.rb", .line = 0 },
 };
+
+/// `discovery.ruby`'s per-op half (spec, "The manifest" documents the
+/// COMBINED field; `rails.zig`'s `combineRuby` builds that from this and
+/// `controllers.zig`'s identical `Result.ruby`): whether Ruby was available
+/// to answer the `routes` op specifically, and which version. `available =
+/// false` (`version = null`) on every path where Ruby/the sidecar never got
+/// to run -- `discoverRoutes`'s own degradation branches build this
+/// directly, since there is no running interpreter to ask. `available =
+/// true` comes from the sidecar's OWN response (`analyze.rb`'s `RUBY_INFO`,
+/// threaded through `WireResponse.ruby`): asking the process that just did
+/// the work, rather than shelling out to `version_check.rb` a second time,
+/// which could disagree with the interpreter that actually ran and wastes a
+/// spawn either way.
+///
+/// Re-exported from `sidecar_client` (Stage 4's task-2-fixes.md item 1)
+/// rather than declared here: `controllers.zig` needs the IDENTICAL type
+/// and decode logic for its own, separate sidecar process, and two copies
+/// would drift the same way `resolveAbsRoot`/`killOnTimeout`/`queryOnce`
+/// already did before that extraction (see `sidecar_client.zig`'s module
+/// doc). Nothing outside this file is known to reference `routes.Ruby`
+/// today, but the alias keeps the name stable regardless.
+pub const Ruby = sidecar_client.Ruby;
 
 pub const Result = struct {
     /// Owned; release with `freeRoutes`.
@@ -73,7 +151,25 @@ pub const Result = struct {
     /// successfully decoded, `"none"` on every degradation path) and is
     /// never freed.
     mode: []const u8,
+    /// This op's own half of `discovery.ruby` -- see `Ruby`'s doc. NOT the
+    /// final manifest value on its own: `rails.zig`'s `combineRuby` ORs
+    /// this together with `controllers.Result.ruby` before either reaches a
+    /// consumer, because `config/routes.rb` being absent (this op
+    /// degrading to `available: false`) says nothing about whether the
+    /// SEPARATE `controllers` op's Ruby process ran.
+    ruby: Ruby,
 };
+
+/// Contract 2 counterpart to `decodeRuby`; re-exported from
+/// `sidecar_client` for the same reason `Ruby` is -- see that alias's doc.
+pub const freeRuby = sidecar_client.freeRuby;
+
+/// Convenience wrapper releasing every owned piece of a `Result`
+/// (`routes` via `freeRoutes`, `ruby.version` via `freeRuby`) in one call.
+pub fn freeResult(gpa: Allocator, result: Result) void {
+    freeRoutes(gpa, result.routes);
+    freeRuby(gpa, result.ruby);
+}
 
 /// Env var naming the Ruby interpreter to spawn; `ruby` on `PATH` when
 /// unset or blank (`std.process.spawn` resolves a bare name against `PATH`
@@ -93,11 +189,14 @@ const runtime_dir_env = "ZIGAPAGOS_RUNTIME_DIR";
 // a pure relocation: no behavior here changed.
 
 /// Contract 2 (owned-result): every `Route` field that is a string
-/// (`verb`, `path`, and non-null `controller`/`action`/`name`) is a fresh
-/// `gpa`-owned allocation -- `discoverRoutes`/`decodeResponse` never let a
-/// `Route` alias the JSON tree it was decoded from, because that tree is
-/// freed before either function returns. `origin` and `certain` are plain
-/// values with nothing to free. `freeRoutes` is the matching release.
+/// (`verb`, `path`, `source.file`, and non-null `controller`/`action`/
+/// `name`) is a fresh `gpa`-owned allocation -- `discoverRoutes`/
+/// `decodeResponse` never let a `Route` alias the JSON tree it was decoded
+/// from, because that tree is freed before either function returns.
+/// `origin`, `certain`, and `source.line` are plain values with nothing to
+/// free. `freeRoutes` is the matching release. `Result.ruby.version` is a
+/// separate `gpa`-owned allocation released by `freeRuby`
+/// (`freeResult` frees both in one call).
 ///
 /// Every failure mode -- Ruby not found, the sidecar script/runtime dir not
 /// found, a spawn/exit/response failure, or no `config/routes.rb` -- appends
@@ -131,10 +230,15 @@ pub fn discoverRoutes(
     blocker_list: *std.ArrayListUnmanaged(blockers.Blocker),
     environ_map: *const std.process.Environ.Map,
 ) Allocator.Error!Result {
-    const none: Result = .{ .routes = &.{}, .mode = "none" };
+    // Every one of `discoverRoutes`'s own degradation branches returns this
+    // literally -- Ruby/the sidecar never ran, so there is no interpreter to
+    // ask and `ruby.available` is unconditionally `false` here. The success
+    // path (below) overrides `.ruby` with whatever the sidecar's own
+    // response reported instead.
+    const none: Result = .{ .routes = &.{}, .mode = "none", .ruby = .{ .available = false, .version = null } };
 
     root.access(io, "config/routes.rb", .{}) catch |err| {
-        try blockers.append(gpa, blocker_list, "RAILS_ROUTES_MISSING", "config/routes.rb", @errorName(err), false);
+        try blockers.append(gpa, blocker_list, "RAILS_ROUTES_MISSING", "config/routes.rb", @errorName(err), false, .@"error", null);
         return none;
     };
 
@@ -143,7 +247,7 @@ pub fn discoverRoutes(
     const runtime_dir_raw = environ_map.get(runtime_dir_env);
     const runtime_dir = if (runtime_dir_raw) |v| std.mem.trim(u8, v, " \t\r\n") else "";
     if (runtime_dir.len == 0) {
-        try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_MISSING", "sidecar/rails/analyze.rb", "ZIGAPAGOS_RUNTIME_DIR is not set", false);
+        try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_MISSING", "sidecar/rails/analyze.rb", "ZIGAPAGOS_RUNTIME_DIR is not set", false, .@"error", null);
         return none;
     }
 
@@ -156,7 +260,7 @@ pub fn discoverRoutes(
     // stable argv[1] regardless of the child's own cwd.
     var script_abs_buf: [Io.Dir.max_path_bytes]u8 = undefined;
     const script_abs_n = Io.Dir.cwd().realPathFile(io, script_path, &script_abs_buf) catch |err| {
-        try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_MISSING", script_path, @errorName(err), false);
+        try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_MISSING", script_path, @errorName(err), false, .@"error", null);
         return none;
     };
     const script_abs = script_abs_buf[0..script_abs_n];
@@ -166,7 +270,7 @@ pub fn discoverRoutes(
     const abs_root = sidecar_client.resolveAbsRoot(io, gpa, root_path) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => {
-            try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_FAILED", root_path, @errorName(err), false);
+            try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_FAILED", root_path, @errorName(err), false, .@"error", null);
             return none;
         },
     };
@@ -185,11 +289,11 @@ pub fn discoverRoutes(
         // above, so an ENOENT here can only be the interpreter -- the same
         // attribution `Sidecar.spawn` makes for the analogous Bun case.
         error.FileNotFound => {
-            try blockers.append(gpa, blocker_list, "RAILS_RUBY_UNAVAILABLE", ruby_path, "not found on PATH", false);
+            try blockers.append(gpa, blocker_list, "RAILS_RUBY_UNAVAILABLE", ruby_path, "not found on PATH", false, .@"error", null);
             return none;
         },
         else => {
-            try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_FAILED", ruby_path, @errorName(err), false);
+            try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_FAILED", ruby_path, @errorName(err), false, .@"error", null);
             return none;
         },
     };
@@ -219,25 +323,25 @@ pub fn discoverRoutes(
         error.OutOfMemory => return error.OutOfMemory,
         else => {
             child.kill(io);
-            try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_FAILED", ruby_path, @errorName(err), false);
+            try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_FAILED", ruby_path, @errorName(err), false, .@"error", null);
             return none;
         },
     };
     defer gpa.free(line);
 
     const term = child.wait(io) catch |err| {
-        try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_FAILED", ruby_path, @errorName(err), false);
+        try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_FAILED", ruby_path, @errorName(err), false, .@"error", null);
         return none;
     };
     switch (term) {
         .exited => |code| if (code != 0) {
             var buf: [48]u8 = undefined;
             const detail = std.fmt.bufPrint(&buf, "ruby exited {d}", .{code}) catch "ruby exited nonzero";
-            try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_FAILED", ruby_path, detail, false);
+            try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_FAILED", ruby_path, detail, false, .@"error", null);
             return none;
         },
         .signal, .stopped, .unknown => {
-            try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_FAILED", ruby_path, "sidecar terminated abnormally", false);
+            try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_FAILED", ruby_path, "sidecar terminated abnormally", false, .@"error", null);
             return none;
         },
     }
@@ -249,14 +353,14 @@ pub fn discoverRoutes(
     // "static_ast" mode actually ran, since `decodeResponse` never adds that
     // code on its success path (only `unresolved`-entry codes, if any).
     const before = blocker_list.items.len;
-    const routes = try decodeResponse(gpa, line, "config/routes.rb", blocker_list);
+    const decoded = try decodeResponse(gpa, line, "config/routes.rb", blocker_list);
     var mode: []const u8 = "static_ast";
     if (blocker_list.items.len > before and
         std.mem.eql(u8, blocker_list.items[blocker_list.items.len - 1].code, "RAILS_SIDECAR_FAILED"))
     {
         mode = "none";
     }
-    return .{ .routes = routes, .mode = mode };
+    return .{ .routes = decoded.routes, .mode = mode, .ruby = decoded.ruby };
 }
 
 const WireRoute = struct {
@@ -266,6 +370,14 @@ const WireRoute = struct {
     action: ?[]const u8 = null,
     name: ?[]const u8 = null,
     certain: bool,
+    // `routes.rb`'s `emit` always sets this, but defaulting to `null`
+    // (rather than making it required) matches the defensive convention
+    // `controllers.zig`'s `WireAction.line` already uses for the identical
+    // wire shape: never let a malformed/older sidecar response fail the
+    // WHOLE decode over one missing optional field. `dupeRoute` falls back
+    // to `0` in that case -- a degenerate value, not a route this walk
+    // actually vouches for the line of.
+    line: ?u64 = null,
 };
 
 const WireUnresolved = struct {
@@ -279,6 +391,12 @@ const WireResponse = struct {
     routes: []const WireRoute = &.{},
     unresolved: []const WireUnresolved = &.{},
     @"error": ?[]const u8 = null,
+    // Optional (not required) so a response from a hypothetically older
+    // sidecar build, or the deliberately hand-written `"ok":false`/
+    // malformed-line test literals below that predate this field, still
+    // decode -- `decodeRuby` treats an absent `ruby` the same as an
+    // explicit `available: false`.
+    ruby: ?sidecar_client.WireRuby = null,
 };
 
 /// The known `unresolved[].code` vocabulary `runtime/sidecar/rails/
@@ -322,7 +440,12 @@ fn staticUnresolvedCode(json_code: []const u8) []const u8 {
 /// (each `errdefer` below guards only the one field above it; Zig runs them
 /// in reverse order, so together they cover the whole partially-built
 /// route).
-fn dupeRoute(gpa: Allocator, wr: WireRoute) Allocator.Error!Route {
+///
+/// `src_path` is `decodeResponse`'s own `"config/routes.rb"` literal, duped
+/// per-route into `source.file` rather than shared -- every `Route` string
+/// field is independently `gpa`-owned (contract 2) so `freeRouteFields` can
+/// release each one without knowing which other routes might alias it.
+fn dupeRoute(gpa: Allocator, wr: WireRoute, src_path: []const u8) Allocator.Error!Route {
     const verb = try gpa.dupe(u8, wr.verb);
     errdefer gpa.free(verb);
     const path = try gpa.dupe(u8, wr.path);
@@ -332,6 +455,8 @@ fn dupeRoute(gpa: Allocator, wr: WireRoute) Allocator.Error!Route {
     const action: ?[]const u8 = if (wr.action) |a| try gpa.dupe(u8, a) else null;
     errdefer if (action) |a| gpa.free(a);
     const name: ?[]const u8 = if (wr.name) |n| try gpa.dupe(u8, n) else null;
+    errdefer if (name) |n| gpa.free(n);
+    const source_file = try gpa.dupe(u8, src_path);
     return .{
         .verb = verb,
         .path = path,
@@ -343,6 +468,7 @@ fn dupeRoute(gpa: Allocator, wr: WireRoute) Allocator.Error!Route {
         // (Task 3); `actiondispatch`/`routes_import` are later-stage
         // origins with no producer yet.
         .origin = .static_ast,
+        .source = .{ .file = source_file, .line = wr.line orelse 0 },
     };
 }
 
@@ -352,6 +478,7 @@ fn freeRouteFields(gpa: Allocator, r: Route) void {
     if (r.controller) |c| gpa.free(c);
     if (r.action) |a| gpa.free(a);
     if (r.name) |n| gpa.free(n);
+    gpa.free(r.source.file);
 }
 
 fn routeLessThan(_: void, a: Route, b: Route) bool {
@@ -379,25 +506,41 @@ fn routeLessThan(_: void, a: Route, b: Route) bool {
 /// the inventory itself is not in question) and an empty route slice --
 /// `discoverRoutes` reads that blocker back to decide `Result.mode` (see
 /// its own comment on that call site).
+///
+/// `ruby` is decoded independent of `ok`: even an `{"ok":false,...}`
+/// response (e.g. no `config/routes.rb`) still comes from a Ruby process
+/// that genuinely ran and answered, so `analyze.rb` stamps `RUBY_INFO` on
+/// every response, success or not -- see the module doc on `Ruby`. Only a
+/// response this function could not decode AT ALL (the malformed-line
+/// branch above) has no `ruby` to read, and falls back to `available:
+/// false`.
+const DecodedRoutes = struct {
+    routes: []Route,
+    ruby: Ruby,
+};
+
 fn decodeResponse(
     gpa: Allocator,
     line: []const u8,
     src_path: []const u8,
     blocker_list: *std.ArrayListUnmanaged(blockers.Blocker),
-) Allocator.Error![]Route {
+) Allocator.Error!DecodedRoutes {
     var parsed = std.json.parseFromSlice(WireResponse, gpa, line, .{ .ignore_unknown_fields = true }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => {
-            try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_FAILED", src_path, @errorName(err), false);
-            return &.{};
+            try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_FAILED", src_path, @errorName(err), false, .@"error", null);
+            return .{ .routes = &.{}, .ruby = .{ .available = false, .version = null } };
         },
     };
     defer parsed.deinit();
     const resp = parsed.value;
 
+    const ruby = try sidecar_client.decodeRuby(gpa, resp.ruby);
+    errdefer sidecar_client.freeRuby(gpa, ruby);
+
     if (!resp.ok) {
-        try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_FAILED", src_path, resp.@"error" orelse "sidecar reported failure", false);
-        return &.{};
+        try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_FAILED", src_path, resp.@"error" orelse "sidecar reported failure", false, .@"error", null);
+        return .{ .routes = &.{}, .ruby = ruby };
     }
 
     var routes = try gpa.alloc(Route, resp.routes.len);
@@ -407,10 +550,19 @@ fn decodeResponse(
         gpa.free(routes);
     }
     for (resp.routes, 0..) |wr, i| {
-        routes[i] = try dupeRoute(gpa, wr);
+        routes[i] = try dupeRoute(gpa, wr, src_path);
         filled = i + 1;
     }
 
+    // `route_id` stays `null` here, deliberately (Stage 4 Task 5): each `u`
+    // describes a CONSTRUCT the Ruby-side parser could not statically
+    // evaluate into a route at all (a dynamic `match`, a custom router
+    // mount, ...) -- there is no `Route` in `routes` above for it to be
+    // "the route for", recovered or otherwise. That is a different shape
+    // from `rails.zig`'s `RAILS_TEMPLATE_UNREADABLE`/
+    // `RAILS_TEMPLATE_RENDER_DEPTH_EXCEEDED`, which fire from INSIDE a
+    // per-route classification loop with a real, already-recovered `Route`
+    // in hand.
     for (resp.unresolved) |u| {
         const code = staticUnresolvedCode(u.code);
         const recognized = !std.mem.eql(u8, code, unrecognized_unresolved_code);
@@ -424,17 +576,17 @@ fn decodeResponse(
             std.fmt.bufPrint(&detail_buf, "unrecognized code {s}: {s} (line {d})", .{ u.code, u.detail, ln }) catch u.detail
         else
             std.fmt.bufPrint(&detail_buf, "unrecognized code {s}: {s}", .{ u.code, u.detail }) catch u.detail;
-        try blockers.append(gpa, blocker_list, code, src_path, detail, false);
+        try blockers.append(gpa, blocker_list, code, src_path, detail, false, .warn, null);
     }
 
     std.mem.sort(Route, routes, {}, routeLessThan);
-    return routes;
+    return .{ .routes = routes, .ruby = ruby };
 }
 
 /// Contract 2 counterpart to `discoverRoutes`/`decodeResponse`: releases
-/// every owned string on every route (see `dupeRoute`'s ownership note)
-/// plus the slice itself. `origin` and `certain` are plain values with
-/// nothing to free.
+/// every owned string on every route -- including `source.file` -- (see
+/// `dupeRoute`'s ownership note) plus the slice itself. `origin`, `certain`,
+/// and `source.line` are plain values with nothing to free.
 pub fn freeRoutes(gpa: Allocator, routes: []Route) void {
     for (routes) |r| freeRouteFields(gpa, r);
     gpa.free(routes);
@@ -443,77 +595,145 @@ pub fn freeRoutes(gpa: Allocator, routes: []Route) void {
 test "a sidecar response decodes into routes, preserving certainty" {
     const line =
         \\{"ok":true,"routes":[
-        \\{"verb":"GET","path":"/","controller":"home","action":"index","name":"root","certain":true},
-        \\{"verb":"GET","path":"/x","controller":null,"action":null,"name":null,"certain":false}],
-        \\"unresolved":[{"code":"RAILS_ROUTE_LOOP","detail":"each","line":12}]}
+        \\{"verb":"GET","path":"/","controller":"home","action":"index","name":"root","certain":true,"line":2},
+        \\{"verb":"GET","path":"/x","controller":null,"action":null,"name":null,"certain":false,"line":9}],
+        \\"unresolved":[{"code":"RAILS_ROUTE_LOOP","detail":"each","line":12}],
+        \\"ruby":{"available":true,"version":"3.3.6"}}
     ;
     var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const res = try decodeResponse(std.testing.allocator, line, "config/routes.rb", &blocker_list);
-    defer freeRoutes(std.testing.allocator, res);
+    defer freeRoutes(std.testing.allocator, res.routes);
+    defer freeRuby(std.testing.allocator, res.ruby);
 
-    try std.testing.expectEqual(@as(usize, 2), res.len);
-    try std.testing.expectEqualStrings("GET", res[0].verb);
-    try std.testing.expect(res[0].certain);
-    try std.testing.expect(!res[1].certain);
+    try std.testing.expectEqual(@as(usize, 2), res.routes.len);
+    try std.testing.expectEqualStrings("GET", res.routes[0].verb);
+    try std.testing.expect(res.routes[0].certain);
+    try std.testing.expect(!res.routes[1].certain);
+    // The wire response for "/" carries a fresh, independently-owned copy
+    // of "config/routes.rb", not the caller's `src_path`.
+    try std.testing.expectEqualStrings("config/routes.rb", res.routes[0].source.file);
     // Unresolved entries become blockers, not silence.
     try std.testing.expectEqual(@as(usize, 1), blocker_list.items.len);
     try std.testing.expectEqualStrings("RAILS_ROUTE_LOOP", blocker_list.items[0].code);
+    // One route the static walk correctly identified as unresolvable, not a
+    // wholesale discovery failure -- see the module doc's severity/integrity
+    // contrast.
+    try std.testing.expectEqual(blockers.Severity.warn, blocker_list.items[0].severity);
+    // The sidecar's own response, not a second `version_check.rb` spawn.
+    try std.testing.expect(res.ruby.available);
+    try std.testing.expectEqualStrings("3.3.6", res.ruby.version.?);
 }
 
-test "an ok:false response becomes one RAILS_SIDECAR_FAILED blocker and zero routes" {
-    const line =
-        \\{"ok":false,"error":"boom: NoMethodError"}
-    ;
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
-    defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
-
-    const res = try decodeResponse(std.testing.allocator, line, "config/routes.rb", &blocker_list);
-    defer freeRoutes(std.testing.allocator, res);
-
-    try std.testing.expectEqual(@as(usize, 0), res.len);
-    try std.testing.expectEqual(@as(usize, 1), blocker_list.items.len);
-    try std.testing.expectEqualStrings("RAILS_SIDECAR_FAILED", blocker_list.items[0].code);
-    // Non-integrity: the sidecar failed, but that says nothing about
-    // whether the rest of the inventory (which never touched this response)
-    // is trustworthy -- see the module doc.
-    try std.testing.expect(!blocker_list.items[0].integrity);
-}
-
-test "a malformed response line becomes one RAILS_SIDECAR_FAILED blocker and zero routes" {
-    const line = "not json";
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
-    defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
-
-    const res = try decodeResponse(std.testing.allocator, line, "config/routes.rb", &blocker_list);
-    defer freeRoutes(std.testing.allocator, res);
-
-    try std.testing.expectEqual(@as(usize, 0), res.len);
-    try std.testing.expectEqual(@as(usize, 1), blocker_list.items.len);
-    try std.testing.expectEqualStrings("RAILS_SIDECAR_FAILED", blocker_list.items[0].code);
-}
-
-test "routes decode sorted by (path, verb) regardless of wire order" {
+// Discriminates the ROUTE's own line, not a constant: a decoder that just
+// hardcodes `.line = 1` (or reuses the FIRST route's line for every route)
+// passes every other test in this file, since none of them assert two
+// DIFFERENT routes carry two DIFFERENT line numbers. This is the one that
+// would catch it.
+test "two routes at different wire lines decode to two different source.line values" {
     const line =
         \\{"ok":true,"routes":[
-        \\{"verb":"POST","path":"/posts","controller":"posts","action":"create","name":null,"certain":true},
-        \\{"verb":"GET","path":"/posts","controller":"posts","action":"index","name":null,"certain":true},
-        \\{"verb":"GET","path":"/","controller":"home","action":"index","name":null,"certain":true}],
+        \\{"verb":"GET","path":"/a","controller":"a","action":"index","name":null,"certain":true,"line":5},
+        \\{"verb":"GET","path":"/b","controller":"b","action":"index","name":null,"certain":true,"line":41}],
         \\"unresolved":[]}
     ;
     var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const res = try decodeResponse(std.testing.allocator, line, "config/routes.rb", &blocker_list);
-    defer freeRoutes(std.testing.allocator, res);
+    defer freeRoutes(std.testing.allocator, res.routes);
+    defer freeRuby(std.testing.allocator, res.ruby);
 
-    try std.testing.expectEqual(@as(usize, 3), res.len);
-    try std.testing.expectEqualStrings("/", res[0].path);
-    try std.testing.expectEqualStrings("/posts", res[1].path);
-    try std.testing.expectEqualStrings("GET", res[1].verb);
-    try std.testing.expectEqualStrings("/posts", res[2].path);
-    try std.testing.expectEqualStrings("POST", res[2].verb);
+    try std.testing.expectEqual(@as(usize, 2), res.routes.len);
+    // Sorted by (path, verb): "/a" then "/b", so index order matches wire
+    // order here -- pin BOTH values, and that they differ from each other.
+    try std.testing.expectEqual(@as(u64, 5), res.routes[0].source.line);
+    try std.testing.expectEqual(@as(u64, 41), res.routes[1].source.line);
+    try std.testing.expect(res.routes[0].source.line != res.routes[1].source.line);
+}
+
+test "an ok:false response becomes one RAILS_SIDECAR_FAILED blocker, zero routes, and still carries ruby info" {
+    const line =
+        \\{"ok":false,"error":"boom: NoMethodError","ruby":{"available":true,"version":"3.4.1"}}
+    ;
+    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
+
+    const res = try decodeResponse(std.testing.allocator, line, "config/routes.rb", &blocker_list);
+    defer freeRoutes(std.testing.allocator, res.routes);
+    defer freeRuby(std.testing.allocator, res.ruby);
+
+    try std.testing.expectEqual(@as(usize, 0), res.routes.len);
+    try std.testing.expectEqual(@as(usize, 1), blocker_list.items.len);
+    try std.testing.expectEqualStrings("RAILS_SIDECAR_FAILED", blocker_list.items[0].code);
+    // Non-integrity: the sidecar failed, but that says nothing about
+    // whether the rest of the inventory (which never touched this response)
+    // is trustworthy -- see the module doc.
+    try std.testing.expect(!blocker_list.items[0].integrity);
+    // But it IS severity=.error: the route graph this call was supposed to
+    // decode never materialized at all -- see the module doc's contrast with
+    // the per-route unresolved codes above.
+    try std.testing.expectEqual(blockers.Severity.@"error", blocker_list.items[0].severity);
+    // Ruby genuinely ran (it answered this very response) even though route
+    // discovery itself failed -- the two are independent facts.
+    try std.testing.expect(res.ruby.available);
+    try std.testing.expectEqualStrings("3.4.1", res.ruby.version.?);
+}
+
+test "an ok:false response with no ruby key at all degrades ruby.available to false" {
+    const line =
+        \\{"ok":false,"error":"routes: \"root\" must be a non-empty string"}
+    ;
+    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
+
+    const res = try decodeResponse(std.testing.allocator, line, "config/routes.rb", &blocker_list);
+    defer freeRoutes(std.testing.allocator, res.routes);
+    defer freeRuby(std.testing.allocator, res.ruby);
+
+    try std.testing.expect(!res.ruby.available);
+    try std.testing.expectEqual(@as(?[]const u8, null), res.ruby.version);
+}
+
+test "a malformed response line becomes one RAILS_SIDECAR_FAILED blocker, zero routes, and ruby.available false" {
+    const line = "not json";
+    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
+
+    const res = try decodeResponse(std.testing.allocator, line, "config/routes.rb", &blocker_list);
+    defer freeRoutes(std.testing.allocator, res.routes);
+    defer freeRuby(std.testing.allocator, res.ruby);
+
+    try std.testing.expectEqual(@as(usize, 0), res.routes.len);
+    try std.testing.expectEqual(@as(usize, 1), blocker_list.items.len);
+    try std.testing.expectEqualStrings("RAILS_SIDECAR_FAILED", blocker_list.items[0].code);
+    try std.testing.expectEqual(blockers.Severity.@"error", blocker_list.items[0].severity);
+    // No response was ever decoded at all -- no interpreter to vouch for.
+    try std.testing.expect(!res.ruby.available);
+}
+
+test "routes decode sorted by (path, verb) regardless of wire order" {
+    const line =
+        \\{"ok":true,"routes":[
+        \\{"verb":"POST","path":"/posts","controller":"posts","action":"create","name":null,"certain":true,"line":4},
+        \\{"verb":"GET","path":"/posts","controller":"posts","action":"index","name":null,"certain":true,"line":3},
+        \\{"verb":"GET","path":"/","controller":"home","action":"index","name":null,"certain":true,"line":2}],
+        \\"unresolved":[]}
+    ;
+    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
+
+    const res = try decodeResponse(std.testing.allocator, line, "config/routes.rb", &blocker_list);
+    defer freeRoutes(std.testing.allocator, res.routes);
+    defer freeRuby(std.testing.allocator, res.ruby);
+
+    try std.testing.expectEqual(@as(usize, 3), res.routes.len);
+    try std.testing.expectEqualStrings("/", res.routes[0].path);
+    try std.testing.expectEqualStrings("/posts", res.routes[1].path);
+    try std.testing.expectEqualStrings("GET", res.routes[1].verb);
+    try std.testing.expectEqualStrings("/posts", res.routes[2].path);
+    try std.testing.expectEqualStrings("POST", res.routes[2].verb);
 }
 
 test "an unrecognized unresolved code is not dropped: it folds into detail under a static fallback code" {
@@ -524,12 +744,16 @@ test "an unrecognized unresolved code is not dropped: it folds into detail under
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const res = try decodeResponse(std.testing.allocator, line, "config/routes.rb", &blocker_list);
-    defer freeRoutes(std.testing.allocator, res);
+    defer freeRoutes(std.testing.allocator, res.routes);
+    defer freeRuby(std.testing.allocator, res.ruby);
 
     try std.testing.expectEqual(@as(usize, 1), blocker_list.items.len);
     try std.testing.expectEqualStrings("RAILS_ROUTE_UNRESOLVED", blocker_list.items[0].code);
     try std.testing.expect(std.mem.indexOf(u8, blocker_list.items[0].detail, "RAILS_ROUTE_FUTURE_THING") != null);
     try std.testing.expect(!blocker_list.items[0].integrity);
+    // The fallback bucket is still a per-route finding, not a wholesale
+    // failure -- warn, same as every other member of the unresolved family.
+    try std.testing.expectEqual(blockers.Severity.warn, blocker_list.items[0].severity);
 }
 
 test "discoverRoutes spawns the real Ruby sidecar and recovers a route from config/routes.rb" {
@@ -558,7 +782,7 @@ test "discoverRoutes spawns the real Ruby sidecar and recovers a route from conf
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const result = try discoverRoutes(io, gpa, app_dir, "tests/migrate/rails-sample", &blocker_list, &env_map);
-    defer freeRoutes(gpa, result.routes);
+    defer freeResult(gpa, result);
 
     if (std.mem.eql(u8, result.mode, "none")) {
         if (blocker_list.items.len == 1 and std.mem.eql(u8, blocker_list.items[0].code, "RAILS_RUBY_UNAVAILABLE"))
@@ -572,11 +796,35 @@ test "discoverRoutes spawns the real Ruby sidecar and recovers a route from conf
 
     try std.testing.expectEqualStrings("static_ast", result.mode);
     try std.testing.expect(result.routes.len >= 1);
+
+    // The real Ruby process that answered this request knows its own
+    // version -- captured from analyze.rb's response, not a second spawn of
+    // version_check.rb (see the module doc on `Ruby`).
+    try std.testing.expect(result.ruby.available);
+    try std.testing.expect(result.ruby.version != null);
+    try std.testing.expect(result.ruby.version.?.len > 0);
+
+    // `tests/migrate/rails-sample/config/routes.rb` declares `root` on
+    // line 2 and `get "/posts/old", ...` on line 10 -- two routes at two
+    // KNOWN, DIFFERENT lines, from a real Prism parse (not a JSON literal
+    // this test wrote by hand). Pinning both, and that they differ, is what
+    // catches an implementation that reports the enclosing `draw` block's
+    // line (1) or a constant for every route.
     var found_root = false;
+    var found_old = false;
     for (result.routes) |r| {
-        if (std.mem.eql(u8, r.path, "/") and std.mem.eql(u8, r.verb, "GET")) found_root = true;
+        if (std.mem.eql(u8, r.path, "/") and std.mem.eql(u8, r.verb, "GET")) {
+            found_root = true;
+            try std.testing.expectEqualStrings("config/routes.rb", r.source.file);
+            try std.testing.expectEqual(@as(u64, 2), r.source.line);
+        }
+        if (std.mem.eql(u8, r.path, "/posts/old") and std.mem.eql(u8, r.verb, "GET")) {
+            found_old = true;
+            try std.testing.expectEqual(@as(u64, 10), r.source.line);
+        }
     }
     try std.testing.expect(found_root);
+    try std.testing.expect(found_old);
 }
 
 test "discoverRoutes: no config/routes.rb appends RAILS_ROUTES_MISSING and degrades to mode=none" {
@@ -596,7 +844,7 @@ test "discoverRoutes: no config/routes.rb appends RAILS_ROUTES_MISSING and degra
     defer env_map.deinit();
 
     const result = try discoverRoutes(io, gpa, tmp.dir, ".", &blocker_list, &env_map);
-    defer freeRoutes(gpa, result.routes);
+    defer freeResult(gpa, result);
 
     try std.testing.expectEqual(@as(usize, 0), result.routes.len);
     try std.testing.expectEqualStrings("none", result.mode);
@@ -607,6 +855,12 @@ test "discoverRoutes: no config/routes.rb appends RAILS_ROUTES_MISSING and degra
     // doc. This is the exact case tests/migrate/rails.sh's exit-code
     // assertion depends on staying 0.
     try std.testing.expect(!blocker_list.items[0].integrity);
+    // But severity=.error: discovery never produced ANY route graph here.
+    try std.testing.expectEqual(blockers.Severity.@"error", blocker_list.items[0].severity);
+    // Ruby never even got spawned on this path -- `discovery.ruby` must
+    // say so, not silently report `available: true` from some stale value.
+    try std.testing.expect(!result.ruby.available);
+    try std.testing.expectEqual(@as(?[]const u8, null), result.ruby.version);
 }
 
 test "discoverRoutes: ZIGAPAGOS_RUBY pointing at a nonexistent binary yields RAILS_RUBY_UNAVAILABLE" {
@@ -631,7 +885,7 @@ test "discoverRoutes: ZIGAPAGOS_RUBY pointing at a nonexistent binary yields RAI
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const result = try discoverRoutes(io, gpa, app_dir, "tests/migrate/rails-sample", &blocker_list, &env_map);
-    defer freeRoutes(gpa, result.routes);
+    defer freeResult(gpa, result);
 
     try std.testing.expectEqual(@as(usize, 0), result.routes.len);
     try std.testing.expectEqualStrings("none", result.mode);
@@ -640,14 +894,68 @@ test "discoverRoutes: ZIGAPAGOS_RUBY pointing at a nonexistent binary yields RAI
     // Non-integrity: see the module doc -- a missing interpreter means no
     // route graph, not an untrustworthy inventory.
     try std.testing.expect(!blocker_list.items[0].integrity);
+    try std.testing.expectEqual(blockers.Severity.@"error", blocker_list.items[0].severity);
+    // The spawn itself failed (ENOENT) -- no interpreter ever ran to answer
+    // with a version.
+    try std.testing.expect(!result.ruby.available);
+}
+
+test "discoverRoutes: config/routes.rb present but ZIGAPAGOS_RUNTIME_DIR unset yields RAILS_SIDECAR_MISSING (the runtime_dir.len == 0 branch)" {
+    // Fix round 1 (task-1-fixes.md item 1): the sibling test below claimed
+    // this branch was "already pinned by" the "no config/routes.rb" test,
+    // which is false -- that test returns at the EARLIER `root.access`
+    // check on a missing `config/routes.rb`, with a different code
+    // (RAILS_ROUTES_MISSING), and never reaches `runtime_dir.len == 0` at
+    // all. This test is what actually reaches it: `config/routes.rb` exists
+    // (so the earlier check passes), and `environ_map` has no
+    // `ZIGAPAGOS_RUNTIME_DIR` entry at all (so `environ_map.get` returns
+    // `null`, `runtime_dir` resolves to `""`, and `runtime_dir.len == 0`
+    // fires) -- distinct from the sibling test below, which sets
+    // `ZIGAPAGOS_RUNTIME_DIR` to a valid, non-empty directory that merely
+    // lacks the sidecar script, reaching `realPathFile`'s failure instead.
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var config_dir = try tmp.dir.createDirPathOpen(io, "config", .{});
+    config_dir.close(io);
+    const routes_rb = try tmp.dir.createFile(io, "config/routes.rb", .{});
+    routes_rb.close(io);
+
+    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
+
+    var env_map: std.process.Environ.Map = .init(gpa);
+    defer env_map.deinit();
+
+    const result = try discoverRoutes(io, gpa, tmp.dir, ".", &blocker_list, &env_map);
+    defer freeResult(gpa, result);
+
+    try std.testing.expectEqual(@as(usize, 0), result.routes.len);
+    try std.testing.expectEqualStrings("none", result.mode);
+    try std.testing.expectEqual(@as(usize, 1), blocker_list.items.len);
+    try std.testing.expectEqualStrings("RAILS_SIDECAR_MISSING", blocker_list.items[0].code);
+    try std.testing.expectEqualStrings("sidecar/rails/analyze.rb", blocker_list.items[0].path);
+    try std.testing.expectEqualStrings("ZIGAPAGOS_RUNTIME_DIR is not set", blocker_list.items[0].detail);
+    // Non-integrity: see the module doc -- a missing runtime dir means no
+    // route graph, not an untrustworthy inventory.
+    try std.testing.expect(!blocker_list.items[0].integrity);
+    try std.testing.expectEqual(blockers.Severity.@"error", blocker_list.items[0].severity);
+    // Never got as far as locating the sidecar script, let alone spawning
+    // Ruby.
+    try std.testing.expect(!result.ruby.available);
 }
 
 test "discoverRoutes: ZIGAPAGOS_RUNTIME_DIR with no sidecar/rails/analyze.rb yields RAILS_SIDECAR_MISSING" {
     // An empty temp dir: it resolves as a directory (so this exercises the
-    // "script not found under an otherwise-valid runtime dir" branch, not
-    // the earlier "ZIGAPAGOS_RUNTIME_DIR is not set" branch, which is
-    // already pinned by the sibling "no config/routes.rb" test taking the
-    // default empty-string path).
+    // "script not found under an otherwise-valid runtime dir" branch --
+    // ZIGAPAGOS_RUNTIME_DIR set to a real, non-empty path whose
+    // sidecar/rails/analyze.rb doesn't exist). The EARLIER "ZIGAPAGOS_
+    // RUNTIME_DIR is not set" branch (`runtime_dir.len == 0`) is a
+    // different code path through the SAME `if` and is pinned by the
+    // sibling test just above this one, not by "no config/routes.rb" (fix
+    // round 1: that claim was false -- see that test's own comment).
     const gpa = std.testing.allocator;
     const io = std.testing.io;
 
@@ -668,7 +976,7 @@ test "discoverRoutes: ZIGAPAGOS_RUNTIME_DIR with no sidecar/rails/analyze.rb yie
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const result = try discoverRoutes(io, gpa, app_dir, "tests/migrate/rails-sample", &blocker_list, &env_map);
-    defer freeRoutes(gpa, result.routes);
+    defer freeResult(gpa, result);
 
     try std.testing.expectEqual(@as(usize, 0), result.routes.len);
     try std.testing.expectEqualStrings("none", result.mode);
@@ -677,4 +985,7 @@ test "discoverRoutes: ZIGAPAGOS_RUNTIME_DIR with no sidecar/rails/analyze.rb yie
     // Non-integrity: see the module doc -- a missing sidecar script means no
     // route graph, not an untrustworthy inventory.
     try std.testing.expect(!blocker_list.items[0].integrity);
+    try std.testing.expectEqual(blockers.Severity.@"error", blocker_list.items[0].severity);
+    // The sidecar script itself doesn't exist -- nothing was ever spawned.
+    try std.testing.expect(!result.ruby.available);
 }

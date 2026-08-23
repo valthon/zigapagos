@@ -179,7 +179,7 @@ written beside the report, so `--target DIR` produces both in `DIR`.
     "evidence": "package.json:@hotwired/turbo-rails"
   }],
   "blockers": [{
-    "code": "RAILS_DYNAMIC_ROUTE_PATH", "severity": "warn",
+    "code": "RAILS_ROUTE_DYNAMIC_PATH", "severity": "warn",
     "source": { "file": "config/routes.rb", "line": 118 },
     "message": "route path is built from an interpolated expression",
     "route_id": null
@@ -189,6 +189,14 @@ written beside the report, so `--target DIR` produces both in `DIR`.
 
 `origin` and `confidence` carry the spike's central lesson and are mandatory on
 every route. Without them the same parser output is a 75.5%-precision liar.
+
+`routes[].id` (`verb` + one space + `path`, e.g. `"GET /articles/:id"`) is a
+LABEL, not a unique key -- Phase 1's phase gate review (finding 13) found that
+two identical route DECLARATIONS in `routes.rb` (an ordinary, if unusual,
+occurrence) produce the same `id`. Do not join on `id` expecting uniqueness;
+a duplicate is a fact about the route table, not a generator defect to
+disambiguate away with a counter suffix or a folded-in source line -- either
+would make the id depend on scan order rather than on the route itself.
 
 ### `candidates`: a deliberate addition
 
@@ -256,7 +264,8 @@ location; that is what makes it reviewable instead of a summary count.
   `RAILS_ROUTE_EXTERNAL_FILE`, `RAILS_ROUTE_GEM_GENERATED`,
   `RAILS_ROUTE_UNRESOLVED`, `RAILS_ROUTES_MISSING`,
   `RAILS_ROUTES_PARSE_ERROR`, `RAILS_RUBY_UNAVAILABLE`,
-  `RAILS_SIDECAR_MISSING`, `RAILS_SIDECAR_FAILED`.
+  `RAILS_SIDECAR_MISSING`, `RAILS_SIDECAR_FAILED`,
+  `RAILS_RUBY_VERSION_MISMATCH`.
 - *Controller shape* -- `RAILS_CONTROLLERS_MISSING`,
   `RAILS_CONTROLLERS_UNAVAILABLE`, `RAILS_CONTROLLER_PARSE_ERROR`,
   `RAILS_CONTROLLER_UNREADABLE` (fix round B / B2: a controller file
@@ -274,6 +283,34 @@ location; that is what makes it reviewable instead of a summary count.
   blocker; the depth cutoff gets one because it names an unusual STRUCTURAL
   shape a human may want to simplify, not a per-route classification fact
   already carried in that route's `reason`).
+- *Assets* (Stage 4 Task 6, revised fix round 1) -- `RAILS_ASSET_PIPELINE_UNKNOWN`
+  (the Gemfile declares neither `propshaft` nor `sprockets-rails`, or
+  declares BOTH -- either way, no single active pipeline can be named
+  statically, so every `app/assets/`-rooted asset in the run reports
+  `deterministic: false` rather than guessing which gem actually wins at
+  boot), `RAILS_ASSET_DIGEST_UNAVAILABLE` (the pipeline's compiled manifest
+  IS present and usable, but this one asset simply isn't listed in it --
+  e.g. an ERB-preprocessed source, which legitimately never appears under
+  its own pre-ERB filename), `RAILS_ASSET_MANIFEST_MISSING` (no compiled
+  manifest was found under `public/assets/` for the active pipeline --
+  Propshaft's fixed `public/assets/.manifest.json` or Sprockets'
+  `manifest-*.json` -- or the one found could not be read or parsed -- so
+  no asset under that pipeline can be resolved at all this run). Fix round
+  1: every `app/assets/`-rooted URL, for EITHER pipeline, is read verbatim
+  from that pipeline's own compiled manifest -- never derived by
+  re-implementing a digest scheme unverified against the real gem (an
+  earlier version computed a SHA-256 digest for Propshaft specifically;
+  deleted, since nothing had ever checked it against a live Propshaft app).
+  See `src/cli/rails/assets.zig`'s module doc and `scan`'s per-case doc
+  comments for the full decision tree.
+- *Source version* (Stage 4 Task 7) -- `RAILS_GEMFILE_LOCK_UNAVAILABLE`
+  (`Gemfile.lock` is absent, unreadable, over the read cap, or readable but
+  never locks the `rails` gem in its `specs:` block -- `source.version`
+  degrades to `null` rather than reporting the Gemfile's unresolved
+  constraint as a resolved version. `.warn`, `integrity = false`: unlike the
+  Gemfile/package.json reads `readCapped` guards, an unresolved Rails
+  version does not make the rest of discovery untrustworthy, so this never
+  affects the exit code).
 
 **Declared, not yet emitted** -- reserved for #167 and the target-assembly
 stage, which is what "additive-only" protects: `RAILS_REQUEST_TIME_STATE`,

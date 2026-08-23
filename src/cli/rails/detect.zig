@@ -303,6 +303,20 @@ test "collect + verdict: an unreadable Gemfile on a branch-B tree is indetermina
 /// `integrity = true` and still treats the file as absent for the rest of
 /// this run, since there is nothing else the caller can safely do with
 /// unreadable content. `error.OutOfMemory` always propagates.
+///
+/// Both of this function's current callers (`rails.zig`'s `discover`, for
+/// `Gemfile` and `package.json`) feed a code whose severity is
+/// `.@"error"`: an unreadable Gemfile means the Rails-app `verdict()` itself
+/// ran on incomplete evidence, and an unreadable package.json means the
+/// integration scan (`integrations.scan`) never got to look at it at all --
+/// both are foundational inputs, not one file among many, so this is not the
+/// "an expected, correctly-detected finding" story `Blocker.severity`'s doc
+/// reserves for `.warn` (contrast `RAILS_PACKAGE_JSON_MALFORMED`, a
+/// *readable* package.json this same integration scan rejects, which IS a
+/// `.warn` -- see `integrations.zig`). Hardcoded here rather than threaded
+/// as a parameter because every caller wants the same answer for the same
+/// reason; a future caller with a different reason gets its own parameter
+/// then, not a silently-reused default.
 pub fn readCapped(
     io: Io,
     gpa: Allocator,
@@ -315,11 +329,47 @@ pub fn readCapped(
         error.OutOfMemory => return error.OutOfMemory,
         error.FileNotFound, error.NotDir => return null,
         else => {
-            try blockers.append(gpa, blocker_list, code, path, @errorName(err), true);
+            try blockers.append(gpa, blocker_list, code, path, @errorName(err), true, .@"error", null);
             return null;
         },
     };
     return src;
+}
+
+// Stage 4 Task 5's other discriminating direction (the route-scoped side is
+// pinned in rails.zig, e.g. "classifyRoutes: an unreadable template becomes
+// a non-integrity blocker"): a `RAILS_GEMFILE_UNREADABLE`/
+// `RAILS_PACKAGE_JSON_UNREADABLE` blocker describes the APP, not a route --
+// `readCapped` is called by `rails.zig`'s `discover` before any route is
+// even recovered, so there is no route for it to name. A test asserting
+// only "route_id is null here" would pass against an implementation that
+// never populated route_id ANYWHERE, which is exactly the pre-Task-5 bug;
+// this is only meaningful paired with the route-scoped tests that pin a
+// real, non-null, per-route id elsewhere.
+test "readCapped: an unreadable file's blocker has no route_id -- it describes the app, not a route" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // A directory named "Gemfile" forces `error.IsDir` -- deterministic,
+    // and distinct from `FileNotFound`/`NotDir`, so this reaches the `else`
+    // branch (the blocker-appending one) regardless of platform permission
+    // enforcement, unlike the permission-bit tricks `inventory.zig`'s own
+    // unreadable-directory tests must SkipZigTest under.
+    var gemfile_dir = try tmp.dir.createDirPathOpen(io, "Gemfile", .{});
+    gemfile_dir.close(io);
+
+    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
+
+    const result = try readCapped(io, gpa, tmp.dir, "Gemfile", "RAILS_GEMFILE_UNREADABLE", &blocker_list);
+    try std.testing.expectEqual(@as(?[]u8, null), result);
+
+    try std.testing.expectEqual(@as(usize, 1), blocker_list.items.len);
+    try std.testing.expectEqualStrings("RAILS_GEMFILE_UNREADABLE", blocker_list.items[0].code);
+    try std.testing.expectEqual(@as(?[]const u8, null), blocker_list.items[0].route_id);
 }
 
 /// True when `src` has an uncommented `gem "<name>"` (or `gem("<name>")`)
@@ -376,4 +426,319 @@ test "gemfileDeclares(\"rails\") still requires the whole quoted token to match"
     // Regression companion to the collision test above, phrased against the
     // parenthesized form specifically (P3's reported repro used gem(\"rails\")).
     try std.testing.expect(!gemfileDeclares("gem(\"rails-html-sanitizer\")\n", "rails"));
+}
+
+/// `source.version` (spec, "The manifest"): the resolved Rails version read
+/// from `Gemfile.lock`, plus the exact evidence string a human can verify by
+/// grepping the lock file (e.g. `"Gemfile.lock:rails (7.1.3)"`). Contract 2
+/// (owned-result): `value`/`evidence` are `gpa`-owned when non-null and must
+/// be released via `freeVersion`; the zero value owns nothing.
+pub const Version = struct {
+    value: ?[]u8 = null,
+    evidence: ?[]u8 = null,
+};
+
+/// Contract 2 counterpart to `Version`. Freeing a zero-value `Version` (both
+/// fields `null`, the degraded-path return of `detectVersion`) is a no-op,
+/// so callers don't need to special-case it.
+pub fn freeVersion(gpa: Allocator, v: Version) void {
+    if (v.value) |val| gpa.free(val);
+    if (v.evidence) |ev| gpa.free(ev);
+}
+
+/// Resolves the `rails` gem's LOCKED version from `Gemfile.lock` -- never
+/// the Gemfile's own constraint (`gem "rails", "~> 7.1"` names a range, not
+/// an answer; `Gemfile.lock` is where Bundler recorded which version it
+/// actually resolved to). Contract 2 (owned-result): on success both
+/// `Version` fields escape as fresh `gpa` allocations, released via
+/// `freeVersion`; every degradation path below returns the zero-value
+/// `Version{}` instead, which owns nothing.
+///
+/// A missing, unreadable, or over-cap lock file and a lock file that is
+/// readable but simply never locks `rails` in its `specs:` block are ALL the
+/// same story to this function's caller: the version is not available this
+/// run. Unlike `readCapped`'s `Gemfile`/`package.json` callers, an
+/// unresolved Rails version does not make the REST of discovery
+/// untrustworthy -- `Gemfile.lock` is committed by convention, not a
+/// dependency the rest of this scan reads, so a project that doesn't commit
+/// one (or ships one this parser can't make sense of) is still a fully
+/// analyzable Rails app. That is why this appends
+/// `RAILS_GEMFILE_LOCK_UNAVAILABLE` at `.warn`, `integrity = false`, rather
+/// than the `.@"error"`/`integrity = true` `readCapped` uses for the
+/// Gemfile/package.json reads discovery actually depends on -- every path
+/// here still returns exit 0. `error.OutOfMemory` always propagates.
+pub fn detectVersion(
+    io: Io,
+    gpa: Allocator,
+    root: Io.Dir,
+    blocker_list: *std.ArrayListUnmanaged(blockers.Blocker),
+) Allocator.Error!Version {
+    const src = root.readFileAlloc(io, "Gemfile.lock", gpa, .limited(1024 * 1024)) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.FileNotFound, error.NotDir => {
+            try blockers.append(gpa, blocker_list, "RAILS_GEMFILE_LOCK_UNAVAILABLE", "Gemfile.lock", "Gemfile.lock not found", false, .warn, null);
+            return .{};
+        },
+        else => {
+            try blockers.append(gpa, blocker_list, "RAILS_GEMFILE_LOCK_UNAVAILABLE", "Gemfile.lock", @errorName(err), false, .warn, null);
+            return .{};
+        },
+    };
+    defer gpa.free(src);
+
+    const found = lockedVersion(src, "rails") orelse {
+        try blockers.append(gpa, blocker_list, "RAILS_GEMFILE_LOCK_UNAVAILABLE", "Gemfile.lock", "no locked \"rails\" entry found in Gemfile.lock", false, .warn, null);
+        return .{};
+    };
+
+    const value = try gpa.dupe(u8, found);
+    errdefer gpa.free(value);
+    const evidence = try std.fmt.allocPrint(gpa, "Gemfile.lock:rails ({s})", .{found});
+    return .{ .value = value, .evidence = evidence };
+}
+
+/// Locates `name`'s LOCKED version inside a `Gemfile.lock`'s `specs:`
+/// block(s) (`GEM`/`GIT`/`PATH` remotes all use the same layout). Contract 3
+/// (caller-buffer): allocates nothing; the returned slice borrows `src`.
+///
+/// Bundler's lockfile format indents a spec's own gem line by exactly 4
+/// spaces (`    rails (7.1.3)`), and each of THAT gem's dependencies one
+/// level deeper, by 6 (`      railties (= 7.1.3)`). Matching on that exact
+/// 4-space indentation, and requiring the token before the version parens to
+/// equal `name` in full (not merely start with it), is what keeps this from
+/// matching:
+///   - a dependency line that happens to name `name` (6+ spaces -- always
+///     someone else's locked entry, never this gem's own),
+///   - the `DEPENDENCIES` section's 2-space `rails (~> 7.1.3)` line, which
+///     is the Gemfile's CONSTRAINT surfacing again inside the lock file, not
+///     the resolved version Bundler actually picked,
+///   - a substring/prefix collision like `rails-html-sanitizer`,
+///     `sprockets-rails`, `jsbundling-rails`, or `rails-dom-testing` --
+///     ordinary companions to a real Rails app's `rails` entry, one of which
+///     (`jsbundling-rails`) sorts BEFORE `rails` itself. A parser that
+///     merely substring-matches `"rails"`, or returns the first
+///     version-shaped token in the file, returns a confidently wrong answer
+///     on a perfectly ordinary lock file -- see this file's tests for a
+///     fixture built to make that wrong answer visibly different from the
+///     right one, not coincidentally identical to it.
+fn lockedVersion(src: []const u8, name: []const u8) ?[]const u8 {
+    var lines = std.mem.splitScalar(u8, src, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trimEnd(u8, raw, "\r");
+        var indent: usize = 0;
+        while (indent < line.len and line[indent] == ' ') : (indent += 1) {}
+        if (indent != 4) continue;
+        const rest = line[indent..];
+
+        var name_end: usize = 0;
+        while (name_end < rest.len and rest[name_end] != ' ' and rest[name_end] != '(') : (name_end += 1) {}
+        if (!std.mem.eql(u8, rest[0..name_end], name)) continue;
+
+        var i = name_end;
+        while (i < rest.len and rest[i] == ' ') : (i += 1) {}
+        if (i >= rest.len or rest[i] != '(') continue;
+        i += 1;
+        const close = std.mem.indexOfScalarPos(u8, rest, i, ')') orelse continue;
+        return rest[i..close];
+    }
+    return null;
+}
+
+// A realistic slice of a Rails app's Gemfile.lock, deliberately shaped so a
+// wrong implementation fails LOUDLY rather than by coincidence:
+//   - `concurrent-ruby` sits alphabetically first with a version that
+//     matches NEITHER gem near it -- "return the first version-shaped
+//     string in the file" lands on "1.2.2", visibly wrong.
+//   - `actioncable`/`actionpack` are pinned to "7.0.0", one minor behind
+//     `rails`'s own "7.1.3" -- so "the first CONFIRMED gem spec" still
+//     lands on a wrong-but-plausible version instead of accidentally
+//     matching rails' own by coincidence (the real-world trap the brief
+//     warns about: same-version neighbors make a naive parser LOOK
+//     correct).
+//   - `jsbundling-rails` sorts before `rails` alphabetically and contains
+//     "rails" as a substring -- a substring-matching parser returns "1.3.0"
+//     before it ever reaches the real entry.
+//   - `rails-dom-testing`/`rails-html-sanitizer`/`sprockets-rails` are
+//     ordinary companions with their own versions, none of which equal
+//     rails' own.
+//   - `DEPENDENCIES` echoes the Gemfile's constraint, `rails (~> 7.1.3)`,
+//     at 2-space indent -- reading THAT as the answer would report a
+//     constraint, not a resolved version, and happens to differ from the
+//     locked "7.1.3" only in spelling, not value, so a test must check the
+//     exact bytes returned, not just "contains 7.1.3".
+const sample_lock =
+    \\GEM
+    \\  remote: https://rubygems.org/
+    \\  specs:
+    \\    concurrent-ruby (1.2.2)
+    \\    actioncable (7.0.0)
+    \\      actionpack (= 7.0.0)
+    \\      activesupport (= 7.0.0)
+    \\    actionpack (7.0.0)
+    \\      actionview (= 7.0.0)
+    \\      activesupport (= 7.0.0)
+    \\    jsbundling-rails (1.3.0)
+    \\      railties (>= 6.0.0)
+    \\    rails (7.1.3)
+    \\      actioncable (= 7.1.3)
+    \\      actionpack (= 7.1.3)
+    \\      railties (= 7.1.3)
+    \\    rails-dom-testing (2.2.0)
+    \\      activesupport (>= 5.0.0)
+    \\    rails-html-sanitizer (1.4.4)
+    \\      loofah (~> 2.21)
+    \\    sprockets-rails (3.4.2)
+    \\      actionpack (>= 5.2)
+    \\      sprockets (>= 3.0.0)
+    \\
+    \\PLATFORMS
+    \\  ruby
+    \\
+    \\DEPENDENCIES
+    \\  jsbundling-rails
+    \\  rails (~> 7.1.3)
+    \\  sprockets-rails
+    \\
+    \\BUNDLED WITH
+    \\   2.5.3
+    \\
+;
+
+test "lockedVersion resolves rails' own locked version, not a same-alphabetized neighbor's" {
+    try std.testing.expectEqualStrings("7.1.3", lockedVersion(sample_lock, "rails").?);
+}
+
+test "lockedVersion ignores a same-named dependency line 6 spaces deep -- only the 4-space spec entry counts" {
+    // `railties` never gets its own top-level `    railties (X)` spec line
+    // in this fixture -- it only appears 6-space indented, as a dependency
+    // of both `jsbundling-rails` and `rails`. If the indentation check were
+    // missing (or off by one), this would wrongly resolve to whichever
+    // dependency line it hit first.
+    try std.testing.expectEqual(@as(?[]const u8, null), lockedVersion(sample_lock, "railties"));
+}
+
+test "lockedVersion discriminates rails from its near-miss companions" {
+    try std.testing.expectEqualStrings("1.3.0", lockedVersion(sample_lock, "jsbundling-rails").?);
+    try std.testing.expectEqualStrings("2.2.0", lockedVersion(sample_lock, "rails-dom-testing").?);
+    try std.testing.expectEqualStrings("1.4.4", lockedVersion(sample_lock, "rails-html-sanitizer").?);
+    try std.testing.expectEqualStrings("3.4.2", lockedVersion(sample_lock, "sprockets-rails").?);
+    // None of the near-miss companions' versions leak into rails' own --
+    // the discriminating property the brief names directly.
+    try std.testing.expect(!std.mem.eql(u8, "1.3.0", lockedVersion(sample_lock, "rails").?));
+}
+
+test "lockedVersion ignores the DEPENDENCIES section's constraint line, not just its value" {
+    // `rails (~> 7.1.3)` sits at 2-space indent in DEPENDENCIES. It is
+    // excluded by indentation alone, but this also pins the exact bytes
+    // returned from the real 4-space specs entry: "7.1.3", not "~> 7.1.3".
+    const v = lockedVersion(sample_lock, "rails").?;
+    try std.testing.expectEqualStrings("7.1.3", v);
+    try std.testing.expect(!std.mem.startsWith(u8, v, "~>"));
+}
+
+test "lockedVersion returns null when the gem is not locked at all" {
+    try std.testing.expectEqual(@as(?[]const u8, null), lockedVersion(sample_lock, "sinatra"));
+}
+
+test "detectVersion: a real Gemfile.lock resolves value and the exact evidence string" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var lock = try tmp.dir.createFile(io, "Gemfile.lock", .{});
+    try lock.writeStreamingAll(io, sample_lock);
+    lock.close(io);
+
+    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
+
+    const v = try detectVersion(io, gpa, tmp.dir, &blocker_list);
+    defer freeVersion(gpa, v);
+
+    try std.testing.expectEqualStrings("7.1.3", v.value.?);
+    try std.testing.expectEqualStrings("Gemfile.lock:rails (7.1.3)", v.evidence.?);
+    try std.testing.expectEqual(@as(usize, 0), blocker_list.items.len);
+}
+
+test "detectVersion: an absent Gemfile.lock is null plus one warn blocker, not a failure" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
+
+    const v = try detectVersion(io, gpa, tmp.dir, &blocker_list);
+    defer freeVersion(gpa, v);
+
+    try std.testing.expectEqual(@as(?[]u8, null), v.value);
+    try std.testing.expectEqual(@as(?[]u8, null), v.evidence);
+    try std.testing.expectEqual(@as(usize, 1), blocker_list.items.len);
+    try std.testing.expectEqualStrings("RAILS_GEMFILE_LOCK_UNAVAILABLE", blocker_list.items[0].code);
+    try std.testing.expectEqual(blockers.Severity.warn, blocker_list.items[0].severity);
+    try std.testing.expect(!blocker_list.items[0].integrity);
+    try std.testing.expectEqual(@as(?[]const u8, null), blocker_list.items[0].route_id);
+}
+
+test "detectVersion: a lock file that never locks rails is null plus a warn blocker, not a crash" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var lock = try tmp.dir.createFile(io, "Gemfile.lock", .{});
+    try lock.writeStreamingAll(io,
+        \\GEM
+        \\  remote: https://rubygems.org/
+        \\  specs:
+        \\    sinatra (3.1.0)
+        \\
+        \\PLATFORMS
+        \\  ruby
+        \\
+        \\DEPENDENCIES
+        \\  sinatra
+        \\
+    );
+    lock.close(io);
+
+    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
+
+    const v = try detectVersion(io, gpa, tmp.dir, &blocker_list);
+    defer freeVersion(gpa, v);
+
+    try std.testing.expectEqual(@as(?[]u8, null), v.value);
+    try std.testing.expectEqual(@as(usize, 1), blocker_list.items.len);
+    try std.testing.expectEqualStrings("RAILS_GEMFILE_LOCK_UNAVAILABLE", blocker_list.items[0].code);
+}
+
+test "detectVersion: an unreadable Gemfile.lock (IsDir) is null plus a warn blocker, distinct detail from absence" {
+    // Same directory-forcing trick `readCapped`'s own test uses: `error.
+    // IsDir` is deterministic across platforms, unlike a permission-bit
+    // test, and reaches the `else` branch distinct from `FileNotFound`.
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var lock_dir = try tmp.dir.createDirPathOpen(io, "Gemfile.lock", .{});
+    lock_dir.close(io);
+
+    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
+
+    const v = try detectVersion(io, gpa, tmp.dir, &blocker_list);
+    defer freeVersion(gpa, v);
+
+    try std.testing.expectEqual(@as(?[]u8, null), v.value);
+    try std.testing.expectEqual(@as(usize, 1), blocker_list.items.len);
+    try std.testing.expectEqualStrings("RAILS_GEMFILE_LOCK_UNAVAILABLE", blocker_list.items[0].code);
+    try std.testing.expect(!std.mem.eql(u8, "Gemfile.lock not found", blocker_list.items[0].detail));
 }

@@ -30,6 +30,57 @@ const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
+/// `discovery.ruby` (spec, "The manifest"): whether Ruby was available to
+/// answer a sidecar op, and which version. Shared here (Stage 4's
+/// task-2-fixes.md item 1 -- NOT the `resolveAbsRoot`/`killOnTimeout`/
+/// `queryOnce` extraction cited elsewhere in this file, which is Stage 3's
+/// task-2-fixes.md item 1; the two stages happen to share a filename)
+/// because `routes.zig` and `controllers.zig` each spawn their OWN, separate
+/// Ruby process (see both files' module docs) and each independently
+/// decodes the identical `{"available":...,"version":...}` shape
+/// `analyze.rb`'s `RUBY_INFO` stamps on every response of EITHER op -- two
+/// copies of this type and its decode logic would be exactly the kind of
+/// duplication `resolveAbsRoot`/`killOnTimeout`/
+/// `queryOnce` were already extracted here to avoid.
+pub const Ruby = struct {
+    available: bool,
+    /// Owned when non-null (contract 2, `decodeRuby`); release with
+    /// `freeRuby`.
+    version: ?[]const u8,
+};
+
+/// `analyze.rb`'s `RUBY_INFO`, mirrored field-for-field. Optional/defaulted
+/// (not required) on `WireResponse.ruby` in both client files, so a
+/// hand-written `ok:false`/malformed test literal that predates this field
+/// still decodes -- `decodeRuby` treats an absent `ruby` the same as an
+/// explicit `available: false`.
+pub const WireRuby = struct {
+    available: bool,
+    version: ?[]const u8 = null,
+};
+
+/// Contract 2 (owned-result) helper shared by `routes.zig`'s and
+/// `controllers.zig`'s `decodeResponse`: turns a decoded `?WireRuby` (absent
+/// entirely, or present with `available`/`version`) into an owned `Ruby`,
+/// duping `version` into a fresh `gpa` allocation independent of the caller's
+/// JSON arena (which is freed before `decodeResponse` returns). Absent
+/// entirely (no response was ever decoded, or an older/malformed line) maps
+/// to `available: false, version: null` -- there is no interpreter to vouch
+/// for in that case.
+pub fn decodeRuby(gpa: Allocator, wire: ?WireRuby) Allocator.Error!Ruby {
+    const wr = wire orelse return .{ .available = false, .version = null };
+    return .{
+        .available = wr.available,
+        .version = if (wr.version) |v| try gpa.dupe(u8, v) else null,
+    };
+}
+
+/// Contract 2 counterpart to `decodeRuby`: frees `ruby.version` when
+/// present. `available` is a plain value with nothing to free.
+pub fn freeRuby(gpa: Allocator, ruby: Ruby) void {
+    if (ruby.version) |v| gpa.free(v);
+}
+
 /// Generous but bounded: a real Prism-AST walk of one file, or of a whole
 /// `app/controllers/` tree, is still milliseconds; this exists purely so a
 /// wedged interpreter cannot hang the whole build. See `killOnTimeout`.
