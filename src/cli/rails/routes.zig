@@ -32,13 +32,19 @@
 //! `integrity = true`, which was simply wrong).
 //!
 //! std-only, like every file in `src/cli/rails/`: no `@import` escapes this
-//! directory, and `fatal.*` handling stays migrate.zig's job.
+//! directory, and `fatal.*` handling stays migrate.zig's job. The spawn/
+//! resolve/watchdog/query plumbing (`resolveAbsRoot`, `killOnTimeout`,
+//! `queryOnce`) lives in the sibling `sidecar_client.zig` (fix round 1,
+//! task-2-fixes.md item 1, moved there once `controllers.zig` needed the
+//! identical logic) -- a pure relocation that changed neither this file's
+//! public signature nor its watchdog/stdin-close semantics.
 
 const std = @import("std");
 const builtin = @import("builtin");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const blockers = @import("blockers.zig");
+const sidecar_client = @import("sidecar_client.zig");
 
 pub const Origin = enum { static_ast, actiondispatch, routes_import };
 
@@ -82,98 +88,9 @@ const ruby_env = "ZIGAPAGOS_RUBY";
 /// comment is the tripwire: keep them in lockstep.
 const runtime_dir_env = "ZIGAPAGOS_RUNTIME_DIR";
 
-/// Generous but bounded: a real Prism-AST walk of `config/routes.rb` is
-/// milliseconds; this exists purely so a wedged interpreter (or a routes.rb
-/// construct that sends the walker into a real infinite loop, as opposed to
-/// the `RAILS_ROUTE_LOOP`-tagged ones `routes.rb` already detects
-/// statically) cannot hang the whole build. See `killOnTimeout`.
-const sidecar_timeout_ms: i64 = 30_000;
-
-/// Contract 2 (owned-result) helper: returns a fresh `gpa`-owned absolute
-/// path for `root_path`, resolved against the process cwd when relative.
-/// Mirrors `Sidecar.absSrc` (`src/islands/sidecar.zig`) -- duplicated
-/// rather than imported for the same std-only reason as everything else in
-/// this file.
-fn resolveAbsRoot(io: Io, gpa: Allocator, root_path: []const u8) ![]const u8 {
-    if (std.fs.path.isAbsolute(root_path)) return try gpa.dupe(u8, root_path);
-    const cwd_str = try std.process.currentPathAlloc(io, gpa);
-    defer gpa.free(cwd_str);
-    return try std.fs.path.resolve(gpa, &.{ cwd_str, root_path });
-}
-
-/// Runs on a dedicated thread for as long as `discoverRoutes`'s blocking
-/// write+read of the sidecar's one response line takes. If `done` is not
-/// signaled within `sidecar_timeout_ms`, the sidecar is presumed hung and is
-/// killed so the blocked read unblocks with an error instead of hanging the
-/// build forever; `discoverRoutes` turns that into `RAILS_SIDECAR_FAILED`
-/// like any other spawn/response failure.
-///
-/// `child.kill`/`child.wait` are not safe to call from two threads at once
-/// (`Child.id` is checked/cleared without its own synchronization), so
-/// `discoverRoutes` signals `done` and `join`s this thread BEFORE it ever
-/// touches `child` again -- by construction, only one of "this thread's
-/// timeout kill" and "the caller's own child.kill/wait" can run.
-///
-/// Inspection-verified only: no test forces the real 30s timeout to fire.
-/// Making that deterministic needs either an actual 30s CI run or a seam
-/// that exists solely for the test, and this guard's failure mode -- the
-/// build hangs instead of erroring -- isn't worth either cost. Every other
-/// test in this file completes in milliseconds and passes with this
-/// watchdog wired in, which does exercise the FAST path (signal, join, no
-/// kill) on every run; the kill-on-timeout branch itself is not covered.
-///
-/// Two known, narrow gaps (whole-branch review, deliberately left as-is --
-/// fixing either would trade away the join-before-touch ordering the doc
-/// above depends on to keep `kill`/`wait` single-threaded):
-/// - `discoverRoutes`'s `child.wait(io)` runs AFTER this thread is joined,
-///   so it is itself unbounded: a sidecar that answers the one response
-///   line but then never exits hangs the build even though this watchdog
-///   fired and returned cleanly (`done.set` + `join` only bound the
-///   write+read, not the final wait).
-/// - `std.process.Child.wait` asserts `child.id != null`; if `child.kill`
-///   here and `discoverRoutes`'s own `child.kill`/`child.wait` could ever
-///   race (they cannot today, by construction -- see above), a kill landing
-///   in the same instant as a response would be a potential panic, not
-///   just a lost race.
-fn killOnTimeout(io: Io, child: *std.process.Child, done: *Io.Event) void {
-    const dur: Io.Clock.Duration = .{ .raw = .fromMilliseconds(sidecar_timeout_ms), .clock = .awake };
-    done.waitTimeout(io, .{ .duration = dur }) catch |err| switch (err) {
-        error.Timeout => child.kill(io),
-        error.Canceled => {},
-    };
-}
-
-/// Contract 2 (owned-result): returns a fresh `gpa`-owned slice holding the
-/// sidecar's one response line (newline stripped by `streamDelimiter`);
-/// `discoverRoutes` frees it with a `defer gpa.free(line)` at its call site.
-/// No scratch allocation escapes besides that one slice.
-///
-/// Writes the one NDJSON request line (`{"op":"routes","root":<abs>}`),
-/// closes stdin (analyze.rb's loop treats EOF as an ordinary, expected
-/// shutdown -- see its own module doc), and reads back the one response
-/// line. Split out of `discoverRoutes` purely to keep that function's body
-/// readable; unlike `decodeResponse` this half is not meant to be unit
-/// tested on its own; it always needs a live process.
-fn queryOnce(io: Io, gpa: Allocator, child: *std.process.Child, root_abs: []const u8) ![]u8 {
-    var wbuf: [4096]u8 = undefined;
-    var fw = child.stdin.?.writer(io, &wbuf);
-    const w = &fw.interface;
-    try w.writeAll("{\"op\":\"routes\",\"root\":");
-    try std.json.Stringify.value(root_abs, .{}, w);
-    try w.writeAll("}\n");
-    try w.flush();
-    // Signals "no more requests" -- analyze.rb's `$stdin.gets` returns nil
-    // and the process exits normally once it has answered this one.
-    child.stdin.?.close(io);
-    child.stdin = null;
-
-    var rbuf: [4096]u8 = undefined;
-    var fr = child.stdout.?.reader(io, &rbuf);
-    var line_aw: std.Io.Writer.Allocating = .init(gpa);
-    errdefer line_aw.deinit();
-    _ = try fr.interface.streamDelimiter(&line_aw.writer, '\n');
-    return line_aw.toOwnedSlice();
-}
+// `resolveAbsRoot`, `killOnTimeout`, `queryOnce` moved to `sidecar_client.zig`
+// (fix round 1, task-2-fixes.md item 1) -- see that file for their docs. This is
+// a pure relocation: no behavior here changed.
 
 /// Contract 2 (owned-result): every `Route` field that is a string
 /// (`verb`, `path`, and non-null `controller`/`action`/`name`) is a fresh
@@ -246,7 +163,7 @@ pub fn discoverRoutes(
 
     // analyze.rb's contract is an ABSOLUTE root (analyze.rb:44); resolve
     // root_path the same way `Sidecar.absSrc` resolves an island `src`.
-    const abs_root = resolveAbsRoot(io, gpa, root_path) catch |err| switch (err) {
+    const abs_root = sidecar_client.resolveAbsRoot(io, gpa, root_path) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => {
             try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_FAILED", root_path, @errorName(err), false);
@@ -280,19 +197,20 @@ pub fn discoverRoutes(
     var done: Io.Event = .unset;
     const watchdog: ?std.Thread = if (comptime !builtin.single_threaded)
         // `catch null` rather than propagating a spawn failure: this thread is
-        // pure defense-in-depth (see `killOnTimeout`'s doc), so losing it just
-        // means the wait below is unbounded again, not that discovery should
-        // fail. `std.Thread.spawn` failing at all is a resource-exhaustion
-        // edge case essentially never hit in practice, not something this
-        // function has a better response to than "proceed without the guard".
-        std.Thread.spawn(.{}, killOnTimeout, .{ io, &child, &done }) catch null
+        // pure defense-in-depth (see `sidecar_client.killOnTimeout`'s doc), so
+        // losing it just means the wait below is unbounded again, not that
+        // discovery should fail. `std.Thread.spawn` failing at all is a
+        // resource-exhaustion edge case essentially never hit in practice, not
+        // something this function has a better response to than "proceed
+        // without the guard".
+        std.Thread.spawn(.{}, sidecar_client.killOnTimeout, .{ io, &child, &done }) catch null
     else
         null; // -Dsingle-threaded has no threads to spawn a watchdog on; see CLAUDE.md's note on that gate.
 
-    const query_result = queryOnce(io, gpa, &child, abs_root);
+    const query_result = sidecar_client.queryOnce(io, gpa, &child, "routes", abs_root);
 
     // Stop the watchdog (if any) BEFORE touching `child` again below -- see
-    // `killOnTimeout`'s doc for why this ordering is what keeps
+    // `sidecar_client.killOnTimeout`'s doc for why this ordering is what keeps
     // `child.kill`/`child.wait` single-threaded.
     done.set(io);
     if (watchdog) |t| t.join();

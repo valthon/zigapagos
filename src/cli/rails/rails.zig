@@ -14,6 +14,8 @@ pub const inventory = @import("inventory.zig");
 pub const integrations = @import("integrations.zig");
 pub const report = @import("report.zig");
 pub const routes = @import("routes.zig");
+pub const controllers = @import("controllers.zig");
+pub const sidecar_client = @import("sidecar_client.zig");
 
 // Pulls the suites of every sibling file into this module so `test-rails`
 // runs them all. Without this the standalone binary only sees this file.
@@ -25,6 +27,8 @@ test {
     _ = integrations;
     _ = report;
     _ = routes;
+    _ = controllers;
+    _ = sidecar_client;
 }
 
 /// Discovery's result: the rendered report plus how many of its blockers mean
