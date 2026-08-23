@@ -46,14 +46,18 @@ set -e
 rm -rf "$EMPTY"
 
 # --- inventory counts --------------------------------------------------------
-# Full accounting of the fixture's 10 non-.other rows: 14 files walked
-# (13 under app/, 1 under public/), 14 counted across these 10 rows — so a
+# Full accounting of the fixture's 10 non-.other rows: 22 files walked
+# (21 under app/, 1 under public/), 22 counted across these 10 rows — so a
 # kind silently dropped from the table shows up here as a count mismatch.
-grep -q "Views | 2" "$WORK/one.md" || fail "expected 2 views"
-grep -q "Layouts | 1" "$WORK/one.md" || fail "expected 1 layout"
-grep -q "Partials | 2" "$WORK/one.md" || fail "expected 2 partials (incl. layouts/_nav)"
+# A1's fixture additions (transitive template scanning) contribute 3 views
+# (recent.html.erb, featured.html.erb, pages/about.html.erb), 1 layout
+# (layouts/posts.html.erb), 1 partial (posts/_meta.html.erb), and 1
+# controller (pages_controller.rb) on top of the pre-A1 counts.
+grep -q "Views | 7" "$WORK/one.md" || fail "expected 7 views"
+grep -q "Layouts | 2" "$WORK/one.md" || fail "expected 2 layouts (application, posts)"
+grep -q "Partials | 3" "$WORK/one.md" || fail "expected 3 partials (incl. layouts/_nav, posts/_meta)"
 grep -q "Mailer views | 1" "$WORK/one.md" || fail "expected 1 mailer view"
-grep -q "Controllers | 1" "$WORK/one.md" || fail "expected 1 controller"
+grep -q "Controllers | 2" "$WORK/one.md" || fail "expected 2 controllers (posts, pages)"
 grep -q "Helpers | 1" "$WORK/one.md" || fail "expected 1 helper"
 grep -q "Stimulus controllers | 2" "$WORK/one.md" || fail "expected 2 stimulus controllers (reveal_controller.js, toggle_controller.ts)"
 grep -q "JS entrypoints | 1" "$WORK/one.md" || fail "expected 1 JS entrypoint (app/javascript/application.js)"
@@ -72,14 +76,20 @@ if command -v ruby >/dev/null 2>&1; then
 
   # resources :posts expands to the full CRUD set. Matched against the
   # exact rendered line (-Fx), not a loose substring: this doubles as proof
-  # that a genuine, certain route carries no uncertainty marker.
-  grep -Fxq -- '- `GET /posts` → `posts#index`' "$WORK/one.md" \
+  # that a genuine, certain route carries no uncertainty marker. The
+  # trailing " — content" is Task 6's classification suffix -- `posts#index`
+  # has a plain static view and a recovered action, so it reaches rule 7.
+  grep -Fxq -- '- `GET /posts` → `posts#index` — content' "$WORK/one.md" \
     || fail "resources :posts did not expand, or a certain route gained a spurious uncertainty marker"
-  # member { post :publish } nests under the resource's :id.
-  grep -Fxq -- '- `POST /posts/:id/publish` → `posts#publish`' "$WORK/one.md" \
+  # member { post :publish } nests under the resource's :id. POST is a
+  # non-GET verb, so rule 1 fires unconditionally -- backend regardless of
+  # the fact that no `publish` view or action was ever recovered.
+  grep -Fxq -- '- `POST /posts/:id/publish` → `posts#publish` — backend' "$WORK/one.md" \
     || fail "member route missing"
-  # namespace :admin prefixes both the path and the controller module.
-  grep -Fxq -- '- `GET /admin/users` → `admin/users#index`' "$WORK/one.md" \
+  # namespace :admin prefixes both the path and the controller module. No
+  # `admin/users#index` view or action exists in the fixture, so rule 2's
+  # "no view and no action" clause fires -- backend.
+  grep -Fxq -- '- `GET /admin/users` → `admin/users#index` — backend' "$WORK/one.md" \
     || fail "namespaced route missing"
 
   # The engine mount is a construct the parser cannot evaluate at all -- it
@@ -94,11 +104,110 @@ if command -v ruby >/dev/null 2>&1; then
   # pass with the per-route marker deleted entirely. That exact vacuous
   # assertion is what Task 6's review caught and rejected; this pins the
   # marker to the one route that must carry it.
-  grep -Fxq -- '- `GET /admin/health` → `admin#health` — **uncertain**' "$WORK/one.md" \
+  # Same "no view, no action" gap as admin/users above, plus the
+  # uncertainty marker -- the two are independent claims, both asserted on
+  # the one line.
+  grep -Fxq -- '- `GET /admin/health` → `admin#health` — **uncertain** — backend' "$WORK/one.md" \
     || fail "conditional route missing its uncertainty marker"
   grep -q "RAILS_ROUTE_CONDITIONAL" "$WORK/one.md" || fail "conditional route not reported as a blocker"
+
+  # --- classification: every rule the classifier defines is exercised ------
+  # Task 6 extends the fixture to reach every classification rule at least
+  # once. Both the summary counts AND one exact rendered line per reached
+  # class are asserted -- counts alone would pass even if a route's rule
+  # attribution were wrong (e.g. two routes swapped between `backend` and
+  # `unresolved` while the totals stayed put), and a line alone would not
+  # prove the summary table's arithmetic matches the per-route list.
+  #
+  # `spa` is asserted at zero deliberately: Stage 3 declares the value but
+  # never assigns it (see classify.zig's module doc) -- nothing in this
+  # stage's evidence proves a component root owns routing. Pinning the zero
+  # here is what would catch a future change that starts guessing.
+  grep -q "| content | 2 |" "$WORK/one.md" || fail "expected 2 content routes"
+  grep -q "| island | 1 |" "$WORK/one.md" || fail "expected 1 island route"
+  grep -q "| spa | 0 |" "$WORK/one.md" || fail "expected 0 spa routes (Stage 3 never assigns spa)"
+  grep -q "| backend | 11 |" "$WORK/one.md" || fail "expected 11 backend routes"
+  grep -q "| redirect | 1 |" "$WORK/one.md" || fail "expected 1 redirect route"
+  # 5, not 2: fix round A / A1 adds three more unresolved routes below
+  # (/about, /posts/recent, /posts/featured), all exercising transitive
+  # template scanning rather than rules 4/5 on the view file alone.
+  grep -q "| unresolved | 5 |" "$WORK/one.md" || fail "expected 5 unresolved routes"
+
+  # island (rule 6): the view wires up a Stimulus controller
+  # (`data-controller="reveal"`).
+  grep -Fxq -- '- `GET /posts/dashboard` → `posts#dashboard` — island' "$WORK/one.md" \
+    || fail "Stimulus-marker view did not classify as island"
+  # redirect (rule 3): the controller action's body is only `redirect_to`.
+  grep -Fxq -- '- `GET /posts/old` → `posts#old` — redirect' "$WORK/one.md" \
+    || fail "pure-redirect action did not classify as redirect"
+  # unresolved (rule 5): the view reads request-time state (`current_user`).
+  grep -Fxq -- '- `GET /posts/profile` → `posts#profile` — unresolved' "$WORK/one.md" \
+    || fail "current_user view did not classify as unresolved"
+  # unresolved (rule 4): the view's template engine is Haml, not erb --
+  # reuses `legacy.html.haml`, already present for the blocker assertion
+  # below, now also routed to so a route actually resolves against it.
+  grep -Fxq -- '- `GET /posts/legacy` → `posts#legacy` — unresolved' "$WORK/one.md" \
+    || fail "Haml view did not classify as unresolved"
+  # backend (rule 2, JSON clause): the controller action renders JSON, not
+  # a view -- fires independent of there being no view file for `stats` at
+  # all.
+  grep -Fxq -- '- `GET /posts/stats` → `posts#stats` — backend' "$WORK/one.md" \
+    || fail "JSON-rendering action did not classify as backend"
+
+  # --- A1: transitive template scanning (layout + partials) ----------------
+  # `posts#index`'s own view (index.html.erb, rendering partial "post") was
+  # already reached above (grep for `- \`GET /posts\` ... content`) -- these
+  # three prove the NEW evidence surfaces, not just that the old ones still
+  # work. All three views look entirely static in isolation; only scanning
+  # what they (or their layout) pull in tells the honest story.
+  #
+  # unresolved: the view is clean, but the resolved LAYOUT
+  # (layouts/application.html.erb, the app-wide fallback -- `pages` has no
+  # layout of its own) carries csrf_meta_tags.
+  grep -Fxq -- '- `GET /about` → `pages#about` — unresolved' "$WORK/one.md" \
+    || fail "a marker in the fallback LAYOUT did not force the route unresolved"
+  # unresolved: the view is clean and posts' own layout is clean, but a
+  # PARTIAL the view renders (_meta.html.erb) reads current_user.
+  grep -Fxq -- '- `GET /posts/recent` → `posts#recent` — unresolved' "$WORK/one.md" \
+    || fail "a marker in a RENDERED PARTIAL did not force the route unresolved"
+  # unresolved: the view renders `@post` -- Rails' implicit
+  # object-to-partial shorthand -- which this scan cannot resolve to a
+  # specific file; the route must not reach content on the strength of
+  # what little the view file itself shows.
+  grep -Fxq -- '- `GET /posts/featured` → `posts#featured` — unresolved' "$WORK/one.md" \
+    || fail "an unresolvable render target did not force the route unresolved"
 else
   echo "SKIP: route assertions (no ruby on PATH)"
+fi
+
+# --- A3: app/controllers/ missing must not hand out backend on a missing
+# action -------------------------------------------------------------------
+# Regression for fix round A / A3: under a WHOLESALE controller-shape
+# degradation, `action == null` is not evidence about any particular route,
+# so rule 2's first sub-clause must not fire `backend` on it -- these routes
+# must land on `unresolved` instead. Uncaught by every OTHER assertion in
+# this file: none of them removes app/controllers/, so this scenario is the
+# only thing that actually exercises `controllerEvidenceAvailable`'s wiring
+# end to end (confirmed by mutation -- see the fix report).
+if command -v ruby >/dev/null 2>&1; then
+  DEGRADED="$WORK/degraded-controllers-app"
+  cp -R "$REPO/tests/migrate/rails-sample" "$DEGRADED"
+  rm -rf "$DEGRADED/app/controllers"
+  set +e
+  "$ZIGAPAGOS" migrate "$DEGRADED" -o "$WORK/degraded.md" >"$WORK/degraded.out" 2>"$WORK/degraded.err"
+  rc=$?
+  set -e
+  [[ $rc -eq 0 ]] || fail "a missing app/controllers/ is a non-integrity degradation and must still exit 0, not $rc"
+  grep -q "RAILS_CONTROLLERS_MISSING" "$WORK/degraded.md" || fail "missing app/controllers/ not reported as a blocker"
+  # Before the A3 fix, both of these rendered ` — backend` -- action==null
+  # was treated as a positive finding about the route instead of the
+  # absence of ANY evidence about it.
+  grep -Fxq -- '- `GET /admin/users` → `admin/users#index` — unresolved' "$WORK/degraded.md" \
+    || fail "a view-less, action-less route under wholesale controller degradation must be unresolved, not backend"
+  grep -Fxq -- '- `GET /posts/old` → `posts#old` — unresolved' "$WORK/degraded.md" \
+    || fail "a route that is normally a redirect must be unresolved (not backend) when controller evidence never confirmed it"
+else
+  echo "SKIP: A3 controller-degradation assertions (no ruby on PATH)"
 fi
 
 # --- empty routes.rb: a legitimate zero-route result, not a degraded one ----

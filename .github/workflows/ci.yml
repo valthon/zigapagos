@@ -436,16 +436,22 @@ jobs:
       # `test-rails` above exercises the Zig CLIENT side of the Rails route
       # sidecar (spawn, NDJSON decode, blocker folding) against the real Ruby
       # process, but it never runs the sidecar's OWN Ruby test suites --
-      # runtime/sidecar/rails/test/*.rb pins 556 lines of the parser's actual
-      # behavioral contract (certain/uncertain marking, custom-router vs.
-      # `.routes.draw` discrimination, literal-array tainting, concern-cycle
-      # detection, AS-faithful inflection) that nothing in ci.yml exercised
-      # before this step existed: a routes.rb/inflect.rb edit that broke any
-      # of it could merge green. `version_check.rb` runs first, deliberately
-      # -- it exists specifically to turn a broken/mismatched Ruby toolchain
-      # into a loud, red failure here instead of the suites below silently
-      # passing (or silently no-op'ing) against an interpreter that can't
-      # actually run them.
+      # runtime/sidecar/rails/test/*.rb pins the parser's actual behavioral
+      # contract (certain/uncertain marking, custom-router vs. `.routes.draw`
+      # discrimination, literal-array tainting, concern-cycle detection,
+      # AS-faithful inflection, controller-action shape -- visibility,
+      # only_redirect, renders_json) that nothing in ci.yml exercised before
+      # this step existed: a routes.rb/inflect.rb edit that broke any of it
+      # could merge green. (Fix round B / B5: this comment used to assert a
+      # line count as a proxy for "the suite is thorough" -- it drifted
+      # three times in one feature, twice right after being "fixed", because
+      # no gate ever checked it. A number nothing enforces is a comment that
+      # is wrong by default, so the count is gone; what the suites actually
+      # cover is the durable claim.) `version_check.rb` runs first,
+      # deliberately -- it exists specifically to turn a broken/mismatched
+      # Ruby toolchain into a loud, red failure here instead of the suites
+      # below silently passing (or silently no-op'ing) against an
+      # interpreter that can't actually run them.
       - name: Rails sidecar (Ruby) suites
         run: |
           ruby runtime/sidecar/rails/version_check.rb
