@@ -201,8 +201,40 @@ if genuine_entry.nil? || genuine_entry[:path] != "app/controllers/x_controller.r
   $failures += 1
 end
 
-deep_src = "class C\n def a\n  x = " + ("[" * 20_000) + ("]" * 20_000) + "\n end\nend"
-deep = RailsControllers.parse(deep_src, path: "app/controllers/deep_controller.rb")
+# Proves the `SystemStackError` arm of `.parse`'s rescue degrades to a
+# structured entry rather than propagating.
+#
+# This RAISES the error directly instead of feeding Prism deeply-nested source
+# to provoke it. The original version built 20,000 nested `[` and relied on
+# `Prism.parse` turning the resulting native-stack exhaustion into a catchable
+# `SystemStackError`. That holds on Linux, but on the macOS arm64 CI runner the
+# same input aborts the interpreter outright -- `Illegal instruction: 4`, a
+# native SIGILL raised inside Prism's C parser, which kills the process before
+# ANY Ruby rescue runs, including the one this check exists to exercise. It
+# turned main red while passing everywhere it was developed (see
+# controllers.rb's rescue for the behavioural caveat that follows from it).
+#
+# Injecting the exception tests the rescue clause itself, deterministically and
+# on every platform, which is what the check was ever actually about.
+module Prism
+  class << self
+    alias_method :__parse_before_stub, :parse
+    def parse(source, **kwargs)
+      raise SystemStackError, "stack level too deep" if source == "__FORCE_SYSTEM_STACK_ERROR__"
+      __parse_before_stub(source, **kwargs)
+    end
+  end
+end
+
+deep = RailsControllers.parse("__FORCE_SYSTEM_STACK_ERROR__", path: "app/controllers/deep_controller.rb")
+
+module Prism
+  class << self
+    alias_method :parse, :__parse_before_stub
+    remove_method :__parse_before_stub
+  end
+end
+
 deep_entry = deep[:unresolved].first
 if deep_entry.nil? || deep_entry[:path] != "app/controllers/deep_controller.rb" ||
    deep_entry[:detail].start_with?("app/controllers/")

@@ -51,7 +51,27 @@ module RailsControllers
     # StandardError` -- SystemStackError < Exception, not StandardError)
     # because `Prism.parse` itself can raise it on syntactically VALID but
     # deeply-nested source (e.g. tens of thousands of nested `[`), before
-    # the walker ever runs. That is a different vector from routes.rb's
+    # the walker ever runs.
+    #
+    # The guarantee this rescue provides has a PLATFORM LIMIT worth stating
+    # plainly, because it was found the hard way. Deep enough nesting
+    # exhausts the native C stack inside Prism's parser, and how that
+    # surfaces is platform-specific: on Linux it arrives as a catchable
+    # SystemStackError, which this clause degrades to one unresolved entry;
+    # on the macOS arm64 CI runner the same 20,000-deep input aborts the
+    # interpreter outright with a native SIGILL (`Illegal instruction: 4`),
+    # killing the process before ANY Ruby rescue runs -- including this one,
+    # and including analyze.rb's process-boundary `rescue Exception`. So a
+    # sufficiently pathological controller file can still take the sidecar
+    # down on some platforms, and no rescue can prevent it.
+    #
+    # No depth pre-check guards against that, deliberately: it would mean a
+    # new heuristic and a magic number defending against an input that does
+    # not occur in real controllers, and the honest limit is cheaper to
+    # state than to police. `controllers_test.rb` therefore RAISES
+    # SystemStackError directly rather than provoking it with deep source,
+    # so it tests this clause on every platform instead of only where the
+    # error happens to be catchable. That is a different vector from routes.rb's
     # SystemStackError hole (unbounded `concern` self-reference, defused
     # there with explicit cycle detection, not a rescue): here there is no
     # expansion step to add cycle detection to, so catching the class by
