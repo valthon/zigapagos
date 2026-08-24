@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://zigapagos.dev/schema/rails-presentation/1",
   "title": "zigapagos Rails presentation manifest",
-  "description": "The `zigapagos.rails-presentation/1` manifest emitted by `zigapagos migrate --from rails`. Written by `src/cli/rails/manifest.zig`'s `build`, which is the binding shape -- this schema is generated FROM that file's Zig types (`src/cli/rails/schema_gen.zig`), not maintained by hand. Field order in every object below matches the manifest's actual emitted key order, which is part of the wire contract (see `manifest.zig`'s module doc).",
+  "description": "The `zigapagos.rails-presentation/1` manifest emitted by `zigapagos migrate --from rails`. Written by `src/cli/rails/manifest.zig`'s `build`, which is the binding shape -- this schema is generated FROM that file's Zig types (`src/cli/rails/schema_gen.zig`), not maintained by hand. Field order in every object below matches the manifest's actual emitted key order, which is part of the wire contract (see `manifest.zig`'s module doc).\n\nSTABILITY. Every declared field appears in `required`, because the emitter always writes every key -- `null` included -- rather than omitting absent ones. Schema `/1` has not shipped in a release (the manifest landed after v0.4.0), so its shape is still being completed and a required field may still be added to it. Once a release carries `/1`, that stops: adding a required key to a published version would make two documents claiming the same version id disagree about what a conforming document contains, and the id would then assert a compatibility it does not have. After that point, additions bump the version.",
   "type": "object",
   "properties": {
     "schema": {

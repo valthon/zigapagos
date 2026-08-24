@@ -1,7 +1,7 @@
 # Rails discovery Stage 5 — target assembly, docs, and the skill mirror
 
 **Spec (binding authority):** `docs/superpowers/specs/2026-08-22-rails-source-discovery-design.md`
-**Issue:** #166 — **this stage closes it.** Depends on Stages 1-4 (PRs #168,
+**Issue:** #166 — the last planned stage, but it does **not** close the issue. The issue is titled "…and target assembly" and asks `--target` to write a minimal valid Zigapagos target and to copy deterministic-URL assets; discovery converts nothing, so neither shipped. Closing needs an explicit scope decision handing assembly to #167. Depends on Stages 1-4 (PRs #168,
 #169, #170, #171, #172, #173 — all merged).
 
 Stage 4 made `migrate` emit a versioned, schema'd, drift-gated manifest beside

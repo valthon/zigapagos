@@ -79,7 +79,17 @@ const schema_description =
     "is generated FROM that file's Zig types (`src/cli/rails/schema_gen." ++
     "zig`), not maintained by hand. Field order in every object below " ++
     "matches the manifest's actual emitted key order, which is part of " ++
-    "the wire contract (see `manifest.zig`'s module doc).";
+    "the wire contract (see `manifest.zig`'s module doc).\n\n" ++
+    "STABILITY. Every declared field appears in `required`, because the " ++
+    "emitter always writes every key -- `null` included -- rather than " ++
+    "omitting absent ones. Schema `/1` has not shipped in a release " ++
+    "(the manifest landed after v0.4.0), so its shape is still being " ++
+    "completed and a required field may still be added to it. Once a " ++
+    "release carries `/1`, that stops: adding a required key to a " ++
+    "published version would make two documents claiming the same " ++
+    "version id disagree about what a conforming document contains, and " ++
+    "the id would then assert a compatibility it does not have. After " ++
+    "that point, additions bump the version.";
 
 /// One hand-written description, attached to a field by (declaring type's
 /// `@typeName`, field name). See the module doc's "What is generated vs.
