@@ -226,7 +226,7 @@ pub fn walk(io: Io, gpa: Allocator, root: Io.Dir) Allocator.Error!WalkResult {
             // the inventory this walk produces is missing an unknown amount
             // of content -- the brief's own canonical example of an
             // untrustworthy inventory.
-            try blockers.append(gpa, &blocker_list, "RAILS_INVENTORY_UNREADABLE", top, @errorName(err), true, .@"error", null);
+            try blockers.append(gpa, &blocker_list, "RAILS_INVENTORY_UNREADABLE", top, @errorName(err), true, .@"error", null, null);
             continue;
         };
         defer dir.close(io);
@@ -247,7 +247,7 @@ pub fn walk(io: Io, gpa: Allocator, root: Io.Dir) Allocator.Error!WalkResult {
                 // `.@"error"`: same reasoning as `RAILS_INVENTORY_UNREADABLE`
                 // above -- a mid-walk failure means an unknown slice of this
                 // root's contents never made it into `list`.
-                try blockers.append(gpa, &blocker_list, "RAILS_INVENTORY_TRUNCATED", top, @errorName(err), true, .@"error", null);
+                try blockers.append(gpa, &blocker_list, "RAILS_INVENTORY_TRUNCATED", top, @errorName(err), true, .@"error", null, null);
                 break;
             };
             const entry = maybe_entry orelse break;
@@ -331,7 +331,7 @@ pub fn appendUnsupportedEngineBlockers(
         // `.warn`: the brief's own canonical example of an expected,
         // correctly-detected finding -- a Haml/Slim view is a fact about
         // this one file, not evidence the rest of the inventory is wrong.
-        try blockers.append(gpa, blocker_list, "RAILS_TEMPLATE_ENGINE_UNSUPPORTED", e.path, detail, false, .warn, null);
+        try blockers.append(gpa, blocker_list, "RAILS_TEMPLATE_ENGINE_UNSUPPORTED", e.path, detail, false, .warn, null, null);
     }
 }
 

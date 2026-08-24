@@ -74,13 +74,31 @@ pub const Blocker = struct {
     /// `source: {file, line}` to `Route`, not an id), so wiring an actual
     /// association is left to whichever later stage has one to give.
     route_id: ?[]const u8 = null,
+    /// The 1-based source line inside `path` this blocker is about, when
+    /// the producer that appended it could name one. Stage 4 Task 8b: the
+    /// Ruby-side static walk already sends `unresolved[].line` across the
+    /// wire for the `RAILS_ROUTE_*`/`RAILS_CONTROLLER_*` unresolved-code
+    /// families (`routes.zig`/`controllers.zig`'s `WireUnresolved.line`),
+    /// and both `decodeResponse`s were decoding it and then dropping it on
+    /// the floor -- this field is the fix, threaded from those two fold
+    /// sites. `null` for every OTHER blocker: a whole-file finding (an
+    /// unreadable Gemfile, a missing sidecar, an unsupported template
+    /// engine) genuinely has no single line to point at. Never a stand-in
+    /// like `1` -- a fabricated location is worse than an absent one,
+    /// because someone will open the file and look at it.
+    ///
+    /// No default, the same discipline `severity` already uses: every
+    /// `append`/`appendCopy` call site, and every hand-written `Blocker`
+    /// literal in this codebase's tests, must state this explicitly rather
+    /// than silently inheriting `null`.
+    line: ?u64,
 };
 
 /// Contract 2 (owned-result): copies `path`, `detail`, and (when non-null)
 /// `route_id` into new allocations that escape into `list` and are released
 /// by `blockers.free`, never here. `code` is always a static string literal
-/// and is never duplicated, so `free` must not free it. `severity` is a
-/// plain enum value with nothing to copy. `OutOfMemory` propagates without
+/// and is never duplicated, so `free` must not free it. `severity`/`line`
+/// are plain values with nothing to copy. `OutOfMemory` propagates without
 /// partially mutating `list` (every dupe is freed via `errdefer` before the
 /// append can fail, in reverse order of acquisition).
 pub fn append(
@@ -92,6 +110,7 @@ pub fn append(
     integrity: bool,
     severity: Severity,
     route_id: ?[]const u8,
+    line: ?u64,
 ) Allocator.Error!void {
     const path_copy = try gpa.dupe(u8, path);
     errdefer gpa.free(path_copy);
@@ -106,22 +125,23 @@ pub fn append(
         .integrity = integrity,
         .severity = severity,
         .route_id = route_id_copy,
+        .line = line,
     });
 }
 
 /// Contract 2 (owned-result), inherited from `append`: copies an existing
 /// `Blocker` (e.g. one owned by another list that is about to be freed) into
 /// `list`, whose contents are released by `blockers.free`. Forwards the
-/// source blocker's own `severity`/`route_id` rather than re-deriving them,
-/// so a blocker copied between lists (e.g. `rails.zig`'s `discover` folding
-/// `inventory.walk`'s blockers into its run-wide list) keeps the exact
-/// values its original `append` call chose.
+/// source blocker's own `severity`/`route_id`/`line` rather than re-deriving
+/// them, so a blocker copied between lists (e.g. `rails.zig`'s `discover`
+/// folding `inventory.walk`'s blockers into its run-wide list) keeps the
+/// exact values its original `append` call chose.
 pub fn appendCopy(
     gpa: Allocator,
     list: *std.ArrayListUnmanaged(Blocker),
     b: Blocker,
 ) Allocator.Error!void {
-    return append(gpa, list, b.code, b.path, b.detail, b.integrity, b.severity, b.route_id);
+    return append(gpa, list, b.code, b.path, b.detail, b.integrity, b.severity, b.route_id, b.line);
 }
 
 /// Releases the owned fields of every `Blocker` in `items` -- `path`,
@@ -237,6 +257,7 @@ fn expectBlockers(items: []const Blocker, want: []const Blocker) !void {
         } else {
             try std.testing.expectEqual(@as(?[]const u8, null), got.route_id);
         }
+        try std.testing.expectEqual(expected.line, got.line);
     }
 }
 
@@ -246,11 +267,11 @@ test "append copies path and detail, leaves code pointing at the literal" {
     defer free(gpa, list.toOwnedSlice(gpa) catch unreachable);
 
     var path_buf = [_]u8{ 'a', '.', 'r', 'b' };
-    try append(gpa, &list, "RAILS_GEMFILE_UNREADABLE", &path_buf, "AccessDenied", true, .@"error", null);
+    try append(gpa, &list, "RAILS_GEMFILE_UNREADABLE", &path_buf, "AccessDenied", true, .@"error", null, null);
     path_buf[0] = 'z'; // mutate the caller's buffer; the copy must be unaffected
 
     try expectBlockers(list.items, &.{
-        .{ .code = "RAILS_GEMFILE_UNREADABLE", .path = "a.rb", .detail = "AccessDenied", .integrity = true, .severity = .@"error" },
+        .{ .code = "RAILS_GEMFILE_UNREADABLE", .path = "a.rb", .detail = "AccessDenied", .integrity = true, .severity = .@"error", .line = null },
     });
 }
 
@@ -260,27 +281,31 @@ test "append copies route_id, leaves it unaffected by mutating the caller's buff
     defer free(gpa, list.toOwnedSlice(gpa) catch unreachable);
 
     var rid_buf = [_]u8{ 'r', '1' };
-    try append(gpa, &list, "RAILS_ROUTE_CONDITIONAL", "config/routes.rb", "conditional route", false, .warn, &rid_buf);
-    rid_buf[0] = 'z';
+    try append(gpa, &list, "RAILS_ROUTE_CONDITIONAL", "config/routes.rb", "conditional route", false, .warn, &rid_buf, 118);
 
     try expectBlockers(list.items, &.{
-        .{ .code = "RAILS_ROUTE_CONDITIONAL", .path = "config/routes.rb", .detail = "conditional route", .integrity = false, .severity = .warn, .route_id = "r1" },
+        .{ .code = "RAILS_ROUTE_CONDITIONAL", .path = "config/routes.rb", .detail = "conditional route", .integrity = false, .severity = .warn, .route_id = "r1", .line = 118 },
     });
+    rid_buf[0] = 'z';
+    try std.testing.expectEqualStrings("r1", list.items[0].route_id.?);
 }
 
-test "appendCopy duplicates rather than aliasing the source blocker" {
+test "appendCopy duplicates rather than aliasing the source blocker, including line" {
     const gpa = std.testing.allocator;
     var src: std.ArrayListUnmanaged(Blocker) = .empty;
-    try append(gpa, &src, "RAILS_INVENTORY_TRUNCATED", "app", "AccessDenied", true, .@"error", null);
+    try append(gpa, &src, "RAILS_INVENTORY_TRUNCATED", "app", "AccessDenied", true, .@"error", null, null);
+    try append(gpa, &src, "RAILS_ROUTE_CONDITIONAL", "config/routes.rb", "conditional route", false, .warn, null, 42);
     const src_items = try src.toOwnedSlice(gpa);
 
     var dst: std.ArrayListUnmanaged(Blocker) = .empty;
     defer free(gpa, dst.toOwnedSlice(gpa) catch unreachable);
     try appendCopy(gpa, &dst, src_items[0]);
+    try appendCopy(gpa, &dst, src_items[1]);
 
-    free(gpa, src_items); // frees the source; dst's copy must survive
+    free(gpa, src_items); // frees the source; dst's copies must survive
     try expectBlockers(dst.items, &.{
-        .{ .code = "RAILS_INVENTORY_TRUNCATED", .path = "app", .detail = "AccessDenied", .integrity = true, .severity = .@"error" },
+        .{ .code = "RAILS_INVENTORY_TRUNCATED", .path = "app", .detail = "AccessDenied", .integrity = true, .severity = .@"error", .line = null },
+        .{ .code = "RAILS_ROUTE_CONDITIONAL", .path = "config/routes.rb", .detail = "conditional route", .integrity = false, .severity = .warn, .line = 42 },
     });
 }
 
@@ -296,8 +321,8 @@ test "severity is per-code: an inventory-integrity code and a detected-finding c
     var list: std.ArrayListUnmanaged(Blocker) = .empty;
     defer free(gpa, list.toOwnedSlice(gpa) catch unreachable);
 
-    try append(gpa, &list, "RAILS_INVENTORY_UNREADABLE", "public", "AccessDenied", true, .@"error", null);
-    try append(gpa, &list, "RAILS_TEMPLATE_ENGINE_UNSUPPORTED", "app/views/x.html.haml", "Haml template is not converted", false, .warn, null);
+    try append(gpa, &list, "RAILS_INVENTORY_UNREADABLE", "public", "AccessDenied", true, .@"error", null, null);
+    try append(gpa, &list, "RAILS_TEMPLATE_ENGINE_UNSUPPORTED", "app/views/x.html.haml", "Haml template is not converted", false, .warn, null, null);
 
     try std.testing.expectEqual(Severity.@"error", list.items[0].severity);
     try std.testing.expectEqual(Severity.warn, list.items[1].severity);

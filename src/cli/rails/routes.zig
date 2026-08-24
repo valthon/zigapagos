@@ -238,7 +238,7 @@ pub fn discoverRoutes(
     const none: Result = .{ .routes = &.{}, .mode = "none", .ruby = .{ .available = false, .version = null } };
 
     root.access(io, "config/routes.rb", .{}) catch |err| {
-        try blockers.append(gpa, blocker_list, "RAILS_ROUTES_MISSING", "config/routes.rb", @errorName(err), false, .@"error", null);
+        try blockers.append(gpa, blocker_list, "RAILS_ROUTES_MISSING", "config/routes.rb", @errorName(err), false, .@"error", null, null);
         return none;
     };
 
@@ -247,7 +247,7 @@ pub fn discoverRoutes(
     const runtime_dir_raw = environ_map.get(runtime_dir_env);
     const runtime_dir = if (runtime_dir_raw) |v| std.mem.trim(u8, v, " \t\r\n") else "";
     if (runtime_dir.len == 0) {
-        try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_MISSING", "sidecar/rails/analyze.rb", "ZIGAPAGOS_RUNTIME_DIR is not set", false, .@"error", null);
+        try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_MISSING", "sidecar/rails/analyze.rb", "ZIGAPAGOS_RUNTIME_DIR is not set", false, .@"error", null, null);
         return none;
     }
 
@@ -260,7 +260,7 @@ pub fn discoverRoutes(
     // stable argv[1] regardless of the child's own cwd.
     var script_abs_buf: [Io.Dir.max_path_bytes]u8 = undefined;
     const script_abs_n = Io.Dir.cwd().realPathFile(io, script_path, &script_abs_buf) catch |err| {
-        try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_MISSING", script_path, @errorName(err), false, .@"error", null);
+        try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_MISSING", script_path, @errorName(err), false, .@"error", null, null);
         return none;
     };
     const script_abs = script_abs_buf[0..script_abs_n];
@@ -270,7 +270,7 @@ pub fn discoverRoutes(
     const abs_root = sidecar_client.resolveAbsRoot(io, gpa, root_path) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => {
-            try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_FAILED", root_path, @errorName(err), false, .@"error", null);
+            try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_FAILED", root_path, @errorName(err), false, .@"error", null, null);
             return none;
         },
     };
@@ -289,11 +289,22 @@ pub fn discoverRoutes(
         // above, so an ENOENT here can only be the interpreter -- the same
         // attribution `Sidecar.spawn` makes for the analogous Bun case.
         error.FileNotFound => {
-            try blockers.append(gpa, blocker_list, "RAILS_RUBY_UNAVAILABLE", ruby_path, "not found on PATH", false, .@"error", null);
+            // `path` names the sidecar script, not `ruby_path` -- see this
+            // function's own doc, "the absolute-interpreter-path leak, now
+            // owned". `ZIGAPAGOS_RUBY` set to an absolute path would
+            // otherwise put a machine-specific path into a field documented
+            // "relative to the app root", and two machines with different
+            // Ruby locations would then emit different manifest bytes for
+            // this same blocker. The interpreter itself is still worth
+            // naming -- it belongs in free-text `detail`, which carries no
+            // such contract, not in the structured `path`.
+            var buf: [Io.Dir.max_path_bytes + 64]u8 = undefined;
+            const detail = std.fmt.bufPrint(&buf, "interpreter '{s}' not found on PATH", .{ruby_path}) catch "interpreter not found on PATH";
+            try blockers.append(gpa, blocker_list, "RAILS_RUBY_UNAVAILABLE", "sidecar/rails/analyze.rb", detail, false, .@"error", null, null);
             return none;
         },
         else => {
-            try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_FAILED", ruby_path, @errorName(err), false, .@"error", null);
+            try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_FAILED", "sidecar/rails/analyze.rb", @errorName(err), false, .@"error", null, null);
             return none;
         },
     };
@@ -323,25 +334,25 @@ pub fn discoverRoutes(
         error.OutOfMemory => return error.OutOfMemory,
         else => {
             child.kill(io);
-            try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_FAILED", ruby_path, @errorName(err), false, .@"error", null);
+            try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_FAILED", "sidecar/rails/analyze.rb", @errorName(err), false, .@"error", null, null);
             return none;
         },
     };
     defer gpa.free(line);
 
     const term = child.wait(io) catch |err| {
-        try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_FAILED", ruby_path, @errorName(err), false, .@"error", null);
+        try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_FAILED", "sidecar/rails/analyze.rb", @errorName(err), false, .@"error", null, null);
         return none;
     };
     switch (term) {
         .exited => |code| if (code != 0) {
             var buf: [48]u8 = undefined;
             const detail = std.fmt.bufPrint(&buf, "ruby exited {d}", .{code}) catch "ruby exited nonzero";
-            try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_FAILED", ruby_path, detail, false, .@"error", null);
+            try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_FAILED", "sidecar/rails/analyze.rb", detail, false, .@"error", null, null);
             return none;
         },
         .signal, .stopped, .unknown => {
-            try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_FAILED", ruby_path, "sidecar terminated abnormally", false, .@"error", null);
+            try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_FAILED", "sidecar/rails/analyze.rb", "sidecar terminated abnormally", false, .@"error", null, null);
             return none;
         },
     }
@@ -528,7 +539,7 @@ fn decodeResponse(
     var parsed = std.json.parseFromSlice(WireResponse, gpa, line, .{ .ignore_unknown_fields = true }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => {
-            try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_FAILED", src_path, @errorName(err), false, .@"error", null);
+            try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_FAILED", src_path, @errorName(err), false, .@"error", null, null);
             return .{ .routes = &.{}, .ruby = .{ .available = false, .version = null } };
         },
     };
@@ -539,7 +550,7 @@ fn decodeResponse(
     errdefer sidecar_client.freeRuby(gpa, ruby);
 
     if (!resp.ok) {
-        try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_FAILED", src_path, resp.@"error" orelse "sidecar reported failure", false, .@"error", null);
+        try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_FAILED", src_path, resp.@"error" orelse "sidecar reported failure", false, .@"error", null, null);
         return .{ .routes = &.{}, .ruby = ruby };
     }
 
@@ -576,7 +587,7 @@ fn decodeResponse(
             std.fmt.bufPrint(&detail_buf, "unrecognized code {s}: {s} (line {d})", .{ u.code, u.detail, ln }) catch u.detail
         else
             std.fmt.bufPrint(&detail_buf, "unrecognized code {s}: {s}", .{ u.code, u.detail }) catch u.detail;
-        try blockers.append(gpa, blocker_list, code, src_path, detail, false, .warn, null);
+        try blockers.append(gpa, blocker_list, code, src_path, detail, false, .warn, null, u.line);
     }
 
     std.mem.sort(Route, routes, {}, routeLessThan);
@@ -621,9 +632,45 @@ test "a sidecar response decodes into routes, preserving certainty" {
     // wholesale discovery failure -- see the module doc's severity/integrity
     // contrast.
     try std.testing.expectEqual(blockers.Severity.warn, blocker_list.items[0].severity);
+    // Stage 4 Task 8b: `u.line` off the wire must reach `Blocker.line`, not
+    // be dropped on the way in (the third instance of that bug shape on
+    // this feature -- see the task brief).
+    try std.testing.expectEqual(@as(?u64, 12), blocker_list.items[0].line);
     // The sidecar's own response, not a second `version_check.rb` spawn.
     try std.testing.expect(res.ruby.available);
     try std.testing.expectEqualStrings("3.3.6", res.ruby.version.?);
+}
+
+// Discriminates the BLOCKER's own line, not a constant: an implementation
+// that hardcodes `.line = null` (Task 8's pre-8b state -- `u.line` was
+// decoded off the wire and then never threaded into the `Blocker`) passes
+// every other test in this file, since none of them assert an unresolved
+// entry's blocker carries a REAL, non-null line that differs from another
+// one. This is the one that would catch it; the third case (no `line` key
+// at all) proves the honest-null path still works, in the same test.
+test "unresolved entries at different wire lines decode to different blocker.line values, and a lineless one is null" {
+    const line =
+        \\{"ok":true,"routes":[],
+        \\"unresolved":[
+        \\{"code":"RAILS_ROUTE_CONDITIONAL","detail":"first","line":5},
+        \\{"code":"RAILS_ROUTE_CONDITIONAL","detail":"second","line":41},
+        \\{"code":"RAILS_ROUTE_DYNAMIC_PATH","detail":"no line at all"}
+        \\]}
+    ;
+    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
+
+    const res = try decodeResponse(std.testing.allocator, line, "config/routes.rb", &blocker_list);
+    defer freeRoutes(std.testing.allocator, res.routes);
+    defer freeRuby(std.testing.allocator, res.ruby);
+
+    try std.testing.expectEqual(@as(usize, 3), blocker_list.items.len);
+    try std.testing.expectEqual(@as(?u64, 5), blocker_list.items[0].line);
+    try std.testing.expectEqual(@as(?u64, 41), blocker_list.items[1].line);
+    try std.testing.expect(blocker_list.items[0].line != blocker_list.items[1].line);
+    // No `line` key on the wire at all -- honestly `null`, not a fabricated
+    // `1` and not accidentally reusing a sibling entry's value.
+    try std.testing.expectEqual(@as(?u64, null), blocker_list.items[2].line);
 }
 
 // Discriminates the ROUTE's own line, not a constant: a decoder that just
@@ -891,6 +938,13 @@ test "discoverRoutes: ZIGAPAGOS_RUBY pointing at a nonexistent binary yields RAI
     try std.testing.expectEqualStrings("none", result.mode);
     try std.testing.expectEqual(@as(usize, 1), blocker_list.items.len);
     try std.testing.expectEqualStrings("RAILS_RUBY_UNAVAILABLE", blocker_list.items[0].code);
+    // F3 (phase-2-review.md): `path` must name the sidecar script, never
+    // the machine-specific `ZIGAPAGOS_RUBY` value -- an absolute
+    // interpreter path here would make two machines with different Ruby
+    // locations emit different manifest bytes for the same blocker. The
+    // interpreter is still named, but only in free-text `detail`.
+    try std.testing.expectEqualStrings("sidecar/rails/analyze.rb", blocker_list.items[0].path);
+    try std.testing.expect(std.mem.indexOf(u8, blocker_list.items[0].detail, "/nonexistent/ruby-binary-does-not-exist-xyz") != null);
     // Non-integrity: see the module doc -- a missing interpreter means no
     // route graph, not an untrustworthy inventory.
     try std.testing.expect(!blocker_list.items[0].integrity);

@@ -142,7 +142,7 @@ test "zero routes, mode none: discovery did not run, points at Blockers" {
         .entries = &.{},
         .integrations = &.{},
         .blockers = &.{
-            .{ .code = "RAILS_SIDECAR_MISSING", .path = "sidecar/rails/analyze.rb", .detail = "ZIGAPAGOS_RUNTIME_DIR is not set", .severity = .@"error" },
+            .{ .code = "RAILS_SIDECAR_MISSING", .path = "sidecar/rails/analyze.rb", .detail = "ZIGAPAGOS_RUNTIME_DIR is not set", .severity = .@"error", .line = null },
         },
         .routes = &.{},
         .route_mode = "none",
@@ -161,7 +161,7 @@ test "zero routes, mode static_ast with a route blocker: points at Blockers" {
         .entries = &.{},
         .integrations = &.{},
         .blockers = &.{
-            .{ .code = "RAILS_ROUTE_ENGINE_MOUNT", .path = "config/routes.rb", .detail = "mount is not evaluated", .severity = .warn },
+            .{ .code = "RAILS_ROUTE_ENGINE_MOUNT", .path = "config/routes.rb", .detail = "mount is not evaluated", .severity = .warn, .line = null },
         },
         .routes = &.{},
         .route_mode = "static_ast",
@@ -205,7 +205,7 @@ test "zero routes, mode static_ast, an unrelated blocker present: still says rou
         .entries = &.{},
         .integrations = &.{},
         .blockers = &.{
-            .{ .code = "RAILS_TEMPLATE_ENGINE_UNSUPPORTED", .path = "app/views/x.html.haml", .detail = "Haml template is not converted", .severity = .warn },
+            .{ .code = "RAILS_TEMPLATE_ENGINE_UNSUPPORTED", .path = "app/views/x.html.haml", .detail = "Haml template is not converted", .severity = .warn, .line = null },
         },
         .routes = &.{},
         .route_mode = "static_ast",
@@ -378,15 +378,15 @@ test "report lists counts, integrations, and flags unsupported engines" {
         .{ .path = "app/views/posts/legacy.html.slim", .kind = .view, .engine = .slim },
     };
     const ints = [_]integrations.Integration{
-        .{ .name = "propshaft", .evidence = "Gemfile:propshaft" },
+        .{ .name = "propshaft", .version = null, .evidence = "Gemfile:propshaft" },
     };
     // Constructed by hand rather than via
     // `inventory.appendUnsupportedEngineBlockers` -- that function has its
     // own test in inventory.zig; this file's tests are about rendering, not
     // construction, so they only need literal `Blocker` values to render.
     const rail_blockers = [_]blockers.Blocker{
-        .{ .code = "RAILS_TEMPLATE_ENGINE_UNSUPPORTED", .path = "app/views/posts/index.html.haml", .detail = "Haml template is not converted", .severity = .warn },
-        .{ .code = "RAILS_TEMPLATE_ENGINE_UNSUPPORTED", .path = "app/views/posts/legacy.html.slim", .detail = "Slim template is not converted", .severity = .warn },
+        .{ .code = "RAILS_TEMPLATE_ENGINE_UNSUPPORTED", .path = "app/views/posts/index.html.haml", .detail = "Haml template is not converted", .severity = .warn, .line = null },
+        .{ .code = "RAILS_TEMPLATE_ENGINE_UNSUPPORTED", .path = "app/views/posts/legacy.html.slim", .detail = "Slim template is not converted", .severity = .warn, .line = null },
     };
     const md = try build(std.testing.allocator, .{
         .app_path = "my-app",
@@ -409,9 +409,9 @@ test "report lists counts, integrations, and flags unsupported engines" {
 
 test "blockers render in (code, path) order regardless of input order" {
     const unsorted = [_]blockers.Blocker{
-        .{ .code = "RAILS_TEMPLATE_ENGINE_UNSUPPORTED", .path = "app/views/z.html.haml", .detail = "Haml template is not converted", .severity = .warn },
-        .{ .code = "RAILS_INVENTORY_UNREADABLE", .path = "public", .detail = "AccessDenied", .integrity = true, .severity = .@"error" },
-        .{ .code = "RAILS_TEMPLATE_ENGINE_UNSUPPORTED", .path = "app/views/a.html.haml", .detail = "Haml template is not converted", .severity = .warn },
+        .{ .code = "RAILS_TEMPLATE_ENGINE_UNSUPPORTED", .path = "app/views/z.html.haml", .detail = "Haml template is not converted", .severity = .warn, .line = null },
+        .{ .code = "RAILS_INVENTORY_UNREADABLE", .path = "public", .detail = "AccessDenied", .integrity = true, .severity = .@"error", .line = null },
+        .{ .code = "RAILS_TEMPLATE_ENGINE_UNSUPPORTED", .path = "app/views/a.html.haml", .detail = "Haml template is not converted", .severity = .warn, .line = null },
     };
     const md = try build(std.testing.allocator, .{
         .app_path = "x",
@@ -434,8 +434,8 @@ test "blockers tying on (code, path) still sort deterministically, by detail (B7
     // Same shape as the routes test above, for `blockerLessThan`: two rows
     // tied on the OLD comparator's only two compared fields (code, path),
     // fed in both input orders, must render in the SAME order both times.
-    const zebra = Blocker{ .code = "RAILS_CONTROLLER_PARSE_ERROR", .path = "app/controllers/x_controller.rb", .detail = "zebra reason", .severity = .warn };
-    const alpha = Blocker{ .code = "RAILS_CONTROLLER_PARSE_ERROR", .path = "app/controllers/x_controller.rb", .detail = "alpha reason", .severity = .warn };
+    const zebra = Blocker{ .code = "RAILS_CONTROLLER_PARSE_ERROR", .path = "app/controllers/x_controller.rb", .detail = "zebra reason", .severity = .warn, .line = null };
+    const alpha = Blocker{ .code = "RAILS_CONTROLLER_PARSE_ERROR", .path = "app/controllers/x_controller.rb", .detail = "alpha reason", .severity = .warn, .line = null };
 
     const forward = [_]Blocker{ zebra, alpha };
     const md_forward = try build(std.testing.allocator, .{
@@ -481,6 +481,7 @@ test "blockerLessThan: two rows identical in (code, path, detail) tiebreak by ro
         .detail = "partial nesting exceeds the depth this scan follows; unify or flatten these partials",
         .severity = .warn,
         .route_id = "GET /posts/profile",
+        .line = null,
     };
     const b = Blocker{
         .code = "RAILS_TEMPLATE_RENDER_DEPTH_EXCEEDED",
@@ -488,6 +489,7 @@ test "blockerLessThan: two rows identical in (code, path, detail) tiebreak by ro
         .detail = "partial nesting exceeds the depth this scan follows; unify or flatten these partials",
         .severity = .warn,
         .route_id = "GET /posts/recent",
+        .line = null,
     };
     // "GET /posts/profile" < "GET /posts/recent" lexically.
     try std.testing.expect(blockerLessThan({}, a, b));
@@ -503,6 +505,7 @@ test "blockerLessThan: two rows identical in (code, path, detail, route_id) tieb
         .detail = "conditional route",
         .severity = .@"error",
         .route_id = "GET /admin/health",
+        .line = null,
     };
     const b = Blocker{
         .code = "RAILS_ROUTE_CONDITIONAL",
@@ -510,6 +513,7 @@ test "blockerLessThan: two rows identical in (code, path, detail, route_id) tieb
         .detail = "conditional route",
         .severity = .warn,
         .route_id = "GET /admin/health",
+        .line = null,
     };
     // `.@"error"` (declared first in `blockers.Severity`) sorts before
     // `.warn`.
@@ -741,7 +745,14 @@ const Blocker = blockers.Blocker;
 /// not merely "does not crash" -- so it stays correct for any later reader
 /// (Phase 2's manifest emitter, should it reuse this sort) that DOES render
 /// those two fields, not just for this file's own three-field print line.
-fn blockerLessThan(_: void, a: Blocker, b: Blocker) bool {
+/// `pub` (Stage 4 Task 8): `manifest.zig` reuses this exact comparator to
+/// sort the manifest's own `blockers[]` (spec, "The manifest" -- "blockers
+/// ... by (code, file, line)"), rather than declaring a second copy that
+/// could silently drift from this one's already-hard-won total order (fix
+/// round 2, phase-1-review.md F8 -- see this function's own doc above). One
+/// comparator means the human-readable report and the machine-readable
+/// manifest always agree on blocker order.
+pub fn blockerLessThan(_: void, a: Blocker, b: Blocker) bool {
     // Rendered as `- \`{code}\` {path}: {detail}\n` (see the Blockers
     // section below) -- `code`, `path`, `detail` is exactly the field order
     // that determines the printed line, so it is the tiebreak order here,
@@ -773,7 +784,7 @@ const Route = routes.Route;
 /// above: `null` sorts before every string (an unresolved/absent half is
 /// "less than" any known one), and two non-null values compare byte-wise.
 /// Contract 3 (caller-buffer): no allocation.
-fn orderOptionalString(a: ?[]const u8, b: ?[]const u8) std.math.Order {
+pub fn orderOptionalString(a: ?[]const u8, b: ?[]const u8) std.math.Order {
     const av = a orelse return if (b == null) .eq else .lt;
     const bv = b orelse return .gt;
     return std.mem.order(u8, av, bv);
@@ -794,7 +805,16 @@ fn orderOptionalString(a: ?[]const u8, b: ?[]const u8) std.math.Order {
 /// are a pure function of verb/view/action -- identical verb+controller+
 /// action routes cannot classify differently), so four keys are already a
 /// total order over the rendered output, not merely "more tiebreaks".
-fn routeLessThan(_: void, a: Route, b: Route) bool {
+///
+/// `pub` (Stage 4 Task 8): `manifest.zig` reuses this comparator (via a
+/// thin wrapper pairing each `Route` with its classification/template
+/// graph, the same shape `RouteVerdict` below already models) to sort the
+/// manifest's own `routes[]` (spec, "The manifest" -- "routes sorted by
+/// (path, verb)"). Reusing rather than re-deriving is what keeps the
+/// report and the manifest agreeing on route order, and keeps this
+/// already-fixed total order (fix round B / B7) from being reinvented --
+/// and possibly reintroducing its own partial-order bug -- a second time.
+pub fn routeLessThan(_: void, a: Route, b: Route) bool {
     return switch (std.mem.order(u8, a.path, b.path)) {
         .lt => true,
         .gt => false,
