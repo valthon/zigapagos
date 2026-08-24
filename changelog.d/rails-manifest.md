@@ -6,4 +6,4 @@
 
 ### Known limitations
 
-- The manifest is discovery output only — nothing yet *consumes* it. Assembling a `--target` directory from it (content conversion, island scaffolding, asset copying) is Stage 5; resolving what a route classified `unresolved` for request-time state would actually need at build or request time is issue #167.
+- The manifest is discovery output only — nothing yet *consumes* it to build a target. `--target DIR` (added later in this release) writes the manifest and `MIGRATION.md` into `DIR`, but assembles no scaffold: content conversion, island scaffolding, and asset copying for Rails sources remain issue #167's job, same as resolving what a route classified `unresolved` for request-time state would actually need at build or request time.

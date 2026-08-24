@@ -435,7 +435,13 @@ Each stage is independently shippable and testable.
 3. Classifier + evidence + blockers.
 4. Manifest + JSON Schema + contract tests + drift gate.
 5. `--target` assembly + `docs/migration/rails-to-zigapagos.md` + the `skills/`
-   reference mirror + `tests/skills/sync.sh` update.
+   reference mirror + `tests/skills/sync.sh` update. **Shipped**, with one
+   deviation recorded here rather than left implicit: Rails' `--target`
+   writes the two discovery artifacts and does NOT scaffold. The other eight
+   sources convert content, scaffold islands and copy assets; this work
+   converts nothing by design, so there is nothing for it to assemble. The
+   flag's help text was corrected to match rather than a conversion step
+   invented to justify it.
 
 Stage 5 carries a known trap: `docs/migration/` and `skills/*/references/` are
 byte-mirrored under a sync gate whose file list is hardcoded, so the doc, its
