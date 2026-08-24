@@ -73,8 +73,8 @@ test "routes render with their origin, and uncertain ones are marked" {
     // uncertainty marker AND its class -- they are independent claims. This
     // also pins that the root route ("/") actually rendered, rather than
     // "GET /" merely being a substring of "GET /x".
-    try std.testing.expect(std.mem.indexOf(u8, md, "- `GET /` → `home#index` — content\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, md, "- `GET /x` — **uncertain** — unresolved\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, md, "- `GET /` → `home#index` — content (test stub)\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, md, "- `GET /x` — **uncertain** — unresolved (test stub)\n") != null);
 }
 
 test "a known controller with no action still renders, not silently dropped" {
@@ -100,7 +100,7 @@ test "a known controller with no action still renders, not silently dropped" {
     try std.testing.expect(std.mem.indexOf(
         u8,
         md,
-        "- `GET /x` → controller `a`, action unknown — unresolved\n",
+        "- `GET /x` → controller `a`, action unknown — unresolved (test stub)\n",
     ) != null);
 }
 
@@ -122,7 +122,7 @@ test "a known action with no controller still renders, not silently dropped" {
     try std.testing.expect(std.mem.indexOf(
         u8,
         md,
-        "- `GET /x` → action `show`, controller unknown — unresolved\n",
+        "- `GET /x` → action `show`, controller unknown — unresolved (test stub)\n",
     ) != null);
 }
 
@@ -322,7 +322,7 @@ test "each route renders with its classification, and an uncertain route still n
     });
     defer std.testing.allocator.free(md);
 
-    try std.testing.expect(std.mem.indexOf(u8, md, "- `GET /posts` → `posts#index` — content\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, md, "- `GET /posts` → `posts#index` — content (test stub)\n") != null);
     // The brief's sketch for the second route only checked
     // `indexOf(md, "unresolved") != null` -- that passes even if the
     // classification summary table (added by this same task, a few lines
@@ -331,7 +331,55 @@ test "each route renders with its classification, and an uncertain route still n
     // rendered line for /mystery is what actually proves THIS route's join
     // produced `unresolved`, not merely that the word occurs somewhere in
     // the document.
-    try std.testing.expect(std.mem.indexOf(u8, md, "- `GET /mystery` — unresolved\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, md, "- `GET /mystery` — unresolved (test stub)\n") != null);
+}
+
+test "two routes unresolved for DIFFERENT rules render DIFFERENT reasons -- not a constant" {
+    // Stage 5's final-fix round (finding 1): a test that only asserts the
+    // rendered reason is non-empty would pass against a hardcoded constant
+    // exactly as well as against the real per-rule text. This pins two
+    // routes that reach `unresolved` through genuinely different rules
+    // (classify.zig's real `classify`, not a test stub) and asserts their
+    // rendered lines differ specifically in the parenthesized reason.
+    const rs = [_]routes.Route{
+        .{ .verb = "GET", .path = "/a", .controller = null, .action = null, .name = null, .certain = true, .origin = .static_ast },
+        .{ .verb = "GET", .path = "/b", .controller = "b", .action = "show", .name = null, .certain = true, .origin = .static_ast },
+    };
+    // /a: no view, no action, controller evidence available -> classify.zig
+    // rule 2's "no view template and no controller action were recovered"
+    // branch returns `backend`, not `unresolved` -- so to pin two DISTINCT
+    // `unresolved` reasons here we instead build the verdicts directly from
+    // `classify.classify` for two inputs that both land on `unresolved`
+    // through different rules: no view at all (rule 4's guard) vs. an
+    // unsupported template engine (rule 4 proper).
+    const v_no_view = classify.classify(.{
+        .verb = "GET",
+        .view = null,
+        .action = .{ .controller = "a", .action = "index" },
+    });
+    const v_bad_engine = classify.classify(.{
+        .verb = "GET",
+        .view = .{ .path = "app/views/b/show.haml", .engine = .haml, .markers = .{} },
+        .action = .{ .controller = "b", .action = "show" },
+    });
+    try std.testing.expectEqual(classify.Class.unresolved, v_no_view.class);
+    try std.testing.expectEqual(classify.Class.unresolved, v_bad_engine.class);
+    try std.testing.expect(!std.mem.eql(u8, v_no_view.reason, v_bad_engine.reason));
+
+    const vs = [_]classify.Verdict{ v_no_view, v_bad_engine };
+    const md = try build(std.testing.allocator, .{
+        .app_path = "app",
+        .entries = &.{},
+        .integrations = &.{},
+        .blockers = &.{},
+        .routes = &rs,
+        .route_mode = "static_ast",
+        .classifications = &vs,
+    });
+    defer std.testing.allocator.free(md);
+
+    try std.testing.expect(std.mem.indexOf(u8, md, "- `GET /a` — unresolved (no view template to classify)\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, md, "- `GET /b` → `b#show` — unresolved (unsupported template engine, never converted)\n") != null);
 }
 
 test "a classification summary counts every class" {
@@ -685,7 +733,16 @@ pub fn build(gpa: Allocator, in: Input) Allocator.Error![]const u8 {
             if (!r.certain) {
                 w.writeAll(" — **uncertain**") catch return error.OutOfMemory;
             }
-            w.print(" — {s}\n", .{@tagName(rv.verdict.class)}) catch return error.OutOfMemory;
+            // The reason travels on every line, not just `unresolved` ones:
+            // Stage 5's final-fix round found `unresolved` routes with
+            // neither a `reason` a reader could see nor a blocker naming
+            // why -- `candidates[]` is empty by design for `unresolved`
+            // (see `classify.zig`'s rule chain), so `reason` is the ONLY
+            // evidence a human has for those routes specifically. Rendering
+            // it uniformly (not "just for unresolved") keeps one code path
+            // instead of a class-conditional branch, and lets every other
+            // classification's reason be spot-checked the same way.
+            w.print(" — {s} ({s})\n", .{ @tagName(rv.verdict.class), rv.verdict.reason }) catch return error.OutOfMemory;
         }
     }
 

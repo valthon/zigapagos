@@ -175,6 +175,9 @@
               "unresolved"
             ]
           },
+          "reason": {
+            "type": "string"
+          },
           "candidates": {
             "type": "array",
             "items": {
@@ -219,6 +222,7 @@
           "origin",
           "confidence",
           "classification",
+          "reason",
           "candidates",
           "templates",
           "layout"

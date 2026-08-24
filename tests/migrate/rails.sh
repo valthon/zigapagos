@@ -97,17 +97,17 @@ if command -v ruby >/dev/null 2>&1; then
   # that a genuine, certain route carries no uncertainty marker. The
   # trailing " — content" is Task 6's classification suffix -- `posts#index`
   # has a plain static view and a recovered action, so it reaches rule 7.
-  grep -Fxq -- '- `GET /posts` → `posts#index` — content' "$WORK/one.md" \
+  grep -Fxq -- '- `GET /posts` → `posts#index` — content (no request-time state or interactivity found)' "$WORK/one.md" \
     || fail "resources :posts did not expand, or a certain route gained a spurious uncertainty marker"
   # member { post :publish } nests under the resource's :id. POST is a
   # non-GET verb, so rule 1 fires unconditionally -- backend regardless of
   # the fact that no `publish` view or action was ever recovered.
-  grep -Fxq -- '- `POST /posts/:id/publish` → `posts#publish` — backend' "$WORK/one.md" \
+  grep -Fxq -- '- `POST /posts/:id/publish` → `posts#publish` — backend (non-GET verb is a backend responsibility)' "$WORK/one.md" \
     || fail "member route missing"
   # namespace :admin prefixes both the path and the controller module. No
   # `admin/users#index` view or action exists in the fixture, so rule 2's
   # "no view and no action" clause fires -- backend.
-  grep -Fxq -- '- `GET /admin/users` → `admin/users#index` — backend' "$WORK/one.md" \
+  grep -Fxq -- '- `GET /admin/users` → `admin/users#index` — backend (no view template and no controller action were recovered for this route)' "$WORK/one.md" \
     || fail "namespaced route missing"
 
   # The engine mount is a construct the parser cannot evaluate at all -- it
@@ -125,7 +125,7 @@ if command -v ruby >/dev/null 2>&1; then
   # Same "no view, no action" gap as admin/users above, plus the
   # uncertainty marker -- the two are independent claims, both asserted on
   # the one line.
-  grep -Fxq -- '- `GET /admin/health` → `admin#health` — **uncertain** — backend' "$WORK/one.md" \
+  grep -Fxq -- '- `GET /admin/health` → `admin#health` — **uncertain** — backend (no view template and no controller action were recovered for this route)' "$WORK/one.md" \
     || fail "conditional route missing its uncertainty marker"
   grep -q "RAILS_ROUTE_CONDITIONAL" "$WORK/one.md" || fail "conditional route not reported as a blocker"
 
@@ -153,23 +153,23 @@ if command -v ruby >/dev/null 2>&1; then
 
   # island (rule 6): the view wires up a Stimulus controller
   # (`data-controller="reveal"`).
-  grep -Fxq -- '- `GET /posts/dashboard` → `posts#dashboard` — island' "$WORK/one.md" \
+  grep -Fxq -- '- `GET /posts/dashboard` → `posts#dashboard` — island (view has an interactive Stimulus controller or component root)' "$WORK/one.md" \
     || fail "Stimulus-marker view did not classify as island"
   # redirect (rule 3): the controller action's body is only `redirect_to`.
-  grep -Fxq -- '- `GET /posts/old` → `posts#old` — redirect' "$WORK/one.md" \
+  grep -Fxq -- '- `GET /posts/old` → `posts#old` — redirect (controller action only issues a redirect)' "$WORK/one.md" \
     || fail "pure-redirect action did not classify as redirect"
   # unresolved (rule 5): the view reads request-time state (`current_user`).
-  grep -Fxq -- '- `GET /posts/profile` → `posts#profile` — unresolved' "$WORK/one.md" \
+  grep -Fxq -- '- `GET /posts/profile` → `posts#profile` — unresolved (view reads request-time state)' "$WORK/one.md" \
     || fail "current_user view did not classify as unresolved"
   # unresolved (rule 4): the view's template engine is Haml, not erb --
   # reuses `legacy.html.haml`, already present for the blocker assertion
   # below, now also routed to so a route actually resolves against it.
-  grep -Fxq -- '- `GET /posts/legacy` → `posts#legacy` — unresolved' "$WORK/one.md" \
+  grep -Fxq -- '- `GET /posts/legacy` → `posts#legacy` — unresolved (unsupported template engine, never converted)' "$WORK/one.md" \
     || fail "Haml view did not classify as unresolved"
   # backend (rule 2, JSON clause): the controller action renders JSON, not
   # a view -- fires independent of there being no view file for `stats` at
   # all.
-  grep -Fxq -- '- `GET /posts/stats` → `posts#stats` — backend' "$WORK/one.md" \
+  grep -Fxq -- '- `GET /posts/stats` → `posts#stats` — backend (action renders JSON, not a view)' "$WORK/one.md" \
     || fail "JSON-rendering action did not classify as backend"
 
   # --- A1: transitive template scanning (layout + partials) ----------------
@@ -182,17 +182,17 @@ if command -v ruby >/dev/null 2>&1; then
   # unresolved: the view is clean, but the resolved LAYOUT
   # (layouts/application.html.erb, the app-wide fallback -- `pages` has no
   # layout of its own) carries csrf_meta_tags.
-  grep -Fxq -- '- `GET /about` → `pages#about` — unresolved' "$WORK/one.md" \
+  grep -Fxq -- '- `GET /about` → `pages#about` — unresolved (the resolved layout reads request-time state)' "$WORK/one.md" \
     || fail "a marker in the fallback LAYOUT did not force the route unresolved"
   # unresolved: the view is clean and posts' own layout is clean, but a
   # PARTIAL the view renders (_meta.html.erb) reads current_user.
-  grep -Fxq -- '- `GET /posts/recent` → `posts#recent` — unresolved' "$WORK/one.md" \
+  grep -Fxq -- '- `GET /posts/recent` → `posts#recent` — unresolved (a rendered partial reads request-time state)' "$WORK/one.md" \
     || fail "a marker in a RENDERED PARTIAL did not force the route unresolved"
   # unresolved: the view renders `@post` -- Rails' implicit
   # object-to-partial shorthand -- which this scan cannot resolve to a
   # specific file; the route must not reach content on the strength of
   # what little the view file itself shows.
-  grep -Fxq -- '- `GET /posts/featured` → `posts#featured` — unresolved' "$WORK/one.md" \
+  grep -Fxq -- '- `GET /posts/featured` → `posts#featured` — unresolved (template renders a dynamic partial target that cannot be resolved statically)' "$WORK/one.md" \
     || fail "an unresolvable render target did not force the route unresolved"
 
   # --- manifest: routes[]/templates[] need real route recovery, so these
@@ -310,9 +310,9 @@ if command -v ruby >/dev/null 2>&1; then
   # Before the A3 fix, both of these rendered ` — backend` -- action==null
   # was treated as a positive finding about the route instead of the
   # absence of ANY evidence about it.
-  grep -Fxq -- '- `GET /admin/users` → `admin/users#index` — unresolved' "$WORK/degraded.md" \
+  grep -Fxq -- '- `GET /admin/users` → `admin/users#index` — unresolved (no view template, and controller evidence was unavailable for this run)' "$WORK/degraded.md" \
     || fail "a view-less, action-less route under wholesale controller degradation must be unresolved, not backend"
-  grep -Fxq -- '- `GET /posts/old` → `posts#old` — unresolved' "$WORK/degraded.md" \
+  grep -Fxq -- '- `GET /posts/old` → `posts#old` — unresolved (no view template, and controller evidence was unavailable for this run)' "$WORK/degraded.md" \
     || fail "a route that is normally a redirect must be unresolved (not backend) when controller evidence never confirmed it"
   # A second, differently-shaped instance through the same validator: a
   # wholesale-degraded run stresses different nullable/enum fields
@@ -441,6 +441,67 @@ set -e
 grep -q -- "--strict only applies to Rails sources" "$WORK/astro-strict.err" \
   || fail "--strict rejection on a non-Rails source did not explain why"
 [[ ! -e "$WORK/astro-like.md" ]] || fail "a rejected --strict combination must not write a report"
+
+# --- --target DIR: the two discovery artifacts land in DIR, nothing else,
+# byte-identical to the -o run (task-1-brief.md's own "Discriminate"
+# requirement -- a bare "DIR is non-empty" check would also pass an
+# implementation that wrote only one of the two artifacts, or that wrote a
+# scaffold Rails must not produce: converting content/scaffolding islands
+# is #167's job, not this one's). --------------------------------------------
+TARGET="$WORK/target-dir"
+"$ZIGAPAGOS" migrate "$APP" --target "$TARGET" >/dev/null 2>&1 \
+  || fail "--target should exit 0 on this fixture (blockers present, but none are integrity blockers, and --strict was not passed)"
+
+# Exactly the two discovery artifacts, nothing else -- no components/,
+# content/, assets/, layouts/, build.sh, package.json, .gitignore, etc. (the
+# scaffold the other eight sources' --target assembles).
+target_listing="$(cd "$TARGET" && find . -type f | sort)"
+expected_listing="$(printf './MIGRATION.manifest.json\n./MIGRATION.md\n' | sort)"
+[[ "$target_listing" == "$expected_listing" ]] \
+  || fail "--target must write exactly MIGRATION.md and MIGRATION.manifest.json into DIR and nothing else, got: $target_listing"
+
+# Nothing leaked to the default out_path location either. Both artifacts,
+# not just the report: final-review.md F11 found the manifest leaking to the
+# repo root under a mutated railsManifestPath call while this check only
+# covered MIGRATION.md, so the leak was caught solely by the exact-listing
+# assertion above and left a stray untracked file behind afterward.
+[[ ! -e "$REPO/MIGRATION.md" ]] \
+  || fail "--target must not also write to the default ./MIGRATION.md location"
+[[ ! -e "$REPO/MIGRATION.manifest.json" ]] \
+  || fail "--target must not also write the manifest to the default ./MIGRATION.manifest.json location"
+
+# Byte-identical to the same app's -o run: the report/manifest depend only
+# on the source tree's discovery, never on where the CLI happens to write
+# them.
+diff -u "$WORK/one.manifest.json" "$TARGET/MIGRATION.manifest.json" \
+  || fail "--target's manifest is not byte-identical to the -o run's manifest"
+diff -u "$WORK/one.md" "$TARGET/MIGRATION.md" \
+  || fail "--target's report is not byte-identical to the -o run's report"
+
+# The source tree is still read-only after --target, same invariant as the
+# plain -o path above.
+after_target="$(cd "$APP" && find . -type f | sort | xargs shasum | shasum)"
+[[ "$before" == "$after_target" ]] || fail "--target modified the source tree"
+
+# --target reuses the same nested/non-empty guards every other source's
+# --target uses (assembleTarget's own pathIsInside/targetHasEntries) rather
+# than a Rails-specific bypass.
+set +e
+"$ZIGAPAGOS" migrate "$APP" --target "$APP/nested-target" >"$WORK/nested.out" 2>&1
+nested_rc=$?
+set -e
+[[ $nested_rc -ne 0 ]] || fail "--target inside the Rails source must be rejected"
+[[ ! -e "$APP/nested-target" ]] || fail "a rejected nested --target must not create the directory"
+
+NONEMPTY="$WORK/nonempty-target"
+mkdir -p "$NONEMPTY"
+touch "$NONEMPTY/keep.txt"
+set +e
+"$ZIGAPAGOS" migrate "$APP" --target "$NONEMPTY" >"$WORK/nonempty.out" 2>&1
+nonempty_rc=$?
+set -e
+[[ $nonempty_rc -ne 0 ]] || fail "--target on a non-empty directory must be rejected"
+[[ ! -e "$NONEMPTY/MIGRATION.md" ]] || fail "a rejected non-empty --target must not write the report"
 
 # --- parenthesized Gemfile syntax is still detected (P3 PR-review repro) ----
 # The reviewer's exact repro: `gem("rails")` with config/application.rb
