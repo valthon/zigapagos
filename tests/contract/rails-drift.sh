@@ -280,7 +280,13 @@ grep -qF '"minimum": 999' contract/rails-presentation.v1.schema.json ||
   fail "the schema mutation did not apply -- contract/rails-presentation.v1.schema.json has no '\"minimum\": 999'"
 
 git add contract/rails-presentation.v1.schema.json
-git commit --quiet -m "TEMP fixture: tests/contract/rails-drift.sh Case B -- must not survive this script"
+# `-c user.*` rather than relying on ambient config: a fresh machine or a CI
+# runner without user.name/user.email set makes `git commit` fail with "Please
+# tell me who you are", and this script would then report a gate failure for a
+# reason that has nothing to do with drift. That is the same launch-versus-
+# finding confusion this whole file exists to rule out -- see the header -- so
+# it must not be reintroduced by the fixture machinery itself.
+git -c user.name="rails-drift fixture" -c user.email="rails-drift@invalid"   commit --quiet -m "TEMP fixture: tests/contract/rails-drift.sh Case B -- must not survive this script"
 
 run_rails_check
 rails_check_drift_ok "$RC" "$OUT" \
