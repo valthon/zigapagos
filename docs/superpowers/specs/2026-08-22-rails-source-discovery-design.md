@@ -161,7 +161,7 @@ written beside the report, so `--target DIR` produces both in `DIR`.
     "source": { "file": "config/routes.rb", "line": 42 },
     "origin": "static_ast", "confidence": "certain",
     "classification": "content",
-    "candidates": [{ "target": "content", "evidence": ["no request-time state in view"] }],
+    "candidates": [{ "target": "content", "evidence": "no request-time state in view" }],
     "templates": ["app/views/articles/show.html.erb"],
     "layout": "app/views/layouts/application.html.erb"
   }],
@@ -274,15 +274,28 @@ location; that is what makes it reviewable instead of a summary count.
   read and Prism rejected its contents; the same read/parse distinction
   `RAILS_TEMPLATE_UNREADABLE` already draws for templates),
   `RAILS_CONTROLLER_UNRESOLVED`.
-- *Classification* -- `RAILS_TEMPLATE_UNREADABLE`, `RAILS_TEMPLATE_RENDER_DEPTH_EXCEEDED`
+- *Classification* -- `RAILS_TEMPLATE_UNREADABLE`, `RAILS_TEMPLATE_RENDER_DEPTH_EXCEEDED`,
+  `RAILS_TEMPLATE_RENDER_UNRESOLVED`
   (fix round A / A1: a `render partial:`/bare-string/`render @x` chain nests
   deeper than the transitive template scan follows -- see `rails.zig`'s
   `max_partial_depth`. The route the deep chain belongs to still classifies,
   never higher than `unresolved`, the same "unscanned content is evidence
-  not in hand" rule an unresolvable render target follows without its own
-  blocker; the depth cutoff gets one because it names an unusual STRUCTURAL
-  shape a human may want to simplify, not a per-route classification fact
-  already carried in that route's `reason`).
+  not in hand" rule an unresolvable render target follows; the depth cutoff
+  gets its own blocker because it additionally names an unusual STRUCTURAL
+  shape a human may want to simplify, not merely a per-route classification
+  fact already carried in that route's `reason`), `RAILS_TEMPLATE_RENDER_
+  UNRESOLVED` (Stage 4 Phase 2 fix round, phase-2-review.md F2: a `render`
+  call whose target is a dynamic expression the scan cannot resolve
+  statically, or a literal target matching no known template. Reverses this
+  document's earlier stance that such a target "follows [the not-in-hand
+  rule] without its own blocker" -- that was true for the route's OWN
+  `classification`/`reason` (still is: the route still classifies, never
+  higher than `unresolved`), but `templates[].renders` is a DIFFERENT,
+  template-scoped array a consumer can read without ever looking at the
+  route that reached it, and a dropped edge there read as "renders
+  nothing" with no signal anywhere naming the gap. Named on the SAME
+  `path` as the template whose render call was dropped, `.warn`,
+  non-integrity, same reasoning as the depth-cap code above).
 - *Assets* (Stage 4 Task 6, revised fix round 1) -- `RAILS_ASSET_PIPELINE_UNKNOWN`
   (the Gemfile declares neither `propshaft` nor `sprockets-rails`, or
   declares BOTH -- either way, no single active pipeline can be named

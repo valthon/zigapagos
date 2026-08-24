@@ -329,7 +329,7 @@ pub fn readCapped(
         error.OutOfMemory => return error.OutOfMemory,
         error.FileNotFound, error.NotDir => return null,
         else => {
-            try blockers.append(gpa, blocker_list, code, path, @errorName(err), true, .@"error", null);
+            try blockers.append(gpa, blocker_list, code, path, @errorName(err), true, .@"error", null, null);
             return null;
         },
     };
@@ -446,48 +446,65 @@ pub fn freeVersion(gpa: Allocator, v: Version) void {
     if (v.evidence) |ev| gpa.free(ev);
 }
 
-/// Resolves the `rails` gem's LOCKED version from `Gemfile.lock` -- never
-/// the Gemfile's own constraint (`gem "rails", "~> 7.1"` names a range, not
-/// an answer; `Gemfile.lock` is where Bundler recorded which version it
-/// actually resolved to). Contract 2 (owned-result): on success both
-/// `Version` fields escape as fresh `gpa` allocations, released via
-/// `freeVersion`; every degradation path below returns the zero-value
-/// `Version{}` instead, which owns nothing.
-///
-/// A missing, unreadable, or over-cap lock file and a lock file that is
-/// readable but simply never locks `rails` in its `specs:` block are ALL the
-/// same story to this function's caller: the version is not available this
-/// run. Unlike `readCapped`'s `Gemfile`/`package.json` callers, an
-/// unresolved Rails version does not make the REST of discovery
-/// untrustworthy -- `Gemfile.lock` is committed by convention, not a
+/// Reads `Gemfile.lock` capped at 1MB and appends `RAILS_GEMFILE_LOCK_
+/// UNAVAILABLE` at `.warn`, `integrity = false` on any read failure --
+/// missing, unreadable, or over the cap. Unlike `readCapped`'s Gemfile/
+/// package.json callers, an unresolvable `Gemfile.lock` does not make the
+/// REST of discovery untrustworthy -- it is committed by convention, not a
 /// dependency the rest of this scan reads, so a project that doesn't commit
-/// one (or ships one this parser can't make sense of) is still a fully
-/// analyzable Rails app. That is why this appends
-/// `RAILS_GEMFILE_LOCK_UNAVAILABLE` at `.warn`, `integrity = false`, rather
-/// than the `.@"error"`/`integrity = true` `readCapped` uses for the
-/// Gemfile/package.json reads discovery actually depends on -- every path
-/// here still returns exit 0. `error.OutOfMemory` always propagates.
-pub fn detectVersion(
+/// one is still a fully analyzable Rails app; every path here still returns
+/// exit 0. Contract 2 (owned-result): the non-null result is a fresh `gpa`
+/// allocation the caller frees; `null` means the read failed and the
+/// blocker above already explains why.
+///
+/// Split out from `detectVersion` (Stage 4 Task 8b) so `rails.zig`'s
+/// `discover` can read the file ONCE and hand the same content to both
+/// `versionFromLock` (Rails' own locked version) and `integrations.scan`
+/// (gem-sourced integration versions, via `lockedVersion` directly) --
+/// reading it twice would append this blocker twice on a missing or
+/// unreadable lock file. `error.OutOfMemory` always propagates.
+pub fn readGemfileLock(
     io: Io,
     gpa: Allocator,
     root: Io.Dir,
     blocker_list: *std.ArrayListUnmanaged(blockers.Blocker),
-) Allocator.Error!Version {
-    const src = root.readFileAlloc(io, "Gemfile.lock", gpa, .limited(1024 * 1024)) catch |err| switch (err) {
+) Allocator.Error!?[]u8 {
+    return root.readFileAlloc(io, "Gemfile.lock", gpa, .limited(1024 * 1024)) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.FileNotFound, error.NotDir => {
-            try blockers.append(gpa, blocker_list, "RAILS_GEMFILE_LOCK_UNAVAILABLE", "Gemfile.lock", "Gemfile.lock not found", false, .warn, null);
-            return .{};
+            try blockers.append(gpa, blocker_list, "RAILS_GEMFILE_LOCK_UNAVAILABLE", "Gemfile.lock", "Gemfile.lock not found", false, .warn, null, null);
+            return null;
         },
         else => {
-            try blockers.append(gpa, blocker_list, "RAILS_GEMFILE_LOCK_UNAVAILABLE", "Gemfile.lock", @errorName(err), false, .warn, null);
-            return .{};
+            try blockers.append(gpa, blocker_list, "RAILS_GEMFILE_LOCK_UNAVAILABLE", "Gemfile.lock", @errorName(err), false, .warn, null, null);
+            return null;
         },
     };
-    defer gpa.free(src);
+}
 
+/// Resolves the `rails` gem's LOCKED version from ALREADY-READ `Gemfile.lock`
+/// content (see `readGemfileLock`) -- never the Gemfile's own constraint
+/// (`gem "rails", "~> 7.1"` names a range, not an answer; `Gemfile.lock` is
+/// where Bundler recorded which version it actually resolved to). Contract 2
+/// (owned-result): on success both `Version` fields escape as fresh `gpa`
+/// allocations, released via `freeVersion`; the degradation path below
+/// returns the zero-value `Version{}` instead, which owns nothing.
+///
+/// A lock file that is readable but simply never locks `rails` in its
+/// `specs:` block is the SAME story to this function's caller as a lock
+/// file `readGemfileLock` never obtained at all: the version is not
+/// available this run. That is why this appends `RAILS_GEMFILE_LOCK_
+/// UNAVAILABLE` at `.warn`, `integrity = false` too -- matching
+/// `readGemfileLock`'s own severity, not the `.@"error"`/`integrity = true`
+/// `readCapped` uses for the Gemfile/package.json reads discovery actually
+/// depends on. `error.OutOfMemory` always propagates.
+pub fn versionFromLock(
+    gpa: Allocator,
+    src: []const u8,
+    blocker_list: *std.ArrayListUnmanaged(blockers.Blocker),
+) Allocator.Error!Version {
     const found = lockedVersion(src, "rails") orelse {
-        try blockers.append(gpa, blocker_list, "RAILS_GEMFILE_LOCK_UNAVAILABLE", "Gemfile.lock", "no locked \"rails\" entry found in Gemfile.lock", false, .warn, null);
+        try blockers.append(gpa, blocker_list, "RAILS_GEMFILE_LOCK_UNAVAILABLE", "Gemfile.lock", "no locked \"rails\" entry found in Gemfile.lock", false, .warn, null, null);
         return .{};
     };
 
@@ -497,9 +514,32 @@ pub fn detectVersion(
     return .{ .value = value, .evidence = evidence };
 }
 
+/// The io/root convenience composition of `readGemfileLock` +
+/// `versionFromLock` -- this function's own tests exercise it this way, and
+/// it stays the single-call form for any caller that only needs Rails' own
+/// version and has no separate use for the raw lock content (unlike
+/// `rails.zig`'s `discover`, which calls the two halves directly -- see
+/// `readGemfileLock`'s doc for why). Contract 2 (owned-result), inherited
+/// from `versionFromLock`. `error.OutOfMemory` always propagates.
+pub fn detectVersion(
+    io: Io,
+    gpa: Allocator,
+    root: Io.Dir,
+    blocker_list: *std.ArrayListUnmanaged(blockers.Blocker),
+) Allocator.Error!Version {
+    const src = try readGemfileLock(io, gpa, root, blocker_list) orelse return .{};
+    defer gpa.free(src);
+    return versionFromLock(gpa, src, blocker_list);
+}
+
 /// Locates `name`'s LOCKED version inside a `Gemfile.lock`'s `specs:`
 /// block(s) (`GEM`/`GIT`/`PATH` remotes all use the same layout). Contract 3
 /// (caller-buffer): allocates nothing; the returned slice borrows `src`.
+///
+/// `pub` (Stage 4 Task 8b): `versionFromLock` below calls this for `rails`
+/// specifically, and `integrations.zig`'s `scan` reuses it for gem-sourced
+/// `Integration.version` (any name in `gem_rules`) -- one parser for the
+/// file, not two that would diverge on the first edit.
 ///
 /// Bundler's lockfile format indents a spec's own gem line by exactly 4
 /// spaces (`    rails (7.1.3)`), and each of THAT gem's dependencies one
@@ -521,7 +561,7 @@ pub fn detectVersion(
 ///     on a perfectly ordinary lock file -- see this file's tests for a
 ///     fixture built to make that wrong answer visibly different from the
 ///     right one, not coincidentally identical to it.
-fn lockedVersion(src: []const u8, name: []const u8) ?[]const u8 {
+pub fn lockedVersion(src: []const u8, name: []const u8) ?[]const u8 {
     var lines = std.mem.splitScalar(u8, src, '\n');
     while (lines.next()) |raw| {
         const line = std.mem.trimEnd(u8, raw, "\r");

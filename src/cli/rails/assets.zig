@@ -341,14 +341,14 @@ fn resolveViaManifest(
         var buf: [96]u8 = undefined;
         const detail = std.fmt.bufPrint(&buf, "asset is not listed in the compiled {s} manifest", .{@tagName(pipeline)}) catch
             "asset is not listed in the compiled manifest";
-        try blockers.append(gpa, blocker_list, "RAILS_ASSET_DIGEST_UNAVAILABLE", e_path, detail, false, .warn, null);
+        try blockers.append(gpa, blocker_list, "RAILS_ASSET_DIGEST_UNAVAILABLE", e_path, detail, false, .warn, null, null);
         return .{ .source = source, .public_url = null, .pipeline = pipeline, .deterministic = false };
     }
     var buf: [96]u8 = undefined;
     const detail = manifest_unusable_reason orelse
         (std.fmt.bufPrint(&buf, "no compiled {s} manifest was found under public/assets/", .{@tagName(pipeline)}) catch
             "no compiled manifest was found under public/assets/");
-    try blockers.append(gpa, blocker_list, "RAILS_ASSET_MANIFEST_MISSING", e_path, detail, false, .warn, null);
+    try blockers.append(gpa, blocker_list, "RAILS_ASSET_MANIFEST_MISSING", e_path, detail, false, .warn, null, null);
     return .{ .source = source, .public_url = null, .pipeline = pipeline, .deterministic = false };
 }
 
@@ -391,7 +391,7 @@ fn buildAsset(
     std.debug.assert(std.mem.startsWith(u8, e.path, "app/assets/"));
 
     if (detection.pipeline == null) {
-        try blockers.append(gpa, blocker_list, "RAILS_ASSET_PIPELINE_UNKNOWN", e.path, detection.unknown_reason.?, false, .warn, null);
+        try blockers.append(gpa, blocker_list, "RAILS_ASSET_PIPELINE_UNKNOWN", e.path, detection.unknown_reason.?, false, .warn, null, null);
         return .{ .source = source, .public_url = null, .pipeline = null, .deterministic = false };
     }
 

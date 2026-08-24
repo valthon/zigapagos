@@ -19,6 +19,9 @@ pub const routes = @import("routes.zig");
 pub const controllers = @import("controllers.zig");
 pub const sidecar_client = @import("sidecar_client.zig");
 pub const template_scan = @import("template_scan.zig");
+pub const manifest = @import("manifest.zig");
+pub const schema_gen = @import("schema_gen.zig");
+pub const schema_validate = @import("schema_validate.zig");
 
 // Pulls the suites of every sibling file into this module so `test-rails`
 // runs them all. Without this the standalone binary never sees them --
@@ -39,6 +42,9 @@ test {
     _ = controllers;
     _ = sidecar_client;
     _ = template_scan;
+    _ = manifest;
+    _ = schema_gen;
+    _ = schema_validate;
 }
 
 /// Discovery's result: the rendered report plus how many of its blockers mean
@@ -107,9 +113,12 @@ pub const Discovery = struct {
     /// `classifications` already relied on before `report.build` consumed
     /// and discarded it. See `RouteTemplates`'s doc for the duping choice.
     route_templates: []RouteTemplates,
-    /// The app-wide, deduplicated template catalog -- manifest's top-level
-    /// `templates[]` (spec, "The manifest"), one entry per DISTINCT path
-    /// across every route's scan, sorted by path (determinism).
+    /// The ROUTE-REACHABLE, deduplicated template catalog -- manifest's
+    /// top-level `templates[]` (spec, "The manifest"), one entry per
+    /// DISTINCT path across every route's scan, sorted by path
+    /// (determinism). Not app-wide (F4a, phase-2-review.md): a template no
+    /// recovered route's scan ever reaches (e.g. a mailer view) is simply
+    /// absent from this list, with no blocker naming the gap.
     templates: []TemplateNode,
     /// Stage 4 Task 6: the manifest's top-level `assets[]` (spec, "The
     /// manifest") -- one `assets.Asset` per `Kind.asset` inventory entry,
@@ -141,6 +150,39 @@ pub const Discovery = struct {
     /// `route_templates` above, same alignment `classifications` already
     /// relied on before `report.build` consumed it.
     routes: []routes.Route,
+    /// Stage 4 Task 8: the manifest's `routes[].classification`/
+    /// `.candidates` (spec, "The manifest") -- index-aligned with `routes`
+    /// above, same alignment `route_templates` already relies on. This is
+    /// the SAME reachability gap `route_templates`/`templates`/`assets`/
+    /// `version`/`routes` above each closed in their own fix round:
+    /// `classifyRoutes`'s result (`classify_result.verdicts`) was computed,
+    /// handed to `report.build`, and then freed -- `classify.Verdict` owns
+    /// nothing itself (classify.zig's own module doc: every `reason`/
+    /// `Candidate` field is a rodata string literal), so only the SLICE
+    /// needed to start escaping, not a deep free; see `freeDiscovery`.
+    classifications: []classify.Verdict,
+    /// Stage 4 Task 8: the manifest's top-level `integrations[]` (spec, "The
+    /// manifest"). Same reachability gap as `classifications` above --
+    /// `integrations.scan`'s result was computed for `report.build` and then
+    /// freed with no seam out of `discover` at all. Contract 2: `.evidence`
+    /// and (when non-null, since Stage 4 Task 8b) `.version` are fresh `gpa`
+    /// allocations per `integrations.freeIntegrations`'s own doc (`.name` is
+    /// always a static literal from the fixed gem/package lookup table and
+    /// is never freed).
+    integrations: []integrations.Integration,
+    /// Stage 4 Task 8: the manifest's top-level `blockers[]` (spec, "The
+    /// manifest") -- every blocker this run appended, in `blocker_list`'s
+    /// own append order (NOT sorted; `manifest.zig`'s own emitter is
+    /// responsible for determinism at the point it renders bytes, exactly
+    /// like `report.build` already sorts its own copy rather than trusting
+    /// discovery order -- see that file's `blockerLessThan`/`routeLessThan`
+    /// docs). This used to be summarized only as `integrity_blocker_count`/
+    /// `severity_error_count`/`severity_warn_count` above, with the actual
+    /// `Blocker` values (`code`, `path`, `detail`, `route_id`) never
+    /// escaping `discover` at all -- the same reachability gap
+    /// `classifications`/`integrations` close. Contract 2: owned via
+    /// `blocker_list.toOwnedSlice`, released by `blockers.free`.
+    blockers: []blockers.Blocker,
 };
 
 /// Contract 2 counterpart to `Discovery`: releases `report` plus the Task 4
@@ -156,6 +198,11 @@ pub fn freeDiscovery(gpa: Allocator, d: Discovery) void {
     assets.freeAssets(gpa, d.assets);
     detect.freeVersion(gpa, d.version);
     routes.freeRoutes(gpa, d.routes);
+    // Stage 4 Task 8: releases the three reachability-gap fields added
+    // alongside `Discovery.classifications`'s own doc above.
+    gpa.free(d.classifications);
+    integrations.freeIntegrations(gpa, d.integrations);
+    blockers.free(gpa, d.blockers);
 }
 
 /// `discovery.ruby`, combined across BOTH sidecar ops. Each op
@@ -258,7 +305,11 @@ fn combineRuby(
             "routes op reported ruby {s}, controllers op reported ruby {s}",
             .{ route_ruby.version.?, controllers_ruby.version.? },
         ) catch "routes/controllers ops reported different ruby versions";
-        try blockers.append(gpa, blocker_list, "RAILS_RUBY_VERSION_MISMATCH", "sidecar/rails/analyze.rb", detail, false, .warn, null);
+        // Takes BOTH sides of the rebase: main's app-relative path (an empty
+        // string is not a path and sorted ahead of every real one) and this
+        // task's `line`, which is null because a disagreement between two
+        // sidecar processes has no source line to point at.
+        try blockers.append(gpa, blocker_list, "RAILS_RUBY_VERSION_MISMATCH", "sidecar/rails/analyze.rb", detail, false, .warn, null, null);
     }
 
     return info;
@@ -511,7 +562,15 @@ pub fn discover(
     // `error.OutOfMemory`, so `catch unreachable` was an assertion over a
     // real failure mode, not a proof. `freeList` operates on the
     // `ArrayListUnmanaged` directly and never allocates.
-    defer blockers.freeList(gpa, &blocker_list);
+    //
+    // Stage 4 Task 8: `defer` widened to `errdefer` -- `Discovery.blockers`
+    // now escapes via `blocker_list.toOwnedSlice` at the very end of this
+    // function (the last read of `blocker_list.items`, see that call site's
+    // own comment), so the success path must free nothing here. This stays
+    // armed for every fallible step below until that `toOwnedSlice` call:
+    // on any earlier error, `blocker_list` still owns its backing storage
+    // and `freeList` is exactly the right release for it.
+    errdefer blockers.freeList(gpa, &blocker_list);
 
     const wr = try inventory.walk(io, gpa, root);
     defer inventory.freeWalkResult(gpa, wr);
@@ -535,11 +594,27 @@ pub fn discover(
     // `discover` returns, because the blocker it can append belongs in
     // THIS run's `blocker_list` -- which is created and freed inside this
     // function, so there is no later seam for it to land in.
-    const version = try detect.detectVersion(io, gpa, root, &blocker_list);
+    //
+    // Stage 4 Task 8b: reads `Gemfile.lock` ONCE via `readGemfileLock`
+    // rather than calling `detect.detectVersion` (which would read it
+    // again internally) -- `gemfile_lock`'s content is also handed to
+    // `integrations.scan` below for gem-sourced `Integration.version`, and
+    // a second read would append `RAILS_GEMFILE_LOCK_UNAVAILABLE` twice on
+    // a missing/unreadable lock file. See `readGemfileLock`'s own doc.
+    const gemfile_lock = try detect.readGemfileLock(io, gpa, root, &blocker_list);
+    defer if (gemfile_lock) |gl| gpa.free(gl);
+
+    const version = if (gemfile_lock) |gl|
+        try detect.versionFromLock(gpa, gl, &blocker_list)
+    else
+        detect.Version{};
     errdefer detect.freeVersion(gpa, version);
 
-    const ints = try integrations.scan(gpa, gemfile, pkg, &blocker_list);
-    defer integrations.freeIntegrations(gpa, ints);
+    const ints = try integrations.scan(gpa, gemfile, pkg, gemfile_lock, &blocker_list);
+    // Stage 4 Task 8: `defer` widened to `errdefer` -- `Discovery.
+    // integrations` now escapes (see that field's own doc), released by
+    // `freeDiscovery` on the success path instead of here.
+    errdefer integrations.freeIntegrations(gpa, ints);
 
     // Stage 4 Task 6: the asset inventory, threading the SAME blocker_list
     // -- every case where a public URL can't be derived statically (unknown
@@ -608,7 +683,11 @@ pub fn discover(
         &blocker_list,
     );
     const classifications = classify_result.verdicts;
-    defer gpa.free(classifications);
+    // Stage 4 Task 8: `defer` widened to `errdefer` -- `Discovery.
+    // classifications` now escapes alongside `route_templates`/`templates`
+    // (see that field's own doc), released by `freeDiscovery` on the
+    // success path instead of here.
+    errdefer gpa.free(classifications);
     errdefer freeRouteTemplates(gpa, classify_result.route_templates);
     errdefer freeTemplateNodes(gpa, classify_result.templates);
 
@@ -642,6 +721,19 @@ pub fn discover(
         .route_mode = route_result.mode,
         .classifications = classifications,
     });
+    errdefer gpa.free(body);
+
+    // Stage 4 Task 8: the LAST read of `blocker_list.items` in this
+    // function (the counts loop above and `report.build` just above both
+    // already finished with it) -- `toOwnedSlice` invalidates the
+    // `ArrayListUnmanaged`, handing this function's own `blocker_list`
+    // storage over to `Discovery.blockers` (see that field's own doc). Every
+    // `errdefer` above that still names `blocker_list`/`&blocker_list`
+    // remains correct up to this point (the list still owns its storage
+    // until this call succeeds); nothing after this line can fail, so there
+    // is no later use of `blocker_list` this ownership transfer could race.
+    const blockers_owned = try blocker_list.toOwnedSlice(gpa);
+
     return .{
         .report = body,
         .integrity_blocker_count = integrity_blocker_count,
@@ -656,6 +748,9 @@ pub fn discover(
         .assets = asset_list,
         .version = version,
         .routes = duped_routes,
+        .classifications = classifications,
+        .integrations = ints,
+        .blockers = blockers_owned,
     };
 }
 
@@ -1050,7 +1145,16 @@ fn freeTransitiveScan(gpa: Allocator, r: *TransitiveScan) void {
 /// ASCII letters; `path` is a source-authored URI pattern) with generous
 /// headroom -- see `formatRouteId`'s doc for what happens on the
 /// not-expected-in-practice case that it isn't.
-const route_id_buf_len = 512;
+///
+/// `pub` (Stage 4 Task 8): `manifest.zig` builds `routes[].id` by calling
+/// `formatRouteId` itself rather than reimplementing the `verb`+' '+`path`
+/// concatenation a second time -- two construction sites for one id is
+/// exactly the drift this field's sibling doc warns about (a blocker's
+/// `route_id` and a route's own `id` disagreeing on the first edit to
+/// either). The buffer type has to travel with the function: a caller
+/// cannot declare `var buf: [route_id_buf_len]u8` to pass by pointer
+/// without the constant also being visible.
+pub const route_id_buf_len = 512;
 
 /// The manifest's `routes[].id` shape (spec, "The manifest": `"id": "GET
 /// /articles/:id"`) -- `route.verb`, a single space, then `route.path`.
@@ -1081,7 +1185,7 @@ const route_id_buf_len = 512;
 /// see `Ruling 9`/finding 9 in progress.md and phase-1-review.md for the
 /// companion case (a blocker's `route_id` naming only ONE of several routes
 /// a shared, unreadable template affects).
-fn formatRouteId(buf: *[route_id_buf_len]u8, r: routes.Route) []const u8 {
+pub fn formatRouteId(buf: *[route_id_buf_len]u8, r: routes.Route) []const u8 {
     return std.fmt.bufPrint(buf, "{s} {s}", .{ r.verb, r.path }) catch r.path;
 }
 
@@ -1145,7 +1249,7 @@ fn transitiveScan(
                     // that depend on it classify as unresolved (see below),
                     // but nothing else this run found is called into
                     // question. See `Blocker.severity`'s doc.
-                    try blockers.append(gpa, blocker_list, "RAILS_TEMPLATE_UNREADABLE", item.entry.path, @errorName(err), false, .warn, route_id);
+                    try blockers.append(gpa, blocker_list, "RAILS_TEMPLATE_UNREADABLE", item.entry.path, @errorName(err), false, .warn, route_id, null);
                     try reported_unreadable_templates.append(gpa, item.entry.path);
                 }
                 if (std.mem.eql(u8, item.entry.path, view_entry.path)) {
@@ -1219,12 +1323,30 @@ fn transitiveScan(
                     false,
                     .warn,
                     route_id,
+                    null,
                 );
             } else {
                 const containing_dir = templateDirOf(item.entry.path);
                 for (targets) |t| {
                     if (!t.resolved) {
                         if (result.unresolved_render == null) result.unresolved_render = .dynamic;
+                        // F2 (phase-2-review.md): without this blocker,
+                        // `templates[].renders` for THIS node reads as
+                        // "renders nothing" -- indistinguishable from a
+                        // template that genuinely has no more render calls
+                        // -- when the true story is "one target was dropped
+                        // here, unread". `.warn`: this scan correctly
+                        // identified one unresolvable render target, the
+                        // same non-integrity reasoning
+                        // RAILS_TEMPLATE_RENDER_DEPTH_EXCEEDED already uses
+                        // just above.
+                        var buf: [256]u8 = undefined;
+                        const detail = std.fmt.bufPrint(
+                            &buf,
+                            "renders a dynamic partial target that cannot be resolved statically: {s}",
+                            .{t.text},
+                        ) catch "renders a dynamic partial target that cannot be resolved statically";
+                        try blockers.append(gpa, blocker_list, "RAILS_TEMPLATE_RENDER_UNRESOLVED", item.entry.path, detail, false, .warn, route_id, null);
                         continue;
                     }
                     if (resolvePartialTarget(entries, containing_dir, t.text)) |partial_entry| {
@@ -1239,8 +1361,18 @@ fn transitiveScan(
                             try visited.append(gpa, partial_entry.path);
                             try queue.append(gpa, .{ .entry = partial_entry, .depth = item.depth + 1 });
                         }
-                    } else if (result.unresolved_render == null) {
-                        result.unresolved_render = .unmatched;
+                    } else {
+                        if (result.unresolved_render == null) result.unresolved_render = .unmatched;
+                        // Same F2 reasoning as the dynamic branch above --
+                        // a literal target naming no known template is
+                        // still a dropped edge, not "renders nothing".
+                        var buf: [256]u8 = undefined;
+                        const detail = std.fmt.bufPrint(
+                            &buf,
+                            "renders a partial target that does not match any known template: {s}",
+                            .{t.text},
+                        ) catch "renders a partial target that does not match any known template";
+                        try blockers.append(gpa, blocker_list, "RAILS_TEMPLATE_RENDER_UNRESOLVED", item.entry.path, detail, false, .warn, route_id, null);
                     }
                 }
             }
@@ -1273,7 +1405,7 @@ fn actionFor(actions: []const controllers.ActionInfo, r: routes.Route) ?controll
     return controllers.find(actions, c, a);
 }
 
-/// Stage 4 Task 4: one template file in the app-wide, deduplicated catalog
+/// Stage 4 Task 4: one template file in the route-reachable, deduplicated catalog
 /// -- manifest's top-level `templates[]` (spec, "The manifest"). `renders`
 /// names every OTHER template this one resolves a `render` call to, by the
 /// ACTUAL RESOLVED path, never the literal argument -- e.g. `render "nav"`
@@ -1526,7 +1658,7 @@ fn mergeGlobalTemplates(
 /// Task 4 template graph the same scan already produces alongside them
 /// (`route_templates`, index-aligned with `verdicts`/`route_list` exactly
 /// like `report.build`'s `Input.classifications` already relies on; and
-/// `templates`, the app-wide deduplicated catalog sorted by path).
+/// `templates`, the route-reachable deduplicated catalog sorted by path).
 ///
 /// Contract 2 (owned-result): release with `freeClassifyResult`.
 pub const ClassifyResult = struct {
@@ -1596,7 +1728,7 @@ fn classifyRoutes(
 
     // Task 4: `route_templates` is index-aligned with `out`/`route_list`,
     // same alignment contract `out` itself already carries; `template_nodes`
-    // is the app-wide dedup accumulator `mergeGlobalTemplates` builds into.
+    // is the route-reachable dedup accumulator `mergeGlobalTemplates` builds into.
     // Both own real `gpa` strings (unlike `out`'s elements), so both need
     // their own partial-failure cleanup -- an `errdefer` freeing whatever
     // had already been appended, mirroring `freeRouteTemplates`/
@@ -2544,7 +2676,7 @@ test "Task 4: renders[] names the RESOLVED partial path, not the literal render 
     try std.testing.expectEqualStrings("app/views/layouts/_nav.html.erb", result.route_templates[0].templates[0]);
     try std.testing.expectEqualStrings("app/views/posts/index.html.erb", result.route_templates[0].templates[1]);
 
-    // templates[]: the app-wide catalog, sorted by path. Three entries: the
+    // templates[]: the route-reachable catalog, sorted by path. Three entries: the
     // partial, the layout, the view.
     try std.testing.expectEqual(@as(usize, 3), result.templates.len);
 
@@ -2877,7 +3009,7 @@ test "mergeGlobalTemplates: an OOM at any point while duping stimulus_controller
     }
 }
 
-test "discover: the fixture's blockers break down 0 error / 4 warn -- the fixture-level severity count the brief asks for" {
+test "discover: the fixture's blockers break down 0 error / 5 warn -- the fixture-level severity count the brief asks for" {
     // Fix round 1 (task-1-fixes.md item 2): the brief asks for "the count
     // of each [severity] on the fixture" to be discriminated. `report.
     // build` does not render `severity` at all -- that's deliberately
@@ -2915,17 +3047,19 @@ test "discover: the fixture's blockers break down 0 error / 4 warn -- the fixtur
 
     // The healthy-toolchain run: 0 error (nothing about the app tree,
     // Gemfile, package.json, or discovery itself is unreadable/missing/
-    // failed) and exactly 4 warn -- RAILS_ROUTE_CONDITIONAL (the `if
+    // failed) and exactly 5 warn -- RAILS_ROUTE_CONDITIONAL (the `if
     // Rails.env...` guarded route), RAILS_ROUTE_ENGINE_MOUNT (the Sidekiq
-    // mount), RAILS_TEMPLATE_ENGINE_UNSUPPORTED (the one Haml view), and
+    // mount), RAILS_TEMPLATE_ENGINE_UNSUPPORTED (the one Haml view),
     // (Stage 4 Task 6) RAILS_ASSET_DIGEST_UNAVAILABLE for
-    // app/assets/stylesheets/application.css.erb -- each a correctly-
-    // detected, scoped finding, none of them evidence the rest of this run
-    // is untrustworthy. Confirmed by running this test with
-    // `std.debug.print`ed counts and the rendered Blockers section before
-    // pinning these exact numbers.
+    // app/assets/stylesheets/application.css.erb, and (phase-2-fixes.md
+    // item 2 / F2) RAILS_TEMPLATE_RENDER_UNRESOLVED for `featured.html.
+    // erb`'s `render @post` (a dynamic target `transitiveScan` cannot
+    // resolve statically) -- each a correctly-detected, scoped finding,
+    // none of them evidence the rest of this run is untrustworthy.
+    // Confirmed by running this test with `std.debug.print`ed counts and
+    // the rendered Blockers section before pinning these exact numbers.
     try std.testing.expectEqual(@as(usize, 0), d.severity_error_count);
-    try std.testing.expectEqual(@as(usize, 4), d.severity_warn_count);
+    try std.testing.expectEqual(@as(usize, 5), d.severity_warn_count);
     // Sanity: every blocker on a healthy run is accounted for by one axis
     // or the other (no third severity value exists).
     try std.testing.expectEqual(@as(usize, 0), d.integrity_blocker_count);
@@ -3093,17 +3227,25 @@ test "discover: reachability -- source.version, per-route source{file,line}/cert
     // union `TransitiveScan.markers` merges across a view, its layout, and
     // every partial either renders. `app/views/posts/dashboard.html.erb`
     // (routed at GET /posts/dashboard) is the one file in the fixture with
-    // its own `data-controller="reveal"`; its resolved layout,
-    // `app/views/layouts/posts.html.erb`, has none of its own. A producer
-    // that (incorrectly) surfaced the per-ROUTE union instead of the
-    // per-node capture would show "reveal" on the layout too.
+    // its own `data-controller="reveal modal"` -- Stage 4 Task 12's fixture
+    // addition (multi-controller attribute) turned this from a single name
+    // into two, discriminating the space-separated split end to end on the
+    // SAME fixture `discover` actually runs on (`template_scan.zig`'s own
+    // unit tests already covered the split in isolation; this is the
+    // reachability half, the same distinction `rails.zig`'s "reachability"
+    // test elsewhere in this file draws for `source.version`/`routes[]`).
+    // Its resolved layout, `app/views/layouts/posts.html.erb`, has none of
+    // its own. A producer that (incorrectly) surfaced the per-ROUTE union
+    // instead of the per-node capture would show both names on the layout
+    // too.
     var found_dashboard = false;
     var found_posts_layout = false;
     for (d.templates) |n| {
         if (std.mem.eql(u8, n.path, "app/views/posts/dashboard.html.erb")) {
             found_dashboard = true;
-            try std.testing.expectEqual(@as(usize, 1), n.stimulus_controllers.len);
+            try std.testing.expectEqual(@as(usize, 2), n.stimulus_controllers.len);
             try std.testing.expectEqualStrings("reveal", n.stimulus_controllers[0]);
+            try std.testing.expectEqualStrings("modal", n.stimulus_controllers[1]);
             try std.testing.expectEqual(@as(usize, 0), n.component_roots.len);
         }
         if (std.mem.eql(u8, n.path, "app/views/layouts/posts.html.erb")) {

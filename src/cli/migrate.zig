@@ -4,6 +4,7 @@ const fatal = @import("../fatal.zig");
 const detect = @import("migrate_detect.zig");
 const content_convert = @import("migrate_content.zig");
 const rails = @import("rails/rails.zig");
+const options = @import("options");
 const Allocator = std.mem.Allocator;
 
 const Role = detect.Role;
@@ -126,6 +127,11 @@ const usage =
     \\                         with --scaffold and --convert-content.
     \\  --json                 With --doctor: emit JSON instead of the human
     \\                         Markdown checklist (pipeable to jq etc.).
+    \\  --strict               Rails only: exit non-zero if the manifest records
+    \\                         ANY blocker, regardless of severity. Report and
+    \\                         manifest are unaffected -- only the exit code
+    \\                         changes. For an agent loop or a CI gate that
+    \\                         wants a clean discovery or none.
     \\  -h, --help             Show this help
     \\
 ;
@@ -544,6 +550,166 @@ fn scanOther(io: Io, gpa: Allocator, root: Io.Dir, source: Source) ScanResult {
     };
 }
 
+/// Rails' exit-code contract for `migrate()`'s bool return (`main.zig`:
+/// `@intFromBool(any_error)`). An integrity blocker means the report/
+/// manifest's own counts can't be trusted -- that is always a hard failure,
+/// `--strict` or not. `--strict` (Stage 4 Task 11, design spec: "`--strict`
+/// exits non-zero when any blocker exists") widens the failure set to ANY
+/// blocker, deliberately severity-blind (`blockers.Blocker.severity`'s own
+/// doc: "do not wire this field into an exit code") -- this reads only the
+/// plain count, never `severity`/`integrity` per-entry.
+///
+/// A pure function on purpose: the discriminating property (task-11-brief.md)
+/// is that `--strict` changes ONLY the exit code, never the report or
+/// manifest bytes written above it -- keeping the decision in one function
+/// with no I/O of its own is what makes that easy to verify without
+/// spinning up a fixture.
+fn railsExitError(strict: bool, integrity_blocker_count: usize, blocker_count: usize) bool {
+    return integrity_blocker_count > 0 or (strict and blocker_count > 0);
+}
+
+test "railsExitError: --strict fails on any blocker, not just integrity ones" {
+    // Non-strict: a purely descriptive (non-integrity) blocker never fails
+    // the run -- this is the "warn" side of severity, and severity does not
+    // gate the exit code at all (see the function's own doc).
+    try std.testing.expect(!railsExitError(false, 0, 0));
+    try std.testing.expect(!railsExitError(false, 0, 3));
+    // An integrity blocker always fails, strict or not -- unaffected by
+    // this task, pinned here so a future refactor can't silently drop it.
+    try std.testing.expect(railsExitError(false, 1, 1));
+    try std.testing.expect(railsExitError(true, 1, 1));
+    // Strict: a clean discovery (no blockers at all) still exits 0 --
+    // `--strict` gates on blocker PRESENCE, not on being asked for at all.
+    try std.testing.expect(!railsExitError(true, 0, 0));
+    // The discriminating case: strict fails on a blocker set that is
+    // ENTIRELY non-integrity (e.g. warn-severity findings only) -- an
+    // implementation that read `integrity_blocker_count` instead of the
+    // plain `blocker_count` would wrongly pass this.
+    try std.testing.expect(railsExitError(true, 0, 3));
+}
+
+/// Slots `railsRootEvidence` needs: one per positive-evidence field
+/// `detect.Evidence` declares (`has_application_rb`, `has_routes_rb`,
+/// `has_app_views`, `gemfile_declares_rails`) -- `has_jekyll_config` and the
+/// `*_unreadable` companions are never rendered here (see that function's
+/// own doc), so this is not `@typeInfo(Evidence).@"struct".fields.len`.
+const max_root_evidence = 4;
+
+/// Renders `evidence`'s positive probes as `manifest.SourceInfo.
+/// root_evidence` entries (design spec, "The manifest": `["Gemfile",
+/// "config/application.rb", "app/views"]`), in `rails.detect.Evidence`'s own
+/// field declaration order -- a fixed, deterministic order, not a choice
+/// made here. Only POSITIVE evidence is rendered: an `*_unreadable` probe is
+/// a fact this run could not confirm, already surfaced as its own blocker
+/// (`RAILS_GEMFILE_UNREADABLE` etc. -- see `Evidence`'s own doc on the
+/// `unreadable` vs. genuinely-absent distinction), not evidence FOR Rails.
+/// `has_jekyll_config` is the veto `verdict` already applies before this
+/// function is ever reached (a Jekyll-shaped tree never gets here) and
+/// carries no meaning as positive Rails evidence, so it is not rendered.
+///
+/// Contract 3 (caller-buffer): allocates nothing; `buf` must hold at least
+/// `max_root_evidence` slots, and the returned slice borrows it.
+fn railsRootEvidence(evidence: rails.detect.Evidence, buf: *[max_root_evidence][]const u8) []const []const u8 {
+    var n: usize = 0;
+    if (evidence.has_application_rb) {
+        buf[n] = "config/application.rb";
+        n += 1;
+    }
+    if (evidence.has_routes_rb) {
+        buf[n] = "config/routes.rb";
+        n += 1;
+    }
+    if (evidence.has_app_views) {
+        buf[n] = "app/views";
+        n += 1;
+    }
+    if (evidence.gemfile_declares_rails) {
+        buf[n] = "Gemfile";
+        n += 1;
+    }
+    return buf[0..n];
+}
+
+test "railsRootEvidence: only positive evidence, in Evidence's own field order" {
+    var buf: [max_root_evidence][]const u8 = undefined;
+    const got = railsRootEvidence(.{
+        .has_routes_rb = true,
+        .has_app_views = true,
+        .gemfile_declares_rails = true,
+        // `has_application_rb` deliberately left false -- branch B evidence
+        // (routes.rb + app/views + a rails gem) without branch A's marker,
+        // the same shape `sourceMarker`'s doc calls "the OTHER conclusive
+        // detection branch".
+    }, &buf);
+    try std.testing.expectEqual(@as(usize, 3), got.len);
+    try std.testing.expectEqualStrings("config/routes.rb", got[0]);
+    try std.testing.expectEqualStrings("app/views", got[1]);
+    try std.testing.expectEqualStrings("Gemfile", got[2]);
+}
+
+test "railsRootEvidence: an unreadable probe is not rendered as evidence" {
+    // `gemfile_unreadable` is a DIFFERENT fact from `gemfile_declares_rails`
+    // (Evidence's own doc: "never when it came back .unreadable") -- this
+    // pins that a probe this run could not confirm never masquerades as
+    // supporting evidence just because SOME `*_unreadable` companion is set.
+    var buf: [max_root_evidence][]const u8 = undefined;
+    const got = railsRootEvidence(.{
+        .has_application_rb = true,
+        .gemfile_unreadable = true,
+    }, &buf);
+    try std.testing.expectEqual(@as(usize, 1), got.len);
+    try std.testing.expectEqualStrings("config/application.rb", got[0]);
+}
+
+/// Derives the manifest's sibling path from the report's own `out_path`
+/// (design spec, "The manifest": "written beside the report"). Strips
+/// `out_path`'s own extension via `std.fs.path.stem` (default `MIGRATION.md`
+/// -> `MIGRATION.manifest.json`) rather than a fixed sibling name: `tests/
+/// migrate/rails.sh` writes many differently-`-o`'d reports into the SAME
+/// directory across one run (`one.md`, `degraded.md`, `empty-routes.md`,
+/// ...), and a fixed name would make each report's manifest overwrite the
+/// last one written -- exactly the silent-clobber failure mode `--target`'s
+/// own doc (`DIR produces both`) is not exempt from just because `--target`
+/// itself is not yet supported for Rails.
+///
+/// Contract 1 (self-freeing): the one allocation that escapes is the
+/// returned path; the intermediate `name` formatting is freed before
+/// returning.
+fn railsManifestPath(gpa: Allocator, out_path: []const u8) []const u8 {
+    const dir = std.fs.path.dirname(out_path);
+    const stem = std.fs.path.stem(std.fs.path.basename(out_path));
+    const name = std.fmt.allocPrint(gpa, "{s}.manifest.json", .{stem}) catch fatal.oom();
+    defer gpa.free(name);
+    if (dir) |d| return std.fs.path.join(gpa, &.{ d, name }) catch fatal.oom();
+    return gpa.dupe(u8, name) catch fatal.oom();
+}
+
+test "railsManifestPath: beside the report, extension replaced, directory preserved" {
+    const gpa = std.testing.allocator;
+    const default_path = railsManifestPath(gpa, "MIGRATION.md");
+    defer gpa.free(default_path);
+    try std.testing.expectEqualStrings("MIGRATION.manifest.json", default_path);
+
+    const nested_path = railsManifestPath(gpa, "/tmp/work/one.md");
+    defer gpa.free(nested_path);
+    try std.testing.expectEqualStrings("/tmp/work/one.manifest.json", nested_path);
+}
+
+test "railsManifestPath: two different -o STEMS in the same directory never collide" {
+    // F7 (phase-2-review.md): the collision domain is the STEM
+    // (`std.fs.path.stem` strips the extension before this function ever
+    // sees it), not the basename -- `-o a.md` and `-o a.txt` in the SAME
+    // directory both produce `a.manifest.json` and DO collide. This test
+    // (and its name) previously claimed "basenames", which is broader than
+    // what the function actually guarantees; narrowed to what it proves.
+    const gpa = std.testing.allocator;
+    const a = railsManifestPath(gpa, "/tmp/work/one.md");
+    defer gpa.free(a);
+    const b = railsManifestPath(gpa, "/tmp/work/degraded.md");
+    defer gpa.free(b);
+    try std.testing.expect(!std.mem.eql(u8, a, b));
+}
+
 pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *const std.process.Environ.Map) bool {
     var project_dir: ?[]const u8 = null;
     var requested_source: ?Source = null;
@@ -556,6 +722,7 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
     var output_set = false;
     var doctor_path: ?[]const u8 = null;
     var json: bool = false;
+    var strict: bool = false;
 
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
@@ -597,6 +764,8 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
             doctor_path = args[i];
         } else if (std.mem.eql(u8, a, "--json")) {
             json = true;
+        } else if (std.mem.eql(u8, a, "--strict")) {
+            strict = true;
         } else if (a.len > 0 and a[0] != '-') {
             project_dir = a;
         } else {
@@ -634,6 +803,19 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
     );
     if (content_dir != null and source.contentSource() == null) fatal.usageError(
         "error: --convert-content supports Hugo, Jekyll, Eleventy, and Hexo Markdown sources; got {s}\n\n" ++ usage,
+        .{source.name()},
+    );
+    // `--strict` reads `rails.Discovery.blockers`, a concept only the Rails
+    // adapter produces -- every other source always returns success (see
+    // the bottom of the non-Rails path below, an unconditional `return
+    // false`). Rejecting rather than silently accepting a no-op flag
+    // matches this function's existing cross-flag checks (--scaffold,
+    // --convert-content above; --target/--copy-assets inside the Rails
+    // block below) -- "report, never omit silently" applies to a flag with
+    // no defined effect just as much as to a construct discovery can't
+    // resolve.
+    if (strict and source != .rails) fatal.usageError(
+        "error: --strict only applies to Rails sources; {s} has no blocker concept yet\n\n" ++ usage,
         .{source.name()},
     );
     if (source == .rails) {
@@ -675,10 +857,17 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
         // (`RAILS_GEMFILE_UNREADABLE`), which fails the run via a non-zero
         // exit anyway -- rejecting it here instead would hide *why* with a
         // usage error the operator can't act on.
+        // Collected once, unconditionally (not just under `requested_source
+        // == .rails` below), because Stage 4 Task 8's manifest needs it too
+        // (`manifest.SourceInfo.root_evidence`) -- see `railsRootEvidence`'s
+        // doc for why the CALLER supplies this rather than `manifest.build`
+        // re-probing the filesystem itself.
+        const evidence = rails.detect.collect(io, gpa, root) catch |err| switch (err) {
+            error.OutOfMemory => fatal.oom(),
+        };
+
         if (requested_source == .rails) {
-            const v = rails.detect.verdict(rails.detect.collect(io, gpa, root) catch |err| switch (err) {
-                error.OutOfMemory => fatal.oom(),
-            });
+            const v = rails.detect.verdict(evidence);
             if (v == .not_rails) fatal.usageError(
                 "error: --from rails but {s} is not a Rails app (no config/application.rb, or no routes.rb + app/views + a rails gem)\n\n" ++ usage,
                 .{dir_path},
@@ -699,6 +888,33 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
         defer rf.close(io);
         var rfw = rf.writer(io, &.{});
         rfw.interface.writeAll(discovery.report) catch |err| fatal.file(out_path, err);
+
+        // The manifest: "the deliverable; MIGRATION.md is a rendering of
+        // it" (design spec, "The manifest"), "written beside the report".
+        // `createFile(..., .{})` truncates-or-creates, exactly like the
+        // report write two lines up -- this is regenerated output, not
+        // hand-edited, so it follows the report's own overwrite-in-place
+        // behavior rather than the `--scaffold`/`--copy-assets` `.new*`
+        // rule (see `tests/migrate/rails.sh`'s "repeat run overwrites the
+        // report" case, which this manifest write is now covered by too).
+        var evidence_buf: [max_root_evidence][]const u8 = undefined;
+        const root_evidence = railsRootEvidence(evidence, &evidence_buf);
+        const manifest_bytes = rails.manifest.build(gpa, .{
+            .generator_version = options.version,
+            .root_evidence = root_evidence,
+            .discovery = &discovery,
+        }) catch |err| switch (err) {
+            error.OutOfMemory => fatal.oom(),
+        };
+        defer gpa.free(manifest_bytes);
+
+        const manifest_path = railsManifestPath(gpa, out_path);
+        defer gpa.free(manifest_path);
+        const mf = Io.Dir.cwd().createFile(io, manifest_path, .{}) catch |err|
+            fatal.file(manifest_path, err);
+        defer mf.close(io);
+        var mfw = mf.writer(io, &.{});
+        mfw.interface.writeAll(manifest_bytes) catch |err| fatal.file(manifest_path, err);
 
         // Mirrors report.zig's own three-way Routes-section conclusion
         // exactly (same predicate: `route_mode == "static_ast"` and no
@@ -745,7 +961,11 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
         // deviation, not the brief's intent, caught by the end-to-end fixture
         // run. `integrity_blocker_count > 0` is the actual signal for a
         // non-zero exit.
-        return discovery.integrity_blocker_count > 0;
+        //
+        // Stage 4 Task 11 widens this with `--strict` via `railsExitError`
+        // -- see that function's own doc for why `strict` must NOT also
+        // gate the report/manifest content above, only this return value.
+        return railsExitError(strict, discovery.integrity_blocker_count, discovery.blockers.len);
     }
 
     var res = if (source == .astro) scan(io, gpa, root) else scanOther(io, gpa, root, source);
