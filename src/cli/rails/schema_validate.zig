@@ -178,12 +178,49 @@ fn validateNode(
 }
 
 fn typeMatches(type_val: std.json.Value, instance: std.json.Value) bool {
-    const want = instanceTypeName(instance);
     return switch (type_val) {
-        .string => |t| std.mem.eql(u8, t, want),
+        .string => |t| oneTypeMatches(t, instance),
         .array => |arr| for (arr.items) |t| {
-            if (std.mem.eql(u8, t.string, want)) break true;
+            if (oneTypeMatches(t.string, instance)) break true;
         } else false,
+        else => false,
+    };
+}
+
+/// JSON Schema's two numeric types are NOT the same test, and collapsing them
+/// is how a validator silently accepts what it exists to reject:
+///
+///   `number`  -- any JSON number.
+///   `integer` -- a number with ZERO fractional part. Note 1.0 IS a valid
+///                integer per draft 2020-12; the type is about the value, not
+///                about how it was spelled.
+///
+/// Every other type name is an exact match against `instanceTypeName`.
+fn oneTypeMatches(want: []const u8, instance: std.json.Value) bool {
+    if (std.mem.eql(u8, want, "number")) return isNumber(instance);
+    if (std.mem.eql(u8, want, "integer")) return isIntegral(instance);
+    return std.mem.eql(u8, want, instanceTypeName(instance));
+}
+
+fn isNumber(v: std.json.Value) bool {
+    return switch (v) {
+        .integer, .float, .number_string => true,
+        else => false,
+    };
+}
+
+fn isIntegral(v: std.json.Value) bool {
+    return switch (v) {
+        .integer => true,
+        .float => |f| std.math.isFinite(f) and @floor(f) == f,
+        // A number too large or too precise for f64 round-tripping is preserved
+        // verbatim by std.json. Parse it as an integer: success means it had no
+        // fractional part; failure is treated as non-integral rather than
+        // guessed at.
+        .number_string => |t| blk: {
+            _ = std.fmt.parseInt(i64, t, 10) catch break :blk false;
+            break :blk true;
+        },
         else => false,
     };
 }
@@ -204,7 +241,11 @@ fn instanceTypeName(v: std.json.Value) []const u8 {
     return switch (v) {
         .null => "null",
         .bool => "boolean",
-        .integer, .float, .number_string => "integer",
+        .integer => "integer",
+        // Reported as "number", not "integer": this name appears in the error
+        // message a human reads, and calling 1.5 an integer there would be the
+        // same lie the type check used to tell.
+        .float, .number_string => "number",
         .string => "string",
         .array => "array",
         .object => "object",
@@ -279,6 +320,46 @@ pub fn main(init: std.process.Init) !void {
 
 const Io = std.Io;
 const testing = std.testing;
+
+test "numeric types: `integer` rejects a fractional number, `number` accepts both" {
+    const gpa = std.testing.allocator;
+
+    // The defect this pins: mapping every JSON number to "integer" made 1.5
+    // satisfy {"type":"integer"} AND skip every deeper check, because the type
+    // gate returns early once it believes the shape is right. Both directions
+    // are asserted -- a test that only rejected 1.5 would pass against a
+    // validator that rejects every number, and one that only accepted 3 would
+    // pass against the original defect.
+    const cases = [_]struct { schema: []const u8, doc: []const u8, valid: bool }{
+        .{ .schema = "{\"type\":\"integer\"}", .doc = "3", .valid = true },
+        .{ .schema = "{\"type\":\"integer\"}", .doc = "1.5", .valid = false },
+        // 1.0 has no fractional part, so it IS an integer per draft 2020-12 --
+        // the type is about the value, not how it was spelled.
+        .{ .schema = "{\"type\":\"integer\"}", .doc = "1.0", .valid = true },
+        .{ .schema = "{\"type\":\"number\"}", .doc = "1.5", .valid = true },
+        .{ .schema = "{\"type\":\"number\"}", .doc = "3", .valid = true },
+        .{ .schema = "{\"type\":\"number\"}", .doc = "\"3\"", .valid = false },
+        .{ .schema = "{\"type\":\"integer\"}", .doc = "\"3\"", .valid = false },
+    };
+
+    for (cases) |c| {
+        var schema = try std.json.parseFromSlice(std.json.Value, gpa, c.schema, .{});
+        defer schema.deinit();
+        var doc = try std.json.parseFromSlice(std.json.Value, gpa, c.doc, .{});
+        defer doc.deinit();
+
+        const errs = try validate(gpa, schema.value, doc.value);
+        defer {
+            for (errs) |e| gpa.free(e);
+            gpa.free(errs);
+        }
+        const ok = errs.len == 0;
+        if (ok != c.valid) {
+            std.debug.print("\n{s} against {s}: expected valid={}, got valid={}\n", .{ c.doc, c.schema, c.valid, ok });
+            return error.TestUnexpectedResult;
+        }
+    }
+}
 
 test "validate: the REAL fixture manifest validates against the generated schema (F1's actual shape, not the golden's empty assets[])" {
     // phase-2-review.md F1 / Ruling 17: `manifestGoldenBytes` pins a
