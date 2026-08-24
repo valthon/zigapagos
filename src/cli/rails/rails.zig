@@ -20,6 +20,8 @@ pub const controllers = @import("controllers.zig");
 pub const sidecar_client = @import("sidecar_client.zig");
 pub const template_scan = @import("template_scan.zig");
 pub const manifest = @import("manifest.zig");
+pub const schema_gen = @import("schema_gen.zig");
+pub const schema_validate = @import("schema_validate.zig");
 
 // Pulls the suites of every sibling file into this module so `test-rails`
 // runs them all. Without this the standalone binary never sees them --
@@ -41,6 +43,8 @@ test {
     _ = sidecar_client;
     _ = template_scan;
     _ = manifest;
+    _ = schema_gen;
+    _ = schema_validate;
 }
 
 /// Discovery's result: the rendered report plus how many of its blockers mean

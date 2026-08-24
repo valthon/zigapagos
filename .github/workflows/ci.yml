@@ -485,6 +485,21 @@ jobs:
         if: runner.os == 'Linux'
         run: zig build api-check
 
+      # Rails presentation manifest schema drift gate (Stage 4 Task 9):
+      # `rails-check` regenerates contract/rails-presentation.v1.schema.json
+      # from src/cli/rails/manifest.zig's own Zig types (build/rails_schema.zig,
+      # mirroring api-check's regenerate -> git add -> git diff --cached
+      # --exit-code pattern), and fails if the committed schema is stale.
+      # Registering a build step is not enough on its own -- this file's step
+      # list is enumerated by hand, and that exact omission is why this repo
+      # once had Ruby suites that existed but never ran (see the Rails
+      # sidecar step above). Hermetic: pure Zig comptime + git, no network.
+      # Linux-only for the same reason api-check is: OS-independent, one run
+      # is enough.
+      - name: Rails manifest schema drift (rails-check)
+        if: runner.os == 'Linux'
+        run: zig build rails-check
+
 
   # The marketing site, built and asserted on the PR path (#76).
   #
