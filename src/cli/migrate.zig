@@ -72,9 +72,12 @@ const usage =
     \\
     \\Rails is discovery-only: its MIGRATION.md is a presentation-and-route
     \\inventory (recovered routes come from a static AST walk of
-    \\config/routes.rb, never by booting the app) with no target mapping, and
-    \\--target, --scaffold, --copy-assets and --convert-content are all
-    \\rejected for it.
+    \\config/routes.rb, never by booting the app) with no target mapping.
+    \\--scaffold, --copy-assets and --convert-content are all rejected for
+    \\it -- Rails converts nothing (that's a separate migration stage).
+    \\--target IS supported, but only writes the two discovery artifacts
+    \\(MIGRATION.md and its manifest) into DIR; it assembles no project
+    \\scaffold.
     \\
     \\Source files are read-only. The command always writes a MIGRATION.md
     \\worklist. With --scaffold it also performs the deterministic React part of
@@ -91,8 +94,12 @@ const usage =
     \\                         supported for the detected source: content
     \\                         conversion, React island scaffolding, and fixed-URL
     \\                         asset copying. Writes the worklist to DIR/MIGRATION.md.
-    \\                         Mutually exclusive with --output, --scaffold,
-    \\                         --convert-content, and --copy-assets.
+    \\                         For Rails, which converts nothing, this instead
+    \\                         writes only the two discovery artifacts --
+    \\                         DIR/MIGRATION.md and DIR/MIGRATION.manifest.json --
+    \\                         with no scaffold. Mutually exclusive with
+    \\                         --output, --scaffold, --convert-content, and
+    \\                         --copy-assets.
     \\  --runtime-path PATH    With --target and React island candidates, set the
     \\                         local @z/runtime package path. Otherwise the emitted
     \\                         package.json contains a visible TODO placeholder.
@@ -669,8 +676,10 @@ test "railsRootEvidence: an unreadable probe is not rendered as evidence" {
 /// directory across one run (`one.md`, `degraded.md`, `empty-routes.md`,
 /// ...), and a fixed name would make each report's manifest overwrite the
 /// last one written -- exactly the silent-clobber failure mode `--target`'s
-/// own doc (`DIR produces both`) is not exempt from just because `--target`
-/// itself is not yet supported for Rails.
+/// own doc (`DIR produces both`) is not exempt from: Rails' `--target DIR`
+/// (Stage 5) calls this same function with `DIR/MIGRATION.md`, so this
+/// derivation is also what keeps its manifest inside DIR rather than
+/// alongside whatever the default `out_path` would have been.
 ///
 /// Contract 1 (self-freeing): the one allocation that escapes is the
 /// returned path; the intermediate `name` formatting is freed before
@@ -823,16 +832,15 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
         // that don't exist in a Rails tree) and must never see a Rails
         // project, so this stage's whole dispatch lives here, before it.
         //
-        // Target assembly and asset copying both run downstream of the
-        // scan/scanOther split this dispatch preempts, so a Rails source
-        // hitting either flag here would otherwise silently produce a
-        // MIGRATION.md and a no-op instead of an error -- reject them
-        // before doing any Rails work, per the "report, never omit
-        // silently" rule.
-        if (target_dir != null) fatal.usageError(
-            "error: --target is not yet supported for Rails sources; target assembly lands in a later stage\n\n" ++ usage,
-            .{},
-        );
+        // Asset copying runs downstream of the scan/scanOther split this
+        // dispatch preempts, so a Rails source hitting it here would
+        // otherwise silently produce a MIGRATION.md and a no-op instead of
+        // an error -- reject it before doing any Rails work, per the
+        // "report, never omit silently" rule. `--target` is NOT rejected:
+        // Rails converts nothing (that's #167), but the spec's `--target DIR`
+        // contract ("produces both in DIR") still applies to the two
+        // discovery artifacts themselves -- see the `target_dir` handling
+        // below, right before they are written.
         if (assets_dir != null) fatal.usageError(
             "error: --copy-assets is not yet supported for Rails sources; asset copying lands in a later stage\n\n" ++ usage,
             .{},
@@ -883,11 +891,47 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
         // is `rails.Discovery`'s own paired release.
         defer rails.freeDiscovery(gpa, discovery);
 
-        const rf = Io.Dir.cwd().createFile(io, out_path, .{}) catch |err|
-            fatal.file(out_path, err);
+        // `--target DIR`: unlike the eight other sources, Rails converts
+        // nothing (that's #167's job, not this one's), so there is no
+        // scaffold to assemble here -- only the two discovery artifacts
+        // Rails already produces, redirected into DIR instead of alongside
+        // `out_path`. Reuses `assembleTarget`'s own nested/non-empty guards
+        // (`pathIsInside`/`targetHasEntries`/`canonicalTargetPath`) so a
+        // Rails target is rejected on exactly the conditions every other
+        // source rejects it on, and `createDirPathOpen` so a missing DIR is
+        // created the same way `assembleTarget` creates one. Computed AFTER
+        // `discover()` runs (not before) to match every other source, where
+        // the scan also happens unconditionally ahead of `assembleTarget`'s
+        // own validation.
+        var target_out_path_buf: ?[]u8 = null;
+        defer if (target_out_path_buf) |p| gpa.free(p);
+        const effective_out_path: []const u8 = if (target_dir) |target| blk: {
+            const source_abs = Io.Dir.cwd().realPathFileAlloc(io, dir_path, gpa) catch |err| fatal.dir(dir_path, err);
+            defer gpa.free(source_abs);
+            const cwd_abs = Io.Dir.cwd().realPathFileAlloc(io, ".", gpa) catch |err| fatal.dir(".", err);
+            defer gpa.free(cwd_abs);
+            const target_abs = canonicalTargetPath(io, gpa, cwd_abs, target);
+            defer gpa.free(target_abs);
+            if (pathIsInside(source_abs, target_abs)) {
+                std.debug.print("error: migration target '{s}' must not be inside source '{s}'.\n", .{ target, dir_path });
+                return true;
+            }
+            if (targetHasEntries(io, target)) {
+                std.debug.print("error: migration target '{s}' already exists and is non-empty.\n", .{target});
+                return true;
+            }
+            var target_root = Io.Dir.cwd().createDirPathOpen(io, target, .{}) catch |err| fatal.dir(target, err);
+            target_root.close(io);
+            const joined = std.fs.path.join(gpa, &.{ target, "MIGRATION.md" }) catch fatal.oom();
+            target_out_path_buf = joined;
+            break :blk joined;
+        } else out_path;
+
+        const rf = Io.Dir.cwd().createFile(io, effective_out_path, .{}) catch |err|
+            fatal.file(effective_out_path, err);
         defer rf.close(io);
         var rfw = rf.writer(io, &.{});
-        rfw.interface.writeAll(discovery.report) catch |err| fatal.file(out_path, err);
+        rfw.interface.writeAll(discovery.report) catch |err| fatal.file(effective_out_path, err);
 
         // The manifest: "the deliverable; MIGRATION.md is a rendering of
         // it" (design spec, "The manifest"), "written beside the report".
@@ -897,6 +941,10 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
         // behavior rather than the `--scaffold`/`--copy-assets` `.new*`
         // rule (see `tests/migrate/rails.sh`'s "repeat run overwrites the
         // report" case, which this manifest write is now covered by too).
+        // Derived from `effective_out_path`, not `out_path`, so `--target
+        // DIR` produces `DIR/MIGRATION.manifest.json` beside `DIR/
+        // MIGRATION.md` -- both artifacts in DIR, matching the spec's
+        // "produces both in DIR" and nothing written outside it.
         var evidence_buf: [max_root_evidence][]const u8 = undefined;
         const root_evidence = railsRootEvidence(evidence, &evidence_buf);
         const manifest_bytes = rails.manifest.build(gpa, .{
@@ -908,7 +956,7 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
         };
         defer gpa.free(manifest_bytes);
 
-        const manifest_path = railsManifestPath(gpa, out_path);
+        const manifest_path = railsManifestPath(gpa, effective_out_path);
         defer gpa.free(manifest_path);
         const mf = Io.Dir.cwd().createFile(io, manifest_path, .{}) catch |err|
             fatal.file(manifest_path, err);
@@ -926,19 +974,19 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
             std.debug.print(
                 "Wrote {s}: Rails, inventory plus {d} recovered route(s).\n" ++
                     "Next: follow MIGRATION.md.\n",
-                .{ out_path, discovery.route_count },
+                .{ effective_out_path, discovery.route_count },
             );
         } else if (!std.mem.eql(u8, discovery.route_mode, "static_ast") or discovery.route_blocker) {
             std.debug.print(
                 "Wrote {s}: Rails, inventory only (no routes recovered -- see Blockers in the report).\n" ++
                     "Next: follow MIGRATION.md.\n",
-                .{out_path},
+                .{effective_out_path},
             );
         } else {
             std.debug.print(
                 "Wrote {s}: Rails, inventory only (config/routes.rb declares no routes).\n" ++
                     "Next: follow MIGRATION.md.\n",
-                .{out_path},
+                .{effective_out_path},
             );
         }
 
@@ -951,7 +999,7 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
         if (discovery.integrity_blocker_count > 0) {
             std.debug.print(
                 "warning: {s} was written, but {d} part(s) of the Rails inventory could not be read; treat its counts as incomplete.\n",
-                .{ out_path, discovery.integrity_blocker_count },
+                .{ effective_out_path, discovery.integrity_blocker_count },
             );
         }
         // migrate()'s bool is `any_error` (main.zig: `@intFromBool(any_error)`);

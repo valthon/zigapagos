@@ -42,15 +42,23 @@
 //!    the unreadable file first. A consumer must not treat that field as
 //!    exhaustive and "fix" only the named route while the other nineteen
 //!    stay broken.
-//! 3. **`templates[].renders == []` means "the scan stopped looking", not
-//!    "this template renders nothing".** At `rails.zig`'s
-//!    `max_partial_depth` cutoff, `RAILS_TEMPLATE_RENDER_DEPTH_EXCEEDED`
-//!    names the template where the walk stopped, and that node's `renders`
-//!    is empty because its own targets were genuinely never resolved -- see
-//!    `rails.GraphNode`'s doc. An unreadable template (`RAILS_TEMPLATE_
-//!    UNREADABLE`) never becomes a `templates[]` entry at all (its render
-//!    targets are unknown, not "none"), so this case is specifically the
-//!    depth-cap one, not every empty `renders`.
+//! 3. **`templates[].renders == []` ordinarily means "this template renders
+//!    nothing" -- that IS the common case (9 of the checked-in fixture's 12
+//!    templates are empty this way, none of them at the depth cap; a
+//!    review round that flatly reversed the emphasis on this point, reading
+//!    the rare case as the default one, is why this bullet leads with the
+//!    ordinary meaning now).** The one other cause collapses to the exact
+//!    same empty value: at `rails.zig`'s `max_partial_depth` cutoff, the
+//!    walk stops and that node's own `renders` is empty because its targets
+//!    were genuinely never resolved -- see `rails.GraphNode`'s doc. The two
+//!    causes are NOT distinguishable from `renders` alone; the
+//!    disambiguator is `blockers[]`: only when a `RAILS_TEMPLATE_RENDER_
+//!    DEPTH_EXCEEDED` blocker names this same template's `path` was the
+//!    walk cut short. No such blocker means `renders == []` is exactly what
+//!    it says. An unreadable template (`RAILS_TEMPLATE_UNREADABLE`) never
+//!    becomes a `templates[]` entry at all (its render targets are
+//!    unknown, not "none"), so every entry present here was itself
+//!    successfully read.
 //! 4. **`severity` and `integrity` are different axes.** `integrity`
 //!    (`BlockerEntry`'s own field) is what the exit code is computed from
 //!    (`--strict`, Task 11, and today's plain `integrity_blocker_count`
@@ -195,13 +203,30 @@ pub const RouteSource = routes.Source;
 pub const CandidateEntry = classify.Candidate;
 
 /// Field order is the wire contract, and matches the spec's own example
-/// object exactly: `id`, `verb`, `path`, `controller`, `action`, `name`,
-/// `source`, `origin`, `confidence`, `classification`, `candidates`,
-/// `templates`, `layout`. Deliberately does NOT carry `classify.Verdict.
-/// reason` -- that free-text explanation is `report.zig`'s (the
-/// human-readable `MIGRATION.md`) job; the spec's own routes[] example has
-/// no `reason` key, and a machine consumer has `classification` plus
-/// `candidates[].evidence` for the same information in a structured form.
+/// object plus one additive field: `id`, `verb`, `path`, `controller`,
+/// `action`, `name`, `source`, `origin`, `confidence`, `classification`,
+/// `reason`, `candidates`, `templates`, `layout`.
+///
+/// **`reason` was added by the Stage 5 final-fix round, REVERSING this
+/// type's earlier stance.** Task 8 deliberately omitted it, arguing that
+/// free-text explanation was `report.zig`'s (the human-readable
+/// `MIGRATION.md`) job, and that a machine consumer already had
+/// `classification` plus `candidates[].evidence` for the same information
+/// in structured form. That argument fails for exactly the class that needs
+/// it most: for `unresolved`, `candidates[]` is empty BY DESIGN (see
+/// `classify.zig`'s rule chain -- every `unresolved` return sets
+/// `candidates = no_candidates`), so an unresolved route carried a
+/// classification and no evidence whatsoever -- neither a manifest consumer
+/// nor a `MIGRATION.md` reader could tell WHY a given route landed there,
+/// which is close to the silent omission this whole feature exists to
+/// prevent. It also voided a justification in the design spec (`docs/
+/// superpowers/specs/2026-08-22-rails-source-discovery-design.md`'s
+/// "Declared, not yet emitted" section), which declines to emit
+/// `RAILS_REQUEST_TIME_STATE`/`RAILS_NO_TEMPLATE` as blockers on the
+/// grounds that "the route's verdict and its `reason` already carry that
+/// finding" -- true only once `reason` actually reaches a consumer, which
+/// it now does. `reason` is a static string literal on every `classify.
+/// Verdict` (see that type's own doc), so emitting it costs no allocation.
 pub const RouteEntry = struct {
     /// See the module doc's point 1: a LABEL (`rails.formatRouteId`'s
     /// output), not a unique key.
@@ -215,6 +240,12 @@ pub const RouteEntry = struct {
     origin: routes.Origin,
     confidence: Confidence,
     classification: classify.Class,
+    /// Why THIS route reached `classification` -- the exact string
+    /// `classify.zig`'s rule chain returned (e.g. "view reads request-time
+    /// state", "controller action only issues a redirect"). Two routes
+    /// `unresolved` for different rules report different `reason` text;
+    /// see `classify.Verdict.reason`'s own doc for the full string set.
+    reason: []const u8,
     candidates: []const CandidateEntry,
     /// The view plus every partial (direct or nested) this route's scan
     /// resolved AND READ -- see `rails.RouteTemplates`'s own doc for why an
@@ -410,6 +441,7 @@ pub fn build(gpa: Allocator, in: BuildInput) Allocator.Error![]u8 {
             .origin = p.route.origin,
             .confidence = confidenceOf(p.route.certain),
             .classification = p.verdict.class,
+            .reason = p.verdict.reason,
             .candidates = p.verdict.candidates,
             .templates = p.tpl.templates,
             .layout = p.tpl.layout,
@@ -844,6 +876,7 @@ test "manifestGoldenBytes: exact bytes for a minimal manifest, pinning key order
         \\      "origin": "static_ast",
         \\      "confidence": "certain",
         \\      "classification": "content",
+        \\      "reason": "static-safe view",
         \\      "candidates": [
         \\        {
         \\          "target": "content",

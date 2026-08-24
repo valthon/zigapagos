@@ -46,3 +46,6 @@ npm/cli-*/
 # The fixture needs it: inventory.zig walks `app` and `public` as its two
 # roots, so without it the public-asset path is untested entirely.
 !tests/migrate/rails-sample/public/
+# Same trap, same fix, for the Sprockets fixture (Task 2 of Stage 5): its
+# compiled manifest lives under public/assets/ too.
+!tests/migrate/rails-legacy-assets/public/

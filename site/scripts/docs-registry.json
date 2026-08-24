@@ -126,6 +126,13 @@
     "description": "Running existing React SPA code on the shared runtime while you port it."
   },
   {
+    "canonical": "docs/migration/rails-to-zigapagos.md",
+    "mirror": "migrate-from-rails.smd",
+    "slug": "migrate-from-rails",
+    "title": "Migrating from Rails",
+    "description": "A deterministic reference for what Rails source discovery does and does not claim: the six route classifications, the manifest's guarantees, and what `zigapagos migrate --from rails` converts (nothing, yet)."
+  },
+  {
     "canonical": "docs/ROADMAP.md",
     "mirror": "roadmap.smd",
     "slug": "roadmap",
