@@ -17,6 +17,16 @@ if [[ ! -x "$ZIGAPAGOS" ]]; then
   mise exec -- zig build || fail "zig build failed"
 fi
 
+# phase-2-review.md F1 / Ruling 17: a real, independent JSON Schema INSTANCE
+# validator against the fixture manifest below -- see
+# src/cli/rails/schema_validate.zig's module doc for why this is a
+# dependency-free Zig CLI rather than a `pip install jsonschema` step this
+# repo's toolchain (mise.toml: zig + bun only) does not otherwise have.
+RAILS_VALIDATE="$REPO/zig-out/bin/rails_manifest_validate"
+if [[ ! -x "$RAILS_VALIDATE" ]]; then
+  mise exec -- zig build rails-manifest-validate || fail "zig build rails-manifest-validate failed"
+fi
+
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -184,9 +194,99 @@ if command -v ruby >/dev/null 2>&1; then
   # what little the view file itself shows.
   grep -Fxq -- '- `GET /posts/featured` → `posts#featured` — unresolved' "$WORK/one.md" \
     || fail "an unresolvable render target did not force the route unresolved"
+
+  # --- manifest: routes[]/templates[] need real route recovery, so these
+  # live inside the ruby guard (the report-level assertions above already
+  # prove the SAME fixture recovers the routes; this proves the manifest
+  # carries them too, not just MIGRATION.md's prose rendering of them).
+  MANIFEST="$WORK/one.manifest.json"
+  [[ -f "$MANIFEST" ]] || fail "no manifest written beside the report"
+  jq -e . "$MANIFEST" >/dev/null || fail "manifest is not valid JSON"
+
+  root_route_id=$(jq -r '.routes[] | select(.path == "/" and .verb == "GET") | .id' "$MANIFEST")
+  [[ "$root_route_id" == "GET /" ]] || fail "manifest routes[] missing 'GET /' (root route), got: $root_route_id"
+  root_line=$(jq -r '.routes[] | select(.path == "/" and .verb == "GET") | .source.line' "$MANIFEST")
+  [[ "$root_line" == "2" ]] || fail "manifest root route source.line should be 2, got: $root_line"
+  root_class=$(jq -r '.routes[] | select(.path == "/" and .verb == "GET") | .classification' "$MANIFEST")
+  [[ "$root_class" == "content" ]] || fail "manifest root route classification should be content, got: $root_class"
+  health_confidence=$(jq -r '.routes[] | select(.path == "/admin/health") | .confidence' "$MANIFEST")
+  [[ "$health_confidence" == "uncertain" ]] || fail "manifest conditional route confidence should be uncertain, got: $health_confidence"
+
+  # --- Stage 4 Task 12's own fixture addition: dashboard.html.erb's
+  # `data-controller="reveal modal"` must reach the manifest as TWO
+  # names, not one string and not a raw attribute value -- the same
+  # split `template_scan.zig`'s own unit tests pin in isolation, proven
+  # here end to end through a real `zigapagos migrate` run.
+  dashboard_controllers=$(jq -c '.templates[] | select(.path == "app/views/posts/dashboard.html.erb") | .stimulus_controllers' "$MANIFEST")
+  [[ "$dashboard_controllers" == '["reveal","modal"]' ]] \
+    || fail "manifest templates[].stimulus_controllers should be [\"reveal\",\"modal\"] for dashboard.html.erb, got: $dashboard_controllers"
 else
   echo "SKIP: route assertions (no ruby on PATH)"
 fi
+
+# --- manifest: the deliverable, unconditionally (design spec, "The
+# manifest": "the deliverable; MIGRATION.md is a rendering of it") --------
+# Everything below is pure Zig/Gemfile-text (assets, integrations,
+# blockers, source.version): none of it needs Ruby, unlike routes[]/
+# templates[] above, so this runs regardless of the `command -v ruby`
+# guard.
+MANIFEST="$WORK/one.manifest.json"
+[[ -f "$MANIFEST" ]] || fail "no manifest written beside the report"
+
+# --- manifest: real INSTANCE validation against the COMMITTED schema -------
+# phase-2-review.md F1: `rails-check` only ever compares schema to schema
+# (it has no instance), and `manifestGoldenBytes` (Task 9) pins a hand-built
+# manifest with `"assets": []`, which structurally cannot contain the one
+# field (`assets[].pipeline`, a nullable enum) the shipped defect broke on.
+# This is the first check on the branch that asks the consumer-side
+# question: does a REAL manifest actually validate against the schema this
+# tool publishes?
+"$RAILS_VALIDATE" "$REPO/contract/rails-presentation.v1.schema.json" "$MANIFEST" \
+  || fail "manifest failed instance validation against the committed schema"
+
+schema=$(jq -r '.schema' "$MANIFEST")
+[[ "$schema" == "zigapagos.rails-presentation/1" ]] || fail "manifest schema mismatch: $schema"
+schema_version=$(jq -r '.schema_version' "$MANIFEST")
+[[ "$schema_version" == "1" ]] || fail "manifest schema_version mismatch: $schema_version"
+generator_tool=$(jq -r '.generator.tool' "$MANIFEST")
+[[ "$generator_tool" == "zigapagos" ]] || fail "manifest generator.tool mismatch: $generator_tool"
+
+source_framework=$(jq -r '.source.framework' "$MANIFEST")
+[[ "$source_framework" == "rails" ]] || fail "manifest source.framework mismatch: $source_framework"
+# The fixture's checked-in Gemfile.lock locks rails at 7.1.3 (several other
+# gems alongside it -- Task 12's fixture requirement for a Gemfile.lock
+# naming several gems, already satisfied by the existing fixture).
+rails_version=$(jq -r '.source.version.value' "$MANIFEST")
+[[ "$rails_version" == "7.1.3" ]] || fail "manifest source.version.value mismatch: $rails_version"
+root_evidence=$(jq -c '.source.root_evidence' "$MANIFEST")
+[[ "$root_evidence" == '["config/application.rb","config/routes.rb","app/views","Gemfile"]' ]] \
+  || fail "manifest source.root_evidence mismatch: $root_evidence"
+
+# --- assets[]: both the deterministic and non-deterministic case, the SAME
+# discrimination `rails.zig`'s own "the fixture's assets discriminate" unit
+# test pins at the Zig level, now proven through a real CLI run's output
+# file.
+logo_deterministic=$(jq -r '.assets[] | select(.source == "app/assets/images/logo.png") | .deterministic' "$MANIFEST")
+[[ "$logo_deterministic" == "true" ]] || fail "manifest logo.png should be deterministic: $logo_deterministic"
+logo_url=$(jq -r '.assets[] | select(.source == "app/assets/images/logo.png") | .public_url' "$MANIFEST")
+[[ "$logo_url" == "/assets/images/logo-9f86d081884c.png" ]] || fail "manifest logo.png public_url mismatch: $logo_url"
+css_deterministic=$(jq -r '.assets[] | select(.source == "app/assets/stylesheets/application.css.erb") | .deterministic' "$MANIFEST")
+[[ "$css_deterministic" == "false" ]] || fail "manifest application.css.erb should NOT be deterministic: $css_deterministic"
+css_url=$(jq -r '.assets[] | select(.source == "app/assets/stylesheets/application.css.erb") | .public_url' "$MANIFEST")
+[[ "$css_url" == "null" ]] || fail "manifest application.css.erb public_url should be null, got: $css_url"
+
+# --- integrations[]: Gemfile-detected, no Ruby needed.
+turbo_evidence=$(jq -r '.integrations[] | select(.name == "turbo") | .evidence' "$MANIFEST")
+[[ -n "$turbo_evidence" && "$turbo_evidence" != "null" ]] || fail "manifest integrations[] missing turbo evidence"
+
+# --- blockers[]: the Haml view is detected independent of route recovery
+# (a plain app/views walk, see inventory.zig), so this fires with or
+# without ruby on PATH -- the severity/integrity axes Task 1 added must
+# both reach the manifest, not just the summary counts.
+haml_severity=$(jq -r '.blockers[] | select(.code == "RAILS_TEMPLATE_ENGINE_UNSUPPORTED") | .severity' "$MANIFEST" | head -1)
+[[ "$haml_severity" == "warn" ]] || fail "manifest RAILS_TEMPLATE_ENGINE_UNSUPPORTED severity should be warn, got: $haml_severity"
+haml_integrity=$(jq -r '.blockers[] | select(.code == "RAILS_TEMPLATE_ENGINE_UNSUPPORTED") | .integrity' "$MANIFEST" | head -1)
+[[ "$haml_integrity" == "false" ]] || fail "manifest RAILS_TEMPLATE_ENGINE_UNSUPPORTED integrity should be false, got: $haml_integrity"
 
 # --- A3: app/controllers/ missing must not hand out backend on a missing
 # action -------------------------------------------------------------------
@@ -214,6 +314,12 @@ if command -v ruby >/dev/null 2>&1; then
     || fail "a view-less, action-less route under wholesale controller degradation must be unresolved, not backend"
   grep -Fxq -- '- `GET /posts/old` → `posts#old` — unresolved' "$WORK/degraded.md" \
     || fail "a route that is normally a redirect must be unresolved (not backend) when controller evidence never confirmed it"
+  # A second, differently-shaped instance through the same validator: a
+  # wholesale-degraded run stresses different nullable/enum fields
+  # (`controller`/`action` null, `classification: "unresolved"`) than the
+  # healthy fixture above.
+  "$RAILS_VALIDATE" "$REPO/contract/rails-presentation.v1.schema.json" "$WORK/degraded.manifest.json" \
+    || fail "degraded manifest failed instance validation against the committed schema"
 else
   echo "SKIP: A3 controller-degradation assertions (no ruby on PATH)"
 fi
@@ -284,6 +390,7 @@ grep -q "app/assets/stylesheets/application.css.erb" "$WORK/one.md" \
 # --- determinism -------------------------------------------------------------
 "$ZIGAPAGOS" migrate "$APP" -o "$WORK/two.md" >/dev/null 2>&1
 diff -u "$WORK/one.md" "$WORK/two.md" || fail "output is not deterministic"
+diff -u "$WORK/one.manifest.json" "$WORK/two.manifest.json" || fail "manifest is not deterministic"
 
 # --- source unchanged --------------------------------------------------------
 after="$(cd "$APP" && find . -type f | sort | xargs shasum | shasum)"
@@ -293,11 +400,47 @@ after="$(cd "$APP" && find . -type f | sort | xargs shasum | shasum)"
 # createFile(..., .{}) truncates by design: the report is regenerated, not
 # versioned. The `.new` rule covers scaffolded islands and copied assets, which
 # this stage does not emit. Assert the documented behaviour rather than a
-# `.new` file that must never appear here.
+# `.new` file that must never appear here. The manifest follows the exact
+# same rule (see migrate.zig's own comment at the manifest write site).
 cp "$WORK/one.md" "$WORK/one.before.md"
+cp "$WORK/one.manifest.json" "$WORK/one.manifest.before.json"
 "$ZIGAPAGOS" migrate "$APP" -o "$WORK/one.md" >/dev/null 2>&1
 [[ ! -e "$WORK/one.md.new" ]] || fail "report must be overwritten, not versioned to .new"
+[[ ! -e "$WORK/one.manifest.json.new" ]] || fail "manifest must be overwritten, not versioned to .new"
 diff -u "$WORK/one.before.md" "$WORK/one.md" || fail "regenerated report differs"
+diff -u "$WORK/one.manifest.before.json" "$WORK/one.manifest.json" || fail "regenerated manifest differs"
+
+# --- --strict: exits non-zero on any blocker, changes NOTHING else ---------
+# The fixture's Haml view (legacy.html.haml) alone produces
+# RAILS_TEMPLATE_ENGINE_UNSUPPORTED independent of route recovery (see the
+# unconditional blocker assertions above), so this fixture ALWAYS has at
+# least one blocker, with or without ruby on PATH -- --strict must fail on
+# it regardless. The discriminating property (task-11-brief.md): --strict
+# changes ONLY the exit code. Compared byte-for-byte, not just "both files
+# exist" -- an implementation that also suppressed or altered output under
+# --strict would still pass a weaker check.
+"$ZIGAPAGOS" migrate "$APP" -o "$WORK/strict-off.md" >/dev/null 2>&1 \
+  || fail "plain (non-strict) migrate should exit 0 on this fixture"
+set +e
+"$ZIGAPAGOS" migrate "$APP" --strict -o "$WORK/strict-on.md" >/dev/null 2>&1
+strict_rc=$?
+set -e
+[[ $strict_rc -ne 0 ]] || fail "--strict must exit non-zero: the fixture has at least one blocker (RAILS_TEMPLATE_ENGINE_UNSUPPORTED)"
+diff -u "$WORK/strict-off.md" "$WORK/strict-on.md" || fail "--strict changed the report bytes"
+diff -u "$WORK/strict-off.manifest.json" "$WORK/strict-on.manifest.json" || fail "--strict changed the manifest bytes"
+
+# --- --strict is rejected for a non-Rails source (no blocker concept there) -
+ASTRO_LIKE="$WORK/astro-like"
+mkdir -p "$ASTRO_LIKE/src/pages"
+touch "$ASTRO_LIKE/astro.config.mjs"
+set +e
+"$ZIGAPAGOS" migrate "$ASTRO_LIKE" --strict -o "$WORK/astro-like.md" >"$WORK/astro-strict.err" 2>&1
+astro_strict_rc=$?
+set -e
+[[ $astro_strict_rc -ne 0 ]] || fail "--strict on a non-Rails source must be rejected, not silently accepted"
+grep -q -- "--strict only applies to Rails sources" "$WORK/astro-strict.err" \
+  || fail "--strict rejection on a non-Rails source did not explain why"
+[[ ! -e "$WORK/astro-like.md" ]] || fail "a rejected --strict combination must not write a report"
 
 # --- parenthesized Gemfile syntax is still detected (P3 PR-review repro) ----
 # The reviewer's exact repro: `gem("rails")` with config/application.rb
