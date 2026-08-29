@@ -216,6 +216,48 @@ const overrides = [_]Override{
             "version. `null` here is a real, expected answer, never a " ++
             "placeholder.",
     },
+    .{
+        .type_name = "manifest.Manifest",
+        .field = "findings",
+        .text = "Questions for the operator this run could not answer on " ++
+            "its own -- each meant to be answered by id in a Stage 2 " ++
+            "MIGRATION.decisions.json, not positionally. A SEPARATE array " ++
+            "from `blockers[]` on purpose: a blocker is a fact about what " ++
+            "discovery could or couldn't establish (drives the exit code " ++
+            "via `integrity`); a finding is a per-fragment CHOICE this run " ++
+            "leaves to the operator (keep an ERB helper as an island, " ++
+            "retire it, block the route). A consumer filtering `blockers[]` " ++
+            "for integrity facts must never see operator questions mixed in.",
+    },
+    .{
+        .type_name = "manifest.FindingEntry",
+        .field = "id",
+        .text = "`<code>.<path>.<loc>` with `%` and `.` reversibly escaped " ++
+            "(`%` -> `%25`, then `.` -> `%2E`) -- rails2zb's own scheme, " ++
+            "reused rather than reimplemented. Stable across a reworded " ++
+            "`message` or a template edit elsewhere in the file, so a " ++
+            "Stage 2 decision file can reconcile against a PRIOR run's " ++
+            "recorded operator choice even after either changes. This is " ++
+            "the join key; `message` is prose and deliberately not part " ++
+            "of it.",
+    },
+    .{
+        .type_name = "manifest.FindingEntry",
+        .field = "choices",
+        .text = "The fixed set of answers an operator may record against " ++
+            "this finding (e.g. \"island\", \"retain\", \"blocked\"). " ++
+            "Always non-empty and always drawn from the derivation " ++
+            "table's static choice sets -- never computed per finding.",
+    },
+    .{
+        .type_name = "manifest.FindingEntry",
+        .field = "requires_artifact",
+        .text = "Whether resolving this finding requires generating an " ++
+            "artifact (e.g. an island component) rather than merely " ++
+            "recording a choice. `false` for every finding this generator " ++
+            "version produces; reserved for a later finding kind that " ++
+            "needs Stage 2 to emit something, not just record a decision.",
+    },
 };
 
 /// F5 (phase-2-review.md, MEDIUM): how many times each `overrides` entry
@@ -500,7 +542,7 @@ test "generate: top-level required lists every Manifest field, in declaration or
     const want = [_][]const u8{
         "schema",       "schema_version", "generator", "source",
         "discovery",    "routes",         "templates", "assets",
-        "integrations", "blockers",
+        "integrations", "blockers",       "findings",
     };
     try testing.expectEqual(want.len, required.len);
     for (want, required) |w, r| try testing.expectEqualStrings(w, r.string);

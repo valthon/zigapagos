@@ -48,10 +48,15 @@ module RailsRoutes
   # `path` is the accumulated URL prefix (e.g. "/admin"); `module_` is the
   # accumulated controller-namespace prefix (e.g. "admin"). They diverge
   # under `scope path:`/`scope module:`, which is why they are tracked
-  # separately rather than as one string.
-  Scope = Struct.new(:path, :module_) do
-    def child(path: self.path, module_: self.module_)
-      Scope.new(path, module_)
+  # separately rather than as one string. `as_prefix` is the accumulated
+  # `namespace`/`scope as:` route-helper-name prefix (e.g. "admin") -- it
+  # tracks the same nesting as module_ but is a SEPARATE string because
+  # `scope as:` (unlike `scope module:`) has no path/controller side effect
+  # of its own; conflating the two would prefix helper names onto routes
+  # that never asked for it.
+  Scope = Struct.new(:path, :module_, :as_prefix) do
+    def child(path: self.path, module_: self.module_, as_prefix: self.as_prefix)
+      Scope.new(path, module_, as_prefix)
     end
   end
 
@@ -60,7 +65,21 @@ module RailsRoutes
   # what resource they belong to without re-deriving it from `sc.path`
   # (which, inside the block, is already suffixed with the parent-id param
   # for the benefit of bare nested routes -- see Walker#resources_call).
-  ResourceCtx = Struct.new(:base, :ctrl, :singular, keyword_init: true)
+  # `name_singular`/`name_plural` are the route-helper stems (`"post"`/
+  # `"posts"`) -- distinct from `singular` (which is "was this declared with
+  # `resource` or `resources`") because `as:` can override the stem
+  # (`resources :articles, as: :stories` keeps `singular` false but makes
+  # `name_plural` "stories", not "articles"). When this resource is itself
+  # nested inside another (resources_call runs with a non-nil res_ctx), both
+  # fields are already fully compounded with every ancestor's singular name
+  # (`resources :posts do resources :comments do resources :replies end
+  # end` -- replies' own name_singular is "post_comment_reply", matching
+  # Rails' Mapper#resource_scope pushing the parent's singular name the same
+  # way `namespace`/`scope as:` push theirs) -- every consumer of these two
+  # fields (this resource's own actions, member/collection/new, and a bare
+  # nested route) reads one already-compounded stem and does no ancestor-
+  # walking of its own.
+  ResourceCtx = Struct.new(:base, :ctrl, :singular, :name_singular, :name_plural, keyword_init: true)
 
   def self.parse(source, path:)
     result = Prism.parse(source)
@@ -77,7 +96,7 @@ module RailsRoutes
     end
 
     walker = Walker.new
-    walker.walk(result.value.statements&.body || [], Scope.new("", ""), nil)
+    walker.walk(result.value.statements&.body || [], Scope.new("", "", ""), nil)
     walker.result
   rescue StandardError => e
     # Defense in depth: even a bug in this walker must not raise. The
@@ -109,6 +128,13 @@ module RailsRoutes
       # recursion, since it is checked against every name on the way down,
       # not just the immediately enclosing one.
       @concern_stack = []
+      # Innermost-last stack of the enclosing member/collection/new block
+      # kind(s), so verb_call can tell `member { post :publish }` (->
+      # publish_post) apart from `collection { get :recent }` (-> recent_
+      # posts) apart from `new { get :preview }` (-> preview_new_post)
+      # without member_collection_new_call having to invent a new Scope
+      # field just to carry one symbol one level down.
+      @res_kind_stack = []
     end
 
     def result
@@ -310,6 +336,12 @@ module RailsRoutes
       new_scope = sc.child(
         path: join(sc.path, path_seg),
         module_: sc.module_.empty? ? seg : "#{sc.module_}/#{seg}",
+        # `namespace :admin` prefixes route helpers with `admin_` (Rails'
+        # Mapper#namespace passes `as: name` through to the enclosing
+        # `scope` call) EVEN WHEN `path:`/`module:` are overridden --
+        # unlike path_seg/module_, the as_prefix always uses `seg`, the
+        # namespace's own name, never path_opt.
+        as_prefix: sc.as_prefix.empty? ? seg : "#{sc.as_prefix}_#{seg}",
       )
       walk(blk, new_scope, res_ctx)
     end
@@ -338,7 +370,17 @@ module RailsRoutes
         new_module = sc.module_.empty? ? mod : "#{sc.module_}/#{mod}"
       end
 
-      walk(blk, sc.child(path: new_path, module_: new_module), res_ctx)
+      new_as = sc.as_prefix
+      if opts["as"]
+        as_lit = literal(opts["as"])
+        if as_lit.nil?
+          mark_unresolved("RAILS_ROUTE_DYNAMIC_PATH", line_of(node), "scope as: is not a literal")
+          return
+        end
+        new_as = sc.as_prefix.empty? ? as_lit : "#{sc.as_prefix}_#{as_lit}"
+      end
+
+      walk(blk, sc.child(path: new_path, module_: new_module, as_prefix: new_as), res_ctx)
     end
 
     def resources_call(node, singular, pos, opts, blk, sc, res_ctx)
@@ -349,10 +391,15 @@ module RailsRoutes
       # and a computed only: that can't be read matches nothing (silently
       # discarding the whole resource with no trace). Both must fail
       # closed the same way path:/controller: already did.
+      # A computed as: must fail closed too, the same as path:/controller:
+      # above: falling through would silently derive the un-aliased name
+      # (`nm`) for a resource whose author explicitly overrode it, handing
+      # a plausible-looking but wrong helper name to a later stage.
       if dynamic_option?(opts, "path") || dynamic_option?(opts, "controller") ||
+         dynamic_option?(opts, "as") ||
          dynamic_array_option?(opts, "only") || dynamic_array_option?(opts, "except")
         mark_unresolved("RAILS_ROUTE_DYNAMIC_PATH", line_of(node),
-                         "#{singular ? "resource" : "resources"} only:/except:/path:/controller: is not a literal")
+                         "#{singular ? "resource" : "resources"} only:/except:/path:/controller:/as: is not a literal")
         return
       end
 
@@ -386,11 +433,46 @@ module RailsRoutes
         actions = singular ? %i[new create edit show update destroy] : %i[index create new edit show update destroy]
         actions = actions.select { |a| only.nil? || only.include?(a) } - except
 
+        # `as:` replaces the PLURAL stem outright (`resources :articles, as:
+        # :stories` names every route off "stories", not "articles"); the
+        # singular stem is then re-derived from that overridden plural, same
+        # as Rails does, so `new`/`edit` still agree with the override
+        # (`new_story`, not `new_article`). A singular `resource` has no
+        # plural of its own -- `sing` IS the (possibly aliased) stem, and
+        # `plural` is set equal to it so collection-kind actions (`create`)
+        # get the same name as member-kind ones, matching Rails' `resource`
+        # (`resource :profile` names every action "profile").
+        as_opt = opts["as"] ? literal(opts["as"]) : nil
+        plural = singular ? nm : (as_opt || nm)
+        sing = singular ? (as_opt || nm) : Inflect.singularize(plural)
+        plural = sing if singular
+
+        # A resource nested inside an enclosing resources/resource block
+        # compounds its own stem onto the PARENT's -- Rails' Mapper#resource_
+        # scope pushes the parent resource's singular name the same way
+        # `namespace`/`scope as:` push their own name onto as_prefix (see
+        # prefixed_name below), so `resources :posts do resources :comments
+        # end` names comments' own actions "post_comments"/"post_comment",
+        # not bare "comments"/"comment". The compounding key is always the
+        # parent's SINGULAR stem, never its plural, matching Rails: a
+        # comment nested under many posts is still named relative to ONE
+        # post ("post_comments", never "posts_comments").
+        if res_ctx
+          plural = "#{res_ctx.name_singular}_#{plural}"
+          sing = "#{res_ctx.name_singular}_#{sing}"
+        end
+
         actions.each do |a|
           verb, kind = RESOURCE_ACTIONS[a]
           route_path = resource_action_path(base, kind, singular)
-          emit(verb, route_path, ctrl, a.to_s, line_of(node))
-          emit("PUT", route_path, ctrl, "update", line_of(node)) if a == :update
+          stem = case kind
+                 when :collection then plural
+                 when :member then sing
+                 when :new then "new_#{sing}"
+                 when :edit then "edit_#{sing}"
+                 end
+          emit(verb, route_path, ctrl, a.to_s, line_of(node), name: prefixed_name(sc, stem))
+          emit("PUT", route_path, ctrl, "update", line_of(node), name: prefixed_name(sc, stem)) if a == :update
         end
 
         next unless blk || !concern_names.empty?
@@ -398,9 +480,28 @@ module RailsRoutes
         parent_param = singular ? nil : ":#{Inflect.singularize(nm)}_id"
         inner_path = singular ? base : join(base, parent_param)
         inner_scope = sc.child(path: inner_path)
-        inner_ctx = ResourceCtx.new(base: base, ctrl: ctrl, singular: singular)
-        walk(blk, inner_scope, inner_ctx) if blk
-        concern_names.each { |cn| expand_concern(cn, inner_scope, inner_ctx, line_of(node)) }
+        inner_ctx = ResourceCtx.new(base: base, ctrl: ctrl, singular: singular,
+                                     name_singular: sing, name_plural: plural)
+        # A nested `resources`/`resource` establishes its OWN resource
+        # identity, so its body must not inherit an ENCLOSING member/
+        # collection/new kind (`resources :posts do collection { resources
+        # :comments do get :flag end } end` -- the bare `get :flag` nested
+        # inside :comments must derive "flag_comment", the ordinary bare-
+        # nested-route shape, not "flag_comments" by mistakenly reading the
+        # outer :collection off a stack that was never popped for this
+        # inner resources call). @res_kind_stack is saved/cleared/restored
+        # around this call's own body for exactly that reason -- pushing an
+        # extra frame (rather than clearing) would still leak the outer
+        # kind to anything that checks "stack non-empty" without also
+        # checking whose resource it belongs to.
+        saved_res_kind_stack = @res_kind_stack
+        @res_kind_stack = []
+        begin
+          walk(blk, inner_scope, inner_ctx) if blk
+          concern_names.each { |cn| expand_concern(cn, inner_scope, inner_ctx, line_of(node)) }
+        ensure
+          @res_kind_stack = saved_res_kind_stack
+        end
       end
     end
 
@@ -427,7 +528,17 @@ module RailsRoutes
                  when :collection then res_ctx.base
                  when :new then join(res_ctx.base, "new")
                  end
-      walk(blk, sc.child(path: new_path), res_ctx)
+      # A fresh ResourceCtx (rather than reusing res_ctx as-is) keeps this
+      # symmetric with resources_call's own inner_ctx construction; @res_
+      # kind_stack -- not a new Scope field -- is what actually tells
+      # verb_call it is inside member/collection/new, since kind is
+      # per-block state, not scope state that should keep flowing past this
+      # block's `end`.
+      inner_ctx = ResourceCtx.new(base: res_ctx.base, ctrl: res_ctx.ctrl, singular: res_ctx.singular,
+                                   name_singular: res_ctx.name_singular, name_plural: res_ctx.name_plural)
+      @res_kind_stack.push(kind)
+      walk(blk, sc.child(path: new_path), inner_ctx)
+      @res_kind_stack.pop
     end
 
     def verb_call(node, name, args, opts, pos, sc, res_ctx)
@@ -487,6 +598,11 @@ module RailsRoutes
                          "#{name} controller: is not a literal")
         return
       end
+      if dynamic_option?(opts, "as")
+        mark_unresolved("RAILS_ROUTE_DYNAMIC_PATH", line_of(node),
+                         "#{name} as: is not a literal")
+        return
+      end
 
       ctrl, target_action = ctrl_action(literal(target_node))
       ctrl ||= opts["controller"] ? literal(opts["controller"]) : nil
@@ -532,7 +648,38 @@ module RailsRoutes
         end
 
         route_path = seg ? join(sc.path, seg) : sc.path
-        verbs.each { |v| emit(v, route_path, ctrl, action, line_of(node)) }
+
+        # Mirrors Rails' Mapper#name_for_action precedence: an explicit
+        # as: always wins; failing that, a route declared inside member/
+        # collection/new gets the Rails-conventional
+        # "<seg>_<singular-or-plural>" shape (publish_post, recent_posts,
+        # preview_new_post); failing that, a bare route nested directly in
+        # a resources block (no member/collection/new wrapper -- see the
+        # "bare nested route" test) gets "<singular>_<seg>" -- name FIRST,
+        # segment second, per Mapper#name_for_action's :nested scope
+        # ([parent_member_name, action]) -- R7 (review, fix round 1) caught
+        # that this file had the order backwards ("<seg>_<singular>",
+        # "stats_post" instead of "post_stats"), built on an earlier, wrong
+        # reading of the plan; and with none of that, a literal path derives
+        # its own name the way Rails would from an ungrouped `get "/about"`.
+        route_name =
+          if opts["as"]
+            as_lit = literal(opts["as"])
+            as_lit.nil? ? nil : prefixed_name(sc, as_lit)
+          elsif res_ctx && !@res_kind_stack.empty? && seg && !seg.start_with?("/")
+            case @res_kind_stack.last
+            when :member then prefixed_name(sc, "#{seg}_#{res_ctx.name_singular}")
+            when :collection then prefixed_name(sc, "#{seg}_#{res_ctx.name_plural}")
+            when :new then prefixed_name(sc, "#{seg}_new_#{res_ctx.name_singular}")
+            end
+          elsif res_ctx && seg && !seg.start_with?("/")
+            # bare route inside a resources block (`resources :posts do get :stats end`)
+            prefixed_name(sc, "#{res_ctx.name_singular}_#{seg}")
+          else
+            prefixed_name(sc, derived_name_from_path(seg))
+          end
+
+        verbs.each { |v| emit(v, route_path, ctrl, action, line_of(node), name: route_name) }
       end
     end
 
@@ -562,7 +709,7 @@ module RailsRoutes
       ctrl = apply_module(ctrl, sc) if ctrl
       ctrl ||= res_ctx&.ctrl
       path = sc.path.empty? ? "/" : sc.path
-      emit("GET", path, ctrl, action || "index", line_of(node))
+      emit("GET", path, ctrl, action || "index", line_of(node), name: prefixed_name(sc, "root"))
     end
 
     def concern_call(pos, blk)
@@ -756,7 +903,7 @@ module RailsRoutes
 
     # ---- emission --------------------------------------------------------
 
-    def emit(verb, path, ctrl, action, line)
+    def emit(verb, path, ctrl, action, line, name: nil)
       p = path.nil? || path.empty? ? "/" : path
       p = p == "/" ? "/" : p.chomp("/")
       p = "/" if p.empty?
@@ -765,13 +912,34 @@ module RailsRoutes
         path: p,
         controller: ctrl,
         action: action,
-        # Intentionally unpopulated in Stage 2 -- named-route-helper
-        # recovery (as:, and deriving implicit names like posts_path)
-        # is Stage 4 work; nothing downstream should assume this is real.
-        name: nil,
+        # Task 1 (#167 Stage 1): the Rails route-helper name (`posts` for
+        # `posts_path`), derived by the same rules Rails' Mapper applies.
+        # nil under @uncertain on purpose: a helper resolving to a route
+        # this parser is not vouching for must become a finding
+        # (RAILS_ROUTE_HELPER_UNKNOWN), not a confident URL.
+        name: @uncertain ? nil : name,
         line: line,
         certain: !@uncertain,
       }
+    end
+
+    # Joins the scope's as_prefix and a route's own name stem with `_`,
+    # returning nil when the stem is nil (a route Rails itself would not
+    # name, e.g. a bare path with a dynamic segment and no as:).
+    def prefixed_name(sc, stem)
+      return nil if stem.nil? || stem.empty?
+      sc.as_prefix.empty? ? stem : "#{sc.as_prefix}_#{stem}"
+    end
+
+    # Rails' Mapper#name_for_action derives a helper name from a literal
+    # path when no as: is given: segments joined by `_`, with any dynamic
+    # (`:id`) or glob (`*path`) segment making the route nameless.
+    def derived_name_from_path(seg)
+      return nil if seg.nil?
+      parts = seg.split("/").reject(&:empty?)
+      return nil if parts.empty?
+      return nil if parts.any? { |s| s.start_with?(":", "*") || s.include?("(") }
+      parts.join("_").tr("-", "_")
     end
 
     def mark_unresolved(code, line, detail)

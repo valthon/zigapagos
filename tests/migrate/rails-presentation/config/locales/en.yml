@@ -1,0 +1,11 @@
+en:
+  site:
+    name: "Presentation Fixture"
+  nav:
+    home: "Home"
+  pages:
+    about:
+      heading: "About us"
+  posts:
+    index:
+      heading: "Posts"

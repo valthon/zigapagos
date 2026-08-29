@@ -1,0 +1,7 @@
+<h1>Linked</h1><p>Static — and never scanned: rails-presentation.sh replaces
+this committed file with a symlink pointing OUT of the app tree, which the
+templates op refuses (`unreadable: "outside root"`) while the transitive scan,
+which follows symlinks, reads it happily. That gap is RAILS_TEMPLATE_UNSCANNED
+(R15). The symlink cannot be committed — its target is an absolute path inside
+the test's own temp dir — so the fixture holds a plain file and the script
+swaps it in after `cp -R`.</p>

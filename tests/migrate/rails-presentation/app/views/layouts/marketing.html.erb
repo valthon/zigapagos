@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <%# Same shell as application.html.erb -- see its comments -- but this
+        is the layout `pages_controller.rb` declares literally
+        (`layout "marketing"`), so /about and /help resolve to THIS file,
+        not the app-wide default. %>
+    <title><%= yield(:title) %></title>
+    <%= csrf_meta_tags %>
+    <%= stylesheet_link_tag "application" %>
+    <%= javascript_importmap_tags %>
+  </head>
+  <body class="marketing">
+    <%= render "shared/nav" %>
+    <main><%= yield %></main>
+    <footer><%= t("site.name") %></footer>
+  </body>
+</html>

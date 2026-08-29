@@ -84,10 +84,9 @@ pub const Route = struct {
     path: []const u8,
     controller: ?[]const u8,
     action: ?[]const u8,
-    /// Always `null` today -- the Prism-AST walk (Task 3) does not attempt
-    /// to name routes yet. Carried rather than invented so a future stage
-    /// can populate it without a shape change; see `routes.rb`'s own
-    /// `name:` field comment.
+    /// Filled by `routes.rb`'s Mapper-faithful naming since #167 Stage 1;
+    /// `null` when Rails itself would not name the route or when the route
+    /// is `certain: false`.
     name: ?[]const u8,
     /// `false` when the parser found the route via a construct it could
     /// not fully evaluate (recorded as a paired `unresolved` entry --
@@ -260,7 +259,19 @@ pub fn discoverRoutes(
     // stable argv[1] regardless of the child's own cwd.
     var script_abs_buf: [Io.Dir.max_path_bytes]u8 = undefined;
     const script_abs_n = Io.Dir.cwd().realPathFile(io, script_path, &script_abs_buf) catch |err| {
-        try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_MISSING", script_path, @errorName(err), false, .@"error", null, null);
+        // R12 (fix round 1, task-8 review): `Blocker.path` is documented
+        // app-root-relative and feeds the discovery report, so two machines
+        // analysing the same app must produce the same bytes for it.
+        // `script_path` is `$ZIGAPAGOS_RUNTIME_DIR` joined -- absolute on any
+        // real install -- so it cannot go here. The static literal does; the
+        // path actually attempted moves into free-text `detail`, which
+        // carries no determinism contract. Same split the spawn branch below
+        // already made for `ruby_path` (F3); this site had simply been
+        // missed. Changed in `controllers.zig` and `fragments.zig` at the
+        // same time so the three clients stay mirrors.
+        var buf: [Io.Dir.max_path_bytes + 64]u8 = undefined;
+        const detail = std.fmt.bufPrint(&buf, "{s}: {t}", .{ script_path, err }) catch @errorName(err);
+        try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_MISSING", "sidecar/rails/analyze.rb", detail, false, .@"error", null, null);
         return none;
     };
     const script_abs = script_abs_buf[0..script_abs_n];
@@ -270,7 +281,15 @@ pub fn discoverRoutes(
     const abs_root = sidecar_client.resolveAbsRoot(io, gpa, root_path) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => {
-            try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_FAILED", root_path, @errorName(err), false, .@"error", null, null);
+            // R12, same reasoning as the site above: `root_path` is the
+            // caller's own cwd-relative (or absolute) handle on the app, not
+            // a path relative to the app root. `"."` IS the app-root-relative
+            // name of the thing that could not be resolved -- the app root
+            // itself -- and is identical on every machine; `root_path` moves
+            // into `detail`.
+            var buf: [Io.Dir.max_path_bytes + 64]u8 = undefined;
+            const detail = std.fmt.bufPrint(&buf, "{s}: {t}", .{ root_path, err }) catch @errorName(err);
+            try blockers.append(gpa, blocker_list, "RAILS_SIDECAR_FAILED", ".", detail, false, .@"error", null, null);
             return none;
         },
     };
@@ -1036,6 +1055,14 @@ test "discoverRoutes: ZIGAPAGOS_RUNTIME_DIR with no sidecar/rails/analyze.rb yie
     try std.testing.expectEqualStrings("none", result.mode);
     try std.testing.expectEqual(@as(usize, 1), blocker_list.items.len);
     try std.testing.expectEqualStrings("RAILS_SIDECAR_MISSING", blocker_list.items[0].code);
+    // R12 (fix round 1, task-8 review): `path` is the machine-stable
+    // literal, never the absolute `script_path` this run actually tried --
+    // that string is machine-specific and would make the same app produce
+    // different report bytes on two machines. It is not lost: it moves into
+    // `detail`, which carries no determinism contract.
+    try std.testing.expectEqualStrings("sidecar/rails/analyze.rb", blocker_list.items[0].path);
+    try std.testing.expect(std.mem.indexOf(u8, blocker_list.items[0].detail, runtime_dir_abs) != null);
+    try std.testing.expect(std.mem.indexOf(u8, blocker_list.items[0].detail, "FileNotFound") != null);
     // Non-integrity: see the module doc -- a missing sidecar script means no
     // route graph, not an untrustworthy inventory.
     try std.testing.expect(!blocker_list.items[0].integrity);

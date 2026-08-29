@@ -1,6 +1,6 @@
 ---
 name: zigapagos-rails-migration
-description: Discover and classify the routes of a Rails app for a future zigapagos migration. Use when asked to inventory, scan, or assess a Rails project for zigapagos migration — covers route recovery via a Ruby/Prism sidecar, the six-way route classification, and the JSON manifest contract. Discovery only: this does not convert a Rails app into a zigapagos project (that is a separate, not-yet-implemented stage).
+description: Discover and classify the routes of a Rails app for a future zigapagos migration. Use when asked to inventory, scan, or assess a Rails project for zigapagos migration — covers route recovery via a Ruby/Prism sidecar, the six-way route classification, Rails route-helper names, controller layouts, and the JSON manifest contract including its per-fragment `findings[]`. Discovery and findings only: this does not convert a Rails app into a zigapagos project (that is issue #167 Stage 2, not yet implemented).
 license: MIT
 metadata:
   source: https://github.com/valthon/zigapagos
@@ -11,11 +11,16 @@ metadata:
 You are running discovery over a Rails project ahead of a possible zigapagos
 migration. This is **not** a conversion tool — it inventories the app, reads
 routes and controller-action shapes, resolves each route's view template
-(and its layout and any partials it renders, transitively), and classifies
-each route with an evidence-gated verdict. No content, layout, or island is
+(and its layout and any partials it renders, transitively), classifies each
+route with an evidence-gated verdict, resolves each `certain` route's Rails
+helper `name` and each controller's declared `layout`, and parses every
+route-reachable ERB template into a closed vocabulary of fragments —
+surfacing anything a converter would need a human decision on as a
+`findings[]` entry (issue #167 Stage 1). No content, layout, or island is
 written for the Rails source. The full deterministic reference —
 classification meanings, the `unresolved` follow-ups, `severity` vs.
-`integrity`, `--strict`, route-id non-uniqueness — is in
+`integrity`, `--strict`, route-id non-uniqueness, route-name derivation,
+layout resolution, and the findings/fragment-vocabulary tables — is in
 [references/rails-to-zigapagos.md](references/rails-to-zigapagos.md). Read
 the sections you need as you reach them; do not guess a meaning that file
 defines.
@@ -69,10 +74,18 @@ defines.
    string — do not treat every `unresolved` route the same way; the reason
    tells you what evidence is actually missing.
 
-5. **Do not attempt to convert anything here.** Producing zigapagos content,
-   islands, or a `.spa.tsx` from a classified route is issue #167, a
-   separate and not-yet-implemented stage. This skill's job ends at an
-   honest inventory and classification.
+5. **Read `findings[]`.** Each is a question with a fixed set of `choices`
+   — a per-fragment or per-declaration decision a converter would need a
+   human to make (an unknown helper, request-time state, a missing
+   translation, a dynamic layout, …). `route_id` is always `null` in this
+   stage; a finding never affects the exit code, `--strict` included.
+   Nothing converts yet: recording an answer has nowhere to go until issue
+   #167 Stage 2 adds a `MIGRATION.decisions.json` input this tool reads
+   back.
+6. **Do not attempt to convert anything here.** Producing zigapagos content,
+   islands, or a `.spa.tsx` from a classified route or an answered finding
+   is issue #167 Stage 2, not yet implemented. This skill's job ends at an
+   honest inventory, classification, and findings.
 
 ## Rules
 

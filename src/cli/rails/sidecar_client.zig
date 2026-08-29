@@ -152,6 +152,32 @@ pub fn killOnTimeout(io: Io, child: *std.process.Child, done: *Io.Event) void {
 
 /// Contract 1 (self-freeing): the only allocation that escapes is the
 /// returned response-line slice, released by the caller's plain
+/// `gpa.free(line)` -- there is no owned graph and no `deinit`. Shared by
+/// `queryOnce` and `queryOnceTemplates` below, which differ only in the
+/// request body they write before calling this -- both close stdin first
+/// (see `closeStdin`) so this half never has to know which request kind
+/// produced the pending response line it is about to read.
+fn readOneLine(io: Io, gpa: Allocator, child: *std.process.Child) ![]u8 {
+    var rbuf: [4096]u8 = undefined;
+    var fr = child.stdout.?.reader(io, &rbuf);
+    var line_aw: std.Io.Writer.Allocating = .init(gpa);
+    errdefer line_aw.deinit();
+    _ = try fr.interface.streamDelimiter(&line_aw.writer, '\n');
+    return line_aw.toOwnedSlice();
+}
+
+/// Signals "no more requests" -- `analyze.rb`'s `$stdin.gets` returns nil
+/// and the process exits normally once it has answered this one. Every
+/// caller of `queryOnce`/`queryOnceTemplates` spawns a process solely to
+/// answer this ONE request, so closing immediately after writing it is
+/// correct for all of them.
+fn closeStdin(io: Io, child: *std.process.Child) void {
+    child.stdin.?.close(io);
+    child.stdin = null;
+}
+
+/// Contract 1 (self-freeing): the only allocation that escapes is the
+/// returned response-line slice, released by the caller's plain
 /// `gpa.free(line)` -- there is no owned graph and no `deinit`. (Fix round
 /// 1: see `resolveAbsRoot`'s doc above -- this carried the same mislabel
 /// before the move.)
@@ -167,7 +193,11 @@ pub fn killOnTimeout(io: Io, child: *std.process.Child, done: *Io.Event) void {
 ///
 /// Split out purely to keep the caller's body readable; unlike
 /// `decodeResponse` this half is not meant to be unit tested on its own; it
-/// always needs a live process.
+/// always needs a live process. The read half (`readOneLine`) is shared
+/// with `queryOnceTemplates` below -- the two functions' request bodies
+/// differ (a bare `{"op":...,"root":...}` here vs. templates' extra
+/// `"paths"` array) but reading back the one response line is identical
+/// work, so it is factored out rather than copied a third time.
 pub fn queryOnce(io: Io, gpa: Allocator, child: *std.process.Child, op: []const u8, root_abs: []const u8) ![]u8 {
     var wbuf: [4096]u8 = undefined;
     var fw = child.stdin.?.writer(io, &wbuf);
@@ -178,17 +208,26 @@ pub fn queryOnce(io: Io, gpa: Allocator, child: *std.process.Child, op: []const 
     try std.json.Stringify.value(root_abs, .{}, w);
     try w.writeAll("}\n");
     try w.flush();
-    // Signals "no more requests" -- analyze.rb's `$stdin.gets` returns nil
-    // and the process exits normally once it has answered this one. Both
-    // callers spawn a process solely to answer this ONE request, so closing
-    // immediately after is correct for either.
-    child.stdin.?.close(io);
-    child.stdin = null;
+    closeStdin(io, child);
+    return readOneLine(io, gpa, child);
+}
 
-    var rbuf: [4096]u8 = undefined;
-    var fr = child.stdout.?.reader(io, &rbuf);
-    var line_aw: std.Io.Writer.Allocating = .init(gpa);
-    errdefer line_aw.deinit();
-    _ = try fr.interface.streamDelimiter(&line_aw.writer, '\n');
-    return line_aw.toOwnedSlice();
+/// Contract 1 (self-freeing), same shape as `queryOnce`: the only escaping
+/// allocation is the response line. Writes the `templates` request --
+/// `{"op":"templates","root":…,"paths":[…]}` -- for a root-relative path
+/// list (`analyze.rb`'s `handle_templates` refuses anything else per
+/// entry). The request line is bounded by the path list; `analyze.rb`
+/// caps it at MAX_TEMPLATE_PATHS and answers ok:false beyond that.
+pub fn queryOnceTemplates(io: Io, gpa: Allocator, child: *std.process.Child, root_abs: []const u8, paths: []const []const u8) ![]u8 {
+    var wbuf: [4096]u8 = undefined;
+    var fw = child.stdin.?.writer(io, &wbuf);
+    const w = &fw.interface;
+    try w.writeAll("{\"op\":\"templates\",\"root\":");
+    try std.json.Stringify.value(root_abs, .{}, w);
+    try w.writeAll(",\"paths\":");
+    try std.json.Stringify.value(paths, .{}, w);
+    try w.writeAll("}\n");
+    try w.flush();
+    closeStdin(io, child);
+    return readOneLine(io, gpa, child);
 }

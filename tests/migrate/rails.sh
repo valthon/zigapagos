@@ -220,6 +220,13 @@ if command -v ruby >/dev/null 2>&1; then
   dashboard_controllers=$(jq -c '.templates[] | select(.path == "app/views/posts/dashboard.html.erb") | .stimulus_controllers' "$MANIFEST")
   [[ "$dashboard_controllers" == '["reveal","modal"]' ]] \
     || fail "manifest templates[].stimulus_controllers should be [\"reveal\",\"modal\"] for dashboard.html.erb, got: $dashboard_controllers"
+
+  # #167 Stage 1: route names and findings on the original fixture.
+  [[ "$(jq -r '.routes[] | select(.verb == "POST" and .path == "/posts/:id/publish") | .name' "$MANIFEST")" == "publish_post" ]] || fail "publish_post name"
+  [[ "$(jq -r '.routes[] | select(.path == "/admin/users") | .name' "$MANIFEST")" == "admin_users" ]] || fail "admin_users name"
+  [[ "$(jq -r '.routes[] | select(.path == "/admin/health") | .name' "$MANIFEST")" == "null" ]] || fail "an uncertain route must stay unnamed"
+  jq -e '.findings[] | select(.code == "RAILS_REQUEST_TIME_STATE" and .source.file == "app/views/posts/profile.html.erb")' "$MANIFEST" >/dev/null || fail "profile finding"
+  jq -e '.findings[] | select(.code == "RAILS_PARTIAL_DYNAMIC" and .source.file == "app/views/posts/featured.html.erb")' "$MANIFEST" >/dev/null || fail "featured render @post finding"
 else
   echo "SKIP: route assertions (no ruby on PATH)"
 fi

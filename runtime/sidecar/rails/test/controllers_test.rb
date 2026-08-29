@@ -244,5 +244,49 @@ if deep_entry.nil? || deep_entry[:path] != "app/controllers/deep_controller.rb" 
   $failures += 1
 end
 
+# Task 2 (#167 Stage 1): `layout` declarations. Rails' `layout :sym` names
+# a METHOD evaluated per request, so only a string literal (with no
+# only:/except:) is static; `false` is static too (no layout).
+def check_layout(label, src, expected)
+  got = RailsControllers.parse(src, path: "app/controllers/x_controller.rb")
+  return if got[:layout] == expected
+  warn "FAIL #{label}\n  expected: #{expected.inspect}\n  actual:   #{got[:layout].inspect}"
+  $failures += 1
+end
+
+check_layout "no declaration is nil", "class PagesController < ApplicationController\n  def about; end\nend\n", nil
+check_layout "a string literal is static",
+             "class PagesController < ApplicationController\n  layout \"marketing\"\n  def about; end\nend\n",
+             { value: "marketing", line: 2 }
+check_layout "layout false disables the layout",
+             "class ApiController < ApplicationController\n  layout false\nend\n",
+             { value: nil, disabled: true, line: 2 }
+check_layout "a symbol names a method -- dynamic",
+             "class PostsController < ApplicationController\n  layout :choose\nend\n",
+             { dynamic: true, line: 2 }
+check_layout "a proc is dynamic",
+             "class PostsController < ApplicationController\n  layout proc { |c| c.request.xhr? ? false : \"application\" }\nend\n",
+             { dynamic: true, line: 2 }
+check_layout "a literal with only:/except: is conditional, so dynamic",
+             "class PostsController < ApplicationController\n  layout \"wide\", only: [:index]\nend\n",
+             { dynamic: true, line: 2 }
+check_layout "the LAST declaration wins, as in Rails",
+             "class PostsController < ApplicationController\n  layout \"a\"\n  layout \"b\"\nend\n",
+             { value: "b", line: 3 }
+
+# Fix round 1 (#167 Stage 1 review): `self.layout "x"` is the SAME
+# class-level DSL call as the bare form -- unlike `def self.foo`/`def foo`
+# (where a `self.` receiver on a DEF distinguishes a class method from an
+# instance method), a `self` receiver on a plain method CALL inside a class
+# body just names the receiver explicitly; it carries no such distinction
+# for `layout`. Any OTHER receiver (`Foo.layout "x"`) is a different
+# method entirely and must stay excluded.
+check_layout "self.layout \"x\" is the same static declaration as the bare form",
+             "class PagesController < ApplicationController\n  self.layout \"x\"\nend\n",
+             { value: "x", line: 2 }
+check_layout "self.layout :sym is dynamic, same as the bare form",
+             "class PostsController < ApplicationController\n  self.layout :choose\nend\n",
+             { dynamic: true, line: 2 }
+
 abort "#{$failures} controllers failure(s)" if $failures > 0
 puts "PASS: controllers_test.rb"

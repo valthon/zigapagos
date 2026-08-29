@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <%# R3: plain `yield(:title)`, NOT the `content_for?(:title) ? yield(:title)
+        : t("site.name")` ternary -- that idiom is a Stage 2 vocabulary item
+        and would classify `unknown` today, putting a spurious
+        HELPER_UNKNOWN on every page's layout. %>
+    <title><%= yield(:title) %></title>
+    <%# csrf_meta_tags / stylesheet_link_tag / javascript_importmap_tags are
+        all named, recognised Rails helpers with literal arguments -- no
+        finding. %>
+    <%= csrf_meta_tags %>
+    <%= stylesheet_link_tag "application" %>
+    <%= javascript_importmap_tags %>
+  </head>
+  <body class="application">
+    <%# render "shared/nav" -- a literal partial target, no options -- is a
+        clean render_partial, not a finding. %>
+    <%= render "shared/nav" %>
+    <main><%= yield %></main>
+    <%# t("site.name") resolves against config/locales/en.yml -- exercises
+        the i18n lookup path WITHOUT tripping I18N_UNRESOLVED (that finding
+        is reserved for help.html.erb's `t(".missing")`). %>
+    <footer><%= t("site.name") %></footer>
+  </body>
+</html>

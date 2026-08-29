@@ -1,6 +1,7 @@
 require "json"
 require "open3"
 require "tmpdir"
+require "fileutils"
 
 $failures = 0
 def check(label, cond)
@@ -34,6 +35,30 @@ Dir.mktmpdir do |dir|
       def create
         redirect_to root_path
       end
+    end
+  RB
+  File.write(File.join(dir, "app/controllers/pages_controller.rb"), <<~RB)
+    class PagesController < ApplicationController
+      layout "marketing"
+      def about; end
+    end
+  RB
+  # Fix round 1 (#167 Stage 1 review): a controller with a `layout` but NO
+  # public actions -- e.g. an all-`private` base controller meant to be
+  # subclassed. This is the ONLY fixture that discriminates the
+  # `controller_key`-hoisting fix through the full `handle_controllers`
+  # round trip: `pages_controller.rb` above has a public action, so it
+  # would still report its layout even if that hoist were reverted (the
+  # `next if result[:actions].empty?` guard would never fire for it).
+  # `bare_controller.rb` has none, so it only reaches `layouts` if the key
+  # is computed BEFORE that guard runs.
+  File.write(File.join(dir, "app/controllers/bare_controller.rb"), <<~RB)
+    class BareController < ApplicationController
+      layout "bare"
+
+      private
+
+      def helper; end
     end
   RB
 
@@ -95,13 +120,41 @@ Dir.mktmpdir do |dir|
     check("controllers: admin/users#create shape (path-derived key, not class name)", by_key["admin/users#create"] == {
       controller: "admin/users", action: "create", only_redirect: true, renders_json: false, line: 2,
     })
-    check("controllers: exactly the two actions above, nothing else", res5[:actions].length == 2)
+    # Three now, not two: `pages_controller.rb` (added below for the layout
+    # checks) contributes its own `about` action, which this count must
+    # keep counting -- a layout declaration does not exempt a controller
+    # from the ordinary action walk.
+    check("controllers: exactly the three actions above, nothing else", res5[:actions].length == 3)
     # Fix round 1 (task-2-fixes.md item 1): `RUBY_INFO` used to ride only
     # the "routes" response -- an app with `app/controllers/` but no
     # `config/routes.rb` then reported ruby.available: false even though
     # THIS very response proves Ruby ran and answered. Now stamped here too.
     check("controllers: ruby.available", res5[:ruby][:available] == true)
     check("controllers: ruby.version matches this process's own interpreter", res5[:ruby][:version] == RUBY_VERSION)
+
+    # Task 2 (#167 Stage 1): the controller's `layout` declaration rides
+    # its own flattened array, one entry per controller that declares one --
+    # a controller that never calls `layout` (posts, admin/users) gets no
+    # entry at all, not an entry with a null value, so the Zig side can
+    # distinguish "no declaration, fall back to convention" from "declared
+    # to use the default explicitly".
+    layouts = res5[:layouts]
+    check("layouts present", layouts.is_a?(Array))
+    pages = layouts.find { |l| l[:controller] == "pages" }
+    check("pages layout literal", pages == { controller: "pages", value: "marketing", disabled: false, dynamic: false, line: 2 })
+    check("undeclared controllers have no layouts entry", layouts.none? { |l| l[:controller] == "posts" })
+    # The named guarantee this brief calls out explicitly: a controller
+    # that declares `layout` but has no public actions of its own must
+    # still report its layout (only the per-action loop has nothing to
+    # iterate). See bare_controller.rb's comment above for why this
+    # fixture, specifically, is what discriminates the guard-reordering
+    # fix -- `pages_controller.rb`'s check above cannot regress-detect it,
+    # since that controller has a public action either way.
+    bare = layouts.find { |l| l[:controller] == "bare" }
+    check("a layout-only controller with no public actions still reports its layout",
+          bare == { controller: "bare", value: "bare", disabled: false, dynamic: false, line: 2 })
+    check("a layout-only controller with no public actions contributes no actions entry",
+          res5[:actions].none? { |a| a[:controller] == "bare" })
 
     # An absent `app/controllers/` must answer structurally, not crash --
     # and specifically with ZERO actions found, not merely `ok: true` (which
@@ -210,6 +263,103 @@ Dir.mktmpdir do |dir3|
           route_err[:detail] == "config/routes.rb: unexpected '(', expecting end-of-input")
     check("B1 (routes): detail never contains the absolute checkout dir", !route_err[:detail].include?(dir3))
   end
+end
+
+# --- Task 6: the `templates` op ---------------------------------------
+#
+# One fixture covers all four response shapes at once: a template that
+# parses AND resolves an i18n key through the SAME `RailsI18n.load` this
+# handler runs once per request (not per template -- see analyze.rb);
+# a template that fails to PARSE (an unterminated `if`, reported as
+# `{error, line}`); a path that never existed on disk (`unreadable`,
+# not a fatal request failure); and, in a second request on the SAME
+# process, a path that escapes `root` after normalization.
+Dir.mktmpdir do |dir|
+  FileUtils.mkdir_p(File.join(dir, "app/views/posts"))
+  FileUtils.mkdir_p(File.join(dir, "config/locales"))
+  File.write(File.join(dir, "config/locales/en.yml"), "en:\n  posts:\n    index:\n      heading: \"Posts\"\n")
+  File.write(File.join(dir, "app/views/posts/index.html.erb"), "<h1><%= t(\".heading\") %></h1>\n<%= current_user.name %>\n")
+  File.write(File.join(dir, "app/views/posts/broken.html.erb"), "<% if x %>\n")
+
+  Open3.popen3("ruby", script) do |stdin, stdout, _stderr, _thr|
+    stdin.puts JSON.generate({ op: "templates", root: dir, paths: ["app/views/posts/index.html.erb", "app/views/posts/broken.html.erb", "app/views/posts/missing.html.erb"] })
+    stdin.flush
+    res = JSON.parse(stdout.gets, symbolize_names: true)
+    check("templates ok", res[:ok] == true)
+    check("templates locale", res[:locale] == "en")
+    check("templates ruby stamped", res[:ruby][:available] == true)
+    t = res[:templates]
+    check("order preserved", t.map { |x| x[:path] } == ["app/views/posts/index.html.erb", "app/views/posts/broken.html.erb", "app/views/posts/missing.html.erb"])
+    kinds = t[0][:nodes].select { |n| n[:t] == "code" }.map { |n| n[:kind] }
+    check("index kinds", kinds == %w[i18n request_state])
+    check("i18n resolved through the op", t[0][:nodes].find { |n| n[:kind] == "i18n" }[:value] == "Posts")
+    check("broken is a parse error with a line", t[1][:error].is_a?(String) && t[1][:line].is_a?(Integer))
+    check("missing is unreadable, not fatal", t[2][:unreadable].is_a?(String))
+
+    stdin.puts JSON.generate({ op: "templates", root: dir, paths: ["../etc/passwd"] })
+    stdin.flush
+    res = JSON.parse(stdout.gets, symbolize_names: true)
+    check("a path escaping root is refused per-entry", res[:ok] == true && res[:templates][0][:unreadable]&.include?("outside"))
+
+    # Fix round 1 (#167 Stage 1 review, R11): `File.expand_path` normalizes
+    # `.`/`..`/a leading `/` but does NOT resolve symlinks, so a symlinked
+    # path could sail through that string-level check and read a file
+    # OUTSIDE root -- the reviewer probed this live against the pre-fix
+    # code. Three symlink shapes, one request: (evil) a symlink that
+    # resolves outside `dir` entirely -- must be refused the same as a
+    # literal `../` escape; (alias) a symlink that stays inside `dir` --
+    # must read normally, since Rails apps legitimately use symlinks for
+    # shared partials/generated code; (dangling) a symlink whose target
+    # doesn't exist -- must degrade to `unreadable`, never raise, and the
+    # whole op must still answer `ok: true`. Guarded so a platform without
+    # `File.symlink` support (Windows; not one of this repo's two CI OSes)
+    # skips loudly instead of failing opaquely.
+    outside_dir = nil
+    begin
+      outside_dir = Dir.mktmpdir
+      File.write(File.join(outside_dir, "secret.html.erb"), "<%= 'leaked' %>\n")
+      File.symlink(File.join(outside_dir, "secret.html.erb"), File.join(dir, "app/views/posts/evil.html.erb"))
+      File.symlink(File.join(dir, "app/views/posts/index.html.erb"), File.join(dir, "app/views/posts/alias.html.erb"))
+      File.symlink(File.join(dir, "app/views/posts/does_not_exist.html.erb"), File.join(dir, "app/views/posts/dangling.html.erb"))
+
+      stdin.puts JSON.generate({ op: "templates", root: dir, paths: ["app/views/posts/evil.html.erb", "app/views/posts/alias.html.erb", "app/views/posts/dangling.html.erb"] })
+      stdin.flush
+      res = JSON.parse(stdout.gets, symbolize_names: true)
+      check("symlink request still answers ok:true", res[:ok] == true)
+      t = res[:templates]
+      check("a symlink resolving outside root is refused as outside root", t[0][:unreadable]&.include?("outside root"))
+      check("a symlink resolving inside root reads as an ordinary node stream", t[1][:nodes].is_a?(Array))
+      check("a dangling symlink is unreadable, not fatal", t[2][:unreadable].is_a?(String))
+    rescue NotImplementedError, Errno::EPERM => e
+      warn "SKIP: symlink tests -- #{e.class}: this platform does not support File.symlink"
+    ensure
+      FileUtils.remove_entry(outside_dir) if outside_dir && Dir.exist?(outside_dir)
+    end
+
+    stdin.puts JSON.generate({ op: "templates", root: dir, paths: "nope" })
+    stdin.flush
+    res = JSON.parse(stdout.gets, symbolize_names: true)
+    check("non-array paths is ok:false", res[:ok] == false)
+  end
+end
+
+# `handle_controllers`'s `rel_file = file.delete_prefix("#{root}/")` had the
+# same trailing-slash defect as `RailsI18n.load` (i18n.rb): when `root`
+# itself already ends with "/", `File.join` collapses the doubled slash in
+# the glob result, so the literal `"#{root}/"` prefix (still doubled) never
+# matches and `delete_prefix` is a no-op -- the ABSOLUTE path then leaks
+# into `unresolved[].path`. A dangling symlink is the repro (as in the B2
+# fixture above): deterministic, and it forces the `RAILS_CONTROLLER_UNREADABLE`
+# branch that computes `rel_file` before this fix normalized `root`.
+Dir.mktmpdir do |dir|
+  Dir.mkdir(File.join(dir, "app"))
+  Dir.mkdir(File.join(dir, "app/controllers"))
+  File.symlink(File.join(dir, "nonexistent-target-xyz"), File.join(dir, "app/controllers/dangling_controller.rb"))
+  res9 = sidecar_response(script, "controllers", "#{dir}/")
+  unreadable9 = res9[:unresolved].find { |u| u[:code] == "RAILS_CONTROLLER_UNREADABLE" }
+  check("trailing-slash root: unreadable-controller entry found", !unreadable9.nil?)
+  check("trailing-slash root: unresolved path is still root-relative, not absolute",
+        !unreadable9.nil? && unreadable9[:path] == "app/controllers/dangling_controller.rb")
 end
 
 abort "#{$failures} analyze failure(s)" if $failures > 0

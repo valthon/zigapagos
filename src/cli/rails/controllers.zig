@@ -90,6 +90,36 @@ pub const ActionInfo = struct {
     renders_json: bool = false,
 };
 
+/// One controller's own `layout` declaration, recovered from
+/// `runtime/sidecar/rails/controllers.rb`'s Prism-AST walk (#167 Stage 1):
+/// layout resolution needs to know when a controller OVERRIDES the Rails
+/// convention (a `<controller>/application.html.erb`-shaped default) rather
+/// than merely falling through to it. Contract 2 (owned-result): `controller`
+/// and `value` (when present) are each a fresh `gpa` allocation independent
+/// of the decoded response's JSON arena; `freeLayouts` is the release.
+///
+/// `value`/`disabled`/`dynamic` are mutually informative, not a tagged
+/// union, because the wire shape (`WireLayout`) isn't one either -- three
+/// independent booleans/optional straight off `controllers.rb`'s own
+/// classification:
+/// - `value` non-null, `disabled`/`dynamic` both false: a literal
+///   `layout "marketing"` -- resolution should use `value` as the layout
+///   name.
+/// - `disabled` true (`value` null): `layout false` -- this controller
+///   renders with NO layout at all, not even the default.
+/// - `dynamic` true (`value` null): `layout :some_method` or a proc --
+///   the static walk cannot resolve a name, but the controller DOES
+///   override the convention; resolution should treat this as "known
+///   non-default, name unavailable" rather than silently falling back to
+///   convention.
+pub const LayoutInfo = struct {
+    controller: []const u8,
+    value: ?[]const u8,
+    disabled: bool,
+    dynamic: bool,
+    line: u64,
+};
+
 /// Env var naming the Ruby interpreter to spawn; `ruby` on `PATH` when
 /// unset or blank. See `routes.zig`'s identical constant for the full
 /// rationale (`std.process.spawn` resolves a bare name against `PATH`
@@ -133,6 +163,13 @@ const WireUnresolved = struct {
 const WireResponse = struct {
     ok: bool,
     actions: []const WireAction = &.{},
+    /// `analyze.rb`'s `controllers` op's layout declarations (#167 Stage 1):
+    /// one entry per controller that names its own `layout` call, literal or
+    /// dynamic (a symbol/proc argument) or explicitly disabled (`layout
+    /// false`). Defaulted, not required -- an older sidecar build's response
+    /// simply predates this field, and `decodeResponse` below treats that
+    /// the same as an explicit empty array (see `Decoded.layouts`'s doc).
+    layouts: []const WireLayout = &.{},
     unresolved: []const WireUnresolved = &.{},
     @"error": ?[]const u8 = null,
     // This op's own half of `discovery.ruby` -- see `routes.zig`'s `Ruby`
@@ -140,6 +177,21 @@ const WireResponse = struct {
     // rather than a second hand copy. Optional so a hand-written `"ok":
     // false`/malformed test literal that predates this field still decodes.
     ruby: ?sidecar_client.WireRuby = null,
+};
+
+/// Wire shape of one `layouts[]` entry. `value` is the layout name when
+/// `analyze.rb` could read it as a literal string (`layout "marketing"`);
+/// `null` covers both `dynamic` (a symbol/proc/method argument the static
+/// walk can't resolve to a name, e.g. `layout :choose_layout`) and
+/// `disabled` (`layout false`) -- the two booleans, not `value`'s nullness
+/// alone, are what tell those apart on the Zig side (see `LayoutInfo`'s
+/// doc).
+const WireLayout = struct {
+    controller: []const u8,
+    value: ?[]const u8 = null,
+    disabled: bool = false,
+    dynamic: bool = false,
+    line: u64 = 0,
 };
 
 /// The known `unresolved[].code` vocabulary `runtime/sidecar/rails/
@@ -225,6 +277,11 @@ fn freeActionFields(gpa: Allocator, a: ActionInfo) void {
 /// read, and falls back to `available: false`.
 const Decoded = struct {
     actions: []ActionInfo,
+    /// Owned (contract 2, see `LayoutInfo`'s doc); released by `freeLayouts`.
+    /// Every early-return above (malformed line, `ok:false`) sets this to
+    /// `&.{}` -- same reasoning as those branches' `actions = &.{}`: there is
+    /// no response to have decoded a layout list FROM.
+    layouts: []LayoutInfo,
     ruby: sidecar_client.Ruby,
 };
 
@@ -238,7 +295,7 @@ fn decodeResponse(
         error.OutOfMemory => return error.OutOfMemory,
         else => {
             try blockers.append(gpa, blocker_list, "RAILS_CONTROLLERS_UNAVAILABLE", src_path, @errorName(err), false, .@"error", null, null);
-            return .{ .actions = &.{}, .ruby = .{ .available = false, .version = null } };
+            return .{ .actions = &.{}, .layouts = &.{}, .ruby = .{ .available = false, .version = null } };
         },
     };
     defer parsed.deinit();
@@ -249,7 +306,7 @@ fn decodeResponse(
 
     if (!resp.ok) {
         try blockers.append(gpa, blocker_list, "RAILS_CONTROLLERS_UNAVAILABLE", src_path, resp.@"error" orelse "sidecar reported failure", false, .@"error", null, null);
-        return .{ .actions = &.{}, .ruby = ruby };
+        return .{ .actions = &.{}, .layouts = &.{}, .ruby = ruby };
     }
 
     var actions = try gpa.alloc(ActionInfo, resp.actions.len);
@@ -261,6 +318,20 @@ fn decodeResponse(
     for (resp.actions, 0..) |wa, i| {
         actions[i] = try dupeAction(gpa, wa);
         filled = i + 1;
+    }
+
+    var layouts = try gpa.alloc(LayoutInfo, resp.layouts.len);
+    var lfilled: usize = 0;
+    errdefer {
+        for (layouts[0..lfilled]) |l| freeLayoutFields(gpa, l);
+        gpa.free(layouts);
+    }
+    for (resp.layouts, 0..) |wl, i| {
+        const controller = try gpa.dupe(u8, wl.controller);
+        errdefer gpa.free(controller);
+        const value: ?[]const u8 = if (wl.value) |v| try gpa.dupe(u8, v) else null;
+        layouts[i] = .{ .controller = controller, .value = value, .disabled = wl.disabled, .dynamic = wl.dynamic, .line = wl.line };
+        lfilled = i + 1;
     }
 
     // `route_id` stays `null` here, deliberately (Stage 4 Task 5): each `u`
@@ -287,7 +358,7 @@ fn decodeResponse(
         try blockers.append(gpa, blocker_list, code, blocker_path, detail, false, .warn, null, u.line);
     }
 
-    return .{ .actions = actions, .ruby = ruby };
+    return .{ .actions = actions, .layouts = layouts, .ruby = ruby };
 }
 
 /// Contract 2 counterpart to `discoverControllers`/`decodeResponse`:
@@ -301,6 +372,33 @@ pub fn freeActions(gpa: Allocator, actions: []ActionInfo) void {
     gpa.free(actions);
 }
 
+fn freeLayoutFields(gpa: Allocator, l: LayoutInfo) void {
+    gpa.free(l.controller);
+    if (l.value) |v| gpa.free(v);
+}
+
+/// Contract 2 counterpart to `LayoutInfo`: releases every owned string on
+/// every entry (see `LayoutInfo`'s ownership note) plus the slice itself.
+/// `disabled`/`dynamic`/`line` are plain values with nothing to free. Same
+/// one-call-for-the-whole-slice idiom as `freeActions`.
+pub fn freeLayouts(gpa: Allocator, layouts: []LayoutInfo) void {
+    for (layouts) |l| freeLayoutFields(gpa, l);
+    gpa.free(layouts);
+}
+
+/// Contract 3 (caller-buffer): plain linear lookup, no allocation, same
+/// reasoning as `find` above -- one Rails app's worth of controllers is
+/// small enough that a hash map buys nothing. Returns a copy of the
+/// matching `LayoutInfo` (a plain-value struct whose string fields alias
+/// `layouts`' own storage) so the caller cannot free through it
+/// independently of `layouts`.
+pub fn findLayout(layouts: []const LayoutInfo, controller: []const u8) ?LayoutInfo {
+    for (layouts) |l| {
+        if (std.mem.eql(u8, l.controller, controller)) return l;
+    }
+    return null;
+}
+
 /// `discoverControllers`'s return: the recovered action shapes plus this
 /// op's own half of `discovery.ruby` (see `routes.zig`'s `Result.ruby` doc
 /// for why this is only a HALF -- `rails.zig`'s `combineRuby` ORs it
@@ -308,15 +406,18 @@ pub fn freeActions(gpa: Allocator, actions: []ActionInfo) void {
 pub const Result = struct {
     /// Owned; release with `freeActions`.
     actions: []ActionInfo,
+    /// Owned; release with `freeLayouts`. See `LayoutInfo`'s doc.
+    layouts: []LayoutInfo,
     ruby: sidecar_client.Ruby,
 };
 
-/// Contract 2 counterpart to `discoverControllers`: releases both owned
-/// pieces of a `Result` (`actions` via `freeActions`, `ruby.version` via
-/// `sidecar_client.freeRuby`) in one call, mirroring `routes.zig`'s
-/// `freeResult`.
+/// Contract 2 counterpart to `discoverControllers`: releases every owned
+/// piece of a `Result` (`actions` via `freeActions`, `layouts` via
+/// `freeLayouts`, `ruby.version` via `sidecar_client.freeRuby`) in one call,
+/// mirroring `routes.zig`'s `freeResult`.
 pub fn freeResult(gpa: Allocator, result: Result) void {
     freeActions(gpa, result.actions);
+    freeLayouts(gpa, result.layouts);
     sidecar_client.freeRuby(gpa, result.ruby);
 }
 
@@ -394,7 +495,7 @@ pub fn discoverControllers(
     // available` is unconditionally `false` here, same as `routes.zig`'s
     // identical `none`. The success path (the final `decodeResponse` call)
     // overrides `.ruby` with whatever the sidecar's own response reported.
-    const none: Result = .{ .actions = &.{}, .ruby = .{ .available = false, .version = null } };
+    const none: Result = .{ .actions = &.{}, .layouts = &.{}, .ruby = .{ .available = false, .version = null } };
 
     var controllers_dir = root.openDir(io, "app/controllers", .{ .iterate = true }) catch |err| {
         const code = if (err == error.FileNotFound) "RAILS_CONTROLLERS_MISSING" else "RAILS_CONTROLLERS_UNAVAILABLE";
@@ -420,7 +521,19 @@ pub fn discoverControllers(
 
     var script_abs_buf: [Io.Dir.max_path_bytes]u8 = undefined;
     const script_abs_n = Io.Dir.cwd().realPathFile(io, script_path, &script_abs_buf) catch |err| {
-        try blockers.append(gpa, blocker_list, "RAILS_CONTROLLERS_UNAVAILABLE", script_path, @errorName(err), false, .@"error", null, null);
+        // R12 (fix round 1, task-8 review): `Blocker.path` is documented
+        // app-root-relative and feeds the discovery report, so two machines
+        // analysing the same app must produce the same bytes for it.
+        // `script_path` is `$ZIGAPAGOS_RUNTIME_DIR` joined -- absolute on any
+        // real install -- so it cannot go here. The static literal does; the
+        // path actually attempted moves into free-text `detail`, which
+        // carries no determinism contract. Same split the spawn branch below
+        // already made for `ruby_path` (F3); this site had simply been
+        // missed. Changed in `routes.zig` and `fragments.zig` at the same
+        // time so the three clients stay mirrors.
+        var buf: [Io.Dir.max_path_bytes + 64]u8 = undefined;
+        const detail = std.fmt.bufPrint(&buf, "{s}: {t}", .{ script_path, err }) catch @errorName(err);
+        try blockers.append(gpa, blocker_list, "RAILS_CONTROLLERS_UNAVAILABLE", "sidecar/rails/analyze.rb", detail, false, .@"error", null, null);
         return none;
     };
     const script_abs = script_abs_buf[0..script_abs_n];
@@ -428,7 +541,15 @@ pub fn discoverControllers(
     const abs_root = sidecar_client.resolveAbsRoot(io, gpa, root_path) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => {
-            try blockers.append(gpa, blocker_list, "RAILS_CONTROLLERS_UNAVAILABLE", root_path, @errorName(err), false, .@"error", null, null);
+            // R12, same reasoning as the site above: `root_path` is the
+            // caller's own cwd-relative (or absolute) handle on the app, not
+            // a path relative to the app root. `"."` IS the app-root-relative
+            // name of the thing that could not be resolved -- the app root
+            // itself -- and is identical on every machine; `root_path` moves
+            // into `detail`.
+            var buf: [Io.Dir.max_path_bytes + 64]u8 = undefined;
+            const detail = std.fmt.bufPrint(&buf, "{s}: {t}", .{ root_path, err }) catch @errorName(err);
+            try blockers.append(gpa, blocker_list, "RAILS_CONTROLLERS_UNAVAILABLE", ".", detail, false, .@"error", null, null);
             return none;
         },
     };
@@ -498,7 +619,7 @@ pub fn discoverControllers(
     }
 
     const decoded = try decodeResponse(gpa, line, "app/controllers", blocker_list);
-    return .{ .actions = decoded.actions, .ruby = decoded.ruby };
+    return .{ .actions = decoded.actions, .layouts = decoded.layouts, .ruby = decoded.ruby };
 }
 
 test "a sidecar response decodes into actions, preserving redirect/json flags" {
@@ -559,11 +680,26 @@ test "decodeResponse: an OOM at any point in a multi-row decode leaves no leak" 
     // would stay green regardless. A real version string gives every
     // failure index AFTER the ruby dupe (but before the sweep succeeds)
     // something the errdefer must actually free.
+    //
+    // Review fix round 1 (task-7 review, Important finding): the fixture
+    // used to carry no "layouts" key at all, so `resp.layouts.len == 0` and
+    // `gpa.alloc(LayoutInfo, 0)` never reaches the allocator vtable
+    // (`std.mem.Allocator.allocBytesWithAlignment`'s documented zero-byte
+    // shortcut) -- the `layouts` dupe/errdefer chain added alongside
+    // `LayoutInfo` was never exercised by this sweep. Two rows below: one
+    // with a non-null `value` (exercises the `controller` dupe, then the
+    // `value` dupe and its own nested `errdefer`) and one with
+    // `value: null` (exercises the `controller`-only dupe with `lfilled`
+    // already at 1) -- so a missing `errdefer` on either dupe, or a wrong
+    // `lfilled` bump, each have a failure index that would now leak.
     const line =
         \\{"ok":true,"actions":[
         \\{"controller":"posts","action":"index","only_redirect":false,"renders_json":false,"line":2},
         \\{"controller":"admin/users","action":"create","only_redirect":true,"renders_json":false,"line":3},
         \\{"controller":"comments","action":"destroy","only_redirect":false,"renders_json":true,"line":9}],
+        \\"layouts":[
+        \\{"controller":"pages","value":"marketing","disabled":false,"dynamic":false,"line":2},
+        \\{"controller":"api","value":null,"disabled":true,"dynamic":false,"line":3}],
         \\"unresolved":[],
         \\"ruby":{"available":true,"version":"3.3.6"}}
     ;
@@ -585,12 +721,14 @@ test "decodeResponse: an OOM at any point in a multi-row decode leaves no leak" 
 
         if (decodeResponse(failing.allocator(), line, "app/controllers", &blocker_list)) |decoded| {
             defer freeActions(std.testing.allocator, decoded.actions);
+            defer freeLayouts(std.testing.allocator, decoded.layouts);
             defer sidecar_client.freeRuby(std.testing.allocator, decoded.ruby);
             // `fail_index` finally exceeded every allocation this decode
             // needs: confirm it decoded correctly one last time, then the
             // sweep is done -- every earlier index already ran under the
             // leak detector above.
             try std.testing.expectEqual(@as(usize, 3), decoded.actions.len);
+            try std.testing.expectEqual(@as(usize, 2), decoded.layouts.len);
             break;
         } else |err| {
             try std.testing.expectEqual(error.OutOfMemory, err);
@@ -753,6 +891,37 @@ test "B2: RAILS_CONTROLLER_UNREADABLE is a recognized code, distinct from RAILS_
     try std.testing.expectEqualStrings("RAILS_CONTROLLER_UNREADABLE", blocker_list.items[0].code);
     try std.testing.expectEqualStrings("app/controllers/broken_controller.rb", blocker_list.items[0].path);
     try std.testing.expectEqual(blockers.Severity.warn, blocker_list.items[0].severity);
+}
+
+test "decodeResponse: layouts[] decodes literal, disabled and dynamic shapes; absent layouts is empty" {
+    const gpa = std.testing.allocator;
+    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    defer blockers.freeList(gpa, &list);
+    const line =
+        \\{"ok":true,"actions":[],"layouts":[
+        \\{"controller":"pages","value":"marketing","disabled":false,"dynamic":false,"line":2},
+        \\{"controller":"api","value":null,"disabled":true,"dynamic":false,"line":3},
+        \\{"controller":"posts","value":null,"disabled":false,"dynamic":true,"line":4}
+        \\],"unresolved":[],"ruby":{"available":true,"version":"3.4.10"}}
+    ;
+    const d = try decodeResponse(gpa, line, "app/controllers", &list);
+    defer freeActions(gpa, d.actions);
+    defer freeLayouts(gpa, d.layouts);
+    defer sidecar_client.freeRuby(gpa, d.ruby);
+    try std.testing.expectEqual(@as(usize, 3), d.layouts.len);
+    const pages = findLayout(d.layouts, "pages").?;
+    try std.testing.expectEqualStrings("marketing", pages.value.?);
+    try std.testing.expect(!pages.disabled and !pages.dynamic);
+    try std.testing.expect(findLayout(d.layouts, "api").?.disabled);
+    try std.testing.expect(findLayout(d.layouts, "posts").?.dynamic);
+    try std.testing.expectEqual(@as(u64, 4), findLayout(d.layouts, "posts").?.line);
+    try std.testing.expect(findLayout(d.layouts, "nope") == null);
+
+    const old = try decodeResponse(gpa, "{\"ok\":true,\"actions\":[],\"unresolved\":[]}", "app/controllers", &list);
+    defer freeActions(gpa, old.actions);
+    defer freeLayouts(gpa, old.layouts);
+    defer sidecar_client.freeRuby(gpa, old.ruby);
+    try std.testing.expectEqual(@as(usize, 0), old.layouts.len);
 }
 
 test "find matches on (controller, action) pair, not either alone" {
@@ -977,6 +1146,14 @@ test "discoverControllers: ZIGAPAGOS_RUNTIME_DIR with no sidecar/rails/analyze.r
     try std.testing.expectEqual(@as(usize, 0), result.actions.len);
     try std.testing.expectEqual(@as(usize, 1), blocker_list.items.len);
     try std.testing.expectEqualStrings("RAILS_CONTROLLERS_UNAVAILABLE", blocker_list.items[0].code);
+    // R12 (fix round 1, task-8 review): `path` is the machine-stable
+    // literal, never the absolute `script_path` this run actually tried --
+    // that string is machine-specific and would make the same app produce
+    // different report bytes on two machines. It is not lost: it moves into
+    // `detail`, which carries no determinism contract.
+    try std.testing.expectEqualStrings("sidecar/rails/analyze.rb", blocker_list.items[0].path);
+    try std.testing.expect(std.mem.indexOf(u8, blocker_list.items[0].detail, runtime_dir_abs) != null);
+    try std.testing.expect(std.mem.indexOf(u8, blocker_list.items[0].detail, "FileNotFound") != null);
     try std.testing.expect(!blocker_list.items[0].integrity);
     try std.testing.expect(!result.ruby.available);
 }
