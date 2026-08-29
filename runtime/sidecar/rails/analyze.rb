@@ -19,14 +19,18 @@
 # Unlike render.ts's MAX_LINE_CHARS guard against an unterminated line
 # growing its buffer to OOM, this loop has no line-length cap: `$stdin.gets`
 # will buffer an arbitrarily long line before returning it. That is a
-# deliberate, op-specific call, not a blanket exemption -- it holds because
-# `routes` sends a filesystem path, not an inline payload, so a request line
-# is bounded by path length, not by the size of the app under migration. A
-# future op that sends inline data (a file's contents, a diff) would NOT
-# inherit this exemption and should add its own cap.
+# deliberate, op-specific call, not a blanket exemption -- it holds for
+# `routes` and `controllers` because both send a filesystem path, not an
+# inline payload, so a request line is bounded by path length, not by the
+# size of the app under migration. `templates` is the exception: it DOES
+# send inline data (a path list), so it is the one op that could make this
+# loop buffer an unbounded line on a malformed request -- that is exactly
+# what `MAX_TEMPLATE_PATHS` below (checked before any file is read) bounds.
 require "json"
 require_relative "routes"
 require_relative "controllers"
+require_relative "templates"
+require_relative "i18n"
 
 module RailsAnalyze
   # RailsRoutes.parse already rescues StandardError internally (routes.rb's
@@ -233,6 +237,104 @@ module RailsAnalyze
     parts.join("/")
   end
 
+  # A generous bound on one request's path list. Route-reachable templates
+  # number in the hundreds on a large app; this cap exists so a malformed
+  # request cannot make the sidecar buffer an unbounded line (see the
+  # module doc's note on line length).
+  MAX_TEMPLATE_PATHS = 5000
+
+  # One response per requested path, in request order, each either a node
+  # stream, a parse error with a line, or an unreadable reason. A path that
+  # is absolute or escapes `root` after normalization is refused PER ENTRY
+  # (`unreadable: "outside root"`) -- the request names files inside the
+  # app under migration and nothing else.
+  #
+  # `RailsI18n.load(root)` runs ONCE per request, not once per template:
+  # `queryOnce` (the Zig client) closes stdin after a single request-response
+  # round trip, so a second op in the same request would mean a second
+  # interpreter spawn just to re-read the same locale files every template
+  # in the batch already needs. All templates in one request therefore see
+  # one consistent snapshot of the default locale, which also matches how
+  # Rails itself loads locale data once per boot rather than per render.
+  #
+  # `File.expand_path` normalizes `.`/`..` and a leading `/` but does NOT
+  # resolve symlinks, so the string-level check below is only the cheap
+  # FIRST gate -- it needs no filesystem access and refuses `../` and
+  # absolute inputs before any `realpath` call, but a symlink inside the
+  # app that POINTS outside `root` would sail straight through it and get
+  # read as ordinary template output. Threat model: this sidecar exists
+  # specifically to analyse untrusted third-party/community Rails apps
+  # during migration, and a careless or malicious one could plant a
+  # symlink to, say, `~/.ssh/id_rsa` and have its contents flow straight
+  # into the discovery report (fix round 1, #167 Stage 1 review, R11 --
+  # probed live against the pre-fix code). So every entry that survives
+  # the cheap gate is ALSO resolved with `File.realpath` and re-checked
+  # against the resolved root: a symlink that stays inside `root` reads
+  # normally (Rails apps legitimately use them -- shared partials,
+  # generated code), one that escapes is refused exactly like a literal
+  # `../` escape (`unreadable: "outside root"`), and a broken symlink or
+  # any other `realpath` failure degrades to `unreadable` too -- never
+  # raises past this handler. This is a READ-only defense: the sidecar
+  # never writes, so the only concern is disclosing a file the operator
+  # did not intend to hand to migration tooling, not the write-side
+  # traversal class path-escape checks usually guard against.
+  def self.handle_templates(req)
+    root = req["root"]
+    if !root.is_a?(String) || root.empty?
+      return { ok: false, error: "templates: \"root\" must be a non-empty string", ruby: RUBY_INFO }
+    end
+    paths = req["paths"]
+    return { ok: false, error: "templates: \"paths\" must be an array", ruby: RUBY_INFO } unless paths.is_a?(Array)
+    return { ok: false, error: "templates: more than #{MAX_TEMPLATE_PATHS} paths", ruby: RUBY_INFO } if paths.length > MAX_TEMPLATE_PATHS
+
+    table = RailsI18n.load(root)
+    root_abs = File.expand_path(root)
+    root_real =
+      begin
+        File.realpath(root_abs)
+      rescue SystemCallError
+        # `root` itself doesn't exist (or isn't reachable) -- fall back to
+        # the already-normalized `root_abs`. Every entry below independently
+        # runs its OWN `File.realpath(abs)` against this same nonexistent
+        # tree and degrades to `unreadable` on its own, so this fallback
+        # only keeps the per-entry prefix check well-defined; it masks no
+        # traversal.
+        root_abs
+      end
+    templates = paths.map do |rel|
+      next { path: rel.to_s, unreadable: "path is not a string" } unless rel.is_a?(String)
+      abs = File.expand_path(rel, root_abs)
+      next { path: rel, unreadable: "outside root" } unless abs.start_with?("#{root_abs}/")
+      real =
+        begin
+          File.realpath(abs)
+        rescue SystemCallError, IOError => e
+          # A dangling symlink (or any other reason `abs` can't be
+          # resolved -- permissions on an intermediate directory, etc.)
+          # degrades exactly like an unreadable file, never raises: this
+          # handler has read nothing yet, so there is nothing more
+          # dangerous here than the ordinary "file vanished" case
+          # `File.read`'s own rescue below already covers.
+          next { path: rel, unreadable: "#{e.class}: #{e.message.gsub(abs, rel)}" }
+        end
+      next { path: rel, unreadable: "outside root" } unless real.start_with?("#{root_real}/")
+      source =
+        begin
+          File.read(real)
+        rescue SystemCallError, IOError => e
+          # Same absolute-path sanitization as `handle_controllers`'
+          # `RAILS_CONTROLLER_UNREADABLE` branch: `e.message` bakes in
+          # whatever path `File.read` actually saw (necessarily `real`,
+          # since a real read needs a real path), so it is scrubbed back to
+          # the relative literal to keep the response directory-independent.
+          next { path: rel, unreadable: "#{e.class}: #{e.message.gsub(real, rel)}" }
+        end
+      res = RailsTemplates.analyze(source, path: rel, i18n: table)
+      res[:error] ? { path: rel, error: res[:error], line: res[:line] } : { path: rel, nodes: res[:nodes] }
+    end
+    { ok: true, locale: table.locale, templates: templates, i18n_errors: table.errors, ruby: RUBY_INFO }
+  end
+
   # Dispatch one already-parsed request hash to its op. Broad `rescue
   # Exception` (see module comment) is what keeps a bug anywhere downstream
   # -- the parser, the inflector, this dispatch -- from taking the process
@@ -244,6 +346,8 @@ module RailsAnalyze
       handle_routes(req)
     when "controllers"
       handle_controllers(req)
+    when "templates"
+      handle_templates(req)
     else
       { ok: false, error: "unknown op: #{op.inspect}" }
     end

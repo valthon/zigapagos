@@ -1,6 +1,7 @@
 require "json"
 require "open3"
 require "tmpdir"
+require "fileutils"
 
 $failures = 0
 def check(label, cond)
@@ -261,6 +262,84 @@ Dir.mktmpdir do |dir3|
     check("B1 (routes): detail is the exact relative-path-prefixed message",
           route_err[:detail] == "config/routes.rb: unexpected '(', expecting end-of-input")
     check("B1 (routes): detail never contains the absolute checkout dir", !route_err[:detail].include?(dir3))
+  end
+end
+
+# --- Task 6: the `templates` op ---------------------------------------
+#
+# One fixture covers all four response shapes at once: a template that
+# parses AND resolves an i18n key through the SAME `RailsI18n.load` this
+# handler runs once per request (not per template -- see analyze.rb);
+# a template that fails to PARSE (an unterminated `if`, reported as
+# `{error, line}`); a path that never existed on disk (`unreadable`,
+# not a fatal request failure); and, in a second request on the SAME
+# process, a path that escapes `root` after normalization.
+Dir.mktmpdir do |dir|
+  FileUtils.mkdir_p(File.join(dir, "app/views/posts"))
+  FileUtils.mkdir_p(File.join(dir, "config/locales"))
+  File.write(File.join(dir, "config/locales/en.yml"), "en:\n  posts:\n    index:\n      heading: \"Posts\"\n")
+  File.write(File.join(dir, "app/views/posts/index.html.erb"), "<h1><%= t(\".heading\") %></h1>\n<%= current_user.name %>\n")
+  File.write(File.join(dir, "app/views/posts/broken.html.erb"), "<% if x %>\n")
+
+  Open3.popen3("ruby", script) do |stdin, stdout, _stderr, _thr|
+    stdin.puts JSON.generate({ op: "templates", root: dir, paths: ["app/views/posts/index.html.erb", "app/views/posts/broken.html.erb", "app/views/posts/missing.html.erb"] })
+    stdin.flush
+    res = JSON.parse(stdout.gets, symbolize_names: true)
+    check("templates ok", res[:ok] == true)
+    check("templates locale", res[:locale] == "en")
+    check("templates ruby stamped", res[:ruby][:available] == true)
+    t = res[:templates]
+    check("order preserved", t.map { |x| x[:path] } == ["app/views/posts/index.html.erb", "app/views/posts/broken.html.erb", "app/views/posts/missing.html.erb"])
+    kinds = t[0][:nodes].select { |n| n[:t] == "code" }.map { |n| n[:kind] }
+    check("index kinds", kinds == %w[i18n request_state])
+    check("i18n resolved through the op", t[0][:nodes].find { |n| n[:kind] == "i18n" }[:value] == "Posts")
+    check("broken is a parse error with a line", t[1][:error].is_a?(String) && t[1][:line].is_a?(Integer))
+    check("missing is unreadable, not fatal", t[2][:unreadable].is_a?(String))
+
+    stdin.puts JSON.generate({ op: "templates", root: dir, paths: ["../etc/passwd"] })
+    stdin.flush
+    res = JSON.parse(stdout.gets, symbolize_names: true)
+    check("a path escaping root is refused per-entry", res[:ok] == true && res[:templates][0][:unreadable]&.include?("outside"))
+
+    # Fix round 1 (#167 Stage 1 review, R11): `File.expand_path` normalizes
+    # `.`/`..`/a leading `/` but does NOT resolve symlinks, so a symlinked
+    # path could sail through that string-level check and read a file
+    # OUTSIDE root -- the reviewer probed this live against the pre-fix
+    # code. Three symlink shapes, one request: (evil) a symlink that
+    # resolves outside `dir` entirely -- must be refused the same as a
+    # literal `../` escape; (alias) a symlink that stays inside `dir` --
+    # must read normally, since Rails apps legitimately use symlinks for
+    # shared partials/generated code; (dangling) a symlink whose target
+    # doesn't exist -- must degrade to `unreadable`, never raise, and the
+    # whole op must still answer `ok: true`. Guarded so a platform without
+    # `File.symlink` support (Windows; not one of this repo's two CI OSes)
+    # skips loudly instead of failing opaquely.
+    outside_dir = nil
+    begin
+      outside_dir = Dir.mktmpdir
+      File.write(File.join(outside_dir, "secret.html.erb"), "<%= 'leaked' %>\n")
+      File.symlink(File.join(outside_dir, "secret.html.erb"), File.join(dir, "app/views/posts/evil.html.erb"))
+      File.symlink(File.join(dir, "app/views/posts/index.html.erb"), File.join(dir, "app/views/posts/alias.html.erb"))
+      File.symlink(File.join(dir, "app/views/posts/does_not_exist.html.erb"), File.join(dir, "app/views/posts/dangling.html.erb"))
+
+      stdin.puts JSON.generate({ op: "templates", root: dir, paths: ["app/views/posts/evil.html.erb", "app/views/posts/alias.html.erb", "app/views/posts/dangling.html.erb"] })
+      stdin.flush
+      res = JSON.parse(stdout.gets, symbolize_names: true)
+      check("symlink request still answers ok:true", res[:ok] == true)
+      t = res[:templates]
+      check("a symlink resolving outside root is refused as outside root", t[0][:unreadable]&.include?("outside root"))
+      check("a symlink resolving inside root reads as an ordinary node stream", t[1][:nodes].is_a?(Array))
+      check("a dangling symlink is unreadable, not fatal", t[2][:unreadable].is_a?(String))
+    rescue NotImplementedError, Errno::EPERM => e
+      warn "SKIP: symlink tests -- #{e.class}: this platform does not support File.symlink"
+    ensure
+      FileUtils.remove_entry(outside_dir) if outside_dir && Dir.exist?(outside_dir)
+    end
+
+    stdin.puts JSON.generate({ op: "templates", root: dir, paths: "nope" })
+    stdin.flush
+    res = JSON.parse(stdout.gets, symbolize_names: true)
+    check("non-array paths is ok:false", res[:ok] == false)
   end
 end
 
