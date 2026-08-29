@@ -36,6 +36,30 @@ Dir.mktmpdir do |dir|
       end
     end
   RB
+  File.write(File.join(dir, "app/controllers/pages_controller.rb"), <<~RB)
+    class PagesController < ApplicationController
+      layout "marketing"
+      def about; end
+    end
+  RB
+  # Fix round 1 (#167 Stage 1 review): a controller with a `layout` but NO
+  # public actions -- e.g. an all-`private` base controller meant to be
+  # subclassed. This is the ONLY fixture that discriminates the
+  # `controller_key`-hoisting fix through the full `handle_controllers`
+  # round trip: `pages_controller.rb` above has a public action, so it
+  # would still report its layout even if that hoist were reverted (the
+  # `next if result[:actions].empty?` guard would never fire for it).
+  # `bare_controller.rb` has none, so it only reaches `layouts` if the key
+  # is computed BEFORE that guard runs.
+  File.write(File.join(dir, "app/controllers/bare_controller.rb"), <<~RB)
+    class BareController < ApplicationController
+      layout "bare"
+
+      private
+
+      def helper; end
+    end
+  RB
 
   Open3.popen3("ruby", script) do |stdin, stdout, _stderr, _thr|
     stdin.puts JSON.generate({ op: "routes", root: dir })
@@ -95,13 +119,41 @@ Dir.mktmpdir do |dir|
     check("controllers: admin/users#create shape (path-derived key, not class name)", by_key["admin/users#create"] == {
       controller: "admin/users", action: "create", only_redirect: true, renders_json: false, line: 2,
     })
-    check("controllers: exactly the two actions above, nothing else", res5[:actions].length == 2)
+    # Three now, not two: `pages_controller.rb` (added below for the layout
+    # checks) contributes its own `about` action, which this count must
+    # keep counting -- a layout declaration does not exempt a controller
+    # from the ordinary action walk.
+    check("controllers: exactly the three actions above, nothing else", res5[:actions].length == 3)
     # Fix round 1 (task-2-fixes.md item 1): `RUBY_INFO` used to ride only
     # the "routes" response -- an app with `app/controllers/` but no
     # `config/routes.rb` then reported ruby.available: false even though
     # THIS very response proves Ruby ran and answered. Now stamped here too.
     check("controllers: ruby.available", res5[:ruby][:available] == true)
     check("controllers: ruby.version matches this process's own interpreter", res5[:ruby][:version] == RUBY_VERSION)
+
+    # Task 2 (#167 Stage 1): the controller's `layout` declaration rides
+    # its own flattened array, one entry per controller that declares one --
+    # a controller that never calls `layout` (posts, admin/users) gets no
+    # entry at all, not an entry with a null value, so the Zig side can
+    # distinguish "no declaration, fall back to convention" from "declared
+    # to use the default explicitly".
+    layouts = res5[:layouts]
+    check("layouts present", layouts.is_a?(Array))
+    pages = layouts.find { |l| l[:controller] == "pages" }
+    check("pages layout literal", pages == { controller: "pages", value: "marketing", disabled: false, dynamic: false, line: 2 })
+    check("undeclared controllers have no layouts entry", layouts.none? { |l| l[:controller] == "posts" })
+    # The named guarantee this brief calls out explicitly: a controller
+    # that declares `layout` but has no public actions of its own must
+    # still report its layout (only the per-action loop has nothing to
+    # iterate). See bare_controller.rb's comment above for why this
+    # fixture, specifically, is what discriminates the guard-reordering
+    # fix -- `pages_controller.rb`'s check above cannot regress-detect it,
+    # since that controller has a public action either way.
+    bare = layouts.find { |l| l[:controller] == "bare" }
+    check("a layout-only controller with no public actions still reports its layout",
+          bare == { controller: "bare", value: "bare", disabled: false, dynamic: false, line: 2 })
+    check("a layout-only controller with no public actions contributes no actions entry",
+          res5[:actions].none? { |a| a[:controller] == "bare" })
 
     # An absent `app/controllers/` must answer structurally, not crash --
     # and specifically with ZERO actions found, not merely `ok: true` (which
@@ -210,6 +262,25 @@ Dir.mktmpdir do |dir3|
           route_err[:detail] == "config/routes.rb: unexpected '(', expecting end-of-input")
     check("B1 (routes): detail never contains the absolute checkout dir", !route_err[:detail].include?(dir3))
   end
+end
+
+# `handle_controllers`'s `rel_file = file.delete_prefix("#{root}/")` had the
+# same trailing-slash defect as `RailsI18n.load` (i18n.rb): when `root`
+# itself already ends with "/", `File.join` collapses the doubled slash in
+# the glob result, so the literal `"#{root}/"` prefix (still doubled) never
+# matches and `delete_prefix` is a no-op -- the ABSOLUTE path then leaks
+# into `unresolved[].path`. A dangling symlink is the repro (as in the B2
+# fixture above): deterministic, and it forces the `RAILS_CONTROLLER_UNREADABLE`
+# branch that computes `rel_file` before this fix normalized `root`.
+Dir.mktmpdir do |dir|
+  Dir.mkdir(File.join(dir, "app"))
+  Dir.mkdir(File.join(dir, "app/controllers"))
+  File.symlink(File.join(dir, "nonexistent-target-xyz"), File.join(dir, "app/controllers/dangling_controller.rb"))
+  res9 = sidecar_response(script, "controllers", "#{dir}/")
+  unreadable9 = res9[:unresolved].find { |u| u[:code] == "RAILS_CONTROLLER_UNREADABLE" }
+  check("trailing-slash root: unreadable-controller entry found", !unreadable9.nil?)
+  check("trailing-slash root: unresolved path is still root-relative, not absolute",
+        !unreadable9.nil? && unreadable9[:path] == "app/controllers/dangling_controller.rb")
 end
 
 abort "#{$failures} analyze failure(s)" if $failures > 0

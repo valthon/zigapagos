@@ -143,9 +143,11 @@ module RailsAnalyze
     if !root.is_a?(String) || root.empty?
       return { ok: false, error: "controllers: \"root\" must be a non-empty string", ruby: RUBY_INFO }
     end
+    root = File.expand_path(root)
 
     controllers_root = File.join(root, "app/controllers")
     actions = []
+    layouts = []
     unresolved = []
 
     Dir.glob(File.join(controllers_root, "**", "*.rb")).sort.each do |file|
@@ -173,14 +175,31 @@ module RailsAnalyze
 
       result = RailsControllers.parse(source, path: rel_file)
       unresolved.concat(result[:unresolved])
+
+      # The key is computed unconditionally now (moved above the
+      # `actions.empty?` guard below): a controller that declares `layout`
+      # but has no public actions of its own (e.g. an all-`private` base
+      # controller meant to be subclassed) must still report its layout --
+      # only the per-action loop has nothing to iterate in that case.
+      controller_key = controller_path_key(file, controllers_root)
+
+      if (lay = result[:layout])
+        layouts << {
+          controller: controller_key,
+          value: lay[:value],
+          disabled: lay[:disabled] == true,
+          dynamic: lay[:dynamic] == true,
+          line: lay[:line],
+        }
+      end
+
       # `result[:actions]` is empty both for a bare concern module (Task 1's
       # documented "nothing found" case) and for a controller class with no
-      # public methods -- either way there is nothing to derive a
-      # controller-path key FOR, so the file is skipped rather than emitting
-      # a key computed from its path alone.
+      # public methods -- either way there is nothing to derive an action
+      # entry FOR, so only the per-action loop is skipped, not the layout
+      # reported above.
       next if result[:actions].empty?
 
-      controller_key = controller_path_key(file, controllers_root)
       result[:actions].each do |name, shape|
         actions << {
           controller: controller_key,
@@ -192,7 +211,7 @@ module RailsAnalyze
       end
     end
 
-    { ok: true, actions: actions, unresolved: unresolved, ruby: RUBY_INFO }
+    { ok: true, actions: actions, layouts: layouts, unresolved: unresolved, ruby: RUBY_INFO }
   end
 
   # The Rails controller PATH key a route's `controller` field holds --

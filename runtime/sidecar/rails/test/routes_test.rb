@@ -448,5 +448,223 @@ check_lines "a resources-expanded route and a sibling bare route report differen
               ["GET", "/about", 3],
             ]
 
+# Task 1 (#167 Stage 1): route names. `check` never inspects :name, so this
+# compares the exact (verb, path, name) triple -- a name attached to the
+# wrong route is the bug that matters, not a missing name.
+def check_names(label, src, expected)
+  got = RailsRoutes.parse(src, path: "config/routes.rb")
+  actual = got[:routes].map { |r| [r[:verb], r[:path], r[:name]] }.sort_by(&:inspect)
+  want = expected.sort_by(&:inspect)
+  return if actual == want
+  warn "FAIL #{label}\n  missing: #{(want - actual).inspect}\n  extra:   #{(actual - want).inspect}"
+  $failures += 1
+end
+
+check_names "resources derive the seven Rails helper names",
+            "Rails.application.routes.draw do\n  resources :posts\nend\n",
+            [
+              ["GET", "/posts", "posts"], ["POST", "/posts", "posts"],
+              ["GET", "/posts/new", "new_post"], ["GET", "/posts/:id/edit", "edit_post"],
+              ["GET", "/posts/:id", "post"], ["PATCH", "/posts/:id", "post"],
+              ["PUT", "/posts/:id", "post"], ["DELETE", "/posts/:id", "post"],
+            ]
+
+check_names "singular resource names",
+            "Rails.application.routes.draw do\n  resource :profile\nend\n",
+            [
+              ["POST", "/profile", "profile"], ["GET", "/profile/new", "new_profile"],
+              ["GET", "/profile/edit", "edit_profile"], ["GET", "/profile", "profile"],
+              ["PATCH", "/profile", "profile"], ["PUT", "/profile", "profile"],
+              ["DELETE", "/profile", "profile"],
+            ]
+
+check_names "member/collection/new routes inside resources",
+            "Rails.application.routes.draw do\n" \
+            "  resources :posts, only: [] do\n" \
+            "    member { post :publish }\n" \
+            "    collection { get :recent }\n" \
+            "    new { get :preview }\n" \
+            "  end\n" \
+            "end\n",
+            [
+              ["POST", "/posts/:id/publish", "publish_post"],
+              ["GET", "/posts/recent", "recent_posts"],
+              ["GET", "/posts/new/preview", "preview_new_post"],
+            ]
+
+check_names "namespace prefixes, scope as: prefixes, as: overrides, root",
+            "Rails.application.routes.draw do\n" \
+            "  root \"home#index\"\n" \
+            "  namespace :admin do\n" \
+            "    resources :users, only: [:index]\n" \
+            "  end\n" \
+            "  scope as: \"legacy\" do\n" \
+            "    get \"/old\", to: \"pages#old\"\n" \
+            "  end\n" \
+            "  get \"/about\", to: \"pages#about\"\n" \
+            "  get \"/posts/old\", to: \"posts#old\"\n" \
+            "  get \"/help\", to: \"pages#help\", as: :support\n" \
+            "  resources :articles, only: [:index], as: :stories\n" \
+            "end\n",
+            [
+              ["GET", "/", "root"],
+              ["GET", "/admin/users", "admin_users"],
+              ["GET", "/old", "legacy_old"],
+              ["GET", "/about", "about"],
+              ["GET", "/posts/old", "posts_old"],
+              ["GET", "/help", "support"],
+              ["GET", "/articles", "stories"],
+            ]
+
+check_names "a dynamic path segment or a glob yields no derived name; an uncertain route never has one",
+            "Rails.application.routes.draw do\n" \
+            "  get \"/posts/:id/raw\", to: \"posts#raw\"\n" \
+            "  get \"/files/*path\", to: \"files#show\"\n" \
+            "  if ENV[\"X\"]\n" \
+            "    get \"/maybe\", to: \"pages#maybe\"\n" \
+            "  end\n" \
+            "end\n",
+            [
+              ["GET", "/posts/:id/raw", nil],
+              ["GET", "/files/*path", nil],
+              ["GET", "/maybe", nil],
+            ]
+
+# Found in self-review while implementing Task 1: @res_kind_stack tracks
+# the enclosing member/collection/new kind so verb_call can build
+# publish_post/recent_posts/preview_new_post, but a nested `resources`
+# establishes its OWN resource identity -- a bare route inside ITS block
+# must not inherit an outer, unrelated member/collection/new kind that was
+# never popped for this inner resources call. Without resources_call
+# saving/clearing/restoring @res_kind_stack around its own body, the bare
+# `get :flag` below read the outer :collection off the leaked stack and
+# named itself with the :collection-kind shape ("<seg>_<plural>") instead
+# of the correct bare-nested-route shape a route bare-nested directly in a
+# resources block always gets (see the "bare nested route" case above).
+#
+# Expectations updated in fix round 1 (#167 Stage 1 review): `comments` is
+# ITSELF nested inside `posts`, so its own name compounds onto posts'
+# singular ("post_comments"/"post_comment", not bare "comments"/"comment"
+# -- see the nested-resources compounding tests below); and R7 (review)
+# fixed the bare-nested-route shape's element order to
+# "<singular>_<seg>" (name first, segment second, matching Rails'
+# Mapper#name_for_action :nested scope), so `flag` nested in the
+# (now-compounded) `comments` resource is "post_comment_flag", not
+# "flag_comment" (built on the plan's wrong order) or "flag_comments" (the
+# original leaked-stack bug this test was written to pin).
+check_names "a resources block nested inside member/collection/new does not inherit that kind",
+            "Rails.application.routes.draw do\n" \
+            "  resources :posts, only: [] do\n" \
+            "    collection do\n" \
+            "      resources :comments, only: [:index] do\n" \
+            "        get :flag\n" \
+            "      end\n" \
+            "    end\n" \
+            "  end\n" \
+            "end\n",
+            [
+              ["GET", "/posts/comments", "post_comments"],
+              ["GET", "/posts/comments/:comment_id/flag", "post_comment_flag"],
+            ]
+
+# ---------------------------------------------------------------------
+# Fix round 1 (#167 Stage 1 review), Important 2: nested resources/resource
+# blocks must compound Rails' parent-prefixed helper names, not name
+# themselves as if they were top-level.
+check_names "two-level nesting compounds the parent's singular onto every action",
+            "Rails.application.routes.draw do\n" \
+            "  resources :posts do\n" \
+            "    resources :comments\n" \
+            "  end\n" \
+            "end\n",
+            [
+              ["GET", "/posts", "posts"], ["POST", "/posts", "posts"],
+              ["GET", "/posts/new", "new_post"], ["GET", "/posts/:id/edit", "edit_post"],
+              ["GET", "/posts/:id", "post"], ["PATCH", "/posts/:id", "post"],
+              ["PUT", "/posts/:id", "post"], ["DELETE", "/posts/:id", "post"],
+              ["GET", "/posts/:post_id/comments", "post_comments"],
+              ["POST", "/posts/:post_id/comments", "post_comments"],
+              ["GET", "/posts/:post_id/comments/new", "new_post_comment"],
+              ["GET", "/posts/:post_id/comments/:id/edit", "edit_post_comment"],
+              ["GET", "/posts/:post_id/comments/:id", "post_comment"],
+              ["PATCH", "/posts/:post_id/comments/:id", "post_comment"],
+              ["PUT", "/posts/:post_id/comments/:id", "post_comment"],
+              ["DELETE", "/posts/:post_id/comments/:id", "post_comment"],
+            ]
+
+check_names "three-level nesting compounds every ancestor's singular, innermost last",
+            "Rails.application.routes.draw do\n" \
+            "  resources :posts, only: [] do\n" \
+            "    resources :comments, only: [] do\n" \
+            "      resources :replies, only: [:index, :show]\n" \
+            "    end\n" \
+            "  end\n" \
+            "end\n",
+            [
+              ["GET", "/posts/:post_id/comments/:comment_id/replies", "post_comment_replies"],
+              ["GET", "/posts/:post_id/comments/:comment_id/replies/:id", "post_comment_reply"],
+            ]
+
+check_names "a singular resource parent compounds its own (already-singular) name",
+            "Rails.application.routes.draw do\n" \
+            "  resource :profile, only: [] do\n" \
+            "    resources :photos, only: [:index]\n" \
+            "  end\n" \
+            "end\n",
+            [
+              ["GET", "/profile/photos", "profile_photos"],
+            ]
+
+check_names "member routes inside a nested resource use the fully-compounded name",
+            "Rails.application.routes.draw do\n" \
+            "  resources :posts, only: [] do\n" \
+            "    resources :comments, only: [] do\n" \
+            "      member { post :flag }\n" \
+            "    end\n" \
+            "  end\n" \
+            "end\n",
+            [
+              ["POST", "/posts/:post_id/comments/:id/flag", "flag_post_comment"],
+            ]
+
+# ---------------------------------------------------------------------
+# Fix round 1 (#167 Stage 1 review), controller ruling R7: the plan's
+# bare-nested-route shape was backwards. Rails' Mapper#name_for_action
+# builds a :nested-scope name as [parent_member_name, action] --
+# `resources :posts do get :stats end` is "post_stats", never "stats_post".
+check_names "a bare route nested directly in resources is named <singular>_<seg>, not <seg>_<singular>",
+            "Rails.application.routes.draw do\n" \
+            "  resources :posts, only: [] do\n" \
+            "    get :stats\n" \
+            "  end\n" \
+            "end\n",
+            [
+              ["GET", "/posts/:post_id/stats", "post_stats"],
+            ]
+
+# ---------------------------------------------------------------------
+# Fix round 1 (#167 Stage 1 review), Important 1: the three `as:`
+# fail-closed branches added alongside route naming (resources_call,
+# scope_call, verb_call) had no covering test -- each must produce
+# RAILS_ROUTE_DYNAMIC_PATH and emit NO route for the affected call, the
+# same "fail closed like path:/controller:" contract path:/controller:
+# already had tests for.
+check "resources as: with a non-literal value is unresolved, not the un-aliased name",
+      'Rails.application.routes.draw do
+  resources :posts, as: some_method
+end', [], expect_unresolved: ["RAILS_ROUTE_DYNAMIC_PATH"]
+
+check "scope as: with a non-literal value is unresolved, not silently un-prefixed",
+      'Rails.application.routes.draw do
+  scope as: some_method do
+    get "/x", to: "a#b"
+  end
+end', [], expect_unresolved: ["RAILS_ROUTE_DYNAMIC_PATH"]
+
+check "a bare verb call's as: with a non-literal value is unresolved, not partially named",
+      'Rails.application.routes.draw do
+  get "/x", to: "a#b", as: some_method
+end', [], expect_unresolved: ["RAILS_ROUTE_DYNAMIC_PATH"]
+
 abort "#{$failures} routes failure(s)" if $failures > 0
 puts "PASS: routes_test.rb"

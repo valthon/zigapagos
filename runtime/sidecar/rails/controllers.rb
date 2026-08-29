@@ -118,10 +118,11 @@ module RailsControllers
       # the same file. See controllers_test.rb's "two controllers in one
       # file" cases.
       @classes = []
+      @layout = nil
     end
 
     def result
-      { controller: @controller, actions: @actions, unresolved: [] }
+      { controller: @controller, actions: @actions, layout: @layout, unresolved: [] }
     end
 
     # Collects every top-level class (recursing through `module` wrappers
@@ -173,6 +174,13 @@ module RailsControllers
         when Prism::DefNode
           record_action(n) if visibility == :public && n.receiver.nil?
         when Prism::CallNode
+          # A `self` receiver on this CALL is not the same distinction a
+          # `self.` receiver on a DEF makes (instance vs. class method):
+          # `self.layout "x"` is the identical class-level DSL call as the
+          # bare `layout "x"` form, just with the receiver spelled out. Any
+          # OTHER receiver (`Foo.layout "x"`) is a different method and
+          # must stay excluded.
+          record_layout(n) if (n.receiver.nil? || n.receiver.is_a?(Prism::SelfNode)) && n.name == :layout
           visibility = handle_visibility_call(n, visibility)
         end
       end
@@ -206,6 +214,26 @@ module RailsControllers
 
     def record_action(def_node)
       @actions[def_node.name.to_s] = analyze_action(def_node)
+    end
+
+    # `layout "x"` is the only static shape. `layout :sym` names a method
+    # Rails calls per request; a proc, a non-literal, or a literal carrying
+    # only:/except: are all decided at request time -- reported as dynamic
+    # so the Zig side can fall back to convention AND raise a finding,
+    # instead of guessing which layout wins.
+    def record_layout(node)
+      line = node.location.start_line
+      args = node.arguments&.arguments || []
+      first = args.first
+      has_opts = args.any? { |a| a.is_a?(Prism::KeywordHashNode) || a.is_a?(Prism::HashNode) }
+      @layout =
+        if first.is_a?(Prism::StringNode) && !has_opts
+          { value: first.unescaped, line: line }
+        elsif first.is_a?(Prism::FalseNode) && !has_opts
+          { value: nil, disabled: true, line: line }
+        else
+          { dynamic: true, line: line }
+        end
     end
 
     # ---- per-action analysis --------------------------------------------
