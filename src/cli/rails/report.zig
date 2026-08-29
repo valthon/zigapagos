@@ -9,6 +9,7 @@ const integrations = @import("integrations.zig");
 const blockers = @import("blockers.zig");
 const routes = @import("routes.zig");
 const classify = @import("classify.zig");
+const findings = @import("findings.zig");
 
 pub const Input = struct {
     app_path: []const u8,
@@ -38,6 +39,13 @@ pub const Input = struct {
     /// rather than silently rendering an unclassified route or
     /// misaligning the pairing.
     classifications: []const classify.Verdict = &.{},
+    /// #167 Stage 1: `findings.derive`'s result -- per-fragment questions
+    /// for the operator, rendered in their own `## Findings` section after
+    /// Blockers (see that section's own doc for why it is a SEPARATE
+    /// section, not folded into Blockers). Defaulted to empty for the same
+    /// reason `routes` defaults empty: every report test written before
+    /// this field existed keeps compiling unchanged.
+    findings: []const findings.Finding = &.{},
 };
 
 const unresolved_verdict: classify.Verdict = .{ .class = .unresolved, .reason = "test stub", .candidates = &.{} };
@@ -599,6 +607,27 @@ fn countOf(entries: []const inventory.Entry, kind: inventory.Kind) usize {
     return n;
 }
 
+const report_choices = [_][]const u8{ "retain", "blocked" };
+
+test "build: a Findings section lists count-per-code and one exact line per finding" {
+    const fs = [_]findings.Finding{
+        .{ .id = "RAILS_HELPER_UNKNOWN.app/views/posts/index%2Ehtml%2Eerb.L1C9", .code = "RAILS_HELPER_UNKNOWN", .severity = .warn, .path = "app/views/posts/index.html.erb", .line = 1, .route_id = null, .message = "unknown helper `number_to_currency`", .choices = &report_choices, .requires_artifact = false },
+        .{ .id = "RAILS_LAYOUT_DYNAMIC.app/controllers/posts_controller%2Erb.L2", .code = "RAILS_LAYOUT_DYNAMIC", .severity = .warn, .path = "app/controllers/posts_controller.rb", .line = 2, .route_id = null, .message = "controller declares a dynamic layout", .choices = &report_choices, .requires_artifact = false },
+    };
+    const md = try build(std.testing.allocator, .{ .app_path = "app", .entries = &.{}, .integrations = &.{}, .blockers = &.{}, .findings = &fs });
+    defer std.testing.allocator.free(md);
+    try std.testing.expect(std.mem.indexOf(u8, md, "\n## Findings\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, md, "\n- RAILS_HELPER_UNKNOWN: 1\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, md, "\n- RAILS_LAYOUT_DYNAMIC: 1\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, md, "\n- `RAILS_HELPER_UNKNOWN` `app/views/posts/index.html.erb:1` — unknown helper `number_to_currency` (choices: retain, blocked)\n") != null);
+}
+
+test "build: zero findings still renders the section, saying so" {
+    const md = try build(std.testing.allocator, .{ .app_path = "app", .entries = &.{}, .integrations = &.{}, .blockers = &.{} });
+    defer std.testing.allocator.free(md);
+    try std.testing.expect(std.mem.indexOf(u8, md, "\n## Findings\n\nNone.\n") != null);
+}
+
 /// Contract 1 (self-freeing): all scratch is released; the returned markdown is
 /// the single escaping allocation and is owned by the caller.
 ///
@@ -767,6 +796,51 @@ pub fn build(gpa: Allocator, in: Input) Allocator.Error![]const u8 {
         std.mem.sort(Blocker, sorted, {}, blockerLessThan);
         for (sorted) |b| {
             w.print("- `{s}` {s}: {s}\n", .{ b.code, b.path, b.detail }) catch return error.OutOfMemory;
+        }
+    }
+
+    // #167 Stage 1: a SEPARATE section from Blockers, deliberately -- see
+    // `Input.findings`'s doc and `findings.zig`'s module doc for why a
+    // blocker (a fact discovery already settled) and a finding (a choice
+    // left to the operator) must not be mixed into one list a reader could
+    // mistake for a single kind of thing.
+    w.writeAll("\n## Findings\n\n") catch return error.OutOfMemory;
+    if (in.findings.len == 0) {
+        w.writeAll("None.\n") catch return error.OutOfMemory;
+    } else {
+        // Sorted in a private copy, the same "determinism is this
+        // function's own responsibility" stance the Blockers section above
+        // already takes -- never trusting that `findings.derive` (or
+        // whatever else built the caller's list) already sorted it.
+        const sorted_findings = try gpa.dupe(findings.Finding, in.findings);
+        defer gpa.free(sorted_findings);
+        std.mem.sort(findings.Finding, sorted_findings, {}, findings.lessThan);
+
+        // One count line per DISTINCT code. `sorted_findings` is already
+        // ordered primarily by code (findings.lessThan), so equal codes are
+        // already adjacent -- this single forward pass only needs to notice
+        // where the code changes, not a second sort/dedup structure.
+        var i: usize = 0;
+        while (i < sorted_findings.len) {
+            const code = sorted_findings[i].code;
+            var count: usize = 0;
+            while (i < sorted_findings.len and std.mem.eql(u8, sorted_findings[i].code, code)) : (i += 1) count += 1;
+            w.print("- {s}: {d}\n", .{ code, count }) catch return error.OutOfMemory;
+        }
+        w.writeAll("\n") catch return error.OutOfMemory;
+
+        for (sorted_findings) |f| {
+            if (f.line) |l| {
+                w.print("- `{s}` `{s}:{d}` — {s}", .{ f.code, f.path, l, f.message }) catch return error.OutOfMemory;
+            } else {
+                w.print("- `{s}` `{s}` — {s}", .{ f.code, f.path, f.message }) catch return error.OutOfMemory;
+            }
+            w.writeAll(" (choices: ") catch return error.OutOfMemory;
+            for (f.choices, 0..) |c, ci| {
+                if (ci > 0) w.writeAll(", ") catch return error.OutOfMemory;
+                w.writeAll(c) catch return error.OutOfMemory;
+            }
+            w.writeAll(")\n") catch return error.OutOfMemory;
         }
     }
 

@@ -12,6 +12,8 @@ pub const assets = @import("assets.zig");
 pub const blockers = @import("blockers.zig");
 pub const classify = @import("classify.zig");
 pub const detect = @import("detect.zig");
+pub const fragments = @import("fragments.zig");
+pub const findings = @import("findings.zig");
 pub const inventory = @import("inventory.zig");
 pub const integrations = @import("integrations.zig");
 pub const report = @import("report.zig");
@@ -35,6 +37,7 @@ test {
     _ = blockers;
     _ = classify;
     _ = detect;
+    _ = findings;
     _ = inventory;
     _ = integrations;
     _ = report;
@@ -183,14 +186,50 @@ pub const Discovery = struct {
     /// `classifications`/`integrations` close. Contract 2: owned via
     /// `blocker_list.toOwnedSlice`, released by `blockers.free`.
     blockers: []blockers.Blocker,
+    /// #167 Stage 1: one node stream per route-reachable **ERB** template,
+    /// straight off `fragments.discoverTemplates`. NOT one per entry in
+    /// `templates` above: a Haml/Slim view already carries
+    /// `RAILS_TEMPLATE_ENGINE_UNSUPPORTED` and can never be converted, so
+    /// it is never sent to the templates op (asking an ERB parser about it
+    /// would manufacture a parse-error finding on top of the real blocker).
+    /// Index order is the order the paths were sent, which is
+    /// `templates`' own path order.
+    ///
+    /// Contract 2: MOVED out of `fragments.Result` rather than copied --
+    /// `discover` never calls `fragments.freeResult` on the result whose
+    /// `templates` this is (see that call site's own comment), so
+    /// `freeDiscovery` is the single release. Freed with
+    /// `fragments.freeTemplates`.
+    fragments: []fragments.Template,
+    /// #167 Stage 1: the per-fragment decisions this run surfaces to the
+    /// operator rather than settling itself (`findings.derive`'s result,
+    /// already sorted). Deliberately NOT folded into `blockers` above:
+    /// a blocker says "discovery could not answer this"; a finding says
+    /// "discovery answered, and a human must choose what the answer
+    /// becomes" -- see findings.zig's module doc. Task 11 renders these;
+    /// nothing in this stage's report or manifest reads them yet, which is
+    /// exactly the reachability gap this field closes ahead of that task.
+    ///
+    /// Contract 2: released by `findings.free`.
+    findings: []findings.Finding,
+    /// #167 Stage 1: the I18n locale the templates op loaded for this run
+    /// (`fragments.Result.locale`), `null` when it could not determine one.
+    /// One locale per run, not per template -- every `i18n` node in every
+    /// `fragments` entry is an answer about THIS locale, so a consumer
+    /// reading a `missing` translation needs it to say which table was
+    /// searched.
+    ///
+    /// Contract 2: MOVED out of `fragments.Result` alongside `fragments`
+    /// above; freed here, never by `fragments.freeResult`.
+    i18n_locale: ?[]const u8,
 };
 
 /// Contract 2 counterpart to `Discovery`: releases `report` plus the Task 4
-/// template-graph fields, the Task 6 asset list, and (fix round 2) the
+/// template-graph fields, the Task 6 asset list, (fix round 2) the
 /// `version`/`routes` fields added to close the reachability gap
-/// phase-1-review.md's F5/F7 found. `migrate.zig`'s Rails call site uses
-/// this instead of the bare `gpa.free(discovery.report)` it used before
-/// Task 4.
+/// phase-1-review.md's F5/F7 found, and (#167 Stage 1) `fragments`/
+/// `findings`/`i18n_locale`. `migrate.zig`'s Rails call site uses this
+/// instead of the bare `gpa.free(discovery.report)` it used before Task 4.
 pub fn freeDiscovery(gpa: Allocator, d: Discovery) void {
     gpa.free(d.report);
     freeRouteTemplates(gpa, d.route_templates);
@@ -203,6 +242,24 @@ pub fn freeDiscovery(gpa: Allocator, d: Discovery) void {
     gpa.free(d.classifications);
     integrations.freeIntegrations(gpa, d.integrations);
     blockers.free(gpa, d.blockers);
+    // #167 Stage 1: `fragments`/`i18n_locale` are the `templates`/`locale`
+    // halves of a `fragments.Result` that `discover` MOVED onto this struct
+    // -- it deliberately never calls `fragments.freeResult` on that result
+    // (freeing only its `ruby` half separately), so this is the single
+    // release for both. Rebuilding the `Result` here rather than
+    // hand-rolling the walk keeps `fragments.zig` the one place that knows
+    // what a `Template` owns; the `ruby` half is stubbed with a null
+    // version because `freeRuby` is the only thing that would read it, and
+    // this struct never held one. `i18n_errors` is stubbed empty for the
+    // same reason: `discover` turns those into blockers and releases them
+    // itself, so nothing of that half ever reaches this struct either.
+    fragments.freeResult(gpa, .{
+        .templates = d.fragments,
+        .locale = d.i18n_locale,
+        .i18n_errors = &.{},
+        .ruby = .{ .available = false, .version = null },
+    });
+    findings.free(gpa, d.findings);
 }
 
 /// `discovery.ruby`, combined across BOTH sidecar ops. Each op
@@ -263,48 +320,89 @@ pub const RubyInfo = struct {
 /// already-`gpa`-owned `blocker_list` -- the identical reasoning
 /// `classifyRoutes` already documents for its own `blockers.append` calls.
 ///
-/// `available` is true when EITHER op's sidecar answered (see `RubyInfo`'s
-/// doc for why reading either op alone is wrong). `version` is read from
-/// whichever op supplied one, preferring `route_ruby` when both did. When
-/// BOTH ops supplied a version and they disagree, that is worth surfacing
-/// rather than silently picking one -- the two sidecar processes should be
-/// the SAME interpreter -- so this appends a `RAILS_RUBY_VERSION_MISMATCH`
-/// blocker (`severity = .warn`: both ops answered and are correctly
-/// reporting what each saw, not "the analysis is untrustworthy" the way
-/// Task 1's wholesale-degradation codes are; `integrity = false`, same
-/// non-integrity reasoning as every other Ruby-discovery blocker -- this
-/// says nothing about `inventory.walk`'s own findings).
+/// `available` is true when ANY op's sidecar answered (see `RubyInfo`'s
+/// doc for why reading one op alone is wrong). `version` is read from
+/// whichever op supplied one, in the parameter order below (`route_ruby`
+/// first). When more than one op supplied a version and they disagree,
+/// that is worth surfacing rather than silently picking one -- every op's
+/// sidecar process should be the SAME interpreter -- so this appends a
+/// `RAILS_RUBY_VERSION_MISMATCH` blocker (`severity = .warn`: the ops
+/// answered and are correctly reporting what each saw, not "the analysis
+/// is untrustworthy" the way Task 1's wholesale-degradation codes are;
+/// `integrity = false`, same non-integrity reasoning as every other
+/// Ruby-discovery blocker -- this says nothing about `inventory.walk`'s own
+/// findings). ONE blocker per run whatever the shape of the disagreement,
+/// with a `detail` naming every op that supplied a version: three pairwise
+/// blockers for one three-way mismatch would be three renderings of a
+/// single fact.
+///
+/// #167 Stage 1 widened this from two halves to three (`templates_ruby`,
+/// `fragments.discoverTemplates`'s own half). It is a genuine third
+/// process, degrading independently of the other two -- an app whose
+/// `config/routes.rb` and `app/controllers/` are both absent still spawns
+/// Ruby for the templates op if any route-reachable ERB was found, so
+/// reading only the first two would report `available: false` for a run
+/// that demonstrably ran an interpreter. That is the exact defect the
+/// two-half version of this function was itself written to fix.
 ///
 /// The blocker's `path` names the sidecar script rather than `""`.
 /// `Blocker.path` is documented as an app-relative source path; an empty
 /// string is not one, and it sorts ahead of every real path in both the
-/// report and the manifest. Both ops run `analyze.rb`, and the sibling
+/// report and the manifest. Every op runs `analyze.rb`, and the sibling
 /// sidecar codes (`RAILS_SIDECAR_MISSING`, `RAILS_CONTROLLERS_UNAVAILABLE`)
-/// already name it, so a disagreement between the two belongs there too.
+/// already name it, so a disagreement between them belongs there too.
 fn combineRuby(
     gpa: Allocator,
     route_ruby: sidecar_client.Ruby,
     controllers_ruby: sidecar_client.Ruby,
+    templates_ruby: sidecar_client.Ruby,
     blocker_list: *std.ArrayListUnmanaged(blockers.Blocker),
 ) Allocator.Error!RubyInfo {
-    var info: RubyInfo = .{ .available = route_ruby.available or controllers_ruby.available };
+    // Named halves, iterated once: `available`, the chosen version and the
+    // mismatch check are three reads of the same list, and writing them as
+    // a loop is what keeps a FOURTH op (should one arrive) from having to
+    // be threaded through three separate hand-written expressions.
+    const halves = [_]struct { op: []const u8, ruby: sidecar_client.Ruby }{
+        .{ .op = "routes", .ruby = route_ruby },
+        .{ .op = "controllers", .ruby = controllers_ruby },
+        .{ .op = "templates", .ruby = templates_ruby },
+    };
 
-    const chosen = route_ruby.version orelse controllers_ruby.version;
+    var info: RubyInfo = .{ .available = false };
+    var chosen: ?[]const u8 = null;
+    var mismatch = false;
+    for (halves) |h| {
+        if (h.ruby.available) info.available = true;
+        const v = h.ruby.version orelse continue;
+        if (chosen) |c| {
+            if (!std.mem.eql(u8, c, v)) mismatch = true;
+        } else {
+            chosen = v;
+        }
+    }
+
     if (chosen) |v| {
         const n = @min(v.len, info.version_buf.len);
         @memcpy(info.version_buf[0..n], v[0..n]);
         info.version_len = @intCast(n);
     }
 
-    if (route_ruby.version != null and controllers_ruby.version != null and
-        !std.mem.eql(u8, route_ruby.version.?, controllers_ruby.version.?))
-    {
+    if (mismatch) {
         var buf: [192]u8 = undefined;
-        const detail = std.fmt.bufPrint(
-            &buf,
-            "routes op reported ruby {s}, controllers op reported ruby {s}",
-            .{ route_ruby.version.?, controllers_ruby.version.? },
-        ) catch "routes/controllers ops reported different ruby versions";
+        var len: usize = 0;
+        for (halves) |h| {
+            const v = h.ruby.version orelse continue;
+            const sep: []const u8 = if (len == 0) "" else ", ";
+            // A chunk that does not fit stops the list rather than
+            // truncating mid-name: `detail` is free text with no
+            // determinism contract, and a short-but-well-formed list beats
+            // a half-written op name. `len == 0` (the FIRST chunk already
+            // overflowed, which 192 bytes makes unreachable for any real
+            // `RUBY_VERSION`) falls back to the static sentence below.
+            const chunk = std.fmt.bufPrint(buf[len..], "{s}{s} op reported ruby {s}", .{ sep, h.op, v }) catch break;
+            len += chunk.len;
+        }
+        const detail: []const u8 = if (len == 0) "sidecar ops reported different ruby versions" else buf[0..len];
         // Takes BOTH sides of the rebase: main's app-relative path (an empty
         // string is not a path and sorted ahead of every real one) and this
         // task's `line`, which is null because a disagreement between two
@@ -321,6 +419,7 @@ test "combineRuby: neither op answered -> available false" {
 
     const info = try combineRuby(
         std.testing.allocator,
+        .{ .available = false, .version = null },
         .{ .available = false, .version = null },
         .{ .available = false, .version = null },
         &blocker_list,
@@ -346,6 +445,7 @@ test "combineRuby: only the controllers op answered (routes op never spawned Rub
         std.testing.allocator,
         .{ .available = false, .version = null },
         .{ .available = true, .version = "3.3.6" },
+        .{ .available = false, .version = null },
         &blocker_list,
     );
     try std.testing.expect(info.available);
@@ -364,6 +464,7 @@ test "combineRuby: only the routes op answered (controllers op never spawned Rub
         std.testing.allocator,
         .{ .available = true, .version = "3.4.1" },
         .{ .available = false, .version = null },
+        .{ .available = false, .version = null },
         &blocker_list,
     );
     try std.testing.expect(info.available);
@@ -371,12 +472,153 @@ test "combineRuby: only the routes op answered (controllers op never spawned Rub
     try std.testing.expectEqual(@as(usize, 0), blocker_list.items.len);
 }
 
-test "combineRuby: both ops answered with the SAME version -> no mismatch blocker" {
+// #167 Stage 1's own one-sided case, pinned for the same reason the two
+// above are: the templates op is a THIRD, independently-degrading sidecar
+// process, so a `combineRuby` that folded it in for `version` but forgot it
+// in the `available` OR (or vice versa) would still pass every sibling test
+// here. Both halves of its contribution are asserted.
+test "combineRuby: only the templates op answered (routes/controllers ops never spawned Ruby) -> available true" {
     var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const info = try combineRuby(
         std.testing.allocator,
+        .{ .available = false, .version = null },
+        .{ .available = false, .version = null },
+        .{ .available = true, .version = "3.4.10" },
+        &blocker_list,
+    );
+    try std.testing.expect(info.available);
+    try std.testing.expectEqualStrings("3.4.10", info.version().?);
+    try std.testing.expectEqual(@as(usize, 0), blocker_list.items.len);
+}
+
+// A three-way disagreement is ONE finding, not three pairwise ones -- see
+// `combineRuby`'s doc. The detail must still name every version, so an
+// implementation that reported only the first disagreeing pair (and left
+// the third op's answer invisible) fails here.
+test "combineRuby: three ops, three different versions -> exactly ONE blocker naming all three" {
+    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
+
+    const info = try combineRuby(
+        std.testing.allocator,
+        .{ .available = true, .version = "3.3.6" },
+        .{ .available = true, .version = "3.4.1" },
+        .{ .available = true, .version = "3.4.10" },
+        &blocker_list,
+    );
+    try std.testing.expect(info.available);
+    try std.testing.expectEqualStrings("3.3.6", info.version().?);
+    try std.testing.expectEqual(@as(usize, 1), blocker_list.items.len);
+    const detail = blocker_list.items[0].detail;
+    try std.testing.expect(std.mem.indexOf(u8, detail, "3.3.6") != null);
+    try std.testing.expect(std.mem.indexOf(u8, detail, "3.4.1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, detail, "3.4.10") != null);
+    try std.testing.expect(std.mem.indexOf(u8, detail, "templates op") != null);
+}
+
+// The other shape of a three-op mismatch: the two ops that ANSWER agree,
+// and the disagreement is with the third. Pinned separately because a
+// buggy comparison that only ever checked adjacent pairs would pass the
+// all-different test above and still miss this.
+/// R16: one blocker per `config/locales/**` file the templates op could not
+/// load (`fragments.Result.i18n_errors`).
+///
+/// A blocker, not a finding: `findings.zig`'s line is that a finding offers
+/// the operator a CHOICE, and there is nothing to choose here -- a locale
+/// file that will not parse is simply broken, and the answer is to fix it and
+/// rerun. What makes it worth its own code is the collateral damage:
+/// `RailsI18n.load` SKIPS a file it cannot read and carries on, so a broken
+/// `en.yml` yields an empty translation table and every `t()` key in the app
+/// comes back `missing`. Without this blocker the manifest reports N
+/// confident `RAILS_I18N_UNRESOLVED` findings and no cause.
+///
+/// `integrity = false`: the inventory, the route graph and the node streams
+/// are all unaffected -- what degrades is the translation lookup layered on
+/// top, the same argument `fragments.zig`'s own `RAILS_TEMPLATES_UNAVAILABLE`
+/// makes. `severity = .warn`: the analysis ran, and this is its correct,
+/// scoped answer about one file (see `Blocker.severity`'s doc).
+///
+/// Contract 1 (self-freeing): allocates nothing that does not escape --
+/// `blockers.append` dupes `path`/`detail` into the list, so `errs` is only
+/// read and stays owned by the caller.
+fn appendI18nErrorBlockers(
+    gpa: Allocator,
+    blocker_list: *std.ArrayListUnmanaged(blockers.Blocker),
+    errs: []const fragments.I18nError,
+) Allocator.Error!void {
+    for (errs) |e| {
+        try blockers.append(gpa, blocker_list, "RAILS_I18N_LOCALE_UNREADABLE", e.path, e.detail, false, .warn, null, null);
+    }
+}
+
+// Ruling R16 (review finding 2): a `config/locales/*` file that fails to load
+// leaves an EMPTY translation table, which makes every `t()` key in the app
+// come back `missing: true` -- N confident `RAILS_I18N_UNRESOLVED` findings
+// blaming the templates for a broken YAML file. One blocker per failed file
+// is what tells the operator which fact is actually true.
+test "appendI18nErrorBlockers: one warn, non-integrity blocker per failed locale file" {
+    const gpa = std.testing.allocator;
+    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    defer blockers.freeList(gpa, &blocker_list);
+
+    const errs = [_]fragments.I18nError{
+        .{ .path = "config/locales/en.yml", .detail = "Psych::SyntaxError: mapping values are not allowed" },
+        .{ .path = "config/locales/de.yml", .detail = "Errno::EACCES: Permission denied" },
+    };
+    try appendI18nErrorBlockers(gpa, &blocker_list, &errs);
+
+    try std.testing.expectEqual(@as(usize, 2), blocker_list.items.len);
+    const b = blocker_list.items[0];
+    try std.testing.expectEqualStrings("RAILS_I18N_LOCALE_UNREADABLE", b.code);
+    // The locale FILE, not the sidecar script: this is a fact about the app
+    // under migration, and `Blocker.path` is app-root-relative.
+    try std.testing.expectEqualStrings("config/locales/en.yml", b.path);
+    try std.testing.expectEqualStrings("Psych::SyntaxError: mapping values are not allowed", b.detail);
+    // `integrity = false`: the inventory and the route graph are untouched by
+    // a broken locale file -- what degrades is the LATER translation lookup,
+    // the same layering `RAILS_TEMPLATES_UNAVAILABLE` already uses. `warn`,
+    // not `error`: the analysis ran and this is its honest, scoped answer
+    // about one file.
+    try std.testing.expect(!b.integrity);
+    try std.testing.expectEqual(blockers.Severity.warn, b.severity);
+    try std.testing.expectEqual(@as(?[]const u8, null), b.route_id);
+    try std.testing.expectEqual(@as(?u64, null), b.line);
+    try std.testing.expectEqualStrings("config/locales/de.yml", blocker_list.items[1].path);
+}
+
+test "appendI18nErrorBlockers: no failed locale files appends nothing" {
+    const gpa = std.testing.allocator;
+    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    defer blockers.freeList(gpa, &blocker_list);
+    try appendI18nErrorBlockers(gpa, &blocker_list, &.{});
+    try std.testing.expectEqual(@as(usize, 0), blocker_list.items.len);
+}
+
+test "combineRuby: routes and templates agree, controllers disagrees -> still exactly one blocker" {
+    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
+
+    const info = try combineRuby(
+        std.testing.allocator,
+        .{ .available = true, .version = "3.3.6" },
+        .{ .available = true, .version = "3.4.1" },
+        .{ .available = true, .version = "3.3.6" },
+        &blocker_list,
+    );
+    try std.testing.expectEqualStrings("3.3.6", info.version().?);
+    try std.testing.expectEqual(@as(usize, 1), blocker_list.items.len);
+    try std.testing.expectEqualStrings("RAILS_RUBY_VERSION_MISMATCH", blocker_list.items[0].code);
+}
+
+test "combineRuby: every op answered with the SAME version -> no mismatch blocker" {
+    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
+
+    const info = try combineRuby(
+        std.testing.allocator,
+        .{ .available = true, .version = "3.3.6" },
         .{ .available = true, .version = "3.3.6" },
         .{ .available = true, .version = "3.3.6" },
         &blocker_list,
@@ -394,6 +636,7 @@ test "combineRuby: both ops answered with DIFFERENT versions -> a warn, non-inte
         std.testing.allocator,
         .{ .available = true, .version = "3.3.6" },
         .{ .available = true, .version = "3.4.1" },
+        .{ .available = false, .version = null },
         &blocker_list,
     );
     // Still available -- a mismatch is a finding to surface, not a reason
@@ -436,6 +679,7 @@ test "combineRuby: a version string longer than the fixed buffer is truncated, n
     const info = try combineRuby(
         std.testing.allocator,
         .{ .available = true, .version = too_long },
+        .{ .available = false, .version = null },
         .{ .available = false, .version = null },
         &blocker_list,
     );
@@ -541,6 +785,14 @@ fn dupeRoutesForDiscovery(gpa: Allocator, list: []const routes.Route) Allocator.
 /// the returned `Discovery` is no longer contract 1 -- `route_templates`/
 /// `templates` escape alongside `report` now (see `Discovery`'s own doc).
 /// Release the whole thing with `freeDiscovery`.
+///
+/// #167 Stage 1 added three more escaping fields (`fragments`, `findings`,
+/// `i18n_locale`) and one MOVE: `fragments.discoverTemplates`' result has
+/// its `templates`/`locale` halves handed to the `Discovery` rather than
+/// freed here, so this function calls `fragments.freeResult` only from an
+/// `errdefer` (the path where the move never happened) and releases the
+/// remaining `ruby` half by itself just before returning. See both call
+/// sites' own comments.
 pub fn discover(
     io: Io,
     gpa: Allocator,
@@ -656,12 +908,6 @@ pub fn discover(
     const controller_evidence_available = controllerEvidenceAvailable(blocker_list.items[blockers_before_controllers..]);
 
     // `discovery.ruby`, combined across both sidecar ops -- see
-    // `combineRuby`'s own doc for why neither op's own `.ruby` half may be
-    // read alone (Stage 4's task-2-fixes.md item 1). Both `discoverRoutes`
-    // and `discoverControllers` have already run by this point, so both
-    // halves are in hand.
-    const ruby_info = try combineRuby(gpa, route_result.ruby, ctrl_result.ruby, &blocker_list);
-
     // Stage 3's join: one classify.Verdict per route, index-aligned with
     // route_result.routes. See classifyRoutes's own doc for why template
     // bytes must stay alive across the classify.classify call that borrows
@@ -679,6 +925,10 @@ pub fn discover(
         wr.entries,
         route_result.routes,
         ctrl_result.actions,
+        // #167 Stage 1: the controllers op's `layout` declarations. Empty
+        // on every degradation path, which leaves every route on the
+        // pre-#167 convention rather than inventing a declaration.
+        ctrl_result.layouts,
         controller_evidence_available,
         &blocker_list,
     );
@@ -690,6 +940,94 @@ pub fn discover(
     errdefer gpa.free(classifications);
     errdefer freeRouteTemplates(gpa, classify_result.route_templates);
     errdefer freeTemplateNodes(gpa, classify_result.templates);
+
+    // #167 Stage 1: one node stream per route-reachable ERB template, in a
+    // SINGLE sidecar spawn (`discoverTemplates` takes the whole path list;
+    // see its doc for why an empty list spawns nothing at all). Only `.erb`
+    // engines are sent -- a Haml/Slim template already carries
+    // RAILS_TEMPLATE_ENGINE_UNSUPPORTED and can never be converted, so
+    // asking an ERB parser to scan it would only manufacture a parse error
+    // on top of the real finding.
+    //
+    // `classify_result.templates` (not `wr.entries`) is the source on
+    // purpose: this pass analyses what a recovered route can actually
+    // REACH, the same scoping every other Stage-4 template field already
+    // uses. `erb_paths` borrows those paths, so it must not outlive
+    // `classify_result` -- it does not; it is a scratch list this function
+    // deinits.
+    var erb_paths: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer erb_paths.deinit(gpa);
+    for (classify_result.templates) |t| {
+        if (t.engine == .erb) try erb_paths.append(gpa, t.path);
+    }
+    const frag_result = try fragments.discoverTemplates(io, gpa, app_path, erb_paths.items, &blocker_list, environ_map);
+    // Split release, deliberately NOT `fragments.freeResult`: `templates`
+    // and `locale` are MOVED onto the returned `Discovery` below
+    // (`.fragments`/`.i18n_locale`), so on the success path `freeDiscovery`
+    // owns them and only `ruby` -- which `RubyInfo` copies into a fixed
+    // buffer rather than adopting -- is released here. On an error before
+    // the return, this `errdefer` still has to free all three, hence the
+    // full `freeResult`; the two are mutually exclusive because the
+    // `errdefer` only fires on the path where the move never happened.
+    errdefer fragments.freeResult(gpa, frag_result);
+
+    // R16: one blocker per locale file that failed to load, appended BEFORE
+    // the counts loop and `report.build` below read `blocker_list` (this is
+    // the last pass that can add to it). `appendI18nErrorBlockers` copies
+    // what it needs, so `frag_result.i18n_errors` is still owned here and is
+    // released at the end of this function alongside `ruby` -- the other half
+    // of the same split.
+    try appendI18nErrorBlockers(gpa, &blocker_list, frag_result.i18n_errors);
+
+    // `discovery.ruby`, combined across all three sidecar ops -- see
+    // `combineRuby`'s own doc for why no single op's `.ruby` half may be
+    // read alone (Stage 4's task-2-fixes.md item 1). Called here rather
+    // than right after `discoverControllers` (where the two-op version
+    // lived) purely because the third half does not exist until
+    // `discoverTemplates` above has run.
+    const ruby_info = try combineRuby(gpa, route_result.ruby, ctrl_result.ruby, frag_result.ruby, &blocker_list);
+
+    // #167 Stage 1: the per-fragment decisions an operator must make. Two
+    // borrowed scratch lists feed it, both deinit'd by this function:
+    //
+    // - `route_names`: only `certain` routes contribute. An UNCERTAIN route
+    //   (one the parser saw inside a conditional, say) is not evidence that
+    //   a route helper resolves, so counting its name would suppress a
+    //   RAILS_ROUTE_HELPER_UNKNOWN finding the operator needs to see.
+    // - `controller_files`: `findings.derive` needs the FILE a dynamic
+    //   `layout` declaration came from, and a `LayoutInfo` names only its
+    //   controller key -- so the inventory's controller entries are
+    //   re-keyed with `controllerKeyOf` (see its doc) to join the two.
+    var route_names: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer route_names.deinit(gpa);
+    for (route_result.routes) |r| {
+        if (!r.certain) continue;
+        if (r.name) |n| try route_names.append(gpa, n);
+    }
+    var controller_files: std.ArrayListUnmanaged(findings.ControllerFile) = .empty;
+    defer controller_files.deinit(gpa);
+    for (wr.entries) |e| {
+        if (e.kind != .controller) continue;
+        try controller_files.append(gpa, .{ .controller = controllerKeyOf(e.path), .path = e.path });
+    }
+    // R16: a third borrowed scratch list, for the same lifetime reason as
+    // the two above -- `derive` only reads the paths, and every string in
+    // here belongs to `frag_result`, which outlives the call.
+    var i18n_error_paths: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer i18n_error_paths.deinit(gpa);
+    for (frag_result.i18n_errors) |e| try i18n_error_paths.append(gpa, e.path);
+    const finding_list = try findings.derive(gpa, .{
+        .templates = frag_result.templates,
+        .layouts = ctrl_result.layouts,
+        .controller_files = controller_files.items,
+        .route_names = route_names.items,
+        .locale = frag_result.locale,
+        .i18n_error_paths = i18n_error_paths.items,
+    });
+    // Escapes as `Discovery.findings`; `freeDiscovery` owns it on the
+    // success path, this covers every fallible step between here and the
+    // return.
+    errdefer findings.free(gpa, finding_list);
 
     var integrity_blocker_count: usize = 0;
     var route_blocker = false;
@@ -720,6 +1058,7 @@ pub fn discover(
         .routes = route_result.routes,
         .route_mode = route_result.mode,
         .classifications = classifications,
+        .findings = finding_list,
     });
     errdefer gpa.free(body);
 
@@ -733,6 +1072,21 @@ pub fn discover(
     // until this call succeeds); nothing after this line can fail, so there
     // is no later use of `blocker_list` this ownership transfer could race.
     const blockers_owned = try blocker_list.toOwnedSlice(gpa);
+
+    // #167 Stage 1: the ONE piece of `frag_result` that does not move onto
+    // the `Discovery` below. `combineRuby` above copied whatever version
+    // string it needed into `RubyInfo.version_buf` (a fixed buffer, never
+    // an adopted allocation -- see that type's doc), so this string has no
+    // remaining reader. Released here rather than by `freeDiscovery`
+    // because `Discovery` has no field for it; released AFTER the last
+    // fallible statement above so the `errdefer fragments.freeResult(...)`
+    // that still covers `frag_result` can never run against a half-freed
+    // value.
+    sidecar_client.freeRuby(gpa, frag_result.ruby);
+    // Same story for the R16 half: `appendI18nErrorBlockers` above copied
+    // every string it needed into the blocker list, and `findings.derive`
+    // only read the paths, so nothing outlives this call.
+    fragments.freeI18nErrors(gpa, frag_result.i18n_errors);
 
     return .{
         .report = body,
@@ -751,6 +1105,12 @@ pub fn discover(
         .classifications = classifications,
         .integrations = ints,
         .blockers = blockers_owned,
+        // MOVED, not copied: `frag_result` is never handed to
+        // `fragments.freeResult` on this path (see the `errdefer` at its
+        // call site), so `freeDiscovery` is the single release for both.
+        .fragments = frag_result.templates,
+        .findings = finding_list,
+        .i18n_locale = frag_result.locale,
     };
 }
 
@@ -880,21 +1240,82 @@ fn matchesLayoutFor(entries: []const inventory.Entry, name: []const u8) ?invento
     return html_match orelse other_match;
 }
 
-/// Resolves the layout Rails would apply to `controller`, by CONVENTION:
-/// prefer a per-controller layout (`app/views/layouts/<controller>.html.*`),
-/// else the app-wide default (`app/views/layouts/application.html.*`). This
-/// is a convention, not a `layout` declaration read from the controller's
-/// source -- reading that needs deeper controller analysis out of scope for
-/// this stage (see A1's brief); convention is the honest approximation and
-/// is right for the overwhelming majority of Rails apps. Returns `null`
-/// when neither exists -- a route still classifies on its view's (and any
-/// resolved partials') markers alone in that case, same as before this
-/// function existed.
+/// Resolves the layout Rails would apply to `controller`.
+///
+/// `declared` is that controller's own `layout` declaration as
+/// `controllers.discoverControllers` recovered it (`null` when the
+/// controller declares none, or when no controller evidence was recovered
+/// at all). #167 Stage 1: convention is no longer the only source, because
+/// the controllers op now reads the declaration itself. Four cases, in the
+/// order Rails itself resolves them:
+///
+/// - `declared.disabled` (`layout false`) -> `null`. This controller
+///   renders with NO layout, not even `application`; falling through to
+///   convention here would credit the route with a template graph the app
+///   never renders.
+/// - `declared.value` (a literal `layout "marketing"`) -> that layout, and
+///   ONLY that layout. A declared name with no matching file on disk
+///   resolves to `null` rather than falling back to convention: Rails
+///   raises `ActionView::MissingTemplate` at render time in that case, so
+///   the honest answer is "no layout resolved", and quietly substituting
+///   `application` would report a graph that does not exist. The gap is
+///   already visible elsewhere -- the declaration is in the controller
+///   source the operator is reading -- so this does not silently swallow
+///   the problem.
+/// - `declared.dynamic` (`layout :method_name`, or a proc) -> convention.
+///   The static walk cannot resolve a name, and convention is the honest
+///   approximation of what such a controller usually falls back to; the
+///   fact that the answer is an approximation is surfaced separately, as
+///   `findings.derive`'s own `RAILS_LAYOUT_DYNAMIC` finding, rather than
+///   by returning `null` and losing the layout's markers from the scan.
+/// - no declaration -> convention: prefer a per-controller layout
+///   (`app/views/layouts/<controller>.html.*`), else the app-wide default
+///   (`app/views/layouts/application.html.*`). Returns `null` when neither
+///   exists -- a route still classifies on its view's (and any resolved
+///   partials') markers alone in that case, same as before this function
+///   existed.
 ///
 /// Contract 3 (caller-buffer): allocates nothing, returns a shallow copy of
 /// the matching `Entry`, same as `resolveViewEntry`.
-fn resolveLayoutEntry(entries: []const inventory.Entry, controller: []const u8) ?inventory.Entry {
+fn resolveLayoutEntry(
+    entries: []const inventory.Entry,
+    controller: []const u8,
+    declared: ?controllers.LayoutInfo,
+) ?inventory.Entry {
+    if (declared) |d| {
+        if (d.disabled) return null;
+        if (d.value) |name| return matchesLayoutFor(entries, name);
+        // `d.dynamic` (and the shouldn't-happen "declared but empty" wire
+        // shape) fall through to convention below.
+    }
     return matchesLayoutFor(entries, controller) orelse matchesLayoutFor(entries, "application");
+}
+
+/// The controller key `LayoutInfo.controller`/`ActionInfo.controller` carry,
+/// recomputed from an `app/controllers/**.rb` inventory path. Mirrors
+/// `analyze.rb`'s `controller_path_key` exactly: strip the
+/// `app/controllers/` prefix and the `.rb` extension, then drop a
+/// `_controller` suffix from the LAST path segment only (`app/controllers/
+/// admin/users_controller.rb` -> `admin/users`). Recomputed here rather
+/// than carried on the wire because a `LayoutInfo` names its controller,
+/// not the file it came from, and `findings.derive` needs the FILE to point
+/// a `RAILS_LAYOUT_DYNAMIC` finding at.
+///
+/// Contract 3 (caller-buffer): allocates nothing -- every step trims from
+/// one end, so the result is a contiguous slice into `path`.
+fn controllerKeyOf(path: []const u8) []const u8 {
+    const prefix = "app/controllers/";
+    var rest = path;
+    if (std.mem.startsWith(u8, rest, prefix)) rest = rest[prefix.len..];
+    if (std.mem.endsWith(u8, rest, ".rb")) rest = rest[0 .. rest.len - ".rb".len];
+    // The Ruby side drops the suffix from `parts[-1]` specifically; a
+    // trailing-suffix trim on the WHOLE string is exactly equivalent
+    // because `_controller` contains no `/` -- if `rest` ends with it, those
+    // bytes are necessarily all inside the last segment. A namespace
+    // directory named `admin_controller/` is therefore left alone by both.
+    const suffix = "_controller";
+    if (std.mem.endsWith(u8, rest, suffix)) rest = rest[0 .. rest.len - suffix.len];
+    return rest;
 }
 
 fn matchesPartialBasename(rest: []const u8, name: []const u8) bool {
@@ -1078,8 +1499,10 @@ const TransitiveScan = struct {
     buffers: std.ArrayListUnmanaged([]u8) = .empty,
     /// The resolved layout's `inventory.Entry.path` (borrowed from
     /// `entries`, same as everywhere else in this file), or `null` when
-    /// `resolveLayoutEntry` found neither a per-controller nor an
-    /// `application` layout. Set once, near the top of `transitiveScan`,
+    /// `resolveLayoutEntry` resolved none -- which since #167 Stage 1 means
+    /// either the convention found neither a per-controller nor an
+    /// `application` layout, or the controller's own declaration ruled one
+    /// out (see that function's doc). Set once, near the top of `transitiveScan`,
     /// before the BFS below runs -- carried on the result so
     /// `buildRouteTemplates` can tell the layout node in `graph` apart from
     /// every other node without re-deriving it.
@@ -1209,6 +1632,12 @@ fn transitiveScan(
     entries: []const inventory.Entry,
     view_entry: inventory.Entry,
     controller: []const u8,
+    /// #167 Stage 1: `controller`'s own `layout` declaration, or `null`
+    /// when it has none. Passed straight to `resolveLayoutEntry` -- see
+    /// that function's doc for the four cases. Threaded as a parameter
+    /// rather than looked up here so this function keeps taking only what
+    /// it reads: `classifyRoutes` already holds the `layouts` slice.
+    declared_layout: ?controllers.LayoutInfo,
     route_id: []const u8,
     blocker_list: *std.ArrayListUnmanaged(blockers.Blocker),
     reported_unreadable_templates: *std.ArrayListUnmanaged([]const u8),
@@ -1224,7 +1653,7 @@ fn transitiveScan(
     try queue.append(gpa, .{ .entry = view_entry, .depth = 0 });
     try visited.append(gpa, view_entry.path);
 
-    const layout_entry = resolveLayoutEntry(entries, controller);
+    const layout_entry = resolveLayoutEntry(entries, controller, declared_layout);
     if (layout_entry) |le| {
         if (!containsPath(visited.items, le.path)) {
             try queue.append(gpa, .{ .entry = le, .depth = 0 });
@@ -1517,6 +1946,11 @@ pub fn freeTemplateNodes(gpa: Allocator, nodes: []TemplateNode) void {
 /// cases apart, and resolving it here would require a second field this
 /// stage's brief does not ask for.
 ///
+/// #167 Stage 1: `layout` is no longer purely conventional -- a
+/// controller's own `layout` declaration wins where one was recovered, so a
+/// `null` here now also covers `layout false` and a declared layout with no
+/// file on disk. See `resolveLayoutEntry`'s doc for all four cases.
+///
 /// Same duping rationale as `TemplateNode`: fresh `gpa` dupes, not slices
 /// into `entries`.
 ///
@@ -1699,6 +2133,13 @@ pub fn freeClassifyResult(gpa: Allocator, r: ClassifyResult) void {
 /// freed would leave `view.markers` pointing at freed memory, the exact
 /// use-after-free this ordering exists to avoid.
 ///
+/// #167 Stage 1: each route's layout is resolved from its controller's own
+/// `layout` declaration when one was recovered, falling back to convention
+/// otherwise -- see `resolveLayoutEntry`'s doc for the four cases. This
+/// changes which file's markers reach `classify` for a controller that
+/// declares `layout false` (none) or a non-default literal, so it can
+/// legitimately change a verdict; that is the point, not a side effect.
+///
 /// A template that cannot be read is non-fatal: it becomes a
 /// `RAILS_TEMPLATE_UNREADABLE` blocker (`integrity = false` -- an unreadable
 /// file is a finding about one file, not a reason to distrust the whole
@@ -1720,6 +2161,14 @@ fn classifyRoutes(
     entries: []const inventory.Entry,
     route_list: []const routes.Route,
     actions: []const controllers.ActionInfo,
+    /// #167 Stage 1: every `layout` declaration the controllers op
+    /// recovered, looked up per route via `controllers.findLayout` (which
+    /// returns `null` for a controller that declares none, and is never
+    /// consulted at all for a route with no recovered controller). Empty
+    /// on every path where controller evidence degraded wholesale -- which
+    /// leaves every route on convention, the pre-#167 behaviour, rather
+    /// than inventing a declaration.
+    layouts: []const controllers.LayoutInfo,
     controller_evidence_available: bool,
     blocker_list: *std.ArrayListUnmanaged(blockers.Blocker),
 ) Allocator.Error!ClassifyResult {
@@ -1773,7 +2222,7 @@ fn classifyRoutes(
         if (r.controller) |c| {
             if (r.action) |a| {
                 if (resolveViewEntry(entries, c, a)) |entry| {
-                    var scan_result = try transitiveScan(io, gpa, root, entries, entry, c, route_id, blocker_list, &reported_unreadable_templates);
+                    var scan_result = try transitiveScan(io, gpa, root, entries, entry, c, controllers.findLayout(layouts, c), route_id, blocker_list, &reported_unreadable_templates);
                     defer freeTransitiveScan(gpa, &scan_result);
 
                     if (scan_result.view_unreadable) {
@@ -1970,7 +2419,7 @@ test "classifyRoutes reads the matched template and classifies from real markers
     var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
-    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, true, &blocker_list);
+    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
     defer freeClassifyResult(gpa, result);
     const verdicts = result.verdicts;
 
@@ -2002,7 +2451,7 @@ test "classifyRoutes: an unreadable template becomes a non-integrity blocker, ro
     var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
-    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, true, &blocker_list);
+    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
     defer freeClassifyResult(gpa, result);
     const verdicts = result.verdicts;
 
@@ -2054,7 +2503,7 @@ test "classifyRoutes: two routes with two DIFFERENT unreadable templates each ca
     var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
-    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, true, &blocker_list);
+    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
     defer freeClassifyResult(gpa, result);
 
     try std.testing.expectEqual(@as(usize, 2), blocker_list.items.len);
@@ -2103,7 +2552,7 @@ test "classifyRoutes: two routes sharing one unreadable template emit ONE RAILS_
     var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
-    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, true, &blocker_list);
+    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
     defer freeClassifyResult(gpa, result);
     const verdicts = result.verdicts;
 
@@ -2139,7 +2588,7 @@ test "classifyRoutes: a jbuilder-only view resolves to no view, not a false unsu
     var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
-    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, true, &blocker_list);
+    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
     defer freeClassifyResult(gpa, result);
     const verdicts = result.verdicts;
 
@@ -2179,7 +2628,7 @@ test "classifyRoutes degradation: no controllers recovered, view present -> unre
     var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
-    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, acts, true, &blocker_list);
+    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, acts, &.{}, true, &blocker_list);
     defer freeClassifyResult(gpa, result);
     const verdicts = result.verdicts;
 
@@ -2204,7 +2653,7 @@ test "resolveLayoutEntry prefers a per-controller layout over application" {
         .{ .path = "app/views/layouts/application.html.erb", .kind = .layout, .engine = .erb },
         .{ .path = "app/views/layouts/posts.html.erb", .kind = .layout, .engine = .erb },
     };
-    const got = resolveLayoutEntry(&entries, "posts").?;
+    const got = resolveLayoutEntry(&entries, "posts", null).?;
     try std.testing.expectEqualStrings("app/views/layouts/posts.html.erb", got.path);
 }
 
@@ -2212,7 +2661,7 @@ test "resolveLayoutEntry falls back to application when no per-controller layout
     const entries = [_]inventory.Entry{
         .{ .path = "app/views/layouts/application.html.erb", .kind = .layout, .engine = .erb },
     };
-    const got = resolveLayoutEntry(&entries, "posts").?;
+    const got = resolveLayoutEntry(&entries, "posts", null).?;
     try std.testing.expectEqualStrings("app/views/layouts/application.html.erb", got.path);
 }
 
@@ -2220,7 +2669,92 @@ test "resolveLayoutEntry returns null when neither exists" {
     const entries = [_]inventory.Entry{
         .{ .path = "app/views/posts/index.html.erb", .kind = .view, .engine = .erb },
     };
-    try std.testing.expect(resolveLayoutEntry(&entries, "posts") == null);
+    try std.testing.expect(resolveLayoutEntry(&entries, "posts", null) == null);
+}
+
+test "resolveLayoutEntry: a literal declaration beats convention; false disables; dynamic keeps convention" {
+    // #167 Stage 1: the four ways a controller's own `layout` declaration
+    // interacts with the convention. The fixture deliberately carries a
+    // per-controller `posts` layout AND an `application` one, so a bugged
+    // implementation that ignored `declared` entirely would still resolve
+    // SOMETHING for every case below -- only the exact path each case
+    // pins discriminates.
+    const entries = [_]inventory.Entry{
+        .{ .path = "app/views/layouts/application.html.erb", .kind = .layout, .engine = .erb },
+        .{ .path = "app/views/layouts/marketing.html.erb", .kind = .layout, .engine = .erb },
+        .{ .path = "app/views/layouts/posts.html.erb", .kind = .layout, .engine = .erb },
+    };
+    const lit: controllers.LayoutInfo = .{ .controller = "posts", .value = "marketing", .disabled = false, .dynamic = false, .line = 2 };
+    try std.testing.expectEqualStrings("app/views/layouts/marketing.html.erb", resolveLayoutEntry(&entries, "posts", lit).?.path);
+    const off: controllers.LayoutInfo = .{ .controller = "posts", .value = null, .disabled = true, .dynamic = false, .line = 2 };
+    try std.testing.expect(resolveLayoutEntry(&entries, "posts", off) == null);
+    const dyn: controllers.LayoutInfo = .{ .controller = "posts", .value = null, .disabled = false, .dynamic = true, .line = 2 };
+    try std.testing.expectEqualStrings("app/views/layouts/posts.html.erb", resolveLayoutEntry(&entries, "posts", dyn).?.path);
+    // A declared layout that does not exist on disk resolves to NO layout,
+    // not to the convention: Rails raises at render time here, and quietly
+    // substituting `application` would report a template graph the app
+    // never renders.
+    const ghost: controllers.LayoutInfo = .{ .controller = "posts", .value = "nope", .disabled = false, .dynamic = false, .line = 2 };
+    try std.testing.expect(resolveLayoutEntry(&entries, "posts", ghost) == null);
+}
+
+test "controllerKeyOf mirrors analyze.rb's controller_path_key" {
+    // The key `LayoutInfo.controller`/`ActionInfo.controller` are stamped
+    // with, recomputed on the Zig side from an inventory path so
+    // `findings.derive` can name the FILE a dynamic-layout declaration came
+    // from. `_controller` is dropped from the LAST segment only -- a
+    // namespace directory called `admin_controller/` would keep its name.
+    try std.testing.expectEqualStrings("admin/users", controllerKeyOf("app/controllers/admin/users_controller.rb"));
+    try std.testing.expectEqualStrings("posts", controllerKeyOf("app/controllers/posts_controller.rb"));
+    // Rails' own base class: no `_controller` suffix to drop after `.rb`.
+    try std.testing.expectEqualStrings("application", controllerKeyOf("app/controllers/application_controller.rb"));
+    // A concern (no `_controller` suffix at all) keeps its whole basename.
+    try std.testing.expectEqualStrings("concerns/authable", controllerKeyOf("app/controllers/concerns/authable.rb"));
+}
+
+test "classifyRoutes threads the controller's declared layout, not just the convention" {
+    // Discriminating over the convention-only predecessor: the fixture has
+    // BOTH `application` and `marketing` layouts on disk, and no
+    // per-controller `posts` layout, so convention alone resolves
+    // `application` here. Only a `classifyRoutes` that actually looks the
+    // route's controller up in `layouts` and hands the result to
+    // `resolveLayoutEntry` reports `marketing`.
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try writeTemplate(tmp, io, "app/views/posts/index.html.erb", "<h1>Posts</h1>\n");
+    try writeTemplate(tmp, io, "app/views/layouts/application.html.erb", "<html><body><%= yield %></body></html>\n");
+    try writeTemplate(tmp, io, "app/views/layouts/marketing.html.erb", "<html><body><%= yield %></body></html>\n");
+
+    const entries = [_]inventory.Entry{
+        .{ .path = "app/views/layouts/application.html.erb", .kind = .layout, .engine = .erb },
+        .{ .path = "app/views/layouts/marketing.html.erb", .kind = .layout, .engine = .erb },
+        .{ .path = "app/views/posts/index.html.erb", .kind = .view, .engine = .erb },
+    };
+    const route_list = [_]routes.Route{
+        .{ .verb = "GET", .path = "/posts", .controller = "posts", .action = "index", .name = null, .certain = true, .origin = .static_ast },
+    };
+    const acts = [_]controllers.ActionInfo{.{ .controller = "posts", .action = "index" }};
+    const layouts = [_]controllers.LayoutInfo{
+        .{ .controller = "posts", .value = "marketing", .disabled = false, .dynamic = false, .line = 2 },
+    };
+
+    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
+
+    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &layouts, true, &blocker_list);
+    defer freeClassifyResult(gpa, result);
+
+    try std.testing.expectEqualStrings("app/views/layouts/marketing.html.erb", result.route_templates[0].layout.?);
+
+    // The control half: the SAME fixture with no declaration falls back to
+    // the convention, so the assertion above pins the declaration's effect
+    // rather than an incidental property of the entry list's order.
+    const plain = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
+    defer freeClassifyResult(gpa, plain);
+    try std.testing.expectEqualStrings("app/views/layouts/application.html.erb", plain.route_templates[0].layout.?);
 }
 
 test "matchesPartialTarget resolves a no-slash target relative to the containing template's own directory" {
@@ -2266,7 +2800,7 @@ test "transitive scan: a clean layout and a clean partial still reach content (m
     var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
-    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, true, &blocker_list);
+    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
     defer freeClassifyResult(gpa, result);
     const verdicts = result.verdicts;
 
@@ -2295,7 +2829,7 @@ test "transitive scan: a marker in the LAYOUT (not the view) forces unresolved, 
     var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
-    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, true, &blocker_list);
+    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
     defer freeClassifyResult(gpa, result);
     const verdicts = result.verdicts;
 
@@ -2323,7 +2857,7 @@ test "transitive scan: a marker in a RENDERED PARTIAL (view and layout clean) fo
     var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
-    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, true, &blocker_list);
+    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
     defer freeClassifyResult(gpa, result);
     const verdicts = result.verdicts;
 
@@ -2351,7 +2885,7 @@ test "transitive scan: the view's own marker wins priority over the layout's (vi
     var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
-    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, true, &blocker_list);
+    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
     defer freeClassifyResult(gpa, result);
     const verdicts = result.verdicts;
 
@@ -2382,7 +2916,7 @@ test "transitive scan: stimulus in a partial still reaches island (stimulus ORs 
     var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
-    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, true, &blocker_list);
+    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
     defer freeClassifyResult(gpa, result);
     const verdicts = result.verdicts;
 
@@ -2422,7 +2956,7 @@ test "transitive scan: a MALFORMED data-controller attribute in a rendered parti
     var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
-    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, true, &blocker_list);
+    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
     defer freeClassifyResult(gpa, result);
     const verdicts = result.verdicts;
 
@@ -2447,7 +2981,7 @@ test "transitive scan: a dynamic render target (render @post) forces unresolved,
     var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
-    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, true, &blocker_list);
+    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
     defer freeClassifyResult(gpa, result);
     const verdicts = result.verdicts;
 
@@ -2475,7 +3009,7 @@ test "transitive scan: a literal render target matching no inventory entry force
     var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
-    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, true, &blocker_list);
+    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
     defer freeClassifyResult(gpa, result);
     const verdicts = result.verdicts;
 
@@ -2505,7 +3039,7 @@ test "transitive scan: an unresolvable render does NOT downgrade a verdict that 
     var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
-    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, true, &blocker_list);
+    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
     defer freeClassifyResult(gpa, result);
     const verdicts = result.verdicts;
 
@@ -2543,7 +3077,7 @@ test "transitive scan: partial nesting past the depth cap emits a blocker and fo
     var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
-    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, true, &blocker_list);
+    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
     defer freeClassifyResult(gpa, result);
     const verdicts = result.verdicts;
 
@@ -2585,7 +3119,7 @@ test "transitive scan: a shared partial rendered from two places (a cycle-safe g
     var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
-    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, true, &blocker_list);
+    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
     defer freeClassifyResult(gpa, result);
     const verdicts = result.verdicts;
 
@@ -2615,7 +3149,7 @@ test "transitive scan: an unreadable PARTIAL (not the view itself) forces unreso
     var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
-    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, true, &blocker_list);
+    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
     defer freeClassifyResult(gpa, result);
     const verdicts = result.verdicts;
 
@@ -2656,7 +3190,7 @@ test "Task 4: renders[] names the RESOLVED partial path, not the literal render 
     var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
-    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, true, &blocker_list);
+    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
     defer freeClassifyResult(gpa, result);
 
     // Nothing here reads request-time state or interactivity, and the
@@ -2720,7 +3254,7 @@ test "Task 4: two routes sharing one view produce ONE global templates[] entry, 
     var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
-    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, true, &blocker_list);
+    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
     defer freeClassifyResult(gpa, result);
 
     try std.testing.expectEqual(@as(usize, 2), result.route_templates.len);
@@ -2758,7 +3292,7 @@ test "Task 4: an unresolved render target (a dynamic expression) contributes not
     var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
-    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, true, &blocker_list);
+    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
     defer freeClassifyResult(gpa, result);
 
     // The dynamic render target still does its OTHER job (forcing
@@ -2811,7 +3345,7 @@ test "Task 4: a node past the depth cap contributes an EMPTY renders[] -- the sc
     var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
-    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, true, &blocker_list);
+    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
     defer freeClassifyResult(gpa, result);
 
     try std.testing.expectEqual(classify.Class.unresolved, result.verdicts[0].class);
@@ -2856,7 +3390,7 @@ test "Task 4: a route whose view was never resolved gets the zero-value RouteTem
     var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
-    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, true, &blocker_list);
+    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
     defer freeClassifyResult(gpa, result);
 
     try std.testing.expectEqual(@as(usize, 2), result.verdicts.len);
@@ -2892,7 +3426,7 @@ test "classifyRoutes A3: controller evidence unavailable wholesale -> a view-les
     var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
-    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, acts, false, &blocker_list);
+    const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, acts, &.{}, false, &blocker_list);
     defer freeClassifyResult(gpa, result);
     const verdicts = result.verdicts;
 
@@ -2939,7 +3473,7 @@ test "transitive scan: an OOM at any point in a multi-file scan leaks nothing" {
         var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
         defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
-        if (classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, true, &blocker_list)) |result| {
+        if (classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list)) |result| {
             // Freed via `std.testing.allocator` directly, not `gpa` (the
             // FailingAllocator wrapper): by the time this branch runs,
             // `fail_index` is past every allocation this call makes, so the
@@ -2995,7 +3529,7 @@ test "mergeGlobalTemplates: an OOM at any point while duping stimulus_controller
         var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
         defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
-        if (classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, true, &blocker_list)) |result| {
+        if (classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list)) |result| {
             defer freeClassifyResult(std.testing.allocator, result);
             try std.testing.expectEqual(@as(usize, 1), result.templates.len);
             const n = result.templates[0];
@@ -3255,6 +3789,51 @@ test "discover: reachability -- source.version, per-route source{file,line}/cert
     }
     try std.testing.expect(found_dashboard);
     try std.testing.expect(found_posts_layout);
+
+    // --- #167 Stage 1: `fragments`/`findings`/`i18n_locale`. Same
+    // reachability point as everything above -- `fragments.discoverTemplates`
+    // and `findings.derive` each had full unit coverage against synthetic
+    // input while nothing proved a real `discover` run ever calls them, let
+    // alone that their results survive to a caller.
+    //
+    // One fragment per route-reachable ERB template and NOT one per
+    // route-reachable template: the fixture's `app/views/posts/legacy.html.
+    // haml` is route-reachable (GET /posts/legacy) and deliberately absent
+    // here -- it already carries RAILS_TEMPLATE_ENGINE_UNSUPPORTED and can
+    // never be converted, so sending it to an ERB parser would manufacture
+    // a parse-error finding on top of the real blocker.
+    var erb_template_count: usize = 0;
+    for (d.templates) |n| {
+        if (n.engine == .erb) erb_template_count += 1;
+    }
+    try std.testing.expect(erb_template_count > 0);
+    try std.testing.expectEqual(erb_template_count, d.fragments.len);
+    try std.testing.expect(erb_template_count < d.templates.len); // the Haml view
+
+    // The I18n locale the templates op settled on for this run. The fixture
+    // declares no `config.i18n.default_locale`, so `RailsI18n.default_locale`
+    // falls back to `"en"` -- what this pins is that the op's answer
+    // survives onto `Discovery` at all (a `null` here would mean the
+    // templates op never ran, or its `locale` was dropped in the move).
+    try std.testing.expectEqualStrings("en", d.i18n_locale.?);
+
+    // `app/views/posts/profile.html.erb` reads `current_user` (routed at
+    // GET /posts/profile, the classifier's rule-5 fixture) -- the one
+    // request-time-state read in the fixture's ERB.
+    try std.testing.expect(d.findings.len > 0);
+    var found_request_state = false;
+    for (d.findings) |f| {
+        if (std.mem.eql(u8, f.code, "RAILS_REQUEST_TIME_STATE") and
+            std.mem.eql(u8, f.path, "app/views/posts/profile.html.erb"))
+        {
+            found_request_state = true;
+            // The id/message are what Task 11 reconciles against, so pin
+            // that they are populated rather than only that a code matched.
+            try std.testing.expect(f.id.len > 0);
+            try std.testing.expect(f.message.len > 0);
+        }
+    }
+    try std.testing.expect(found_request_state);
 }
 
 test "discover: config/routes.rb absent but app/controllers/ present still reports ruby.available (Stage 4's task-2-fixes.md item 1)" {

@@ -562,6 +562,9 @@ fn emptyDiscovery() rails.Discovery {
         .classifications = &.{},
         .integrations = &.{},
         .blockers = &.{},
+        .fragments = &.{},
+        .findings = &.{},
+        .i18n_locale = null,
     };
 }
 
