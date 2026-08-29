@@ -123,6 +123,7 @@ const classify = @import("classify.zig");
 const detect = @import("detect.zig");
 const inventory = @import("inventory.zig");
 const report = @import("report.zig");
+const findings = @import("findings.zig");
 
 /// The manifest's `schema` field. Additive-only within `1`: a new field may
 /// be appended, an existing one may not change meaning or disappear -- see
@@ -329,10 +330,46 @@ pub const BlockerEntry = struct {
     route_id: ?[]const u8,
 };
 
+/// Same shape as `BlockerSource`/`RouteSource` (`file` then `line`),
+/// declared independently for the same "internal producer order vs. wire
+/// order" reason `TemplateEntry`'s doc gives -- `findings.Finding` carries
+/// `path`/`line` as two separate top-level fields; this folds them into one
+/// `source` object to match `BlockerEntry`'s shape.
+pub const FindingSource = struct { file: []const u8, line: ?u64 };
+
+/// Field order is the wire contract: `id`, `code`, `severity`, `source`,
+/// `route_id`, `message`, `choices`, `requires_artifact`. NOT an alias of
+/// `findings.Finding` -- see `FindingSource`'s doc for the one shape
+/// difference; `build` below copies field by field, the same pattern
+/// `BlockerEntry`/`TemplateEntry` already use for an internal producer type
+/// with a different field order than its wire form.
+///
+/// `id` is the join key a Stage 2 decision file references against a
+/// PREVIOUS run's recorded operator choice -- see `findings.zig`'s module
+/// doc ("Ids, not array positions") for why it survives a reworded
+/// `message` or a template edit elsewhere in the file. `message` is prose
+/// and deliberately NOT part of that identity.
+pub const FindingEntry = struct {
+    id: []const u8,
+    code: []const u8,
+    severity: blockers.Severity,
+    source: FindingSource,
+    route_id: ?[]const u8,
+    message: []const u8,
+    choices: []const []const u8,
+    requires_artifact: bool,
+};
+
 /// Field order is the wire contract and matches the spec's own example
 /// object top to bottom: `schema`, `schema_version`, `generator`, `source`,
 /// `discovery`, `routes`, `templates`, `assets`, `integrations`,
-/// `blockers`.
+/// `blockers`, `findings`. `findings` is LAST and deliberately a SEPARATE
+/// array from `blockers`, not folded into it: a blocker is a fact about
+/// what discovery could or couldn't establish (drives the exit code via
+/// `integrity`); a finding is a per-fragment choice this run cannot make on
+/// the operator's behalf, meant to be answered by id in a Stage 2 decision
+/// file -- see `findings.zig`'s module doc. A consumer filtering `blockers[]`
+/// for integrity facts must never see operator questions mixed in.
 pub const Manifest = struct {
     schema: []const u8 = schema_id,
     schema_version: u32 = schema_version_value,
@@ -344,6 +381,7 @@ pub const Manifest = struct {
     assets: []const AssetEntry,
     integrations: []const IntegrationEntry,
     blockers: []const BlockerEntry,
+    findings: []const FindingEntry,
 };
 
 /// Everything `build` needs beyond a `rails.Discovery`: the two pieces
@@ -386,24 +424,30 @@ fn routePairLessThan(_: void, a: RoutePair, b: RoutePair) bool {
 }
 
 /// Contract 1 (self-freeing): every allocation this function makes --
-/// the paired/sorted route and blocker scratch arrays, the per-route id
-/// buffers, the constructed `RouteEntry`/`TemplateEntry`/`BlockerEntry`
-/// arrays, and `std.json.Stringify`'s own internal buffer -- is freed
-/// before returning; the ONE allocation that escapes is the returned
-/// `[]u8`. Every `RouteEntry`/`TemplateEntry`/`AssetEntry`/
-/// `IntegrationEntry`/`BlockerEntry` string this function builds is either
-/// a borrow of `in.discovery`'s own already-owned memory (which outlives
-/// this call) or a borrow of a per-route id buffer freed at the end of this
-/// function -- never a NEW `gpa` allocation that would need its own release
-/// path, which is what keeps this contract 1 instead of contract 2 despite
-/// building a fair amount of intermediate structure.
+/// the paired/sorted route, blocker, and finding scratch arrays, the
+/// per-route id buffers, the constructed `RouteEntry`/`TemplateEntry`/
+/// `BlockerEntry`/`FindingEntry` arrays, and `std.json.Stringify`'s own
+/// internal buffer -- is freed before returning; the ONE allocation that
+/// escapes is the returned `[]u8`. Every `RouteEntry`/`TemplateEntry`/
+/// `AssetEntry`/`IntegrationEntry`/`BlockerEntry`/`FindingEntry` string this
+/// function builds is either a borrow of `in.discovery`'s own
+/// already-owned memory (which outlives this call) or a borrow of a
+/// per-route id buffer freed at the end of this function -- never a NEW
+/// `gpa` allocation that would need its own release path, which is what
+/// keeps this contract 1 instead of contract 2 despite building a fair
+/// amount of intermediate structure.
 ///
-/// Determinism (module doc; design doc's "Determinism" section): `routes[]`
-/// and `blockers[]` are sorted in private copies here (`templates[]`/
-/// `assets[]` arrive from `Discovery` already sorted by path -- see `rails.
-/// zig`'s `classifyRoutes`/`assets.scan` docs -- so they are copied
-/// verbatim, not re-sorted); this function never depends on the order
-/// discovery happened to produce either in. `root_evidence`/`integrations[]`
+/// Determinism (module doc; design doc's "Determinism" section): `routes[]`,
+/// `blockers[]`, and `findings[]` are sorted in private copies here
+/// (`templates[]`/`assets[]` arrive from `Discovery` already sorted by path
+/// -- see `rails.zig`'s `classifyRoutes`/`assets.scan` docs -- so they are
+/// copied verbatim, not re-sorted); this function never depends on the
+/// order discovery happened to produce any of them in --
+/// `findings.derive` already sorts its own returned slice by `findings.
+/// lessThan` before `Discovery.findings` is ever set, but this function
+/// re-sorts a private copy anyway rather than trusting that upstream
+/// invariant, the same "determinism is this function's own responsibility"
+/// stance it already takes for `blockers[]`. `root_evidence`/`integrations[]`
 /// are emitted in the order the caller/`Discovery` supplies them, which is
 /// itself deterministic given a fixed evidence-probe order and a fixed
 /// gem/package lookup table respectively -- see those types' own docs.
@@ -493,6 +537,29 @@ pub fn build(gpa: Allocator, in: BuildInput) Allocator.Error![]u8 {
         };
     }
 
+    // --- findings[] ------------------------------------------------------
+    // NOT trusted to already be sorted (this function's own doc above):
+    // a private, sorted copy, mirroring the identical stance already taken
+    // for blockers[] just above.
+    const sorted_findings = try gpa.dupe(findings.Finding, d.findings);
+    defer gpa.free(sorted_findings);
+    std.mem.sort(findings.Finding, sorted_findings, {}, findings.lessThan);
+
+    const finding_entries = try gpa.alloc(FindingEntry, sorted_findings.len);
+    defer gpa.free(finding_entries);
+    for (sorted_findings, 0..) |f, i| {
+        finding_entries[i] = .{
+            .id = f.id,
+            .code = f.code,
+            .severity = f.severity,
+            .source = .{ .file = f.path, .line = f.line },
+            .route_id = f.route_id,
+            .message = f.message,
+            .choices = f.choices,
+            .requires_artifact = f.requires_artifact,
+        };
+    }
+
     // --- source.version --------------------------------------------------
     // detect.detectVersion only ever sets both fields together or neither
     // (VersionEntry's own doc) -- collapsed here into one optional.
@@ -516,6 +583,7 @@ pub fn build(gpa: Allocator, in: BuildInput) Allocator.Error![]u8 {
         .assets = d.assets,
         .integrations = integration_entries,
         .blockers = blocker_entries,
+        .findings = finding_entries,
     };
 
     var out = try std.json.Stringify.valueAlloc(gpa, manifest_value, .{ .whitespace = .indent_2 });
@@ -562,6 +630,18 @@ fn emptyDiscovery() rails.Discovery {
         .classifications = &.{},
         .integrations = &.{},
         .blockers = &.{},
+        // #167 Stage 1's three new `Discovery` fields. `Discovery` declares
+        // no field defaults (deliberately -- a new escaping field that
+        // silently defaults to empty is exactly how a producer ships
+        // unwired), so this test helper spells the degraded value out like
+        // every field above it. `build` DOES read and emit `findings` (see
+        // the "findings[] is emitted last" test below); `fragments` and
+        // `i18n_locale` are not rendered by the manifest at all -- they are
+        // inputs `findings.derive` consumes upstream, one layer before
+        // `Discovery` is built (`report.build` only consumes the findings
+        // `derive` already produced, not `fragments`/`i18n_locale`
+        // themselves), so this helper leaves them empty rather than wiring
+        // them through here.
         .fragments = &.{},
         .findings = &.{},
         .i18n_locale = null,
@@ -784,6 +864,64 @@ test "build: integrations[].version passes Integration.version through, null and
     try testing.expectEqualStrings("package.json:@hotwired/turbo-rails", is[1].object.get("evidence").?.string);
 }
 
+const two_choices = [_][]const u8{ "retain", "blocked" };
+
+fn testFinding(code: []const u8, id: []const u8, path: []const u8, line: ?u64, message: []const u8) findings.Finding {
+    return .{ .id = id, .code = code, .severity = .warn, .path = path, .line = line, .route_id = null, .message = message, .choices = &two_choices, .requires_artifact = false };
+}
+
+test "build: findings[] is emitted last, sorted by findings.lessThan, with the wire field order" {
+    const gpa = testing.allocator;
+    var fs = [_]findings.Finding{
+        testFinding("RAILS_REQUEST_TIME_STATE", "RAILS_REQUEST_TIME_STATE.app/views/p%2Ehtml%2Eerb.L2C1", "app/views/p.html.erb", 2, "request-time state `current_user`"),
+        testFinding("RAILS_HELPER_UNKNOWN", "RAILS_HELPER_UNKNOWN.app/views/p%2Ehtml%2Eerb.L1C1", "app/views/p.html.erb", 1, "unknown helper `foo`"),
+    };
+    const d: rails.Discovery = blk: {
+        var v = emptyDiscovery();
+        v.findings = &fs;
+        break :blk v;
+    };
+    const out = try build(gpa, .{ .generator_version = "0.0.0-test", .root_evidence = &.{}, .discovery = &d });
+    defer gpa.free(out);
+
+    const blockers_at = std.mem.indexOf(u8, out, "\"blockers\": [").?;
+    const findings_at = std.mem.indexOf(u8, out, "\"findings\": [").?;
+    try testing.expect(findings_at > blockers_at);
+
+    var parsed = try std.json.parseFromSlice(std.json.Value, gpa, out, .{});
+    defer parsed.deinit();
+    const arr = parsed.value.object.get("findings").?.array.items;
+    try testing.expectEqual(@as(usize, 2), arr.len);
+    try testing.expectEqualStrings("RAILS_HELPER_UNKNOWN", arr[0].object.get("code").?.string);
+    try testing.expectEqualStrings("app/views/p.html.erb", arr[0].object.get("source").?.object.get("file").?.string);
+    try testing.expectEqual(@as(i64, 1), arr[0].object.get("source").?.object.get("line").?.integer);
+    try testing.expect(arr[0].object.get("route_id").? == .null);
+    try testing.expectEqual(@as(usize, 2), arr[0].object.get("choices").?.array.items.len);
+    try testing.expect(!arr[0].object.get("requires_artifact").?.bool);
+
+    // Key order inside one finding object is the wire contract: assert the
+    // byte offsets are strictly increasing within the first object.
+    //
+    // Self-review fix: the brief's own sketch sliced `first_obj` to end at
+    // `indexOfPos(..., "\"requires_artifact\"").? + 1` -- one byte past the
+    // START of that match, i.e. right after its opening quote, not past
+    // its end. That truncated `first_obj` mid-key, so the loop's own final
+    // search (for the full `"\"requires_artifact\""` needle) could never
+    // find it inside the very slice constructed to contain it, and panicked
+    // on the resulting `.?` instead of failing as a normal `expect`. Ending
+    // the slice one byte past the FULL needle's length is what actually
+    // keeps the last key inside `first_obj`.
+    const requires_artifact_key = "\"requires_artifact\"";
+    const first_obj = out[findings_at .. std.mem.indexOfPos(u8, out, findings_at, requires_artifact_key).? + requires_artifact_key.len];
+    const keys = [_][]const u8{ "\"id\"", "\"code\"", "\"severity\"", "\"source\"", "\"route_id\"", "\"message\"", "\"choices\"", requires_artifact_key };
+    var last: usize = 0;
+    for (keys) |k| {
+        const at = std.mem.indexOfPos(u8, first_obj, last, k).?;
+        try testing.expect(at >= last);
+        last = at + k.len;
+    }
+}
+
 test "manifestGoldenBytes: exact bytes for a minimal manifest, pinning key order byte-for-byte" {
     // The strongest form of "key ordering is explicit, not incidental" the
     // module doc promises: this doesn't just check that "path" appears
@@ -913,7 +1051,8 @@ test "manifestGoldenBytes: exact bytes for a minimal manifest, pinning key order
         \\      "message": "route path is built from an interpolated expression",
         \\      "route_id": null
         \\    }
-        \\  ]
+        \\  ],
+        \\  "findings": []
         \\}
         \\
     ;

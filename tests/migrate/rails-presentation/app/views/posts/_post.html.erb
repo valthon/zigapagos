@@ -1,0 +1,8 @@
+<article><%= link_to post.title, post_path(post) %></article>
+<!-- RAILS_TEMPLATE_CONTROL_FLOW fixture: `post` is a template local (bound
+     via `locals:` in index.html.erb, never assigned in THIS file's own
+     source), so Prism sees it as a variable_call and it classifies as
+     `local` -- a GENERIC_PREDICATE per templates.rb's control_info, so the
+     branch itself becomes a plain `control` node instead of an `errors` or
+     ivar one. -->
+<% if post.published? %><span>Published</span><% end %>
