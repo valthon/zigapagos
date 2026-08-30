@@ -1111,17 +1111,25 @@ test "build: two runs from differently-named directories produce byte-identical 
     // discriminate a bug that only shows up when the two paths differ in
     // length, e.g. a fixed-width buffer silently truncating one and not
     // the other).
-    const name_a = ".zig-cache/tmp/manifest-determinism-app-one-with-a-long-name";
-    const name_b = ".zig-cache/tmp/mdt2";
+    //
+    // Both copies live under a per-process `std.testing.tmpDir`, never at a
+    // fixed path: this test is compiled into every test binary whose module
+    // graph reaches this file (test-init, test-rails, test-migrate), CI runs
+    // those binaries in parallel, and with fixed names one process's
+    // `deleteTree` raced another's `copyTree` into FileNotFound (PR #183,
+    // CI run 33289222022).
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const leaf_a = "manifest-determinism-app-one-with-a-long-name";
+    const leaf_b = "mdt2";
+    const name_a = try std.fmt.allocPrint(gpa, ".zig-cache/tmp/{s}/{s}", .{ &tmp.sub_path, leaf_a });
+    defer gpa.free(name_a);
+    const name_b = try std.fmt.allocPrint(gpa, ".zig-cache/tmp/{s}/{s}", .{ &tmp.sub_path, leaf_b });
+    defer gpa.free(name_b);
 
-    std.Io.Dir.cwd().deleteTree(io, name_a) catch {};
-    std.Io.Dir.cwd().deleteTree(io, name_b) catch {};
-    defer std.Io.Dir.cwd().deleteTree(io, name_a) catch {};
-    defer std.Io.Dir.cwd().deleteTree(io, name_b) catch {};
-
-    var dir_a = try std.Io.Dir.cwd().createDirPathOpen(io, name_a, .{ .open_options = .{ .iterate = true } });
+    var dir_a = try tmp.dir.createDirPathOpen(io, leaf_a, .{ .open_options = .{ .iterate = true } });
     defer dir_a.close(io);
-    var dir_b = try std.Io.Dir.cwd().createDirPathOpen(io, name_b, .{ .open_options = .{ .iterate = true } });
+    var dir_b = try tmp.dir.createDirPathOpen(io, leaf_b, .{ .open_options = .{ .iterate = true } });
     defer dir_b.close(io);
 
     try copyTree(io, gpa, src_dir, dir_a);
