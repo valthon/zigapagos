@@ -1824,7 +1824,9 @@ operation is rejected with `allowed: retain, blocked`.
 
 **`custom:/<path>`** is accepted as well, on this code only, and is *not*
 enumerated in `choices` — a free-form token cannot be. It must be
-`custom:/` + an absolute path with no whitespace and no `"`; a malformed one
+`custom:/` + an absolute path with no whitespace and no quotes of either
+kind (a character you need is expressible percent-encoded, e.g. `%27`); a
+malformed one
 says so (`choice "custom:x" must be custom:/<absolute path> with no whitespace
 or quotes`). It is how you bind to a consumer route the document does not
 describe, and it records `{"operation_id": "custom", "verb": <the Rails

@@ -445,14 +445,17 @@ fn isNoopChoice(choice: []const u8) bool {
 }
 
 /// Ruling A3's shape: `custom:` followed by an ABSOLUTE path with no
-/// whitespace and no quote.
+/// whitespace and no quotes of either kind.
 ///
 /// Absolute because the binding is `zb.send("<VERB>", "<path>", …)` and a
 /// relative path there resolves against whatever page happens to be open --
-/// a bug that only shows on a nested URL. No whitespace and no `"` because
-/// the token is interpolated into generated TypeScript, and because a
-/// trailing space in a hand-edited JSON file is otherwise an invisible
-/// difference between two paths.
+/// a bug that only shows on a nested URL. No whitespace because a trailing
+/// space in a hand-edited JSON file is otherwise an invisible difference
+/// between two paths. No quotes because the error message promises "no
+/// quotes" and the rule must be at least as strict as its own description
+/// (the emitters escape correctly either way; a quote the operator really
+/// needs is expressible percent-encoded, and `%27` round-trips to the same
+/// URL).
 ///
 /// Contract 3 (caller-buffer): allocates nothing.
 fn validCustomChoice(choice: []const u8) bool {
@@ -460,7 +463,11 @@ fn validCustomChoice(choice: []const u8) bool {
     const path = choice[custom_prefix.len..];
     if (path.len == 0 or path[0] != '/') return false;
     for (path) |c| {
-        if (c == '"' or std.ascii.isWhitespace(c)) return false;
+        // Both quote kinds, because the error message promises "no quotes"
+        // and the rule must be at least as strict as its own description
+        // (PR #188 review). The emitters escape correctly either way; `%27`
+        // expresses a quote the operator actually needs.
+        if (c == '"' or c == '\'' or std.ascii.isWhitespace(c)) return false;
     }
     return true;
 }
@@ -1052,10 +1059,17 @@ test "parse: a malformed custom: choice names the shape it must have" {
         \\  {"id":"F","choice":"custom:/a b","rationale":"a space"}
         \\]}
         ,
+        // A single quote: the message promises "no quotes", and the path is
+        // spliced into generated TSX — both quote kinds are rejected.
+        \\{"schema":"zigapagos.rails-decisions/1","decisions":[
+        \\  {"id":"F","choice":"custom:/a'b","rationale":"a quote"}
+        \\]}
+        ,
     };
     const wanted = [_][]const u8{
         "choice \"custom:api/contact\" must be custom:/<absolute path> with no whitespace or quotes",
         "choice \"custom:/a b\" must be custom:/<absolute path> with no whitespace or quotes",
+        "choice \"custom:/a'b\" must be custom:/<absolute path> with no whitespace or quotes",
     };
     for (cases, wanted) |bytes, want| {
         var problems: std.ArrayListUnmanaged(Problem) = .empty;

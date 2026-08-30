@@ -1435,7 +1435,11 @@ test "contentClaims under a FailingAllocator leaks nothing on any partial alloca
         if (fail_index > 500) return error.SweepNeverReachedSuccess;
         var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
         if (contentClaims(failing.allocator(), &rs, &vs)) |c| {
-            defer c.deinit(std.testing.allocator);
+            // Freed through the same allocator interface that allocated it;
+            // the wrapped testing allocator would ACCEPT the frees, but the
+            // FailingAllocator's own accounting is part of what the sweep
+            // checks (PR #188 review).
+            defer c.deinit(failing.allocator());
             try std.testing.expectEqual(@as(usize, 1), c.collisions.len);
             try std.testing.expectEqual(@as(usize, 1), c.unsupported.len);
             break;
