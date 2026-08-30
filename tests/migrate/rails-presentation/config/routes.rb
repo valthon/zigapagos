@@ -7,33 +7,39 @@ Rails.application.routes.draw do
   # pages#help's view (help.html.erb) is the one template that exercises
   # HELPER_UNKNOWN, RAW_OUTPUT, and I18N_UNRESOLVED all in one line.
   get "/help", to: "pages#help"
-  # posts#index/#show: PostsController declares `layout :choose` (a
-  # dynamic/symbol layout -- RAILS_LAYOUT_DYNAMIC), which must fall back to
-  # the app-wide convention (application.html.erb) since no
-  # app/views/layouts/posts.html.erb exists.
+  # posts#index/#show: `layout :choose` (a dynamic/symbol layout --
+  # RAILS_LAYOUT_DYNAMIC) falls back to the app-wide convention; and #167
+  # Stage 3's `before_action :require_login, only: [:index]` puts a
+  # RAILS_ROUTE_AUTH_GUARD on THIS line, answerable `public`.
   resources :posts, only: [:index, :show]
+  # #167 Stage 3: a GET route whose action renders JSON, not a view. It is
+  # the one route assumption A2 bites on -- a user-facing GET the handoff
+  # calls `backend` stays UNACCOUNTED until an operation is chosen for it,
+  # so a run that ignores it cannot reach `complete`. Its choices are the
+  # --backend document's own GET operations.
+  get "/feed", to: "posts#feed"
   # Routes to legacy.html.haml with no controller action required -- the
   # Haml engine blocker (RAILS_TEMPLATE_ENGINE_UNSUPPORTED) fires from a
   # plain app/views walk regardless of routing, but this proves a route can
   # still resolve to it.
   get "/posts/legacy", to: "posts#legacy"
-  # R13 (#166 follow-up): this parser computes a SINGULAR controller
-  # identifier for a singular `resource` (see
-  # runtime/sidecar/rails/test/routes_test.rb's "singular resource has
-  # exactly the 7 non-index actions": `resource :profile` yields
-  # `controller: "profile"`, not the pluralized "profiles" real Rails
-  # would route to). Real Rails resolves `resource :session` to
-  # `SessionsController` (pluralized) with NO explicit `controller:`
-  # needed -- the explicit override below is redundant in a real app and
-  # exists only to keep this fixture's controller/view pair
-  # (SessionsController / app/views/sessions/) honest against this
-  # parser's current gap.
-  resource :session, only: [:new, :create], controller: "sessions"
-  # Same #166 gap, same override -- RegistrationsController /
-  # app/views/registrations/. This view also carries the one
-  # RAILS_REQUEST_TIME_STATE finding that is NOT inside an `errors` chain
-  # (see registrations/new.html.erb's own comment).
-  resource :registration, only: [:new, :create], controller: "registrations"
+  # #176: a singular `resource` routes to the PLURAL controller --
+  # SessionsController, app/views/sessions/ -- exactly as Rails does
+  # (SingletonResource#controller defaults to `name.to_s.pluralize`) while
+  # the path and every route helper stay singular (`/session`,
+  # `session_path`, `new_session_path`). This fixture therefore carries NO
+  # `controller:` override: the override it used to need was a workaround
+  # for the parser gap #176 closed, and keeping it would have meant the
+  # fixture never exercised the rule a real app depends on.
+  #
+  # `destroy` is what the shared nav's `button_to ..., method: :delete`
+  # targets: the sign-out half of the journey, and the fixture's only
+  # mutating link.
+  resource :session, only: [:new, :create, :destroy]
+  # Same rule, same absent override -- RegistrationsController /
+  # app/views/registrations/. That view carries the two `errors` regions
+  # this fixture answers `island` (see its own comment).
+  resource :registration, only: [:new, :create]
   # Self-review coverage: TEMPLATE_PARSE_ERROR and ROUTE_HELPER_UNKNOWN are
   # not in the Stage 1 vocabulary's core pins, but every code Stage 1 can
   # emit should appear at least once. broken.html.erb has an unclosed

@@ -219,5 +219,88 @@ check_node "a block-form output tag skips its prefix too",
   $failures += 1
 end
 
+# ---------------------------------------------------------------------------
+# #167 Stage 3 (Task 3 round 3, N-2): a nested `data:` hash reaches the Zig
+# side as the attributes Rails would have RENDERED. Before this, the hash was
+# reported as one `data` key holding the `{...}` sentinel, so the Rails 7 /
+# Turbo spelling of a destructive link -- `data: { turbo_method: :delete }` --
+# raised no finding (`findings.mutationVerb` reads `data-turbo-method`) and
+# converted to a GET link carrying `data="{...}"`.
+# ---------------------------------------------------------------------------
+
+check_node "a nested data: hash flattens to dasherised data-* attrs, in source order",
+           "<%= link_to \"Sign out\", logout_path, data: { turbo_method: :delete, turbo_confirm: \"Sign out?\" } %>", 0,
+           { kind: "link_to", name: "logout", args: ["Sign out"],
+             attrs: [["data-turbo-method", "delete"], ["data-turbo-confirm", "Sign out?"]] }
+check_node "a literal-path link flattens the same way",
+           "<%= link_to \"Sign out\", \"/logout\", data: { turbo_method: :delete } %>", 0,
+           { kind: "link_to", name: nil, args: ["Sign out", "/logout"], attrs: [["data-turbo-method", "delete"]] }
+# Rails' `tag_options`: a String/Symbol value as is, any other scalar
+# JSON-encoded, a nil value skipped, a string key dasherised like a symbol one.
+check_node "booleans and numbers render as Rails renders them; a nil pair is omitted",
+           "<%= link_to \"x\", root_path, data: { turbo: false, \"item_count\" => 3, gone: nil, \"already-dashed\" => 1.5 } %>", 0,
+           { kind: "link_to", attrs: [["data-turbo", "false"], ["data-item-count", "3"], ["data-already-dashed", "1.5"]] }
+check_node "the flattened pairs sit where data: sat among the other options",
+           "<%= link_to \"x\", root_path, class: \"a\", data: { turbo_method: :delete }, id: \"b\" %>", 0,
+           { attrs: [["class", "a"], ["data-turbo-method", "delete"], ["id", "b"]] }
+check_node "aria: is the other prefix Rails flattens",
+           "<%= link_to \"x\", root_path, aria: { label: \"Home\" } %>", 0, { attrs: [["aria-label", "Home"]] }
+# `button_to` accepts the confirmation on the button (`data:`) and on the form
+# it builds (`form: { data: … }`); Turbo honours both. The rest of `form:` has
+# no attribute name on the control and keeps the sentinel it always had.
+check_node "button_to's data: turbo_confirm sits beside its method:",
+           "<%= button_to \"Sign out\", logout_path, method: :delete, data: { turbo_confirm: \"Sign out?\" } %>", 0,
+           { kind: "link_to", name: "logout", attrs: [["method", "delete"], ["data-turbo-confirm", "Sign out?"]] }
+check_node "button_to's form: { data: … } lands on the control; the rest of form: stays the sentinel",
+           "<%= button_to \"Sign out\", logout_path, method: :delete, form: { data: { turbo_confirm: \"Sure?\" }, class: \"c\" } %>", 0,
+           { kind: "link_to", name: "logout", attrs: [["method", "delete"], ["data-turbo-confirm", "Sure?"], ["form", "{...}"]] }
+check_node "a form: carrying only data: leaves no form key behind",
+           "<%= button_to \"Sign out\", logout_path, method: :delete, form: { data: { turbo_confirm: \"Sure?\" } } %>", 0,
+           { kind: "link_to", attrs: [["method", "delete"], ["data-turbo-confirm", "Sure?"]] }
+check_node "form_with's data: flattens onto the form node",
+           "<%= form_with(url: \"/p\", data: { turbo: false }) do |f| %><% end %>", 0,
+           { kind: "form", attrs: [["url", "/p"], ["data-turbo", "false"]] }
+check_node "a builder field's data: flattens too",
+           "<%= form_with(url: \"/x\") do |f| %><%= f.text_field :q, data: { controller: \"search\" } %><% end %>", 1,
+           { kind: "form_field", attrs: [["data-controller", "search"]] }
+# Only a hash of scalar literals is flattened. A value Rails would JSON-encode
+# (a nested hash) or evaluate (an ivar, an interpolation) is left as it was,
+# and the link is what it was before: not literal.
+check "a data: value that is not a scalar literal leaves the link non-literal, as before",
+      "<%= link_to \"x\", root_path, data: { params: { a: 1 } } %><%= link_to \"x\", root_path, data: { confirm: @msg } %><%= link_to \"x\", root_path, data: { confirm: \"Delete \#{@p.title}?\" } %><%= button_to \"x\", root_path, form: { data: { confirm: @msg } } %>",
+      %w[route_helper_dynamic route_helper_dynamic route_helper_dynamic route_helper_dynamic]
+# A nested hash under any OTHER key is not a Rails tag prefix and is reported
+# as it always was.
+check_node "a nested hash under a non-prefix key keeps the sentinel",
+           "<%= link_to \"x\", root_path, html: { a: 1 } %>", 0, { kind: "link_to", attrs: [["html", "{...}"]] }
+# NEW-4. ActionView 8.1.3.1's `tag_options` opens with `next if key.blank?`
+# and repeats it inside the `data:`/`aria:` arms as `next if k.blank? ||
+# v.nil?`, so Rails renders NO attribute for a blank key at either level. The
+# nil half was already honoured; the blank half was not, and a blank key came
+# through as `data-=""` / `=""` -- markup Rails never emits, and (for the
+# outer case) an attribute with no name at all.
+check_node "a blank key is omitted, at the top level and inside a data: hash",
+           "<%= link_to \"x\", root_path, data: { \"\" => 1, ok: 2 }, \"\" => 3, id: \"b\" %>", 0,
+           { kind: "link_to", attrs: [["data-ok", "2"], ["id", "b"]] }
+# `blank?`, not `empty?`: ActiveSupport calls a whitespace-only String blank,
+# and Rails drops that key exactly as it drops `""`.
+check_node "a whitespace-only key is blank too",
+           "<%= link_to \"x\", root_path, data: { \" \" => 1, ok: 2 } %>", 0,
+           { kind: "link_to", attrs: [["data-ok", "2"]] }
+# ActionView 8.1.3.1's `tag_option` runs the finished attribute NAME through
+# `ERB::Util.xml_name_escape`, which rewrites every character XML forbids in a
+# name to `_`. Without that, `data: { "with space" => "v" }` was reported as
+# `data-with space`, which is not one attribute at all: a downstream HTML
+# parser reads `data-with` and a nameless `space="v"`, and the converter wrote
+# that into the target template.
+check_node "an attribute name XML forbids is escaped the way ActionView escapes it",
+           "<%= link_to \"x\", root_path, data: { \"with space\" => \"v\", \"q\\\"uote\" => \"w\" } %>", 0,
+           { kind: "link_to", attrs: [["data-with_space", "v"], ["data-q_uote", "w"]] }
+# Only the forbidden characters move: a dot and a digit are legal after the
+# first character of an XML name, and Rails leaves them alone.
+check_node "a dot and a digit inside a name survive the escape",
+           "<%= link_to \"x\", root_path, data: { \"a.b2\" => \"v\" } %>", 0,
+           { kind: "link_to", attrs: [["data-a.b2", "v"]] }
+
 abort "#{$failures} templates failure(s)" if $failures > 0
 puts "PASS: templates_test.rb"

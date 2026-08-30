@@ -152,6 +152,14 @@ module RailsAnalyze
     controllers_root = File.join(root, "app/controllers")
     actions = []
     layouts = []
+    before_actions = []
+    skip_before_actions = []
+    # Resolving a superclass NAME to a controller key needs to know which
+    # keys this walk actually saw, so the edges cannot be emitted inside the
+    # file loop -- they are collected here and resolved after it (fix round
+    # 2, N1).
+    pending_parents = []
+    controller_keys = []
     unresolved = []
 
     Dir.glob(File.join(controllers_root, "**", "*.rb")).sort.each do |file|
@@ -197,6 +205,49 @@ module RailsAnalyze
         }
       end
 
+      # #167 Stage 3: the class-level filters ride their own flattened array,
+      # keyed on the same path-derived `controller_key` the actions use, so
+      # the Zig side joins the two on one string. Emitted here for the same
+      # reason `layouts` is -- ABOVE the `actions.empty?` guard below: a base
+      # controller with a `before_action` and no public actions of its own
+      # still guards every subclass action, and dropping its filters because
+      # it has no actions to iterate would report exactly the pages that
+      # subclass it as unguarded.
+      #
+      # Filters are reported as DECLARED, one entry per declaring controller
+      # -- they are not copied down to each subclass here. Attributing an
+      # inherited filter to the route that runs it needs the `parents` chain
+      # below, and that join lives in `controllers.zig`'s `guardsFor`, next
+      # to the data, rather than being pre-expanded into a wire array whose
+      # size is the product of the two (fix round 1, I-1).
+      #
+      # A `dynamic` entry is emitted WITHOUT `name`/`only`/`except` rather
+      # than with null placeholders: the Zig decode defaults them, and a
+      # `null` name in the JSON would read as "a filter named nothing"
+      # instead of "a filter this walk could not read".
+      flatten_filters = lambda do |src, into|
+        (src || []).each do |f|
+          into <<
+            if f[:dynamic]
+              { controller: controller_key, dynamic: true, line: f[:line] }
+            else
+              { controller: controller_key, name: f[:name], only: f[:only],
+                except: f[:except], line: f[:line] }
+            end
+        end
+      end
+      flatten_filters.call(result[:before_actions], before_actions)
+      flatten_filters.call(result[:skip_before_actions], skip_before_actions)
+
+      controller_keys << controller_key
+      if result[:superclass]
+        pending_parents << {
+          controller: controller_key,
+          superclass: result[:superclass],
+          namespaces: result[:lexical_namespaces] || [],
+        }
+      end
+
       # `result[:actions]` is empty both for a bare concern module (Task 1's
       # documented "nothing found" case) and for a controller class with no
       # public methods -- either way there is nothing to derive an action
@@ -210,12 +261,115 @@ module RailsAnalyze
           action: name,
           only_redirect: shape[:only_redirect],
           renders_json: shape[:renders_json],
+          # #167 Stage 3: `[]` for an action with no `redirect_to` at all,
+          # never absent -- one shape for every entry (`|| []` covers the
+          # older `.parse` failure hashes, which carry no actions anyway).
+          redirects: shape[:redirects] || [],
           line: shape[:line],
         }
       end
     end
 
-    { ok: true, actions: actions, layouts: layouts, unresolved: unresolved, ruby: RUBY_INFO }
+    # One edge per controller whose superclass this walk could both read and
+    # resolve -- so `ApplicationController < ActionController::Base`
+    # contributes none, and the chain terminates at the framework rather than
+    # at an invented `action_controller/base` node.
+    parents = pending_parents.filter_map do |pp|
+      parent = resolve_parent_key(pp[:superclass], pp[:namespaces], controller_keys)
+      { controller: pp[:controller], parent: parent } if parent
+    end
+
+    { ok: true, actions: actions, layouts: layouts, before_actions: before_actions,
+      skip_before_actions: skip_before_actions, parents: parents,
+      unresolved: unresolved, ruby: RUBY_INFO }
+  end
+
+  # Ruby's own constant lookup, restricted to what a superclass name can
+  # mean (fix round 2, N1).
+  #
+  # `module Admin; class UsersController < BaseController` resolves
+  # `BaseController` to `Admin::BaseController`, because Ruby searches the
+  # LEXICAL scope innermost-outward before falling back to the top level.
+  # Reading the name as written gave `base` -- a key no file produces -- so
+  # the chain snapped exactly where the review found it, on a shape the
+  # previous commit message itself cited.
+  #
+  # Candidates are the enclosing namespaces innermost-outward, then the bare
+  # name; the first whose key names a controller THIS WALK ACTUALLY SAW wins.
+  # Matching against the observed keys, rather than trusting the innermost
+  # candidate, is what keeps `class Admin::X < ApplicationController` pointing
+  # at the real top-level `application` instead of an `admin/application` that
+  # does not exist.
+  #
+  # `namespaces` is the `module` nesting, not the class's qualified name --
+  # see `controllers.rb`'s `@lexical_namespaces` for why those differ for the
+  # compact `class Admin::UsersController` form.
+  #
+  # When nothing matches, the top-level reading is the answer: the parent may
+  # genuinely be a class this walk never saw (a gem's, or one outside
+  # `app/controllers/`), and naming it costs nothing -- the Zig-side walk
+  # finds no filters under that key and stops. Failure still degrades to
+  # under-reporting, never to attributing a foreign controller's filters.
+  def self.resolve_parent_key(name, namespaces, controller_keys)
+    return nil unless name.is_a?(String)
+    candidates = namespaces.length.downto(1).map { |n| (namespaces[0, n] + [name]).join("::") }
+    candidates << name
+    candidates.each do |candidate|
+      key = controller_key_from_class_name(candidate)
+      return key if key && controller_keys.include?(key)
+    end
+    controller_key_from_class_name(name)
+  end
+
+  # Rails' own base classes. A controller whose superclass is one of these
+  # inherits no app-declared filters, so the chain ENDS there -- emitting an
+  # edge to a key no controller file will ever produce would only make the
+  # Zig-side walk take an extra hop to discover the same thing.
+  FRAMEWORK_BASE_CLASSES = %w[
+    ActionController::Base
+    ActionController::API
+    ActionController::Metal
+    ApplicationRecord
+    Object
+  ].freeze
+
+  # The controller key a superclass NAME denotes -- `ApplicationController` ->
+  # `application`, `Admin::BaseController` -> `admin/base` (fix round 1, I-1).
+  #
+  # Derived from the class name, unavoidably: unlike `controller_path_key`
+  # below, there is no file path to read here, because the parent is named
+  # only as a constant in the child's source. That makes this edge a
+  # CONVENTION-BASED guess in exactly the way `controller_path_key`'s own
+  # comment says a class name is -- a reopened or aliased parent, or one whose
+  # file does not follow Rails' naming convention, resolves to a key no
+  # controller file produced. The cost of a wrong guess is bounded: the chain
+  # walk finds no filters under that key and stops, i.e. it under-reports
+  # inherited filters rather than attributing someone else's.
+  #
+  # nil for no superclass, a framework base class, or a name that does not
+  # reduce to a usable key.
+  def self.controller_key_from_class_name(name)
+    return nil unless name.is_a?(String)
+    name = name.delete_prefix("::")
+    return nil if name.empty? || FRAMEWORK_BASE_CLASSES.include?(name)
+    parts = name.split("::").map { |s| underscore(s) }
+    return nil if parts.empty? || parts.any?(&:empty?)
+    # A last segment of exactly `Controller` leaves nothing behind, so it
+    # names no key -- the same answer Rails' own `controller_path` gives it.
+    parts[-1] = parts[-1] == "controller" ? "" : parts[-1].sub(/_controller\z/, "")
+    return nil if parts.any?(&:empty?)
+    parts.join("/")
+  end
+
+  # ActiveSupport's `underscore`, minus the parts nothing here needs (no
+  # `::`->`/` -- the caller splits first -- and no acronym table). The first
+  # gsub is what keeps a run of capitals together: `APIController` ->
+  # `api_controller`, not `a_p_i_controller`.
+  def self.underscore(segment)
+    segment
+      .gsub(/([A-Z]+)([A-Z][a-z])/, '\1_\2')
+      .gsub(/([a-z\d])([A-Z])/, '\1_\2')
+      .downcase
   end
 
   # The Rails controller PATH key a route's `controller` field holds --

@@ -245,6 +245,16 @@ rails_check_launch_failure_ok() {
 # ─── Case A: rails-check catches schema drift in BOTH generated schemas ──────
 echo "--- Case A: rails-check catches schema drift (manifest.zig + handoff.zig type changes) ---"
 
+# EVERY `grep -cF` anchor count below ends in `|| true`, and that is not
+# defensive noise. `grep -c` exits 1 when it matches NOTHING, so under this
+# script's `set -euo pipefail` a count of zero killed the script at the
+# assignment — BEFORE the `|| fail` line that exists to name the missing
+# anchor ever ran. The observable symptom was exit 1 with no output at all,
+# which is indistinguishable from the build-graph launch failure Case D
+# exists to tell apart. The gate that proves another gate is not vacuous had
+# a silent-failure mode of its own (review finding I-2). With `|| true` the
+# count is 0, the assertion fires, and the message names the anchor.
+#
 # `available: bool,` occurs exactly once in manifest.zig (src/cli/rails/manifest.zig's
 # RubyStatus -- confirmed via `grep -c` below, not assumed), so this is scoped to the
 # one field it is meant to touch without needing a fragile line-number anchor. The
@@ -254,9 +264,9 @@ echo "--- Case A: rails-check catches schema drift (manifest.zig + handoff.zig t
 # must not change.
 mutate_manifest_type() {
   local count
-  count=$(grep -cF 'available: bool,' src/cli/rails/manifest.zig)
+  count=$(grep -cF 'available: bool,' src/cli/rails/manifest.zig || true)
   [ "$count" -eq 1 ] ||
-    fail "expected exactly one 'available: bool,' in manifest.zig, found $count -- mutate_manifest_type's anchor is no longer unique"
+    fail "expected exactly one 'available: bool,' in manifest.zig, found $count -- mutate_manifest_type's anchor no longer matches exactly once"
   perl -i -pe 's/\bavailable: bool,/present: bool,/' src/cli/rails/manifest.zig
   perl -i -pe 's/\.available = d\.ruby\.available,/.present = d.ruby.available,/' src/cli/rails/manifest.zig
   grep -qF 'present: bool,' src/cli/rails/manifest.zig ||
@@ -265,26 +275,39 @@ mutate_manifest_type() {
     fail "the manifest mutation did not apply -- manifest.zig has no '.present = d.ruby.available,'"
 }
 
-# The handoff half. `endpoint: ?Endpoint,` is a WIRE-ONLY field (handoff.zig's
-# input `RouteRow` deliberately has no endpoint), so renaming it plus its single
-# construction site (`.endpoint = null,` in `build`) still COMPILES — which is
-# what makes this a schema-drift mutation rather than a build break. Both anchors
-# are confirmed unique below rather than assumed, exactly as the manifest half
-# does for `available: bool,`.
+# The handoff half. Renaming the WIRE field `RouteEntry.endpoint` plus its
+# single construction site in `build` still COMPILES — which is what makes this
+# a schema-drift mutation rather than a build break.
+#
+# The declaration is anchored INSIDE the `pub const RouteEntry` block rather
+# than by the bare text `endpoint: ?Endpoint,`. It used to be anchored on that
+# text, on the reasoning that the field was wire-only ("handoff.zig's input
+# `RouteRow` deliberately has no endpoint"); #167 Stage 3 gave `RouteRow` one
+# too, so the bare anchor now matches twice and this gate started failing on
+# its own uniqueness check — which is exactly what that check is for, and why
+# it asserts rather than assumes. Renaming BOTH would not do: `RouteRow` is an
+# INPUT type whose name is not a contract, so a producer-convenience rename
+# there is not drift and must not be presented as such.
 mutate_handoff_type() {
   local count
-  count=$(grep -cF 'endpoint: ?Endpoint,' src/cli/rails/handoff.zig)
+  count=$(grep -cF 'pub const RouteEntry = struct {' src/cli/rails/handoff.zig || true)
   [ "$count" -eq 1 ] ||
-    fail "expected exactly one 'endpoint: ?Endpoint,' in handoff.zig, found $count -- mutate_handoff_type's anchor is no longer unique"
-  count=$(grep -cF '.endpoint = null,' src/cli/rails/handoff.zig)
+    fail "expected exactly one 'pub const RouteEntry = struct {' in handoff.zig, found $count -- mutate_handoff_type's anchor no longer matches exactly once"
+  count=$(grep -cF '.endpoint = row.endpoint,' src/cli/rails/handoff.zig || true)
   [ "$count" -eq 1 ] ||
-    fail "expected exactly one '.endpoint = null,' in handoff.zig, found $count -- mutate_handoff_type's second anchor is no longer unique"
-  perl -i -pe 's/\bendpoint: \?Endpoint,/backend_endpoint: ?Endpoint,/' src/cli/rails/handoff.zig
-  perl -i -pe 's/\.endpoint = null,/.backend_endpoint = null,/' src/cli/rails/handoff.zig
-  grep -qF 'backend_endpoint: ?Endpoint,' src/cli/rails/handoff.zig ||
-    fail "the handoff mutation did not apply -- handoff.zig has no 'backend_endpoint: ?Endpoint,'"
-  grep -qF '.backend_endpoint = null,' src/cli/rails/handoff.zig ||
-    fail "the handoff mutation did not apply -- handoff.zig has no '.backend_endpoint = null,'"
+    fail "expected exactly one '.endpoint = row.endpoint,' in handoff.zig, found $count -- mutate_handoff_type's second anchor no longer matches exactly once"
+  # `-0777` (slurp) + a non-greedy prefix from the struct header: the FIRST
+  # `endpoint: ?Endpoint,` after `pub const RouteEntry = struct {` is the wire
+  # one, and `RouteRow`'s copy further down is left alone.
+  perl -0777 -i -pe 's/(pub const RouteEntry = struct \{.*?)\bendpoint: \?Endpoint,/${1}backend_endpoint: ?Endpoint,/s' src/cli/rails/handoff.zig
+  perl -i -pe 's/\.endpoint = row\.endpoint,/.backend_endpoint = row.endpoint,/' src/cli/rails/handoff.zig
+  count=$(grep -cF 'backend_endpoint: ?Endpoint,' src/cli/rails/handoff.zig || true)
+  [ "$count" -eq 1 ] ||
+    fail "the handoff mutation misapplied -- expected exactly one 'backend_endpoint: ?Endpoint,', found $count"
+  grep -qF 'endpoint: ?Endpoint,' src/cli/rails/handoff.zig ||
+    fail "the handoff mutation renamed the INPUT RouteRow.endpoint too -- that is not wire drift"
+  grep -qF '.backend_endpoint = row.endpoint,' src/cli/rails/handoff.zig ||
+    fail "the handoff mutation did not apply -- handoff.zig has no '.backend_endpoint = row.endpoint,'"
 }
 
 mutate_manifest_type

@@ -1,10 +1,14 @@
-# Gem-free English singularizer for the route sidecar's static_ast mode.
+# Gem-free English inflector for the route sidecar's static_ast mode.
 #
 # Why this exists at all: static_ast has to work on a Rails app that cannot
 # boot, so ActiveSupport (and its inflector) is unavailable by design. A
 # route declared bare inside `resources :people do ... end` nests under the
 # parent's *singular* -- `:person_id`, not `:people_id` -- so getting this
 # wrong silently produces a plausible-looking path that does not exist.
+# Symmetrically, a singular `resource :session` routes to the *plural*
+# SessionsController (Rails' SingletonResource#controller defaults to
+# `name.to_s.pluralize`), so a missing pluralizer names a controller file
+# that does not exist -- see #176 and routes.rb's own comment there.
 #
 # CORRECTNESS CRITERION: agreement with ActiveSupport, not agreement with
 # English. This module's job is not "be a good English singularizer" -- it
@@ -118,12 +122,77 @@ module Inflect
     [/s$/i, ''],
   ].freeze
 
+  # Faithful port of ActiveSupport::Inflector.inflections(:en).plurals, in
+  # AS's own front-to-back precedence order, read the same way SINGULAR_RULES
+  # was:
+  #
+  #   ruby -e 'require "active_support/all"; \
+  #     infl = ActiveSupport::Inflector.inflections(:en); \
+  #     infl.plurals.each { |r, x| puts "#{r.inspect} => #{x.inspect}" }'
+  #
+  # The same correctness criterion applies: agreement with AS, not with
+  # English. The idempotent self-matching rules (`/(m)en$/ => '\1en'`) come
+  # from `inflect.irregular` expanding into two rules, exactly as in
+  # SINGULAR_RULES, and are why `pluralize("people")` is "people" rather
+  # than "peoples". The final two rules are AS's catch-alls: a word already
+  # ending in "s" is left alone, everything else gains one.
+  PLURAL_RULES = [
+    [/(z)ombies$/i, '\1ombies'],
+    [/(z)ombie$/i, '\1ombies'],
+    [/(m)oves$/i, '\1oves'],
+    [/(m)ove$/i, '\1oves'],
+    [/(s)exes$/i, '\1exes'],
+    [/(s)ex$/i, '\1exes'],
+    [/(c)hildren$/i, '\1hildren'],
+    [/(c)hild$/i, '\1hildren'],
+    [/(m)en$/i, '\1en'],
+    [/(m)an$/i, '\1en'],
+    [/(p)eople$/i, '\1eople'],
+    [/(p)erson$/i, '\1eople'],
+    [/(quiz)$/i, '\1zes'],
+    [/^(oxen)$/i, '\1'],
+    [/^(ox)$/i, '\1en'],
+    [/^(m|l)ice$/i, '\1ice'],
+    [/^(m|l)ouse$/i, '\1ice'],
+    [/(matr|vert|ind)(?:ix|ex)$/i, '\1ices'],
+    [/(x|ch|ss|sh)$/i, '\1es'],
+    [/([^aeiouy]|qu)y$/i, '\1ies'],
+    [/(hive)$/i, '\1s'],
+    [/(?:([^f])fe|([lr])f)$/i, '\1\2ves'],
+    [/sis$/i, "ses"],
+    [/([ti])a$/i, '\1a'],
+    [/([ti])um$/i, '\1a'],
+    [/(buffal|tomat)o$/i, '\1oes'],
+    [/(bu)s$/i, '\1ses'],
+    [/(alias|status)$/i, '\1es'],
+    [/(octop|vir)i$/i, '\1i'],
+    [/(octop|vir)us$/i, '\1i'],
+    [/^(ax|test)is$/i, '\1es'],
+    [/s$/i, "s"],
+    [/$/, "s"],
+  ].freeze
+
   def self.singularize(word)
     str = word.to_s
     return word if str.empty? || uncountable?(str)
 
     result = str.dup
     SINGULAR_RULES.each do |(rule, replacement)|
+      break if result.sub!(rule, replacement)
+    end
+    result
+  end
+
+  # The mirror of singularize, and AS's own apply_inflections again: walk
+  # PLURAL_RULES top-to-bottom, stop at the first rule that actually
+  # substitutes. Uncountables are returned untouched, which is why
+  # `resource :series` routes to SeriesController and not SeriesesController.
+  def self.pluralize(word)
+    str = word.to_s
+    return word if str.empty? || uncountable?(str)
+
+    result = str.dup
+    PLURAL_RULES.each do |(rule, replacement)|
       break if result.sub!(rule, replacement)
     end
     result

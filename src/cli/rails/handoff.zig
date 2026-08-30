@@ -86,15 +86,15 @@ pub const Generator = struct {
 };
 
 /// `backend`'s non-null shape (spec's example: `{"file": "openapi.json",
-/// "contract_version": "2026-06-27.1"}`). Declared, never constructed in
-/// Stage 2 -- see `Handoff.backend`.
+/// "contract_version": "2026-06-27.1"}`). Filled from the `--backend FILE`
+/// document since #167 Stage 3; `file` is that path's BASENAME.
 pub const Backend = struct {
     file: []const u8,
     contract_version: []const u8,
 };
 
-/// `routes[].endpoint`'s non-null shape. Declared, never constructed in
-/// Stage 2 -- see `RouteEntry.endpoint`.
+/// `routes[].endpoint`'s non-null shape. Filled since #167 Stage 3 -- see
+/// `RouteEntry.endpoint`.
 pub const Endpoint = struct {
     operation_id: []const u8,
     verb: []const u8,
@@ -111,11 +111,10 @@ pub const Endpoint = struct {
 ///   has acknowledged that in `MIGRATION.decisions.json`.
 /// - `retained` -- the operator chose to keep the Rails behaviour as-is.
 /// - `backend` -- the route is API/JSON traffic that becomes a ZigBase
-///   endpoint (Stage 3), not a page. It ACCOUNTS for the route (ruling S11):
-///   a route needing no page cannot block a migration whose completion
-///   question is "can a visitor browse this site". Whether Stage 3 then maps
-///   it to a real endpoint is a separate question, reopened by its own
-///   `RAILS_BACKEND_ENDPOINT` finding rather than by this status.
+///   endpoint, not a page. It accounts for the route only once it has been
+///   ANSWERED -- bound to an operation, or acknowledged by a decision
+///   (ruling A2, the Stage 3 reopening ruling S11 promised). See
+///   `statusAccounted`.
 /// - `redirect` -- the route is a pure redirect, emitted as host config.
 pub const Status = enum { migrated, open, blocked, retained, backend, redirect };
 
@@ -141,7 +140,10 @@ pub const RouteEntry = struct {
     status: Status,
     /// Target-relative paths this route produced, sorted lexicographically.
     artifacts: []const []const u8,
-    /// Always `null` in Stage 2 -- no route becomes a backend endpoint yet.
+    /// The ZigBase operation this route's traffic becomes, or `null` for a
+    /// page route and for a `backend` route nobody has bound yet. Since
+    /// #167 Stage 3 that second case is also what keeps `complete` false
+    /// for a user-facing route (`statusAccounted`, ruling A2).
     endpoint: ?Endpoint,
     decision: ?DecisionRef,
     /// `findings[].id`s from the manifest that this route left OPEN, sorted
@@ -192,9 +194,10 @@ pub const Handoff = struct {
     schema: []const u8 = schema_id,
     schema_version: u32 = schema_version_value,
     generator: Generator,
-    /// Always `null` in Stage 2: nothing emits a backend contract yet.
-    /// Present on the wire anyway rather than omitted, so a consumer reads
-    /// one shape in both versions.
+    /// The ZigBase OpenAPI document `--backend FILE` named, or `null` when
+    /// the run had none. Present on the wire either way rather than omitted,
+    /// so a consumer reads one shape whether or not the operator passed the
+    /// flag.
     backend: ?Backend,
     /// `isComplete`'s verdict, recomputed by `build` from `routes` -- never
     /// supplied by the caller, so it cannot drift from the rows beside it.
@@ -220,6 +223,15 @@ pub const RouteRow = struct {
     status: Status,
     /// Emitted sorted; the caller's order is not preserved and not read.
     artifacts: []const []const u8,
+    /// #167 Stage 3: the ZigBase operation this route's traffic becomes,
+    /// copied straight onto `RouteEntry.endpoint`.
+    ///
+    /// Deliberately WITHOUT a default. Every other field here is mandatory,
+    /// and this one carries the half of the `backend` status that ruling A2
+    /// makes load-bearing (`statusAccounted`): a defaulted `null` would let a
+    /// producer that forgot to wire its endpoints through compile clean and
+    /// report a migration as incomplete for a reason nobody can see.
+    endpoint: ?Endpoint,
     decision: ?DecisionRef,
     /// Emitted sorted; the caller's order is not preserved and not read.
     findings: []const []const u8,
@@ -252,6 +264,18 @@ pub const BuildInput = struct {
     routes: []const RouteRow,
     assets: []const AssetRow,
     redirects: []const Redirect,
+    /// #167 Stage 3: the `--backend` document this run read, or `null` when
+    /// the operator passed no `--backend FILE`. Copied verbatim onto
+    /// `Handoff.backend`.
+    ///
+    /// `file` is a BASENAME (`backend.Document.file` already reduces it):
+    /// the handoff is a committed artifact and "no absolute paths in any
+    /// artifact" is a determinism rule, so the operator's directory layout
+    /// must not reach the wire. Defaulted, unlike `RouteRow.endpoint`,
+    /// because "this run had no backend document" is the ordinary state of
+    /// every caller that predates Stage 3 -- and a wrong `null` here is
+    /// visible in one line of the report, not hidden in a status rule.
+    backend: ?Backend = null,
 };
 
 /// The verbs a visitor can reach by following a link -- the ones `complete`
@@ -279,21 +303,28 @@ fn isUserFacing(verb: []const u8) bool {
 /// on its own (discovery classified the route), and the host config owns the
 /// redirect either way.
 ///
-/// `backend` is accounted with OR without a decision (ruling S11). It marks a
-/// route that needs no PAGE -- a POST/PATCH/DELETE, or a GET that renders
-/// JSON -- and `complete` asks whether the migrated site is browsable, a
-/// question such a route cannot answer either way. Treating it as unanswered
-/// made exit 3 unreachable for any app with a JSON endpoint, which is the
-/// same over-strictness the GET/HEAD filter in `isUserFacing` exists to
-/// avoid. The still-open half -- WHICH endpoint it maps to -- rides on its
-/// own `RAILS_BACKEND_ENDPOINT` finding in Stage 3, so nothing is lost by
-/// letting the status pass here.
+/// `backend` marks a route that needs no PAGE -- a POST/PATCH/DELETE, or a
+/// GET that renders JSON. Ruling S11 accounted it unconditionally and said
+/// so with a promise: "the still-open half -- WHICH endpoint it maps to --
+/// rides on its own `RAILS_BACKEND_ENDPOINT` finding in Stage 3". Stage 3
+/// exists, that finding is derived, and ruling A2 is the promise being kept:
+/// a `backend` row is accounted iff it was ANSWERED -- bound to an operation
+/// (`endpoint`), or acknowledged by a decision (`retain`/`blocked`, or a
+/// `public` guard answer) on one of its findings.
+///
+/// This does NOT restore the over-strictness `isUserFacing` exists to avoid.
+/// A POST/PATCH/DELETE route never reaches this function's caller at all, so
+/// the only route A2 can bite on is a GET that renders JSON -- exactly the
+/// one case where "nobody said what this URL becomes" is a real gap and not
+/// a category error. An app whose `/feed` silently vanished from the
+/// migration used to report `complete: true`.
 ///
 /// `open` is the only status that is never accounted: it is the literal
 /// statement that nothing has answered for this route.
 fn statusAccounted(row: RouteRow) bool {
     return switch (row.status) {
-        .migrated, .redirect, .backend => true,
+        .migrated, .redirect => true,
+        .backend => row.endpoint != null or row.decision != null,
         .retained, .blocked => row.decision != null,
         .open => false,
     };
@@ -304,8 +335,9 @@ fn statusAccounted(row: RouteRow) bool {
 /// through the emitted bytes:
 ///
 ///   `complete` iff EVERY route in `discovery.routes` whose verb is GET or
-///   HEAD has `status` in {migrated, redirect, backend}, or `retained`/
-///   `blocked` with a non-null `decision`.
+///   HEAD has `status` in {migrated, redirect}, `backend` with a non-null
+///   `endpoint` or `decision` (ruling A2), or `retained`/`blocked` with a
+///   non-null `decision`.
 ///
 /// A user-facing route with NO row in `rows` counts as `open` -- absence is
 /// the unanswered case, not an exemption, which is what stops a scaffold that
@@ -397,12 +429,14 @@ fn orderDecision(a: ?DecisionRef, b: ?DecisionRef) std.math.Order {
     return std.mem.order(u8, av.rationale, bv.rationale);
 }
 
-/// Same shape as `orderDecision`, for `RouteEntry.endpoint`. Dead weight in
-/// this version -- every entry's `endpoint` is `null`, so it can never
-/// discriminate -- and deliberately written anyway: `entryOrder` below claims
-/// to be a TOTAL order over an entry's content, and the moment Stage 3 starts
-/// filling `endpoint` an omission here would silently turn that claim into a
-/// partial order, i.e. into nondeterministic bytes, with nothing failing.
+/// Same shape as `orderDecision`, for `RouteEntry.endpoint`. Written in
+/// Stage 2 against the day `endpoint` stopped being `null` -- because
+/// `entryOrder` below claims to be a TOTAL order over an entry's content, and
+/// an omission here would have turned that claim into a partial order, i.e.
+/// into nondeterministic bytes, with nothing failing. #167 Stage 3 is that
+/// day, and the foresight is now load-bearing: "build: two rows naming the
+/// same route are ordered by their endpoint, not by input position" is the
+/// test that discriminates it.
 fn orderEndpoint(a: ?Endpoint, b: ?Endpoint) std.math.Order {
     const av = a orelse return if (b == null) .eq else .lt;
     const bv = b orelse return .gt;
@@ -511,7 +545,7 @@ pub fn build(gpa: Allocator, in: BuildInput) Allocator.Error![]u8 {
                 .route_id = rails.formatRouteId(&id_bufs[i], in.discovery.routes[row.route_index]),
                 .status = row.status,
                 .artifacts = try sortedCopy(scratch, row.artifacts),
-                .endpoint = null,
+                .endpoint = row.endpoint,
                 .decision = row.decision,
                 .findings = try sortedCopy(scratch, row.findings),
                 .note = row.note,
@@ -539,7 +573,7 @@ pub fn build(gpa: Allocator, in: BuildInput) Allocator.Error![]u8 {
 
     const value: Handoff = .{
         .generator = .{ .version = in.generator_version },
-        .backend = null,
+        .backend = in.backend,
         .complete = isComplete(in.discovery, in.routes),
         .routes = route_entries,
         .assets = asset_entries,
@@ -593,6 +627,11 @@ fn emptyDiscovery() rails.Discovery {
         .findings = &.{},
         .i18n_locale = null,
         .decisions = .empty,
+        // #167 Stage 3: inputs to the backend boundary, not to this emitter.
+        .actions = &.{},
+        .before_actions = &.{},
+        .skip_before_actions = &.{},
+        .parents = &.{},
     };
 }
 
@@ -691,6 +730,7 @@ fn goldenInput(d: *const rails.Discovery) BuildInput {
                 .route_index = 1,
                 .status = .blocked,
                 .artifacts = &.{},
+                .endpoint = null,
                 .decision = .{ .id = "F1", .choice = "blocked", .rationale = "needs a backend" },
                 .findings = &.{ "Fb", "Fa" },
                 .note = "deferred to Stage 3/4",
@@ -699,6 +739,7 @@ fn goldenInput(d: *const rails.Discovery) BuildInput {
                 .route_index = 0,
                 .status = .migrated,
                 .artifacts = &.{ "layouts/pages/about.shtml", "content/about/index.smd" },
+                .endpoint = null,
                 .decision = null,
                 .findings = &.{},
                 .note = null,
@@ -726,6 +767,218 @@ test "build: a two-route handoff is EXACTLY these bytes" {
     const out = try build(gpa, goldenInput(&d));
     defer gpa.free(out);
     try testing.expectEqualStrings(golden_two_route, out);
+}
+
+/// #167 Stage 3. The other half of `golden_two_route`: that one pins the
+/// shape of a document with no `--backend` and no bound route (`"backend":
+/// null`, `"endpoint": null`), this one pins the shape when both are present.
+/// Authored from the spec's wire example, not pasted from a run.
+const golden_backend_bound =
+    \\{
+    \\  "schema": "zigapagos.rails-handoff/1",
+    \\  "schema_version": 1,
+    \\  "generator": {
+    \\    "tool": "zigapagos",
+    \\    "version": "0.0.0-test"
+    \\  },
+    \\  "backend": {
+    \\    "file": "openapi.json",
+    \\    "contract_version": "2026-06-27.1"
+    \\  },
+    \\  "complete": true,
+    \\  "routes": [
+    \\    {
+    \\      "route_id": "GET /feed",
+    \\      "status": "backend",
+    \\      "artifacts": [],
+    \\      "endpoint": {
+    \\        "operation_id": "listPosts",
+    \\        "verb": "GET",
+    \\        "path": "/api/collections/posts/records"
+    \\      },
+    \\      "decision": {
+    \\        "id": "RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L9.GET.posts",
+    \\        "choice": "listPosts",
+    \\        "rationale": "the feed is the posts list"
+    \\      },
+    \\      "findings": [],
+    \\      "note": null
+    \\    },
+    \\    {
+    \\      "route_id": "POST /registration",
+    \\      "status": "backend",
+    \\      "artifacts": [],
+    \\      "endpoint": {
+    \\        "operation_id": "createUsers",
+    \\        "verb": "POST",
+    \\        "path": "/api/collections/users/records"
+    \\      },
+    \\      "decision": null,
+    \\      "findings": [],
+    \\      "note": null
+    \\    }
+    \\  ],
+    \\  "assets": [],
+    \\  "redirects": [],
+    \\  "parity": []
+    \\}
+    \\
+;
+
+var golden_backend_routes = [_]routes.Route{
+    testRoute("GET", "/feed", "posts", "feed"),
+    testRoute("POST", "/registration", "registrations", "create"),
+};
+
+test "build: a --backend document and a bound endpoint are EXACTLY these bytes" {
+    const gpa = testing.allocator;
+    const d = discoveryWith(&golden_backend_routes);
+    const out = try build(gpa, .{
+        .generator_version = "0.0.0-test",
+        .discovery = &d,
+        // Reversed, like `goldenInput`: a `build` that emitted its input
+        // verbatim could not produce the golden.
+        .routes = &.{
+            .{
+                .route_index = 1,
+                .status = .backend,
+                .artifacts = &.{},
+                .endpoint = .{ .operation_id = "createUsers", .verb = "POST", .path = "/api/collections/users/records" },
+                .decision = null,
+                .findings = &.{},
+                .note = null,
+            },
+            .{
+                .route_index = 0,
+                .status = .backend,
+                .artifacts = &.{},
+                .endpoint = .{ .operation_id = "listPosts", .verb = "GET", .path = "/api/collections/posts/records" },
+                .decision = .{
+                    .id = "RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L9.GET.posts",
+                    .choice = "listPosts",
+                    .rationale = "the feed is the posts list",
+                },
+                .findings = &.{},
+                .note = null,
+            },
+        },
+        .assets = &.{},
+        .redirects = &.{},
+        .backend = .{ .file = "openapi.json", .contract_version = "2026-06-27.1" },
+    });
+    defer gpa.free(out);
+    try testing.expectEqualStrings(golden_backend_bound, out);
+}
+
+test "build: a GET backend route nobody bound leaves the run incomplete (A2)" {
+    // The byte-level half of the truth table's A2 rows: the SAME fixture as
+    // the golden above with both routes' endpoints and decisions removed.
+    // Ruling S11 used to make this `complete: true`.
+    //
+    // Two runs differing in ONE field, because the interesting claim is not
+    // "false" on its own -- it is that the false verdict is the GET route's
+    // doing and NOT "any unbound `backend` row". Run 2 flips only the GET to
+    // `migrated`, leaving the POST an unbound `backend` row exactly as it
+    // was, and gets `complete: true`. An `isUserFacing` that had stopped
+    // exempting non-GET verbs would fail run 2 while run 1 stayed green.
+    //
+    // (This pair replaces an assertion that read the TOP-LEVEL `backend`
+    // field as null -- true, but a statement about this run having no
+    // `--backend` document, not about the POST row's exemption it claimed to
+    // prove. Review finding M-1.)
+    const gpa = testing.allocator;
+    const d = discoveryWith(&golden_backend_routes);
+
+    const unbound_get: RouteRow = .{
+        .route_index = 0,
+        .status = .backend,
+        .artifacts = &.{},
+        .endpoint = null,
+        .decision = null,
+        .findings = &.{"RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L9.GET.posts"},
+        .note = null,
+    };
+    const unbound_post: RouteRow = .{
+        .route_index = 1,
+        .status = .backend,
+        .artifacts = &.{},
+        .endpoint = null,
+        .decision = null,
+        .findings = &.{},
+        .note = null,
+    };
+
+    const both_unbound = [_]RouteRow{ unbound_get, unbound_post };
+    try testing.expect(!try completeWithPostStillUnbound(gpa, &d, &both_unbound));
+
+    var migrated_get = unbound_get;
+    migrated_get.status = .migrated;
+    migrated_get.findings = &.{};
+    const get_answered = [_]RouteRow{ migrated_get, unbound_post };
+    try testing.expect(try completeWithPostStillUnbound(gpa, &d, &get_answered));
+}
+
+/// Builds `rows` and returns the document's `complete`, having first checked
+/// that `POST /registration` is STILL an unbound `backend` row. That check is
+/// the control for the test above: without it, run 2's `true` could be
+/// explained by the fixture having quietly changed underneath rather than by
+/// the non-GET exemption doing its job.
+fn completeWithPostStillUnbound(
+    gpa: Allocator,
+    d: *const rails.Discovery,
+    rows: []const RouteRow,
+) !bool {
+    const out = try build(gpa, .{
+        .generator_version = "0.0.0-test",
+        .discovery = d,
+        .routes = rows,
+        .assets = &.{},
+        .redirects = &.{},
+    });
+    defer gpa.free(out);
+    var parsed = try std.json.parseFromSlice(std.json.Value, gpa, out, .{});
+    defer parsed.deinit();
+    const post = for (parsed.value.object.get("routes").?.array.items) |r| {
+        if (std.mem.eql(u8, r.object.get("route_id").?.string, "POST /registration")) break r;
+    } else return error.PostRouteMissing;
+    try testing.expectEqualStrings("backend", post.object.get("status").?.string);
+    try testing.expect(post.object.get("endpoint").? == .null);
+    try testing.expect(post.object.get("decision").? == .null);
+    return parsed.value.object.get("complete").?.bool;
+}
+
+test "build: two rows naming the same route are ordered by their endpoint, not by input position" {
+    // `entryOrder` calls `orderEndpoint`, which could not discriminate
+    // anything while every entry's endpoint was null (see its own doc). Now
+    // that Stage 3 fills it, this is the test that keeps that claim true:
+    // two rows for ONE route differing in NOTHING but the endpoint must
+    // serialize identically whichever order the caller assembled them in.
+    const gpa = testing.allocator;
+    var rs = [_]routes.Route{testRoute("POST", "/session", "sessions", "create")};
+    const d = discoveryWith(&rs);
+    const a: RouteRow = .{
+        .route_index = 0,
+        .status = .backend,
+        .artifacts = &.{},
+        .endpoint = .{ .operation_id = "authWithPassword", .verb = "POST", .path = "/api/collections/users/auth-with-password" },
+        .decision = null,
+        .findings = &.{},
+        .note = null,
+    };
+    var b = a;
+    b.endpoint = .{ .operation_id = "createUsers", .verb = "POST", .path = "/api/collections/users/records" };
+
+    const forward = [_]RouteRow{ a, b };
+    const backward = [_]RouteRow{ b, a };
+    const one = try build(gpa, .{ .generator_version = "v", .discovery = &d, .routes = &forward, .assets = &.{}, .redirects = &.{} });
+    defer gpa.free(one);
+    const two = try build(gpa, .{ .generator_version = "v", .discovery = &d, .routes = &backward, .assets = &.{}, .redirects = &.{} });
+    defer gpa.free(two);
+    try testing.expectEqualStrings(one, two);
+    // Sorted by `operation_id`, so `authWithPassword` comes first in both.
+    const at = std.mem.indexOf(u8, one, "authWithPassword").?;
+    const ct = std.mem.indexOf(u8, one, "createUsers").?;
+    try testing.expect(at < ct);
 }
 
 test "build: output ends in exactly one newline" {
@@ -758,6 +1011,7 @@ test "build: identical content in a DIFFERENT input order produces identical byt
                 .route_index = 0,
                 .status = .migrated,
                 .artifacts = &.{ "content/about/index.smd", "layouts/pages/about.shtml" },
+                .endpoint = null,
                 .decision = null,
                 .findings = &.{},
                 .note = null,
@@ -766,6 +1020,7 @@ test "build: identical content in a DIFFERENT input order produces identical byt
                 .route_index = 1,
                 .status = .blocked,
                 .artifacts = &.{},
+                .endpoint = null,
                 .decision = .{ .id = "F1", .choice = "blocked", .rationale = "needs a backend" },
                 .findings = &.{ "Fa", "Fb" },
                 .note = "deferred to Stage 3/4",
@@ -840,7 +1095,7 @@ test "isComplete: the truth table" {
     // gets wrong.
     const Case = struct { name: []const u8, verb: []const u8, row: ?RouteRow, want: bool };
     const decided: DecisionRef = .{ .id = "F1", .choice = "blocked", .rationale = "why" };
-    const base: RouteRow = .{ .route_index = 0, .status = .open, .artifacts = &.{}, .decision = null, .findings = &.{}, .note = null };
+    const base: RouteRow = .{ .route_index = 0, .status = .open, .artifacts = &.{}, .endpoint = null, .decision = null, .findings = &.{}, .note = null };
 
     var cases = [_]Case{
         .{ .name = "GET migrated", .verb = "GET", .row = base, .want = true },
@@ -857,12 +1112,15 @@ test "isComplete: the truth table" {
         .{ .name = "GET blocked WITHOUT a decision", .verb = "GET", .row = base, .want = false },
         .{ .name = "GET open", .verb = "GET", .row = base, .want = false },
         .{ .name = "GET backend WITH a decision", .verb = "GET", .row = base, .want = true },
-        .{ .name = "GET backend WITHOUT a decision", .verb = "GET", .row = base, .want = true },
+        .{ .name = "GET backend with NEITHER an endpoint nor a decision", .verb = "GET", .row = base, .want = false },
         .{ .name = "GET with no row at all", .verb = "GET", .row = null, .want = false },
         .{ .name = "HEAD open (HEAD is user-facing too)", .verb = "HEAD", .row = base, .want = false },
         .{ .name = "POST open (never counts)", .verb = "POST", .row = base, .want = true },
         .{ .name = "POST with no row at all", .verb = "POST", .row = null, .want = true },
         .{ .name = "DELETE with no row at all", .verb = "DELETE", .row = null, .want = true },
+        // #167 Stage 3, ruling A2 -- the two rows S11 deferred to this stage.
+        .{ .name = "GET backend WITH an endpoint", .verb = "GET", .row = base, .want = true },
+        .{ .name = "GET backend WITH both an endpoint and a decision", .verb = "GET", .row = base, .want = true },
     };
     cases[0].row.?.status = .migrated;
     cases[1].row.?.status = .retained;
@@ -874,9 +1132,20 @@ test "isComplete: the truth table" {
     cases[5].row.?.status = .blocked;
     cases[7].row.?.status = .backend;
     cases[7].row.?.decision = decided;
-    // Ruling S11: `backend` is accounted with OR without a decision --
-    // the two cases exist to pin that the decision is not what carries it.
+    // Ruling A2 (#167 Stage 3) amends ruling S11. S11 made `backend`
+    // accounted unconditionally, with a note that Stage 3's endpoint mapping
+    // would reopen it -- this is that reopening. A `backend` route is
+    // accounted iff it was ANSWERED: bound to an operation (`endpoint`), or
+    // acknowledged (`decision`, i.e. `retain`/`blocked`/`public` on one of
+    // its findings). A GET that renders JSON and that nobody has bound is
+    // now `open` again, which is the only case A2 can bite on -- a non-GET
+    // route never reaches `isComplete`'s count at all (`isUserFacing`).
     cases[8].row.?.status = .backend;
+    cases[14].row.?.status = .backend;
+    cases[14].row.?.endpoint = .{ .operation_id = "listPosts", .verb = "GET", .path = "/api/collections/posts/records" };
+    cases[15].row.?.status = .backend;
+    cases[15].row.?.endpoint = .{ .operation_id = "listPosts", .verb = "GET", .path = "/api/collections/posts/records" };
+    cases[15].row.?.decision = decided;
 
     for (cases) |c| {
         var rs = [_]routes.Route{testRoute(c.verb, "/x", "x", "show")};
@@ -902,7 +1171,7 @@ test "isComplete: one unanswered GET among answered ones is enough to be incompl
         testRoute("GET", "/c", "p", "c"),
     };
     const d = discoveryWith(&rs);
-    const ok: RouteRow = .{ .route_index = 0, .status = .migrated, .artifacts = &.{}, .decision = null, .findings = &.{}, .note = null };
+    const ok: RouteRow = .{ .route_index = 0, .status = .migrated, .artifacts = &.{}, .endpoint = null, .decision = null, .findings = &.{}, .note = null };
     var rows = [_]RouteRow{ ok, ok, ok };
     rows[1].route_index = 1;
     rows[2].route_index = 2;
@@ -918,8 +1187,8 @@ test "isComplete: a duplicate row cannot launder an unanswered route" {
     // not decide the verdict -- both orders are incomplete.
     var rs = [_]routes.Route{testRoute("GET", "/a", "p", "a")};
     const d = discoveryWith(&rs);
-    const good: RouteRow = .{ .route_index = 0, .status = .migrated, .artifacts = &.{}, .decision = null, .findings = &.{}, .note = null };
-    const bad: RouteRow = .{ .route_index = 0, .status = .open, .artifacts = &.{}, .decision = null, .findings = &.{}, .note = null };
+    const good: RouteRow = .{ .route_index = 0, .status = .migrated, .artifacts = &.{}, .endpoint = null, .decision = null, .findings = &.{}, .note = null };
+    const bad: RouteRow = .{ .route_index = 0, .status = .open, .artifacts = &.{}, .endpoint = null, .decision = null, .findings = &.{}, .note = null };
     const forward = [_]RouteRow{ good, bad };
     const backward = [_]RouteRow{ bad, good };
     try testing.expect(!isComplete(&d, &forward));
@@ -938,8 +1207,8 @@ test "build: two routes tying on (path, verb, controller, action) still sort det
         testRoute("GET", "/dup", "p", "d"),
     };
     const d = discoveryWith(&rs);
-    const first: RouteRow = .{ .route_index = 0, .status = .migrated, .artifacts = &.{"first"}, .decision = null, .findings = &.{}, .note = null };
-    const second: RouteRow = .{ .route_index = 1, .status = .migrated, .artifacts = &.{"second"}, .decision = null, .findings = &.{}, .note = null };
+    const first: RouteRow = .{ .route_index = 0, .status = .migrated, .artifacts = &.{"first"}, .endpoint = null, .decision = null, .findings = &.{}, .note = null };
+    const second: RouteRow = .{ .route_index = 1, .status = .migrated, .artifacts = &.{"second"}, .endpoint = null, .decision = null, .findings = &.{}, .note = null };
     const forward = [_]RouteRow{ first, second };
     const backward = [_]RouteRow{ second, first };
 
@@ -964,8 +1233,8 @@ test "build: two rows naming the SAME route are ordered by content, not by input
     const gpa = testing.allocator;
     var rs = [_]routes.Route{testRoute("GET", "/dup", "p", "d")};
     const d = discoveryWith(&rs);
-    const first: RouteRow = .{ .route_index = 0, .status = .migrated, .artifacts = &.{"content/dup/index.smd"}, .decision = null, .findings = &.{}, .note = null };
-    const second: RouteRow = .{ .route_index = 0, .status = .redirect, .artifacts = &.{"redirects.conf"}, .decision = null, .findings = &.{}, .note = "host config" };
+    const first: RouteRow = .{ .route_index = 0, .status = .migrated, .artifacts = &.{"content/dup/index.smd"}, .endpoint = null, .decision = null, .findings = &.{}, .note = null };
+    const second: RouteRow = .{ .route_index = 0, .status = .redirect, .artifacts = &.{"redirects.conf"}, .endpoint = null, .decision = null, .findings = &.{}, .note = "host config" };
     const forward = [_]RouteRow{ first, second };
     const backward = [_]RouteRow{ second, first };
 
@@ -1017,7 +1286,7 @@ test "build: every route_id is its OWN route, not the last one formatted" {
         testRoute("GET", "/gamma", "p", "c"),
     };
     const d = discoveryWith(&rs);
-    const base: RouteRow = .{ .route_index = 0, .status = .migrated, .artifacts = &.{}, .decision = null, .findings = &.{}, .note = null };
+    const base: RouteRow = .{ .route_index = 0, .status = .migrated, .artifacts = &.{}, .endpoint = null, .decision = null, .findings = &.{}, .note = null };
     var rows = [_]RouteRow{ base, base, base };
     rows[1].route_index = 1;
     rows[2].route_index = 2;
@@ -1044,6 +1313,7 @@ test "build: the caller's own slices are never reordered in place" {
         .route_index = 0,
         .status = .migrated,
         .artifacts = &artifacts,
+        .endpoint = null,
         .decision = null,
         .findings = &.{},
         .note = null,

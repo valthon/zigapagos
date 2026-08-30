@@ -23,6 +23,25 @@ Dir.mktmpdir do |dir|
   Dir.mkdir(File.join(dir, "app"))
   Dir.mkdir(File.join(dir, "app/controllers"))
   Dir.mkdir(File.join(dir, "app/controllers/admin"))
+  # Fix round 1, I-1: the two-file app the whole inheritance edge exists for.
+  # The filter is declared HERE and nowhere else; every check below that
+  # attributes it to `posts` goes through `parents`.
+  File.write(File.join(dir, "app/controllers/application_controller.rb"), <<~RB)
+    class ApplicationController < ActionController::Base
+      before_action :authenticate_user!
+    end
+  RB
+  # Fix round 2, N1: the namespace-relative chain. `BaseController` here is
+  # Ruby's `Admin::BaseController`, and reading the name as written keyed the
+  # edge `base` -- a controller no file produces -- so the guard declared one
+  # level up was invisible from `admin/users`.
+  File.write(File.join(dir, "app/controllers/admin/base_controller.rb"), <<~RB)
+    module Admin
+      class BaseController < ApplicationController
+        before_action :require_admin_login
+      end
+    end
+  RB
   File.write(File.join(dir, "app/controllers/posts_controller.rb"), <<~RB)
     class PostsController < ApplicationController
       def index; @posts = Post.all; end
@@ -31,9 +50,11 @@ Dir.mktmpdir do |dir|
   # Namespaced, to pin that the controller key comes from the FILE PATH
   # (admin/users) and NOT from the Ruby class name alone.
   File.write(File.join(dir, "app/controllers/admin/users_controller.rb"), <<~RB)
-    class Admin::UsersController < ApplicationController
-      def create
-        redirect_to root_path
+    module Admin
+      class UsersController < BaseController
+        def create
+          redirect_to root_path
+        end
       end
     end
   RB
@@ -55,6 +76,7 @@ Dir.mktmpdir do |dir|
   File.write(File.join(dir, "app/controllers/bare_controller.rb"), <<~RB)
     class BareController < ApplicationController
       layout "bare"
+      before_action :require_login
 
       private
 
@@ -115,10 +137,16 @@ Dir.mktmpdir do |dir|
     check("controllers: ok", res5[:ok] == true)
     by_key = res5[:actions].to_h { |a| ["#{a[:controller]}##{a[:action]}", a] }
     check("controllers: posts#index shape", by_key["posts#index"] == {
-      controller: "posts", action: "index", only_redirect: false, renders_json: false, line: 2,
+      controller: "posts", action: "index", only_redirect: false, renders_json: false,
+      redirects: [], line: 2,
     })
+    # #167 Stage 3: `redirects` rides every action entry, and this is the one
+    # that has one -- the round trip pins that the helper STEM survives
+    # `handle_controllers`' flattening, not just `RailsControllers.parse`'s
+    # own return (which controllers_test.rb covers directly).
     check("controllers: admin/users#create shape (path-derived key, not class name)", by_key["admin/users#create"] == {
-      controller: "admin/users", action: "create", only_redirect: true, renders_json: false, line: 2,
+      controller: "admin/users", action: "create", only_redirect: true, renders_json: false,
+      redirects: [{ name: "root", args: [] }], line: 3,
     })
     # Three now, not two: `pages_controller.rb` (added below for the layout
     # checks) contributes its own `about` action, which this count must
@@ -155,6 +183,46 @@ Dir.mktmpdir do |dir|
           bare == { controller: "bare", value: "bare", disabled: false, dynamic: false, line: 2 })
     check("a layout-only controller with no public actions contributes no actions entry",
           res5[:actions].none? { |a| a[:controller] == "bare" })
+
+    # #167 Stage 3: `before_actions` is flattened the same way, and
+    # `bare_controller.rb` discriminates the same hoisting question the
+    # layout check above does -- a base controller with NO public actions
+    # still guards every subclass action, so its filters must survive the
+    # `actions.empty?` guard. Nothing else in this fixture declares one, so
+    # the exact-length check pins that no phantom entry appears either.
+    # Sorted by `Dir.glob(...).sort`, so `application` precedes `bare`.
+    check("controllers: before_actions carries the filter of an action-less base controller",
+          res5[:before_actions] == [
+            { controller: "admin/base", name: "require_admin_login", only: [], except: [], line: 3 },
+            { controller: "application", name: "authenticate_user!", only: [], except: [], line: 2 },
+            { controller: "bare", name: "require_login", only: [], except: [], line: 3 },
+          ])
+
+    # Fix round 1, I-1: the inheritance edges. `application` itself
+    # contributes NONE -- its superclass is a framework base class, which is
+    # where the chain has to terminate.
+    # Fix round 2, N1: `admin/users` inherits `BaseController` written inside
+    # `module Admin`, so its edge must be `admin/base` -- the key the file
+    # actually produces -- and NOT the `base` the bare name spells.
+    check("controllers: parents carries one edge per controller with a readable app superclass",
+          res5[:parents] == [
+            { controller: "admin/base", parent: "application" },
+            { controller: "admin/users", parent: "admin/base" },
+            { controller: "bare", parent: "application" },
+            { controller: "pages", parent: "application" },
+            { controller: "posts", parent: "application" },
+          ])
+    # And the guard one level up is now reachable from the leaf: this is the
+    # whole point of the edge, checked on the wire rather than only in Zig.
+    check("controllers: the namespaced base controller's filter is on the wire under its own key",
+          res5[:before_actions].include?(
+            { controller: "admin/base", name: "require_admin_login", only: [], except: [], line: 3 },
+          ))
+    check("controllers: a framework base class terminates the chain, it is not an edge",
+          res5[:parents].none? { |p| p[:controller] == "application" })
+    # Nothing in this fixture skips, but the key must still be present and an
+    # array -- an absent key and an empty one are different answers.
+    check("controllers: skip_before_actions is present and empty", res5[:skip_before_actions] == [])
 
     # An absent `app/controllers/` must answer structurally, not crash --
     # and specifically with ZERO actions found, not merely `ok: true` (which
@@ -361,6 +429,78 @@ Dir.mktmpdir do |dir|
   check("trailing-slash root: unresolved path is still root-relative, not absolute",
         !unreadable9.nil? && unreadable9[:path] == "app/controllers/dangling_controller.rb")
 end
+
+# --- Fix round 1, I-1: superclass name -> controller key -------------------
+#
+# Loaded in-process rather than driven through the sidecar: this is a pure
+# function over strings, and one round trip per name shape would cost a
+# tmpdir and a subprocess to pin one substitution. `analyze.rb` guards its
+# own `run` with `$PROGRAM_NAME == __FILE__`, so requiring it starts nothing.
+require_relative "../analyze"
+
+def check_key(name, expected)
+  got = RailsAnalyze.controller_key_from_class_name(name)
+  return if got == expected
+  warn "FAIL controller_key_from_class_name(#{name.inspect}) => #{got.inspect}, want #{expected.inspect}"
+  $failures += 1
+end
+
+check_key "ApplicationController", "application"
+check_key "Admin::BaseController", "admin/base"
+# A run of capitals stays one word -- `a_p_i` would key a controller nothing
+# produces, silently dropping every filter declared on it.
+check_key "APIController", "api"
+check_key "TwoWordsController", "two_words"
+# Not every parent is `...Controller`-suffixed; only the suffix is optional,
+# not the conversion.
+check_key "Authenticated", "authenticated"
+check_key "::ApplicationController", "application"
+# The chain must END at the framework, not hop to a key no file produces.
+check_key "ActionController::Base", nil
+check_key "ActionController::API", nil
+check_key "ActionController::Metal", nil
+check_key nil, nil
+check_key "", nil
+check_key "Controller", nil
+
+# Fix round 2, N1: Ruby's lookup, innermost-outward, matched against the keys
+# this walk actually saw.
+def check_parent(name, namespaces, keys, expected)
+  got = RailsAnalyze.resolve_parent_key(name, namespaces, keys)
+  return if got == expected
+  warn "FAIL resolve_parent_key(#{name.inspect}, #{namespaces.inspect}) => #{got.inspect}, want #{expected.inspect}"
+  $failures += 1
+end
+
+seen = %w[application admin/base admin/users base]
+# The lexical spelling: `BaseController` inside `module Admin` is Admin's.
+check_parent "BaseController", ["Admin"], seen, "admin/base"
+# The fully qualified spelling reaches the same class...
+check_parent "Admin::BaseController", ["Admin"], seen, "admin/base"
+# ...and so does the qualified spelling from outside the namespace.
+check_parent "Admin::BaseController", [], seen, "admin/base"
+# A bare name that only exists at top level is NOT captured by the namespace,
+# even though a namespaced candidate is tried first: the candidate has to name
+# a controller this walk saw.
+check_parent "ApplicationController", ["Admin"], seen, "application"
+# Deeper nesting searches innermost-outward. Discriminating that needs BOTH
+# candidates to exist -- with only the outer one present, either direction
+# lands on it and the search order means nothing.
+check_parent "BaseController", %w[Admin Deep], seen, "admin/base"
+check_parent "BaseController", %w[Admin Deep], seen + ["admin/deep/base"], "admin/deep/base"
+# Fix round 3, NEW-1: `module Admin::Deep` is ONE scope entry, so the only
+# namespaced candidate is `Admin::Deep::BaseController` -- `Admin` is not in
+# Ruby's nesting there and must not be searched. With only `admin/base`
+# around, the answer is the TOP-LEVEL `base`, not `admin/base`.
+check_parent "BaseController", ["Admin::Deep"], seen, "base"
+check_parent "BaseController", ["Admin::Deep"], seen + ["admin/deep/base"], "admin/deep/base"
+# ... and with neither, it still falls back to the top-level reading.
+check_parent "BaseController", ["Admin::Deep"], %w[application admin/base], "base"
+# Nothing matched: the top-level reading is the answer, and the Zig-side walk
+# simply finds no filters under it.
+check_parent "SomeGemController", ["Admin"], seen, "some_gem"
+# The framework still terminates the chain from inside a namespace.
+check_parent "ActionController::Base", ["Admin"], seen, nil
 
 abort "#{$failures} analyze failure(s)" if $failures > 0
 puts "PASS: analyze_test.rb"

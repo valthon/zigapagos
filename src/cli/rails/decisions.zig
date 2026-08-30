@@ -148,10 +148,16 @@ const decision_keys = [_][]const u8{ "id", "choice", "rationale", "artifact" };
 /// operator to the wrong line); a blank `rationale`; a `choice` outside the
 /// finding's `choices`; a finding with `requires_artifact` answered without
 /// one. An id matching no finding is `stale`, not a rejection.
+///
+/// `auth_collections` is `backend.Document.auth_collections` (empty for a
+/// run with no `--backend`), and is read by exactly one rule -- see
+/// `unknownAuthCollection`. It is a bare string list rather than the
+/// document itself so this file keeps its one import.
 pub fn parse(
     gpa: Allocator,
     bytes: []const u8,
     finding_list: []const findings.Finding,
+    auth_collections: []const []const u8,
     problems: *std.ArrayListUnmanaged(Problem),
 ) ParseError!Parsed {
     // Two-stage on purpose: the `Value` tree from stage one is what stage
@@ -245,16 +251,58 @@ pub fn parse(
 
         const finding = findById(finding_list, w.id);
         if (finding) |f| {
+            const is_backend = std.mem.eql(u8, f.code, findings.code_backend_endpoint);
             if (!containsString(f.choices, w.choice)) {
-                const allowed = try joinChoices(gpa, f.choices);
-                defer gpa.free(allowed);
-                try addProblem(gpa, problems, i, w.id, "choice \"{s}\" is not offered for \"{s}\"; allowed: {s}", .{ w.choice, w.id, allowed });
-                entry_ok = false;
+                // #167 Stage 3 ruling A3. The spec lists `custom:<path>`
+                // among a `RAILS_BACKEND_ENDPOINT` finding's answers, and a
+                // free-form token cannot sit in a fixed `choices[]` -- the
+                // manifest would have to enumerate every URL the operator
+                // might invent. So `choices[]` stays the document's
+                // operations plus `retain`/`blocked`, and the SHAPE is
+                // validated here instead; the finding's own message spells
+                // it out so the file is still self-describing.
+                //
+                // The `custom:` PREFIX is what routes an entry to this arm:
+                // a plain misspelling still gets the ordinary "not offered;
+                // allowed: ..." message, which is the more useful one when
+                // the operator meant an operation id.
+                if (is_backend and std.mem.startsWith(u8, w.choice, custom_prefix)) {
+                    if (!validCustomChoice(w.choice)) {
+                        try addProblem(gpa, problems, i, w.id, "choice \"{s}\" must be custom:/<absolute path> with no whitespace or quotes", .{w.choice});
+                        entry_ok = false;
+                    }
+                } else {
+                    const allowed = try joinChoices(gpa, f.choices);
+                    defer gpa.free(allowed);
+                    try addProblem(gpa, problems, i, w.id, "choice \"{s}\" is not offered for \"{s}\"; allowed: {s}", .{ w.choice, w.id, allowed });
+                    entry_ok = false;
+                }
             }
             const artifact = normalizeArtifact(w.artifact);
-            if (f.requires_artifact and artifact == null) {
+            // #167 Stage 3 ruling A4. `requires_artifact` says the choice
+            // that RESOLVES this finding produces something; `retain` and
+            // `blocked` produce nothing, and demanding an artifact path for
+            // a decision to write no files was the Stage 2 rule written when
+            // no finding set the flag at all.
+            if (f.requires_artifact and artifact == null and !isNoopChoice(w.choice)) {
                 try addProblem(gpa, problems, i, w.id, "finding \"{s}\" requires an `artifact` path alongside the choice", .{w.id});
                 entry_ok = false;
+            }
+            // #167 Stage 3. The `RAILS_AUTH_JOURNEY` artifact is a ZigBase
+            // auth collection NAME, and a name that is not one produces an
+            // `AuthForm` calling `zb.collection("members").authWithPassword`
+            // against a collection that cannot authenticate -- a migration
+            // that builds, ships, and fails at the first sign-in. When
+            // `--backend` gave us the list, check it. Without a document
+            // there is nothing to check against, and refusing every name
+            // would make the flag unanswerable without one.
+            if (artifact) |a| {
+                if (unknownAuthCollection(f, w.choice, a, auth_collections)) {
+                    const known = try joinChoices(gpa, auth_collections);
+                    defer gpa.free(known);
+                    try addProblem(gpa, problems, i, w.id, "artifact \"{s}\" is not an auth collection in the backend document; auth collections: {s}", .{ a, known });
+                    entry_ok = false;
+                }
             }
         }
 
@@ -386,6 +434,65 @@ fn findById(finding_list: []const findings.Finding, id: []const u8) ?findings.Fi
     return null;
 }
 
+/// #167 Stage 3 ruling A3's marker.
+const custom_prefix = "custom:";
+
+/// The two answers that resolve a finding by producing nothing. Named
+/// because ruling A4 turns on exactly this set, and a third such word would
+/// otherwise have to be remembered in two places.
+fn isNoopChoice(choice: []const u8) bool {
+    return std.mem.eql(u8, choice, "retain") or std.mem.eql(u8, choice, "blocked");
+}
+
+/// Ruling A3's shape: `custom:` followed by an ABSOLUTE path with no
+/// whitespace and no quotes of either kind.
+///
+/// Absolute because the binding is `zb.send("<VERB>", "<path>", …)` and a
+/// relative path there resolves against whatever page happens to be open --
+/// a bug that only shows on a nested URL. No whitespace because a trailing
+/// space in a hand-edited JSON file is otherwise an invisible difference
+/// between two paths. No quotes because the error message promises "no
+/// quotes" and the rule must be at least as strict as its own description
+/// (the emitters escape correctly either way; a quote the operator really
+/// needs is expressible percent-encoded, and `%27` round-trips to the same
+/// URL).
+///
+/// Contract 3 (caller-buffer): allocates nothing.
+fn validCustomChoice(choice: []const u8) bool {
+    if (!std.mem.startsWith(u8, choice, custom_prefix)) return false;
+    const path = choice[custom_prefix.len..];
+    if (path.len == 0 or path[0] != '/') return false;
+    for (path) |c| {
+        // Both quote kinds, because the error message promises "no quotes"
+        // and the rule must be at least as strict as its own description
+        // (PR #188 review). The emitters escape correctly either way; `%27`
+        // expresses a quote the operator actually needs.
+        if (c == '"' or c == '\'' or std.ascii.isWhitespace(c)) return false;
+    }
+    return true;
+}
+
+/// True when this entry names an auth collection the backend document does
+/// not have.
+///
+/// Scoped tightly on purpose: only a `RAILS_AUTH_JOURNEY` finding, only a
+/// choice that actually builds the auth islands (`retain`/`blocked` may
+/// carry an artifact note that means something else entirely), and only when
+/// a document gave us a non-empty list to check against.
+///
+/// Contract 3 (caller-buffer): allocates nothing.
+fn unknownAuthCollection(
+    f: findings.Finding,
+    choice: []const u8,
+    artifact: []const u8,
+    auth_collections: []const []const u8,
+) bool {
+    if (auth_collections.len == 0) return false;
+    if (!std.mem.eql(u8, f.code, findings.code_auth_journey)) return false;
+    if (isNoopChoice(choice)) return false;
+    return !containsString(auth_collections, artifact);
+}
+
 fn containsString(choices: []const []const u8, choice: []const u8) bool {
     for (choices) |c| {
         if (std.mem.eql(u8, c, choice)) return true;
@@ -459,6 +566,14 @@ fn fixture(id: []const u8, choices: []const []const u8, requires_artifact: bool)
     };
 }
 
+/// `fixture`'s sibling for the two Stage 3 rules that key off the finding's
+/// CODE rather than only off its `choices`.
+fn codedFixture(code: []const u8, id: []const u8, choices: []const []const u8, requires_artifact: bool) findings.Finding {
+    var f = fixture(id, choices, requires_artifact);
+    f.code = code;
+    return f;
+}
+
 fn expectMessageContains(problem: Problem, needle: []const u8) !void {
     std.testing.expect(std.mem.indexOf(u8, problem.message, needle) != null) catch |err| {
         std.debug.print("expected message to contain \"{s}\", got \"{s}\"\n", .{ needle, problem.message });
@@ -481,7 +596,7 @@ test "parse: a valid file round-trips every field; artifact is optional" {
     var problems: std.ArrayListUnmanaged(Problem) = .empty;
     defer freeProblems(gpa, &problems);
 
-    const parsed = try parse(gpa, bytes, &fs, &problems);
+    const parsed = try parse(gpa, bytes, &fs, &.{}, &problems);
     defer free(gpa, parsed);
 
     try std.testing.expectEqual(@as(usize, 0), problems.items.len);
@@ -511,7 +626,7 @@ test "lookup: finds a live decision by finding id and never a stale one" {
     var problems: std.ArrayListUnmanaged(Problem) = .empty;
     defer freeProblems(gpa, &problems);
 
-    const parsed = try parse(gpa, bytes, &fs, &problems);
+    const parsed = try parse(gpa, bytes, &fs, &.{}, &problems);
     defer free(gpa, parsed);
 
     try std.testing.expectEqualStrings("retain", lookup(parsed, "A").?.choice);
@@ -533,7 +648,7 @@ test "parse: an id matching no finding is stale, not an error" {
     var problems: std.ArrayListUnmanaged(Problem) = .empty;
     defer freeProblems(gpa, &problems);
 
-    const parsed = try parse(gpa, bytes, &fs, &problems);
+    const parsed = try parse(gpa, bytes, &fs, &.{}, &problems);
     defer free(gpa, parsed);
 
     try std.testing.expectEqual(@as(usize, 0), problems.items.len);
@@ -557,7 +672,7 @@ test "parse: a choice outside the finding's set is Invalid and the message lists
     var problems: std.ArrayListUnmanaged(Problem) = .empty;
     defer freeProblems(gpa, &problems);
 
-    try std.testing.expectError(error.Invalid, parse(gpa, bytes, &fs, &problems));
+    try std.testing.expectError(error.Invalid, parse(gpa, bytes, &fs, &.{}, &problems));
     try std.testing.expectEqual(@as(usize, 1), problems.items.len);
     try std.testing.expectEqual(@as(usize, 0), problems.items[0].index);
     try std.testing.expectEqualStrings("A", problems.items[0].id.?);
@@ -576,7 +691,7 @@ test "parse: a finding that requires an artifact rejects a decision without one"
     var problems: std.ArrayListUnmanaged(Problem) = .empty;
     defer freeProblems(gpa, &problems);
 
-    try std.testing.expectError(error.Invalid, parse(gpa, bytes, &fs, &problems));
+    try std.testing.expectError(error.Invalid, parse(gpa, bytes, &fs, &.{}, &problems));
     try std.testing.expectEqual(@as(usize, 1), problems.items.len);
     try std.testing.expectEqualStrings("A", problems.items[0].id.?);
     try expectMessageContains(problems.items[0], "artifact");
@@ -593,7 +708,7 @@ test "parse: an empty artifact string counts as absent" {
     var problems: std.ArrayListUnmanaged(Problem) = .empty;
     defer freeProblems(gpa, &problems);
 
-    try std.testing.expectError(error.Invalid, parse(gpa, bytes, &fs, &problems));
+    try std.testing.expectError(error.Invalid, parse(gpa, bytes, &fs, &.{}, &problems));
     try expectMessageContains(problems.items[0], "artifact");
 }
 
@@ -609,7 +724,7 @@ test "parse: a duplicate id is Invalid and names the id" {
     var problems: std.ArrayListUnmanaged(Problem) = .empty;
     defer freeProblems(gpa, &problems);
 
-    try std.testing.expectError(error.Invalid, parse(gpa, bytes, &fs, &problems));
+    try std.testing.expectError(error.Invalid, parse(gpa, bytes, &fs, &.{}, &problems));
     try std.testing.expectEqual(@as(usize, 1), problems.items.len);
     // The SECOND entry is the offender: the first one is a perfectly good
     // answer, and pointing at it would send the operator to the wrong line.
@@ -633,7 +748,7 @@ test "parse: an empty or whitespace-only rationale is Invalid" {
     var problems: std.ArrayListUnmanaged(Problem) = .empty;
     defer freeProblems(gpa, &problems);
 
-    try std.testing.expectError(error.Invalid, parse(gpa, bytes, &fs, &problems));
+    try std.testing.expectError(error.Invalid, parse(gpa, bytes, &fs, &.{}, &problems));
     try std.testing.expectEqual(@as(usize, 2), problems.items.len);
     try expectMessageContains(problems.items[0], "rationale");
     try std.testing.expectEqualStrings("B", problems.items[1].id.?);
@@ -651,7 +766,7 @@ test "parse: a missing id names the entry by index, with no id to quote" {
     var problems: std.ArrayListUnmanaged(Problem) = .empty;
     defer freeProblems(gpa, &problems);
 
-    try std.testing.expectError(error.Invalid, parse(gpa, bytes, &fs, &problems));
+    try std.testing.expectError(error.Invalid, parse(gpa, bytes, &fs, &.{}, &problems));
     try std.testing.expectEqual(@as(usize, 1), problems.items.len);
     try std.testing.expect(problems.items[0].id == null);
     try expectMessageContains(problems.items[0], "id");
@@ -676,7 +791,7 @@ test "parse: every offending entry gets its own problem, and valid siblings do n
 
     // One run must list EVERY offending entry: an operator re-running after
     // each single complaint is the failure mode this reporting avoids.
-    try std.testing.expectError(error.Invalid, parse(gpa, bytes, &fs, &problems));
+    try std.testing.expectError(error.Invalid, parse(gpa, bytes, &fs, &.{}, &problems));
     try std.testing.expectEqual(@as(usize, 3), problems.items.len);
     try std.testing.expectEqual(@as(usize, 1), problems.items[0].index);
     try std.testing.expectEqual(@as(usize, 2), problems.items[1].index);
@@ -691,7 +806,7 @@ test "parse: malformed JSON is InvalidJson" {
     var problems: std.ArrayListUnmanaged(Problem) = .empty;
     defer freeProblems(gpa, &problems);
 
-    try std.testing.expectError(error.InvalidJson, parse(gpa, "{\"schema\": ", &fs, &problems));
+    try std.testing.expectError(error.InvalidJson, parse(gpa, "{\"schema\": ", &fs, &.{}, &problems));
     try std.testing.expectEqual(@as(usize, 1), problems.items.len);
     try expectMessageContains(problems.items[0], "JSON");
 }
@@ -705,7 +820,7 @@ test "parse: a missing `decisions` key is InvalidJson, not an empty decision set
     const bytes =
         \\{"schema":"zigapagos.rails-decisions/1"}
     ;
-    try std.testing.expectError(error.InvalidJson, parse(gpa, bytes, &fs, &problems));
+    try std.testing.expectError(error.InvalidJson, parse(gpa, bytes, &fs, &.{}, &problems));
     try expectMessageContains(problems.items[0], "decisions");
 }
 
@@ -718,7 +833,7 @@ test "parse: a wrong or absent schema id is WrongSchema" {
     ;
     var problems: std.ArrayListUnmanaged(Problem) = .empty;
     defer freeProblems(gpa, &problems);
-    try std.testing.expectError(error.WrongSchema, parse(gpa, wrong, &fs, &problems));
+    try std.testing.expectError(error.WrongSchema, parse(gpa, wrong, &fs, &.{}, &problems));
     try expectMessageContains(problems.items[0], schema_id);
     try expectMessageContains(problems.items[0], "zigapagos.rails-decisions/2");
 
@@ -727,7 +842,7 @@ test "parse: a wrong or absent schema id is WrongSchema" {
     ;
     var problems2: std.ArrayListUnmanaged(Problem) = .empty;
     defer freeProblems(gpa, &problems2);
-    try std.testing.expectError(error.WrongSchema, parse(gpa, absent, &fs, &problems2));
+    try std.testing.expectError(error.WrongSchema, parse(gpa, absent, &fs, &.{}, &problems2));
     try expectMessageContains(problems2.items[0], schema_id);
 }
 
@@ -744,7 +859,7 @@ test "parse: an unrecognized key is Invalid and names the key" {
     ;
     var problems: std.ArrayListUnmanaged(Problem) = .empty;
     defer freeProblems(gpa, &problems);
-    try std.testing.expectError(error.Invalid, parse(gpa, inner, &fs, &problems));
+    try std.testing.expectError(error.Invalid, parse(gpa, inner, &fs, &.{}, &problems));
     try std.testing.expectEqual(@as(usize, 1), problems.items.len);
     try std.testing.expectEqual(@as(usize, 0), problems.items[0].index);
     try expectMessageContains(problems.items[0], "rationalle");
@@ -755,7 +870,7 @@ test "parse: an unrecognized key is Invalid and names the key" {
     ;
     var problems2: std.ArrayListUnmanaged(Problem) = .empty;
     defer freeProblems(gpa, &problems2);
-    try std.testing.expectError(error.Invalid, parse(gpa, outer, &fs, &problems2));
+    try std.testing.expectError(error.Invalid, parse(gpa, outer, &fs, &.{}, &problems2));
     try expectMessageContains(problems2.items[0], "desicions");
 }
 
@@ -768,7 +883,7 @@ test "parse: an empty decision list is valid" {
     const bytes =
         \\{"schema":"zigapagos.rails-decisions/1","decisions":[]}
     ;
-    const parsed = try parse(gpa, bytes, &fs, &problems);
+    const parsed = try parse(gpa, bytes, &fs, &.{}, &problems);
     defer free(gpa, parsed);
     try std.testing.expectEqual(@as(usize, 0), parsed.decisions.len);
     try std.testing.expectEqual(@as(usize, 0), parsed.stale.len);
@@ -800,7 +915,7 @@ test "parse under a FailingAllocator leaks nothing on any partial allocation" {
         // freeing it through the SAME failing allocator is what proves the
         // partial list is reclaimable rather than leaked.
         defer freeProblems(gpa, &problems);
-        if (parse(gpa, bytes, &fs, &problems)) |parsed| {
+        if (parse(gpa, bytes, &fs, &.{}, &problems)) |parsed| {
             defer free(gpa, parsed);
             try std.testing.expectEqual(@as(usize, 2), parsed.decisions.len);
             try std.testing.expectEqual(@as(usize, 1), parsed.stale.len);
@@ -870,7 +985,7 @@ test "parse under a FailingAllocator leaks nothing while REPORTING problems" {
             // what makes a missing `errdefer` inside `addProblem` show up
             // here as a testing-allocator leak rather than passing silently.
             defer freeProblems(gpa, &problems);
-            if (parse(gpa, c.bytes, &fs, &problems)) |parsed| {
+            if (parse(gpa, c.bytes, &fs, &.{}, &problems)) |parsed| {
                 free(gpa, parsed);
                 return error.SweepAcceptedAnInvalidFile;
             } else |err| {
@@ -886,4 +1001,222 @@ test "parse under a FailingAllocator leaks nothing while REPORTING problems" {
         }
         try std.testing.expect(reached_rejection);
     }
+}
+
+// ---- #167 Stage 3 --------------------------------------------------------
+
+const backend_choices = [_][]const u8{ "createPosts", "retain", "blocked" };
+const journey_choices = [_][]const u8{ "island", "retain", "blocked" };
+const users_collection = [_][]const u8{"users"};
+
+test "parse: custom:/<path> answers a RAILS_BACKEND_ENDPOINT finding, and only that code" {
+    const gpa = std.testing.allocator;
+    // Ruling A3. `choices[]` cannot enumerate a free-form URL, so the SHAPE
+    // is validated here; the finding's message is what tells the operator
+    // the answer exists at all.
+    const fs = [_]findings.Finding{
+        codedFixture(findings.code_backend_endpoint, "F", &backend_choices, false),
+        codedFixture("RAILS_REQUEST_TIME_STATE", "S", &retain_blocked, false),
+    };
+    const bytes =
+        \\{"schema":"zigapagos.rails-decisions/1","decisions":[
+        \\  {"id":"F","choice":"custom:/api/contact","rationale":"a consumer route, not a collection"}
+        \\]}
+    ;
+    var problems: std.ArrayListUnmanaged(Problem) = .empty;
+    defer freeProblems(gpa, &problems);
+    const parsed = try parse(gpa, bytes, &fs, &.{}, &problems);
+    defer free(gpa, parsed);
+    try std.testing.expectEqual(@as(usize, 0), problems.items.len);
+    try std.testing.expectEqualStrings("custom:/api/contact", parsed.decisions[0].choice);
+
+    // The same token on a finding that is NOT a backend endpoint is just a
+    // choice nobody offered.
+    const other =
+        \\{"schema":"zigapagos.rails-decisions/1","decisions":[
+        \\  {"id":"S","choice":"custom:/api/contact","rationale":"wrong finding"}
+        \\]}
+    ;
+    var problems2: std.ArrayListUnmanaged(Problem) = .empty;
+    defer freeProblems(gpa, &problems2);
+    try std.testing.expectError(error.Invalid, parse(gpa, other, &fs, &.{}, &problems2));
+    try expectMessageContains(problems2.items[0], "is not offered for");
+}
+
+test "parse: a malformed custom: choice names the shape it must have" {
+    const gpa = std.testing.allocator;
+    const fs = [_]findings.Finding{codedFixture(findings.code_backend_endpoint, "F", &backend_choices, false)};
+    const cases = [_][]const u8{
+        // No leading slash: the binding is `zb.send(verb, path)`, and a
+        // relative path resolves against whatever page is open.
+        \\{"schema":"zigapagos.rails-decisions/1","decisions":[
+        \\  {"id":"F","choice":"custom:api/contact","rationale":"relative"}
+        \\]}
+        ,
+        // Whitespace: invisible in a hand-edited file, and interpolated
+        // straight into generated TypeScript.
+        \\{"schema":"zigapagos.rails-decisions/1","decisions":[
+        \\  {"id":"F","choice":"custom:/a b","rationale":"a space"}
+        \\]}
+        ,
+        // A single quote: the message promises "no quotes", and the path is
+        // spliced into generated TSX — both quote kinds are rejected.
+        \\{"schema":"zigapagos.rails-decisions/1","decisions":[
+        \\  {"id":"F","choice":"custom:/a'b","rationale":"a quote"}
+        \\]}
+        ,
+    };
+    const wanted = [_][]const u8{
+        "choice \"custom:api/contact\" must be custom:/<absolute path> with no whitespace or quotes",
+        "choice \"custom:/a b\" must be custom:/<absolute path> with no whitespace or quotes",
+        "choice \"custom:/a'b\" must be custom:/<absolute path> with no whitespace or quotes",
+    };
+    for (cases, wanted) |bytes, want| {
+        var problems: std.ArrayListUnmanaged(Problem) = .empty;
+        defer freeProblems(gpa, &problems);
+        try std.testing.expectError(error.Invalid, parse(gpa, bytes, &fs, &.{}, &problems));
+        try std.testing.expectEqual(@as(usize, 1), problems.items.len);
+        try std.testing.expectEqualStrings(want, problems.items[0].message);
+    }
+}
+
+test "parse: requires_artifact demands an artifact only from a choice that produces one" {
+    const gpa = std.testing.allocator;
+    // Ruling A4. `retain` and `blocked` write nothing, so demanding a path
+    // for them was the Stage 2 rule written when no finding set the flag.
+    const fs = [_]findings.Finding{codedFixture(findings.code_auth_journey, "J", &journey_choices, true)};
+    const ok =
+        \\{"schema":"zigapagos.rails-decisions/1","decisions":[
+        \\  {"id":"J","choice":"retain","rationale":"the Rails app keeps the sign-in flow"}
+        \\]}
+    ;
+    var problems: std.ArrayListUnmanaged(Problem) = .empty;
+    defer freeProblems(gpa, &problems);
+    const parsed = try parse(gpa, ok, &fs, &.{}, &problems);
+    defer free(gpa, parsed);
+    try std.testing.expectEqual(@as(usize, 0), problems.items.len);
+    try std.testing.expect(parsed.decisions[0].artifact == null);
+
+    const bad =
+        \\{"schema":"zigapagos.rails-decisions/1","decisions":[
+        \\  {"id":"J","choice":"island","rationale":"migrate it"}
+        \\]}
+    ;
+    var problems2: std.ArrayListUnmanaged(Problem) = .empty;
+    defer freeProblems(gpa, &problems2);
+    try std.testing.expectError(error.Invalid, parse(gpa, bad, &fs, &.{}, &problems2));
+    try std.testing.expectEqual(@as(usize, 1), problems2.items.len);
+    // The Stage 2 wording, unchanged: only WHEN it fires has moved.
+    try std.testing.expectEqualStrings(
+        "finding \"J\" requires an `artifact` path alongside the choice",
+        problems2.items[0].message,
+    );
+}
+
+test "parse: an auth-journey artifact must be an auth collection the document carries" {
+    const gpa = std.testing.allocator;
+    // The failure this prevents is silent and late: an `AuthForm` calling
+    // `zb.collection("members").authWithPassword` against a collection that
+    // cannot authenticate builds, ships, and fails at the first sign-in.
+    const fs = [_]findings.Finding{codedFixture(findings.code_auth_journey, "J", &journey_choices, true)};
+    const bad =
+        \\{"schema":"zigapagos.rails-decisions/1","decisions":[
+        \\  {"id":"J","choice":"island","rationale":"migrate it","artifact":"members"}
+        \\]}
+    ;
+    var problems: std.ArrayListUnmanaged(Problem) = .empty;
+    defer freeProblems(gpa, &problems);
+    try std.testing.expectError(error.Invalid, parse(gpa, bad, &fs, &users_collection, &problems));
+    try std.testing.expectEqual(@as(usize, 1), problems.items.len);
+    try std.testing.expectEqualStrings(
+        "artifact \"members\" is not an auth collection in the backend document; auth collections: users",
+        problems.items[0].message,
+    );
+
+    const good =
+        \\{"schema":"zigapagos.rails-decisions/1","decisions":[
+        \\  {"id":"J","choice":"island","rationale":"migrate it","artifact":"users"}
+        \\]}
+    ;
+    var problems2: std.ArrayListUnmanaged(Problem) = .empty;
+    defer freeProblems(gpa, &problems2);
+    const parsed = try parse(gpa, good, &fs, &users_collection, &problems2);
+    defer free(gpa, parsed);
+    try std.testing.expectEqual(@as(usize, 0), problems2.items.len);
+}
+
+test "parse: without a backend document an auth collection name is accepted verbatim" {
+    const gpa = std.testing.allocator;
+    // There is nothing to check against, and refusing every name would make
+    // `RAILS_AUTH_JOURNEY` unanswerable without `--backend` -- which the
+    // finding's own message promises it is not.
+    const fs = [_]findings.Finding{codedFixture(findings.code_auth_journey, "J", &journey_choices, true)};
+    const bytes =
+        \\{"schema":"zigapagos.rails-decisions/1","decisions":[
+        \\  {"id":"J","choice":"island","rationale":"migrate it","artifact":"members"}
+        \\]}
+    ;
+    var problems: std.ArrayListUnmanaged(Problem) = .empty;
+    defer freeProblems(gpa, &problems);
+    const parsed = try parse(gpa, bytes, &fs, &.{}, &problems);
+    defer free(gpa, parsed);
+    try std.testing.expectEqual(@as(usize, 0), problems.items.len);
+    try std.testing.expectEqualStrings("members", parsed.decisions[0].artifact.?);
+}
+
+test "parse: the auth-collection rule is scoped to an island answer on the journey finding" {
+    const gpa = std.testing.allocator;
+    // A `retain` may carry an artifact note that means something else
+    // entirely, and an `island` artifact on any OTHER finding is a component
+    // path -- neither is an auth collection name, and rejecting them against
+    // that list would be nonsense.
+    const fs = [_]findings.Finding{
+        codedFixture(findings.code_auth_journey, "J", &journey_choices, true),
+        codedFixture("RAILS_REQUEST_TIME_STATE", "S", &island_spa_retain_blocked, true),
+    };
+    const bytes =
+        \\{"schema":"zigapagos.rails-decisions/1","decisions":[
+        \\  {"id":"J","choice":"retain","rationale":"kept","artifact":"notes/why.md"},
+        \\  {"id":"S","choice":"island","rationale":"state","artifact":"components/Cart.island.tsx"}
+        \\]}
+    ;
+    var problems: std.ArrayListUnmanaged(Problem) = .empty;
+    defer freeProblems(gpa, &problems);
+    const parsed = try parse(gpa, bytes, &fs, &users_collection, &problems);
+    defer free(gpa, parsed);
+    try std.testing.expectEqual(@as(usize, 0), problems.items.len);
+}
+
+test "parse: the Stage 3 rejections leak nothing under a FailingAllocator" {
+    // The sweep above never reaches `validCustomChoice`'s message or the
+    // auth-collection one, both of which allocate.
+    const fs = [_]findings.Finding{
+        codedFixture(findings.code_backend_endpoint, "F", &backend_choices, false),
+        codedFixture(findings.code_auth_journey, "J", &journey_choices, true),
+    };
+    const bytes =
+        \\{"schema":"zigapagos.rails-decisions/1","decisions":[
+        \\  {"id":"F","choice":"custom:api/contact","rationale":"relative"},
+        \\  {"id":"J","choice":"island","rationale":"migrate it","artifact":"members"}
+        \\]}
+    ;
+    var reached_rejection = false;
+    var fail_index: usize = 0;
+    while (fail_index <= 1000) : (fail_index += 1) {
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
+        const gpa = failing.allocator();
+        var problems: std.ArrayListUnmanaged(Problem) = .empty;
+        defer freeProblems(gpa, &problems);
+        if (parse(gpa, bytes, &fs, &users_collection, &problems)) |parsed| {
+            free(gpa, parsed);
+            return error.SweepAcceptedAnInvalidFile;
+        } else |err| {
+            if (err == error.OutOfMemory) continue;
+            try std.testing.expectEqual(error.Invalid, err);
+            try std.testing.expectEqual(@as(usize, 2), problems.items.len);
+            reached_rejection = true;
+            break;
+        }
+    }
+    try std.testing.expect(reached_rejection);
 }

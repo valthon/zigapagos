@@ -22,6 +22,12 @@ fi
 # src/cli/rails/schema_validate.zig's module doc for why this is a
 # dependency-free Zig CLI rather than a `pip install jsonschema` step this
 # repo's toolchain (mise.toml: zig + bun only) does not otherwise have.
+# #167 Stage 3 reads a route's `endpoint` object out of the handoff, which is
+# a field lookup no grep can do honestly (a `grep -q operation_id` cannot say
+# WHICH route carries it). `jq` is already a hard requirement of the two
+# sibling Rails e2e scripts, so this adds no new tool to CI.
+command -v jq >/dev/null || fail "jq required"
+
 RAILS_VALIDATE="$REPO/zig-out/bin/rails_manifest_validate"
 if [[ ! -x "$RAILS_VALIDATE" ]]; then
   mise exec -- zig build rails-manifest-validate || fail "zig build rails-manifest-validate failed"
@@ -482,6 +488,13 @@ grep -q -- "MIGRATION.decisions.json" "$WORK/target.out" \
 # copying it would ship each asset twice plus a Rails bookkeeping file no
 # Zigapagos site reads. The sources themselves are copied from `app/assets/`
 # (`assets/images/logo.png` below).
+#
+# Also note what #167 Stage 3 did NOT add: no `package.json`, no
+# `tsconfig.json`, no `lib/zb.ts`, no `components/`. This fixture has no
+# answered `RAILS_BACKEND_ENDPOINT` and therefore no binding, and a run with
+# no binding must emit no island machinery at all -- the listing is the only
+# assertion that can catch a scaffolder that writes `lib/zb.ts`
+# unconditionally, since nothing else here would notice one extra file.
 target_listing="$(cd "$TARGET" && find . -type f | sort)"
 expected_listing="$(cat <<'LISTING'
 ./.gitignore
@@ -547,8 +560,41 @@ diff -u "$WORK/one.manifest.json" "$TARGET/MIGRATION.manifest.json" \
 sed -n '/^## Handoff$/,$p' "$TARGET/MIGRATION.md" >"$WORK/target-handoff-section.md"
 [[ -s "$WORK/target-handoff-section.md" ]] \
   || fail "--target's report is missing the Handoff section"
-grep -q '^complete: false$' "$WORK/target-handoff-section.md" \
-  || fail "the Handoff section did not state the completion verdict"
+# The whole section, byte for byte. A `grep -q '^complete: false$'` (which is
+# all this used to be) passes an implementation that renders the section
+# twice, drops the status table, or -- the #167 Stage 3 case -- omits the
+# `backend:`/`endpoints:` lines entirely. This run passed no `--backend`, so
+# it also pins what those two lines say when there is no document: `none`,
+# and `0 of the 11` -- NOT a line that disappears, because the operator
+# wondering why their `RAILS_BACKEND_ENDPOINT` findings offered nothing but
+# `retain`/`blocked` is precisely the operator who forgot the flag.
+diff -u - "$WORK/target-handoff-section.md" <<'HANDOFF' \
+  || fail "--target's Handoff section is not the expected bytes"
+## Handoff
+
+complete: false
+backend: none
+
+`MIGRATION.handoff.json` records what each recovered route became.
+
+| Status | Routes |
+| --- | --- |
+| migrated | 2 |
+| open | 6 |
+| blocked | 0 |
+| retained | 0 |
+| backend | 11 |
+| redirect | 1 |
+
+endpoints: 0 of the 11 `backend` route(s) are bound to a ZigBase operation.
+
+Next: each `open` route in `MIGRATION.handoff.json` lists the
+finding ids still unanswered. Answer each one in
+`MIGRATION.decisions.json` -- `{"id": "<finding id>", "choice":
+"<one of that finding's choices>", "rationale": "why"}` -- then
+delete everything in the target except that file and re-run the
+same command.
+HANDOFF
 # Everything strictly above the section, minus the single blank line that
 # separates it, must be the -o report byte for byte. `head -n -N` is a GNU
 # extension and CI also runs macOS, so the line count is taken explicitly.
@@ -563,6 +609,15 @@ grep -q '"schema": "zigapagos.rails-handoff/1"' "$TARGET/MIGRATION.handoff.json"
   || fail "the handoff does not carry its schema marker"
 grep -q '"complete": false' "$TARGET/MIGRATION.handoff.json" \
   || fail "the handoff's complete verdict disagrees with the exit code"
+# #167 Stage 3: no `--backend`, so the document reference is null and every
+# route's endpoint is too. The wire shape is present either way -- a consumer
+# reads one schema whether or not the operator passed the flag.
+grep -q '^  "backend": null,$' "$TARGET/MIGRATION.handoff.json" \
+  || fail "a run without --backend must still emit a null backend object"
+grep -q '"endpoint": ' "$TARGET/MIGRATION.handoff.json" \
+  || fail "the handoff is missing the per-route endpoint field"
+! grep -q '"operation_id"' "$TARGET/MIGRATION.handoff.json" \
+  || fail "a run with no binding must bind no route to an operation"
 
 # The source tree is still read-only after --target, same invariant as the
 # plain -o path above. This is the assertion that stops the converter from
@@ -610,6 +665,277 @@ set -e
 # loop this exception exists for.
 grep -q 'zigapagos.rails-decisions/1' "$DECIDED/MIGRATION.decisions.json" \
   || fail "--target overwrote the operator's decisions file"
+
+# --- --backend FILE: the ZigBase contract widens the choices (#167 Stage 3) --
+# The document used here is the repo's OWN checked-in `contract/
+# zigbase.openapi.json` -- a real 3.0.3 document with three consumer routes
+# and no collections -- rather than a fixture written to fit: a reader who
+# doubts an assertion below can open the file the assertion is about.
+#
+# Like --decisions, --backend needs no --target: without one it still widens
+# what the manifest publishes, and the manifest is what an operator reads
+# BEFORE writing any answers. That is what this first run pins.
+BACKEND_DOC="$REPO/contract/zigbase.openapi.json"
+"$ZIGAPAGOS" migrate "$APP" --from rails --backend "$BACKEND_DOC" -o "$WORK/backend.md" >/dev/null 2>&1 \
+  || fail "--backend on a Rails source was rejected"
+
+# The ONLY difference from the no-backend run of the same app is the `choices`
+# of the RAILS_BACKEND_ENDPOINT rows. Everything else in the manifest --
+# classifications, ids, messages, every other finding -- is discovery's
+# verdict about the RAILS app, which a ZigBase document cannot change. A diff
+# reduced to its changed lines is the assertion: a bare "the choices grew"
+# grep would also pass an implementation that renamed a finding or
+# reclassified a route as a side effect of reading the document.
+#
+# Sorted, NOT deduplicated: the multiplicities are the assertion. Four GET
+# rows gain `getFlagsState` and two POST rows gain the two POST operations,
+# and a `sort -u` here would pass an implementation that offered an operation
+# to one route too many or too few.
+diff "$WORK/one.manifest.json" "$WORK/backend.manifest.json" \
+  | grep -E '^[<>]' >"$WORK/backend-manifest-delta.txt" || true
+sort "$WORK/backend-manifest-delta.txt" >"$WORK/backend-manifest-delta-sorted.txt"
+diff -u - "$WORK/backend-manifest-delta-sorted.txt" <<'DELTA' \
+  || fail "--backend changed more (or less) of the manifest than the RAILS_BACKEND_ENDPOINT choices"
+>         "clubLogin",
+>         "clubLogin",
+>         "getFlagsState",
+>         "getFlagsState",
+>         "getFlagsState",
+>         "getFlagsState",
+>         "submitContact",
+>         "submitContact",
+DELTA
+# ...and those added words really are operation ids from that document, not
+# invented ones. `getFlagsState` is a GET route, so it is offered to the GET
+# rows; `clubLogin`/`submitContact` are POSTs and are offered to the POST
+# rows. A verb never crosses over (`backend.choicesFor` refuses to), which is
+# what makes an answer checkable at all.
+grep -q '"operationId": "getFlagsState"' "$BACKEND_DOC" \
+  || fail "the fixture assumption is stale: getFlagsState is not in the contract document"
+grep -q 'GET /posts/stats (choices: getFlagsState, retain, blocked)' "$WORK/backend.md" \
+  || fail "a GET backend route was not offered the document's GET operation"
+grep -q 'POST /posts (choices: clubLogin, submitContact, retain, blocked)' "$WORK/backend.md" \
+  || fail "a POST backend route was not offered the document's POST operations"
+grep -q 'GET /posts/stats (choices: retain, blocked)' "$WORK/one.md" \
+  || fail "the no-backend baseline this delta is measured against has moved"
+
+# With --target, the document is recorded in both artifacts the operator
+# reads. `file` is the BASENAME: the handoff is committed, and "no absolute
+# paths in any artifact" is a determinism rule, so two operators running this
+# from different checkouts must produce the same bytes.
+BACKEND_TARGET="$WORK/backend-target"
+set +e
+"$ZIGAPAGOS" migrate "$APP" --from rails --target "$BACKEND_TARGET" --backend "$BACKEND_DOC" >"$WORK/backend-target.out" 2>&1
+backend_target_rc=$?
+set -e
+[[ $backend_target_rc -eq 3 ]] \
+  || fail "--backend must not change the exit code of a run with open routes, got $backend_target_rc"
+grep -q '"file": "zigbase.openapi.json"' "$BACKEND_TARGET/MIGRATION.handoff.json" \
+  || fail "the handoff does not name the backend document by basename"
+grep -q '"contract_version": "2026-06-27.1"' "$BACKEND_TARGET/MIGRATION.handoff.json" \
+  || fail "the handoff does not carry the document's contract version"
+! grep -q "$REPO" "$BACKEND_TARGET/MIGRATION.handoff.json" \
+  || fail "the handoff leaked the absolute path of the backend document"
+grep -q '^backend: zigbase.openapi.json (2026-06-27.1)$' "$BACKEND_TARGET/MIGRATION.md" \
+  || fail "the Handoff section does not name the backend document"
+# Nothing was bound (this fixture answers no finding), so the endpoint count
+# is still zero -- passing a document is not itself an answer.
+grep -q '^endpoints: 0 of the 11 `backend` route(s) are bound to a ZigBase operation.$' "$BACKEND_TARGET/MIGRATION.md" \
+  || fail "the Handoff section's endpoint count is wrong for a run that bound nothing"
+
+# ...and now ANSWER one of those findings with one of the operations the
+# document offered. This is the whole chain in one run: the document widens a
+# finding's choices, the operator names an operation, and the route comes out
+# of `MIGRATION.handoff.json` with a real `endpoint` object rather than a
+# note. Without this case the endpoint machinery is only ever exercised at
+# `null`, which every one of the assertions above is equally happy with.
+#
+# `GET /posts/stats` (config/routes.rb:12) is the fixture's JSON-rendering
+# action -- classified `backend` by the "action renders JSON, not a view"
+# rule asserted near the top of this file -- so it is the one route here that
+# ruling A2 can actually bite on: a user-facing GET that needs an answer.
+BOUND="$WORK/backend-bound"
+mkdir -p "$BOUND"
+cat >"$BOUND/MIGRATION.decisions.json" <<'DECISIONS'
+{"schema": "zigapagos.rails-decisions/1", "decisions": [
+  {"id": "RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L12.GET.posts",
+   "choice": "getFlagsState",
+   "rationale": "posts#stats renders the same JSON the flags-state route serves"}
+]}
+DECISIONS
+set +e
+"$ZIGAPAGOS" migrate "$APP" --from rails --target "$BOUND" --backend "$BACKEND_DOC" >"$WORK/bound.out" 2>&1
+bound_rc=$?
+set -e
+# Still 3: six other routes remain open. The point is the endpoint, not the
+# exit code -- and pinning the code exactly is what stops this case from
+# passing on an unrelated failure.
+[[ $bound_rc -eq 3 ]] || fail "the bound run should still be incomplete (other routes are open), got $bound_rc"
+grep -q '^endpoints: 1 of the 11 `backend` route(s) are bound to a ZigBase operation.$' "$BOUND/MIGRATION.md" \
+  || fail "an answered RAILS_BACKEND_ENDPOINT did not raise the report's endpoint count"
+# The wire shape: all three fields, and the verb/path come from the DOCUMENT
+# (`/api/flags/state`), not from the Rails route (`/posts/stats`). That is
+# the difference between recording an answer and resolving it.
+bound_endpoint=$(jq -c '.routes[] | select(.route_id == "GET /posts/stats") | .endpoint' "$BOUND/MIGRATION.handoff.json")
+[[ "$bound_endpoint" == '{"operation_id":"getFlagsState","verb":"GET","path":"/api/flags/state"}' ]] \
+  || fail "the answered route did not carry the document's operation as its endpoint, got: $bound_endpoint"
+# One answer binds one route -- and no other.
+bound_routes=$(jq -r '[.routes[] | select(.endpoint != null) | .route_id] | join(",")' "$BOUND/MIGRATION.handoff.json")
+[[ "$bound_routes" == "GET /posts/stats" ]] \
+  || fail "one answer bound more than the route it named: $bound_routes"
+
+# A file that is not a ZigBase OpenAPI document is fatal, and the message
+# names the file AND which of the three ways it failed -- `InvalidJson` (a
+# truncated or hand-edited document), `NotOpenApi3` (the wrong file
+# entirely), `NoPaths` (a document generated against an empty data dir) send
+# an operator to three different fixes. Exit 1, not 3: the operator's own
+# input is wrong, which is a failure of this invocation and not an unfinished
+# migration.
+set +e
+"$ZIGAPAGOS" migrate "$APP" --from rails --target "$WORK/backend-bad" --backend "$APP/Gemfile" >"$WORK/backend-bad.out" 2>&1
+backend_bad_rc=$?
+set -e
+[[ $backend_bad_rc -eq 1 ]] \
+  || fail "--backend at a non-OpenAPI file must exit 1, got $backend_bad_rc"
+grep -q 'is not a ZigBase OpenAPI document: InvalidJson' "$WORK/backend-bad.out" \
+  || fail "the --backend rejection did not name the file and the reason"
+[[ ! -e "$WORK/backend-bad" ]] \
+  || fail "a rejected --backend must not create the target directory"
+
+# `--backend` as the last word on the command line is a usage error naming
+# the flag, not a crash and not a silent run without a document. Trailing
+# flags are how a half-typed command usually arrives.
+set +e
+"$ZIGAPAGOS" migrate "$APP" --from rails -o "$WORK/backend-noarg.md" --backend >"$WORK/backend-noarg.out" 2>&1
+backend_noarg_rc=$?
+set -e
+[[ $backend_noarg_rc -eq 1 ]] || fail "--backend with no argument must exit 1, got $backend_noarg_rc"
+grep -q -- "error: --backend needs a file path" "$WORK/backend-noarg.out" \
+  || fail "--backend with no argument did not name the flag"
+[[ ! -e "$WORK/backend-noarg.md" ]] || fail "a rejected --backend must not write a report"
+
+# A path that does not resolve is the SAME exit 1, not a crash (ruling
+# S3-R4). This arm exists because both reads used to end in `fatal.file`,
+# which routes through `fatal.msg` and PANICS under a Debug build -- and
+# Debug is what `zig build` produces and what this script runs, so a typo'd
+# path arrived as SIGABRT/134. Nothing tested either read path in either
+# direction, so the whole class was invisible.
+#
+# Four shapes, because they take four different routes through the kernel and
+# only the first was ever likely to be tried by hand: absent, a DIRECTORY
+# where a file was meant (IsDir), unreadable (mode 000 -- skipped for root,
+# who can read it anyway), and over the 16 MiB cap.
+backend_read_failure() {  # <label> <path>
+  local label="$1" path="$2" rc
+  set +e
+  "$ZIGAPAGOS" migrate "$APP" --from rails -o "$WORK/backend-$label.md" --backend "$path" \
+    >"$WORK/backend-$label.out" 2>&1
+  rc=$?
+  set -e
+  [[ $rc -eq 1 ]] || fail "--backend at $label must exit 1 (not a panic), got $rc"
+  grep -q -- "error: --backend $path could not be read:" "$WORK/backend-$label.out" \
+    || fail "--backend at $label did not name the flag, the path and the OS error"
+  [[ ! -e "$WORK/backend-$label.md" ]] || fail "a rejected --backend ($label) must not write a report"
+}
+backend_read_failure missing "$WORK/no-such-openapi.json"
+mkdir -p "$WORK/backend-as-dir"
+backend_read_failure isdir "$WORK/backend-as-dir"
+# 17 MiB of zeros: one megabyte past the cap `readRailsInput` is given.
+dd if=/dev/zero of="$WORK/huge.json" bs=1048576 count=17 status=none
+backend_read_failure toobig "$WORK/huge.json"
+rm -f "$WORK/huge.json"
+if [[ "$(id -u)" != "0" ]]; then
+  cp "$BACKEND_DOC" "$WORK/unreadable.json"
+  chmod 000 "$WORK/unreadable.json"
+  backend_read_failure unreadable "$WORK/unreadable.json"
+  chmod 644 "$WORK/unreadable.json"
+fi
+
+# The SAME rule for --decisions, which shares the reader and shared the
+# defect. An explicit --decisions is held to a higher standard than the
+# --target default: the operator named this file, so its absence is an error
+# rather than the ordinary first-run state.
+set +e
+"$ZIGAPAGOS" migrate "$APP" --from rails -o "$WORK/dec-missing.md" --decisions "$WORK/no-such-answers.json" \
+  >"$WORK/dec-missing.out" 2>&1
+dec_missing_rc=$?
+set -e
+[[ $dec_missing_rc -eq 1 ]] \
+  || fail "an explicitly-named --decisions file that does not exist must exit 1 (not a panic), got $dec_missing_rc"
+grep -q -- "error: --decisions $WORK/no-such-answers.json could not be read:" "$WORK/dec-missing.out" \
+  || fail "the missing --decisions file was not named with its OS error"
+[[ ! -e "$WORK/dec-missing.md" ]] || fail "a rejected --decisions must not write a report"
+
+# ...and the FIRST run of a migration, with no --decisions and no answers
+# file in the target, is still the ordinary case: existence-gated, not
+# read-gated. Without this control the arm above is satisfied by a build that
+# made every run demand an answers file.
+FIRSTRUN="$WORK/first-run-target"
+set +e
+"$ZIGAPAGOS" migrate "$APP" --from rails --target "$FIRSTRUN" >"$WORK/first-run.out" 2>&1
+first_run_rc=$?
+set -e
+[[ $first_run_rc -eq 3 ]] \
+  || fail "a first run with no decisions file must reach the handoff (exit 3), got $first_run_rc"
+[[ -e "$FIRSTRUN/MIGRATION.handoff.json" ]] || fail "the first run assembled nothing"
+
+# Well-formed JSON that is not OpenAPI 3.x is the same fatal, with the reason
+# that distinguishes it. This is the case a bare "could not parse" message
+# would leave an operator guessing about.
+printf '{"swagger": "2.0", "paths": {}}\n' >"$WORK/swagger2.json"
+set +e
+"$ZIGAPAGOS" migrate "$APP" --from rails -o "$WORK/backend-v2.md" --backend "$WORK/swagger2.json" >"$WORK/backend-v2.out" 2>&1
+backend_v2_rc=$?
+set -e
+[[ $backend_v2_rc -eq 1 ]] || fail "--backend at a Swagger 2.0 document must exit 1, got $backend_v2_rc"
+grep -q 'is not a ZigBase OpenAPI document: NotOpenApi3' "$WORK/backend-v2.out" \
+  || fail "a non-3.x document was not rejected as NotOpenApi3"
+[[ ! -e "$WORK/backend-v2.md" ]] || fail "a rejected --backend must not write a report"
+
+# --backend is Rails-only, rejected the same way --strict and --decisions are
+# rather than silently ignored ("report, never omit silently").
+BACKEND_ASTRO="$WORK/backend-astro"
+mkdir -p "$BACKEND_ASTRO/src/pages"
+touch "$BACKEND_ASTRO/astro.config.mjs"
+set +e
+"$ZIGAPAGOS" migrate "$BACKEND_ASTRO" --backend "$BACKEND_DOC" -o "$WORK/backend-astro.md" >"$WORK/backend-astro.out" 2>&1
+backend_astro_rc=$?
+set -e
+[[ $backend_astro_rc -eq 1 ]] || fail "--backend on a non-Rails source must exit 1, got $backend_astro_rc"
+grep -q -- "--backend only applies to Rails sources" "$WORK/backend-astro.out" \
+  || fail "the --backend rejection on a non-Rails source did not explain why"
+[[ ! -e "$WORK/backend-astro.md" ]] || fail "a rejected --backend combination must not write a report"
+
+# `--doctor` is mutually exclusive with `--backend`, and the message lists it.
+# Both halves matter: dropping `or backend_path != null` from the guard leaves
+# `--doctor --backend` running the doctor and silently ignoring the document,
+# and dropping the word from the message leaves an operator reading a list
+# that does not include the flag they passed. Nothing pinned this message
+# before (review finding M-3).
+set +e
+"$ZIGAPAGOS" migrate "$APP" --from rails --doctor "$WORK/nonexistent-site" --backend "$BACKEND_DOC" \
+  >"$WORK/backend-doctor.out" 2>&1
+backend_doctor_rc=$?
+set -e
+[[ $backend_doctor_rc -eq 1 ]] \
+  || fail "--doctor with --backend must exit 1, got $backend_doctor_rc"
+grep -q -- "error: --doctor is mutually exclusive with --target, --decisions, --backend, --scaffold, --convert-content, and --copy-assets" \
+  "$WORK/backend-doctor.out" \
+  || fail "the --doctor exclusion message does not list --backend"
+
+# #187. `--runtime-path`'s help described the Rails half as the `.spa.tsx` a
+# `spa` decision produced, which was true before Stage 3 and is not now: every
+# island a backend answer binds emits a `package.json` too, which made
+# `file:TODO-SET-RUNTIME-PATH` the ordinary outcome of a successful run rather
+# than a rare one -- the defect #179 fixed by falling back to
+# ZIGAPAGOS_RUNTIME_DIR. Neither fact was in the help, and an operator reading
+# it had no reason to set either. Pinned like the exclusion message above, on
+# the two sentences that would go stale if the emission rule moved again.
+"$ZIGAPAGOS" migrate --help >"$WORK/help.out" 2>&1
+grep -q -- "every island a" "$WORK/help.out" \
+  || fail "--runtime-path help does not say a backend answer's islands emit a package.json"
+grep -q -- "Falls back to ZIGAPAGOS_RUNTIME_DIR when that is" "$WORK/help.out" \
+  || fail "--runtime-path help does not name the ZIGAPAGOS_RUNTIME_DIR fallback (#179)"
 
 # --- parenthesized Gemfile syntax is still detected (P3 PR-review repro) ----
 # The reviewer's exact repro: `gem("rails")` with config/application.rb

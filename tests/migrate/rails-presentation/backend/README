@@ -1,0 +1,59 @@
+openapi.json in this directory is a REAL `zigbase openapi` document, not a
+hand-written stand-in. It is what `zigapagos migrate --from rails --backend`
+reads to learn which operations a Rails route may be bound to, so a fixture
+that invented its own bytes would test the migrator against a document
+shape ZigBase does not emit -- exactly the drift `src/cli/rails/backend.zig`
+exists to survive.
+
+It is checked in rather than generated at test time because the e2e must be
+hermetic: it runs wherever CI runs, with no ZigBase binary on PATH.
+
+REGENERATING IT (the documented developer step)
+
+  zb=/path/to/zigbase                       # a built zigbase binary
+  d=$(mktemp -d)
+
+  # 1. Create the database. `schema dump`/`apply` need the system tables,
+  #    and only `migrate` writes them.
+  "$zb" migrate --data-dir "$d"
+
+  # 2. Apply the two collections this fixture's Rails app maps onto:
+  #    an AUTH collection `users` (its `email` required, createRule
+  #    `@public` -- the sign-up form must reach it while signed out), and a
+  #    BASE collection `posts` (`title` required text, `body` editor,
+  #    listRule/viewRule `@public`, createRule `@request.auth.id != ""`).
+  #    schema.json is beside this README.
+  "$zb" schema apply "$(dirname "$0")/schema.json" --data-dir "$d"
+
+  # 3. Export. --api-version is what lands in `info.version`, which is what
+  #    the handoff reports as `backend.contract_version` (this document
+  #    carries no `x-zigbase-contract-version`).
+  "$zb" openapi --data-dir "$d" --api-version 1.0.0 --out openapi.json
+
+WHAT THE E2E DEPENDS ON
+
+  openapi: "3.1.2"                       backend.parse accepts 3.x only
+  info.version: "1.0.0"                  -> handoff backend.contract_version
+  10 operation ids                       listUsers createUsers viewUsers
+                                         updateUsers deleteUsers listPosts
+                                         createPosts viewPosts updatePosts
+                                         deletePosts
+  components.schemas.UsersCreate         carries BOTH `password` and
+                                         `passwordConfirm`, which is the
+                                         ONLY way an auth collection is
+                                         recognisable -- it is what makes
+                                         `users` the legal artifact for the
+                                         RAILS_AUTH_JOURNEY answer
+  x-zigbase-coverage.allAuthMethods      false, as always: auth-with-password
+                                         and auth-logout are NOT in the
+                                         document, which is why the journey's
+                                         two session endpoints are the
+                                         client's method names rather than
+                                         operation ids
+
+Do NOT reconcile this document with `fixture_document` in
+src/cli/rails/backend.zig. They are independent by design: the inline one
+gives `listPosts` a `conditional` access so every `x-zigbase-access`
+spelling has a unit test, while a real `listRule: "@public"` (this one)
+makes it `public`. Editing either to match the other costs a case its only
+coverage.
