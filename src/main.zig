@@ -170,23 +170,29 @@ pub fn main(init: std.process.Init) u8 {
         fatal.helpError();
     };
 
-    const any_error = switch (cmd) {
-        .init => @import("cli/init.zig").init(io, gpa, args[2..]),
+    // Every command but `migrate` answers a yes/no question -- did anything
+    // go wrong -- so its bool maps onto the two exit codes a shell cares
+    // about. `migrate` returns the code itself because Rails' `--target`
+    // needs a THIRD answer (#167 Stage 2): `3` means the run wrote everything
+    // it meant to and the migration is not finished, which a bool cannot
+    // distinguish from a broken run. Mapping each arm at the arm rather than
+    // widening every command's signature keeps that special case visible and
+    // confined to one line.
+    return switch (cmd) {
+        .init => @intFromBool(@import("cli/init.zig").init(io, gpa, args[2..])),
         .migrate => @import("cli/migrate.zig").migrate(io, gpa, args[2..], init.environ_map),
-        .doctor => @import("cli/doctor.zig").doctor(io, gpa, args[2..]),
-        .validate => @import("cli/validate.zig").validate(io, gpa, args[2..]),
-        .explain => @import("cli/explain.zig").explain(io, gpa, args[2..]),
-        .release => @import("cli/release.zig").release(io, gpa, args[2..], init.environ_map),
-        .debug => @import("cli/debug.zig").debug(io, gpa, args[2..]),
-        .e2e => @import("cli/e2e.zig").e2e(io, gpa, args[2..], init.environ_map) catch fatal.oom(),
-        .languages => @import("cli/languages.zig").languages(args[2..]),
-        .@"explain-code" => @import("cli/explain_code.zig").explainCode(args[2..]),
-        .dev, .develop => @import("cli/dev.zig").dev(io, gpa, args[2..], init.environ_map) catch fatal.oom(),
+        .doctor => @intFromBool(@import("cli/doctor.zig").doctor(io, gpa, args[2..])),
+        .validate => @intFromBool(@import("cli/validate.zig").validate(io, gpa, args[2..])),
+        .explain => @intFromBool(@import("cli/explain.zig").explain(io, gpa, args[2..])),
+        .release => @intFromBool(@import("cli/release.zig").release(io, gpa, args[2..], init.environ_map)),
+        .debug => @intFromBool(@import("cli/debug.zig").debug(io, gpa, args[2..])),
+        .e2e => @intFromBool(@import("cli/e2e.zig").e2e(io, gpa, args[2..], init.environ_map) catch fatal.oom()),
+        .languages => @intFromBool(@import("cli/languages.zig").languages(args[2..])),
+        .@"explain-code" => @intFromBool(@import("cli/explain_code.zig").explainCode(args[2..])),
+        .dev, .develop => @intFromBool(@import("cli/dev.zig").dev(io, gpa, args[2..], init.environ_map) catch fatal.oom()),
         .help, .@"-h", .@"--help" => fatal.help(),
         .version, .@"-v", .@"--version" => printVersion(),
     };
-
-    return @intFromBool(any_error);
 }
 
 fn printVersion() noreturn {

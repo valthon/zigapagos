@@ -1,0 +1,80 @@
+{
+  "schema": "zigapagos.rails-decisions/1",
+  "decisions": [
+    {
+      "id": "RAILS_HELPER_UNKNOWN.app/views/pages/help%2Ehtml%2Eerb.L1C18",
+      "choice": "blocked",
+      "rationale": "number_to_currency has no static equivalent; /help does not ship until someone decides what it should render, so the target emits no page for it."
+    },
+    {
+      "id": "RAILS_RAW_OUTPUT.app/views/pages/help%2Ehtml%2Eerb.L1C47",
+      "choice": "blocked",
+      "rationale": "raw() output is unescaped author HTML from a Ruby expression; same route, same block."
+    },
+    {
+      "id": "RAILS_I18N_UNRESOLVED.app/views/pages/help%2Ehtml%2Eerb.L1C62",
+      "choice": "blocked",
+      "rationale": "the t() key resolves to nothing in this app's locale table; same route, same block."
+    },
+    {
+      "id": "RAILS_TEMPLATE_PARSE_ERROR.app/views/pages/broken%2Ehtml%2Eerb.L2",
+      "choice": "blocked",
+      "rationale": "broken.html.erb has an unclosed <% if %>; nothing can convert a template that does not parse, and nothing is emitted for it."
+    },
+    {
+      "id": "RAILS_ROUTE_HELPER_UNKNOWN.app/views/pages/links%2Ehtml%2Eerb.L1C5",
+      "choice": "blocked",
+      "rationale": "ghost_path names no route this run recovered; the link target is unknown, so /links does not ship."
+    },
+    {
+      "id": "RAILS_TEMPLATE_ENGINE_UNSUPPORTED.app/views/posts/legacy%2Ehtml%2Ehaml.engine",
+      "choice": "blocked",
+      "rationale": "legacy.html.haml is Haml; no converter reads that engine, so /posts/legacy is blocked rather than shipped empty."
+    },
+    {
+      "id": "RAILS_REDIRECT_HOST_CONFIG.config/routes%2Erb.L47",
+      "choice": "retain",
+      "rationale": "/old keeps redirecting to /about; the host config owns the rule, so there is nothing for the static tree to carry."
+    },
+    {
+      "id": "RAILS_PARTIAL_DYNAMIC.app/views/posts/index%2Ehtml%2Eerb.L1C61",
+      "choice": "retain",
+      "rationale": "the render call names its partial dynamically, so the index cannot be converted faithfully; Rails keeps serving /posts and this target emits no page for it."
+    },
+    {
+      "id": "RAILS_REQUEST_TIME_STATE.app/views/posts/index%2Ehtml%2Eerb.L1C33",
+      "choice": "retain",
+      "rationale": "@posts is request-time state; the list stays on Rails with the rest of /posts. Only the per-record page below moves, as a SPA."
+    },
+    {
+      "id": "RAILS_ROUTE_DYNAMIC_SEGMENT.config/routes%2Erb.L14",
+      "choice": "spa",
+      "rationale": "/posts/:id is one page per record; a client-routed SPA mounted at /posts is the shape this converter can actually produce."
+    },
+    {
+      "id": "RAILS_BACKEND_ENDPOINT.app/views/sessions/new%2Ehtml%2Eerb.L1C5",
+      "choice": "retain",
+      "rationale": "the sign-in form needs a session endpoint no static tree can offer; Rails keeps serving /session/new until Stage 3 binds the form to a backend operation."
+    },
+    {
+      "id": "RAILS_BACKEND_ENDPOINT.app/views/registrations/new%2Ehtml%2Eerb.L1C139",
+      "choice": "retain",
+      "rationale": "the sign-up form stays on Rails on the same terms as the sign-in form."
+    },
+    {
+      "id": "RAILS_REQUEST_TIME_STATE.app/views/registrations/new%2Ehtml%2Eerb.L1C4",
+      "choice": "retain",
+      "rationale": "the errors block only renders after a failed submit, which no static page can perform; it stays on Rails with the form it belongs to."
+    },
+    {
+      "id": "RAILS_REQUEST_TIME_STATE.app/views/registrations/new%2Ehtml%2Eerb.L1C36",
+      "choice": "retain",
+      "rationale": "the full_messages loop inside that same errors block; retained with it. Its `|m|` block local is the region convert.zig cannot map, which is why this route also exercises ruling S19: the answer settles the route even so."
+    },
+    {
+      "id": "RAILS_REQUEST_TIME_STATE.app/views/registrations/new%2Ehtml%2Eerb.L1C121",
+      "choice": "retain",
+      "rationale": "the @user ivar read that pre-fills the form; it has no meaning without the request that filled it, so it stays on Rails too."
+    }
+  ]
+}

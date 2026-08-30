@@ -6,4 +6,4 @@
 
 ### Known limitations
 
-- The manifest is discovery output only — nothing yet *consumes* it to build a target. `--target DIR` (added later in this release) writes the manifest and `MIGRATION.md` into `DIR`, but assembles no scaffold: content conversion, island scaffolding, and asset copying for Rails sources remain issue #167's job, same as resolving what a route classified `unresolved` for request-time state would actually need at build or request time.
+- The manifest is discovery output: it records what discovery established about the Rails app, and it does not change when the converter improves. The conversion added later in this release reads it and writes a second, separately-versioned artifact (`MIGRATION.handoff.json`) rather than amending it — so a route's `classification` here and its handoff `status` there are different claims, and may disagree.
