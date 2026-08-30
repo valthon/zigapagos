@@ -1216,7 +1216,14 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
 
         var decision_problems: std.ArrayListUnmanaged(rails.decisions.Problem) = .empty;
         defer rails.decisions.freeProblems(gpa, &decision_problems);
-        const discovery = rails.discover(io, gpa, root, dir_path, environ_map, .{
+        // Resolve the source once, up front. The report titles itself by the
+        // source's basename and the scaffold names the site by it, and `.`
+        // or `./` has no basename until it is resolved -- so both consumers
+        // read the real path and cannot disagree (#178).
+        const source_real = Io.Dir.cwd().realPathFileAlloc(io, dir_path, gpa) catch |err| fatal.dir(dir_path, err);
+        defer gpa.free(source_real);
+
+        const discovery = rails.discover(io, gpa, root, source_real, environ_map, .{
             .bytes = decisions_bytes,
             .path = decisions_label,
             .problems = &decision_problems,
@@ -1259,8 +1266,7 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
         var target_out_path_buf: ?[]u8 = null;
         defer if (target_out_path_buf) |p| gpa.free(p);
         const effective_out_path: []const u8 = if (target_dir) |target| blk: {
-            const source_abs = Io.Dir.cwd().realPathFileAlloc(io, dir_path, gpa) catch |err| fatal.dir(dir_path, err);
-            defer gpa.free(source_abs);
+            const source_abs = source_real;
             const cwd_abs = Io.Dir.cwd().realPathFileAlloc(io, ".", gpa) catch |err| fatal.dir(".", err);
             defer gpa.free(cwd_abs);
             const target_abs = canonicalTargetPath(io, gpa, cwd_abs, target);
@@ -1333,7 +1339,7 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
             var last_error_path: ?[]const u8 = null;
             defer if (last_error_path) |p| gpa.free(p);
             var last_error: ?anyerror = null;
-            const app_name = railsAppName(dir_path, target);
+            const app_name = railsAppName(source_real, target);
             const result = rails.scaffold.write(io, gpa, .{
                 .discovery = &discovery,
                 .decisions = discovery.decisions,

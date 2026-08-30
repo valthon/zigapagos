@@ -356,6 +356,14 @@ done
   --decisions "$DECISIONS" --runtime-path "$REPO/runtime" >/dev/null
 cmp "$WORK/out2/MIGRATION.manifest.json" "$WORK/out2b/MIGRATION.manifest.json" || fail "manifest not deterministic"
 cmp "$HANDOFF2" "$WORK/out2b/MIGRATION.handoff.json" || fail "handoff not deterministic"
+# MIGRATION.md joins the determinism cmp set (#178). Both runs migrate the
+# same source path, so this cmp alone would not have caught the old
+# path-as-given title; the two greps below are the pins for that.
+cmp "$WORK/out2/MIGRATION.md" "$WORK/out2b/MIGRATION.md" || fail "MIGRATION.md not deterministic"
+# The fixture is migrated from its scratch copy at $WORK/app, so the basename
+# the title must carry is `app` -- and nothing of the scratch path above it.
+grep -q "^# Migrating app to Zigapagos" "$WORK/out2/MIGRATION.md" || fail "MIGRATION.md title must be the app basename"
+grep -q "$WORK" "$WORK/out2/MIGRATION.md" && fail "MIGRATION.md embeds the scratch path"
 
 # --- the target is a real Zigapagos project --------------------------------
 # The criterion no listing can fake: the emitted tree BUILDS, and the built

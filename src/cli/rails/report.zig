@@ -657,7 +657,11 @@ pub fn build(gpa: Allocator, in: Input) Allocator.Error![]const u8 {
     errdefer aw.deinit();
     const w = &aw.writer;
 
-    w.print("# Migrating {s} to Zigapagos\n\n", .{in.app_path}) catch return error.OutOfMemory;
+    // The basename, never the path as given: an operator's absolute path is
+    // machine-specific, and MIGRATION.md is committed beside the target.
+    // `migrate.zig` resolves the source before it reaches here, so `.` has
+    // a name by this point (#178).
+    w.print("# Migrating {s} to Zigapagos\n\n", .{std.fs.path.basename(in.app_path)}) catch return error.OutOfMemory;
     w.writeAll(
         \\Rails source discovery. This worklist inventories the presentation
         \\layer and the recovered route graph. Discovery itself converts
@@ -1158,4 +1162,19 @@ test "handoffSection: the section appends onto build()'s output as the last sect
     const findings_at = std.mem.indexOf(u8, joined, "\n## Findings\n").?;
     const handoff_at = std.mem.indexOf(u8, joined, "\n## Handoff\n").?;
     try std.testing.expect(findings_at < handoff_at);
+}
+
+test "report: the title is the app basename, never the path as given (#178)" {
+    var entries = [_]inventory.Entry{};
+    var ints = [_]integrations.Integration{};
+    var rail_blockers = [_]blockers.Blocker{};
+    const md = try build(std.testing.allocator, .{
+        .app_path = "/home/someone/src/my-app/",
+        .entries = &entries,
+        .integrations = &ints,
+        .blockers = &rail_blockers,
+    });
+    defer std.testing.allocator.free(md);
+    try std.testing.expect(std.mem.indexOf(u8, md, "# Migrating my-app to Zigapagos") != null);
+    try std.testing.expect(std.mem.indexOf(u8, md, "/home/someone") == null);
 }
