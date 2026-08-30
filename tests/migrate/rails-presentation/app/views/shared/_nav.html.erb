@@ -1,6 +1,7 @@
 <nav>
   <%= link_to "Home", root_path %>
   <%= link_to "About", about_path %>
-  <%= link_to "Sign in", new_session_path %>
+  <% unless current_user %><%= link_to "Sign in", new_session_path %><% end %>
+  <% if current_user %><%= current_user.email %> <%= button_to "Sign out", session_path, method: :delete %><% end %>
   <%= image_tag "logo.png", alt: "Logo" %>
 </nav>

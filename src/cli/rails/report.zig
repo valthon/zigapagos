@@ -1001,12 +1001,39 @@ pub const HandoffSummary = struct {
     /// `handoff.isComplete`'s verdict, verbatim -- never recomputed here, so
     /// the report and the JSON artifact beside it cannot disagree.
     complete: bool,
+    /// #167 Stage 3: the `--backend` document this run read, or `null`. The
+    /// same two strings `handoff.Backend` carries -- a local type for the
+    /// reason `HandoffSummary` itself is one (importing `handoff.zig` here
+    /// would close an import cycle), and `file` is already a basename.
+    backend_doc: ?BackendRef = null,
     migrated: usize = 0,
     open: usize = 0,
     blocked: usize = 0,
     retained: usize = 0,
     backend: usize = 0,
     redirect: usize = 0,
+    /// How many of the `backend` routes an operator actually bound to a
+    /// ZigBase operation. Rendered against `backend` rather than alone: the
+    /// interesting number is the REMAINDER (ruling A2 -- an unbound `backend`
+    /// route no longer counts as accounted), and `2` on its own does not say
+    /// whether three are still unanswered.
+    ///
+    /// INVARIANT: `endpoints <= backend` (M-2). It is not arithmetic, it is a
+    /// structural fact of `scaffold.zig`: `RouteOutcome.endpoint` is assigned
+    /// in exactly one place, inside the branch that has just set
+    /// `status = .backend` and that returns at its end -- so a route cannot
+    /// carry an endpoint under any other status. `migrate.zig`'s tally
+    /// asserts the per-row half as it counts; `handoffSection` asserts the
+    /// sum below, because "N of the M" is a sentence that stops being true
+    /// the moment the invariant does, and rendering `3 of the 2` would be a
+    /// report quietly lying rather than a build failing.
+    endpoints: usize = 0,
+};
+
+/// See `HandoffSummary.backend_doc`.
+pub const BackendRef = struct {
+    file: []const u8,
+    contract_version: []const u8,
 };
 
 /// The `## Handoff` section, rendered SEPARATELY from `build` and appended by
@@ -1032,7 +1059,18 @@ pub fn handoffSection(gpa: Allocator, in: HandoffSummary) Allocator.Error![]cons
     // leaves the document without a trailing blank line, so the caller can
     // concatenate this directly onto it.
     w.writeAll("\n## Handoff\n\n") catch return error.OutOfMemory;
-    w.print("complete: {s}\n\n", .{if (in.complete) "true" else "false"}) catch return error.OutOfMemory;
+    w.print("complete: {s}\n", .{if (in.complete) "true" else "false"}) catch return error.OutOfMemory;
+    // #167 Stage 3. Always emitted, `none` included: the operator who is
+    // wondering why a `RAILS_BACKEND_ENDPOINT` finding offered nothing but
+    // `retain`/`blocked` is the one who did not pass `--backend`, and a line
+    // that disappears in exactly that case cannot tell them so. `file` is a
+    // basename and `contract_version` comes from the document, so no
+    // absolute path and no local state reaches the report.
+    if (in.backend_doc) |b| {
+        w.print("backend: {s} ({s})\n\n", .{ b.file, b.contract_version }) catch return error.OutOfMemory;
+    } else {
+        w.writeAll("backend: none\n\n") catch return error.OutOfMemory;
+    }
     w.writeAll(
         \\`MIGRATION.handoff.json` records what each recovered route became.
         \\
@@ -1048,6 +1086,19 @@ pub fn handoffSection(gpa: Allocator, in: HandoffSummary) Allocator.Error![]cons
     w.print("| retained | {d} |\n", .{in.retained}) catch return error.OutOfMemory;
     w.print("| backend | {d} |\n", .{in.backend}) catch return error.OutOfMemory;
     w.print("| redirect | {d} |\n", .{in.redirect}) catch return error.OutOfMemory;
+
+    // See `HandoffSummary.endpoints` for why this cannot exceed `backend`.
+    std.debug.assert(in.endpoints <= in.backend);
+    // Directly under the `backend` row it refines, rather than up in the
+    // header block: the number only means anything against that row, and
+    // "endpoints: 2" on its own does not say whether three are left. Under
+    // ruling A2 the remainder is what keeps a user-facing route open, so
+    // this line is the report's own statement of why `complete` is false
+    // when every status count looks harmless.
+    w.print(
+        "\nendpoints: {d} of the {d} `backend` route(s) are bound to a ZigBase operation.\n",
+        .{ in.endpoints, in.backend },
+    ) catch return error.OutOfMemory;
 
     if (in.complete) {
         // `bash`, not `sh`. `scaffold.emitBuildSh` writes
@@ -1098,6 +1149,7 @@ test "handoffSection: an incomplete run renders the counts and the decide-and-re
         \\## Handoff
         \\
         \\complete: false
+        \\backend: none
         \\
         \\`MIGRATION.handoff.json` records what each recovered route became.
         \\
@@ -1109,6 +1161,8 @@ test "handoffSection: an incomplete run renders the counts and the decide-and-re
         \\| retained | 0 |
         \\| backend | 5 |
         \\| redirect | 1 |
+        \\
+        \\endpoints: 0 of the 5 `backend` route(s) are bound to a ZigBase operation.
         \\
         \\Next: each `open` route in `MIGRATION.handoff.json` lists the
         \\finding ids still unanswered. Answer each one in
@@ -1128,6 +1182,7 @@ test "handoffSection: a complete run says so and points at the build, not at dec
         \\## Handoff
         \\
         \\complete: true
+        \\backend: none
         \\
         \\`MIGRATION.handoff.json` records what each recovered route became.
         \\
@@ -1140,6 +1195,8 @@ test "handoffSection: a complete run says so and points at the build, not at dec
         \\| backend | 0 |
         \\| redirect | 0 |
         \\
+        \\endpoints: 0 of the 0 `backend` route(s) are bound to a ZigBase operation.
+        \\
         \\Next: every user-facing route is accounted for. Build the target
         \\with `bash build.sh`, then check it with `zigapagos doctor`.
         \\
@@ -1147,6 +1204,85 @@ test "handoffSection: a complete run says so and points at the build, not at dec
     // The discriminating half: a complete run must NOT tell the operator to
     // go on answering findings.
     try std.testing.expect(std.mem.indexOf(u8, md, "MIGRATION.decisions.json") == null);
+}
+
+test "handoffSection: a --backend run names the document and counts the bindings" {
+    // #167 Stage 3. The two lines the operator needs in order to read the
+    // rest of the section: WHICH contract this run's `choices` came from
+    // (a stale `openapi.json` is the likeliest reason an operation id was
+    // rejected), and how much of the backend traffic is actually bound --
+    // which, under ruling A2, is now what `complete` turns on.
+    const md = try handoffSection(std.testing.allocator, .{
+        .complete = false,
+        .backend_doc = .{ .file = "openapi.json", .contract_version = "2026-06-27.1" },
+        .migrated = 4,
+        .open = 1,
+        .backend = 3,
+        .endpoints = 2,
+    });
+    defer std.testing.allocator.free(md);
+    try std.testing.expectEqualStrings(
+        \\
+        \\## Handoff
+        \\
+        \\complete: false
+        \\backend: openapi.json (2026-06-27.1)
+        \\
+        \\`MIGRATION.handoff.json` records what each recovered route became.
+        \\
+        \\| Status | Routes |
+        \\| --- | --- |
+        \\| migrated | 4 |
+        \\| open | 1 |
+        \\| blocked | 0 |
+        \\| retained | 0 |
+        \\| backend | 3 |
+        \\| redirect | 0 |
+        \\
+        \\endpoints: 2 of the 3 `backend` route(s) are bound to a ZigBase operation.
+        \\
+        \\Next: each `open` route in `MIGRATION.handoff.json` lists the
+        \\finding ids still unanswered. Answer each one in
+        \\`MIGRATION.decisions.json` -- `{"id": "<finding id>", "choice":
+        \\"<one of that finding's choices>", "rationale": "why"}` -- then
+        \\delete everything in the target except that file and re-run the
+        \\same command.
+        \\
+    , md);
+}
+
+test "handoffSection: every backend route bound renders N of the N, not an off-by-one" {
+    // The boundary the `endpoints <= backend` invariant sits on (M-2). A
+    // guard written `<` instead of `<=` fires exactly here and nowhere else,
+    // and this is also the state a FINISHED backend migration is in -- so
+    // the case that must render is the case that would crash.
+    const md = try handoffSection(std.testing.allocator, .{
+        .complete = true,
+        .backend_doc = .{ .file = "openapi.json", .contract_version = "1.0.0" },
+        .migrated = 2,
+        .backend = 3,
+        .endpoints = 3,
+    });
+    defer std.testing.allocator.free(md);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        md,
+        "\nendpoints: 3 of the 3 `backend` route(s) are bound to a ZigBase operation.\n",
+    ) != null);
+}
+
+test "handoffSection: a document with no contract version still renders one line" {
+    // `backend.Document.contract_version` is `""` when the document declares
+    // neither `x-zigbase-contract-version` nor `info.version`
+    // (task-1-report.md, deviation 6). The line must stay parseable rather
+    // than collapsing into `backend: openapi.json` -- a reader (and the e2e)
+    // greps for the parenthesis.
+    const md = try handoffSection(std.testing.allocator, .{
+        .complete = true,
+        .backend_doc = .{ .file = "openapi.json", .contract_version = "" },
+    });
+    defer std.testing.allocator.free(md);
+    try std.testing.expect(std.mem.indexOf(u8, md, "\nbackend: openapi.json ()\n") != null);
 }
 
 test "handoffSection: the section appends onto build()'s output as the last section" {

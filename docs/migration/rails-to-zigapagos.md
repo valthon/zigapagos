@@ -25,10 +25,22 @@ for, the handoff says `"complete": true` and the run exits 0. Sections
 [§13](#13---target-writes-a-project) through [§17](#17-the-re-run-loop)
 are that half of the tool.
 
-Two things are still not converted and say so rather than pretending: an
-`island` choice (Stage 4) and a `backend` choice (Stage 3) are accepted as
-answers, recorded in the handoff, and leave the route `open` with the
-deferral named — see [§15](#15-decisions).
+**With `--backend FILE` it also binds** (issue #167 Stage 3). `FILE` is the
+ZigBase OpenAPI document `zigbase openapi` writes. Its operations become the
+`choices` a `RAILS_BACKEND_ENDPOINT` finding offers; an answered finding
+turns the Rails form, the mutating link or the auth journey it names into a
+generated island that calls that operation through `@zigbase/client`; and the
+route's `endpoint` is recorded in the handoff.
+[§18](#18-the-backend-boundary) is that half, and without the flag those
+findings offer nothing but `retain`/`blocked` — a backend route can be
+acknowledged but not bound.
+
+One choice is still accepted without being carried out, and says so rather
+than pretending: `island` on the Turbo/component families is Stage 4, and the
+literal `backend` **word** on `RAILS_REQUEST_TIME_STATE` has no converter at
+all (issue #184 — it is not the same thing as binding an endpoint, which
+[§18](#18-the-backend-boundary) does). Both are recorded in the handoff and
+leave the route `open` with the reason named — see [§15](#15-decisions).
 
 This is a deterministic reference for what the tool does and does not claim,
 written for an agent or a human driving it unattended — not a tutorial.
@@ -43,6 +55,7 @@ zigapagos migrate path/to/rails-app -o MIGRATION.md
 zigapagos migrate path/to/rails-app --from rails -o MIGRATION.md
 zigapagos migrate path/to/rails-app --from rails --target path/to/new-site
 zigapagos migrate path/to/rails-app --from rails --target DIR --decisions answers.json
+zigapagos migrate path/to/rails-app --from rails --target DIR --backend openapi.json
 zigapagos migrate path/to/rails-app --strict
 ```
 
@@ -339,8 +352,12 @@ it means you are writing into a tree you have not wiped, and clobbering it
 would destroy hand edits.
 
 `--runtime-path PATH` sets the local `@z/runtime` package path in the
-generated `package.json`, which is only written when a `spa` decision
-scaffolded a `.spa.tsx`. It is rejected unless a `--target` is also given.
+generated `package.json`, which is written whenever the target has something
+to build — a `.spa.tsx` from a `spa` decision, or an island from a `--backend`
+binding or an `island` answer. Without the flag the path is taken from
+`ZIGAPAGOS_RUNTIME_DIR` (the variable `build.sh` already exports), and only
+when neither is set does the placeholder `file:TODO-SET-RUNTIME-PATH` remain.
+The flag is rejected unless a `--target` is also given.
 
 What `--target` then writes is [§13](#13---target-writes-a-project).
 
@@ -398,11 +415,24 @@ The derivation rules (`runtime/sidecar/rails/routes.rb`'s `emit` /
   unresolvable literal argument in this parser already reports — the route
   it would have named is not emitted with a guessed name.
 
-**Known gap, follow-up filed:** a singular `resource :x` derives controller
-`x`, but Rails maps a singular resource to the **plural** controller
-(`resource :profile` → `ProfilesController`, not `ProfileController`) unless
-`controller:` is given explicitly. Pass `controller:` on every singular
-`resource` until this is fixed.
+**A singular `resource :x` routes to the PLURAL controller** — Rails'
+`SingletonResource#controller` is `options[:controller] || name.to_s.pluralize`
+— so `resource :profile` is `ProfilesController` and `resource :person` is
+`PeopleController`, while the path and every helper name stay singular
+(`/profile`, `profile_path`, `new_profile_path`). The parser pluralises with
+an order-preserving port of `ActiveSupport::Inflector`'s own plural rules
+(`runtime/sidecar/rails/inflect.rb`), uncountables included: `resource :series`
+is `SeriesController`, not `SeriesesController`. An explicit `controller:`
+still wins.
+
+This closes issue #176, and the earlier advice to write `controller:` on every
+singular `resource` is withdrawn — that workaround is no longer needed and
+real Rails apps do not carry it. The bug was not a cosmetic label: a route
+whose controller does not resolve reaches no template, so it raised no finding
+from that template and produced no page, which made an app's entire sign-in
+flow invisible to the migration and stopped the auth-journey detection of
+[§18](#18-the-backend-boundary) — which keys on the `sessions`/`registrations`
+controller names — from ever firing on an idiomatic app.
 
 ## 10. Layouts (Stage 1)
 
@@ -479,12 +509,18 @@ fixture:
   the way a blocker's `integrity` does.
 - **`source`** — `{file, line}`.
 - **`route_id`** is `null` for every template- or controller-scoped finding,
-  which is most of them. The two **route-scoped** codes —
-  `RAILS_ROUTE_DYNAMIC_SEGMENT` and `RAILS_REDIRECT_HOST_CONFIG` — set it,
-  and their `source` is `config/routes.rb` at the line the route was
-  declared on. Even there it names **one** affected route, not all of them:
-  a single `resources :posts` line yields several dynamic routes that share
-  one finding id, and `message` lists them all (see the table below).
+  which is most of them. The **route-scoped** codes —
+  `RAILS_ROUTE_DYNAMIC_SEGMENT`, `RAILS_REDIRECT_HOST_CONFIG`,
+  `RAILS_NO_TEMPLATE`, `RAILS_CONTENT_PATH_COLLISION`,
+  `RAILS_ROUTE_PATH_UNSUPPORTED`, `RAILS_ROUTE_AUTH_GUARD`,
+  `RAILS_AUTH_JOURNEY` and the route-level shape of `RAILS_BACKEND_ENDPOINT`
+  — set it, and their `source` is `config/routes.rb` at the line the route
+  was declared on. Even there it names **one** affected route, not all of
+  them: a single `resources :posts` line yields several dynamic routes that
+  share one finding id, and `message` lists them all (see the table below).
+  `RAILS_BACKEND_ENDPOINT` is the one code that does **not** fold a whole
+  line into one question — [§18](#18-the-backend-boundary) explains why, and
+  what its longer id looks like.
 - **`message`** is human prose, explicitly **not** part of `id`; reword it
   freely without invalidating a previously recorded decision.
 - **`choices`** is the fixed set of answers you may record against **this**
@@ -492,10 +528,13 @@ fixture:
   with the same `code` can offer different lists, and
   `RAILS_REQUEST_TIME_STATE` actually does (below). Read the `choices` array
   on the finding you are answering — never a remembered list per code.
-- **`requires_artifact`** is `false` for every finding this version emits —
-  none of them demands generating a component or file, only recording a
-  choice. When it is `true`, an answer without an `artifact` path is
-  rejected.
+- **`requires_artifact`** is `true` for exactly one code, `RAILS_AUTH_JOURNEY`,
+  and `false` for every other finding this version emits. When it is `true`
+  an answer whose choice **produces** something (`island`) is rejected without
+  an `artifact`; `retain` and `blocked` never need one, because they produce
+  nothing for an artifact to name. For the auth journey the `artifact` is the
+  ZigBase auth collection name, and it is checked against the `--backend`
+  document — see [§18](#18-the-backend-boundary).
 
 `findings[]` is sorted by `(code, path, line, id)`. `MIGRATION.md` renders a
 separate `## Findings` section, after `## Blockers` on purpose — the two
@@ -507,16 +546,22 @@ per finding — both also real output from the same fixture run:
 ```
 ## Findings
 
+- RAILS_AUTH_JOURNEY: 1
 - RAILS_BACKEND_ENDPOINT: 2
 - RAILS_HELPER_UNKNOWN: 1
 - RAILS_I18N_UNRESOLVED: 1
-- RAILS_LAYOUT_DYNAMIC: 1
 ...
 
-- `RAILS_BACKEND_ENDPOINT` `app/views/registrations/new.html.erb:1` — form submits to a Rails action: model `user` (choices: retain, blocked)
+- `RAILS_AUTH_JOURNEY` `config/routes.rb:38` — auth journey: DELETE /session, GET /session/new, POST /session, GET /registration/new, POST /registration; island needs artifact = the ZigBase auth collection name (in --backend: users) (choices: island, retain, blocked)
+- `RAILS_BACKEND_ENDPOINT` `app/views/shared/_nav.html.erb:5` — link performs a mutation: button_to `Sign out` method=delete (choices: deletePosts, deleteUsers, retain, blocked)
+- `RAILS_BACKEND_ENDPOINT` `config/routes.rb:20` — route is API traffic and needs a backend operation: GET /feed (choices: listPosts, viewPosts, listUsers, viewUsers, retain, blocked)
 - `RAILS_HELPER_UNKNOWN` `app/views/pages/help.html.erb:1` — unknown helper `number_to_currency` (choices: island, retain, blocked)
 ...
 ```
+
+(Those operation ids are the ones this fixture's own `backend/openapi.json`
+declares, offered because the run passed `--backend`. Without the flag the
+same two findings read `(choices: retain, blocked)` — [§18](#18-the-backend-boundary).)
 
 These are the codes — `src/cli/rails/findings.zig`'s derivation table is the
 single source of truth. The `Choices` column below is what that table
@@ -527,7 +572,7 @@ reading the individual finding's own `choices` array.
 |---|---|---|
 | `RAILS_HELPER_UNKNOWN` | a fragment classifies `unknown` — outside the closed vocabulary, [§12](#12-the-fragment-vocabulary) | island, retain, blocked |
 | `RAILS_REQUEST_TIME_STATE` | `current_user`/`session`/`flash`/`cookies`/non-route `params`/`request.`/`policy(`/… or a bare `@ivar` | island, spa, backend, retain, blocked |
-| `RAILS_REQUEST_TIME_STATE` (again) | an `errors` fragment — `@x.errors.full_messages`, `errors.any?`, `f.object.errors[:y]`. Same code, **different question**: not "where does this state come from" but "how is the validation state that comes back presented", which Stage 2 cannot answer with an island or a SPA | retain, blocked |
+| `RAILS_REQUEST_TIME_STATE` (again) | an `errors` fragment — `@x.errors.full_messages`, `errors.any?`, `f.object.errors[:y]`. Same code, **different question**: not "where does this state come from" but "how is the validation state that comes back presented" | island, retain, blocked |
 | `RAILS_I18N_UNRESOLVED` | `t("key")` has no entry under the default locale | retain, blocked |
 | `RAILS_RAW_OUTPUT` | `<%== %>`, `raw(...)`, `.html_safe` | island, retain, blocked |
 | `RAILS_PARTIAL_DYNAMIC` | `render @x`, `collection:`, or non-literal `locals:` | island, spa, retain, blocked |
@@ -542,19 +587,24 @@ reading the individual finding's own `choices` array.
 | `RAILS_ROUTE_DYNAMIC_SEGMENT` | a GET/HEAD route whose path has a `:param` or `*glob` segment, and which is neither `backend` nor `redirect`. **Route-scoped**, one per `routes.rb` *declaration* rather than per route — a `resources :posts` line is one question, and `message` names every route it covers | spa, retain, blocked |
 | `RAILS_REDIRECT_HOST_CONFIG` | a route classified `redirect`. Route-scoped, same one-per-declaration folding. The static tree cannot express a redirect; the host-config emitters own it | retain, blocked |
 | `RAILS_NO_TEMPLATE` | a GET/HEAD route, neither `backend` nor `redirect` nor dynamic, whose `<controller>/<action>` matches none of the templates discovery resolved for it — an action that renders another template (`def other; render :about; end`), or one whose view was deleted. Route-scoped, same one-per-declaration folding, so its id is e.g. `RAILS_NO_TEMPLATE.config/routes%2Erb.L56`. There is no template, so no answer produces a page: the choice is whether the URL stays on Rails or does not ship | retain, blocked |
-| `RAILS_BACKEND_ENDPOINT` | a `form`/`form_field` fragment. Only the **outermost** form asks: one form with twelve fields is one decision, not thirteen. A stray `form_field` outside any form still raises its own | retain, blocked |
+| `RAILS_BACKEND_ENDPOINT` | **three shapes**, all one code ([§18](#18-the-backend-boundary)): a `form`/`form_field` fragment (only the **outermost** form asks — one form with twelve fields is one decision, not thirteen; a stray `form_field` outside any form still raises its own); a `link_to`/`button_to` that performs a mutation (`method:` other than `get`, or `data-turbo-method`/`data-method`); and a non-GET or JSON-rendering **route**, keyed on `(routes.rb` line, verb, resource`)` rather than on the line alone | the `--backend` document's own operation ids for that verb, resource-first; then retain, blocked. `custom:/<path>` is additionally accepted. Without `--backend`: retain, blocked |
+| `RAILS_AUTH_JOURNEY` | the app's whole sign-in/sign-up flow, folded into **one** question keyed on the smallest `routes.rb` line any journey route was declared on. `requires_artifact: true` — the artifact is the ZigBase auth collection ([§18](#18-the-backend-boundary)) | island, retain, blocked |
+| `RAILS_ROUTE_AUTH_GUARD` | a page route whose controller (or a class it inherits from) runs a `before_action` whose symbol name contains `login`, `auth`, `sign` or `user`, and does not `skip_before_action` it. A static page cannot enforce the guard, and shipping it silently public is the thing this migration refuses to do | public, retain, blocked |
+| `RAILS_CONTENT_PATH_COLLISION` | a route whose content path another route already claimed (`/about` and `/about/` normalise to one path). Route-scoped. Closes the id-less half of issue #182 | retain, blocked |
+| `RAILS_ROUTE_PATH_UNSUPPORTED` | a route whose path this stage cannot reduce to a content path at all (`GET /posts(.:format)`). Route-scoped, the other half of #182 | retain, blocked |
 | `RAILS_TURBO_FRAME` | a `turbo_frame_tag` fragment | retain, blocked |
 | `RAILS_TURBO_STREAM` | a `turbo_stream_from`/`turbo_stream.*` fragment | retain, blocked |
 | `RAILS_COMPONENT_ROOT` | a `react_component("Name", {…})` mount point | retain, blocked |
 
-The last four exist so that a region the converter cannot finish is at least
-**acknowledgeable**. Without them, a route whose only blemish was a form
-converted to a `<!-- rails:unmapped form -->` marker — which carries no
-finding id — could never be closed by any answer at all. Their `choices` are
-deliberately narrow: Stage 3 widens the two form-family codes with the real
-backend operations, Stage 4 widens the Turbo/component ones with `island`,
-and offering a choice this version cannot carry out would be worse than
-offering two it can.
+The last three exist so that a region the converter cannot finish is at least
+**acknowledgeable**. Without them, a route whose only blemish was a Turbo
+frame converted to a `<!-- rails:unmapped turbo_frame -->` marker — which
+carries no finding id — could never be closed by any answer at all. Their
+`choices` stay narrow because Stage 4 owns them: offering a choice this
+version cannot carry out would be worse than offering two it can. The form
+family was in that position until this stage, and is not any more — `--backend`
+gives `RAILS_BACKEND_ENDPOINT` and the `errors` row real answers that produce
+real files.
 
 `RAILS_TEMPLATE_ENGINE_UNSUPPORTED` is the one code that is a blocker **and**
 a finding, and the pairing is deliberate. Without the finding a Haml view had
@@ -629,15 +679,15 @@ markers.
 | `render_dynamic`      | `render @x`, `collection:`, non-literal locals                   | finding `RAILS_PARTIAL_DYNAMIC`                 | `rails:finding` region, `RAILS_PARTIAL_DYNAMIC` |
 | `route_helper`        | `<name>_path`, `<name>_url`, no args or literal args             | the route's path, literals substituted          | the route's URL, each literal argument percent-encoded per RFC 3986; a `rails:finding` region (`RAILS_ROUTE_HELPER_UNKNOWN`) when the name matches no `certain` route |
 | `route_helper_dynamic`| args are not literals                                            | finding `RAILS_ROUTE_HELPER_DYNAMIC`            | `rails:finding` region, `RAILS_ROUTE_HELPER_DYNAMIC` |
-| `link_to`             | `link_to "text", <route_helper> [, html_opts literals]`          | `<a href="…">text</a>`                          | `<a href="/about">About</a>` (also covers `button_to`); a `rails:finding` region when the route name is unknown |
+| `link_to`             | `link_to "text", <route_helper> [, html_opts literals]`          | `<a href="…">text</a>`, unless it mutates       | `<a href="/about">About</a>` for a navigation link (also covers `button_to`); a `rails:finding` region when the route name is unknown. A link that **performs a mutation** — `method:` other than `get`, `data-turbo-method`, or the rails-ujs `data-method`, and every `button_to` without an explicit `get` — is a `RAILS_BACKEND_ENDPOINT` question instead: unanswered it is an empty `rails:finding` region (never an `<a>` that GETs a DELETE route), answered it is a click island ([§18](#18-the-backend-boundary)) |
 | `asset`               | the ten helpers in `templates.rb`'s `ASSET_HELPERS`: `image_tag`, `image_path`, `asset_path`, `asset_url`, `stylesheet_link_tag`, `javascript_include_tag`, `favicon_link_tag`, `audio_tag`, `video_tag`, `font_path` | `$site.asset('…').link()` when `assets[]` has it deterministic; else `RAILS_ASSET_TRANSFORM` | `<img src="$site.asset('images/logo.png').link()">` / `<link rel="stylesheet" href="$site.asset('…').link()">` / a bare `$site.asset('…').link()` for `image_path`/`asset_path`/`asset_url`/`font_path`/the media helpers; a `rails:finding` region (`RAILS_ASSET_TRANSFORM`) when any argument does not resolve deterministically. An **absolute URL** argument (`http://…`, `https://…`, or the protocol-relative `//host/…`) is emitted verbatim and raises nothing — `<%= image_tag "https://cdn.example.com/x.png" %>` becomes `<img src="https://cdn.example.com/x.png">`; the resource is on another host, so there is no local file to match and nothing to copy. `stylesheet_link_tag "a", "b"` emits one `<link>` per argument, and one unresolvable argument makes the whole node a region even if another argument was absolute. `javascript_include_tag` and `favicon_link_tag` are the two exceptions — they take the drop path below instead |
 | `importmap`           | `javascript_importmap_tags`, `turbo_include_tags`                | dropped                                          | `<!-- rails: javascript_importmap_tags dropped; @z/runtime replaces the Rails JS entry -->` and an informational note. No finding: `@z/runtime` and the island bundle replace the Rails JS entry wholesale, so there is nothing to decide. `javascript_include_tag`/`favicon_link_tag` take this path too |
 | `csrf`                | all three of `templates.rb`'s `CSRF_HELPERS`: `csrf_meta_tags`, `csrf_meta_tag`, `csp_meta_tag` | dropped; noted in `MIGRATION.md` (ZigBase cookie/CSRF boundary owns this) | `<!-- rails: csrf_meta_tags dropped; the ZigBase cookie/CSRF boundary owns this -->` and an informational note |
 | `i18n`                | `t("key")`, `t(".key")`, `I18n.t`                                | resolved literal; `RAILS_I18N_UNRESOLVED` if missing | the resolved string, HTML-escaped; a `rails:finding` region when the key is missing from the default locale |
 | `literal`             | string/number/`nil`/`true`/`false`                               | HTML-escaped text                               | the value, HTML-escaped |
-| `form`                | `form_with`/`form_for`/`form_tag` block and its `f.*` builder calls | a form bound to a backend operation           | `rails:finding` region, `RAILS_BACKEND_ENDPOINT` (Stage 3 produces the real binding) |
+| `form`                | `form_with`/`form_for`/`form_tag` block and its `f.*` builder calls | a form bound to a backend operation           | `rails:finding` region, `RAILS_BACKEND_ENDPOINT`; answered against a `--backend` document it becomes `<island src="components/forms/….island.tsx" client:load>` and the region's ERB is gone ([§18](#18-the-backend-boundary)). A form in a sign-in/sign-up view asks no question of its own — the one `RAILS_AUTH_JOURNEY` finding is its question |
 | `form_field`          | `f.text_field :title`, `f.label`, `f.submit`, `f.check_box`, `f.select` with literal options, `f.text_area`, `f.email_field`, `f.password_field`, `f.hidden_field` | field descriptor inside the enclosing `form` | folded into the enclosing form's one region; only a field with no enclosing form raises its own |
-| `errors`              | `@x.errors.full_messages`, `errors.any?`, `f.object.errors[:y]`   | the form's validation-presentation region       | `rails:finding` region, `RAILS_REQUEST_TIME_STATE` with `retain`/`blocked` only |
+| `errors`              | `@x.errors.full_messages`, `errors.any?`, `f.object.errors[:y]`   | the form's validation-presentation region       | `rails:finding` region, `RAILS_REQUEST_TIME_STATE` with `island`/`retain`/`blocked`. A summary naming the **bound form's own model** (`@post.errors` beside `form_with model: @post`), or any summary in a template whose bound form declares no model, is absorbed into that form's island and emits no region at all — the island renders the backend's field errors where the ERB rendered `full_messages` |
 | `request_state`       | a receiverless call to one of `templates.rb`'s fourteen `REQUEST_STATE` names — `current_user`, `session`, `flash`, `cookies`, `params`, `request`, `signed_in?`, `logged_in?`, `user_signed_in?`, `current_account`, `current_organization`, `policy`, `can?`, `authorize` — **or any name starting with `current_`**, which is what generalises an app's own `current_tenant`-style helpers, **or a read of the `Current` constant** (`Current.user`, `Current.account`: Rails' `ActiveSupport::CurrentAttributes` singleton, which is per-request state under a constant rather than a method — `templates.rb`'s `state_or` matches it as a `Prism::ConstantReadNode` named `Current`, and the finding's message names it as `Current`) | finding `RAILS_REQUEST_TIME_STATE`             | `rails:finding` region, `RAILS_REQUEST_TIME_STATE` with all five choices |
 | `ivar`                | `@anything` outside the shapes above                             | finding `RAILS_REQUEST_TIME_STATE`              | same as `request_state` |
 | `control`             | `if`/`unless`/`case`/`each` whose condition classifies as `literal`, `local` or `unknown` (a request-state/ivar/errors condition takes that kind instead) | finding `RAILS_TEMPLATE_CONTROL_FLOW`           | `rails:finding` region around the whole block, with `<!-- rails:else -->` separating its branches |
@@ -673,8 +723,11 @@ discovery.
 ## 13. `--target` writes a project
 
 This is the exact tree `zigapagos migrate tests/migrate/rails-presentation
---from rails --target DIR` writes for this repository's own fixture — a
-fourteen-route Rails app — on a first run, with no decisions file:
+--from rails --target DIR --backend tests/migrate/rails-presentation/backend/openapi.json`
+writes for this repository's own fixture — a sixteen-route Rails app — on a
+first run, with no decisions file. **Run 1 binds nothing**: no `lib/`, no
+`components/`, no `package.json`, because an unanswered question produces no
+island.
 
 ```
 DIR/.gitignore
@@ -710,10 +763,10 @@ DIR/zigapagos.ziggy
 and it says so on stderr, then exits 3:
 
 ```
-Assembled DIR: 8 page(s), 3 asset(s), 8 route(s) open.
-Wrote DIR/MIGRATION.md: Rails, inventory plus 14 recovered route(s).
+Assembled DIR: 8 page(s), 3 asset(s), 11 route(s) open.
+Wrote DIR/MIGRATION.md: Rails, inventory plus 16 recovered route(s).
 Next: follow MIGRATION.md.
-8 route(s) open -- answer the findings in MIGRATION.handoff.json via MIGRATION.decisions.json and re-run.
+11 route(s) open -- answer the findings in MIGRATION.handoff.json via MIGRATION.decisions.json and re-run.
 ```
 
 The last line names the file you have to write. On a first run that is the
@@ -731,9 +784,10 @@ guessing where your answers live.
 | `build.sh` | `exec "${ZIGAPAGOS_BIN:-zigapagos}" release --force --output=zig-out/site "$@"`, plus one quoted `--spa='spa/<seg>.spa.tsx\|/<seg>'` per scaffolded SPA and a `bun install` line when there is a `package.json`. |
 | `.gitignore`, `AGENTS.md`, `CLAUDE.md` | The same three files every other source's `--target` writes. |
 | `spa/<segment>.spa.tsx` | Only when a `spa` decision was recorded — [§14](#14-the-conversion-rules). |
-| `package.json`, `tsconfig.json` | Only alongside a `.spa.tsx`: a pure content target builds with the binary alone, and a `package.json` nothing installs would invite `bun install` into a project with no JS. **Its `@z/runtime` dependency is a placeholder unless you passed `--runtime-path`** — see [The generated project builds](#the-generated-project-builds) below, because `bun install` fails on it. |
+| `components/…island.tsx`, `lib/zb.ts` | Only when a `--backend` answer produced an island — [§18](#18-the-backend-boundary). `lib/zb.ts` is keyed on an island being **written**, not on a binding existing, so a bound route you then answered `retain` leaves neither behind. |
+| `package.json`, `tsconfig.json` | Only alongside a `.spa.tsx` or an island: a pure content target builds with the binary alone, and a `package.json` nothing installs would invite `bun install` into a project with no JS. **Its `@z/runtime` dependency is a placeholder unless `--runtime-path` or `ZIGAPAGOS_RUNTIME_DIR` gave it one** — see [The generated project builds](#the-generated-project-builds) below, because `bun install` fails on the placeholder. An island also adds `"@zigbase/client": "0.3.0"`. |
 
-Note what is **not** here: the fixture has fourteen routes and eight
+Note what is **not** here: the fixture has sixteen routes and eight
 `content/` pages. A route that is `backend`, `redirect`, dynamic-and-undecided,
 answered `retain` or `blocked`, or whose view would not convert writes no
 page — and an `open` route may still have written one (its page exists; it is
@@ -744,14 +798,46 @@ which is which.
 `layouts/<view stem>.shtml` of its own: `retained` means the page stays on
 Rails, so this target must not answer that URL, and `blocked` means it does
 not ship. Re-running the fixture with its checked-in
-`MIGRATION.decisions.json` therefore produces a *smaller* tree than the one
-above — `content/help`, `content/links`, `content/posts`,
-`content/session/new`, `content/registration/new` and their view files are all
-gone, and only the three migrated routes plus the scaffolded SPA remain. The
-handoff row is the record that the route was considered; the tree holds only
-what the site serves. (`layouts/templates/<layout stem>.shtml` is unaffected —
-a layout is shared chrome, written once per layout rather than per route, so
-one can outlive every page that extended it.)
+`MIGRATION.decisions.json` therefore drops `content/help`, `content/links`
+and `content/posts` and their view files — and *gains* the four files the
+answers produced. The whole answered tree, verbatim:
+
+```
+DIR/.gitignore
+DIR/AGENTS.md
+DIR/CLAUDE.md
+DIR/MIGRATION.decisions.json
+DIR/MIGRATION.handoff.json
+DIR/MIGRATION.manifest.json
+DIR/MIGRATION.md
+DIR/assets/images/logo.png
+DIR/assets/robots.txt
+DIR/assets/stylesheets/application.css
+DIR/build.sh
+DIR/components/AuthForm.island.tsx
+DIR/components/AuthStatus.island.tsx
+DIR/content/about/index.smd
+DIR/content/index.smd
+DIR/content/linked/index.smd
+DIR/content/registration/new/index.smd
+DIR/content/session/new/index.smd
+DIR/layouts/pages/about.shtml
+DIR/layouts/pages/linked.shtml
+DIR/layouts/registrations/new.shtml
+DIR/layouts/sessions/new.shtml
+DIR/layouts/templates/application.shtml
+DIR/layouts/templates/marketing.shtml
+DIR/lib/zb.ts
+DIR/package.json
+DIR/spa/posts.spa.tsx
+DIR/tsconfig.json
+DIR/zigapagos.ziggy
+```
+
+The handoff row is the record that the route was considered; the tree holds
+only what the site serves. (`layouts/templates/<layout stem>.shtml` is
+unaffected — a layout is shared chrome, written once per layout rather than
+per route, so one can outlive every page that extended it.)
 
 Everything is a pure function of the discovery result and your decisions
 file: no timestamps, no absolute paths, no ambient state. Two runs over the
@@ -771,15 +857,24 @@ resolve to. A route left `open` still builds: its unfinished regions are HTML
 comments, so the page renders and the `rails:finding` markers are visible in
 the output for whoever finishes it by hand.
 
-**A target with a SPA needs `@z/runtime` pointed somewhere real first.** The
-generated `package.json` carries a deliberate placeholder:
+**A target with JS needs `@z/runtime` pointed somewhere real first** — a SPA,
+an island, or both. Where the path comes from, in order:
+
+1. **`--runtime-path <path>/runtime`** on the `migrate` call that scaffolds
+   it. Always wins.
+2. **`ZIGAPAGOS_RUNTIME_DIR`**, which the run reads from its own environment
+   (issue #179). It is the same variable the Rails sidecar and the bundlers
+   already need when you drive `zigapagos` out of a checkout rather than an
+   installed release, so in that setup the dependency is written resolved
+   with nothing extra to remember.
+3. Neither: a deliberate placeholder.
 
 ```json
 "dependencies": { "@z/runtime": "file:TODO-SET-RUNTIME-PATH" }
 ```
 
-and `build.sh` starts with `bun install`, so building it as-is fails before
-`release` is ever reached:
+`build.sh` starts with `bun install`, so building the placeholder as-is fails
+before `release` is ever reached:
 
 ```
 error: Could not find package.json for "file:TODO-SET-RUNTIME-PATH" dependency "@z/runtime"
@@ -787,15 +882,10 @@ error: @z/runtime@file:TODO-SET-RUNTIME-PATH failed to resolve
 ```
 
 The handoff says so too — the `spa`-decided route's `note` reads
-`set dependencies.@z/runtime in package.json`. Two ways to fix it, and the
-first is better because it leaves nothing to remember:
-
-- pass **`--runtime-path <path>/runtime`** on the `migrate` call that
-  scaffolds the SPA, and the dependency is written resolved; or
-- edit that one line in `package.json` afterwards.
-
-Either way `bash build.sh` then exits 0. A target with no SPA has no
-`package.json` at all and needs neither.
+`set dependencies.@z/runtime in package.json`. Editing that one line in
+`package.json` afterwards works as well as either of the two inputs above.
+Any of the three, and `bash build.sh` exits 0. A target with no SPA and no
+island has no `package.json` at all and needs none of them.
 
 **A scaffolded SPA renders unstyled until you give it a `head`.** The
 generated `spa/<segment>.spa.tsx` declares `export const spa = { base: … }`
@@ -812,20 +902,26 @@ porting the placeholder components.
 
 **`zigapagos doctor` on the built site reports 0 errors, and a warning per
 link into a route you did not migrate.** On the fixture's answered run that is
-three, all the same one:
+now **none**:
 
 ```
-warn dangling-internal-link: about/index.html: href '/session/new' resolves to no file in the tree
-warn dangling-internal-link: index.html: href '/session/new' resolves to no file in the tree
-warn dangling-internal-link: linked/index.html: href '/session/new' resolves to no file in the tree
-doctor: 0 errors, 3 warnings across 4 files
+doctor: 0 errors, 0 warnings across 6 files
 ```
 
-That is not a defect in the conversion — it is the honest report of a partial
-migration. `/session/new` was answered `retain`, so Rails still serves it and
-this tree does not, while the shared `_nav` partial inlined into every
-migrated page still links to it. Fix it by migrating the route, by pointing
-the link at the Rails origin, or by accepting it until you do.
+It used to be three, all the same `dangling-internal-link` on
+`href '/session/new'`: the shared `_nav` partial linked to the sign-in page,
+and `/session/new` was answered `retain`, so Rails served it and this tree did
+not. Answering the auth journey `island` instead migrates that route — the
+target now serves `/session/new/` — and the nav's own link is gone anyway,
+because the `AuthStatus` island replaces the whole `current_user` region and
+renders its own `<a href="/session/new">` at runtime
+([§18](#18-the-backend-boundary)).
+
+A warning of that shape is still what you should expect from a **partial**
+migration, and it is not a defect in the conversion: a link into a route you
+answered `retain` or `blocked` genuinely resolves to nothing in this tree
+while Rails still answers it. Fix it by migrating the route, by pointing the
+link at the Rails origin, or by accepting it until you do.
 
 ## 14. The conversion rules
 
@@ -834,9 +930,10 @@ the link at the Rails origin, or by accepting it until you do.
 | Discovery says | The conversion writes | Handoff `status` |
 |---|---|---|
 | any GET/HEAD route whose whole template graph converts | `content/<url>/index.smd` + `layouts/<view stem>.shtml` + `layouts/templates/<layout stem>.shtml` | `migrated` |
-| `redirect` | nothing in the tree; a `redirects[]` entry (`to` is always `null` — recovering the target is Stage 3) and a `RAILS_REDIRECT_HOST_CONFIG` finding | `redirect` |
-| `backend`, **or any non-GET/HEAD verb** | nothing | `backend` |
+| `redirect` | nothing in the tree; a `redirects[]` entry and a `RAILS_REDIRECT_HOST_CONFIG` finding. `to` is the URL the action's own `redirect_to` names, resolved through the route table (`redirect_to about_path` → `/about`), or `null` when this run could not resolve one — and then the row says `redirect target is request-time state; set it by hand` | `redirect` |
+| `backend`, **or any non-GET/HEAD verb** | nothing in the tree; a `RAILS_BACKEND_ENDPOINT` question, and an `endpoint` in the handoff once it is answered ([§18](#18-the-backend-boundary)) | `backend` |
 | a path with a `:param`/`*glob` segment | nothing until a `spa` decision; then `spa/<first segment>.spa.tsx` | `open`, then `migrated` |
+| a form, a mutating link or the auth journey, answered against `--backend` | the page, with the region replaced by `<island src="…" client:load>`, plus the island's own `.tsx`, `lib/zb.ts`, `package.json` and a `--island=` flag in `build.sh` | `migrated` |
 | a route you answered `retain` | **nothing** — no page, no view file. The page stays on Rails, so this tree must not answer that URL | `retained` |
 | a route you answered `blocked` | **nothing**, for the same reason from the other side: it does not ship | `blocked` |
 | anything the converter could not finish and nobody answered | whatever it did write, plus the finding ids and a `note` saying why | `open` |
@@ -1097,8 +1194,9 @@ a path, which nothing downstream can build. Such a route stays `open` with
   run and is read by the next person to touch the migration; an unexplained
   `blocked` is a decision nobody can revisit.
 - **`artifact`** is optional, and required only for a finding whose
-  `requires_artifact` is `true` (none, today). `""` is normalised to absent,
-  so it cannot satisfy the requirement.
+  `requires_artifact` is `true` — `RAILS_AUTH_JOURNEY`, and only when the
+  choice is one that produces something (`island`). `""` is normalised to
+  absent, so it cannot satisfy the requirement.
 
 The file is read from `DIR/MIGRATION.decisions.json` when it exists, or from
 `--decisions FILE` when you name one. The default is existence-gated, not
@@ -1112,14 +1210,46 @@ the normal state, not a failure.
 | `retain` | status `retained` — you are keeping the Rails behaviour as it is. Accounts for the route, and **writes no page**: Rails still serves that URL, so this target must not. |
 | `blocked` | status `blocked` — the converter cannot produce this and you have acknowledged it. Accounts for the route **only** with a decision attached, which by construction it always has. **Writes no page**: a blocked route that still emitted its converted page would serve a blank one, which is worse than a 404 because it looks deliberate. |
 | `spa` | on `RAILS_ROUTE_DYNAMIC_SEGMENT` with a static first segment, scaffolds the `.spa.tsx` and reports `migrated`. |
-| `island` | **accepted and recorded, route stays `open`** with `choice island deferred to Stage 4`. This version cannot produce the island component the choice promises, and recording it as migrated would claim work that does not exist. |
-| `backend` | same: recorded, route stays `open` with `choice backend deferred to Stage 3`. |
+| an **operation id**, or `custom:/<path>` | on `RAILS_BACKEND_ENDPOINT` only: binds the form, the mutating link or the route to that ZigBase operation, writes the island, and reports `migrated` (or fills a `backend` route's `endpoint`). Needs `--backend` — [§18](#18-the-backend-boundary). |
+| `island` on `RAILS_AUTH_JOURNEY` | with an `artifact` naming an auth collection, scaffolds `AuthForm`/`AuthStatus`, `lib/zb.ts` and the journey's three endpoints, and settles every route the journey rides on. |
+| `island` on the `errors` / `current_user` shape of `RAILS_REQUEST_TIME_STATE` | mounts the island that replaces that region — the bound form's error list, or `AuthStatus`. |
+| `public` | on `RAILS_ROUTE_AUTH_GUARD` only: ships the page and records that you decided to, with the note `guarded by before_action :<name>; shipped public by decision` — the same filter the finding's own message named, which is the smallest `(name, line)` among the auth-looking filters the action runs, so a controller with two of them names one filter and not two. It does **not** change the route's status by itself — it settles that one finding, and the ZigBase rule on each operation is what actually protects the data. |
+| `island` (anything else) | **accepted and recorded, route stays `open`** with `choice island deferred to Stage 4`. This version cannot produce the island component the choice promises, and recording it as migrated would claim work that does not exist. |
+| `backend` | recorded, route stays `open` with `choice backend on RAILS_REQUEST_TIME_STATE has no converter (see #184)`. The word is a leftover: binding a route to a backend operation is what an operation-id answer on `RAILS_BACKEND_ENDPOINT` does, and this choice never grew a converter of its own. |
 
 When a route has several open findings and you answered more than one, the
-strongest answer decides its status: `blocked` beats `retain`, and both beat
-a deferred `island`/`backend`; ties break on the smaller finding id. An
-operator who blocked a route on one of its gaps has not agreed to ship it
-because another gap was marked `retain`.
+strongest answer decides its status: `blocked` beats `retain`, both beat an
+answer that **produces** something (an operation id, `island`, `public`), and
+that in turn beats a deferral (`backend`); ties break on the smaller finding
+id. An operator who blocked a route on one of its gaps has not agreed to ship
+it because another gap was marked `retain`.
+
+**Every answer on the route is carried out**, strongest first — each answered
+finding is settled by its own choice, and the status above is the strongest
+outcome among them rather than the verdict of a single winning answer. So a
+route carrying both a bound mutation *and* an answered `RAILS_ROUTE_AUTH_GUARD`
+comes back `migrated` **and** carries the guard's note (`guarded by
+before_action :require_login; shipped public by decision`): the binding wrote
+the island, and the `public` settled the guard. Answering that same guard
+`retain` instead comes back `retained`, because `retain` outranks the binding.
+
+`retain` and `blocked` are the exception, and they stop the walk. They
+acknowledge the **route** — it stays on Rails, or does not ship at all —
+which moots every answer about what is on that page, so once one of them has
+been applied nothing after it runs. Carrying on would not change the status
+(that is what makes them the top two ranks, and why one can only ever be the
+first answer applied) but it would file notes about work that is not
+happening: `public`'s note says a guarded page is shipping, and on a retained
+route no page ships.
+
+Three arms sit outside this rule, and each applies exactly one answer. A
+**dynamic route** looks up the answer to the `RAILS_ROUTE_DYNAMIC_SEGMENT` id
+it has just raised rather than choosing among the route's findings. A
+**redirect** route and a **backend** route each record the strongest answer —
+a backend route that bound an endpoint also settles it; a redirect route only
+records it — but never let it change the route's status — `redirect` and
+`backend` are already complete answers about what the route *is*, and a
+`retain` on either would claim a page decision nobody made.
 
 **The answer is applied before anything else can veto it.** A route whose
 view the converter refused outright (a parse error, an unsupported engine)
@@ -1127,8 +1257,9 @@ and a route whose converted bytes hold a `rails:unmapped` region are both
 settled by a `retain`/`blocked` answer — the unmapped region is then reported
 as a **footnote** in `note` (e.g. `local left unmapped`), which records that
 the emitted `.shtml` really does hold the placeholder without pretending the
-route is unanswered. An `island`/`backend` answer still leaves the route
-`open`, and then the note names both the deferral and the region.
+route is unanswered. A `backend` answer, or an `island` on a code no converter
+owns, still leaves the route `open`, and then the note names both the deferral
+and the region.
 
 The one case no answer reaches: a route with a `rails:unmapped` region and
 **no finding at all**. There is no id to write down, so no decision file can
@@ -1251,7 +1382,7 @@ expected to change on every run of the loop.
   "schema": "zigapagos.rails-handoff/1",
   "schema_version": 1,
   "generator": { "tool": "zigapagos", "version": "<the build that wrote it>" },
-  "backend": null,
+  "backend": { "file": "openapi.json", "contract_version": "1.0.0" },
   "complete": false,
   "routes": [
     {
@@ -1294,17 +1425,17 @@ expected to change on every run of the loop.
 
 | Field | What it is |
 |---|---|
-| `backend` | Always `null` in this version — nothing emits a backend contract yet. Present on the wire anyway so a consumer reads one shape in both versions. |
+| `backend` | `{file, contract_version}` for the `--backend` document this run read, else `null`. `file` is the **basename** — a committed artifact must not carry the operator's directory layout — and `contract_version` is the document's `x-zigbase-contract-version` when it has one, else its `info.version`. |
 | `complete` | The completion verdict, recomputed from `routes[]` rather than supplied — see below. |
 | `routes[].route_id` | `"<VERB> <path>"`. A **label, not a unique key**, exactly as `routes[].id` is in the manifest ([§6](#6-route-identity-routesid-is-not-unique)). |
 | `routes[].status` | One of `migrated`, `open`, `blocked`, `retained`, `backend`, `redirect`. |
 | `routes[].artifacts` | Target-relative paths this route produced, sorted. A shared file (a layout, a `.spa.tsx`) is listed on **every** route that reaches it, and written once. |
-| `routes[].endpoint` | Always `null` in this version; Stage 3 fills it. |
+| `routes[].endpoint` | `{operation_id, verb, path}` once something bound this route, else `null`. The verb and path are the **document's**, not the Rails route's: `GET /feed` answered `listPosts` records `{"listPosts", "GET", "/api/collections/posts/records"}`. A `custom:/<path>` answer records `operation_id: "custom"` with the Rails verb and the path you named. Three ways it arrives — [§18](#18-the-backend-boundary). |
 | `routes[].decision` | `{id, choice, rationale}` — the answer recorded against one of this route's open findings, echoed so a reader does not have to cross-reference the decisions file by hand. A `redirect` route carries it too: the status stays `redirect` whatever you answered, but the acknowledgement is visible rather than silently ignored. |
 | `routes[].findings` | The finding ids this route left **open**, sorted. This is the join key: these are the ids you answer. Non-empty on a `retained`/`blocked` route too — the findings did not go away, they were acknowledged. |
 | `routes[].note` | Free prose. Carries both the conversion's informational drops and the reason a route is not finished. Not identity, not parsed by anything. |
 | `assets[]` | `{source, rails_url, target_url}` per copied asset. |
-| `redirects[]` | `{from, to}`; `to` is always `null` in this version. |
+| `redirects[]` | `{from, to}`. `to` is the target the redirecting action names, resolved through the route table, or `null` when this run could not resolve one (a `redirect_to @post`, a `redirect_back`). |
 | `parity[]` | Always empty in this version; Stage 5 fills it. |
 
 Every list is sorted under a **total** order, and every tiebreak compares
@@ -1316,8 +1447,9 @@ different orders.
 ### `complete`, and the exit code
 
 > `complete` is true iff **every** route whose verb is GET or HEAD has
-> `status` in `{migrated, redirect, backend}`, or `retained`/`blocked` with a
-> non-null `decision`.
+> `status` `migrated` or `redirect`; or `retained`/`blocked` with a non-null
+> `decision`; or `backend` with a non-null `endpoint` **or** a non-null
+> `decision`.
 
 `retained` and `blocked` are the two statuses only an *operator* can produce
 (both come from a choice, never from the conversion), and both mean the target
@@ -1330,11 +1462,14 @@ Three things that rule deliberately does *not* do:
 - **Non-GET/HEAD routes are not counted at all.** A `POST /session` is form
   traffic, and leaving it unconverted does not make the site broken to
   browse.
-- **`backend` counts as accounted, with or without a decision.** It marks a
-  route that needs no *page*, and `complete` asks whether the migrated site
-  is browsable. Treating it as unanswered made exit 3 unreachable for any app
-  with a JSON endpoint. Which endpoint it maps to is a separate question,
-  reopened by its own `RAILS_BACKEND_ENDPOINT` finding in Stage 3.
+- **`backend` needs its endpoint bound, or acknowledged.** It marks a route
+  that needs no *page*, but it does need an answer to "which operation is
+  this?" — so a `backend` row counts only once it carries an `endpoint` or a
+  `decision`. Because non-GET/HEAD routes are outside the count entirely,
+  this bites on exactly one shape: a **user-facing GET that renders JSON**,
+  such as the fixture's `GET /feed`. Until this stage the status counted
+  unconditionally, which is what made a route the operator had never seen a
+  question about look accounted for.
 - **A user-facing route with no row at all counts as `open`.** Absence is the
   unanswered case, not an exemption — that is what stops a conversion that
   silently skipped a route from reporting a complete migration.
@@ -1343,7 +1478,7 @@ The exit code, in order:
 
 | Code | Meaning |
 |---|---|
-| `1` | An `integrity: true` blocker fired (or, under `--strict`, any blocker at all). The artifacts were written but cannot be trusted. **Checked first**: a run that is both broken and incomplete reports broken. Also `1` for an unusable decisions file or a rejected `--target`. |
+| `1` | An `integrity: true` blocker fired (or, under `--strict`, any blocker at all). The artifacts were written but cannot be trusted. **Checked first**: a run that is both broken and incomplete reports broken. Also `1` for an unusable decisions file, a rejected `--target`, and an unusable `--backend` document — one whose path cannot be read (`error: --backend <path> could not be read: FileNotFound`) or that is not an OpenAPI 3.x document with a `paths` object (`error: <path> is not a ZigBase OpenAPI document: InvalidJson`). A path the operator typed wrong is their input being wrong, so it prints and exits 1 rather than taking the fatal path, which panics with 134 under a debug build. |
 | `3` | Everything was written and read correctly, and at least one user-facing route is still unanswered. Only reachable with `--target`: a run with no target has no handoff and therefore no completion question, so it never exits 3. |
 | `0` | Complete — or a `-o` run with no blockers. |
 
@@ -1353,17 +1488,20 @@ The exit code, in order:
 ## Handoff
 
 complete: false
+backend: openapi.json (1.0.0)
 
 `MIGRATION.handoff.json` records what each recovered route became.
 
 | Status | Routes |
 | --- | --- |
-| migrated | 3 |
-| open | 8 |
+| migrated | 0 |
+| open | 11 |
 | blocked | 0 |
 | retained | 0 |
-| backend | 2 |
+| backend | 4 |
 | redirect | 1 |
+
+endpoints: 0 of the 4 `backend` route(s) are bound to a ZigBase operation.
 
 Next: each `open` route in `MIGRATION.handoff.json` lists the
 finding ids still unanswered. Answer each one in
@@ -1375,6 +1513,14 @@ same command.
 
 It is recomputed from the same rows the JSON's own `complete` came from, so
 the report, the JSON and the exit code cannot disagree.
+
+The two backend lines are emitted **unconditionally**. `backend: none` is not
+a line that disappears: the operator wondering why their
+`RAILS_BACKEND_ENDPOINT` findings offered nothing but `retain`/`blocked` is
+precisely the operator who forgot the flag. `endpoints:` sits under the
+`backend` row it refines rather than in the header block, because
+`endpoints: 2` alone does not say whether one is left or three are — and it is
+the remainder that keeps `complete` false.
 
 ## 17. The re-run loop
 
@@ -1398,10 +1544,10 @@ Then, on exit 0:
 bash site/build.sh
 ```
 
-**If any of your answers was `spa`**, the final `migrate` — the one that
-scaffolds the `.spa.tsx` — needs `--runtime-path` too, or `build.sh`'s
-`bun install` fails on the `file:TODO-SET-RUNTIME-PATH` placeholder before
-`release` runs:
+**If any of your answers scaffolded JS** — a `spa`, or any `--backend`
+binding — the final `migrate` needs `--runtime-path` (or
+`ZIGAPAGOS_RUNTIME_DIR` in its environment), or `build.sh`'s `bun install`
+fails on the `file:TODO-SET-RUNTIME-PATH` placeholder before `release` runs:
 
 ```sh
 zigapagos migrate app --from rails --target site --runtime-path /path/to/runtime
@@ -1410,33 +1556,52 @@ zigapagos migrate app --from rails --target site --runtime-path /path/to/runtime
 (Editing that one line of the generated `package.json` afterwards works just
 as well — see [The generated project builds](#the-generated-project-builds).)
 
+**Pass `--backend` on every run of the loop, not just the last one.** It is
+what widens the `choices` an answer has to come from, so a run without it
+rejects the operation id you wrote last time (`allowed: retain, blocked`), and
+a run without it *first* never shows you the ids to choose among.
+
 ### The loop, on this repository's own fixture
 
-`tests/migrate/rails-presentation` is a fourteen-route Rails app carrying one
-of nearly every finding the vocabulary can raise, and it ships its own
+`tests/migrate/rails-presentation` is a sixteen-route Rails app carrying one
+of nearly every finding the vocabulary can raise, it ships a real
+`zigbase openapi` document under `backend/openapi.json`, and it ships its own
 `MIGRATION.decisions.json` — so the two runs below are the whole loop, end to
 end, and `tests/migrate/rails-presentation.sh` pins both.
 
-**Run 1**, no decisions file. Exit **3**, `complete: false`, eight routes
+```sh
+zigapagos migrate tests/migrate/rails-presentation --from rails --target DIR \
+  --backend tests/migrate/rails-presentation/backend/openapi.json
+```
+
+**Run 1**, no decisions file. Exit **3**, `complete: false`, eleven routes
 open:
 
 | route | status | why |
 |---|---|---|
-| `GET /`, `GET /about` | `migrated` | one view, one layout; S16 dedupe gives both routes the same `layouts/pages/about.shtml` |
-| `GET /linked` | `migrated` | an ordinary static view |
-| `GET /help` | `open` | `RAILS_HELPER_UNKNOWN` + `RAILS_RAW_OUTPUT` + `RAILS_I18N_UNRESOLVED` |
-| `GET /broken` | `open` | `RAILS_TEMPLATE_PARSE_ERROR`; no page written |
-| `GET /links` | `open` | `RAILS_ROUTE_HELPER_UNKNOWN` |
-| `GET /posts` | `open` | `RAILS_PARTIAL_DYNAMIC` + `RAILS_REQUEST_TIME_STATE` |
+| `GET /`, `GET /about`, `GET /linked` | `open` | nothing wrong with the page — the shared `_nav` partial reads `current_user` and holds a `button_to "Sign out"`, and a layout's findings ride on every route under it (four ids each) |
+| `GET /help` | `open` | `RAILS_HELPER_UNKNOWN` + `RAILS_RAW_OUTPUT` + `RAILS_I18N_UNRESOLVED`, plus the nav's four |
+| `GET /broken` | `open` | `RAILS_TEMPLATE_PARSE_ERROR`; no page written, so the nav's ids never reach it |
+| `GET /links` | `open` | `RAILS_ROUTE_HELPER_UNKNOWN`, plus the nav's four |
+| `GET /posts` | `open` | `RAILS_PARTIAL_DYNAMIC` + `RAILS_REQUEST_TIME_STATE` + `RAILS_ROUTE_AUTH_GUARD` (a `before_action :require_login`), plus the nav's four |
 | `GET /posts/:id` | `open` | `RAILS_ROUTE_DYNAMIC_SEGMENT`, undecided |
 | `GET /posts/legacy` | `open` | `RAILS_TEMPLATE_ENGINE_UNSUPPORTED` (Haml); no page written |
-| `GET /session/new` | `open` | `RAILS_BACKEND_ENDPOINT` (the form) |
-| `GET /registration/new` | `open` | `RAILS_BACKEND_ENDPOINT` + 3× `RAILS_REQUEST_TIME_STATE` |
-| `GET /old` | `redirect` | a pure `redirect_to`; complete without a page and without a decision |
-| `POST /session`, `POST /registration` | `backend` | non-GET |
+| `GET /session/new`, `GET /registration/new` | `open` | the one `RAILS_AUTH_JOURNEY` id, plus the nav's four (and, for sign-up, two `errors` rows) |
+| `GET /old` | `redirect` | a pure `redirect_to`; complete without a page and without a decision, and `redirects[0]` already reads `{from: "/old", to: "/about"}` |
+| `GET /feed` | `backend` | `posts#feed` renders JSON. Its own `RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L20.GET.posts` is unanswered, so under the amended completion rule it is **not** accounted |
+| `POST /session`, `DELETE /session`, `POST /registration` | `backend` | non-GET, and all three carry the journey's id |
 
-**Answer them.** The fixture's file records fifteen decisions — every open
-route's findings, not one per route. A representative three:
+The report's Handoff section reads `backend: openapi.json (1.0.0)` and
+`endpoints: 0 of the 4`. Nothing is bound yet, so run 1's tree has no `lib/`,
+no `components/` and no `package.json`. Drop the `--backend` flag and the same
+run still exits 3 — but `backend: none`, the feed's choices narrow to
+`retain, blocked`, and the journey's message ends
+`(pass --backend to validate the name)` instead of `(in --backend: users)`.
+
+**Answer them.** The fixture's file records eighteen decisions — every open
+route's findings, not one per route. Four representative entries, their
+`rationale` abridged (the fixture's are longer and cite the ruling each one
+turns on):
 
 ```jsonc
 {
@@ -1450,43 +1615,104 @@ route's findings, not one per route. A representative three:
   "rationale": "/posts/:id is one page per record; a client-routed SPA mounted at /posts is the shape this converter can actually produce."
 },
 {
-  "id": "RAILS_REDIRECT_HOST_CONFIG.config/routes%2Erb.L47",
-  "choice": "retain",
-  "rationale": "/old keeps redirecting to /about; the host config owns the rule, so there is nothing for the static tree to carry."
+  "id": "RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L20.GET.posts",
+  "choice": "listPosts",
+  "rationale": "GET /feed renders `Post.all` as JSON, which is exactly what the backend document's `listPosts` operation returns."
+},
+{
+  "id": "RAILS_AUTH_JOURNEY.config/routes%2Erb.L38",
+  "choice": "island",
+  "artifact": "users",
+  "rationale": "one question for the whole sign-in/sign-up flow; `users` is the document's only auth collection."
 }
 ```
 
-The four findings that reach no route outcome — two in `posts/_post.html.erb`,
-one in `posts/show.html.erb`, and the controller's `RAILS_LAYOUT_DYNAMIC` —
-are left unanswered on purpose. They are not stale (the run really does raise
+The findings that reach no route outcome — two in `posts/_post.html.erb`, one
+in `posts/show.html.erb`, and the controller's `RAILS_LAYOUT_DYNAMIC` — are
+left unanswered on purpose. They are not stale (the run really does raise
 them) and answering them would change nothing.
 
-**Run 2**, with that file in the target. Exit **0**, `complete: true`, no
-open route:
+The `RAILS_BACKEND_ENDPOINT` on the nav's `button_to "Sign out"` is left
+unanswered on purpose too, and that one is not cosmetic: the `AuthStatus`
+island replaces the whole `if current_user` region the button sits inside, so
+the answer to that region settles the button with it, and the fixture records
+only the answer that does the work. Answering it *as well* is **accepted** —
+the run still exits 0 and `complete` stays `true`; the extra answer is settled
+and the route's `note` names both ids, e.g. `choice custom:/api/logout on
+RAILS_BACKEND_ENDPOINT.app/views/shared/_nav%2Ehtml%2Eerb.L5C54 superseded by
+the island answering
+RAILS_REQUEST_TIME_STATE.app/views/shared/_nav%2Ehtml%2Eerb.L5C6, which
+replaced the region it sits in`. See
+[§18](#18-the-backend-boundary)'s auth-journey section.
+
+**Run 2**, with that file in the target and the same `--backend`. Exit **0**,
+`complete: true`, no open route:
 
 - `/help`, `/broken`, `/links`, `/posts/legacy` → **`blocked`**;
-- `/posts`, `/session/new`, `/registration/new` → **`retained`**;
+- `/posts` → **`retained`** (its `RAILS_PARTIAL_DYNAMIC` is answered `retain`,
+  which outranks the `public` on its auth guard **and** stops the walk there,
+  so the guard note is not filed on a route that ships no page);
+- `/`, `/about`, `/linked` → **`migrated`**, their nav region replaced by one
+  `components/AuthStatus.island.tsx`;
+- `/session/new`, `/registration/new` → **`migrated`** (they were `retained`
+  before this stage), each mounting the one `components/AuthForm.island.tsx`
+  with `mode="signin"` / `mode="signup"`;
 - `/posts/:id` → **`migrated`**, scaffolding `spa/posts.spa.tsx`,
   `package.json`, `tsconfig.json` and `build.sh`'s
   `--spa='spa/posts.spa.tsx|/posts'`;
+- `/feed` stays **`backend`**, now with
+  `endpoint = {listPosts, GET, /api/collections/posts/records}`;
+- `POST /session`, `DELETE /session`, `POST /registration` stay **`backend`**
+  with the journey's three endpoints — `authWithPassword`, `logout`,
+  `createUsers`;
 - `/old` stays **`redirect`** with its decision *recorded* — the status was
   already complete, and the answer is echoed rather than acted on.
 
-`/registration/new` is the interesting one: its view contains an unbound
-block local, so its converted bytes hold a `<!-- rails:unmapped local -->`
-placeholder — and because its findings were answered, the route is `retained`
-with `local left unmapped` as a footnote in `note`, not held open by it.
-(Nothing is written for it: `retained` is an answer, and the footnote is what
-records what the conversion would have carried.)
+The report now says `endpoints: 4 of the 4`.
 
-Then `build.sh` on that target builds a real site — three pages and the SPA.
-`/posts` itself is retained, so the built tree has no `posts/index.html`; the
-SPA still mounts at that base, giving `posts/_shell.html`,
-`posts/routing-manifest.json` and `posts/.spa`. `doctor` reports **0 errors**
-and three `dangling-internal-link` warnings, all of them the shared `_nav`
-partial's link to `/session/new` — a retained route Rails still serves and
-this tree deliberately does not. That is the honest shape of a partial
-migration, and it is pinned as such.
+`GET /` is the interesting one: the nav is a **complementary pair**
+(`<% unless current_user %>…<% end %>` then `<% if current_user %>…<% end %>`),
+both halves answered `island`, and `AuthStatus` renders both branches itself —
+so the two answers mount it **once**, and the route's `note` names the half
+that was folded in: ``app/views/shared/_nav.html.erb:5 `if current_user`
+folded into the AuthStatus island above it``. Mounting it twice would print
+"Sign in" twice in the built nav.
+
+The nav's third region — the `<%= current_user.email %>` **inside** the `if`
+half — is answered too, and it produces a second note on the same routes:
+``app/views/shared/_nav.html.erb:5 `current_user.email` is inside the region
+the AuthStatus island replaced, so it mounts nothing of its own``. Both notes
+ride on the *decisions*, not on the page, so both land on exactly the five
+routes that mounted the island — `/`, `/about`, `/linked`, `/session/new`,
+`/registration/new` — and `/posts`, which renders the same nav but is
+`retained`, carries neither.
+
+`/registration/new` carries two more clauses nobody else does. Its two
+`errors` regions were answered `island` *and* absorbed into the `AuthForm` the
+journey answer mounted, so each is settled as superseded and says by what:
+`choice island on
+RAILS_REQUEST_TIME_STATE.app/views/registrations/new%2Ehtml%2Eerb.L1C4
+superseded by the island answering
+RAILS_AUTH_JOURNEY.config/routes%2Erb.L38, which replaced the region it sits
+in`, and the same for `…L1C36`. Both ids are named because neither alone is
+actionable: you know which finding you answered, and what you cannot see from
+the target is which other answer made yours redundant.
+
+Then `build.sh` on that target builds a real site — five pages, two bundled
+islands and the SPA. `/posts` itself is retained, so the built tree has no
+`posts/index.html`; the SPA still mounts at that base, giving
+`posts/_shell.html`, `posts/routing-manifest.json` and `posts/.spa`. The two
+sign-in pages SSR their `AuthForm` with `{"mode":"signin"}` /
+`{"mode":"signup"}` in the `data-z-props` block, and every page carries one
+SSR'd `AuthStatus`. `doctor` reports **0 errors and 0 warnings across 6
+files** (the five pages plus the SPA shell).
+
+The `errors` regions in `registrations/new.html.erb` are worth one line: they
+name `@user`, which is the model the sign-up form declares, so they are
+absorbed into the `AuthForm` island rather than converted at all. That is why
+the sign-up layout carries no `<!-- rails:unmapped local -->` from the
+`full_messages.each do |m|` block it used to — one instance of issue #181
+closed by the binding rather than by the decision plumbing.
 
 ### The one thing a decision cannot close
 
@@ -1513,7 +1739,572 @@ write today helps. If you hit it, the route has to be finished by hand. It is
 tracked as issue #181, and a route's `note` says so: an unmapped region whose
 kind no later stage owns is reported as `<kind>: converter gap (see #181)`,
 against `<kind>: deferred to Stage 3`/`Stage 4` for the form and
-Turbo/component families that a later stage really does own.
+Turbo/component families that a later stage really does own. The form family's
+own **findings** are answerable now ([§18](#18-the-backend-boundary)), so that
+first label survives only for a `form`/`form_field`/`errors` region that raised
+no finding at all.
+
+## 18. The backend boundary
+
+Everything above converts *presentation*. This section is the other half:
+what happens to the parts of a Rails app that were never presentation — a
+form's `POST`, a sign-out button, a JSON endpoint, the whole sign-in flow —
+once you tell the migration which backend they should talk to instead.
+
+```sh
+zigapagos migrate app --from rails --target site --backend openapi.json
+```
+
+### The document
+
+`--backend FILE` reads the OpenAPI document `zigbase openapi` writes. It is
+**not** generated by this tool and has **no default location**: a document the
+operator did not name is a document the run does not have. Producing one is
+three commands against a ZigBase data directory —
+
+```sh
+zigbase migrate       --data-dir "$d"                  # create the database
+zigbase schema apply  schema.json --data-dir "$d"      # the collections
+zigbase openapi       --data-dir "$d" --api-version 1.0.0 --out openapi.json
+```
+
+— and this repository's `tests/migrate/rails-presentation/backend/README`
+records exactly that for the checked-in fixture document, with the
+`schema.json` beside it so the artifact is reproducible. (There is no
+`zigbase collection create` subcommand; the declarative `schema apply` path is
+the equivalent.)
+
+What the reader takes from the document, and nothing else:
+
+| What it reads | What it does with it |
+|---|---|
+| `openapi` | must start with `3.` — a Swagger 2.0 file is rejected, not best-effort parsed |
+| `paths` × verbs | every operation **with an `operationId`**; one without cannot be named in an answer, so it is dropped |
+| `x-zigbase-contract-version`, else `info.version` | the handoff's `backend.contract_version` |
+| `x-zigbase-access` (`public`/`locked`/`conditional`), else `x-zigbase-auth` (`public`/`authenticated`/`superuser`/`path-secret`) | recorded per operation; an unrecognised value is `unknown`, never an error — the document is ZigBase's, not the operator's |
+| `/api/collections/<name>/records[/{id}]` | the collection an operation belongs to, and its CRUD slot. Any other path is a consumer route |
+| a collection whose create-request schema (resolved one hop through `$ref`) has **both** `password` and `passwordConfirm` | an **auth collection**. This is the only marker there is |
+
+**The coverage caveat.** `x-zigbase-coverage.allAuthMethods` is always
+`false`: `auth-with-password` and `auth-logout` are *not* in the document at
+all. That is why the auth journey's session endpoints below are the client's
+own method names rather than operation ids — there are no ids for them to be.
+
+### `RAILS_BACKEND_ENDPOINT`: three shapes, one code
+
+| shape | id | the `resource` it ranks by |
+|---|---|---|
+| a `form`/`form_field` region | `<code>.<view>.L<line>C<col>` | the controller of the route whose main view this template is; `null` in a partial |
+| a mutating `link_to`/`button_to` | `<code>.<view>.L<line>C<col>` | `Route.controller` of the route the link submits to — the same route the binding is paired onto; `null` when this run resolved no such route |
+| a non-GET or JSON-rendering **route** | `<code>.config/routes%2Erb.L<line>.<VERB>.<resource>` | `Route.controller` |
+
+The route shape is the one exception to the rule that a `routes.rb` line is
+one question ([§11](#11-findings)). `resources :posts` puts `POST /posts`,
+`PATCH /posts/:id` and `DELETE /posts/:id` on one line, and one ZigBase
+operation cannot serve all three; `resources :posts, :comments` puts two
+resources on one line, and `createPosts` cannot serve a comment. So this row
+alone groups by **(line, verb, resource)** and carries both in its id —
+`RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L20.GET.posts`. The `resource`
+component is always emitted (empty when the controller never resolved), so a
+reader never has to guess whether a trailing token is a verb or a controller.
+
+**`choices` are the document's own operations, ranked.** Operations with the
+finding's verb *and* its collection first, by operation id; then every other
+operation with that verb, by operation id; then `retain`, `blocked`. **A
+different verb is never offered** — that is the guarantee that stops an
+operator binding a `DELETE` link to `createPosts`. From the fixture, run 1:
+
+```
+RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L20.GET.posts   listPosts, viewPosts, listUsers, viewUsers, retain, blocked
+RAILS_BACKEND_ENDPOINT.app/views/shared/_nav%2Ehtml%2Eerb.L5C54   deletePosts, deleteUsers, retain, blocked
+```
+
+Without `--backend` both narrow to `retain, blocked`, and an answer naming an
+operation is rejected with `allowed: retain, blocked`.
+
+**`custom:/<path>`** is accepted as well, on this code only, and is *not*
+enumerated in `choices` — a free-form token cannot be. It must be
+`custom:/` + an absolute path with no whitespace and no `"`; a malformed one
+says so (`choice "custom:x" must be custom:/<absolute path> with no whitespace
+or quotes`). It is how you bind to a consumer route the document does not
+describe, and it records `{"operation_id": "custom", "verb": <the Rails
+verb>, "path": <what you named>}`.
+
+### What an answered finding produces
+
+A bound region is not converted — it is **replaced**:
+
+```html
+<island src="components/forms/posts_new.island.tsx" client:load></island>
+```
+
+`client:load`, not `client:visible`: the page's own markup no longer carries
+the form, so deferring hydration would show markup that does nothing. The
+island's path is `components/forms/<view stem, '/' → '_'>[_<n>].island.tsx`
+— flattened because `release` names `--island=` bundles by basename, and
+de-collided by an ordinal when two distinct view stems flatten to one name. A
+partial two views render is one binding and **one** file, written once.
+
+Alongside it the target gains `lib/zb.ts`, a `@zigbase/client` dependency in
+`package.json`, and one `--island='…'` flag per island in `build.sh`, sorted
+by path. All of that is keyed on an island being **written**: a bound route
+you then answered `retain` produces none of it — a settled route writes no
+page, and therefore no island either.
+
+```ts
+// lib/zb.ts
+import { createClient, LocalAuthStore } from "@zigbase/client";
+export const zb = createClient("", { authStore: new LocalAuthStore() });
+```
+
+`authCollection: "<name>"` is added to those options when — and only when — an
+auth scaffold reached the target, because that option arms the client's own
+401 refresh and arming it for a site that never signs anybody in would be a
+claim about the site that is not true.
+
+Which call the island makes is read off the verb and the collection, because
+the document is the authority on both:
+
+| collection | verb | call |
+|---|---|---|
+| a collection | `POST` | `zb.collection(c).create(values)` |
+| a collection | `PATCH`/`PUT` | `zb.collection(c).update(values.id, values)` |
+| a collection | `DELETE` | `zb.collection(c).delete(values.id)` |
+| none (a consumer route, or `custom:`) | any | `zb.send("<VERB>", "<path>", { body: values })` |
+
+An `update` or `delete` with no record id renders
+`TODO: this form acts on one record; pass its id` and nothing else — one
+message for both shapes, since both address a single record and a static page
+has no request to read its id from. A form whose submit can only fail at
+runtime is worse than an honest stub.
+
+A generated form island, verbatim (`form_with(model: @post)` with one
+`text_field` and a submit, answered `createPosts`, on a `posts#create` that
+redirects to `posts_path`):
+
+```tsx
+// Generated by `zigapagos migrate --from rails` from app/views/posts/new.html.erb:2.
+// Replaces: form_with(model: @post) do |f|
+// Enforcement stays server-side: this island only presents the form and the backend's
+// validation errors; the ZigBase rule on the operation decides who may submit.
+import { useState } from "@z/runtime";
+import { isZigbaseError, type FieldError } from "@zigbase/client";
+import { zb } from "../../lib/zb";
+
+export interface Props {}
+
+export default function PostsNew(_props: Props) {
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [errors, setErrors] = useState<Record<string, FieldError>>({});
+  const [done, setDone] = useState(false);
+  const set = (field: string) => (e: any) =>
+    setValues({ ...values, [field]: String(e.currentTarget.value ?? "") });
+  async function onSubmit(e: any) {
+    e.preventDefault();
+    setErrors({});
+    try {
+      await zb.collection("posts").create(values);
+      location.assign("/posts");
+    } catch (err) {
+      if (isZigbaseError(err)) {
+        setErrors(err.data);
+        return;
+      }
+      throw err;
+    }
+  }
+  const errorList = (
+    <ul class="errors">
+      {Object.entries(errors).map(([f, e]) => (
+        <li key={f}>{f + ": " + e.message}</li>
+      ))}
+    </ul>
+  );
+  if (done) return <p>{"Done."}</p>;
+  return (
+    <form onSubmit={onSubmit}>
+      <label htmlFor="title">{"Title"}</label>
+      <input id="title" type="text" name="title" value={values["title"] ?? ""} onInput={set("title")} />
+      {errorList}
+      <button type="submit">{"Create"}</button>
+    </form>
+  );
+}
+```
+
+Three things in there are decisions, not incidentals:
+
+- **`location.assign("/posts")` is where the Rails action went.** The redirect
+  comes from the *paired* action's own `redirect_to`, resolved through the
+  route table: `C#new` pairs with `C#create` and `C#edit` with `C#update`, and
+  only a non-GET route can receive the pairing. A `redirect_to @post` resolves
+  to nothing, and then the island calls `setDone(true)` instead of navigating.
+- **The error list sits where the ERB's `full_messages` did.** A summary
+  naming the form's own model, or any summary in a template whose bound form
+  declares no model, is absorbed into the island rather than left as its own
+  region — which is one instance of issue #181 closed by construction.
+- **The header comment is not decoration.** Nothing else ties the generated
+  file to the ERB it replaced, and `// Replaces:` carries the original call
+  (collapsed to one line, capped at 160 bytes).
+
+### The endpoint half
+
+An answered finding fills `routes[].endpoint` on the route Rails paired with
+it. Three ways one arrives:
+
+1. a **route-level** answer fills its own route — and, because one finding
+   speaks for a whole group, every route sharing that `routes.rb` line, verb
+   and resource;
+2. a **form** answer fills the non-GET route its `new`/`edit` action pairs
+   with, never the page route it sits on;
+3. a **link** answer fills the route the link submits to — matched by
+   `(helper name, verb)`, or `(literal path, verb)` — which the link names
+   outright, so it is not a guess.
+
+`endpoint`'s verb and path are the **document's**, not Rails': `GET /feed`
+answered `listPosts` records
+`{"listPosts", "GET", "/api/collections/posts/records"}`.
+
+And that endpoint is what the amended completion rule reads
+([§16](#complete-and-the-exit-code)): a `backend` row counts as accounted only
+with a non-null `endpoint` **or** a non-null `decision`. Since non-GET routes
+are outside the count entirely, this bites on exactly one shape — a
+user-facing GET that renders JSON. Delete the fixture's `GET /feed` answer and
+the otherwise-complete run drops back to exit 3, while `POST /session` beside
+it stays exempt.
+
+### Mutating links become click islands
+
+A `link_to`/`button_to` "performs a mutation" when its effective verb is not
+`GET`: an explicit `method:`, a Turbo `data-turbo-method`, the rails-ujs
+`data-method`, or a bare `button_to` (whose Rails default is `POST`). An
+explicit `get` on any of them answers "not a mutation" and the node stays an
+ordinary `<a href>`.
+
+**Unanswered, such a link is an empty region, not a link.**
+
+```html
+<!-- rails:finding RAILS_BACKEND_ENDPOINT.app/views/pages/home%2Ehtml%2Eerb.L2C5 --><!-- rails:end -->
+```
+
+That matters more than it looks: before this stage the same node converted to
+`<a href="/logout" method="delete">`, an ordinary GET link pointing at a
+`DELETE` route, on a page the handoff called `migrated` with nothing open. Now
+the page stays `open` on the link's own finding until somebody answers it.
+
+**Answered, it is a click island** — same naming and de-collision rules as a
+form island, a `<button type="button">` instead of a `<form>`:
+
+```tsx
+// Generated by `zigapagos migrate --from rails` from app/views/pages/home.html.erb:2.
+// Replaces: button_to "Sign out", logout_path, method: :delete, data: { turbo_confirm: "Sign out?" }
+// Enforcement stays server-side: this island only presents the control and the
+// backend's errors; the ZigBase rule on the operation decides who may submit.
+…
+  async function onClick() {
+    if (!window.confirm("Sign out?")) return;
+    setErrors({});
+    try {
+      await zb.send("DELETE", "/api/collections/users/auth-logout");
+      location.assign("/about");
+    } catch (err) { … }
+  }
+```
+
+The redirect is read off the **mutating** action (`pages#logout`'s own
+`redirect_to`), never off the page the button sits on. `post_path(1)` gives
+the record id for a `delete("1")`/`update("1", {})` call; without one the
+island renders the same honest TODO a form does.
+
+**Nested `data:` hashes are flattened the way Rails flattens them.** The
+sidecar expands `data:`/`aria:` hashes of scalar literals into
+`data-<dasherised key>` attributes in the hash's own position, and
+`button_to`'s `form: { data: … }` onto the control (Turbo reads the form's
+`data-turbo-confirm` exactly as the submitter's). So both the Turbo spelling
+(`data: { turbo_method: :delete }`) and the rails-ujs one
+(`data: { method: :delete }`) raise the finding, and both confirm spellings
+(`data: { turbo_confirm: "…" }`, `data: { confirm: "…" }`) reach the island's
+`window.confirm` guard. Only scalar literals flatten:
+`data: { params: { a: 1 } }` or `data: { confirm: @msg }` is left as written,
+and the call stays a `route_helper_dynamic` node.
+
+The attribute NAME goes through the same two filters ActionView applies. A
+blank key renders nothing at all (`data: { "" => 1, ok: 2 }` is just
+`data-ok="2"`), and a name XML forbids is escaped the way
+`ERB::Util.xml_name_escape` escapes it — every offending character becomes
+`_`, so `data: { "with space" => "v" }` is `data-with_space="v"`, not two
+attributes the second of which has no name.
+
+### The auth journey
+
+Sign-in and sign-up are **one** question, `RAILS_AUTH_JOURNEY`, keyed on the
+smallest `config/routes.rb` line any journey route was declared on, because
+the answer to both is a single ZigBase auth collection.
+
+A route is a journey route when its controller is `sessions` or
+`registrations`, **or** when its own reachable view holds a form containing a
+`password_field`. Journey views — and, through the render graph, the partials
+they render, to the same depth Stage 1's partial walk uses — raise no
+`RAILS_BACKEND_ENDPOINT` of their own: the journey finding is their question,
+and asking twice about one form would let one form get two conflicting
+answers. A partial reached from a journey view **and** an ordinary one is the
+journey's.
+
+The message names every route it covers and, when the document has auth
+collections to name, which (one line, wrapped here):
+
+```
+auth journey: DELETE /session, GET /session/new, POST /session, GET /registration/new,
+POST /registration; island needs artifact = the ZigBase auth collection name
+(in --backend: users)
+```
+
+Without candidates to name, the tail is `(pass --backend to validate the
+name)` instead. Answer it:
+
+```jsonc
+{ "id": "RAILS_AUTH_JOURNEY.config/routes%2Erb.L38",
+  "choice": "island",
+  "artifact": "users",
+  "rationale": "…" }
+```
+
+`artifact` is **required** for `island` and validated: a name that is not an
+auth collection of the `--backend` document is refused —
+`artifact "members" is not an auth collection in the backend document; auth
+collections: users`. With no document the name is accepted verbatim, because
+there is nothing to check it against.
+
+That one answer produces four things.
+
+**`components/AuthForm.island.tsx` — one file, both halves**, told apart by a
+`mode` prop. One finding got one answer, so one component carries it; the
+generated file's own header says the same thing, citing the design assumption
+(`A5`) that folded the two forms together:
+
+```html
+<island src="components/AuthForm.island.tsx" client:load :props='{ .mode = "signin" }'></island>
+<island src="components/AuthForm.island.tsx" client:load :props='{ .mode = "signup" }'></island>
+```
+
+```tsx
+const signup = props.mode === "signup";
+…
+if (signup) {
+  await zb.collection("users").create({ email, password, passwordConfirm });
+}
+await zb.collection("users").authWithPassword(email, password);
+location.assign(signup ? "/" : "/");
+```
+
+The two redirects are the two Rails actions' own, resolved through the route
+table: this fixture's `sessions#create` and `registrations#create` both
+`redirect_to root_path`, so both arms read `"/"`; an app whose sign-up lands
+on the sign-in page emits `signup ? "/session/new" : "/"`. The sign-up branch renders
+the confirmation field; the sign-in branch does not. Because the component's
+bytes must not depend on which view was converted first, `AuthForm` carries no
+`from <path>:<line>` header.
+
+**`components/AuthStatus.island.tsx`** replaces a `current_user` region — the
+`<% if current_user %>` in a nav, greeting and sign-out button included:
+
+```tsx
+const [ready, setReady] = useState(false);
+useEffect(() => setReady(true), []);
+async function logout() {
+  await zb.collection("users").logout();
+  location.reload();
+}
+if (!ready || !zb.authStore.isValid) {
+  return <a href="/session/new">{"Sign in"}</a>;
+}
+return (
+  <span>
+    {String(zb.authStore.record?.email ?? "")}{" "}
+    <button onClick={logout}>{"Sign out"}</button>
+  </span>
+);
+```
+
+The `ready` flag is deliberate. The session lives in the visitor's own
+browser, so the prerendered HTML cannot know who is signed in: the SSR'd
+markup is the signed-out branch and the effect flips it. Reading the store
+during the first render would make the server's markup and the client's
+disagree. `AuthStatus` is mounted by answering that region's own
+`RAILS_REQUEST_TIME_STATE` finding `island`, not by the journey answer —
+the journey supplies the collection, the region supplies the position.
+
+**Two rules govern how many times it mounts.**
+
+- *The complementary-pair rule.* `<% if current_user %>…<% end %>` beside
+  `<% unless current_user %>…<% end %>` in **one template** is one control,
+  not two: `AuthStatus` renders both branches itself, so mounting it twice
+  would print the nav's "Sign in" twice in the built page. Answered, the pair
+  is one mount at the first region and the second is absorbed, with the
+  route's `note` naming the half that was folded:
+  ``app/views/shared/_nav.html.erb:5 `if current_user` folded into the
+  AuthStatus island above it``. `if X` + `if !X` and `unless !X` pair the same
+  way. Two regions of the **same** polarity (a nav greeting and a footer CTA),
+  two regions on **different** predicates (`current_user` vs `signed_in?`),
+  and the same pair in two different templates are all two controls and mount
+  twice — a duplicate is a visible blemish, a wrong pairing silently *deletes*
+  a control, so every uncertain case falls to two mounts. An
+  `<% if … else … end %>` was always one region and stays one mount.
+- *The sign-in-link rule.* The `<a href="/session/new">` is the journey's own
+  `sessions#new` route path. A journey detected only by a `password_field` —
+  no `sessions` controller at all — has no such route, and then the component
+  renders **no link** rather than one to a URL that does not exist.
+
+**A finding inside the region the island replaced is settled, not refused.**
+The nav's `if current_user` region holds two more findings — a
+`RAILS_REQUEST_TIME_STATE` on `<%= current_user.email %>` and a
+`RAILS_BACKEND_ENDPOINT` on the `button_to "Sign out"` — and mounting
+`AuthStatus` over the region answers both by construction. Two things follow,
+and neither of them is a refusal:
+
+- An **answer** on one of them is accepted and settled. The run does not exit
+  3, and the route's `note` records what happened, naming both ids: `choice
+  custom:/api/logout on
+  RAILS_BACKEND_ENDPOINT.app/views/shared/_nav%2Ehtml%2Eerb.L5C54 superseded
+  by the island answering
+  RAILS_REQUEST_TIME_STATE.app/views/shared/_nav%2Ehtml%2Eerb.L5C6, which
+  replaced the region it sits in`. Rejecting it would be misleading — the
+  operator answered a real question with one of its own choices — and
+  dropping it silently would leave them unable to tell which of their two
+  answers took effect.
+- An answered **status** region nested inside another is additionally marked
+  `enclosed`. The island's header lists it among the regions it replaces, with
+  its position spelled out —
+  `//   app/views/shared/_nav.html.erb:5 -- current_user.email (inside the
+  region above, which this replaces)` — and the route note says the same in
+  prose: ``app/views/shared/_nav.html.erb:5 `current_user.email` is inside the
+  region the AuthStatus island replaced, so it mounts nothing of its own``.
+  That is the difference between an answer this stage *carried out* and one it
+  merely recorded: the region is genuinely gone from the page, so there is
+  nothing left for a second island to mount.
+
+Both notes ride on the *decisions*, not on the page, so they land on the
+routes whose answers mounted the island and on no others. On the fixture the
+fold note and the enclosed note appear on exactly the five routes that mounted
+it — `/`, `/about`, `/linked`, `/session/new`, `/registration/new`. `/posts`
+renders the same nav but is `retained` and carries neither; and the sixth
+migrated route, `GET /posts/:id`, resolves no layout at all (`layout :choose`
+is dynamic) so it never reaches the nav and its `note` is `null`.
+
+The **supersession** clause in the first bullet is rarer than either. On this
+fixture it lands on `/registration/new` alone, twice — once for each of the
+sign-up view's two `errors` regions, which the journey's `AuthForm` absorbed.
+
+**Three endpoints**, on the three non-GET journey routes:
+
+| route | operation_id | verb | path |
+|---|---|---|---|
+| `POST /session` (`sessions#create`) | `authWithPassword` | POST | `/api/collections/users/auth-with-password` |
+| `DELETE /session` (`sessions#destroy`) | `logout` | POST | `/api/collections/users/auth-logout` |
+| `POST /registration` (`registrations#create`) | `createUsers` | POST | `/api/collections/users/records` |
+
+The first two are `CollectionService` **method** names, not operation ids —
+`allAuthMethods` is always false, so the document carries no ids for them.
+`createUsers` is re-derived by ZigBase's own `<verb><Base>` rule rather than
+looked up, so all three come from one rule: a trio where one member came from
+the document and two were synthesized would disagree with itself the moment
+the document did.
+
+**And `lib/zb.ts` with `authCollection: "users"`**, which is what arms the
+client's 401 refresh.
+
+### `RAILS_ROUTE_AUTH_GUARD` and `public`
+
+A page route whose controller runs a `before_action` whose symbol name
+contains `login`, `auth`, `sign` or `user` raises `RAILS_ROUTE_AUTH_GUARD`:
+
+```
+page is guarded by before_action :require_login on posts; a static page cannot
+enforce it: GET /posts
+```
+
+**The filter is looked up along the inheritance chain**, not on the route's
+own controller alone. The overwhelmingly common Rails shape is one
+`before_action :authenticate_user!` on `ApplicationController` with everything
+else inheriting it; matching only the route's own controller found nothing and
+shipped a guarded page silently public, which is the failure this code exists
+to prevent. `skip_before_action` is honoured, and the message names the
+**declaring** controller — that is where an operator has to go to read it. When
+several filters match, the smallest `(name, line)` is named, so the message
+does not depend on the order the sidecar's directory walk emitted them in.
+
+Answer it `public` and the page ships, with the decision on the record:
+
+```
+guarded by before_action :require_login; shipped public by decision
+```
+
+`public` is a new choice word and means one specific thing: *ship the page;
+the ZigBase rule on the operation protects the data*. It settles that one
+finding and changes nothing else about the route's status: a route whose only
+answer is `public` still comes back `open` on whatever else it raised. It does
+not have to be the route's only answer, though — every answer on a route is
+applied ([§15](#what-each-choice-does)), so a route carrying a bound mutation
+*and* this guard, answered both, comes back `migrated` with the note above on
+it. `retain`/`blocked` are the other two answers, with their usual meanings,
+and either of them ends the route there.
+
+### Exit codes
+
+Unchanged for a run whose `--backend` document is usable. Otherwise:
+
+| condition | code | stderr |
+|---|---|---|
+| the path cannot be read (missing, a directory, unreadable, over the 16 MiB cap) | **1** | `error: --backend <path> could not be read: FileNotFound` |
+| it is not an OpenAPI 3.x document with a `paths` object | **1** | `error: <path> is not a ZigBase OpenAPI document: InvalidJson` (or `NotOpenApi3`, `NoPaths`) |
+| `--backend` on a non-Rails source | 1 | `error: --backend only applies to Rails sources; Hugo binds nothing to a ZigBase operation` |
+| `--backend` with no argument | 1 | `error: --backend needs a file path` |
+| `--doctor` alongside it | 1 | `error: --doctor is mutually exclusive with --target, --decisions, --backend, --scaffold, --convert-content, and --copy-assets` |
+
+All of them **print and return 1** rather than taking the fatal path, which
+panics with 134 under a debug build — and a debug build is what every shell
+e2e drives. A path the operator typed wrong is their input being wrong, the
+same class as an unusable decisions file. The message names the flag as well
+as the path, because `--decisions` and `--backend` fail identically at the OS
+level and an operator who passed both needs to know which one the kernel
+refused. The full path is printed, not the basename: stderr advice is not a
+committed artifact, so the determinism rule that reduces `backend.file` to a
+basename does not apply to it.
+
+### Known limitations
+
+- **The literal `backend` choice on `RAILS_REQUEST_TIME_STATE` has no
+  converter** (issue #184). It is a leftover from before this stage and is not
+  the same thing as binding an endpoint: an answer of the word `backend` is
+  recorded and the route stays `open` with `choice backend on
+  RAILS_REQUEST_TIME_STATE has no converter (see #184)`. What you almost
+  always want instead is `island` on that region, or an operation id on the
+  `RAILS_BACKEND_ENDPOINT` beside it.
+- **The emitted `tsconfig.json` makes `tsc` report `TS7026` on every island**
+  (issue #185) — *JSX element implicitly has type 'any' because no interface
+  'JSX.IntrinsicElements' exists*. It is a property of the emitted `tsconfig`
+  plus the `@z/runtime` package's exports map under
+  `moduleResolution: "bundler"`, not of the generated code: a two-line
+  hand-written island produces it too, and `build.sh` (the real Bun/esbuild
+  pipeline and the SSR sidecar) is green. A consumer who runs `tsc` over the
+  target sees a red tree until #185 lands.
+- **A login partial reached only through the layout is not the journey's.**
+  Journey membership is seeded from *route views* and widened through the
+  render graph, so a `shared/_login_form` that only the application layout
+  renders — not any journey route's own view — keeps its own
+  `RAILS_BACKEND_ENDPOINT` question instead of being folded into the journey.
+  That is answerable, just answerable twice.
+- **An unflattenable `data:` hash on a bound control is noted, not silently
+  dropped.** If a `data:` hash reaches the converter as a sentinel — which
+  happens when `--runtime-path`/`ZIGAPAGOS_RUNTIME_DIR` selects an older
+  sidecar than the one that flattens it — the island is still written and the
+  binding still stands, with a comment after the `<island>` and a route note:
+  `nested data: on a bound control was not recovered; a confirm guard may be
+  missing`. Refusing the answer would leave the operator nothing to do but
+  edit the ERB.
+- **A form on a *layout* is not bound.** The layout conversion passes no
+  bindings, so a form declared in `app/views/layouts/*` raises its question and
+  cannot be answered into an island. Rare, and worth knowing.
 
 ## Procedure (for an agent)
 
@@ -1537,19 +2328,28 @@ Turbo/component families that a later stage really does own.
    see [§11](#11-findings) for the field list and [§12](#12-the-fragment-vocabulary)
    for what fragment kind produced it. Read each finding's **own** `choices`
    array; the same `code` can offer different lists.
-5. **Convert.** Re-run with `--target DIR`
-   ([§13](#13---target-writes-a-project)). Read the exit code: `1` means the
-   run is broken and no amount of deciding will help; `3` means it worked and
-   the migration is not finished; `0` means it is.
+5. **Convert.** Re-run with `--target DIR`, and — if the target site has a
+   ZigBase backend — with `--backend <the zigbase openapi document>` on this
+   and every later run ([§13](#13---target-writes-a-project),
+   [§18](#18-the-backend-boundary)). Read the exit code: `1` means the run is
+   broken and no amount of deciding will help (an unusable decisions file, a
+   rejected `--target`, an unreadable or non-OpenAPI `--backend` document);
+   `3` means it worked and the migration is not finished; `0` means it is.
 6. **On exit 3, read `DIR/MIGRATION.handoff.json`, not the tree.** Each
    `status: "open"` route lists the finding ids it left open in `findings[]`
    and says why in `note`. Answer every id on every open route; a route whose
    only remaining problem is a `rails:unmapped` region with no finding at all
    is the one shape no answer reaches — see [§17](#17-the-re-run-loop).
 7. **Answer them** in `DIR/MIGRATION.decisions.json`
-   ([§15](#15-decisions)), one `{id, choice, rationale}` per finding.
-   `island` and `backend` are accepted but do not close a route in this
-   version.
-8. **Delete the generated tree, keeping the decisions file, and re-run.**
-   Repeat until exit 0 and `"complete": true`, then build the target with
-   `bash DIR/build.sh`.
+   ([§15](#15-decisions)), one `{id, choice, rationale}` per finding. A
+   `RAILS_BACKEND_ENDPOINT` finding's choices are the `--backend` document's
+   own operation ids (or `custom:/<path>`); `RAILS_AUTH_JOURNEY` takes
+   `island` **and** an `artifact` naming the auth collection;
+   `RAILS_ROUTE_AUTH_GUARD` takes `public`. The literal `backend` word, and
+   `island` on a Turbo/component finding, are accepted but do not close a
+   route in this version.
+8. **Delete the generated tree, keeping the decisions file, and re-run** with
+   the same flags, `--backend` included. Repeat until exit 0 and
+   `"complete": true`, then build the target with `bash DIR/build.sh` — after
+   pointing `@z/runtime` somewhere real if the target has a `package.json`
+   ([§13](#the-generated-project-builds)).

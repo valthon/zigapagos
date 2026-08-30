@@ -8,6 +8,11 @@
 # the target it produced then BUILDS with `zigapagos release` and passes
 # `zigapagos doctor` -- which is the only definition of "a valid Zigapagos
 # project" that cannot be faked by a file listing.
+# Stage 3: the backend boundary. `--backend backend/openapi.json` (a REAL
+# `zigbase openapi` document -- see that directory's README) is what turns a
+# Rails mutation into a binding: the auth journey becomes an AuthForm/
+# AuthStatus pair against the `users` collection, `GET /feed` becomes
+# `listPosts`, and `complete` is only reachable BECAUSE those answers exist.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 REPO="$(pwd)"
@@ -23,6 +28,11 @@ DECISIONS="$REPO/tests/migrate/rails-presentation/MIGRATION.decisions.json"
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 cp -R "$REPO/tests/migrate/rails-presentation" "$WORK/app"
 before="$(cd "$WORK/app" && find . -type f | sort | xargs shasum)"
+# The document lives INSIDE the fixture app so the e2e migrates the same tree
+# a developer would: `--backend` names a file, and naming one under the app is
+# what a real operator does with the artifact their backend emitted.
+BACKEND="$WORK/app/backend/openapi.json"
+[[ -f "$BACKEND" ]] || fail "the fixture's backend document is missing"
 
 # --- run 1: no decisions ----------------------------------------------------
 # Exit 3 BY VALUE, not merely non-zero: 3 means "the conversion ran and some
@@ -30,7 +40,7 @@ before="$(cd "$WORK/app" && find . -type f | sort | xargs shasum)"
 # `|| fail` would have accepted either, and the two send an operator (or a CI
 # loop) to completely different work.
 set +e
-"$ZIGAPAGOS" migrate "$WORK/app" --from rails --target "$WORK/out1"
+"$ZIGAPAGOS" migrate "$WORK/app" --from rails --target "$WORK/out1" --backend "$BACKEND"
 run1_rc=$?
 set -e
 [[ $run1_rc -eq 3 ]] || fail "run 1 must exit 3 while routes are open, got $run1_rc"
@@ -51,6 +61,25 @@ name_of() { jq -r --arg v "$1" --arg p "$2" '.routes[] | select(.verb == $v and 
 [[ "$(name_of GET /posts/:id)" == "post" ]] || fail "post name"
 [[ "$(name_of GET /session/new)" == "new_session" ]] || fail "new_session name"
 [[ "$(name_of POST /registration)" == "registration" ]] || fail "registration name"
+# #176, from the naming side. `resource :session` routes to the PLURAL
+# SessionsController while every helper name stays SINGULAR -- a fix that
+# pluralized the stem too would break every `session_path` in the app it was
+# supposed to make work.
+[[ "$(name_of DELETE /session)" == "session" ]] || fail "the sign-out route's name must stay singular: $(name_of DELETE /session)"
+# ...and the controller really is the plural, with no `controller:` override
+# anywhere in this fixture's config/routes.rb. Before #176 this said
+# "session", the fixture carried the override, and the auth journey (which is
+# detected by the `sessions`/`registrations` controller names) could not be
+# found in any real app.
+sess_ctrl=$(jq -r '.routes[] | select(.verb == "DELETE" and .path == "/session") | .controller' "$MANIFEST")
+[[ "$sess_ctrl" == "sessions" ]] || fail "#176: a singular resource routes to the PLURAL controller, got '$sess_ctrl'"
+reg_ctrl=$(jq -r '.routes[] | select(.verb == "POST" and .path == "/registration") | .controller' "$MANIFEST")
+[[ "$reg_ctrl" == "registrations" ]] || fail "#176: registration controller should be 'registrations', got '$reg_ctrl'"
+# ...on a fixture that carries no override to lean on. Comment lines are
+# excluded because routes.rb explains the rule in prose right above it.
+if grep -v '^[[:space:]]*#' "$WORK/app/config/routes.rb" | grep -q 'controller:'; then
+  fail "the fixture must carry no controller: override; without one it exercises the real #176 rule"
+fi
 
 # --- layouts ---------------------------------------------------------------
 about_layout=$(jq -r '.routes[] | select(.path == "/about") | .layout' "$MANIFEST")
@@ -60,22 +89,15 @@ posts_layout=$(jq -r '.routes[] | select(.path == "/posts" and .verb == "GET") |
 
 # --- findings: exact id set ------------------------------------------------
 # Every finding this stage can emit appears at least once, with the exact
-# id that a Stage 2 decision file will reference. An id is (code, path,
-# location) -- assert the WHOLE thing so a shifted line is caught.
+# id that a decision file will reference. An id is (code, path, location) --
+# assert the WHOLE thing so a shifted line is caught.
 #
-# NOTE on the registration finding's path: `resource :registration` maps
-# (by this parser's own tested convention -- see routes_test.rb's "singular
-# resource has exactly the 7 non-index actions") to a SINGULAR controller
-# identifier "registration", not the pluralized "registrations" real Rails
-# would use for a singular resource's controller class. R13 (controller
-# ruling): the fixture keeps the REAL, pluralized RegistrationsController/
-# SessionsController and app/views/registrations/ / app/views/sessions/
-# directories,
-# and works around the gap with an explicit `controller: "registrations"`
-# (config/routes.rb) -- redundant in real Rails, honest to this parser.
-# Filed as a #166 follow-up. Verified empirically: without the override,
-# the route never resolved a template at all (zero findings from the
-# file), which is what caught the gap in the first place.
+# ON RE-PINNING THESE. A finding id carries the LINE and COLUMN the construct
+# sits at, so every fixture edit moves every id after it. Re-derive from run 1
+# (`jq -r '.findings[].id' MIGRATION.manifest.json`) after ANY fixture edit and
+# re-pin both here and in MIGRATION.decisions.json; a stale answer surfaces as
+# a RAILS_DECISION_STALE blocker and a run that will not complete, not as
+# anything obviously wrong.
 have_finding() { jq -e --arg id "$1" '.findings[] | select(.id == $id)' "$MANIFEST" >/dev/null || fail "missing finding $1"; }
 have_finding 'RAILS_HELPER_UNKNOWN.app/views/pages/help%2Ehtml%2Eerb.L1C18'
 have_finding 'RAILS_RAW_OUTPUT.app/views/pages/help%2Ehtml%2Eerb.L1C47'
@@ -83,39 +105,90 @@ have_finding 'RAILS_I18N_UNRESOLVED.app/views/pages/help%2Ehtml%2Eerb.L1C62'
 have_finding 'RAILS_REQUEST_TIME_STATE.app/views/posts/index%2Ehtml%2Eerb.L1C33'
 have_finding 'RAILS_REQUEST_TIME_STATE.app/views/posts/show%2Ehtml%2Eerb.L1C9'
 have_finding 'RAILS_ROUTE_HELPER_DYNAMIC.app/views/posts/_post%2Ehtml%2Eerb.L1C14'
-have_finding 'RAILS_LAYOUT_DYNAMIC.app/controllers/posts_controller%2Erb.L2'
-have_finding 'RAILS_REQUEST_TIME_STATE.app/views/registrations/new%2Ehtml%2Eerb.L1C121'
+# L3, not L2: #167 Stage 3 put `before_action :require_login` on line 2 of
+# posts_controller.rb and pushed `layout :choose` down one.
+have_finding 'RAILS_LAYOUT_DYNAMIC.app/controllers/posts_controller%2Erb.L3'
 have_finding 'RAILS_PARTIAL_DYNAMIC.app/views/posts/index%2Ehtml%2Eerb.L1C61'
 have_finding 'RAILS_TEMPLATE_CONTROL_FLOW.app/views/posts/_post%2Ehtml%2Eerb.L8C4'
-# Self-review coverage: the three codes above don't reach
-# (TEMPLATE_PARSE_ERROR, ROUTE_HELPER_UNKNOWN, TEMPLATE_CONTROL_FLOW),
-# exercised via small dedicated fragments so every code the derivation
-# table can emit at Stage 1 appears at least once somewhere in this
-# fixture.
+have_finding 'RAILS_TEMPLATE_PARSE_ERROR.app/views/pages/broken%2Ehtml%2Eerb.L2'
+have_finding 'RAILS_ROUTE_HELPER_UNKNOWN.app/views/pages/links%2Ehtml%2Eerb.L1C5'
 #
 # Three of ruling S12's codes are NOT pinned here and cannot be until the
 # fixture grows the constructs that raise them: RAILS_TURBO_FRAME,
 # RAILS_TURBO_STREAM and RAILS_COMPONENT_ROOT need a turbo_frame_tag, a
 # turbo_stream and a react_component call respectively, and this app has
-# none (its dashboard.html.erb carries a Stimulus data-controller, which is
-# a different marker entirely). They are covered by findings.zig's own
-# unit tests. Adding them here changes route classification across the
-# fixture, so it is its own change, not a rider on this one.
-have_finding 'RAILS_TEMPLATE_PARSE_ERROR.app/views/pages/broken%2Ehtml%2Eerb.L2'
-have_finding 'RAILS_ROUTE_HELPER_UNKNOWN.app/views/pages/links%2Ehtml%2Eerb.L1C5'
-# #167 Stage 2 ruling S12: the fragment kinds that used to convert to a
-# `rails:unmapped` placeholder now derive a finding, so a route holding one can
-# be acknowledged. Both form views contribute:
+# none. They are covered by findings.zig's own unit tests. Adding them here
+# changes route classification across the fixture, so it is its own change.
 #
-#   sessions/new.html.erb    form_with(url: session_path)   -> no model
-#   registrations/new.html.erb  form_with(model: @user, ...) -> model `user`
+# #167 Stage 2 ruling S12 gave each of this fixture's two forms its own
+# `RAILS_BACKEND_ENDPOINT`. #167 Stage 3 assumption A5 replaces BOTH with the
+# one journey finding below: they are the sign-in and sign-up halves of a
+# single authentication flow, and the answer to both is a single ZigBase auth
+# collection shared by an `AuthForm` and an `AuthStatus`. Asking each form
+# separately would let an operator answer them inconsistently.
 #
-# ONE finding per form, not one per field: each of these forms has four
-# `f.*_field` calls inside it and none of them adds a second question (the
-# outermost form in a nesting is the decision). The per-file counts below are
-# what pin that -- a regression to one-per-field would make them 5 and 6.
-have_finding 'RAILS_BACKEND_ENDPOINT.app/views/sessions/new%2Ehtml%2Eerb.L1C5'
-have_finding 'RAILS_BACKEND_ENDPOINT.app/views/registrations/new%2Ehtml%2Eerb.L1C139'
+# Keyed on the SMALLEST routes.rb line the journey occupies (ruling S22):
+# `resource :session` at L38, ahead of `resource :registration` at L42.
+have_finding 'RAILS_AUTH_JOURNEY.config/routes%2Erb.L38'
+journey_msg=$(jq -r '.findings[] | select(.code == "RAILS_AUTH_JOURNEY") | .message' "$MANIFEST")
+# The message names every route the journey speaks for -- including the
+# sign-out `DELETE /session` #167 Stage 3 added -- and, because this run has a
+# document, the auth collection the artifact must name. Without `--backend` it
+# says "pass --backend to validate the name" instead (pinned in run 1b).
+[[ "$journey_msg" == "auth journey: DELETE /session, GET /session/new, POST /session, GET /registration/new, POST /registration; island needs artifact = the ZigBase auth collection name (in --backend: users)" ]] \
+  || fail "auth journey message: $journey_msg"
+# It is the only finding in the vocabulary that demands an artifact, and the
+# artifact is a fact about the DESTINATION (which ZigBase collection holds the
+# users), which no amount of reading the Rails app recovers.
+journey_artifact=$(jq -r '.findings[] | select(.code == "RAILS_AUTH_JOURNEY") | .requires_artifact' "$MANIFEST")
+[[ "$journey_artifact" == "true" ]] || fail "the auth journey must require an artifact, got $journey_artifact"
+journey_choices=$(jq -r '.findings[] | select(.code == "RAILS_AUTH_JOURNEY") | .choices | join(",")' "$MANIFEST")
+[[ "$journey_choices" == "island,retain,blocked" ]] || fail "auth journey choices: $journey_choices"
+# ONE finding for five routes across two declarations, and exactly one per
+# app: a second would mean the journey was split.
+journey_count=$(jq '[.findings[] | select(.code == "RAILS_AUTH_JOURNEY")] | length' "$MANIFEST")
+[[ "$journey_count" == "1" ]] || fail "the auth journey must be one finding, got $journey_count"
+# A5 from the other side: `POST /session`, `DELETE /session` and
+# `POST /registration` are API traffic and would each carry a route-level
+# `RAILS_BACKEND_ENDPOINT` -- except that the journey is already their
+# question. `GET /feed` is NOT part of the journey and does carry one.
+route_backend_ids=$(jq -r '[.findings[] | select(.code == "RAILS_BACKEND_ENDPOINT") | select(.source.file == "config/routes.rb") | .id] | join(" ")' "$MANIFEST")
+[[ "$route_backend_ids" == "RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L20.GET.posts" ]] \
+  || fail "exactly one route-level backend question (the feed), got: $route_backend_ids"
+# Ruling S3-R2: the route-level row is keyed on (line, VERB, resource), not on
+# the line alone -- one routes.rb line can declare several verbs, and each verb
+# gets different operations offered.
+have_finding 'RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L20.GET.posts'
+feed_choices=$(jq -r '.findings[] | select(.id == "RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L20.GET.posts") | .choices | join(",")' "$MANIFEST")
+# The document's own GET operations, resource-matching group first, each group
+# by operation id -- then the two reserved answers. No POST/PATCH/DELETE
+# operation may appear: a verb never crosses over.
+[[ "$feed_choices" == "listPosts,viewPosts,listUsers,viewUsers,retain,blocked" ]] \
+  || fail "the feed route's choices must be the document's GET operations: $feed_choices"
+feed_msg=$(jq -r '.findings[] | select(.id == "RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L20.GET.posts") | .message' "$MANIFEST")
+[[ "$feed_msg" == "route is API traffic and needs a backend operation: GET /feed" ]] || fail "feed message: $feed_msg"
+# Assumption A7's new code, on the routes.rb line the guarded route was
+# declared on (S22). `public` is its new choice word.
+have_finding 'RAILS_ROUTE_AUTH_GUARD.config/routes%2Erb.L14'
+guard_choices=$(jq -r '.findings[] | select(.code == "RAILS_ROUTE_AUTH_GUARD") | .choices | join(",")' "$MANIFEST")
+[[ "$guard_choices" == "public,retain,blocked" ]] || fail "auth guard choices: $guard_choices"
+guard_msg=$(jq -r '.findings[] | select(.code == "RAILS_ROUTE_AUTH_GUARD") | .message' "$MANIFEST")
+[[ "$guard_msg" == "page is guarded by before_action :require_login on posts; a static page cannot enforce it: GET /posts" ]] \
+  || fail "auth guard message: $guard_msg"
+# The shared nav, since #167 Stage 3: a complementary `unless current_user` /
+# `if current_user` pair (two regions on one predicate) plus the email read
+# inside the signed-in half plus the sign-out control's own question.
+have_finding 'RAILS_REQUEST_TIME_STATE.app/views/shared/_nav%2Ehtml%2Eerb.L4C6'
+have_finding 'RAILS_REQUEST_TIME_STATE.app/views/shared/_nav%2Ehtml%2Eerb.L5C6'
+have_finding 'RAILS_REQUEST_TIME_STATE.app/views/shared/_nav%2Ehtml%2Eerb.L5C28'
+have_finding 'RAILS_BACKEND_ENDPOINT.app/views/shared/_nav%2Ehtml%2Eerb.L5C54'
+link_msg=$(jq -r '.findings[] | select(.id == "RAILS_BACKEND_ENDPOINT.app/views/shared/_nav%2Ehtml%2Eerb.L5C54") | .message' "$MANIFEST")
+[[ "$link_msg" == 'link performs a mutation: button_to `Sign out` method=delete' ]] || fail "sign-out link message: $link_msg"
+# A DELETE control is offered the document's DELETE operations and nothing
+# else -- there is no `session` collection, so the list is honestly useless
+# here, which is exactly why the region's `island` answer is what settles it.
+link_choices=$(jq -r '.findings[] | select(.id == "RAILS_BACKEND_ENDPOINT.app/views/shared/_nav%2Ehtml%2Eerb.L5C54") | .choices | join(",")' "$MANIFEST")
+[[ "$link_choices" == "deletePosts,deleteUsers,retain,blocked" ]] || fail "sign-out link choices: $link_choices"
 # The two `errors` regions in registrations/new (`@user&.errors&.any?` and
 # `@user.errors.full_messages`) are a different question from the form's --
 # how request-time validation state is PRESENTED -- and get the same code an
@@ -125,11 +198,18 @@ have_finding 'RAILS_REQUEST_TIME_STATE.app/views/registrations/new%2Ehtml%2Eerb.
 # #167 Stage 2 rulings S1/S12: the two ROUTE-scoped rows, keyed on the
 # config/routes.rb line the route was declared on rather than on a template.
 have_finding 'RAILS_ROUTE_DYNAMIC_SEGMENT.config/routes%2Erb.L14'
-have_finding 'RAILS_REDIRECT_HOST_CONFIG.config/routes%2Erb.L47'
+have_finding 'RAILS_REDIRECT_HOST_CONFIG.config/routes%2Erb.L53'
+# Zero and two. Assumption A5 moves both forms' question to the ROUTE-scoped
+# `RAILS_AUTH_JOURNEY`, so the sign-in view raises nothing at all; the sign-up
+# view keeps only its two `errors` regions (#167 Stage 3 dropped the separate
+# `<%= @user.email %>` read -- the plain-ivar shape is still covered by
+# posts/index and posts/show).
 sessions_count=$(jq '[.findings[] | select(.source.file == "app/views/sessions/new.html.erb")] | length' "$MANIFEST")
-[[ "$sessions_count" == "1" ]] || fail "sessions/new should raise exactly one finding (the form), got $sessions_count"
+[[ "$sessions_count" == "0" ]] || fail "sessions/new's only question is the auth journey's, got $sessions_count findings"
 registrations_count=$(jq '[.findings[] | select(.source.file == "app/views/registrations/new.html.erb")] | length' "$MANIFEST")
-[[ "$registrations_count" == "4" ]] || fail "registrations/new should raise 4 findings (1 form, 2 errors, 1 ivar), got $registrations_count"
+[[ "$registrations_count" == "2" ]] || fail "registrations/new should raise 2 errors findings, got $registrations_count"
+nav_count=$(jq '[.findings[] | select(.source.file == "app/views/shared/_nav.html.erb")] | length' "$MANIFEST")
+[[ "$nav_count" == "4" ]] || fail "the nav should raise 4 findings (2 halves, 1 email, 1 sign-out), got $nav_count"
 # linked.html.erb is an ordinary static view HERE; it is the third run below
 # that makes the templates op refuse it. Pinning zero findings for it in this
 # run is what proves that run's finding comes from the refusal and not from
@@ -157,9 +237,14 @@ haml_choices=$(jq -r '.findings[] | select(.source.file | endswith(".haml")) | .
 [[ "$haml_choices" == "retain,blocked" ]] || fail "a Haml route can only be retained or blocked, got: $haml_choices"
 jq -e '.blockers[] | select(.code == "RAILS_TEMPLATE_ENGINE_UNSUPPORTED")' "$MANIFEST" >/dev/null || fail "haml blocker missing"
 
-# Every finding has the wire shape and a choices list drawn from the fixed vocabulary.
-bad=$(jq -r '.findings[] | select((.id|type) != "string" or (.choices|length) == 0 or (.choices - ["island","spa","backend","retain","blocked"] | length) != 0) | .id' "$MANIFEST")
+# Every finding has the wire shape and a non-empty choices list. Stage 3's
+# vocabulary is no longer a fixed set -- an operation id is whatever the
+# ZigBase document calls an operation -- so the closed-set check now covers
+# the WORDS only, and the operation ids are pinned per finding above.
+bad=$(jq -r '.findings[] | select((.id|type) != "string" or (.choices|length) == 0) | .id' "$MANIFEST")
 [[ -z "$bad" ]] || fail "malformed findings: $bad"
+badwords=$(jq -r '.findings[] | select((.choices - ["island","spa","backend","public","retain","blocked","listPosts","viewPosts","listUsers","viewUsers","deletePosts","deleteUsers"] | length) != 0) | .id' "$MANIFEST")
+[[ -z "$badwords" ]] || fail "findings offering a choice outside the vocabulary + this document's ids: $badwords"
 
 # Schema validation of both real instances. `rails_manifest_validate` takes
 # any schema + any instance, so the handoff is validated by the same tool.
@@ -169,6 +254,14 @@ bad=$(jq -r '.findings[] | select((.id|type) != "string" or (.choices|length) ==
 
 grep -q '^## Findings' "$WORK/out1/MIGRATION.md" || fail "MIGRATION.md lacks a Findings section"
 grep -q '^## Handoff' "$WORK/out1/MIGRATION.md" || fail "MIGRATION.md lacks a Handoff section"
+# #167 Stage 3: the report names the document and counts the bindings. Both
+# lines are unconditional -- an operator whose backend choices were all
+# `retain, blocked` is precisely the operator who forgot the flag.
+grep -qx 'backend: openapi.json (1.0.0)' "$WORK/out1/MIGRATION.md" \
+  || fail "the Handoff section must name the backend document by basename and version"
+grep -q "$WORK" "$WORK/out1/MIGRATION.md" && fail "MIGRATION.md embeds the scratch path"
+grep -qx 'endpoints: 0 of the 4 `backend` route(s) are bound to a ZigBase operation.' "$WORK/out1/MIGRATION.md" \
+  || fail "run 1 binds nothing, and the report must say so"
 
 # --- run 1: the handoff's verdict, route by route --------------------------
 # The whole point of the artifact: which routes are DONE, which are waiting on
@@ -176,20 +269,20 @@ grep -q '^## Handoff' "$WORK/out1/MIGRATION.md" || fail "MIGRATION.md lacks a Ha
 # a status that moves from `migrated` to `open` (or the reverse) names itself.
 [[ "$(jq -r '.complete' "$HANDOFF")" == "false" ]] || fail "run 1 must not be complete"
 route_count=$(jq '.routes | length' "$HANDOFF")
-[[ "$route_count" == "14" ]] || fail "expected 14 routes in the handoff, got $route_count -- a new route needs a pin below"
+[[ "$route_count" == "16" ]] || fail "expected 16 routes in the handoff, got $route_count -- a new route needs a pin below"
 status_of() { jq -r --arg r "$1" '.routes[] | select(.route_id == $r) | .status' "$HANDOFF"; }
 want_status() {
   local got; got="$(status_of "$1")"
   [[ "$got" == "$2" ]] || fail "run 1: $1 should be $2, got '$got'"
 }
-# `/` is `root "pages#about"` and `/about` is the same action: one view, one
-# layout, two URLs. Ruling S16 lets a view be shared as long as the LAYOUT is
-# the same (it is -- PagesController declares `layout "marketing"` for both),
-# so both migrate off one `layouts/pages/about.shtml`.
-want_status 'GET /'                  migrated
-want_status 'GET /about'             migrated
-want_status 'GET /linked'            migrated
-# Every open route below names a finding the decisions file answers.
+# EVERY page route is `open` in run 1, and that is #167 Stage 3's doing: the
+# shared `_nav` partial now reads `current_user`, and a layout's findings ride
+# on every route under it (ruling S21). `GET /`, `GET /about` and `GET /linked`
+# were `migrated` here in Stage 2 and regain it in run 2, once the nav's
+# regions are answered.
+want_status 'GET /'                  open
+want_status 'GET /about'             open
+want_status 'GET /linked'            open
 want_status 'GET /help'              open
 want_status 'GET /broken'            open
 want_status 'GET /links'             open
@@ -199,14 +292,40 @@ want_status 'GET /posts/legacy'      open
 want_status 'GET /session/new'       open
 want_status 'GET /registration/new'  open
 # No page, no decision, no question: a pure `redirect_to` action is answered
-# by the host config, and a non-GET route is Stage 3's endpoint work.
+# by the host config.
 want_status 'GET /old'               redirect
+# Non-GET traffic, plus the one GET that renders JSON instead of a view.
 want_status 'POST /session'          backend
+want_status 'DELETE /session'        backend
 want_status 'POST /registration'     backend
-# ...and the redirect is reported as one, with no target: Stage 2 records that
-# the route redirects, not where to.
+want_status 'GET /feed'              backend
+# Nothing is bound yet: `--backend` alone widens the questions, it answers
+# none of them.
+unbound=$(jq -r '[.routes[] | select(.endpoint != null) | .route_id] | join(" ")' "$HANDOFF")
+[[ -z "$unbound" ]] || fail "run 1 answers nothing, so no route may carry an endpoint: $unbound"
+# ...and the document itself is recorded by BASENAME. An absolute path in a
+# committed artifact would make the handoff non-reproducible.
+[[ "$(jq -r '.backend.file' "$HANDOFF")" == "openapi.json" ]] || fail "the handoff must name the backend document by basename"
+[[ "$(jq -r '.backend.contract_version' "$HANDOFF")" == "1.0.0" ]] || fail "backend contract_version: $(jq -r '.backend.contract_version' "$HANDOFF")"
+grep -q "$WORK" "$HANDOFF" && fail "the handoff embeds the scratch path"
+# The redirect is reported WITH its target since #167 Stage 3's redirect
+# recovery: `pages#old` calls `redirect_to about_path`, and the host config
+# needs the destination, not just the fact.
 [[ "$(jq -r '.redirects | length' "$HANDOFF")" == "1" ]] || fail "expected exactly one redirect"
 [[ "$(jq -r '.redirects[0].from' "$HANDOFF")" == "/old" ]] || fail "the redirect should be /old"
+[[ "$(jq -r '.redirects[0].to' "$HANDOFF")" == "/about" ]] || fail "the redirect target should be /about"
+
+# An UNANSWERED mutating link keeps its page open. `GET /` renders the shared
+# nav, whose `button_to ..., method: :delete` raised a RAILS_BACKEND_ENDPOINT
+# nobody has answered -- so the route is `open` ON THAT ID, and the converted
+# layout carries an empty finding region instead of an `<a href="/session">`
+# that would GET the route the control was supposed to DELETE.
+root_ids=$(jq -r '.routes[] | select(.route_id == "GET /") | .findings | join(" ")' "$HANDOFF")
+[[ "$root_ids" == "RAILS_BACKEND_ENDPOINT.app/views/shared/_nav%2Ehtml%2Eerb.L5C54 RAILS_REQUEST_TIME_STATE.app/views/shared/_nav%2Ehtml%2Eerb.L4C6 RAILS_REQUEST_TIME_STATE.app/views/shared/_nav%2Ehtml%2Eerb.L5C28 RAILS_REQUEST_TIME_STATE.app/views/shared/_nav%2Ehtml%2Eerb.L5C6" ]] \
+  || fail "GET / must be open on all four nav findings, got: $root_ids"
+run1_nav="$WORK/out1/layouts/templates/marketing.shtml"
+grep -q 'href="/session">' "$run1_nav" && fail "an unanswered mutating link must not become a GET link to the DELETE route"
+grep -q 'method="delete"' "$run1_nav" && fail 'a method= attribute on an <a> does nothing in a static site'
 
 # --- run 1: the converted tree ---------------------------------------------
 listing="$(cd "$WORK/out1" && find . -type f | sort | tr '\n' ' ')"
@@ -220,12 +339,22 @@ expected_listing="./.gitignore ./AGENTS.md ./CLAUDE.md ./MIGRATION.handoff.json 
 # converted at all (broken.html.erb, legacy.html.haml).
 [[ ! -e "$WORK/out1/content/broken" ]] || fail "an unconvertible view must not leave a page behind"
 [[ ! -e "$WORK/out1/content/posts/legacy" ]] || fail "the Haml route must not leave a page behind"
+# Nothing is BOUND in run 1, so nothing that only a binding produces exists:
+# no client library, no island, no package.json. This listing is the only
+# assertion that catches a scaffolder writing lib/zb.ts unconditionally.
+[[ ! -e "$WORK/out1/lib" ]] || fail "run 1 binds nothing, so there is no client library to write"
+[[ ! -e "$WORK/out1/components" ]] || fail "run 1 binds nothing, so there is no island to write"
+[[ ! -e "$WORK/out1/package.json" ]] || fail "run 1 needs no npm dependencies"
 # Ruling S17: public/assets/** is the pipeline's compiled OUTPUT. The sources
 # are copied from app/assets/ (see assets/images/logo.png), so copying it too
 # would ship every asset twice plus a Rails bookkeeping file.
 [[ -f "$WORK/out1/assets/images/logo.png" ]] || fail "app/assets image not copied"
 [[ -f "$WORK/out1/assets/robots.txt" ]] || fail "public/robots.txt not copied"
 [[ ! -e "$WORK/out1/assets/assets" ]] || fail "public/assets/** must not be copied as site assets (ruling S17)"
+# The backend document is an input, not an asset: it must not be copied into
+# the site tree by the inventory walk.
+[[ ! -e "$WORK/out1/assets/openapi.json" ]] || fail "the --backend document is an input, not a site asset"
+[[ ! -e "$WORK/out1/backend" ]] || fail "the --backend document is an input, not a site asset"
 # The scaffold writes with exclusive-create; a `.new` file would mean
 # something took `--scaffold`'s versioning path instead.
 new_files="$(find "$WORK/out1" -name '*.new*' | tr '\n' ' ')"
@@ -260,25 +389,34 @@ grep -q '<div id="main"><super></div>' "$marketing" || fail "the layout must car
 head -1 "$WORK/out1/layouts/pages/about.shtml" | grep -qx '<extend template="marketing.shtml">' \
   || fail "layouts/pages/about.shtml must start with <extend template=\"marketing.shtml\">"
 
+# --- run 1b: the same app with NO --backend --------------------------------
+# The flag is what makes an operation answerable at all. Without it the two
+# backend questions are still ASKED -- the operator has to acknowledge them
+# somehow -- but the only answers on offer are the two that ship nothing, and
+# the journey message says how to get the third.
+set +e
+"$ZIGAPAGOS" migrate "$WORK/app" --from rails --target "$WORK/out1b" >/dev/null
+run1b_rc=$?
+set -e
+[[ $run1b_rc -eq 3 ]] || fail "run 1b should still exit 3, got $run1b_rc"
+M1B="$WORK/out1b/MIGRATION.manifest.json"
+feed_choices_nb=$(jq -r '.findings[] | select(.id == "RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L20.GET.posts") | .choices | join(",")' "$M1B")
+[[ "$feed_choices_nb" == "retain,blocked" ]] || fail "without a document there is no operation to offer: $feed_choices_nb"
+journey_msg_nb=$(jq -r '.findings[] | select(.code == "RAILS_AUTH_JOURNEY") | .message' "$M1B")
+[[ "$journey_msg_nb" == *"(pass --backend to validate the name)" ]] \
+  || fail "the journey message must say how to get the collection validated: $journey_msg_nb"
+[[ "$(jq -r '.backend' "$WORK/out1b/MIGRATION.handoff.json")" == "null" ]] || fail "no document, no backend object"
+grep -qx 'backend: none' "$WORK/out1b/MIGRATION.md" || fail "the report must say `backend: none` rather than omitting the line"
+
 # --- run 2: the operator's answers -----------------------------------------
 # The checked-in decisions file answers every finding that keeps a route open.
-#
-# ON THE IDS IN THAT FILE (it is JSON, and `decisions.zig` rejects any key
-# outside schema/decisions, so the note has to live here): a finding id is
-# `<code>.<path>.<loc>`, and `<loc>` is the LINE and COLUMN the construct sits
-# at. Editing a fixture template therefore moves every id after the edit --
-# `registrations/new.html.erb` alone accounts for four -- and the answers stop
-# matching, which surfaces as `RAILS_DECISION_STALE` blockers and a run that
-# will not complete rather than as anything obviously wrong. Re-derive them
-# from run 1's manifest (`jq -r '.findings[].id'`) after any fixture edit, and
-# re-pin the `have_finding` lines above with them.
 # `--runtime-path` points the generated package.json at this checkout's
-# runtime/ so the SPA scaffold's `@z/runtime` dependency resolves without a
+# runtime/ so the generated `@z/runtime` dependency resolves without a
 # published npm package -- the same thing site/build.sh does via
-# ZIGAPAGOS_RUNTIME_DIR.
+# ZIGAPAGOS_RUNTIME_DIR (run 2c below covers the variable).
 set +e
 "$ZIGAPAGOS" migrate "$WORK/app" --from rails --target "$WORK/out2" \
-  --decisions "$DECISIONS" --runtime-path "$REPO/runtime"
+  --decisions "$DECISIONS" --backend "$BACKEND" --runtime-path "$REPO/runtime"
 run2_rc=$?
 set -e
 [[ $run2_rc -eq 0 ]] || fail "run 2 must exit 0 once every route is answered, got $run2_rc"
@@ -297,91 +435,303 @@ want2 'GET /help'             blocked
 want2 'GET /broken'           blocked
 want2 'GET /links'            blocked
 want2 'GET /posts/legacy'     blocked
+# `retain` outranks `public`: the two answers on the index view say the page
+# stays on Rails, which moots every other answer about what is on it, so the
+# auth-guard answer changes nothing here (ruling S3-R7 widens which answers
+# run, not the rank that decides the route). The variant run near the end of
+# this script deletes exactly those two, and is where `public` does something
+# visible.
 want2 'GET /posts'            retained
-want2 'GET /session/new'      retained
-# Ruling S19, and the only route that exercises it: registrations/new.html.erb
-# renders `full_messages.each do |m| … <%= m %>`, and `m` is an unbound block
-# local that `convert.zig` leaves as `<!-- rails:unmapped local -->` with no
-# finding id. Ruling S6's net used to run BEFORE the decision was read, so this
-# route stayed `open` however it was answered and the whole run could never
-# complete. The answer is honoured now -- `retain` means the page stays on
-# Rails, so what the converter could not map is moot -- and the unmapped
-# region is still reported, as a footnote that cannot change the status.
-want2 'GET /registration/new' retained
-reg_note=$(jq -r '.routes[] | select(.route_id == "GET /registration/new") | .note' "$HANDOFF2")
-grep -q 'local left unmapped' <<<"$reg_note" || fail "the retained route must still report its unmapped region: $reg_note"
 want2 'GET /posts/:id'        migrated
+# The three routes the shared nav kept open in run 1, back to `migrated` now
+# that its regions are answered -- ruling S21 running in the other direction.
+want2 'GET /'                 migrated
+want2 'GET /about'            migrated
+want2 'GET /linked'           migrated
+# The journey's two page routes. In Stage 2 these were `retained`; the
+# `island` answer is what moves them, and it is the reason `content/session/
+# new/index.smd` is back in the listing below.
+want2 'GET /session/new'      migrated
+want2 'GET /registration/new' migrated
 # A decision on a redirect is RECORDED but never changes the status: the host
 # config answered it before anyone was asked.
 want2 'GET /old'              redirect
 [[ "$(jq -r '.routes[] | select(.route_id == "GET /old") | .decision.choice' "$HANDOFF2")" == "retain" ]] \
   || fail "the redirect's decision should still be recorded"
 
-# The `spa` choice is the only one that emits code, so it is the only one with
-# an artifact to check.
+# --- run 2: the bindings ----------------------------------------------------
+# The stage's whole claim, route by route. Two of the three journey endpoints
+# are CollectionService METHOD names rather than operation ids, because
+# `x-zigbase-coverage.allAuthMethods` is always false -- auth-with-password
+# and auth-logout are not in any ZigBase OpenAPI document. `createUsers` is
+# re-derived by the same rule that names them, not looked up, so a trio where
+# one member came from the document and two were synthesized cannot disagree.
+endpoint_of() { jq -r --arg r "$1" '.routes[] | select(.route_id == $r) | .endpoint | "\(.operation_id) \(.verb) \(.path)"' "$HANDOFF2"; }
+[[ "$(endpoint_of 'GET /feed')" == "listPosts GET /api/collections/posts/records" ]] \
+  || fail "GET /feed endpoint: $(endpoint_of 'GET /feed')"
+[[ "$(endpoint_of 'POST /session')" == "authWithPassword POST /api/collections/users/auth-with-password" ]] \
+  || fail "POST /session endpoint: $(endpoint_of 'POST /session')"
+[[ "$(endpoint_of 'DELETE /session')" == "logout POST /api/collections/users/auth-logout" ]] \
+  || fail "DELETE /session endpoint: $(endpoint_of 'DELETE /session')"
+[[ "$(endpoint_of 'POST /registration')" == "createUsers POST /api/collections/users/records" ]] \
+  || fail "POST /registration endpoint: $(endpoint_of 'POST /registration')"
+# ...and only those four. A page route must never claim an endpoint.
+bound_routes=$(jq -r '[.routes[] | select(.endpoint != null) | .route_id] | join(",")' "$HANDOFF2")
+[[ "$bound_routes" == "GET /feed,POST /registration,DELETE /session,POST /session" ]] \
+  || fail "exactly the four backend routes are bound, got: $bound_routes"
+grep -qx 'endpoints: 4 of the 4 `backend` route(s) are bound to a ZigBase operation.' "$WORK/out2/MIGRATION.md" \
+  || fail "the report's endpoint tally must say every backend route is bound"
+
+# The `spa` choice and the `island` answers are the ones that emit code.
 [[ -f "$WORK/out2/spa/posts.spa.tsx" ]] || fail "the spa decision must scaffold spa/posts.spa.tsx"
-[[ -f "$WORK/out2/package.json" ]] || fail "a SPA needs a package.json"
 [[ -f "$WORK/out2/tsconfig.json" ]] || fail "a SPA needs a tsconfig.json"
 grep -q "^export const spa = { base: \"/posts\" };$" "$WORK/out2/spa/posts.spa.tsx" || fail "the SPA must mount at /posts"
 # Quoted in build.sh: `--spa=path|base` unquoted is a shell PIPELINE.
 grep -qF -- "--spa='spa/posts.spa.tsx|/posts'" "$WORK/out2/build.sh" || fail "build.sh must carry a quoted --spa entry"
+# ONE AuthForm file for both halves of the journey (assumption A5: one
+# finding, one answer, one component), told apart by a prop.
+[[ -f "$WORK/out2/components/AuthForm.island.tsx" ]] || fail "the journey must scaffold components/AuthForm.island.tsx"
+[[ -f "$WORK/out2/components/AuthStatus.island.tsx" ]] || fail "the nav's answered region must scaffold components/AuthStatus.island.tsx"
+[[ -f "$WORK/out2/lib/zb.ts" ]] || fail "a bound island needs the client library"
+grep -qF 'authCollection: "users"' "$WORK/out2/lib/zb.ts" \
+  || fail "lib/zb.ts must name the auth collection the journey was answered with"
+grep -qF '<island src="components/AuthForm.island.tsx" client:load :props='"'"'{ .mode = "signin" }'"'"'></island>' "$WORK/out2/layouts/sessions/new.shtml" \
+  || fail "sessions/new must mount the AuthForm in signin mode"
+grep -qF '<island src="components/AuthForm.island.tsx" client:load :props='"'"'{ .mode = "signup" }'"'"'></island>' "$WORK/out2/layouts/registrations/new.shtml" \
+  || fail "registrations/new must mount the AuthForm in signup mode"
+# Ruling S6 / #181: the `full_messages.each do |m|` block local was the one
+# region convert.zig could not map and could not be asked about. The island
+# owns the whole errors region now, so it never reaches the converter at all.
+grep -q 'rails:unmapped' "$WORK/out2/layouts/registrations/new.shtml" \
+  && fail "a bound auth form leaves no unmapped region behind"
+# The complementary pair is ONE mount. Two would print the nav's sign-in link
+# twice in the built page: AuthStatus renders BOTH branches itself.
+# `|| true`: grep -c exits 1 on zero matches, which under `set -e` would kill
+# the script at the assignment, before the `fail` that exists to name it.
+status_mounts=$(grep -c '<island src="components/AuthStatus.island.tsx"' "$WORK/out2/layouts/templates/marketing.shtml" || true)
+[[ "$status_mounts" == "1" ]] || fail "an if/unless pair on one predicate is one AuthStatus mount, got $status_mounts"
+# ...and the route says which half was folded into which, so the operator can
+# see the two answers became one component.
+root_note=$(jq -r '.routes[] | select(.route_id == "GET /") | .note' "$HANDOFF2")
+grep -q '`if current_user` folded into the AuthStatus island above it' <<<"$root_note" \
+  || fail "the absorbed half must be named in the note: $root_note"
+# The sign-out control is inside that region, so the island replaced it: no
+# link to the DELETE route survives, and no separate click island was written.
+grep -q 'href="/session">' "$WORK/out2/layouts/templates/marketing.shtml" \
+  && fail "the AuthStatus island replaces the sign-out control; no link to /session may survive"
+[[ ! -e "$WORK/out2/components/forms" ]] || fail "this fixture's only mutating control is inside the AuthStatus region; a forms/ island would mean it was bound twice"
+# npm dependencies: the client, pinned, and the runtime at the path we asked
+# for. `--runtime-path` SHADOWS ZIGAPAGOS_RUNTIME_DIR; run 2c covers the
+# variable on its own.
+grep -qF '"@zigbase/client": "0.3.0"' "$WORK/out2/package.json" || fail "package.json must pin @zigbase/client"
+grep -qF "\"@z/runtime\": \"file:$REPO/runtime\"" "$WORK/out2/package.json" || fail "--runtime-path must fill the runtime dependency"
+# Each island reaches `release` once, quoted, in path order.
+for isl in components/AuthForm.island.tsx components/AuthStatus.island.tsx; do
+  n=$(grep -o -- "--island='$isl'" "$WORK/out2/build.sh" | wc -l)
+  [[ "$n" -eq 1 ]] || fail "build.sh must carry --island='$isl' exactly once, got $n"
+done
+
+# --- run 2: every route's note, exactly (rulings S3-R6 and S3-R7) ----------
+# The note is the whole handoff for a `migrated` route -- the status says the
+# route is finished, and only the note says what the operator's answers turned
+# into. Pinned as an exact string per route rather than by `grep -q`, because
+# the defect ruling S3-R7 closes is a note that says something TRUE TWICE: a
+# presence check passes just as happily on one copy as on two.
+#
+# Ruling S3-R7 applies every answer on a route instead of only the
+# strongest-ranked one, so the nav's `<%= current_user.email %>` -- answered
+# `island` in the decisions file, and swallowed by the `<% if current_user %>`
+# region the AuthStatus island replaced -- now reaches `settleSuperseded` on
+# all five routes the nav rides on. It settles there and says nothing, because
+# the status-region walk below it already reports that region by file and line
+# ("mounts nothing of its own"). What `settleSuperseded` still says is the
+# supersession the walk cannot see: the error summary on `/registration/new`,
+# swallowed by the AuthForm the JOURNEY answer built, twice over (the region
+# and the block local inside it).
+note2() {
+  local got
+  got="$(jq -r --arg r "$1" '.routes[] | select(.route_id == $r) | .note // "<null>"' "$HANDOFF2")"
+  [[ "$got" == "$2" ]] || fail "run 2: the note on $1 changed
+  want: $2
+  got:  $got"
+}
+head2='csrf_meta_tags dropped; javascript_importmap_tags dropped'
+# The two facts the status-region walk reports about the shared nav: the
+# signed-out half folded into its complement, and the greeting inside the
+# region the island replaced.
+nav2='app/views/shared/_nav.html.erb:5 `if current_user` folded into the AuthStatus island above it; app/views/shared/_nav.html.erb:5 `current_user.email` is inside the region the AuthStatus island replaced, so it mounts nothing of its own'
+# `settleSuperseded`'s note, on the one route that earns it. Both ids are
+# named because neither alone is actionable: the operator knows which finding
+# they answered and cannot otherwise tell which answer made theirs redundant
+# -- and here the superseder is the auth JOURNEY, so there is no
+# "mounts nothing of its own" line coming to say it instead.
+absorbed2='choice island on RAILS_REQUEST_TIME_STATE.app/views/registrations/new%2Ehtml%2Eerb.L1C36 superseded by the island answering RAILS_AUTH_JOURNEY.config/routes%2Erb.L38, which replaced the region it sits in; choice island on RAILS_REQUEST_TIME_STATE.app/views/registrations/new%2Ehtml%2Eerb.L1C4 superseded by the island answering RAILS_AUTH_JOURNEY.config/routes%2Erb.L38, which replaced the region it sits in'
+note2 "GET /"                 "$head2; $nav2"
+note2 "GET /about"            "$head2; $nav2"
+note2 "GET /linked"           "$head2; $nav2"
+note2 "GET /session/new"      "$head2; $nav2"
+note2 "GET /registration/new" "$head2; $absorbed2; $nav2"
+# The nav does not reach a dynamic route's shell, so nothing is folded there.
+note2 "GET /posts/:id"        "<null>"
+# The unmigrated rows, pinned in the same pass so a change to the walk cannot
+# move a note off a migrated route and onto one of these unnoticed.
+note2 "GET /posts"            "$head2"
+note2 "GET /help"             "$head2"
+note2 "GET /links"            "$head2"
+note2 "GET /broken"           "view app/views/pages/broken.html.erb was not converted"
+note2 "GET /posts/legacy"     "view app/views/posts/legacy.html.haml was not converted"
+note2 "GET /feed"             "<null>"
+note2 "GET /old"              "<null>"
+note2 "POST /registration"    "<null>"
+note2 "POST /session"         "<null>"
+note2 "DELETE /session"       "<null>"
 
 # --- run 2: the answered tree (ruling S20) ---------------------------------
 # The exact tree, which is what makes S20 visible: an acknowledged route
-# writes NO page and NO view file. Compare with run 1's listing above --
-# `content/help`, `content/links`, `content/posts`, `content/session`,
-# `content/registration` and their `layouts/<ctrl>/<action>.shtml` are all
-# gone, because `retained` means the page stays on Rails and `blocked` means
-# it does not ship. Emitting them anyway made `blocked` a relabelling: the
-# built site served a blank `<main>` for a route the handoff called blocked,
-# which is worse than a 404 because it looks deliberate.
+# writes NO page and NO view file -- `content/help`, `content/links`,
+# `content/posts` and their `layouts/<ctrl>/<action>.shtml` are gone, because
+# `retained` means the page stays on Rails and `blocked` means it does not
+# ship. Emitting them anyway made `blocked` a relabelling: the built site
+# served a blank `<main>` for a route the handoff called blocked, which is
+# worse than a 404 because it looks deliberate.
 #
 # `layouts/templates/application.shtml` DOES survive with no page extending
 # it: a layout is shared chrome, written once per layout rather than per
-# route, and every route using this one happens to be retained here.
+# route, and it mounts the AuthStatus island the nav's answer produced.
 listing2="$(cd "$WORK/out2" && find . -type f | sort | tr '\n' ' ')"
-expected_listing2="./.gitignore ./AGENTS.md ./CLAUDE.md ./MIGRATION.handoff.json ./MIGRATION.manifest.json ./MIGRATION.md ./assets/images/logo.png ./assets/robots.txt ./assets/stylesheets/application.css ./build.sh ./content/about/index.smd ./content/index.smd ./content/linked/index.smd ./layouts/pages/about.shtml ./layouts/pages/linked.shtml ./layouts/templates/application.shtml ./layouts/templates/marketing.shtml ./package.json ./spa/posts.spa.tsx ./tsconfig.json ./zigapagos.ziggy "
+expected_listing2="./.gitignore ./AGENTS.md ./CLAUDE.md ./MIGRATION.handoff.json ./MIGRATION.manifest.json ./MIGRATION.md ./assets/images/logo.png ./assets/robots.txt ./assets/stylesheets/application.css ./build.sh ./components/AuthForm.island.tsx ./components/AuthStatus.island.tsx ./content/about/index.smd ./content/index.smd ./content/linked/index.smd ./content/registration/new/index.smd ./content/session/new/index.smd ./layouts/pages/about.shtml ./layouts/pages/linked.shtml ./layouts/registrations/new.shtml ./layouts/sessions/new.shtml ./layouts/templates/application.shtml ./layouts/templates/marketing.shtml ./lib/zb.ts ./package.json ./spa/posts.spa.tsx ./tsconfig.json ./zigapagos.ziggy "
 [[ "$listing2" == "$expected_listing2" ]] || fail "run 2 target listing changed:
   got:      $listing2
   expected: $expected_listing2"
 # ...and the handoff agrees: an acknowledged route claims no artifact, so the
 # record and the tree cannot drift apart.
-for r in 'GET /help' 'GET /links' 'GET /posts' 'GET /session/new' 'GET /registration/new'; do
+for r in 'GET /help' 'GET /links' 'GET /posts'; do
   n=$(jq -r --arg r "$r" '.routes[] | select(.route_id == $r) | .artifacts | length' "$HANDOFF2")
   [[ "$n" == "0" ]] || fail "$r is acknowledged and must claim no artifact, got $n"
 done
+new_files2="$(find "$WORK/out2" -name '*.new*' | tr '\n' ' ')"
+[[ -z "$new_files2" ]] || fail "the target must never contain .new files, got: $new_files2"
 
 # --- determinism ------------------------------------------------------------
 "$ZIGAPAGOS" migrate "$WORK/app" --from rails --target "$WORK/out2b" \
-  --decisions "$DECISIONS" --runtime-path "$REPO/runtime" >/dev/null
+  --decisions "$DECISIONS" --backend "$BACKEND" --runtime-path "$REPO/runtime" >/dev/null
 cmp "$WORK/out2/MIGRATION.manifest.json" "$WORK/out2b/MIGRATION.manifest.json" || fail "manifest not deterministic"
 cmp "$HANDOFF2" "$WORK/out2b/MIGRATION.handoff.json" || fail "handoff not deterministic"
 # MIGRATION.md joins the determinism cmp set (#178). Both runs migrate the
 # same source path, so this cmp alone would not have caught the old
 # path-as-given title; the two greps below are the pins for that.
 cmp "$WORK/out2/MIGRATION.md" "$WORK/out2b/MIGRATION.md" || fail "MIGRATION.md not deterministic"
+# The islands are generated code, and generated code that moves between two
+# identical runs is not shippable.
+cmp "$WORK/out2/components/AuthForm.island.tsx" "$WORK/out2b/components/AuthForm.island.tsx" || fail "AuthForm not deterministic"
+cmp "$WORK/out2/components/AuthStatus.island.tsx" "$WORK/out2b/components/AuthStatus.island.tsx" || fail "AuthStatus not deterministic"
+cmp "$WORK/out2/lib/zb.ts" "$WORK/out2b/lib/zb.ts" || fail "lib/zb.ts not deterministic"
+cmp "$WORK/out2/build.sh" "$WORK/out2b/build.sh" || fail "build.sh not deterministic"
 # The fixture is migrated from its scratch copy at $WORK/app, so the basename
 # the title must carry is `app` -- and nothing of the scratch path above it.
 grep -q "^# Migrating app to Zigapagos" "$WORK/out2/MIGRATION.md" || fail "MIGRATION.md title must be the app basename"
 grep -q "$WORK" "$WORK/out2/MIGRATION.md" && fail "MIGRATION.md embeds the scratch path"
 
+# --- run 2c: the same answers with NO --runtime-path (#179) ----------------
+# `--runtime-path` shadows ZIGAPAGOS_RUNTIME_DIR, so every run above proves
+# nothing about the variable -- and the variable is the ONLY thing standing
+# between a generated package.json and `file:TODO-SET-RUNTIME-PATH`, which
+# `bun install` cannot resolve. This run is that seam's only coverage.
+"$ZIGAPAGOS" migrate "$WORK/app" --from rails --target "$WORK/out2c" \
+  --decisions "$DECISIONS" --backend "$BACKEND" >/dev/null
+grep -qF "\"@z/runtime\": \"file:$REPO/runtime\"" "$WORK/out2c/package.json" \
+  || fail "#179: ZIGAPAGOS_RUNTIME_DIR must fill the runtime dependency when --runtime-path is absent"
+grep -q 'TODO-SET-RUNTIME-PATH' "$WORK/out2c/package.json" \
+  && fail "#179: the placeholder must not survive when the environment names a runtime"
+
+# --- run 2d: the operator ALSO answers the nested sign-out link (S3-R6) ----
+# The `button_to "Sign out"` sits INSIDE the `if current_user` region the
+# AuthStatus island replaces, and the island performs the logout itself -- so
+# run 2's decisions deliberately leave it alone. But the handoff lists its
+# finding under every route the nav rides on, so an operator working down that
+# list answers it, and that answer must be ACCEPTED: it is a correct answer to
+# a question that is simply already settled.
+#
+# The defect this pins shut: `applyAcknowledgement`'s backend arm asked only
+# whether the answer produced a BINDING, never whether an enclosing region's
+# binding had already swallowed the id -- so the run exited 3 with
+# `needs the --backend document that names it`, on a run given a document, for
+# a `custom:` answer that needs no document at all.
+DEC2D="$WORK/decisions-2d.json"
+jq '.decisions += [{
+      "id": "RAILS_BACKEND_ENDPOINT.app/views/shared/_nav%2Ehtml%2Eerb.L5C54",
+      "choice": "custom:/api/logout",
+      "rationale": "answered from the handoff, not knowing the AuthStatus island already logs out"
+    }]' "$DECISIONS" > "$DEC2D"
+set +e
+"$ZIGAPAGOS" migrate "$WORK/app" --from rails --target "$WORK/out2d" \
+  --decisions "$DEC2D" --backend "$BACKEND" --runtime-path "$REPO/runtime" >/dev/null
+run2d_rc=$?
+set -e
+[[ $run2d_rc -eq 0 ]] || fail "S3-R6: answering a finding inside a bound region must not fail the run, got $run2d_rc"
+HANDOFF2D="$WORK/out2d/MIGRATION.handoff.json"
+[[ "$(jq -r '.complete' "$HANDOFF2D")" == "true" ]] || fail "S3-R6: run 2d must still be complete"
+still_open_2d="$(jq -r '.routes[] | select(.status == "open") | .route_id' "$HANDOFF2D" | tr '\n' ' ')"
+[[ -z "$still_open_2d" ]] || fail "S3-R6: routes left open by a redundant answer: $still_open_2d"
+# The route the extra answer is read on. `pickDecision` ranks `custom:…` and
+# `island` equally and breaks the tie on the smallest id, so the sign-out
+# answer is what `GET /` is decided by -- which is exactly why it had to be
+# accepted rather than deferred.
+root_note_2d=$(jq -r '.routes[] | select(.route_id == "GET /") | .note' "$HANDOFF2D")
+[[ "$(jq -r '.routes[] | select(.route_id == "GET /") | .status' "$HANDOFF2D")" == "migrated" ]] \
+  || fail "S3-R6: GET / must still be migrated: $root_note_2d"
+# BOTH ids: the operator knows which finding they answered, and cannot
+# otherwise tell which other answer made theirs redundant.
+grep -q 'superseded by the island answering' <<<"$root_note_2d" \
+  || fail "S3-R6: the note must say the answer was superseded: $root_note_2d"
+grep -q 'RAILS_BACKEND_ENDPOINT.app/views/shared/_nav%2Ehtml%2Eerb.L5C54' <<<"$root_note_2d" \
+  || fail "S3-R6: the note must name the answer that was superseded: $root_note_2d"
+grep -q 'RAILS_REQUEST_TIME_STATE.app/views/shared/_nav%2Ehtml%2Eerb.L5C6' <<<"$root_note_2d" \
+  || fail "S3-R6: the note must name the island answer that superseded it: $root_note_2d"
+grep -q 'needs the --backend document' <<<"$root_note_2d" \
+  && fail "S3-R6: the run WAS given a --backend document; that note is a lie: $root_note_2d"
+# Accepted, not acted on: the redundant answer builds nothing of its own. The
+# page still has no link to /session (the island replaced the control), and
+# `DELETE /session` still binds the journey's `logout`, not `custom`.
+grep -q 'href="/session">' "$WORK/out2d/layouts/templates/marketing.shtml" \
+  && fail "S3-R6: a superseded answer must not resurrect the control the island replaced"
+[[ ! -e "$WORK/out2d/components/forms" ]] \
+  || fail "S3-R6: a superseded answer must not scaffold a second click island"
+ep_2d=$(jq -r '.routes[] | select(.route_id == "DELETE /session") | [.endpoint.operation_id, .endpoint.verb, .endpoint.path] | join(" ")' "$HANDOFF2D")
+[[ "$ep_2d" == "logout POST /api/collections/users/auth-logout" ]] \
+  || fail "S3-R6: DELETE /session must still bind the journey's logout, got: $ep_2d"
+
 # --- the target is a real Zigapagos project --------------------------------
 # The criterion no listing can fake: the emitted tree BUILDS, and the built
 # site passes the auditor. `build.sh` is the target's own entry point (bun
-# install + `zigapagos release --spa=...`), so this exercises the generated
-# command line too, not a hand-written one.
+# install + `zigapagos release --spa=... --island=...`), so this exercises the
+# generated command line too, not a hand-written one. `bun install` fetches
+# `@zigbase/client@0.3.0` from npm (assumption A8): the skip below is for a
+# missing bun, never for a missing network.
 if command -v bun >/dev/null; then
   ( cd "$WORK/out2" && ZIGAPAGOS_BIN="$ZIGAPAGOS" bash build.sh >"$WORK/release.log" 2>&1 ) \
     || { tail -20 "$WORK/release.log"; fail "zigapagos release failed on the migrated target"; }
   [[ -f "$WORK/out2/zig-out/site/about/index.html" ]] || fail "the release did not emit the about page"
   [[ -f "$WORK/out2/zig-out/site/posts/_shell.html" ]] || fail "the release did not emit the SPA shell"
+  # The islands the backend boundary produced, bundled and SSR'd. Their bytes
+  # having been written is not the claim -- the claim is that a browser gets
+  # them, with the props the layout declared.
+  [[ -f "$WORK/out2/zig-out/site/islands/AuthForm.island.js" ]] || fail "the AuthForm island was not bundled"
+  [[ -f "$WORK/out2/zig-out/site/islands/AuthStatus.island.js" ]] || fail "the AuthStatus island was not bundled"
+  [[ -f "$WORK/out2/zig-out/site/session/new/index.html" ]] || fail "the sign-in page was not built"
+  grep -q 'data-z-props' "$WORK/out2/zig-out/site/session/new/index.html" || fail "the sign-in page carries no SSR'd island"
+  grep -qF '{"mode":"signin"}' "$WORK/out2/zig-out/site/session/new/index.html" || fail "the sign-in page's island is not in signin mode"
+  grep -qF '{"mode":"signup"}' "$WORK/out2/zig-out/site/registration/new/index.html" || fail "the sign-up page's island is not in signup mode"
+  # The layout's AuthStatus rides on every built page, ONCE.
+  nav_ssr=$(grep -c 'data-z-module="/islands/AuthStatus.island.js"' "$WORK/out2/zig-out/site/about/index.html" || true)
+  [[ "$nav_ssr" == "1" ]] || fail "the nav's AuthStatus must be SSR'd exactly once per page, got $nav_ssr"
   # Ruling S20 in the BUILT site, which is where it actually matters: a
   # blocked route has no page here at all. Before S20 these existed and
   # rendered an empty `<main>` -- a route the handoff called blocked, served
   # as a blank page.
   [[ ! -e "$WORK/out2/zig-out/site/help/index.html" ]] || fail "a blocked route must not be served at all"
   [[ ! -e "$WORK/out2/zig-out/site/links/index.html" ]] || fail "a blocked route must not be served at all"
-  [[ ! -e "$WORK/out2/zig-out/site/session/new/index.html" ]] || fail "a retained route stays on Rails; the static tree must not answer it"
+  [[ ! -e "$WORK/out2/zig-out/site/posts/index.html" ]] || fail "a retained route stays on Rails; the static tree must not answer it"
   # A KNOWN GAP, pinned so it flips loudly the day the emitter grows a
   # `head:`: the scaffolded `.spa.tsx` declares no `spa.head`, so the SPA's
   # routes render without the site's stylesheet. `release` says so; when the
@@ -391,16 +741,193 @@ if command -v bun >/dev/null; then
     || fail "the no-spa.head warning is gone -- if the scaffold now emits a head:, delete this pin"
   "$ZIGAPAGOS" doctor "$WORK/out2/zig-out/site" >"$WORK/doctor.log" 2>&1 || { cat "$WORK/doctor.log"; fail "doctor failed"; }
   grep -q 'doctor: 0 errors' "$WORK/doctor.log" || { cat "$WORK/doctor.log"; fail "doctor reported errors on the migrated site"; }
-  # The warnings that DO remain are S20's honest consequence and nothing
-  # else: the shared `_nav` partial links to /session/new, which is retained
-  # -- Rails still serves it, this tree does not, and a dangling link is
-  # exactly the right thing for the auditor to say about a partial migration.
-  # Any OTHER warning is a real regression, so the check is per-line.
-  other=$(grep '^warn ' "$WORK/doctor.log" | grep -v "dangling-internal-link: .*href '/session/new'" || true)
-  [[ -z "$other" ]] || { cat "$WORK/doctor.log"; fail "unexpected doctor warnings: $other"; }
+  # ZERO warnings, not a permitted set. In Stage 2 the shared `_nav` linked to
+  # `/session/new`, which was retained, and the auditor rightly called it a
+  # dangling internal link. #167 Stage 3 migrates that route AND replaces the
+  # link with the AuthStatus island, so the last warning is gone and any new
+  # one is a regression.
+  warns=$(grep '^warn ' "$WORK/doctor.log" || true)
+  [[ -z "$warns" ]] || { cat "$WORK/doctor.log"; fail "unexpected doctor warnings: $warns"; }
 else
   echo "SKIP(partial): bun not on PATH -- the migrated target was not built or audited"
 fi
+
+# --- negative: an unusable --backend document ------------------------------
+# Exit 1, not 3 and not a panic: the operator's input is wrong, which is the
+# same class as an unusable decisions file, and both print and return rather
+# than going through `fatal.msg` (which panics under the Debug build every
+# shell e2e drives, delivering 134).
+set +e
+notdoc_out="$("$ZIGAPAGOS" migrate "$WORK/app" --from rails --target "$WORK/badbk" --backend "$WORK/app/Gemfile" 2>&1)"
+notdoc_rc=$?
+set -e
+[[ $notdoc_rc -eq 1 ]] || fail "a --backend file that is not an OpenAPI document must exit 1, got $notdoc_rc"
+grep -q 'is not a ZigBase OpenAPI document: InvalidJson' <<<"$notdoc_out" || fail "the error must name the reason: $notdoc_out"
+[[ ! -e "$WORK/badbk" ]] || fail "a rejected --backend must create no target"
+# Ruling S3-R4: a path that does not resolve is the same class of mistake, and
+# gets the same treatment. It arrived as 134 before that ruling.
+set +e
+missing_out="$("$ZIGAPAGOS" migrate "$WORK/app" --from rails --target "$WORK/badbk2" --backend "$WORK/no-such-file.json" 2>&1)"
+missing_rc=$?
+set -e
+[[ $missing_rc -eq 1 ]] || fail "a missing --backend file must exit 1 (not a panic), got $missing_rc"
+grep -q -- '--backend .* could not be read: FileNotFound' <<<"$missing_out" || fail "the error must name the flag, the path and the OS error: $missing_out"
+
+# --- negative: answers the document refuses --------------------------------
+# The artifact must be an auth collection the DOCUMENT knows, and the error
+# names the ones it has -- otherwise an operator guesses collection names
+# against a backend they cannot see.
+python3 - "$DECISIONS" "$WORK/members.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+for x in d["decisions"]:
+    if x["id"].startswith("RAILS_AUTH_JOURNEY"):
+        x["artifact"] = "members"
+json.dump(d, open(sys.argv[2], "w"))
+PY
+set +e
+members_out="$("$ZIGAPAGOS" migrate "$WORK/app" --from rails --target "$WORK/m1" --decisions "$WORK/members.json" --backend "$BACKEND" 2>&1)"
+members_rc=$?
+set -e
+[[ $members_rc -eq 1 ]] || fail "an artifact naming no auth collection must exit 1, got $members_rc"
+grep -q 'artifact "members" is not an auth collection in the backend document; auth collections: users' <<<"$members_out" \
+  || fail "the error must name the collections the document does have: $members_out"
+
+# An operation of the WRONG VERB is not merely unhelpful, it is not offered:
+# `createPosts` is a POST, and this finding is a GET route's.
+python3 - "$DECISIONS" "$WORK/wrongverb.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+for x in d["decisions"]:
+    if x["id"].startswith("RAILS_BACKEND_ENDPOINT.config"):
+        x["choice"] = "createPosts"
+json.dump(d, open(sys.argv[2], "w"))
+PY
+set +e
+wrongverb_out="$("$ZIGAPAGOS" migrate "$WORK/app" --from rails --target "$WORK/m2" --decisions "$WORK/wrongverb.json" --backend "$BACKEND" 2>&1)"
+wrongverb_rc=$?
+set -e
+[[ $wrongverb_rc -eq 1 ]] || fail "an operation of the wrong verb must exit 1, got $wrongverb_rc"
+grep -q 'allowed: listPosts, viewPosts, listUsers, viewUsers, retain, blocked' <<<"$wrongverb_out" \
+  || fail "the rejection must name the allowed set: $wrongverb_out"
+
+# The same answers WITHOUT the document: `listPosts` is a word the run cannot
+# check, so it is refused rather than trusted. This is the discrimination for
+# every `--backend` assertion above -- if the flag did nothing, this run would
+# succeed.
+set +e
+nodoc_out="$("$ZIGAPAGOS" migrate "$WORK/app" --from rails --target "$WORK/m3" --decisions "$DECISIONS" 2>&1)"
+nodoc_rc=$?
+set -e
+[[ $nodoc_rc -eq 1 ]] || fail "an operation id without a document must exit 1, got $nodoc_rc"
+grep -q 'choice "listPosts" is not offered' <<<"$nodoc_out" || fail "the rejection must name the choice: $nodoc_out"
+grep -q 'allowed: retain, blocked' <<<"$nodoc_out" || fail "without a document only the two reserved answers are allowed: $nodoc_out"
+
+# `custom:/<path>` (assumption A3) is the escape hatch for a route no
+# collection operation matches: accepted on a RAILS_BACKEND_ENDPOINT, never
+# enumerated in `choices` (a free-form token cannot be), and it binds.
+python3 - "$DECISIONS" "$WORK/custom.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+for x in d["decisions"]:
+    if x["id"].startswith("RAILS_BACKEND_ENDPOINT.config"):
+        x["choice"] = "custom:/api/feed"
+json.dump(d, open(sys.argv[2], "w"))
+PY
+set +e
+"$ZIGAPAGOS" migrate "$WORK/app" --from rails --target "$WORK/m4" --decisions "$WORK/custom.json" \
+  --backend "$BACKEND" --runtime-path "$REPO/runtime" >/dev/null
+custom_rc=$?
+set -e
+[[ $custom_rc -eq 0 ]] || fail "a custom: answer must still complete the run, got $custom_rc"
+custom_ep=$(jq -r '.routes[] | select(.route_id == "GET /feed") | .endpoint | "\(.operation_id) \(.verb) \(.path)"' "$WORK/m4/MIGRATION.handoff.json")
+[[ "$custom_ep" == "custom GET /api/feed" ]] || fail "a custom: answer binds {custom, the route's verb, the given path}, got: $custom_ep"
+
+# Delete ONE answer and the run stops completing. Without this the exit-0
+# above could be explained by a completion rule that never looked at the
+# journey at all.
+python3 - "$DECISIONS" "$WORK/nojourney.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d["decisions"] = [x for x in d["decisions"] if not x["id"].startswith("RAILS_AUTH_JOURNEY")]
+json.dump(d, open(sys.argv[2], "w"))
+PY
+set +e
+"$ZIGAPAGOS" migrate "$WORK/app" --from rails --target "$WORK/m5" --decisions "$WORK/nojourney.json" \
+  --backend "$BACKEND" --runtime-path "$REPO/runtime" >/dev/null
+nojourney_rc=$?
+set -e
+[[ $nojourney_rc -eq 3 ]] || fail "dropping the journey answer must reopen the run, got $nojourney_rc"
+[[ ! -e "$WORK/m5/components/AuthForm.island.tsx" ]] || fail "an unanswered journey scaffolds nothing"
+
+# Delete the feed answer and the run stops completing TOO -- assumption A2 in
+# one assertion. Every other route is answered; the only thing keeping this
+# run open is a user-facing GET the handoff calls `backend` with nothing bound
+# to it. Under Stage 2's rule (S11) `backend` was accounted unconditionally
+# and this run would have exited 0 with an unanswered route.
+python3 - "$DECISIONS" "$WORK/nofeed.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d["decisions"] = [x for x in d["decisions"] if not x["id"].startswith("RAILS_BACKEND_ENDPOINT.config")]
+json.dump(d, open(sys.argv[2], "w"))
+PY
+set +e
+"$ZIGAPAGOS" migrate "$WORK/app" --from rails --target "$WORK/m6" --decisions "$WORK/nofeed.json" \
+  --backend "$BACKEND" --runtime-path "$REPO/runtime" >/dev/null
+nofeed_rc=$?
+set -e
+[[ $nofeed_rc -eq 3 ]] || fail "A2: an unbound user-facing GET must keep the run open, got $nofeed_rc"
+feed_status=$(jq -r '.routes[] | select(.route_id == "GET /feed") | "\(.status) \(.endpoint) \(.decision)"' "$WORK/m6/MIGRATION.handoff.json")
+[[ "$feed_status" == "backend null null" ]] || fail "the unbound feed row: $feed_status"
+# ...and its non-GET neighbours are still exempt, which is what stops A2 from
+# being "every backend route must be answered".
+post_status=$(jq -r '.routes[] | select(.route_id == "POST /session") | .status' "$WORK/m6/MIGRATION.handoff.json")
+[[ "$post_status" == "backend" ]] || fail "POST /session should still be backend, got $post_status"
+
+# --- the auth guard on its own (assumption A7) -----------------------------
+# `public` in run 2 is outranked by the two `retain` answers on the same
+# route, so nothing it does is visible there. Here those two are deleted, and
+# nothing else: `public` is then the STRONGEST answer this route has, which is
+# all it now takes. It settles the guard, the page IS written (unlike
+# `retain`/`blocked`), the route stays open on the questions nobody answered,
+# and the note says out loud that a guarded page is shipping public.
+#
+# Ruling S3-R7 is what shrank this drop set from five ids to two. The nav's
+# three `island` answers ride on this route through the layout, tie with
+# `public` on rank, and win the id tie-break -- so while only the single
+# picked answer ran, they had to be deleted too or `public` never executed.
+# That was the defect, not a property of the fixture: every answer on a route
+# is applied now, so the island answers and the guard answer coexist and this
+# arm exercises exactly the shape it claims to. Deleting them anyway would
+# make it pass for the old reason and pin nothing.
+python3 - "$DECISIONS" "$WORK/guardonly.json" <<'PY'
+import json, sys
+drop = {
+    "RAILS_PARTIAL_DYNAMIC.app/views/posts/index%2Ehtml%2Eerb.L1C61",
+    "RAILS_REQUEST_TIME_STATE.app/views/posts/index%2Ehtml%2Eerb.L1C33",
+}
+d = json.load(open(sys.argv[1]))
+d["decisions"] = [x for x in d["decisions"] if x["id"] not in drop]
+json.dump(d, open(sys.argv[2], "w"))
+PY
+set +e
+"$ZIGAPAGOS" migrate "$WORK/app" --from rails --target "$WORK/g1" --decisions "$WORK/guardonly.json" \
+  --backend "$BACKEND" --runtime-path "$REPO/runtime" >/dev/null
+guard_rc=$?
+set -e
+[[ $guard_rc -eq 3 ]] || fail "the guard-only variant should still exit 3, got $guard_rc"
+G="$WORK/g1/MIGRATION.handoff.json"
+[[ "$(jq -r '.routes[] | select(.route_id == "GET /posts") | .status' "$G")" == "open" ]] \
+  || fail "public settles the guard, not the route"
+[[ -f "$WORK/g1/content/posts/index.smd" ]] || fail "public SHIPS the page -- that is the whole difference from retain"
+guard_note=$(jq -r '.routes[] | select(.route_id == "GET /posts") | .note' "$G")
+grep -q 'guarded by before_action :require_login; shipped public by decision' <<<"$guard_note" \
+  || fail "the note must say a guarded page is shipping public: $guard_note"
+# The guard's own id is settled and no longer listed; the questions nobody
+# answered still are.
+guard_open=$(jq -r '.routes[] | select(.route_id == "GET /posts") | .findings | join(" ")' "$G")
+grep -q 'RAILS_ROUTE_AUTH_GUARD' <<<"$guard_open" && fail "an answered-and-acted-on guard must not stay open: $guard_open"
+grep -q 'RAILS_PARTIAL_DYNAMIC' <<<"$guard_open" || fail "the unanswered questions must still be listed: $guard_open"
 
 # --- a decisions file that does not fit this run ---------------------------
 # A choice the finding does not offer is a user error, and fatal: exit 1, with
@@ -463,7 +990,7 @@ mkdir -p "$WORK/loop"
 cp "$DECISIONS" "$WORK/loop/MIGRATION.decisions.json"
 set +e
 "$ZIGAPAGOS" migrate "$WORK/app" --from rails --target "$WORK/loop" \
-  --decisions "$WORK/loop/MIGRATION.decisions.json" --runtime-path "$REPO/runtime" >/dev/null
+  --decisions "$WORK/loop/MIGRATION.decisions.json" --backend "$BACKEND" --runtime-path "$REPO/runtime" >/dev/null
 loop_rc=$?
 set -e
 [[ $loop_rc -eq 0 ]] || fail "a target holding only MIGRATION.decisions.json must be accepted, got $loop_rc"

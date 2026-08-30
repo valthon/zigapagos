@@ -1,7 +1,6 @@
-# Routed via `resource :session, controller: "sessions"` (see
-# config/routes.rb's R13 comment: this parser does not pluralize a
-# singular resource's controller, so the override is required to match
-# this real, pluralized controller class).
+# Routed via `resource :session` (config/routes.rb). Since #176 that needs
+# no `controller:` override: a singular resource routes to the PLURAL
+# controller, which is this class, with its views in app/views/sessions/.
 class SessionsController < ApplicationController
   # sessions/new.html.erb is a plain `form_with` -- no findings.
   def new
@@ -9,6 +8,15 @@ class SessionsController < ApplicationController
 
   def create
     session = find_or_create_session
+    redirect_to root_path
+  end
+
+  # #167 Stage 3: the sign-out half. The shared nav's
+  # `button_to "Sign out", session_path, method: :delete` targets this
+  # action. The generated AuthStatus island does NOT follow the redirect
+  # below -- after `logout()` it calls `location.reload()`.
+  def destroy
+    reset_session
     redirect_to root_path
   end
 end

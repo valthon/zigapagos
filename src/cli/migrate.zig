@@ -124,13 +124,40 @@ const usage =
     \\                         RAILS_DECISION_STALE blocker and the exit code
     \\                         is unaffected, because fixing the template you
     \\                         were asked about is what makes its id disappear.
+    \\  --backend FILE         Rails only: the ZigBase OpenAPI document this
+    \\                         app's mutations should bind to, as written by
+    \\                         `zigbase openapi`. Its operations become the
+    \\                         choices a RAILS_BACKEND_ENDPOINT finding offers
+    \\                         and a RAILS_AUTH_JOURNEY answer's auth
+    \\                         collection is validated against it; an answered
+    \\                         finding then becomes a real client call in a
+    \\                         generated island. Without it those findings
+    \\                         offer only retain/blocked, so a backend route
+    \\                         can be acknowledged but not bound.
+    \\                         There is NO default location: a document the
+    \\                         operator did not name is a document this run
+    \\                         does not have. A FILE that cannot be read, or
+    \\                         that is not an OpenAPI 3.x document with a
+    \\                         paths object, is fatal (exit 1) -- an operator
+    \\                         who passed --backend meant it, and silently
+    \\                         degrading to retain/blocked would look like the
+    \\                         document simply had no matching operation.
     \\  --runtime-path PATH    With --target, set the local @z/runtime package
     \\                         path in the generated package.json. Written only
     \\                         when the target has JS to install: React island
     \\                         scaffolds, or -- for Rails -- the .spa.tsx a
-    \\                         `spa` decision produced. Without it that
-    \\                         dependency is a visible TODO placeholder and
-    \\                         the target's own build.sh cannot install it.
+    \\                         `spa` decision produced AND every island a
+    \\                         backend answer binds (the form island of a bound
+    \\                         form, the click island of a bound link, and the
+    \\                         AuthForm/AuthStatus pair an auth-journey
+    \\                         `island` answer produces). That is the ordinary
+    \\                         outcome of an answered Rails run, not a rare one.
+    \\                         Falls back to ZIGAPAGOS_RUNTIME_DIR when that is
+    \\                         set (#179); this flag wins over it, because a
+    \\                         flag is an explicit answer and the variable an
+    \\                         ambient one. With neither, the dependency is a
+    \\                         visible file:TODO-SET-RUNTIME-PATH placeholder
+    \\                         and the target's own build.sh cannot install it.
     \\  --scaffold DIR         Write a starter TSX island per island into DIR.
     \\                         Supported for Astro, Next.js, and Gatsby React
     \\                         sources only.
@@ -629,6 +656,20 @@ test "railsExitError: --strict fails on any blocker, not just integrity ones" {
 /// file, and three literals would eventually not.
 const rails_decisions_basename = "MIGRATION.decisions.json";
 
+/// #179 option 1: the environment variable `scaffold.Input.runtime_dir_env`
+/// is filled from. Spelled here rather than imported from `release.zig`'s own
+/// `pub const runtime_dir_env` because `src/cli/rails/` is std-only and
+/// cannot reach a file that pulls in the wired build (the reason
+/// `routes.zig:184` gives for its own copy).
+///
+/// There are FIVE copies of this literal, not the three an earlier version
+/// of this comment claimed: `release.zig:587` (the public one),
+/// `rails/routes.zig:184`, `rails/controllers.zig:237`,
+/// `rails/fragments.zig:279`, and this one. They must stay in lockstep --
+/// `git grep 'const runtime_dir_env'` is the whole list, and this sentence
+/// is the tripwire that says so.
+const runtime_dir_env = "ZIGAPAGOS_RUNTIME_DIR";
+
 /// Rails' exit code, the whole mapping in one pure function.
 ///
 /// `1` first: an integrity blocker (or `--strict` with any blocker) means the
@@ -828,6 +869,17 @@ fn railsHandoffRoutes(
             .route_index = o.route_index,
             .status = railsHandoffStatus(o.status),
             .artifacts = o.artifacts,
+            // #167 Stage 3. Field by field rather than a struct copy: the two
+            // `Endpoint` types are declared separately for the same reason
+            // the row types are (`scaffold.Endpoint` is a conversion outcome,
+            // `handoff.Endpoint` a wire shape whose field ORDER is a
+            // contract), so a reorder on either side has to be written out
+            // here rather than being absorbed silently.
+            .endpoint = if (o.endpoint) |e| .{
+                .operation_id = e.operation_id,
+                .verb = e.verb,
+                .path = e.path,
+            } else null,
             .decision = decision,
             .findings = o.open_finding_ids,
             .note = o.note,
@@ -1006,6 +1058,7 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
     var json: bool = false;
     var strict: bool = false;
     var decisions_path: ?[]const u8 = null;
+    var backend_path: ?[]const u8 = null;
 
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
@@ -1049,6 +1102,10 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
             i += 1;
             if (i >= args.len) fatal.usageError("error: --decisions needs a file path\n\n" ++ usage, .{});
             decisions_path = args[i];
+        } else if (std.mem.eql(u8, a, "--backend")) {
+            i += 1;
+            if (i >= args.len) fatal.usageError("error: --backend needs a file path\n\n" ++ usage, .{});
+            backend_path = args[i];
         } else if (std.mem.eql(u8, a, "--json")) {
             json = true;
         } else if (std.mem.eql(u8, a, "--strict")) {
@@ -1060,8 +1117,8 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
         }
     }
 
-    if (doctor_path != null and (scaffold_dir != null or content_dir != null or assets_dir != null or target_dir != null or decisions_path != null)) {
-        fatal.usageError("error: --doctor is mutually exclusive with --target, --decisions, --scaffold, --convert-content, and --copy-assets\n\n" ++ usage, .{});
+    if (doctor_path != null and (scaffold_dir != null or content_dir != null or assets_dir != null or target_dir != null or decisions_path != null or backend_path != null)) {
+        fatal.usageError("error: --doctor is mutually exclusive with --target, --decisions, --backend, --scaffold, --convert-content, and --copy-assets\n\n" ++ usage, .{});
     }
     if (target_dir != null and (output_set or scaffold_dir != null or content_dir != null or assets_dir != null)) fatal.usageError(
         "error: --target is mutually exclusive with --output, --scaffold, --convert-content, and --copy-assets\n\n" ++ usage,
@@ -1114,6 +1171,16 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
     // answers as blockers, which is a useful check on its own.
     if (decisions_path != null and source != .rails) fatal.usageError(
         "error: --decisions only applies to Rails sources; {s} raises no findings to decide\n\n" ++ usage,
+        .{source.name()},
+    );
+    // #167 Stage 3, and gated exactly as `--decisions` is: the backend
+    // boundary is a Rails-adapter concept (no other importer derives a
+    // finding an operation id could answer), and, like `--decisions`, it is
+    // NOT gated on `--target` -- without one it still widens the `choices`
+    // the manifest publishes, which is what an operator reads before writing
+    // any answers at all.
+    if (backend_path != null and source != .rails) fatal.usageError(
+        "error: --backend only applies to Rails sources; {s} binds nothing to a ZigBase operation\n\n" ++ usage,
         .{source.name()},
     );
     if (source == .rails) {
@@ -1171,6 +1238,42 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
             );
         }
 
+        // #167 Stage 3: the ZigBase contract. Read BEFORE `discover` for the
+        // same reason the decisions file is -- `findings.derive` turns its
+        // operations into a finding's `choices`, and `decisions.parse`
+        // validates an auth-collection artifact against it, and both run
+        // inside `discover`.
+        //
+        // Read via `Io.Dir.cwd()`, not through `root`: the document is the
+        // ZigBase side of the migration and lives wherever the operator ran
+        // `zigbase openapi`, which is emphatically NOT inside the Rails app
+        // being read.
+        var backend_doc: ?rails.backend.Document = null;
+        defer if (backend_doc) |doc| rails.backend.free(gpa, doc);
+        if (backend_path) |p| {
+            const bytes = readRailsInput(io, gpa, "--backend", p, 16 * 1024 * 1024) orelse return 1;
+            defer gpa.free(bytes);
+            backend_doc = rails.backend.parse(gpa, bytes, p) catch |err| switch (err) {
+                error.OutOfMemory => fatal.oom(),
+                // Exit 1 with the error NAMED, printed here rather than
+                // through `fatal.*`, exactly like the decisions-file branch
+                // below: the three cases send an operator to three different
+                // fixes (`InvalidJson` -- a truncated or hand-edited file;
+                // `NotOpenApi3` -- the wrong file entirely, a Gemfile or a
+                // package.json; `NoPaths` -- a document generated against an
+                // empty data dir), and collapsing them into "could not read"
+                // would cost the only clue. The full path, not the basename:
+                // this is stderr advice, not an artifact.
+                error.InvalidJson, error.NotOpenApi3, error.NoPaths => {
+                    std.debug.print(
+                        "error: {s} is not a ZigBase OpenAPI document: {t}\n",
+                        .{ p, err },
+                    );
+                    return 1;
+                },
+            };
+        }
+
         // #167 Stage 2: the operator's answers. Read BEFORE `discover`,
         // because `discover` is what validates them -- an answer is checked
         // against the findings this run derives, which do not exist until it
@@ -1194,7 +1297,7 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
             break :blk joined;
         };
         const decisions_bytes: ?[]const u8 = if (effective_decisions_path) |p|
-            Io.Dir.cwd().readFileAlloc(io, p, gpa, .limited(4 * 1024 * 1024)) catch |err| fatal.file(p, err)
+            readRailsInput(io, gpa, "--decisions", p, 4 * 1024 * 1024) orelse return 1
         else
             null;
         defer if (decisions_bytes) |b| gpa.free(b);
@@ -1227,6 +1330,7 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
             .bytes = decisions_bytes,
             .path = decisions_label,
             .problems = &decision_problems,
+            .backend = backend_doc,
         }) catch |err| switch (err) {
             error.OutOfMemory => fatal.oom(),
             // EVERY complaint, not just the first. A hand-written answers
@@ -1347,6 +1451,18 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
                 .target = target,
                 .app_name = app_name,
                 .runtime_path = runtime_path,
+                // #179 option 1. Stage 3 emits a `package.json` on every
+                // bound form, not only for a `spa` decision, so the
+                // `file:TODO-SET-RUNTIME-PATH` placeholder went from a rare
+                // annoyance to the ordinary outcome of a successful
+                // migration. `ZIGAPAGOS_RUNTIME_DIR` is already how
+                // `site/build.sh` and `examples/tsx-site/build.sh` point at a
+                // checkout's runtime, so honouring it makes the generated
+                // target installable in the same shell that generated it.
+                // `--runtime-path` still wins (`scaffold.runtimePath`): a
+                // flag is an explicit answer, the variable an ambient one.
+                .runtime_dir_env = environ_map.get(runtime_dir_env),
+                .backend = backend_doc,
                 // `scaffold.zig` lives in the std-only `rails/` directory and
                 // cannot `@embedFile` across it, so the bytes are passed in --
                 // the same two files `assembleTarget` writes for every other
@@ -1381,6 +1497,13 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
                 .routes = route_rows,
                 .assets = asset_rows,
                 .redirects = redirect_rows,
+                // `Document.file` is already a basename (task-1-report.md),
+                // so the operator's directory layout cannot reach this
+                // committed artifact.
+                .backend = if (backend_doc) |doc| .{
+                    .file = doc.file,
+                    .contract_version = doc.contract_version,
+                } else null,
             }) catch |err| switch (err) {
                 error.OutOfMemory => fatal.oom(),
             };
@@ -1397,7 +1520,32 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
             // JSON and the exit code cannot disagree.
             var summary: rails.report.HandoffSummary = .{
                 .complete = rails.handoff.isComplete(&discovery, route_rows),
+                .backend_doc = if (backend_doc) |doc| .{
+                    .file = doc.file,
+                    .contract_version = doc.contract_version,
+                } else null,
             };
+            // Counted over the OUTCOMES, not over `route_rows`, for the same
+            // reason the status tally beside it is: one function's own
+            // result, so the report cannot disagree with the JSON built from
+            // the rows those outcomes produced.
+            //
+            // The assert is the invariant `report.handoffSection` renders
+            // against -- it prints "endpoints: N of the M `backend` route(s)"
+            // and that sentence is a lie unless every endpoint sits on a
+            // `backend` row (M-2). `scaffold.zig` guarantees it structurally:
+            // `out.endpoint` is assigned in exactly one place, inside the
+            // `out.status = .backend` branch that returns at its end. A
+            // `std.debug.assert` rather than a degradation, because a
+            // violation would be an internal scaffolder bug and `fatal.msg`'s
+            // own reasoning applies -- that is precisely the case a Debug
+            // stack trace exists for.
+            for (result.routes) |o| {
+                if (o.endpoint != null) {
+                    std.debug.assert(o.status == .backend);
+                    summary.endpoints += 1;
+                }
+            }
             for (result.routes) |o| switch (o.status) {
                 .migrated => summary.migrated += 1,
                 .open => summary.open += 1,
@@ -2366,6 +2514,48 @@ fn targetHasEntries(io: Io, path: []const u8) bool {
     defer dir.close(io);
     var it = dir.iterateAssumeFirstIteration();
     return (it.next(io) catch |err| fatal.dir(path, err)) != null;
+}
+
+/// Reads a Rails input file the OPERATOR named on the command line
+/// (`--backend FILE`, `--decisions FILE`, or the `--target` default the
+/// decide-and-re-run loop leaves behind). Returns `null` after printing the
+/// reason, in which case the caller must `return 1`.
+///
+/// Ruling S3-R4: NOT `fatal.file`. That call routes through `fatal.msg`,
+/// which panics when `builtin.mode == .Debug` -- and Debug is what `zig
+/// build` produces and what every shell e2e drives, so a missing file, an
+/// unreadable one (mode 000), a directory passed where a file was meant, and
+/// a document over the size cap all arrived as SIGABRT/134 rather than as
+/// the exit 1 the CLI contract promises. `fatal.*` is for an internal
+/// Zigapagos bug, where a Debug stack trace is the point; a path the
+/// operator typed that does not resolve is their input being wrong, which is
+/// the same class of failure as an unusable decisions file or an
+/// unparseable backend document -- both of which already print and return 1
+/// a few lines below.
+///
+/// The message names the FLAG as well as the path: `--decisions` and
+/// `--backend` fail identically at the OS level, and an operator who passed
+/// both needs to know which one the kernel refused.
+///
+/// The full path, not the basename -- this is stderr advice, not an
+/// artifact, so the determinism rule that reduces `decisions_label` to a
+/// basename does not apply here.
+///
+/// Contract 1 (self-freeing), not contract 2: the one allocation
+/// `readFileAlloc` makes escapes as the return value and there is no scratch
+/// to free -- the caller frees a flat slice with `gpa.free`, not a graph with
+/// a `deinit`. Contract 2 would promise a result that owns other allocations,
+/// and mislabelling that way is how a `deinit` gets looked for and a leak gets
+/// argued about. `error.OutOfMemory` is still `fatal.oom()`: an allocator
+/// failure is not a statement about the operator's path.
+fn readRailsInput(io: Io, gpa: Allocator, flag: []const u8, path: []const u8, limit: usize) ?[]u8 {
+    return Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(limit)) catch |err| switch (err) {
+        error.OutOfMemory => fatal.oom(),
+        else => {
+            std.debug.print("error: {s} {s} could not be read: {t}\n", .{ flag, path, err });
+            return null;
+        },
+    };
 }
 
 fn targetPathExists(io: Io, path: []const u8) bool {
