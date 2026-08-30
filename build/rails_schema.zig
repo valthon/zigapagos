@@ -1,5 +1,8 @@
-//! `rails-schema` / `rails-check` — the JSON Schema drift gate for the Rails
-//! discovery manifest (`contract/rails-presentation.v1.schema.json`).
+//! `rails-schema` / `rails-check` — the JSON Schema drift gate for the two
+//! generated Rails contracts: the discovery manifest
+//! (`contract/rails-presentation.v1.schema.json`, from `manifest.zig`) and
+//! the migration handoff (`contract/rails-handoff.v1.schema.json`, from
+//! `handoff.zig`).
 //!
 //! Mirrors `codegen.zig`'s `api-check` block exactly: regenerate -> `git
 //! add` -> `git diff --cached --exit-code`, with the gate owning its OWN
@@ -65,54 +68,83 @@ pub fn setup(b: *std.Build, cfg: config.Config) Exes {
         ).dependOn(&install.step);
     }
 
-    // `rails-schema` — regenerate contract/rails-presentation.v1.schema.json.
+    // `rails-schema` — regenerate BOTH generated schemas.
+    //
+    // #167 Stage 2 Task 5 added the second document (the `zigapagos.
+    // rails-handoff/1` handoff, generated from `src/cli/rails/handoff.zig`'s
+    // wire types). Each schema gets its own Run/`git add`/`git diff` chain
+    // rather than one step writing both: zig names a failed leaf step after
+    // the command it ran, so a per-file chain says WHICH schema drifted,
+    // while a combined step could only report that one of the two did —
+    // and `tests/contract/rails-drift.sh` asserts on exactly those step
+    // names to tell a caught drift apart from a generator that never ran.
     {
-        const run = addSchemaGenRun(b, exe);
-        b.step(
+        const schema = b.step(
             "rails-schema",
-            "Regenerate contract/rails-presentation.v1.schema.json from the manifest Zig types",
-        ).dependOn(&run.step);
+            "Regenerate contract/rails-presentation.v1.schema.json and contract/rails-handoff.v1.schema.json from the Rails Zig types",
+        );
+        for (schema_docs) |doc| {
+            schema.dependOn(&addSchemaGenRun(b, exe, doc).step);
+        }
     }
 
     // `rails-check` — drift gate: regen then git add + git diff --cached --exit-code.
-    // Its own Run step (not the one above): the gate must regenerate on
+    // Its own Run steps (not the ones above): the gate must regenerate on
     // every `rails-check`, independently of `rails-schema`.
     {
-        const run = addSchemaGenRun(b, exe);
-
-        const git_add = b.addSystemCommand(&.{ "git", "add" });
-        git_add.addFileArg(b.path("contract/rails-presentation.v1.schema.json"));
-        git_add.setName("git add contract/rails-presentation.v1.schema.json");
-        git_add.step.dependOn(&run.step);
-
-        const diff = b.addSystemCommand(&.{
-            "git",
-            "diff",
-            "--cached",
-            "--exit-code",
-        });
-        diff.addFileArg(b.path("contract/rails-presentation.v1.schema.json"));
-        diff.setName("git diff contract/rails-presentation.v1.schema.json");
-        diff.step.dependOn(&git_add.step);
-
         const rails_check = b.step(
             "rails-check",
-            "Fail if contract/rails-presentation.v1.schema.json is stale vs a fresh rails-schema",
+            "Fail if either generated Rails schema is stale vs a fresh rails-schema",
         );
-        rails_check.dependOn(&diff.step);
+        for (schema_docs) |doc| {
+            const run = addSchemaGenRun(b, exe, doc);
+
+            const git_add = b.addSystemCommand(&.{ "git", "add" });
+            git_add.addFileArg(b.path(doc.path));
+            git_add.setName(b.fmt("git add {s}", .{doc.path}));
+            git_add.step.dependOn(&run.step);
+
+            const diff = b.addSystemCommand(&.{
+                "git",
+                "diff",
+                "--cached",
+                "--exit-code",
+            });
+            diff.addFileArg(b.path(doc.path));
+            diff.setName(b.fmt("git diff {s}", .{doc.path}));
+            diff.step.dependOn(&git_add.step);
+
+            rails_check.dependOn(&diff.step);
+        }
     }
 
     return .{ .schema_gen = exe, .manifest_validate = validate_exe };
 }
 
-fn addSchemaGenRun(b: *std.Build, exe: *std.Build.Step.Compile) *std.Build.Step.Run {
+/// One generated schema: the file it lands in, and the generator flag that
+/// selects it (`schema_gen.zig`'s `main` takes `[--handoff] <out-path>`).
+/// `flag` is empty for the default (manifest) document, so the argv it
+/// builds — and therefore the step name the drift script matches on — stays
+/// exactly what it was before the handoff document existed.
+const SchemaDoc = struct { flag: []const u8, path: []const u8 };
+
+const schema_docs = [_]SchemaDoc{
+    .{ .flag = "", .path = "contract/rails-presentation.v1.schema.json" },
+    .{ .flag = "--handoff", .path = "contract/rails-handoff.v1.schema.json" },
+};
+
+fn addSchemaGenRun(b: *std.Build, exe: *std.Build.Step.Compile, doc: SchemaDoc) *std.Build.Step.Run {
     const run = b.addRunArtifact(exe);
-    run.addFileArg(b.path("contract/rails-presentation.v1.schema.json"));
+    if (doc.flag.len != 0) run.addArg(doc.flag);
+    run.addFileArg(b.path(doc.path));
     // Writes into the source tree every time — the whole point is to
     // overwrite what is there, so the Run cache must never treat this as a
     // no-op (mirrors docgen.zig's docgen_reference Run and codegen.zig's
     // apigen Run, both of which set this for the identical reason).
     run.has_side_effects = true;
-    run.setName("rails_schema_gen contract/rails-presentation.v1.schema.json");
+    run.setName(if (doc.flag.len == 0)
+        b.fmt("rails_schema_gen {s}", .{doc.path})
+    else
+        b.fmt("rails_schema_gen {s} {s}", .{ doc.flag, doc.path }));
     return run;
 }

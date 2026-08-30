@@ -1,0 +1,243 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zigapagos.dev/schema/rails-handoff/1",
+  "title": "zigapagos Rails migration handoff",
+  "description": "The `zigapagos.rails-handoff/1` document emitted as `MIGRATION.handoff.json` by `zigapagos migrate --from rails --target DIR`. Written by `src/cli/rails/handoff.zig`'s `build`, which is the binding shape -- this schema is generated FROM that file's Zig types (`src/cli/rails/schema_gen.zig`), not maintained by hand. Field order in every object below matches the emitted key order, which is part of the wire contract.\n\nA SEPARATE artifact from `zigapagos.rails-presentation/1`, and separately versioned: the manifest records what DISCOVERY established about the Rails app; this document records what the CONVERSION produced, and is expected to change on every run of the decide-then-re-run loop. Where a route's `status` here and the manifest's `classification` disagree, the conversion wins.\n\nSTABILITY. Every declared field appears in `required`, because the emitter always writes every key -- `null` included -- rather than omitting absent ones. Schema `/1` has not shipped in a release, so its shape is still being completed and a required field may still be added to it (`backend`, `routes[].endpoint` and `parity[]` are the declared-but-unfilled parts a later stage populates). Once a release carries `/1`, that stops: adding a required key to a published version would make two documents claiming the same version id disagree about what a conforming document contains. After that point, additions bump the version.",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "type": "string"
+    },
+    "schema_version": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "generator": {
+      "type": "object",
+      "properties": {
+        "tool": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "backend": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "file": {
+          "type": "string"
+        },
+        "contract_version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "file",
+        "contract_version"
+      ],
+      "additionalProperties": false,
+      "description": "The backend contract this migration produced. ALWAYS `null` in the version of the tool that generated this schema -- nothing emits a backend contract yet."
+    },
+    "complete": {
+      "type": "boolean",
+      "description": "True iff EVERY route whose verb is GET or HEAD has `status` in {migrated, redirect, backend}, or `retained`/`blocked` with a non-null `decision`. Deliberately says nothing about POST/PATCH/DELETE routes: those are form/API traffic a later stage handles, and leaving them unconverted does not make the site broken to browse. `backend` counts for the same reason -- it marks a route that needs no page at all; which endpoint it maps to is asked separately, by a RAILS_BACKEND_ENDPOINT finding. A user-facing route with no entry in `routes[]` at all counts as open, so a converter that silently skipped a route cannot report completion."
+    },
+    "routes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "route_id": {
+            "type": "string",
+            "description": "`verb` + one space + `path` (e.g. \"GET /about\"), the same label the manifest's `routes[].id` carries. NOT a unique key: two identical route declarations in config/routes.rb produce the same id, and this document may additionally carry more than one entry for one route. Do not join on this field expecting uniqueness."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "migrated",
+              "open",
+              "blocked",
+              "retained",
+              "backend",
+              "redirect"
+            ],
+            "description": "What the CONVERSION produced for this route -- a different question from the manifest's `classification`, which is discovery's verdict about the Rails route and is never revised. Where the two disagree, this field wins. `open` is the default and means neither the converter nor an operator decision has accounted for the route yet."
+          },
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "endpoint": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "operation_id": {
+                "type": "string"
+              },
+              "verb": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation_id",
+              "verb",
+              "path"
+            ],
+            "additionalProperties": false,
+            "description": "The backend endpoint this route became. ALWAYS `null` in the version of the tool that generated this schema -- no route becomes an endpoint yet; the field is on the wire anyway so a consumer reads one shape across versions."
+          },
+          "decision": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "choice": {
+                "type": "string"
+              },
+              "rationale": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "choice",
+              "rationale"
+            ],
+            "additionalProperties": false
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "`findings[].id`s from the companion manifest that this route left OPEN -- the join key an operator answers in MIGRATION.decisions.json. Sorted lexicographically. An empty array means this route asks nothing, NOT that the route converted: read `status` for that."
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Free prose for a human reader (e.g. \"deferred to Stage 3/4\"). Not identity, not a stable string, and not parsed by anything -- never branch on its content."
+          }
+        },
+        "required": [
+          "route_id",
+          "status",
+          "artifacts",
+          "endpoint",
+          "decision",
+          "findings",
+          "note"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "rails_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The URL Rails served this asset at. `null` is a real, expected answer -- an asset the run could not attribute a Rails URL to (no fingerprinted manifest entry, or a `public/`-relative file Rails served directly) -- not a value the generator failed to compute."
+          },
+          "target_url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "rails_url",
+          "target_url"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "redirects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`null` when the redirect's target could not be resolved to a URL on the migrated site, which is a real answer: the operator has to supply the destination in host config. Not a placeholder for a value this generator gave up on silently."
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "parity": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "url"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Replayable checks comparing the migrated site against the running Rails app. ALWAYS empty in the version of the tool that generated this schema. The per-kind `expect` object the design sketches is deliberately not declared yet: it varies by `kind`, and guessing its shape before the kinds exist would publish a contract nothing produces."
+    }
+  },
+  "required": [
+    "schema",
+    "schema_version",
+    "generator",
+    "backend",
+    "complete",
+    "routes",
+    "assets",
+    "redirects",
+    "parity"
+  ],
+  "additionalProperties": false
+}

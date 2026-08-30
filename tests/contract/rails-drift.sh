@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# tests/contract/rails-drift.sh — proves `zig build rails-check` (the Rails
-# manifest JSON Schema drift gate, `build/rails_schema.zig` /
+# tests/contract/rails-drift.sh — proves `zig build rails-check` (the drift
+# gate over BOTH generated Rails JSON Schemas — the discovery manifest and
+# the migration handoff — `build/rails_schema.zig` /
 # `src/cli/rails/schema_gen.zig`) is NOT vacuous.
 #
 # Modeled directly on `contract/test/drift.sh` (read its header first). That
@@ -26,9 +27,15 @@
 #
 # Cases:
 #   A. Schema drift — a manifest.zig TYPE changes (RubyStatus.available ->
-#      present); the committed contract/rails-presentation.v1.schema.json
-#      does not, so rails-check must fail at the git-diff step and show the
-#      rename in the diff hunk.
+#      present) AND a handoff.zig wire TYPE changes (RouteEntry.endpoint ->
+#      backend_endpoint); neither committed schema does, so rails-check must
+#      fail at the git-diff step FOR EACH FILE and show each rename in its
+#      own diff hunk. Both halves in one case on purpose: `rails-check`
+#      grew a second, independent Run/add/diff chain in #167 Stage 2, and a
+#      gate that reported only the first drift it met would leave the other
+#      schema unguarded — asserting both markers from ONE run is what pins
+#      that the two chains are genuinely independent, not sequenced behind
+#      each other.
 #   B. Committed-schema drift — contract/rails-presentation.v1.schema.json
 #      itself is hand-edited AND committed (a throwaway local commit,
 #      reverted before this script exits) without touching manifest.zig, so
@@ -71,7 +78,9 @@ fail() {
 # comment on why widening this list "just to be safe" is the opposite of safe.
 MUTATES=(
   contract/rails-presentation.v1.schema.json
+  contract/rails-handoff.v1.schema.json
   src/cli/rails/manifest.zig
+  src/cli/rails/handoff.zig
   src/cli/rails/schema_gen.zig
 )
 
@@ -122,6 +131,22 @@ on_exit() {
   exit "$rc"
 }
 
+echo "=== rails-drift.sh: proving the Rails schema drift gate (manifest + handoff) is not vacuous ==="
+echo ""
+
+# ── Pre-flight: nothing we are about to overwrite may already be dirty ─────────
+# This check runs BEFORE the EXIT trap is armed, on purpose. The trap's restore is
+# `git checkout HEAD -- <MUTATES>`, which discards any uncommitted edit under those
+# paths; armed first, the refusal below would itself fire the trap and delete the
+# edits it had just told the operator to commit. That happened twice on the #167
+# branch before the order was fixed.
+PREEXISTING=$(dirty_paths)
+if [ -n "$PREEXISTING" ]; then
+  fail "these paths are already modified, and rails-drift.sh would discard the changes when it restores:
+$PREEXISTING
+  Commit or stash them first."
+fi
+
 trap on_exit EXIT
 # The signal handlers exist only so the EXIT trap gets a chance to run: bash does not
 # fire an EXIT trap for an untrapped fatal signal, so a Ctrl-C without these would
@@ -129,17 +154,6 @@ trap on_exit EXIT
 # behind.
 trap 'exit 130' INT
 trap 'exit 143' TERM
-
-echo "=== rails-drift.sh: proving the Rails manifest schema drift gate is not vacuous ==="
-echo ""
-
-# ── Pre-flight: nothing we are about to overwrite may already be dirty ─────────
-PREEXISTING=$(dirty_paths)
-if [ -n "$PREEXISTING" ]; then
-  fail "these paths are already modified, and rails-drift.sh would discard the changes when it restores:
-$PREEXISTING
-  Commit or stash them first."
-fi
 
 # ── Runner ───────────────────────────────────────────────────────────────────────
 # Captures combined output AND the real exit status. `out=$(...) || rc=$?` rather than
@@ -164,20 +178,24 @@ run_rails_check() {
 # same step instead renders "... transitive failure" because it never got to run) rules
 # out a failure anywhere else in the graph masquerading as caught drift.
 DIFF_LEAF_FAILURE='git diff contract/rails-presentation.v1.schema.json failure'
+# The handoff schema's own diff step, from the same `diff.setName(...)` loop.
+HANDOFF_DIFF_LEAF_FAILURE='git diff contract/rails-handoff.v1.schema.json failure'
 
 # The generator's own Run step failing is rendered with this exact leaf-failure suffix
 # by `build/rails_schema.zig`'s `run.setName(...)`.
 GEN_LEAF_FAILURE='rails_schema_gen contract/rails-presentation.v1.schema.json failure'
 
-# `removed`/`added` are the exact diff-hunk lines the two real cases below expect.
-rails_check_drift_ok() {
-  local rc="$1" out="$2" removed="$3" added="$4"
+# `removed`/`added` are the exact diff-hunk lines the real cases below expect;
+# `marker` is the leaf-failure string of the diff step that must have failed, so
+# a caller names WHICH schema it is crediting rather than accepting either.
+rails_check_drift_ok_for() {
+  local marker="$1" rc="$2" out="$3" removed="$4" added="$5"
   if [ "$rc" -eq 0 ]; then
     echo "  reject: rails-check exited 0" >&2
     return 1
   fi
-  if ! printf '%s\n' "$out" | grep -qF "$DIFF_LEAF_FAILURE"; then
-    echo "  reject: rails-check failed somewhere other than the git-diff step" >&2
+  if ! printf '%s\n' "$out" | grep -qF "$marker"; then
+    echo "  reject: rails-check failed somewhere other than the git-diff step for this schema" >&2
     return 1
   fi
   if ! printf '%s\n' "$out" | grep -qF -- "$removed"; then
@@ -189,6 +207,12 @@ rails_check_drift_ok() {
     return 1
   fi
   return 0
+}
+
+# The manifest schema's drift predicate — the one Case D cross-checks itself
+# against, kept as a named wrapper so that cross-check reads unchanged.
+rails_check_drift_ok() {
+  rails_check_drift_ok_for "$DIFF_LEAF_FAILURE" "$@"
 }
 
 # Case D's predicate: the generator's OWN step must be the thing that failed, and —
@@ -211,11 +235,15 @@ rails_check_launch_failure_ok() {
     echo "  reject: output contains the drift-caught leaf marker -- a launch failure must not look like caught drift" >&2
     return 1
   fi
+  if printf '%s\n' "$out" | grep -qF "$HANDOFF_DIFF_LEAF_FAILURE"; then
+    echo "  reject: output contains the handoff drift-caught leaf marker -- a launch failure must not look like caught drift" >&2
+    return 1
+  fi
   return 0
 }
 
-# ─── Case A: rails-check catches schema drift (a manifest.zig type change) ────
-echo "--- Case A: rails-check catches schema drift (manifest.zig type change) ---"
+# ─── Case A: rails-check catches schema drift in BOTH generated schemas ──────
+echo "--- Case A: rails-check catches schema drift (manifest.zig + handoff.zig type changes) ---"
 
 # `available: bool,` occurs exactly once in manifest.zig (src/cli/rails/manifest.zig's
 # RubyStatus -- confirmed via `grep -c` below, not assumed), so this is scoped to the
@@ -237,7 +265,30 @@ mutate_manifest_type() {
     fail "the manifest mutation did not apply -- manifest.zig has no '.present = d.ruby.available,'"
 }
 
+# The handoff half. `endpoint: ?Endpoint,` is a WIRE-ONLY field (handoff.zig's
+# input `RouteRow` deliberately has no endpoint), so renaming it plus its single
+# construction site (`.endpoint = null,` in `build`) still COMPILES — which is
+# what makes this a schema-drift mutation rather than a build break. Both anchors
+# are confirmed unique below rather than assumed, exactly as the manifest half
+# does for `available: bool,`.
+mutate_handoff_type() {
+  local count
+  count=$(grep -cF 'endpoint: ?Endpoint,' src/cli/rails/handoff.zig)
+  [ "$count" -eq 1 ] ||
+    fail "expected exactly one 'endpoint: ?Endpoint,' in handoff.zig, found $count -- mutate_handoff_type's anchor is no longer unique"
+  count=$(grep -cF '.endpoint = null,' src/cli/rails/handoff.zig)
+  [ "$count" -eq 1 ] ||
+    fail "expected exactly one '.endpoint = null,' in handoff.zig, found $count -- mutate_handoff_type's second anchor is no longer unique"
+  perl -i -pe 's/\bendpoint: \?Endpoint,/backend_endpoint: ?Endpoint,/' src/cli/rails/handoff.zig
+  perl -i -pe 's/\.endpoint = null,/.backend_endpoint = null,/' src/cli/rails/handoff.zig
+  grep -qF 'backend_endpoint: ?Endpoint,' src/cli/rails/handoff.zig ||
+    fail "the handoff mutation did not apply -- handoff.zig has no 'backend_endpoint: ?Endpoint,'"
+  grep -qF '.backend_endpoint = null,' src/cli/rails/handoff.zig ||
+    fail "the handoff mutation did not apply -- handoff.zig has no '.backend_endpoint = null,'"
+}
+
 mutate_manifest_type
+mutate_handoff_type
 
 run_rails_check
 rails_check_drift_ok "$RC" "$OUT" \
@@ -256,7 +307,23 @@ fi
 if ! printf '%s\n' "$OUT" | grep -qF -- '+            "present",'; then
   fail "Case A: staged diff does not add 'present' to the required array"
 fi
-echo "PASS Case A: rails-check rejected the stale generated schema at the git-diff step, showing the available->present hunk in both the property key and the required array (exit $RC)"
+echo "PASS Case A (manifest): rails-check rejected the stale generated schema at the git-diff step, showing the available->present hunk in both the property key and the required array (exit $RC)"
+
+# The handoff half, asserted against the SAME run's output: one `rails-check`
+# has to catch both, or the second chain is not really being gated.
+rails_check_drift_ok_for "$HANDOFF_DIFF_LEAF_FAILURE" "$RC" "$OUT" \
+  '-          "endpoint": {' \
+  '+          "backend_endpoint": {' || {
+  printf 'rails-check exit %s, output:\n%s\n' "$RC" "$OUT" >&2
+  fail "Case A: rails-check did not reject the handoff type drift"
+}
+if ! printf '%s\n' "$OUT" | grep -qF -- '-          "endpoint",'; then
+  fail "Case A: staged diff does not drop 'endpoint' from the handoff required array"
+fi
+if ! printf '%s\n' "$OUT" | grep -qF -- '+          "backend_endpoint",'; then
+  fail "Case A: staged diff does not add 'backend_endpoint' to the handoff required array"
+fi
+echo "PASS Case A (handoff): the same rails-check run also rejected contract/rails-handoff.v1.schema.json at ITS own git-diff step, showing the endpoint->backend_endpoint hunk in both the property key and the required array"
 
 restore_tree
 echo ""

@@ -6,6 +6,15 @@
 //! `rails-check` (regenerate + `git diff --cached --exit-code`, mirroring
 //! `build/codegen.zig`'s `api-check`).
 //!
+//! #167 Stage 2 Task 5 added a SECOND generated document on the same walk:
+//! `contract/rails-handoff.v1.schema.json`, from `handoff.zig`'s wire types
+//! (`generateHandoff`). The two differ only in their root type, their
+//! override table and their three header strings -- everything below
+//! `generateDoc` is document-agnostic, which is why a second contract cost
+//! a table and an entry point rather than a second generator. `main` picks
+//! one per invocation (`--handoff`), so each schema gets its own build step
+//! and a failing gate can name the file that drifted.
+//!
 //! ## Why this lives INSIDE `src/cli/rails/`, not `build/`
 //!
 //! `manifest.zig`'s module doc requires every file in this directory to stay
@@ -30,7 +39,8 @@
 //! changes this file's OUTPUT the next time it runs, without this file
 //! changing at all; that is the whole point.
 //!
-//! The `overrides` table below is the one genuinely hand-written part: Zig
+//! The `manifest_overrides`/`handoff_overrides` tables below are the one
+//! genuinely hand-written part: Zig
 //! has no comptime-reflectable doc comments, so the four honesty
 //! requirements `manifest.zig`'s own module doc numbers 1-4 (plus the two
 //! "null is a real, expected answer" notes for `BlockerSource.line` and
@@ -68,6 +78,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const manifest = @import("manifest.zig");
+const handoff = @import("handoff.zig");
 
 const draft = "https://json-schema.org/draft/2020-12/schema";
 const schema_url = "https://zigapagos.dev/schema/rails-presentation/1";
@@ -101,7 +112,7 @@ const Override = struct {
     text: []const u8,
 };
 
-const overrides = [_]Override{
+const manifest_overrides = [_]Override{
     .{
         .type_name = "manifest.RouteEntry",
         .field = "id",
@@ -260,25 +271,168 @@ const overrides = [_]Override{
     },
 };
 
-/// F5 (phase-2-review.md, MEDIUM): how many times each `overrides` entry
-/// actually matched a walked (type, field) pair during the most recent
-/// `generate()` call -- test-only instrumentation, reset at the top of
-/// `generate`. `overrideFor`'s lookup already broke once, silently, under
-/// `@typeName`'s module-path variance (see `localTypeName`'s doc); this is
-/// what turns a repeat of that shape -- an override whose `type_name`/
-/// `field` no longer matches ANYTHING walked -- into a test failure instead
-/// of a description that quietly stopped reaching the schema. Not part of
-/// the generator's own output and not read by `generate` itself, so it
-/// carries no allocation and needs no contract label.
-var override_hits: [overrides.len]u32 = @splat(0);
+const handoff_url = "https://zigapagos.dev/schema/rails-handoff/1";
+const handoff_title = "zigapagos Rails migration handoff";
+const handoff_description =
+    "The `zigapagos.rails-handoff/1` document emitted as " ++
+    "`MIGRATION.handoff.json` by `zigapagos migrate --from rails " ++
+    "--target DIR`. Written by `src/cli/rails/handoff.zig`'s `build`, " ++
+    "which is the binding shape -- this schema is generated FROM that " ++
+    "file's Zig types (`src/cli/rails/schema_gen.zig`), not maintained " ++
+    "by hand. Field order in every object below matches the emitted key " ++
+    "order, which is part of the wire contract.\n\n" ++
+    "A SEPARATE artifact from `zigapagos.rails-presentation/1`, and " ++
+    "separately versioned: the manifest records what DISCOVERY " ++
+    "established about the Rails app; this document records what the " ++
+    "CONVERSION produced, and is expected to change on every run of the " ++
+    "decide-then-re-run loop. Where a route's `status` here and the " ++
+    "manifest's `classification` disagree, the conversion wins.\n\n" ++
+    "STABILITY. Every declared field appears in `required`, because the " ++
+    "emitter always writes every key -- `null` included -- rather than " ++
+    "omitting absent ones. Schema `/1` has not shipped in a release, so " ++
+    "its shape is still being completed and a required field may still " ++
+    "be added to it (`backend`, `routes[].endpoint` and `parity[]` are " ++
+    "the declared-but-unfilled parts a later stage populates). Once a " ++
+    "release carries `/1`, that stops: adding a required key to a " ++
+    "published version would make two documents claiming the same " ++
+    "version id disagree about what a conforming document contains. " ++
+    "After that point, additions bump the version.";
 
-fn overrideFor(type_name: []const u8, field: []const u8) ?[]const u8 {
+/// The handoff's own hand-written descriptions. A SECOND table rather than
+/// more rows in `manifest_overrides`: `overrideFor` keys on (`localTypeName`,
+/// field), and both documents declare a `RouteEntry` -- one table would let
+/// a manifest row silently attach itself to a handoff field, or vice versa,
+/// the moment the two modules' type names converged. Keeping the tables
+/// per-document makes that impossible by construction and keeps each
+/// document's "every override matched" check scoped to its own walk.
+const handoff_overrides = [_]Override{
+    .{
+        .type_name = "handoff.RouteEntry",
+        .field = "route_id",
+        .text = "`verb` + one space + `path` (e.g. \"GET /about\"), the " ++
+            "same label the manifest's `routes[].id` carries. NOT a " ++
+            "unique key: two identical route declarations in " ++
+            "config/routes.rb produce the same id, and this document may " ++
+            "additionally carry more than one entry for one route. Do " ++
+            "not join on this field expecting uniqueness.",
+    },
+    .{
+        .type_name = "handoff.RouteEntry",
+        .field = "status",
+        .text = "What the CONVERSION produced for this route -- a " ++
+            "different question from the manifest's `classification`, " ++
+            "which is discovery's verdict about the Rails route and is " ++
+            "never revised. Where the two disagree, this field wins. " ++
+            "`open` is the default and means neither the converter nor " ++
+            "an operator decision has accounted for the route yet.",
+    },
+    .{
+        .type_name = "handoff.RouteEntry",
+        .field = "endpoint",
+        .text = "The backend endpoint this route became. ALWAYS `null` " ++
+            "in the version of the tool that generated this schema -- no " ++
+            "route becomes an endpoint yet; the field is on the wire " ++
+            "anyway so a consumer reads one shape across versions.",
+    },
+    .{
+        .type_name = "handoff.RouteEntry",
+        .field = "findings",
+        .text = "`findings[].id`s from the companion manifest that this " ++
+            "route left OPEN -- the join key an operator answers in " ++
+            "MIGRATION.decisions.json. Sorted lexicographically. An " ++
+            "empty array means this route asks nothing, NOT that the " ++
+            "route converted: read `status` for that.",
+    },
+    .{
+        .type_name = "handoff.RouteEntry",
+        .field = "note",
+        .text = "Free prose for a human reader (e.g. \"deferred to Stage " ++
+            "3/4\"). Not identity, not a stable string, and not parsed " ++
+            "by anything -- never branch on its content.",
+    },
+    .{
+        .type_name = "handoff.Handoff",
+        .field = "complete",
+        .text = "True iff EVERY route whose verb is GET or HEAD has " ++
+            "`status` in {migrated, redirect, backend}, or `retained`/" ++
+            "`blocked` with a non-null `decision`. Deliberately says " ++
+            "nothing about POST/PATCH/DELETE routes: those are form/API " ++
+            "traffic a later stage handles, and leaving them unconverted " ++
+            "does not make the site broken to browse. `backend` counts " ++
+            "for the same reason -- it marks a route that needs no page " ++
+            "at all; which endpoint it maps to is asked separately, by a " ++
+            "RAILS_BACKEND_ENDPOINT finding. A user-facing route with no " ++
+            "entry in `routes[]` at all counts as open, so a converter " ++
+            "that silently skipped a route cannot report completion.",
+    },
+    .{
+        .type_name = "handoff.Handoff",
+        .field = "backend",
+        .text = "The backend contract this migration produced. ALWAYS " ++
+            "`null` in the version of the tool that generated this " ++
+            "schema -- nothing emits a backend contract yet.",
+    },
+    .{
+        .type_name = "handoff.Handoff",
+        .field = "parity",
+        .text = "Replayable checks comparing the migrated site against " ++
+            "the running Rails app. ALWAYS empty in the version of the " ++
+            "tool that generated this schema. The per-kind `expect` " ++
+            "object the design sketches is deliberately not declared " ++
+            "yet: it varies by `kind`, and guessing its shape before the " ++
+            "kinds exist would publish a contract nothing produces.",
+    },
+    .{
+        .type_name = "handoff.AssetEntry",
+        .field = "rails_url",
+        .text = "The URL Rails served this asset at. `null` is a real, " ++
+            "expected answer -- an asset the run could not attribute a " ++
+            "Rails URL to (no fingerprinted manifest entry, or a " ++
+            "`public/`-relative file Rails served directly) -- not a " ++
+            "value the generator failed to compute.",
+    },
+    .{
+        .type_name = "handoff.RedirectEntry",
+        .field = "to",
+        .text = "`null` when the redirect's target could not be resolved " ++
+            "to a URL on the migrated site, which is a real answer: the " ++
+            "operator has to supply the destination in host config. Not " ++
+            "a placeholder for a value this generator gave up on " ++
+            "silently.",
+    },
+};
+
+/// F5 (phase-2-review.md, MEDIUM): how many times each override entry
+/// actually matched a walked (type, field) pair during the most recent
+/// generate call for that document -- test-only instrumentation, reset at
+/// the top of `generateDoc`. `overrideFor`'s lookup already broke once,
+/// silently, under `@typeName`'s module-path variance (see `localTypeName`'s
+/// doc); this is what turns a repeat of that shape -- an override whose
+/// `type_name`/`field` no longer matches ANYTHING walked -- into a test
+/// failure instead of a description that quietly stopped reaching the
+/// schema. Not part of the generator's own output and not read by
+/// `generateDoc` itself, so it carries no allocation and needs no contract
+/// label. One array per document, for the reason `handoff_overrides`'s doc
+/// gives.
+var manifest_override_hits: [manifest_overrides.len]u32 = @splat(0);
+var handoff_override_hits: [handoff_overrides.len]u32 = @splat(0);
+
+/// `table` is comptime and `hits` is its matching counter array, threaded
+/// down the walk rather than read from a module-level "currently active
+/// document" variable: two documents share this walk, and a hidden global
+/// would make which table applies depend on call order.
+fn overrideFor(
+    comptime table: []const Override,
+    hits: []u32,
+    type_name: []const u8,
+    field: []const u8,
+) ?[]const u8 {
     const local = localTypeName(type_name);
-    for (overrides, 0..) |o, i| {
+    for (table, 0..) |o, i| {
         if (std.mem.eql(u8, o.type_name, local) and
             std.mem.eql(u8, o.field, field))
         {
-            override_hits[i] += 1;
+            hits[i] += 1;
             return o.text;
         }
     }
@@ -366,7 +520,12 @@ fn enumSchema(comptime T: type, arena: Allocator) Allocator.Error!std.json.Value
     return .{ .object = o };
 }
 
-fn structSchema(comptime T: type, arena: Allocator) Allocator.Error!std.json.Value {
+fn structSchema(
+    comptime T: type,
+    comptime table: []const Override,
+    hits: []u32,
+    arena: Allocator,
+) Allocator.Error!std.json.Value {
     const type_name = @typeName(T);
     var props: std.json.ObjectMap = .empty;
     var required: std.json.Array = .init(arena);
@@ -379,8 +538,8 @@ fn structSchema(comptime T: type, arena: Allocator) Allocator.Error!std.json.Val
     // optional field -- see `manifest.zig`'s golden-bytes test, where
     // `"version": null` is a present key, not an absent one.
     inline for (std.meta.fields(T)) |f| {
-        var field_schema = try schemaFor(f.type, arena);
-        if (overrideFor(type_name, f.name)) |text| {
+        var field_schema = try schemaFor(f.type, table, hits, arena);
+        if (overrideFor(table, hits, type_name, f.name)) |text| {
             try field_schema.object.put(arena, "description", strVal(text));
         }
         try props.put(arena, f.name, field_schema);
@@ -398,7 +557,12 @@ fn structSchema(comptime T: type, arena: Allocator) Allocator.Error!std.json.Val
 /// (never a bare scalar), so a caller may always widen the result via
 /// `field_schema.object.put(arena, ...)` (`structSchema` does exactly that to
 /// attach an `overrides` description) without a tag check.
-fn schemaFor(comptime T: type, arena: Allocator) Allocator.Error!std.json.Value {
+fn schemaFor(
+    comptime T: type,
+    comptime table: []const Override,
+    hits: []u32,
+    arena: Allocator,
+) Allocator.Error!std.json.Value {
     return switch (@typeInfo(T)) {
         .bool => simpleType(arena, "boolean"),
         .int => |info| blk: {
@@ -409,7 +573,7 @@ fn schemaFor(comptime T: type, arena: Allocator) Allocator.Error!std.json.Value 
         },
         .@"enum" => enumSchema(T, arena),
         .optional => |opt| blk: {
-            const inner = try schemaFor(opt.child, arena);
+            const inner = try schemaFor(opt.child, table, hits, arena);
             break :blk try nullableOf(arena, inner);
         },
         .pointer => |ptr| blk: {
@@ -417,13 +581,13 @@ fn schemaFor(comptime T: type, arena: Allocator) Allocator.Error!std.json.Value 
                 @compileError("rails schema_gen: unsupported pointer kind for " ++ @typeName(T));
             }
             if (ptr.child == u8) break :blk try simpleType(arena, "string");
-            const items = try schemaFor(ptr.child, arena);
+            const items = try schemaFor(ptr.child, table, hits, arena);
             var o: std.json.ObjectMap = .empty;
             try o.put(arena, "type", strVal("array"));
             try o.put(arena, "items", items);
             break :blk .{ .object = o };
         },
-        .@"struct" => structSchema(T, arena),
+        .@"struct" => structSchema(T, table, hits, arena),
         else => @compileError("rails schema_gen: unsupported type " ++ @typeName(T)),
     };
 }
@@ -436,21 +600,29 @@ fn schemaFor(comptime T: type, arena: Allocator) Allocator.Error!std.json.Value 
 /// does not need the `std.json.Value` tree it serializes to share its own
 /// allocator). Mirrors `manifest.build`'s identical shape one level up: a
 /// scratch structure freed in full, a single owned buffer returned.
-pub fn generate(gpa: Allocator) Allocator.Error![]u8 {
-    // Reset `override_hits` before this run's walk -- see its own doc.
-    @memset(&override_hits, 0);
+fn generateDoc(
+    comptime T: type,
+    comptime table: []const Override,
+    hits: []u32,
+    gpa: Allocator,
+    url: []const u8,
+    title: []const u8,
+    description: []const u8,
+) Allocator.Error![]u8 {
+    // Reset this document's override hits before its walk -- see their doc.
+    @memset(hits, 0);
 
     var arena_state: std.heap.ArenaAllocator = .init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const root = try structSchema(manifest.Manifest, arena);
+    const root = try structSchema(T, table, hits, arena);
 
     var doc: std.json.ObjectMap = .empty;
     try doc.put(arena, "$schema", strVal(draft));
-    try doc.put(arena, "$id", strVal(schema_url));
-    try doc.put(arena, "title", strVal(schema_title));
-    try doc.put(arena, "description", strVal(schema_description));
+    try doc.put(arena, "$id", strVal(url));
+    try doc.put(arena, "title", strVal(title));
+    try doc.put(arena, "description", strVal(description));
     try doc.put(arena, "type", root.object.get("type").?);
     try doc.put(arena, "properties", root.object.get("properties").?);
     try doc.put(arena, "required", root.object.get("required").?);
@@ -466,26 +638,63 @@ pub fn generate(gpa: Allocator) Allocator.Error![]u8 {
     return out;
 }
 
+/// `contract/rails-presentation.v1.schema.json`, from `manifest.Manifest`.
+pub fn generate(gpa: Allocator) Allocator.Error![]u8 {
+    return generateDoc(
+        manifest.Manifest,
+        &manifest_overrides,
+        &manifest_override_hits,
+        gpa,
+        schema_url,
+        schema_title,
+        schema_description,
+    );
+}
+
+/// `contract/rails-handoff.v1.schema.json`, from `handoff.Handoff`. A second
+/// entry point rather than a second generator: the `@typeInfo` walk above is
+/// document-agnostic, and the only per-document inputs are the root type,
+/// its override table and the three header strings.
+pub fn generateHandoff(gpa: Allocator) Allocator.Error![]u8 {
+    return generateDoc(
+        handoff.Handoff,
+        &handoff_overrides,
+        &handoff_override_hits,
+        gpa,
+        handoff_url,
+        handoff_title,
+        handoff_description,
+    );
+}
+
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const arena = init.arena.allocator();
 
     const args = try init.minimal.args.toSlice(arena);
-    if (args.len != 2) fatal(
-        "usage: rails_schema_gen <out-path>\n" ++
-            "  writes the generated JSON Schema for the rails-presentation/1\n" ++
-            "  manifest (src/cli/rails/manifest.zig's types) to <out-path>\n",
+    // One document per invocation, selected by `--handoff`, rather than two
+    // output paths in one run: `build/rails_schema.zig` gives each schema
+    // its own Run/`git add`/`git diff` chain so a failing gate names the
+    // file that drifted. A single combined step could only say "one of the
+    // two".
+    const handoff_mode = args.len == 3 and std.mem.eql(u8, args[1], "--handoff");
+    if (!handoff_mode and args.len != 2) fatal(
+        "usage: rails_schema_gen [--handoff] <out-path>\n" ++
+            "  default: the generated JSON Schema for the rails-presentation/1\n" ++
+            "           manifest (src/cli/rails/manifest.zig's types)\n" ++
+            "  --handoff: the generated JSON Schema for the rails-handoff/1\n" ++
+            "           document (src/cli/rails/handoff.zig's types)\n",
         .{},
     );
-    const out_path = args[1];
+    const out_path = args[args.len - 1];
 
-    // `generate` is Contract 1 -- `arena` here is the process's own
-    // top-level arena (freed whole at process exit), so passing it as
-    // `generate`'s `gpa` is a normal CLI-main allocation choice, not the
-    // "arena wraps testing.allocator" pattern `scripts/check-allocator-
+    // `generate`/`generateHandoff` are Contract 1 -- `arena` here is the
+    // process's own top-level arena (freed whole at process exit), so
+    // passing it as their `gpa` is a normal CLI-main allocation choice, not
+    // the "arena wraps testing.allocator" pattern `scripts/check-allocator-
     // contracts.sh` flags: there is no `const gpa = testing.allocator;`
     // alias anywhere in this file for that scanner to find.
-    const bytes = try generate(arena);
+    const bytes = if (handoff_mode) try generateHandoff(arena) else try generate(arena);
 
     const file = std.Io.Dir.cwd().createFile(io, out_path, .{}) catch |err| fatal(
         "error creating '{s}': {t}\n",
@@ -657,11 +866,144 @@ test "generate: every override entry matches at least one walked (type, field) p
     const out = try generate(gpa);
     defer gpa.free(out);
 
-    for (overrides, override_hits) |o, hits| {
+    for (manifest_overrides, manifest_override_hits) |o, hits| {
         if (hits == 0) std.debug.print(
             "unmatched schema override: {s}.{s} -- overrideFor never matched this (type, field) pair\n",
             .{ o.type_name, o.field },
         );
         try testing.expect(hits > 0);
     }
+}
+
+test "generateHandoff: every override entry matches at least one walked (type, field) pair" {
+    // Same guarantee as the manifest table's, for the handoff's own table.
+    // Written as its own test rather than folded into the one above because
+    // the hit counters are per-DOCUMENT: a run of `generate` leaves the
+    // handoff counters at whatever the previous `generateHandoff` set, so
+    // the assertion has to follow the call that populated them.
+    const gpa = testing.allocator;
+    const out = try generateHandoff(gpa);
+    defer gpa.free(out);
+
+    for (handoff_overrides, handoff_override_hits) |o, hits| {
+        if (hits == 0) std.debug.print(
+            "unmatched handoff schema override: {s}.{s} -- overrideFor never matched this (type, field) pair\n",
+            .{ o.type_name, o.field },
+        );
+        try testing.expect(hits > 0);
+    }
+}
+
+test "generateHandoff: produces well-formed JSON with the handoff document's own header" {
+    const gpa = testing.allocator;
+    const out = try generateHandoff(gpa);
+    defer gpa.free(out);
+    try testing.expect(out.len > 0);
+    try testing.expectEqual(@as(u8, '\n'), out[out.len - 1]);
+
+    var parsed = try std.json.parseFromSlice(std.json.Value, gpa, out, .{});
+    defer parsed.deinit();
+    try testing.expectEqualStrings(draft, parsed.value.object.get("$schema").?.string);
+    try testing.expectEqualStrings("object", parsed.value.object.get("type").?.string);
+    // The two documents must not share an `$id`: a consumer resolving one
+    // and getting the other's shape is exactly what a distinct id prevents.
+    try testing.expectEqualStrings(handoff_url, parsed.value.object.get("$id").?.string);
+    try testing.expect(!std.mem.eql(u8, schema_url, handoff_url));
+}
+
+test "generateHandoff: is byte-identical across two independent runs" {
+    // The property the handoff half of `rails-check` rests on, asserted for
+    // this document too rather than assumed to follow from the manifest's.
+    const gpa = testing.allocator;
+    const a = try generateHandoff(gpa);
+    defer gpa.free(a);
+    const b = try generateHandoff(gpa);
+    defer gpa.free(b);
+    try testing.expectEqualStrings(a, b);
+}
+
+test "generateHandoff: top-level required lists every Handoff field, in declaration order" {
+    const gpa = testing.allocator;
+    const out = try generateHandoff(gpa);
+    defer gpa.free(out);
+
+    var parsed = try std.json.parseFromSlice(std.json.Value, gpa, out, .{});
+    defer parsed.deinit();
+    const required = parsed.value.object.get("required").?.array.items;
+    const want = [_][]const u8{
+        "schema", "schema_version", "generator", "backend", "complete",
+        "routes", "assets",         "redirects", "parity",
+    };
+    try testing.expectEqual(want.len, required.len);
+    for (want, required) |w, r| try testing.expectEqualStrings(w, r.string);
+}
+
+test "generateHandoff: routes[] items carry the wire field order and the Status enum" {
+    const gpa = testing.allocator;
+    const out = try generateHandoff(gpa);
+    defer gpa.free(out);
+
+    var parsed = try std.json.parseFromSlice(std.json.Value, gpa, out, .{});
+    defer parsed.deinit();
+    const items = parsed.value.object.get("properties").?.object
+        .get("routes").?.object.get("items").?.object;
+    const required = items.get("required").?.array.items;
+    const want = [_][]const u8{
+        "route_id", "status",   "artifacts", "endpoint",
+        "decision", "findings", "note",
+    };
+    try testing.expectEqual(want.len, required.len);
+    for (want, required) |w, r| try testing.expectEqualStrings(w, r.string);
+
+    const members = items.get("properties").?.object.get("status").?.object
+        .get("enum").?.array.items;
+    const want_members = [_][]const u8{
+        "migrated", "open", "blocked", "retained", "backend", "redirect",
+    };
+    try testing.expectEqual(want_members.len, members.len);
+    for (want_members, members) |w, m| try testing.expectEqualStrings(w, m.string);
+}
+
+test "generateHandoff: backend and routes[].endpoint are nullable objects, not bare objects" {
+    // Both are `null` in every document this version emits. A schema that
+    // typed them as a bare object would reject every real handoff.
+    const gpa = testing.allocator;
+    const out = try generateHandoff(gpa);
+    defer gpa.free(out);
+
+    var parsed = try std.json.parseFromSlice(std.json.Value, gpa, out, .{});
+    defer parsed.deinit();
+    const props = parsed.value.object.get("properties").?.object;
+
+    const backend_types = props.get("backend").?.object.get("type").?.array.items;
+    try testing.expectEqual(@as(usize, 2), backend_types.len);
+    try testing.expectEqualStrings("object", backend_types[0].string);
+    try testing.expectEqualStrings("null", backend_types[1].string);
+
+    const endpoint = props.get("routes").?.object.get("items").?.object
+        .get("properties").?.object.get("endpoint").?.object;
+    const endpoint_types = endpoint.get("type").?.array.items;
+    try testing.expectEqual(@as(usize, 2), endpoint_types.len);
+    try testing.expectEqualStrings("object", endpoint_types[0].string);
+    try testing.expectEqualStrings("null", endpoint_types[1].string);
+}
+
+test "generate/generateHandoff: the two documents do not share an override table" {
+    // `overrideFor` keys on the last two segments of `@typeName`, and BOTH
+    // modules declare a `RouteEntry`. One shared table would let a manifest
+    // description land on a handoff field. Asserted through the output:
+    // the manifest's `routes[].id` caveat must not appear anywhere in the
+    // handoff document, and vice versa for the handoff's `complete` rule.
+    const gpa = testing.allocator;
+    const m = try generate(gpa);
+    defer gpa.free(m);
+    const h = try generateHandoff(gpa);
+    defer gpa.free(h);
+
+    try testing.expect(std.mem.indexOf(u8, m, "NOT a unique key") != null);
+    try testing.expect(std.mem.indexOf(u8, h, "NOT a unique key") != null);
+    // The manifest's own text, verbatim, must NOT have leaked across.
+    try testing.expect(std.mem.indexOf(u8, h, "a repeated id is a fact about the route table") == null);
+    try testing.expect(std.mem.indexOf(u8, m, "does not make the site broken to browse") == null);
+    try testing.expect(std.mem.indexOf(u8, h, "does not make the site broken to browse") != null);
 }

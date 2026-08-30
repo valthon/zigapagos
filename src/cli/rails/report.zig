@@ -660,7 +660,10 @@ pub fn build(gpa: Allocator, in: Input) Allocator.Error![]const u8 {
     w.print("# Migrating {s} to Zigapagos\n\n", .{in.app_path}) catch return error.OutOfMemory;
     w.writeAll(
         \\Rails source discovery. This worklist inventories the presentation
-        \\layer and the recovered route graph; it converts nothing.
+        \\layer and the recovered route graph. Discovery itself converts
+        \\nothing: run `migrate --from rails --target DIR` to assemble a
+        \\Zigapagos project from it, and see the Handoff section below (when
+        \\present) for what each route became.
         \\
         \\## Inventory
         \\
@@ -981,4 +984,178 @@ fn classCount(classifications: []const classify.Verdict, class: classify.Class) 
         if (v.class == class) n += 1;
     }
     return n;
+}
+
+/// The Handoff section's inputs: what `scaffold.zig` produced, reduced to the
+/// numbers a human reader needs.
+///
+/// Deliberately a plain count struct rather than `handoff.Status` counts:
+/// `handoff.zig` imports THIS file (for `routeLessThan`), so taking its types
+/// here would close an import cycle for no gain -- the section renders six
+/// numbers and a boolean, none of which need the wire types' semantics.
+pub const HandoffSummary = struct {
+    /// `handoff.isComplete`'s verdict, verbatim -- never recomputed here, so
+    /// the report and the JSON artifact beside it cannot disagree.
+    complete: bool,
+    migrated: usize = 0,
+    open: usize = 0,
+    blocked: usize = 0,
+    retained: usize = 0,
+    backend: usize = 0,
+    redirect: usize = 0,
+};
+
+/// The `## Handoff` section, rendered SEPARATELY from `build` and appended by
+/// `migrate.zig` after the scaffold has run.
+///
+/// Why not a `build` input: `rails.discover` builds the report, and it does so
+/// before `scaffold.write` exists to be summarised -- the conversion outcome is
+/// not known until after `discover` has returned. Threading a
+/// `?HandoffSummary` through `Input` would therefore add a branch no production
+/// caller could ever take with a non-null value. The report is markdown, the
+/// section is the last one (`build` ends with `## Findings`), and concatenation
+/// is the whole join.
+///
+/// Contract 1 (self-freeing): all scratch is released; the returned markdown is
+/// the single escaping allocation, owned by the caller. No timestamps, no
+/// absolute paths -- identical input renders identical bytes.
+pub fn handoffSection(gpa: Allocator, in: HandoffSummary) Allocator.Error![]const u8 {
+    var aw: std.Io.Writer.Allocating = .init(gpa);
+    errdefer aw.deinit();
+    const w = &aw.writer;
+
+    // Leading newline, matching every other section's own separator: `build`
+    // leaves the document without a trailing blank line, so the caller can
+    // concatenate this directly onto it.
+    w.writeAll("\n## Handoff\n\n") catch return error.OutOfMemory;
+    w.print("complete: {s}\n\n", .{if (in.complete) "true" else "false"}) catch return error.OutOfMemory;
+    w.writeAll(
+        \\`MIGRATION.handoff.json` records what each recovered route became.
+        \\
+        \\| Status | Routes |
+        \\| --- | --- |
+        \\
+    ) catch return error.OutOfMemory;
+    // Fixed order, not sorted by count: the six statuses are a vocabulary, and
+    // a reader diffing two runs needs the rows to stay in the same places.
+    w.print("| migrated | {d} |\n", .{in.migrated}) catch return error.OutOfMemory;
+    w.print("| open | {d} |\n", .{in.open}) catch return error.OutOfMemory;
+    w.print("| blocked | {d} |\n", .{in.blocked}) catch return error.OutOfMemory;
+    w.print("| retained | {d} |\n", .{in.retained}) catch return error.OutOfMemory;
+    w.print("| backend | {d} |\n", .{in.backend}) catch return error.OutOfMemory;
+    w.print("| redirect | {d} |\n", .{in.redirect}) catch return error.OutOfMemory;
+
+    if (in.complete) {
+        // `bash`, not `sh`. `scaffold.emitBuildSh` writes
+        // `#!/usr/bin/env bash` and `set -euo pipefail`, and `pipefail` is not
+        // in POSIX `set` -- run under dash (which is `/bin/sh` on Debian and
+        // Ubuntu) the script dies on line 2 with `Illegal option -o pipefail`
+        // and exit 2, before it builds anything. The one instruction the
+        // report gives an operator whose migration is FINISHED has to work.
+        w.writeAll(
+            \\
+            \\Next: every user-facing route is accounted for. Build the target
+            \\with `bash build.sh`, then check it with `zigapagos doctor`.
+            \\
+        ) catch return error.OutOfMemory;
+    } else {
+        // Names the file, the key, and the shape of one entry: an operator
+        // reading only this paragraph has to be able to write the next line of
+        // `MIGRATION.decisions.json` without opening the docs.
+        w.writeAll(
+            \\
+            \\Next: each `open` route in `MIGRATION.handoff.json` lists the
+            \\finding ids still unanswered. Answer each one in
+            \\`MIGRATION.decisions.json` -- `{"id": "<finding id>", "choice":
+            \\"<one of that finding's choices>", "rationale": "why"}` -- then
+            \\delete everything in the target except that file and re-run the
+            \\same command.
+            \\
+        ) catch return error.OutOfMemory;
+    }
+
+    return aw.toOwnedSlice();
+}
+
+test "handoffSection: an incomplete run renders the counts and the decide-and-re-run instruction" {
+    const md = try handoffSection(std.testing.allocator, .{
+        .complete = false,
+        .migrated = 1,
+        .open = 4,
+        .backend = 5,
+        .redirect = 1,
+    });
+    defer std.testing.allocator.free(md);
+    // Golden: the whole section, byte for byte. A substring check would pass
+    // an implementation that rendered the table twice or lost the separator
+    // the caller concatenates against.
+    try std.testing.expectEqualStrings(
+        \\
+        \\## Handoff
+        \\
+        \\complete: false
+        \\
+        \\`MIGRATION.handoff.json` records what each recovered route became.
+        \\
+        \\| Status | Routes |
+        \\| --- | --- |
+        \\| migrated | 1 |
+        \\| open | 4 |
+        \\| blocked | 0 |
+        \\| retained | 0 |
+        \\| backend | 5 |
+        \\| redirect | 1 |
+        \\
+        \\Next: each `open` route in `MIGRATION.handoff.json` lists the
+        \\finding ids still unanswered. Answer each one in
+        \\`MIGRATION.decisions.json` -- `{"id": "<finding id>", "choice":
+        \\"<one of that finding's choices>", "rationale": "why"}` -- then
+        \\delete everything in the target except that file and re-run the
+        \\same command.
+        \\
+    , md);
+}
+
+test "handoffSection: a complete run says so and points at the build, not at decisions" {
+    const md = try handoffSection(std.testing.allocator, .{ .complete = true, .migrated = 3, .retained = 2 });
+    defer std.testing.allocator.free(md);
+    try std.testing.expectEqualStrings(
+        \\
+        \\## Handoff
+        \\
+        \\complete: true
+        \\
+        \\`MIGRATION.handoff.json` records what each recovered route became.
+        \\
+        \\| Status | Routes |
+        \\| --- | --- |
+        \\| migrated | 3 |
+        \\| open | 0 |
+        \\| blocked | 0 |
+        \\| retained | 2 |
+        \\| backend | 0 |
+        \\| redirect | 0 |
+        \\
+        \\Next: every user-facing route is accounted for. Build the target
+        \\with `bash build.sh`, then check it with `zigapagos doctor`.
+        \\
+    , md);
+    // The discriminating half: a complete run must NOT tell the operator to
+    // go on answering findings.
+    try std.testing.expect(std.mem.indexOf(u8, md, "MIGRATION.decisions.json") == null);
+}
+
+test "handoffSection: the section appends onto build()'s output as the last section" {
+    const gpa = std.testing.allocator;
+    const body = try build(gpa, .{ .app_path = "app", .entries = &.{}, .integrations = &.{}, .blockers = &.{} });
+    defer gpa.free(body);
+    const tail = try handoffSection(gpa, .{ .complete = false, .open = 1 });
+    defer gpa.free(tail);
+    const joined = try std.mem.concat(gpa, u8, &.{ body, tail });
+    defer gpa.free(joined);
+    // `build` ends with the Findings section; the handoff must follow it, not
+    // precede it (the operator reads the findings, then what to do about them).
+    const findings_at = std.mem.indexOf(u8, joined, "\n## Findings\n").?;
+    const handoff_at = std.mem.indexOf(u8, joined, "\n## Handoff\n").?;
+    try std.testing.expect(findings_at < handoff_at);
 }
