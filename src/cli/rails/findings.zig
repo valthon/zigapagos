@@ -45,6 +45,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const assets = @import("assets.zig");
+const backend = @import("backend.zig");
 const blockers = @import("blockers.zig");
 const classify = @import("classify.zig");
 // Only for `opensBlock` (ruling S12's form-nesting scope). `convert.zig`
@@ -63,10 +64,10 @@ pub const Severity = blockers.Severity;
 /// surfaces to the operator rather than settling itself. See the module
 /// doc for how this differs from `blockers.Blocker`.
 ///
-/// Contract 2 (owned-result): `id`, `path`, and `message` are fresh `gpa`
-/// allocations; `route_id` is a fresh allocation when non-null. `code` and
-/// every `choices` slice are static string literals, never freed. Released
-/// by `free`.
+/// Contract 2 (owned-result): `id`, `path`, `message` and `choices` (both
+/// levels) are fresh `gpa` allocations; `route_id` is a fresh allocation
+/// when non-null. `code` alone is a static string literal, never freed.
+/// Released by `free`.
 pub const Finding = struct {
     /// `<code>.<path>.<loc>` with `%`/`.` escaped; see `findingId`. Stable
     /// across a reworded `message` or a template edit elsewhere in the
@@ -91,8 +92,23 @@ pub const Finding = struct {
     /// -- see the module doc -- so rewording this never invalidates a
     /// recorded decision.
     message: []const u8,
-    /// The fixed set of answers an operator may record against this
-    /// finding. Always a static string literal slice, never freed.
+    /// The set of answers an operator may record against this finding.
+    ///
+    /// #167 Stage 3: OWNED (both the slice and every string in it), where
+    /// Stage 2 had it be a static literal slice. The reason is
+    /// `RAILS_BACKEND_ENDPOINT`: its answers are the ZigBase operations
+    /// `--backend` named, so the list is built per finding from a
+    /// `backend.Document` and cannot be a comptime constant. And it is a
+    /// DEEP copy rather than an owned slice over `backend.choicesFor`'s
+    /// borrowed elements, because a `Finding` outlives nothing it can see:
+    /// it is handed to `manifest.zig`, `report.zig` and `decisions.zig`
+    /// with no handle on the document those strings live in, so borrowing
+    /// would make every consumer's correctness depend on a lifetime none of
+    /// them can check. `backend.choicesFor` keeps its own contract 1; this
+    /// type is contract 2 and pays a handful of small dupes for it.
+    ///
+    /// A hand-built `Finding` in a test may still point this at a static
+    /// literal, as long as that finding is never passed to `free`.
     choices: []const []const u8,
     /// Whether resolving this finding requires generating an artifact
     /// (e.g. an island component) rather than just recording a choice.
@@ -105,11 +121,50 @@ const choices_island_retain_blocked = [_][]const u8{ "island", "retain", "blocke
 const choices_island_spa_retain_blocked = [_][]const u8{ "island", "spa", "retain", "blocked" };
 const choices_spa_retain_blocked = [_][]const u8{ "spa", "retain", "blocked" };
 const choices_full = [_][]const u8{ "island", "spa", "backend", "retain", "blocked" };
+/// #167 Stage 3 assumption A7's new choice word: "ship the page; the ZigBase
+/// rules protect the data". Only `RAILS_ROUTE_AUTH_GUARD` offers it.
+const choices_public_retain_blocked = [_][]const u8{ "public", "retain", "blocked" };
+
+/// Contract 2 (owned-result): a deep copy of `src`, released by
+/// `freeChoices`. Every row's `choices` goes through here -- see
+/// `Finding.choices` for why a `Finding` owns its answers outright.
+pub fn dupeChoices(gpa: Allocator, src: []const []const u8) Allocator.Error![]const []const u8 {
+    const out = try gpa.alloc([]const u8, src.len);
+    var filled: usize = 0;
+    errdefer {
+        for (out[0..filled]) |c| gpa.free(c);
+        gpa.free(out);
+    }
+    for (src, 0..) |c, i| {
+        out[i] = try gpa.dupe(u8, c);
+        filled = i + 1;
+    }
+    return out;
+}
+
+/// Contract 2's release half for `dupeChoices`.
+pub fn freeChoices(gpa: Allocator, choices: []const []const u8) void {
+    for (choices) |c| gpa.free(c);
+    gpa.free(choices);
+}
 
 /// The three #167 Stage 2 ROUTE-scoped codes, and the file all of them point
 /// at. Public because `scaffold.zig` has to recompute the very ids `derive`
 /// produced in order to look an operator decision up against them -- see
 /// `routeFindingId`.
+///
+/// **Ruling S22's grouping, and its one exception.** Every ROUTE-scoped row
+/// emits ONE finding per `config/routes.rb` LINE, whose `message` names every
+/// route on that line, because one declaration is one decision. #167 Stage 3
+/// fix round 1 (ruling I-3), extended in fix round 2 (NEW-2), narrows exactly
+/// one row to `(line, verb, resource)`: `RAILS_BACKEND_ENDPOINT`, whose
+/// answer is a single ZigBase operation. One `resources :posts` line declares
+/// both `POST /posts` and `DELETE /posts/:id`, and one
+/// `resources :posts, :comments` line declares `POST /posts` and
+/// `POST /comments`; no single operation serves either pair. The narrowed key
+/// is exactly the pair `backend.choicesFor` is asked, so two routes share a
+/// finding precisely when they would be offered the same answers. That row
+/// alone uses `routeVerbFindingId`; every other row keeps `routeFindingId`.
 pub const routes_file = "config/routes.rb";
 pub const code_route_dynamic_segment = "RAILS_ROUTE_DYNAMIC_SEGMENT";
 pub const code_redirect_host_config = "RAILS_REDIRECT_HOST_CONFIG";
@@ -176,6 +231,51 @@ pub const code_no_template = "RAILS_NO_TEMPLATE";
 pub const code_template_engine_unsupported = "RAILS_TEMPLATE_ENGINE_UNSUPPORTED";
 
 pub const code_backend_endpoint = "RAILS_BACKEND_ENDPOINT";
+
+/// Ruling S12's row for anything the page can only know at request time: an
+/// `errors` summary, a `current_user` helper, a `session[...]` read.
+///
+/// Named since #167 Stage 3 Task 5 because `scaffold.zig` now has to tell
+/// this code apart from the others to decide whether an `island` answer is
+/// the auth-status scaffold or Stage 4's component port; the derivation sites
+/// below used the literal, and a second copy of it in another file is exactly
+/// the drift the other `code_*` constants exist to prevent.
+pub const code_request_time_state = "RAILS_REQUEST_TIME_STATE";
+
+/// #167 Stage 3 assumption A5. The sign-in/sign-up/sign-out routes are ONE
+/// decision, not one per route: they share a ZigBase auth collection, an
+/// `AuthForm` and an `AuthStatus`, and answering three of them `island` with
+/// three different collection names is not a migration anyone wants. At most
+/// one of these exists per app, keyed (ruling S22) on the SMALLEST
+/// `config/routes.rb` line the journey occupies.
+///
+/// The one row in the table with `requires_artifact: true`: the artifact is
+/// the ZigBase auth collection name, which no amount of reading the Rails app
+/// can recover -- it is a fact about the destination.
+pub const code_auth_journey = "RAILS_AUTH_JOURNEY";
+
+/// #167 Stage 3 assumption A7. A page whose Rails controller runs an
+/// authentication `before_action` is not a page: it is a page PLUS an
+/// enforcement the static tree cannot express. Emitting it silently is the
+/// "silently marked complete" #167 exists to prevent, so the operator either
+/// ships it deliberately (`public` -- the ZigBase rules still protect the
+/// data behind it), retains the Rails route, or blocks on it.
+pub const code_route_auth_guard = "RAILS_ROUTE_AUTH_GUARD";
+
+/// #182, first half. Two route declarations reducing to one
+/// `content/<url>/index.smd` (`/about` and `/about/`) used to be a bare
+/// `addOpenNote` in `scaffold.zig` with no id behind it, so no decisions file
+/// could name it and `complete` was unreachable for the app. `retain`/
+/// `blocked` only: the loser has no page to write whatever anyone decides.
+pub const code_content_path_collision = "RAILS_CONTENT_PATH_COLLISION";
+
+/// #182, second half, and the case `routeHasNoView` deliberately leaves to
+/// this row: a static GET route whose path carries syntax `resolve.
+/// contentPath` refuses (`(.:format)`). Same id-less-note defect, same two
+/// choices -- there is no file to write until the route parser learns the
+/// syntax.
+pub const code_route_path_unsupported = "RAILS_ROUTE_PATH_UNSUPPORTED";
+
 pub const code_turbo_frame = "RAILS_TURBO_FRAME";
 pub const code_turbo_stream = "RAILS_TURBO_STREAM";
 pub const code_component_root = "RAILS_COMPONENT_ROOT";
@@ -230,23 +330,80 @@ pub fn routeFindingId(gpa: Allocator, code: []const u8, line: u64) Allocator.Err
     return findingId(gpa, code, routes_file, loc);
 }
 
+/// The id of the one ROUTE-scoped row that is keyed on
+/// `(line, verb, resource)` rather than on the line alone:
+/// `RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L<line>.<VERB>.<resource>`.
+///
+/// #167 Stage 3 fix round 1 (ruling I-3), extended in fix round 2 (NEW-2).
+/// S22 folds every route on one `routes.rb` line into one finding because
+/// one declaration is one decision -- `spa` on a `resources :posts` line
+/// means the whole declaration becomes a SPA. That reasoning does not
+/// survive contact with this row, whose answer is a single ZigBase
+/// OPERATION, and one `routes.rb` line can declare routes needing several:
+///
+/// - `resources :posts` declares `POST /posts`, `PATCH /posts/:id` and
+///   `DELETE /posts/:id`. No operation is both a create and a delete.
+/// - `resources :posts, :comments` declares `POST /posts` AND
+///   `POST /comments` -- same verb, two collections, and `createPosts`
+///   cannot serve a comment.
+///
+/// So this row, and only this row, narrows S22's grouping to
+/// `(line, verb, resource)`, where `resource` is the route's controller --
+/// exactly the pair `backend.choicesFor` is asked, so two routes share a
+/// finding precisely when they would be offered the same answers.
+///
+/// The two extra keys ride in a FOURTH and FIFTH id component rather than
+/// inside `loc`, so the three-part `<code>.<path>.<loc>` shape every other
+/// finding has is still what a reader sees, with the extra keys appended and
+/// separated by the same `.`. `escapePart` is applied to both like any other
+/// component, so the id stays reversible even for a namespaced controller
+/// key (`admin/users`).
+///
+/// **`resource` is always emitted**, so the id has a fixed component count
+/// and a reader never has to guess whether a trailing token is a verb or a
+/// controller. A route whose controller discovery never recovered
+/// (`Route.controller == null`) contributes an EMPTY component
+/// (`…L7.POST.`) -- distinct from every real controller key, which is
+/// derived from a file path and is never empty.
+///
+/// Exported for the same reason `routeFindingId` is: `scaffold.zig` has to
+/// recompute this byte for byte to look an operator decision up.
+///
+/// Contract 1 (self-freeing): all scratch is released; only the id escapes.
+pub fn routeVerbFindingId(
+    gpa: Allocator,
+    code: []const u8,
+    line: u64,
+    verb: []const u8,
+    resource: ?[]const u8,
+) Allocator.Error![]u8 {
+    const base = try routeFindingId(gpa, code, line);
+    defer gpa.free(base);
+    // Upper-cased HERE, not at the call sites: two callers have to produce
+    // the same bytes, and `routes.Route.verb` being upper-case today is a
+    // property of one producer, not a guarantee of the type.
+    const upper = try upperAlloc(gpa, verb);
+    defer gpa.free(upper);
+    const verb_esc = try escapePart(gpa, upper);
+    defer gpa.free(verb_esc);
+    const resource_esc = try escapePart(gpa, resource orelse "");
+    defer gpa.free(resource_esc);
+    return std.fmt.allocPrint(gpa, "{s}.{s}.{s}", .{ base, verb_esc, resource_esc });
+}
+
 /// True when a route path has a `:param` or `*glob` segment -- i.e. when it
 /// stands for a family of URLs rather than one.
 ///
-/// Duplicates the predicate `resolve.zig` keeps private inside `contentPath`
-/// (`isPlaceholder`). The two MUST agree, since "dynamic" is defined here as
-/// exactly "no single static content path", so the agreement is pinned by a
-/// test below rather than left to a comment. Widening `resolve`'s API for a
-/// two-line predicate would have been the alternative; the pinned test is
-/// cheaper and catches drift in the direction that matters.
+/// A one-line forward to `resolve.isDynamicRoutePath`, kept as a name in this
+/// file because `scaffold.zig` and this file's own rows read it under this
+/// name. It used to be a SECOND copy of the loop, kept honest by the test
+/// below; "dynamic" is defined as exactly "`resolve.contentPath` gives it no
+/// single static page", so the definition belongs next to `contentPath` and
+/// there is now no second implementation to drift.
 ///
 /// Contract 3 (caller-buffer): allocates nothing.
 pub fn isDynamicRoutePath(route_path: []const u8) bool {
-    var it = std.mem.splitScalar(u8, route_path, '/');
-    while (it.next()) |seg| {
-        if (seg.len > 1 and (seg[0] == ':' or seg[0] == '*')) return true;
-    }
-    return false;
+    return resolve.isDynamicRoutePath(route_path);
 }
 
 /// Total order over `(code, path, line orelse 0, id)`. `id` is the key that
@@ -282,18 +439,23 @@ pub fn lessThan(_: void, a: Finding, b: Finding) bool {
     return std.mem.order(u8, a.id, b.id) == .lt;
 }
 
-/// Contract 2 counterpart to `derive`: releases `id`/`path`/`message` and
-/// (when non-null) `route_id` on every finding plus the slice itself. Does
-/// not free `code` or `choices` -- both point at static literals owned by
-/// the derivation table, never duplicated.
+/// Contract 2 counterpart to `derive`: releases `id`/`path`/`message`/
+/// `choices` and (when non-null) `route_id` on every finding plus the slice
+/// itself. Does not free `code`, which is always the static literal the
+/// derivation table names.
 pub fn free(gpa: Allocator, list: []Finding) void {
-    for (list) |f| {
-        gpa.free(f.id);
-        gpa.free(f.path);
-        gpa.free(f.message);
-        if (f.route_id) |rid| gpa.free(rid);
-    }
+    for (list) |f| freeOne(gpa, f);
     gpa.free(list);
+}
+
+/// The per-element half of `free`, shared with `derive`'s `errdefer` so the
+/// two cannot drift over which fields a `Finding` owns.
+fn freeOne(gpa: Allocator, f: Finding) void {
+    gpa.free(f.id);
+    gpa.free(f.path);
+    gpa.free(f.message);
+    if (f.route_id) |rid| gpa.free(rid);
+    freeChoices(gpa, f.choices);
 }
 
 pub const ControllerFile = struct { controller: []const u8, path: []const u8 };
@@ -390,6 +552,80 @@ pub const DeriveInput = struct {
     /// with no Haml/Slim would not have had anyway. The one production caller
     /// passes the real slice.
     unsupported_templates: []const UnsupportedTemplate = &.{},
+    /// #167 Stage 3: the ZigBase OpenAPI document `--backend FILE` named, or
+    /// `null` for a run without one. Read ONLY through `backend.choicesFor`,
+    /// which answers `["retain", "blocked"]` for `null` -- so a run without a
+    /// document produces exactly the Stage 2 choice list and nothing about
+    /// the file reaches the manifest (plan, Global Constraints: identical
+    /// input, identical bytes).
+    ///
+    /// Borrowed for the duration of the call. Nothing in the returned
+    /// `Finding`s points into it: `Finding.choices` is a deep copy, for the
+    /// reason that field's doc gives.
+    backend: ?backend.Document = null,
+    /// #167 Stage 3 (assumption A7): the controllers op's filter view --
+    /// every `before_action` and `skip_before_action` it recovered, plus the
+    /// `class Child < Parent` edges. Read by `RAILS_ROUTE_AUTH_GUARD` alone,
+    /// through `controllers.guardsFor`.
+    ///
+    /// A `FilterSet` and not a bare `[]BeforeAction` (fix round 1, I-1): the
+    /// overwhelmingly common Rails shape is `before_action :authenticate_user!`
+    /// on `ApplicationController` with every other controller inheriting it,
+    /// and matching a filter's own `controller` against the route's saw NONE
+    /// of them -- the row fired only for an app that redeclares the filter in
+    /// every controller. `guardsFor` walks the chain and honours
+    /// `skip_before_action` placement; both are Task 2's work, and re-deriving
+    /// either here would be a second implementation to keep in step.
+    ///
+    /// Defaulted empty, which LOSES the row rather than fabricating one --
+    /// the safe direction and the stance every input below takes.
+    filters: controllers.FilterSet = .{},
+    /// #167 Stage 3: index-aligned with `routes` -- the VIEW each route
+    /// resolved (`resolve.viewFor` over that route's template list), or
+    /// `null` where it resolved none. Two rows read it: assumption A5's
+    /// journey detection (a view holding a password form makes its route a
+    /// journey route) and the `RAILS_BACKEND_ENDPOINT` form row (a form's
+    /// backend `resource` is the controller of the route whose view it sits
+    /// in).
+    ///
+    /// A SHORT slice is not an error: an entry that is not present is a route
+    /// this input says nothing about.
+    route_views: []const ?[]const u8 = &.{},
+    /// #182: the routes that lose a content path to an earlier route, from
+    /// `resolve.contentClaims`. Computed by the caller rather than here so
+    /// this row and `scaffold.zig`'s own claim walk read ONE function and
+    /// cannot disagree about which route is the loser -- see that function's
+    /// doc for the single remaining difference.
+    content_collisions: []const resolve.ContentCollision = &.{},
+    /// #182: the routes whose path `resolve.contentPath` refuses, from the
+    /// same `resolve.contentClaims` call as `content_collisions`.
+    unsupported_route_paths: []const usize = &.{},
+    /// #167 Stage 3 fix round 2 (NEW-1): the render graph Stage 1 already
+    /// resolved -- one entry per template, naming the OTHER templates it
+    /// renders. `rails.Discovery.templates[].renders` verbatim.
+    ///
+    /// Read by assumption A5's journey detection alone, which has to know
+    /// that `sessions/new.html.erb` reaches `shared/_login_form.html.erb`:
+    /// the sign-in form usually lives in the partial, and without the edge
+    /// the journey and the partial each raised a finding for the same form.
+    /// Passed in rather than re-derived from the `.render_partial` nodes in
+    /// `templates` because resolving a partial's LOGICAL name
+    /// (`shared/login_form`) to a file is `rails.resolvePartialTarget`'s job
+    /// and needs the inventory; a second implementation here would be a
+    /// second thing to keep in step.
+    ///
+    /// Defaulted empty, which loses only the transitive half of the rule: a
+    /// form in a journey route's OWN view is still the journey's.
+    render_graph: []const TemplateRenders = &.{},
+};
+
+/// One node of the render graph: a template, and the templates it renders.
+/// Mirrors the two fields of `rails.TemplateNode` this file reads; restated
+/// rather than imported because `rails.zig` is this package's ROOT and
+/// imports this file. Both levels borrowed for the duration of the call.
+pub const TemplateRenders = struct {
+    path: []const u8,
+    renders: []const []const u8,
 };
 
 /// One `unsupported_templates` row: the app-relative template path and the
@@ -440,6 +676,8 @@ fn appendFinding(
     errdefer gpa.free(path_copy);
     const message_copy = try gpa.dupe(u8, message);
     errdefer gpa.free(message_copy);
+    const choices_copy = try dupeChoices(gpa, choices);
+    errdefer freeChoices(gpa, choices_copy);
     try list.append(gpa, .{
         .id = id,
         .code = code,
@@ -448,7 +686,7 @@ fn appendFinding(
         .line = line,
         .route_id = null,
         .message = message_copy,
-        .choices = choices,
+        .choices = choices_copy,
         .requires_artifact = false,
     });
 }
@@ -471,8 +709,22 @@ fn appendRouteFinding(
     message: []const u8,
     choices: []const []const u8,
     route_id: []const u8,
+    /// #167 Stage 3: true for `RAILS_AUTH_JOURNEY` alone. A parameter rather
+    /// than a post-append mutation so the field is set where every other
+    /// field of the same finding is.
+    requires_artifact: bool,
+    /// #167 Stage 3 fix rounds 1 and 2 (I-3 / NEW-2): non-null for
+    /// `RAILS_BACKEND_ENDPOINT` alone, whose findings are keyed on
+    /// `(line, verb, resource)`. `resource` is the second half of that key
+    /// and may itself be null (a route whose controller never resolved);
+    /// it is read only when `verb_key` is set. See `routeVerbFindingId`.
+    verb_key: ?[]const u8,
+    resource_key: ?[]const u8,
 ) Allocator.Error!void {
-    const id = try routeFindingId(gpa, code, line);
+    const id = if (verb_key) |v|
+        try routeVerbFindingId(gpa, code, line, v, resource_key)
+    else
+        try routeFindingId(gpa, code, line);
     errdefer gpa.free(id);
     const path_copy = try gpa.dupe(u8, routes_file);
     errdefer gpa.free(path_copy);
@@ -480,6 +732,8 @@ fn appendRouteFinding(
     errdefer gpa.free(message_copy);
     const route_id_copy = try gpa.dupe(u8, route_id);
     errdefer gpa.free(route_id_copy);
+    const choices_copy = try dupeChoices(gpa, choices);
+    errdefer freeChoices(gpa, choices_copy);
     try list.append(gpa, .{
         .id = id,
         .code = code,
@@ -488,9 +742,284 @@ fn appendRouteFinding(
         .line = line,
         .route_id = route_id_copy,
         .message = message_copy,
-        .choices = choices,
-        .requires_artifact = false,
+        .choices = choices_copy,
+        .requires_artifact = requires_artifact,
     });
+}
+
+/// The Rails resource a submission from `path` targets: the controller of
+/// the route that named this template as its view.
+///
+/// `null` for a partial, a layout, or any template no route resolved to --
+/// there is no controller to name, and `backend.choicesFor` answers a null
+/// resource with one flat verb-matched group, which is the honest ranking
+/// when the resource is unknown.
+///
+/// Ties (two routes on one view -- `root "pages#about"` and `get "/about"`)
+/// resolve to the SMALLEST route index rather than to the first match in
+/// some other order: the route table is `rails.Discovery.routes`, whose
+/// order is fixed before this file sees it, so the same input gives the same
+/// answer. The two would in any case share a controller in every case that
+/// matters -- a view lives under `app/views/<controller>/`.
+///
+/// Contract 3 (caller-buffer): allocates nothing; borrows from `in`.
+fn templateResource(in: DeriveInput, path: []const u8) ?[]const u8 {
+    for (in.route_views, 0..) |maybe_view, i| {
+        const view = maybe_view orelse continue;
+        if (!std.mem.eql(u8, view, path)) continue;
+        if (i >= in.routes.len) continue;
+        if (in.routes[i].controller) |c| return c;
+    }
+    return null;
+}
+
+// ---- #167 Stage 3 assumption A5: the auth journey ------------------------
+
+/// The controller names Rails' own generators, and every guide since, give
+/// the sign-in and sign-up halves of an authentication flow. Matching on the
+/// controller rather than on the route path is what makes `/session/new`,
+/// `/login` and `/users/sign_in` one rule.
+const journey_controllers = [_][]const u8{ "sessions", "registrations" };
+
+/// True when `tpl` holds a `form` containing a `password_field`.
+///
+/// The nesting matters: a bare `password_field` outside any form is not
+/// evidence of an authentication flow (it is a field on something else), and
+/// A5 says "a `form` containing a `form_field` named `password_field`". The
+/// frame walk is `derive`'s own, restated -- both go through
+/// `convert.opensBlock`, so the two cannot disagree about what a form
+/// encloses.
+///
+/// Contract 1 (self-freeing): the frame stack is the only allocation and it
+/// is released before returning.
+fn templateHasPasswordForm(gpa: Allocator, tpl: fragments.Template) Allocator.Error!bool {
+    // Every open block gets a frame, not just forms: a `<% if %>` inside a
+    // form must not pop the form's own frame when its `end` arrives.
+    var frames: std.ArrayListUnmanaged(bool) = .empty;
+    defer frames.deinit(gpa);
+    var forms: usize = 0;
+    for (tpl.nodes) |node| {
+        if (node.text != null) continue;
+        if (node.kind == .form_field and forms > 0) {
+            if (node.name) |name| {
+                if (std.mem.eql(u8, name, "password_field")) return true;
+            }
+        }
+        if (node.kind == .block_end) {
+            // A stray `block_end` with no frame is dropped, the same defence
+            // `derive` and `convert.matchingEnd` take against a malformed
+            // stream.
+            if (frames.pop()) |was_form| {
+                if (was_form) forms -= 1;
+            }
+        } else if (convert.opensBlock(node)) {
+            const is_form = node.kind == .form;
+            try frames.append(gpa, is_form);
+            if (is_form) forms += 1;
+        }
+    }
+    return false;
+}
+
+/// Assumption A5's verdict, computed once per `derive` and read by three
+/// rows (the form row's suppression, the route-level
+/// `RAILS_BACKEND_ENDPOINT` exclusion, and `RAILS_AUTH_JOURNEY` itself).
+///
+/// Contract 2 (owned-result): `route` and `views` are the two allocations;
+/// released by `deinit`. Every string held is borrowed from `in`.
+const Journey = struct {
+    /// Index-aligned with `in.routes`.
+    route: []bool,
+    /// Every template whose forms the journey speaks for: the view of each
+    /// journey route, plus every template those views reach through the
+    /// render graph. Borrowed from `in`; the backing slice is owned.
+    views: []const []const u8,
+
+    fn deinit(self: Journey, gpa: Allocator) void {
+        gpa.free(self.route);
+        gpa.free(self.views);
+    }
+
+    /// True when a template's forms are the auth journey's question rather
+    /// than their own.
+    ///
+    /// Contract 3 (caller-buffer): a linear scan of a list the size of one
+    /// app's journey (a handful of templates), computed once per `derive`.
+    fn isJourneyView(self: Journey, path: []const u8) bool {
+        for (self.views) |v| {
+            if (std.mem.eql(u8, v, path)) return true;
+        }
+        return false;
+    }
+};
+
+/// How far the journey-view walk follows `render` edges. Mirrors
+/// `rails.max_partial_depth` (3), the cap Stage 1's own transitive scan
+/// applies -- restated rather than imported because `rails.zig` is this
+/// package's ROOT and imports this file.
+///
+/// **The cap is what guarantees termination** -- including on a cycle, which
+/// `in.render_graph` cannot contain today (it is the output of Stage 1's own
+/// capped walk) but which this function must not depend on. The visited set
+/// in `appendUnseen` is a WORK bound, not a correctness one: it keeps a wide
+/// or diamond-shaped graph linear in the graph rather than exponential in
+/// the cap, and removing it changes no answer.
+const max_journey_render_depth: usize = 3;
+
+/// Contract 2 (owned-result), released by `Journey.deinit`.
+fn detectJourney(gpa: Allocator, in: DeriveInput) Allocator.Error!Journey {
+    // Which templates hold a password form. Scratch: read only to decide
+    // `route[]` below -- fix round 1 (I-2) took away its power to suppress
+    // anything on its own, because a password partial that no journey route
+    // reaches has a real, answerable backend question of its own.
+    var password_views: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer password_views.deinit(gpa);
+    for (in.templates) |tpl| {
+        if (try templateHasPasswordForm(gpa, tpl)) try password_views.append(gpa, tpl.path);
+    }
+    const route = try journeyFlags(gpa, in.routes, in.route_views, password_views.items);
+    errdefer gpa.free(route);
+
+    // Fix round 2 (NEW-1): the journey's views are not just the route views.
+    // A sign-in page routinely renders `shared/_login_form`, and the form is
+    // in the PARTIAL -- so keying suppression on "is this a route view"
+    // raised BOTH `RAILS_AUTH_JOURNEY` and the partial's own
+    // `RAILS_BACKEND_ENDPOINT` for one form, which is the double question A5
+    // exists to prevent. The render graph is what closes it: a partial's form
+    // belongs to the journey exactly when some journey route's view REACHES
+    // that partial.
+    //
+    // A partial reached from a journey view AND from an ordinary one is
+    // treated as the journey's. That is the deliberate choice, and the
+    // asymmetry is the reason: a shared partial answered twice is two
+    // conflicting bindings for one region, while the ordinary page it also
+    // appears on is still covered -- the journey's `island` answer scaffolds
+    // the `AuthForm` that region becomes wherever it is rendered. The other
+    // direction would leave the sign-in form asked about twice.
+    var views: std.ArrayListUnmanaged([]const u8) = .empty;
+    errdefer views.deinit(gpa);
+    for (route, 0..) |j, i| {
+        if (!j) continue;
+        if (i >= in.route_views.len) continue;
+        const v = in.route_views[i] orelse continue;
+        try appendUnseen(gpa, &views, v);
+    }
+    // Breadth-first over the already-seeded prefix: `frontier_end` is where
+    // the current depth's nodes stop, and everything appended past it is the
+    // next depth. `max_journey_render_depth` is what ends the loop -- see its
+    // doc for why the visited set is a work bound rather than the
+    // termination argument.
+    var depth: usize = 0;
+    var frontier_start: usize = 0;
+    while (depth < max_journey_render_depth and frontier_start < views.items.len) : (depth += 1) {
+        const frontier_end = views.items.len;
+        var k = frontier_start;
+        while (k < frontier_end) : (k += 1) {
+            const from = views.items[k];
+            for (in.render_graph) |node| {
+                if (!std.mem.eql(u8, node.path, from)) continue;
+                for (node.renders) |target| try appendUnseen(gpa, &views, target);
+            }
+        }
+        frontier_start = frontier_end;
+    }
+
+    return .{ .route = route, .views = try views.toOwnedSlice(gpa) };
+}
+
+/// A5's ROUTE rule, split out of `detectJourney` so the one definition can
+/// also answer `journeyRouteFlags` below. `detectJourney` goes on to widen
+/// the answer into a set of TEMPLATES through the render graph; this half is
+/// only about which routes the journey covers, which is all `scaffold.zig`
+/// needs.
+///
+/// Contract 2 (owned-result): the returned slice is the only allocation.
+fn journeyFlags(
+    gpa: Allocator,
+    route_list: []const routes.Route,
+    route_views: []const ?[]const u8,
+    password_views: []const []const u8,
+) Allocator.Error![]bool {
+    const route = try gpa.alloc(bool, route_list.len);
+    errdefer gpa.free(route);
+    for (route_list, 0..) |r, i| {
+        var is_journey = false;
+        if (r.controller) |c| {
+            for (journey_controllers) |jc| {
+                if (std.mem.eql(u8, c, jc)) is_journey = true;
+            }
+        }
+        if (!is_journey and i < route_views.len) {
+            if (route_views[i]) |v| {
+                for (password_views) |pv| {
+                    if (std.mem.eql(u8, pv, v)) is_journey = true;
+                }
+            }
+        }
+        route[i] = is_journey;
+    }
+    return route;
+}
+
+/// Assumption A5's per-route verdict, index-aligned with `route_list`.
+///
+/// Public because `scaffold.zig` has to push the `RAILS_AUTH_JOURNEY`
+/// finding's id into every journey route's `open_finding_ids` (ruling S21's
+/// mechanism): the finding is keyed on ONE `config/routes.rb` line -- the
+/// smallest the journey occupies -- so no route except that one can find it
+/// by recomputing an id from its own line, and without the push the
+/// operator's answer settles nothing. Exported rather than re-derived there
+/// so A5 has exactly one definition; a second copy would let the question
+/// and the answer disagree about which routes the journey covers.
+///
+/// Only the ROUTE half is exported. The render-graph widening
+/// (`Journey.views`) decides which TEMPLATES the journey speaks for, which
+/// is a question about findings, not about route outcomes -- `scaffold.zig`
+/// never asks it.
+///
+/// Contract 2 (owned-result): the returned slice is the only allocation and
+/// is the caller's to free.
+pub fn journeyRouteFlags(
+    gpa: Allocator,
+    route_list: []const routes.Route,
+    route_views: []const ?[]const u8,
+    templates: []const fragments.Template,
+) Allocator.Error![]bool {
+    var password_views: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer password_views.deinit(gpa);
+    for (templates) |tpl| {
+        if (try templateHasPasswordForm(gpa, tpl)) try password_views.append(gpa, tpl.path);
+    }
+    return journeyFlags(gpa, route_list, route_views, password_views.items);
+}
+
+/// Appends `path` unless it is already present. Linear, which is right at
+/// this size: the list is one app's journey (a handful of templates), walked
+/// once per `derive`, and a hash set would cost an allocation and a failure
+/// path to save nothing measurable.
+///
+/// The dedupe changes no ANSWER -- `Journey.isJourneyView` is a membership
+/// test, and a duplicate entry is still the same member. It bounds the work
+/// the BFS above does on a diamond-shaped graph (two partials rendering one
+/// shared partial is the everyday case). Stated here rather than left to be
+/// mistaken for the termination argument, which is the depth cap's.
+///
+/// Contract 2 (owned-result), via the `list` out-parameter rather than the
+/// return value: the only allocation is `list`'s backing store, which the
+/// caller owns and releases -- `detectJourney` hands it to
+/// `toOwnedSlice`, and `Journey.deinit` frees it from there. `path` is
+/// stored BORROWED, never copied, so the elements outlive this call by
+/// virtue of `DeriveInput`, not of anything allocated here. Nothing is
+/// scratch, so there is nothing to free on the error path either.
+fn appendUnseen(
+    gpa: Allocator,
+    list: *std.ArrayListUnmanaged([]const u8),
+    path: []const u8,
+) Allocator.Error!void {
+    for (list.items) |v| {
+        if (std.mem.eql(u8, v, path)) return;
+    }
+    try list.append(gpa, path);
 }
 
 /// Which routes one ROUTE-scoped row fires on.
@@ -508,6 +1037,18 @@ const RouteRow = enum {
     /// Ruling S22: a route that `scaffold.zig` sends down the content-page
     /// path and finds no view template for. See `routeHasNoView`.
     no_template,
+    /// #167 Stage 3: a route that is API traffic -- `backend` by
+    /// classification, or by verb -- and therefore needs a ZigBase operation
+    /// rather than a page. Journey routes are excluded: `RAILS_AUTH_JOURNEY`
+    /// is already their question (assumption A5).
+    backend_endpoint,
+    /// #167 Stage 3 assumption A7: a page route whose controller runs an
+    /// authentication `before_action` over its action.
+    auth_guard,
+    /// #182: the second route to claim one `content/<url>/index.smd`.
+    content_collision,
+    /// #182: a static GET route whose path `resolve.contentPath` refuses.
+    route_path_unsupported,
 };
 
 /// Ruling S22's predicate, and a deliberate mirror of `scaffold.zig`'s own
@@ -550,13 +1091,77 @@ fn routeHasNoView(
 }
 
 /// One qualifying route, reduced to what the grouping below needs.
-/// `id` is owned by `deriveRouteFindings`'s own scratch list.
-const RouteHit = struct { line: u64, id: []u8 };
+/// `id` and `detail` are owned by `deriveRouteFindings`'s own scratch list.
+const RouteHit = struct {
+    line: u64,
+    id: []u8,
+    /// #167 Stage 3: the row-specific half of the message, for the two rows
+    /// whose prefix is not a constant -- `auth_guard`'s
+    /// `<filter> on <controller>` and `content_collision`'s winning route.
+    /// `null` for every row with a fixed prefix.
+    detail: ?[]u8 = null,
+    /// #167 Stage 3: what the `backend_endpoint` row asks
+    /// `backend.choicesFor`. Borrowed from the route table.
+    verb: []const u8 = "",
+    resource: ?[]const u8 = null,
+};
 
+/// `(line, verb, resource, id)`.
+///
+/// The `verb` key is redundant as an ORDER -- a hit's `id` is
+/// `"<verb> <path>"`, so ordering by `id` already orders by verb (no HTTP
+/// verb is a prefix of another, and even if one were, the `' '` separator
+/// sorts below every letter). `resource` is not redundant at all: two routes
+/// of different controllers can interleave freely under one `(line, verb)`.
+/// Both are here so `deriveRouteFindings`' `RAILS_BACKEND_ENDPOINT` grouping
+/// (fix round 1, I-3; fix round 2, NEW-2) walks CONTIGUOUS runs of equal
+/// `(line, verb, resource)` -- a split run would emit two findings with the
+/// same id, the one property an id must never lose.
 fn routeHitLessThan(_: void, a: RouteHit, b: RouteHit) bool {
     if (a.line != b.line) return a.line < b.line;
+    const verb_order = std.mem.order(u8, a.verb, b.verb);
+    if (verb_order != .eq) return verb_order == .lt;
+    const resource_order = std.mem.order(u8, a.resource orelse "", b.resource orelse "");
+    if (resource_order != .eq) return resource_order == .lt;
     return std.mem.lessThan(u8, a.id, b.id);
 }
+
+/// Whether two hits belong to the same `RAILS_BACKEND_ENDPOINT` group: the
+/// key `backend.choicesFor` is asked, so a shared group is exactly "these
+/// routes would be offered the same answers".
+fn sameBackendGroup(a: RouteHit, b: RouteHit) bool {
+    return std.mem.eql(u8, a.verb, b.verb) and
+        std.mem.eql(u8, a.resource orelse "", b.resource orelse "");
+}
+
+fn containsIndex(list: []const usize, i: usize) bool {
+    for (list) |v| {
+        if (v == i) return true;
+    }
+    return false;
+}
+
+/// The route that beat `i` to its content path, or null when `i` did not
+/// lose one. Contract 3 (caller-buffer).
+fn collisionWinner(list: []const resolve.ContentCollision, i: usize) ?usize {
+    for (list) |c| {
+        if (c.route == i) return c.with;
+    }
+    return null;
+}
+
+/// Assumption A7's join: the authentication `before_action` that applies to
+/// this route's action, or null.
+///
+/// `controllers.authGuardFor` is THE picker, shared with `scaffold.zig`'s
+/// `public` note rather than restated here: the finding and the note are two
+/// rows about one decision, and while each had its own pick they could -- and
+/// on a controller with two auth-looking filters did -- name different
+/// filters. Its doc carries the reasoning behind the smallest-`(name, line)`
+/// rule and behind walking the `class Child < Parent` chain (fix round 1,
+/// I-1: comparing `f.controller` to the route's own controller reported
+/// nothing at all for the shape almost every Rails app has).
+const authGuardFor = controllers.authGuardFor;
 
 /// Emits ONE finding per `routes.rb` DECLARATION, not per route.
 ///
@@ -584,10 +1189,14 @@ fn deriveRouteFindings(
     list: *std.ArrayListUnmanaged(Finding),
     in: DeriveInput,
     row: RouteRow,
+    journey: Journey,
 ) Allocator.Error!void {
     var hits: std.ArrayListUnmanaged(RouteHit) = .empty;
     defer {
-        for (hits.items) |h| gpa.free(h.id);
+        for (hits.items) |h| {
+            gpa.free(h.id);
+            if (h.detail) |d| gpa.free(d);
+        }
         hits.deinit(gpa);
     }
 
@@ -610,6 +1219,33 @@ fn deriveRouteFindings(
                 isDynamicRoutePath(r.path),
             .redirect => class == classify.Class.redirect,
             .no_template => try routeHasNoView(gpa, in, r, i, class),
+            // #167 Stage 3. `backend` by classification OR by verb, exactly
+            // the pair `scaffold.routeOutcome` folds into its `backend`
+            // status -- so every route the handoff calls `backend` has an id
+            // an operator can bind an operation to (S11's reopening).
+            //
+            // `redirect` is excluded (fix round 1, M-1) for the reason it is
+            // excluded from every other row: `scaffold.routeOutcome` reaches
+            // its `redirect` arm FIRST, whatever the verb, and returns with
+            // status `redirect` -- so a `post "/legacy" => redirect("/new")`
+            // would carry a backend question attached to no route outcome,
+            // unanswerable and un-retirable. Its own
+            // `RAILS_REDIRECT_HOST_CONFIG` is the question about it.
+            .backend_endpoint => !journeyRoute(journey, i) and
+                class != classify.Class.redirect and
+                (class == classify.Class.backend or
+                    !(std.mem.eql(u8, r.verb, "GET") or std.mem.eql(u8, r.verb, "HEAD"))),
+            // A7. Same exclusions as a page: a non-GET route, a `backend` or
+            // `redirect` one, and a dynamic path all reach scaffold's earlier
+            // arms and never become a page, so "this page cannot enforce its
+            // guard" is not a question about them.
+            .auth_guard => (std.mem.eql(u8, r.verb, "GET") or std.mem.eql(u8, r.verb, "HEAD")) and
+                class != classify.Class.backend and
+                class != classify.Class.redirect and
+                !isDynamicRoutePath(r.path) and
+                authGuardFor(in.filters, r.controller, r.action) != null,
+            .content_collision => collisionWinner(in.content_collisions, i) != null,
+            .route_path_unsupported => containsIndex(in.unsupported_route_paths, i),
         };
         if (!qualifies) continue;
         // `<verb> <path>`, the same string `rails.formatRouteId` builds.
@@ -618,45 +1254,203 @@ fn deriveRouteFindings(
         // simpler to restate than that cycle is to reason about.
         const id = try std.fmt.allocPrint(gpa, "{s} {s}", .{ r.verb, r.path });
         errdefer gpa.free(id);
-        try hits.append(gpa, .{ .line = r.source.line, .id = id });
+        const detail: ?[]u8 = switch (row) {
+            .auth_guard => blk: {
+                const f = authGuardFor(in.filters, r.controller, r.action).?;
+                break :blk try std.fmt.allocPrint(gpa, "{s} on {s}", .{ f.name orelse "", f.controller });
+            },
+            .content_collision => blk: {
+                const w = in.routes[collisionWinner(in.content_collisions, i).?];
+                break :blk try std.fmt.allocPrint(gpa, "{s} {s}", .{ w.verb, w.path });
+            },
+            else => null,
+        };
+        errdefer if (detail) |d| gpa.free(d);
+        try hits.append(gpa, .{
+            .line = r.source.line,
+            .id = id,
+            .detail = detail,
+            .verb = r.verb,
+            .resource = r.controller,
+        });
     }
 
-    // Sorted by (line, route id) so the grouping below is contiguous and the
-    // representative route -- and the message's order -- is the same on every
-    // machine, whatever order the sidecar emitted the route table in.
+    // Sorted by (line, verb, resource, id) so the grouping below is
+    // contiguous and the representative route -- and the message's order --
+    // is the same on every machine, whatever order the sidecar emitted the
+    // route table in.
     std.mem.sort(RouteHit, hits.items, {}, routeHitLessThan);
 
     const code = switch (row) {
         .dynamic_segment => code_route_dynamic_segment,
         .redirect => code_redirect_host_config,
         .no_template => code_no_template,
+        .backend_endpoint => code_backend_endpoint,
+        .auth_guard => code_route_auth_guard,
+        .content_collision => code_content_path_collision,
+        .route_path_unsupported => code_route_path_unsupported,
     };
-    const choices: []const []const u8 = switch (row) {
+    // `null` for the one row whose answers are not a constant: see the
+    // per-group `choicesFor` call below.
+    const static_choices: ?[]const []const u8 = switch (row) {
         .dynamic_segment => &choices_spa_retain_blocked,
         .redirect => &choices_retain_blocked,
         .no_template => &choices_retain_blocked,
+        .backend_endpoint => null,
+        .auth_guard => &choices_public_retain_blocked,
+        .content_collision => &choices_retain_blocked,
+        .route_path_unsupported => &choices_retain_blocked,
     };
-    const prefix = switch (row) {
-        .dynamic_segment => "route path has a dynamic segment: ",
-        .redirect => "route redirects; the host config owns it, not the static tree: ",
-        .no_template => "no view template resolves for the route's controller and action: ",
-    };
+
+    // Ruling S22 groups by `routes.rb` LINE. Fix round 1 (I-3) and fix round
+    // 2 (NEW-2) narrow THIS row -- and only this row -- to
+    // `(line, verb, resource)`: its answer is a single ZigBase operation, and
+    // one line routinely declares routes needing several. `resources :posts`
+    // puts `POST /posts`, `PATCH /posts/:id` and `DELETE /posts/:id` on one
+    // line; `resources :posts, :comments` puts `POST /posts` and
+    // `POST /comments` on one line at one verb. Either way the grouped
+    // finding offered the REPRESENTATIVE route's operations only, so the rest
+    // had nothing they could be bound to. The narrowed key is exactly the
+    // pair `backend.choicesFor` is asked below. See `routeVerbFindingId` for
+    // the id shape that keeps the groups apart.
+    const group_by_verb = row == .backend_endpoint;
 
     var i: usize = 0;
     while (i < hits.items.len) {
         var j = i + 1;
-        while (j < hits.items.len and hits.items[j].line == hits.items[i].line) j += 1;
+        while (j < hits.items.len and hits.items[j].line == hits.items[i].line and
+            (!group_by_verb or sameBackendGroup(hits.items[j], hits.items[i]))) j += 1;
+        const head = hits.items[i];
 
         var message: std.ArrayListUnmanaged(u8) = .empty;
         defer message.deinit(gpa);
-        try message.appendSlice(gpa, prefix);
+        // A prefix that names a specific route -- the guard's controller, the
+        // winner of a content-path collision -- can only speak for the
+        // group's representative. That is the same compromise `route_id`
+        // already makes, and the trailing list still names every route in the
+        // group.
+        switch (row) {
+            .dynamic_segment => try message.appendSlice(gpa, "route path has a dynamic segment: "),
+            .redirect => try message.appendSlice(gpa, "route redirects; the host config owns it, not the static tree: "),
+            .no_template => try message.appendSlice(gpa, "no view template resolves for the route's controller and action: "),
+            .backend_endpoint => try message.appendSlice(gpa, "route is API traffic and needs a backend operation: "),
+            .auth_guard => {
+                try message.appendSlice(gpa, "page is guarded by before_action :");
+                try message.appendSlice(gpa, head.detail orelse "");
+                try message.appendSlice(gpa, "; a static page cannot enforce it: ");
+            },
+            .content_collision => {
+                try message.appendSlice(gpa, "content path collision with ");
+                try message.appendSlice(gpa, head.detail orelse "");
+                try message.appendSlice(gpa, ": ");
+            },
+            .route_path_unsupported => try message.appendSlice(gpa, "route path contains syntax this stage does not interpret: "),
+        }
         for (hits.items[i..j], 0..) |h, k| {
             if (k != 0) try message.appendSlice(gpa, ", ");
             try message.appendSlice(gpa, h.id);
         }
-        try appendRouteFinding(gpa, list, code, .warn, hits.items[i].line, message.items, choices, hits.items[i].id);
+
+        const verb_key: ?[]const u8 = if (group_by_verb) head.verb else null;
+        const resource_key: ?[]const u8 = if (group_by_verb) head.resource else null;
+        if (static_choices) |ch| {
+            try appendRouteFinding(gpa, list, code, .warn, head.line, message.items, ch, head.id, false, verb_key, resource_key);
+        } else {
+            // Contract 1 over borrowed elements: free the slice alone. Every
+            // route in this group shares `head.verb` now, so the offered
+            // operations really are the ones that could serve all of them.
+            const ch = try backend.choicesFor(gpa, in.backend, head.verb, head.resource);
+            defer gpa.free(ch);
+            try appendRouteFinding(gpa, list, code, .warn, head.line, message.items, ch, head.id, false, verb_key, resource_key);
+        }
         i = j;
     }
+}
+
+/// `journey.route[i]`, defensively: `Journey.route` is allocated to
+/// `in.routes.len`, but reading it through one accessor keeps its two call
+/// sites -- the `backend_endpoint` row's exclusion and `deriveAuthJourney`'s
+/// own membership test -- from each repeating the bound check.
+fn journeyRoute(journey: Journey, i: usize) bool {
+    return i < journey.route.len and journey.route[i];
+}
+
+/// #167 Stage 3 assumption A5's own row: ONE finding for the whole
+/// sign-in/sign-up/sign-out flow.
+///
+/// Keyed (ruling S22) on the SMALLEST `routes.rb` line the journey occupies
+/// rather than on one route's own line, because the journey spans several
+/// declarations and the id has to be stable when one of them moves. The
+/// message names every journey route in the same (line, route id) order the
+/// grouped rows use, and says what the artifact is: the ZigBase auth
+/// collection, which is a fact about the destination that no amount of
+/// reading the Rails app recovers.
+///
+/// Contract 2 (owned-result), inherited from `derive`.
+fn deriveAuthJourney(
+    gpa: Allocator,
+    list: *std.ArrayListUnmanaged(Finding),
+    in: DeriveInput,
+    journey: Journey,
+) Allocator.Error!void {
+    var hits: std.ArrayListUnmanaged(RouteHit) = .empty;
+    defer {
+        for (hits.items) |h| gpa.free(h.id);
+        hits.deinit(gpa);
+    }
+    for (in.routes, 0..) |r, i| {
+        if (!journeyRoute(journey, i)) continue;
+        const id = try std.fmt.allocPrint(gpa, "{s} {s}", .{ r.verb, r.path });
+        errdefer gpa.free(id);
+        try hits.append(gpa, .{ .line = r.source.line, .id = id });
+    }
+    if (hits.items.len == 0) return;
+    std.mem.sort(RouteHit, hits.items, {}, routeHitLessThan);
+
+    var message: std.ArrayListUnmanaged(u8) = .empty;
+    defer message.deinit(gpa);
+    try message.appendSlice(gpa, "auth journey: ");
+    for (hits.items, 0..) |h, k| {
+        if (k != 0) try message.appendSlice(gpa, ", ");
+        try message.appendSlice(gpa, h.id);
+    }
+    try message.appendSlice(gpa, "; island needs artifact = the ZigBase auth collection name ");
+    // The parenthetical exists to NAME the candidates, so it keys on there
+    // being candidates rather than on there being a document: a document
+    // with no auth collection (the in-repo `contract/zigbase.openapi.json`
+    // is one -- three consumer routes and no collections at all) leaves the
+    // operator exactly as unable to check the name as no document does, and
+    // `(in --backend: )` would be a list pretending to be one.
+    const auth_collections: []const []const u8 = if (in.backend) |doc| doc.auth_collections else &.{};
+    if (auth_collections.len > 0) {
+        try message.appendSlice(gpa, "(in --backend: ");
+        for (auth_collections, 0..) |c, k| {
+            if (k != 0) try message.appendSlice(gpa, ", ");
+            try message.appendSlice(gpa, c);
+        }
+        try message.append(gpa, ')');
+    } else {
+        try message.appendSlice(gpa, "(pass --backend to validate the name)");
+    }
+
+    try appendRouteFinding(
+        gpa,
+        list,
+        code_auth_journey,
+        .warn,
+        hits.items[0].line,
+        message.items,
+        &choices_island_retain_blocked,
+        hits.items[0].id,
+        true,
+        // Keyed on the line alone (ruling S22): the journey IS one decision
+        // across several verbs and both its controllers, which is exactly
+        // what makes the `RAILS_BACKEND_ENDPOINT` row's
+        // `(line, verb, resource)` narrowing an exception rather than a new
+        // rule.
+        null,
+        null,
+    );
 }
 
 /// Formats `"L<line>C<col>"` for a node loc, or `"L<line>"` for a parse
@@ -685,6 +1479,190 @@ const unscanned_loc = "unscanned";
 /// yields at most one of these, so `(code, path)` is still unique.
 const unsupported_engine_loc = "engine";
 
+/// The value of `key` among `attrs`, or null. Contract 3 (caller-buffer):
+/// returns a sub-slice of the node's own strings.
+fn attrValue(node: fragments.Node, key: []const u8) ?[]const u8 {
+    for (node.attrs) |a| {
+        if (std.mem.eql(u8, a.key, key)) return a.value;
+    }
+    return null;
+}
+
+/// ASCII upper-case. Contract 1 (self-freeing): the returned buffer is the
+/// only allocation and it escapes.
+fn upperAlloc(gpa: Allocator, s: []const u8) Allocator.Error![]u8 {
+    const out = try gpa.alloc(u8, s.len);
+    for (s, 0..) |c, i| out[i] = std.ascii.toUpper(c);
+    return out;
+}
+
+/// The HTTP verb a `form`/`form_field` node submits with: its literal
+/// `method` attribute, upper-cased, else `POST`.
+///
+/// `POST` and not `GET` for the default because that is Rails': `form_with`
+/// and `form_for` both post unless told otherwise, and a `form_tag` without
+/// `method:` posts too. Guessing `GET` would offer the operator a list of
+/// read operations to bind a submission to.
+///
+/// Contract 1 (self-freeing): one allocation, and it escapes.
+fn formVerb(gpa: Allocator, node: fragments.Node) Allocator.Error![]u8 {
+    const raw = attrValue(node, "method") orelse return gpa.dupe(u8, "POST");
+    if (raw.len == 0) return gpa.dupe(u8, "POST");
+    return upperAlloc(gpa, raw);
+}
+
+/// The verb a `link_to`/`button_to` node submits with, or `null` when it
+/// does not submit at all.
+///
+/// `method:` wins over `data-turbo-method:` and `data-method:` (the Turbo
+/// and rails-ujs spellings) because Rails' own UJS reads it first; a
+/// `button_to` with none of them posts (that is what `button_to` IS -- a
+/// one-button form); a plain `link_to` with neither is navigation and
+/// answers `null`. An explicit `get` answers `null` whichever attribute
+/// carried it, `button_to` included: `button_to "Search", path, method: :get`
+/// renders a GET form, which fetches a page rather than mutating anything.
+///
+/// Contract 1 (self-freeing): the returned buffer, when non-null, is the
+/// only allocation and it escapes.
+fn mutationVerb(gpa: Allocator, node: fragments.Node) Allocator.Error!?[]u8 {
+    const raw = attrValue(node, "method") orelse
+        attrValue(node, "data-turbo-method") orelse
+        // rails-ujs' own spelling, `data: { method: :delete }`, which the
+        // sidecar flattens to `data-method` exactly as Rails renders it. A
+        // site that serves no UJS would otherwise ship it as a GET link to a
+        // DELETE route -- the same silent loss as the Turbo spelling, one
+        // key over.
+        attrValue(node, "data-method") orelse
+        {
+            // `code` is the fragment's own source text, which is the only
+            // place the helper's NAME survives: `classify_link` folds
+            // `link_to` and `button_to` into one `link_to` kind.
+            if (std.mem.startsWith(u8, node.code, "button_to")) return try gpa.dupe(u8, "POST");
+            return null;
+        };
+    if (raw.len == 0) return null;
+    const verb = try upperAlloc(gpa, raw);
+    errdefer gpa.free(verb);
+    if (std.mem.eql(u8, verb, "GET")) {
+        gpa.free(verb);
+        return null;
+    }
+    return verb;
+}
+
+/// The verb a node that raised `RAILS_BACKEND_ENDPOINT` submits with, or
+/// `null` when the node is not a mutation at all.
+///
+/// Public because `scaffold.zig` needs the SAME verb this file offered the
+/// operator a choice list for: an answer of `custom:/api/contact` carries a
+/// path and no verb (assumption A3), so the binding's verb has to be
+/// re-derived, and re-deriving it there would be a second copy of two rules
+/// that already exist here. `deriveNode` keeps calling the two halves
+/// directly -- it knows which kind it is holding and does not need the
+/// dispatch.
+///
+/// Contract 1 (self-freeing): the returned verb, when non-null, is the only
+/// allocation and it escapes.
+pub fn nodeVerb(gpa: Allocator, node: fragments.Node) Allocator.Error!?[]u8 {
+    return switch (node.kind) {
+        .form, .form_field => try formVerb(gpa, node),
+        .link_to => try mutationVerb(gpa, node),
+        else => null,
+    };
+}
+
+/// The route a mutating `link_to`/`button_to` submits to, as an index into
+/// `route_list`, or null when this run resolved none.
+///
+/// A link names its own target -- a route helper stem (`post_path` -> `post`,
+/// matched against `Route.name`) or a literal path -- so this is a lookup and
+/// not a convention, unlike the new/create pairing a form needs. `verb` is
+/// the method the control submits with; a route with a different verb is a
+/// different route, and `resources :posts` puts several on one path.
+///
+/// Public and shared with `scaffold.zig`'s `linkRoute`, which pairs the
+/// binding onto the same route. The two answers have to agree: the choices
+/// this file offers are ranked against the resource that route names, and
+/// scaffold hands the endpoint to that same route.
+///
+/// Contract 3 (caller-buffer): allocates nothing.
+pub fn linkTargetRoute(route_list: []const routes.Route, node: fragments.Node, verb: ?[]const u8) ?usize {
+    const want = verb orelse return null;
+    // `classify_link` puts the link TEXT first, so a literal target is
+    // `args[1]`; a helper target is `name` instead and leaves `args[1..]` to
+    // the route's own placeholders.
+    const literal_target: ?[]const u8 = if (node.name == null and node.args.len > 1) node.args[1] else null;
+    for (route_list, 0..) |other, i| {
+        if (!std.mem.eql(u8, other.verb, want)) continue;
+        if (node.name) |stem| {
+            const rn = other.name orelse continue;
+            if (std.mem.eql(u8, rn, stem)) return i;
+        } else if (literal_target) |t| {
+            if (std.mem.eql(u8, other.path, t)) return i;
+        }
+    }
+    return null;
+}
+
+/// #167 Stage 3's `RAILS_BACKEND_ENDPOINT` link row. Returns true when it
+/// emitted a finding, so `deriveNode`'s `.link_to` arm knows to stop.
+///
+/// Contract 2 (owned-result), inherited from `derive`.
+fn deriveMutationLink(
+    gpa: Allocator,
+    list: *std.ArrayListUnmanaged(Finding),
+    in: DeriveInput,
+    path: []const u8,
+    node: fragments.Node,
+) Allocator.Error!bool {
+    const verb = (try mutationVerb(gpa, node)) orelse return false;
+    defer gpa.free(verb);
+
+    // The resource is the TARGET ROUTE's controller: the same key the
+    // route-level `RAILS_BACKEND_ENDPOINT` row is grouped by
+    // (`routeVerbFindingId`), and therefore the same key `choicesFor` is
+    // asked everywhere else.
+    //
+    // The helper STEM was the key before, and it is the wrong shape. Rails
+    // singularises a member helper -- `post_path(1)` for `DELETE /posts/:id`
+    // -- while a ZigBase collection is plural, so "the resource's own
+    // operations first" never fired for the member links that are most of the
+    // mutating links there are: an operator answering a delete on a post was
+    // offered every DELETE in the document in operation-id order, with the
+    // right one wherever the alphabet put it.
+    //
+    // `null` when this run resolved no target route -- a literal path nothing
+    // matches, a helper for a route the walk never recovered. There is no
+    // resource to rank against then, and inventing one from the stem is what
+    // this change removes.
+    const target = linkTargetRoute(in.routes, node, verb);
+    const resource: ?[]const u8 = if (target) |i| in.routes[i].controller else null;
+    const choices = try backend.choicesFor(gpa, in.backend, verb, resource);
+    defer gpa.free(choices);
+
+    const loc = try nodeLoc(gpa, node.line, node.col);
+    defer gpa.free(loc);
+
+    var summary: std.ArrayListUnmanaged(u8) = .empty;
+    defer summary.deinit(gpa);
+    try summary.appendSlice(gpa, "link performs a mutation: ");
+    try summary.appendSlice(gpa, if (std.mem.startsWith(u8, node.code, "button_to")) "button_to" else "link_to");
+    // `args[0]` is the link TEXT (`classify_link` puts it first), which is
+    // what an operator will recognise the control by -- the helper stem is
+    // already implied by the choices.
+    try summary.appendSlice(gpa, " `");
+    if (node.args.len > 0) try summary.appendSlice(gpa, node.args[0]);
+    try summary.append(gpa, '`');
+    for (node.attrs) |a| {
+        try summary.append(gpa, ' ');
+        try summary.appendSlice(gpa, a.key);
+        try summary.append(gpa, '=');
+        try summary.appendSlice(gpa, a.value);
+    }
+    try appendFinding(gpa, list, code_backend_endpoint, .warn, path, node.line, loc, summary.items, choices);
+    return true;
+}
+
 /// Handles the node-triggered rows of the derivation table for one
 /// template. Split out of `derive` because it is the one source with
 /// several codes keyed off `Kind`, so this is where the table's node rows
@@ -694,17 +1672,28 @@ const unsupported_engine_loc = "engine";
 fn deriveNode(
     gpa: Allocator,
     list: *std.ArrayListUnmanaged(Finding),
+    in: DeriveInput,
     path: []const u8,
     node: fragments.Node,
-    route_names: []const []const u8,
-    locale: ?[]const u8,
-    in_i18n_error_paths: []const []const u8,
-    asset_list: []const assets.Asset,
     /// Ruling S12: this node sits inside a `form` block that already carries
     /// its own `RAILS_BACKEND_ENDPOINT`. Computed by `derive`'s walk, because
     /// only a walk over the whole stream can know it.
     in_form: bool,
+    /// #167 Stage 3: the Rails resource a submission from THIS template goes
+    /// to -- the controller of the route whose view this is -- so
+    /// `backend.choicesFor` can rank that resource's own operations first.
+    /// `null` for a partial, a layout, or any template no route named as its
+    /// view: an unranked flat list is the honest answer, never a guessed one.
+    resource: ?[]const u8,
+    /// #167 Stage 3 assumption A5: this template is part of the auth journey,
+    /// whose ONE `RAILS_AUTH_JOURNEY` finding is already the question its
+    /// forms would otherwise each ask.
+    journey_view: bool,
 ) Allocator.Error!void {
+    const route_names = in.route_names;
+    const locale = in.locale;
+    const in_i18n_error_paths = in.i18n_error_paths;
+    const asset_list = in.assets;
     // A text run (`node.text != null`) is never a finding candidate: per
     // `fragments.zig`'s `Node` doc, a text run's `kind` is always `.unknown`
     // as a side effect of the wire decode (there is no real `Kind` for
@@ -728,7 +1717,7 @@ fn deriveNode(
             const name = node.name orelse "";
             const message = try std.fmt.allocPrint(gpa, "request-time state `{s}`", .{name});
             defer gpa.free(message);
-            try appendFinding(gpa, list, "RAILS_REQUEST_TIME_STATE", .warn, path, node.line, loc, message, &choices_full);
+            try appendFinding(gpa, list, code_request_time_state, .warn, path, node.line, loc, message, &choices_full);
         },
         .i18n => {
             if (!node.missing) return;
@@ -777,6 +1766,26 @@ fn deriveNode(
             try appendFinding(gpa, list, "RAILS_ROUTE_HELPER_DYNAMIC", .warn, path, node.line, loc, message, &choices_island_spa_retain_blocked);
         },
         .route_helper, .link_to => {
+            // #167 Stage 3: a `button_to`, or a `link_to ... method: :delete`,
+            // is not navigation -- it submits. It needs a backend operation
+            // for exactly the reason a form does, and nothing else in the
+            // table reports it: a sign-out control is a `link_to`/`button_to`
+            // with no form around it, so before this row it produced no
+            // finding at all. (No fixture exercises it yet -- Task 7 adds the
+            // `button_to "Sign out"` this row was written for; the unit tests
+            // below are its only coverage until then.)
+            //
+            // Checked BEFORE the route-name lookup below, and returning
+            // instead of falling through, for two reasons: a `link_to` with a
+            // literal target has `name == null` and would otherwise return
+            // unexamined, and a mutation whose helper stem names no recovered
+            // route must ask ONE question, not two on the same node -- the
+            // backend row is answerable (`custom:/<path>` covers a route the
+            // document does not carry), `RAILS_ROUTE_HELPER_UNKNOWN` is the
+            // narrower restatement of the same problem.
+            if (node.kind == .link_to) {
+                if (try deriveMutationLink(gpa, list, in, path, node)) return;
+            }
             const name = node.name orelse return;
             if (!routeNameUnknown(route_names, name)) return;
             const loc = try nodeLoc(gpa, node.line, node.col);
@@ -859,6 +1868,16 @@ fn deriveNode(
             // suppressed: a stray `text_field` still submits somewhere, and
             // nothing else in the table would report it.
             if (in_form) return;
+            // #167 Stage 3 assumption A5: a form in a sign-in/sign-up view
+            // is not a separate backend question. The whole journey is ONE
+            // decision (`RAILS_AUTH_JOURNEY`) because the answer is a single
+            // ZigBase auth collection that an `AuthForm` and an `AuthStatus`
+            // share; asking each form which operation it binds to would let
+            // an operator answer the sign-in form and the sign-up form
+            // inconsistently. A stray `form_field` in such a view is
+            // suppressed with it, for the same reason it is suppressed
+            // inside a form: the journey's finding is its question.
+            if (journey_view) return;
             const loc = try nodeLoc(gpa, node.line, node.col);
             defer gpa.free(loc);
             var summary: std.ArrayListUnmanaged(u8) = .empty;
@@ -889,7 +1908,22 @@ fn deriveNode(
                 try summary.append(gpa, '=');
                 try summary.appendSlice(gpa, a.value);
             }
-            try appendFinding(gpa, list, code_backend_endpoint, .warn, path, node.line, loc, summary.items, &choices_retain_blocked);
+            // #167 Stage 3: the row S12 reserved. The choices are no longer
+            // two words but the ZigBase operations that could answer THIS
+            // submission -- the form's own `method` (Rails defaults a
+            // `form_with` to POST) against the resource its route names --
+            // plus `retain`/`blocked`, plus (validator-side only, ruling A3)
+            // a `custom:/<path>` the message spells out because a free-form
+            // token cannot be enumerated in a fixed list.
+            const verb = try formVerb(gpa, node);
+            defer gpa.free(verb);
+            const choices = try backend.choicesFor(gpa, in.backend, verb, resource);
+            // `choicesFor` is contract 1 over BORROWED elements: free the
+            // slice and nothing else. `appendFinding` deep-copies what it
+            // keeps.
+            defer gpa.free(choices);
+            try summary.appendSlice(gpa, "; bind it to a backend operation, retain, or block. A route not in the document is answerable as custom:/<path>.");
+            try appendFinding(gpa, list, code_backend_endpoint, .warn, path, node.line, loc, summary.items, choices);
         },
         .errors => {
             // A separate question from the form's: the form asks where the
@@ -901,7 +1935,14 @@ fn deriveNode(
             defer gpa.free(loc);
             const message = try std.fmt.allocPrint(gpa, "validation errors of `{s}`", .{node.name orelse ""});
             defer gpa.free(message);
-            try appendFinding(gpa, list, "RAILS_REQUEST_TIME_STATE", .warn, path, node.line, loc, message, &choices_retain_blocked);
+            // #167 Stage 3 widens this row with `island`: the converter can
+            // now render `ZigbaseError.data` where the ERB rendered
+            // `full_messages`, so "present the backend's validation errors
+            // client-side" is finally a choice this stage can carry out.
+            // The message is untouched -- the question did not change, only
+            // the set of answers -- so a decision recorded against it in a
+            // Stage 2 run still applies.
+            try appendFinding(gpa, list, code_request_time_state, .warn, path, node.line, loc, message, &choices_island_retain_blocked);
         },
         .turbo_frame, .turbo_stream, .component_root => {
             const loc = try nodeLoc(gpa, node.line, node.col);
@@ -942,14 +1983,16 @@ fn deriveNode(
 pub fn derive(gpa: Allocator, in: DeriveInput) Allocator.Error![]Finding {
     var list: std.ArrayListUnmanaged(Finding) = .empty;
     errdefer {
-        for (list.items) |f| {
-            gpa.free(f.id);
-            gpa.free(f.path);
-            gpa.free(f.message);
-            if (f.route_id) |rid| gpa.free(rid);
-        }
+        for (list.items) |f| freeOne(gpa, f);
         list.deinit(gpa);
     }
+
+    // #167 Stage 3 assumption A5, computed before anything derives: which
+    // routes and which views belong to the auth journey. Four rows read it,
+    // and every one of them would ask a question the journey already answers
+    // if it did not.
+    const journey = try detectJourney(gpa, in);
+    defer journey.deinit(gpa);
 
     // Ruling S12's form-nesting scope. `frames` records, for each block
     // currently open, whether it is a `form`; `form_depth` is how many of
@@ -967,11 +2010,15 @@ pub fn derive(gpa: Allocator, in: DeriveInput) Allocator.Error![]Finding {
     for (in.templates) |tpl| {
         frames.clearRetainingCapacity();
         var form_depth: usize = 0;
+        // #167 Stage 3: both are properties of the TEMPLATE, so they are
+        // resolved once per file rather than once per node.
+        const resource = templateResource(in, tpl.path);
+        const journey_view = journey.isJourneyView(tpl.path);
         for (tpl.nodes) |node| {
             // Computed BEFORE this node's own frame is pushed, so an
             // outermost `form` sees `false` and asks its question, while
             // everything it contains sees `true`.
-            try deriveNode(gpa, &list, tpl.path, node, in.route_names, in.locale, in.i18n_error_paths, in.assets, form_depth > 0);
+            try deriveNode(gpa, &list, in, tpl.path, node, form_depth > 0, resource, journey_view);
             if (node.text != null) continue;
             if (node.kind == .block_end) {
                 // A stray `block_end` with no frame is dropped rather than
@@ -1033,9 +2080,15 @@ pub fn derive(gpa: Allocator, in: DeriveInput) Allocator.Error![]Finding {
 
     // #167 Stage 2: the three ROUTE-scoped rows. Appended last purely for
     // readability -- the sort below fixes the output order regardless.
-    try deriveRouteFindings(gpa, &list, in, .dynamic_segment);
-    try deriveRouteFindings(gpa, &list, in, .redirect);
-    try deriveRouteFindings(gpa, &list, in, .no_template);
+    try deriveRouteFindings(gpa, &list, in, .dynamic_segment, journey);
+    try deriveRouteFindings(gpa, &list, in, .redirect, journey);
+    try deriveRouteFindings(gpa, &list, in, .no_template, journey);
+    // #167 Stage 3 and #182: four more, same mechanism.
+    try deriveRouteFindings(gpa, &list, in, .backend_endpoint, journey);
+    try deriveRouteFindings(gpa, &list, in, .auth_guard, journey);
+    try deriveRouteFindings(gpa, &list, in, .content_collision, journey);
+    try deriveRouteFindings(gpa, &list, in, .route_path_unsupported, journey);
+    try deriveAuthJourney(gpa, &list, in, journey);
 
     const out = try list.toOwnedSlice(gpa);
     std.mem.sort(Finding, out, {}, lessThan);
@@ -1087,7 +2140,7 @@ test "derive: one finding per triggering node, with code/choices/loc from the ta
         "RAILS_I18N_UNRESOLVED",
         "RAILS_LAYOUT_DYNAMIC",
         "RAILS_RAW_OUTPUT",
-        "RAILS_REQUEST_TIME_STATE",
+        code_request_time_state,
         "RAILS_ROUTE_HELPER_UNKNOWN",
         "RAILS_TEMPLATE_PARSE_ERROR",
     };
@@ -1600,20 +2653,27 @@ test "derive: a dynamic GET route raises RAILS_ROUTE_DYNAMIC_SEGMENT, one per de
     });
     defer free(gpa, out);
 
-    try std.testing.expectEqual(@as(usize, 1), out.len);
-    try std.testing.expectEqualStrings("RAILS_ROUTE_DYNAMIC_SEGMENT", out[0].code);
-    try std.testing.expectEqualStrings("RAILS_ROUTE_DYNAMIC_SEGMENT.config/routes%2Erb.L3", out[0].id);
-    try std.testing.expectEqualStrings("config/routes.rb", out[0].path);
-    try std.testing.expectEqual(@as(?u64, 3), out[0].line);
-    try std.testing.expectEqual(Severity.warn, out[0].severity);
-    try std.testing.expectEqualStrings("GET /posts/:id", out[0].route_id.?);
-    try std.testing.expectEqual(@as(usize, 3), out[0].choices.len);
-    try std.testing.expectEqualStrings("spa", out[0].choices[0]);
-    try std.testing.expectEqualStrings("retain", out[0].choices[1]);
-    try std.testing.expectEqualStrings("blocked", out[0].choices[2]);
+    // Three, not one, since #167 Stage 3: the POST on line 3 and the
+    // `backend` GET on line 9 are API traffic, and each now carries its own
+    // `RAILS_BACKEND_ENDPOINT` so an operator can bind an operation to it
+    // (S11's reopening). They sort before the dynamic-segment row by code.
+    try std.testing.expectEqual(@as(usize, 3), out.len);
+    try std.testing.expectEqualStrings("RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L3.POST.posts", out[0].id);
+    try std.testing.expectEqualStrings("RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L9.GET.posts", out[1].id);
+    const dyn = out[2];
+    try std.testing.expectEqualStrings("RAILS_ROUTE_DYNAMIC_SEGMENT", dyn.code);
+    try std.testing.expectEqualStrings("RAILS_ROUTE_DYNAMIC_SEGMENT.config/routes%2Erb.L3", dyn.id);
+    try std.testing.expectEqualStrings("config/routes.rb", dyn.path);
+    try std.testing.expectEqual(@as(?u64, 3), dyn.line);
+    try std.testing.expectEqual(Severity.warn, dyn.severity);
+    try std.testing.expectEqualStrings("GET /posts/:id", dyn.route_id.?);
+    try std.testing.expectEqual(@as(usize, 3), dyn.choices.len);
+    try std.testing.expectEqualStrings("spa", dyn.choices[0]);
+    try std.testing.expectEqualStrings("retain", dyn.choices[1]);
+    try std.testing.expectEqualStrings("blocked", dyn.choices[2]);
     // Both routes of the shared declaration are named in the message, so the
     // one `route_id` naming only the first is not the only evidence left.
-    try std.testing.expect(std.mem.indexOf(u8, out[0].message, "GET /posts/:id/edit") != null);
+    try std.testing.expect(std.mem.indexOf(u8, dyn.message, "GET /posts/:id/edit") != null);
 }
 
 test "derive: a redirect route raises RAILS_REDIRECT_HOST_CONFIG, whatever its path shape" {
@@ -1716,17 +2776,23 @@ test "derive: a GET route whose controller/action resolves no view raises RAILS_
     // dynamic path here. `scaffold.zig` answers it in `dynamicRoute` and
     // never reaches the view lookup, so a second row about its missing
     // template would be a question no route outcome names.
-    try std.testing.expectEqual(@as(usize, 2), out.len);
-    try std.testing.expectEqualStrings("RAILS_ROUTE_DYNAMIC_SEGMENT.config/routes%2Erb.L7", out[1].id);
-    try std.testing.expectEqualStrings("RAILS_NO_TEMPLATE", out[0].code);
-    try std.testing.expectEqualStrings("RAILS_NO_TEMPLATE.config/routes%2Erb.L3", out[0].id);
-    try std.testing.expectEqualStrings("config/routes.rb", out[0].path);
-    try std.testing.expectEqual(@as(?u64, 3), out[0].line);
-    try std.testing.expectEqual(Severity.warn, out[0].severity);
-    try std.testing.expectEqualStrings("GET /other", out[0].route_id.?);
-    try std.testing.expectEqual(@as(usize, 2), out[0].choices.len);
-    try std.testing.expectEqualStrings("retain", out[0].choices[0]);
-    try std.testing.expectEqualStrings("blocked", out[0].choices[1]);
+    // Four since #167 Stage 3: the POST on line 5 and the `backend` GET on
+    // line 6 each carry a `RAILS_BACKEND_ENDPOINT`, which sorts first by
+    // code. The two rows this test is about follow.
+    try std.testing.expectEqual(@as(usize, 4), out.len);
+    try std.testing.expectEqualStrings("RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L5.POST.posts", out[0].id);
+    try std.testing.expectEqualStrings("RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L6.GET.posts", out[1].id);
+    try std.testing.expectEqualStrings("RAILS_ROUTE_DYNAMIC_SEGMENT.config/routes%2Erb.L7", out[3].id);
+    const no_tpl = out[2];
+    try std.testing.expectEqualStrings("RAILS_NO_TEMPLATE", no_tpl.code);
+    try std.testing.expectEqualStrings("RAILS_NO_TEMPLATE.config/routes%2Erb.L3", no_tpl.id);
+    try std.testing.expectEqualStrings("config/routes.rb", no_tpl.path);
+    try std.testing.expectEqual(@as(?u64, 3), no_tpl.line);
+    try std.testing.expectEqual(Severity.warn, no_tpl.severity);
+    try std.testing.expectEqualStrings("GET /other", no_tpl.route_id.?);
+    try std.testing.expectEqual(@as(usize, 2), no_tpl.choices.len);
+    try std.testing.expectEqualStrings("retain", no_tpl.choices[0]);
+    try std.testing.expectEqualStrings("blocked", no_tpl.choices[1]);
 }
 
 // `DeriveInput.route_templates` defaults empty so this file's pre-S22 call
@@ -1828,6 +2894,14 @@ test "derive: a form is one answerable RAILS_BACKEND_ENDPOINT, not one per field
 
     try std.testing.expectEqualStrings("RAILS_REQUEST_TIME_STATE", out[1].code);
     try std.testing.expect(std.mem.indexOf(u8, out[1].message, "validation errors of `post`") != null);
+    // #167 Stage 3 widened this one with `island`: the bound form island now
+    // renders `ZigbaseError.data` where the ERB rendered `full_messages`, so
+    // "present it client-side" is a choice this stage can carry out. The
+    // message and the id are untouched, so a Stage 2 decision still applies.
+    try std.testing.expectEqual(@as(usize, 3), out[1].choices.len);
+    try std.testing.expectEqualStrings("island", out[1].choices[0]);
+    try std.testing.expectEqualStrings("retain", out[1].choices[1]);
+    try std.testing.expectEqualStrings("blocked", out[1].choices[2]);
 }
 
 test "derive: a form_field outside any form asks its own question" {
@@ -1846,6 +2920,1417 @@ test "derive: a form_field outside any form asks its own question" {
     try std.testing.expectEqual(@as(usize, 1), out.len);
     try std.testing.expectEqualStrings("RAILS_BACKEND_ENDPOINT", out[0].code);
     try std.testing.expect(std.mem.indexOf(u8, out[0].message, "field `text_field` name=q") != null);
+}
+
+// ---- #167 Stage 3: the backend boundary ----------------------------------
+
+fn backendOp(
+    id: []const u8,
+    verb: []const u8,
+    path: []const u8,
+    collection: ?[]const u8,
+    kind: backend.Kind,
+) backend.Operation {
+    return .{
+        .operation_id = id,
+        .verb = verb,
+        .path = path,
+        .collection = collection,
+        .kind = kind,
+        .access = .unknown,
+    };
+}
+
+/// File scope, not a local inside `testBackendDoc`: a `Document`'s slices
+/// have to outlive the call that builds it, and `&local_array` is a pointer
+/// to a stack temporary (the same trap `assetNode`'s comptime note records).
+var test_backend_ops = [_]backend.Operation{
+    backendOp("createPosts", "POST", "/api/collections/posts/records", "posts", .create),
+    backendOp("createUsers", "POST", "/api/collections/users/records", "users", .create),
+    backendOp("deleteUsers", "DELETE", "/api/collections/users/records/{id}", "users", .delete),
+    backendOp("listPosts", "GET", "/api/collections/posts/records", "posts", .list),
+};
+var test_backend_auth = [_][]const u8{"users"};
+
+/// A hand-built stand-in for what `backend.parse` returns, shaped like the
+/// document Task 7's fixture carries: two collections, one of them an auth
+/// collection. Static storage, so `backend.free` must never see it.
+fn testBackendDoc() backend.Document {
+    return .{
+        .file = "openapi.json",
+        .contract_version = "1.0.0",
+        .consumer_routes = false,
+        .operations = &test_backend_ops,
+        .auth_collections = &test_backend_auth,
+    };
+}
+
+fn ctrlRoute(verb: []const u8, path: []const u8, controller: []const u8, action: []const u8, line: u64) routes.Route {
+    var r = testRoute(verb, path, line);
+    r.controller = controller;
+    r.action = action;
+    return r;
+}
+
+test "derive: a form's choices are the backend document's own operations for its verb and resource" {
+    const gpa = std.testing.allocator;
+    // Ruling S12 widened by Stage 3: the row is the same row, the id is the
+    // same id, and the answers are now the operations `--backend` named for
+    // this form's method against this template's resource.
+    var form = openFormNode(1, 1, "user");
+    form.attrs = &[_]fragments.Attr{.{ .key = "method", .value = "post" }};
+    const nodes = [_]fragments.Node{ form, endNodeAt(2, 1) };
+    const tpls = [_]fragments.Template{
+        .{ .path = "app/views/users/new.html.erb", .nodes = @constCast(&nodes), .error_message = null, .error_line = null, .unreadable = null },
+    };
+    const rs = [_]routes.Route{ctrlRoute("GET", "/users/new", "users", "new", 3)};
+    const vs = [_]classify.Verdict{testVerdict(.content)};
+    const views = [_]?[]const u8{"app/views/users/new.html.erb"};
+    const doc = testBackendDoc();
+
+    const out = try derive(gpa, .{
+        .templates = &tpls,
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .routes = &rs,
+        .classifications = &vs,
+        .route_views = &views,
+        .backend = doc,
+    });
+    defer free(gpa, out);
+
+    try std.testing.expectEqual(@as(usize, 1), out.len);
+    try std.testing.expectEqualStrings("RAILS_BACKEND_ENDPOINT.app/views/users/new%2Ehtml%2Eerb.L1C1", out[0].id);
+    try std.testing.expectEqualStrings(
+        "form submits to a Rails action: model `user` method=post; bind it to a backend operation, retain, or block. A route not in the document is answerable as custom:/<path>.",
+        out[0].message,
+    );
+    // `users` is the route's controller, so its own POST operation ranks
+    // first; the other POST follows; the two words that are always available
+    // come last. A GET operation is never offered for a POST.
+    try std.testing.expectEqual(@as(usize, 4), out[0].choices.len);
+    try std.testing.expectEqualStrings("createUsers", out[0].choices[0]);
+    try std.testing.expectEqualStrings("createPosts", out[0].choices[1]);
+    try std.testing.expectEqualStrings("retain", out[0].choices[2]);
+    try std.testing.expectEqualStrings("blocked", out[0].choices[3]);
+}
+
+test "derive: a form's choices survive the document being freed" {
+    const gpa = std.testing.allocator;
+    // `backend.choicesFor` returns BORROWED elements (its contract 1), so a
+    // `Finding` that kept them would read freed memory the moment
+    // `migrate.zig` released the document. `Finding.choices` is a deep copy
+    // precisely so the two lifetimes are independent; this is what fails if
+    // someone "optimises" the dupe away.
+    const bytes =
+        \\{"openapi":"3.1.2","info":{"version":"1.0.0"},"paths":{
+        \\ "/api/collections/posts/records":{"post":{"operationId":"createPosts"}}}}
+    ;
+    const doc = try backend.parse(gpa, bytes, "openapi.json");
+    const form = openFormNode(1, 1, "post");
+    const nodes = [_]fragments.Node{ form, endNodeAt(2, 1) };
+    const tpls = [_]fragments.Template{
+        .{ .path = "app/views/posts/new.html.erb", .nodes = @constCast(&nodes), .error_message = null, .error_line = null, .unreadable = null },
+    };
+    const out = try derive(gpa, .{
+        .templates = &tpls,
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .backend = doc,
+    });
+    defer free(gpa, out);
+    backend.free(gpa, doc);
+
+    try std.testing.expectEqual(@as(usize, 1), out.len);
+    try std.testing.expectEqualStrings("createPosts", out[0].choices[0]);
+    try std.testing.expectEqualStrings("retain", out[0].choices[1]);
+    try std.testing.expectEqualStrings("blocked", out[0].choices[2]);
+}
+
+test "derive: a form in a journey view asks no backend question -- the journey does" {
+    const gpa = std.testing.allocator;
+    // Assumption A5. The sign-in view's form and the sign-up view's form are
+    // one decision (which ZigBase auth collection), so neither raises its own
+    // `RAILS_BACKEND_ENDPOINT`; the ordinary form two templates over still
+    // does, which is what proves the suppression is scoped to the journey
+    // and not to forms in general.
+    var pw = nodeCode(.form_field, 1, 20, "password_field");
+    const journey_nodes = [_]fragments.Node{ openFormNode(1, 1, "user"), pw, endNodeAt(1, 60) };
+    const plain_nodes = [_]fragments.Node{ openFormNode(1, 1, "post"), endNodeAt(1, 40) };
+    const tpls = [_]fragments.Template{
+        .{ .path = "app/views/sessions/new.html.erb", .nodes = @constCast(&journey_nodes), .error_message = null, .error_line = null, .unreadable = null },
+        .{ .path = "app/views/posts/new.html.erb", .nodes = @constCast(&plain_nodes), .error_message = null, .error_line = null, .unreadable = null },
+    };
+    const rs = [_]routes.Route{
+        ctrlRoute("GET", "/session/new", "sessions", "new", 2),
+        ctrlRoute("GET", "/posts/new", "posts", "new", 3),
+    };
+    const vs = [_]classify.Verdict{ testVerdict(.content), testVerdict(.content) };
+    const views = [_]?[]const u8{ "app/views/sessions/new.html.erb", "app/views/posts/new.html.erb" };
+
+    const out = try derive(gpa, .{
+        .templates = &tpls,
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .routes = &rs,
+        .classifications = &vs,
+        .route_views = &views,
+    });
+    defer free(gpa, out);
+
+    // The journey finding, and the ordinary form's -- not the journey form's.
+    try std.testing.expectEqual(@as(usize, 2), out.len);
+    try std.testing.expectEqualStrings("RAILS_AUTH_JOURNEY.config/routes%2Erb.L2", out[0].id);
+    try std.testing.expectEqualStrings("RAILS_BACKEND_ENDPOINT.app/views/posts/new%2Ehtml%2Eerb.L1C1", out[1].id);
+    _ = &pw;
+}
+
+test "derive: a password form makes its route a journey route even under an ordinary controller" {
+    const gpa = std.testing.allocator;
+    // The second half of A5: the controller names are the common case, the
+    // password field is the fact. A `users#new` view holding one is a sign-up
+    // page whatever the controller is called.
+    const pw = nodeCode(.form_field, 1, 20, "password_field");
+    const nodes = [_]fragments.Node{ openFormNode(1, 1, "user"), pw, endNodeAt(1, 60) };
+    const tpls = [_]fragments.Template{
+        .{ .path = "app/views/users/new.html.erb", .nodes = @constCast(&nodes), .error_message = null, .error_line = null, .unreadable = null },
+    };
+    const rs = [_]routes.Route{ctrlRoute("GET", "/users/new", "users", "new", 4)};
+    const vs = [_]classify.Verdict{testVerdict(.content)};
+    const views = [_]?[]const u8{"app/views/users/new.html.erb"};
+    const out = try derive(gpa, .{
+        .templates = &tpls,
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .routes = &rs,
+        .classifications = &vs,
+        .route_views = &views,
+    });
+    defer free(gpa, out);
+    try std.testing.expectEqual(@as(usize, 1), out.len);
+    try std.testing.expectEqualStrings("RAILS_AUTH_JOURNEY.config/routes%2Erb.L4", out[0].id);
+}
+
+test "derive: a bare password_field outside any form is not a journey" {
+    const gpa = std.testing.allocator;
+    // A5 says "a `form` containing a `form_field` named `password_field`".
+    // A stray field is a field on something else, and promoting it would
+    // suppress a real backend question on the same view.
+    const pw = nodeCode(.form_field, 1, 1, "password_field");
+    const nodes = [_]fragments.Node{pw};
+    const tpls = [_]fragments.Template{
+        .{ .path = "app/views/pages/search.html.erb", .nodes = @constCast(&nodes), .error_message = null, .error_line = null, .unreadable = null },
+    };
+    const rs = [_]routes.Route{ctrlRoute("GET", "/search", "pages", "search", 4)};
+    const vs = [_]classify.Verdict{testVerdict(.content)};
+    const views = [_]?[]const u8{"app/views/pages/search.html.erb"};
+    const out = try derive(gpa, .{
+        .templates = &tpls,
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .routes = &rs,
+        .classifications = &vs,
+        .route_views = &views,
+    });
+    defer free(gpa, out);
+    try std.testing.expectEqual(@as(usize, 1), out.len);
+    try std.testing.expectEqualStrings("RAILS_BACKEND_ENDPOINT.app/views/pages/search%2Ehtml%2Eerb.L1C1", out[0].id);
+}
+
+/// `comptime text`, so `&.{text}` points at a comptime-promoted constant
+/// rather than at a stack temporary that dies with this call -- the trap
+/// `assetNode` above already documents.
+fn linkNode(code: []const u8, stem: ?[]const u8, comptime text: []const u8, line: u64, col: u64) fragments.Node {
+    var n = nodeCode(.link_to, line, col, stem);
+    n.code = code;
+    n.args = &.{text};
+    return n;
+}
+
+test "derive: button_to and a link_to with a mutating method raise RAILS_BACKEND_ENDPOINT" {
+    const gpa = std.testing.allocator;
+    var sign_out = linkNode("button_to \"Sign out\", session_path, method: :delete", "session", "Sign out", 1, 5);
+    sign_out.attrs = &[_]fragments.Attr{.{ .key = "method", .value = "delete" }};
+    var turbo = linkNode("link_to \"Destroy\", post_path(1), \"data-turbo-method\" => \"delete\"", "post", "Destroy", 2, 5);
+    turbo.attrs = &[_]fragments.Attr{.{ .key = "data-turbo-method", .value = "delete" }};
+    const plain_button = linkNode("button_to \"Publish\", publish_path", "publish", "Publish", 3, 5);
+    // The two that must stay silent: an ordinary navigation link, and one
+    // whose `method` is an explicit GET.
+    const nav = linkNode("link_to \"Home\", root_path", "root", "Home", 4, 5);
+    var get_link = linkNode("link_to \"Search\", search_path, method: :get", "search", "Search", 5, 5);
+    get_link.attrs = &[_]fragments.Attr{.{ .key = "method", .value = "get" }};
+    // rails-ujs' spelling, flattened by the sidecar from `data: { method: }`.
+    var ujs = linkNode("link_to \"Sign out\", session_path, data: { method: :delete }", "session", "Sign out", 6, 5);
+    ujs.attrs = &[_]fragments.Attr{.{ .key = "data-method", .value = "delete" }};
+    const nodes = [_]fragments.Node{ sign_out, turbo, plain_button, nav, get_link, ujs };
+    const tpls = [_]fragments.Template{
+        .{ .path = "app/views/shared/_nav.html.erb", .nodes = @constCast(&nodes), .error_message = null, .error_line = null, .unreadable = null },
+    };
+    // Every stem is a known route name, so a silent node really is silent
+    // rather than raising `RAILS_ROUTE_HELPER_UNKNOWN` instead.
+    const names = [_][]const u8{ "session", "post", "publish", "root", "search" };
+    const doc = testBackendDoc();
+
+    const out = try derive(gpa, .{
+        .templates = &tpls,
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &names,
+        .locale = null,
+        .backend = doc,
+    });
+    defer free(gpa, out);
+
+    try std.testing.expectEqual(@as(usize, 4), out.len);
+    try std.testing.expectEqualStrings("RAILS_BACKEND_ENDPOINT.app/views/shared/_nav%2Ehtml%2Eerb.L1C5", out[0].id);
+    try std.testing.expectEqualStrings("link performs a mutation: link_to `Sign out` data-method=delete", out[3].message);
+    try std.testing.expectEqualStrings("deleteUsers", out[3].choices[0]);
+    try std.testing.expectEqualStrings("link performs a mutation: button_to `Sign out` method=delete", out[0].message);
+    // DELETE, from the attribute: no operation on `session`, so the flat
+    // same-verb group is what is offered.
+    try std.testing.expectEqual(@as(usize, 3), out[0].choices.len);
+    try std.testing.expectEqualStrings("deleteUsers", out[0].choices[0]);
+    try std.testing.expectEqualStrings("retain", out[0].choices[1]);
+
+    try std.testing.expectEqualStrings("link performs a mutation: link_to `Destroy` data-turbo-method=delete", out[1].message);
+    // `button_to` with no method at all is a POST -- that is what the helper
+    // renders -- so its choices are the POST operations.
+    try std.testing.expectEqualStrings("link performs a mutation: button_to `Publish`", out[2].message);
+    try std.testing.expectEqualStrings("createPosts", out[2].choices[0]);
+    try std.testing.expectEqualStrings("createUsers", out[2].choices[1]);
+}
+
+/// Two DELETE operations whose ids sort the OPPOSITE way round from the
+/// collection the link targets, so "the resource's own operations first" and
+/// "operation ids in order" cannot both be satisfied and the test really does
+/// discriminate between them. Static storage: `backend.free` must never see
+/// it.
+var link_rank_ops = [_]backend.Operation{
+    backendOp("deleteComments", "DELETE", "/api/collections/comments/records/{id}", "comments", .delete),
+    backendOp("removePosts", "DELETE", "/api/collections/posts/records/{id}", "posts", .delete),
+};
+
+test "derive: a mutating link's choices are ranked by the route it targets, not by the helper stem" {
+    const gpa = std.testing.allocator;
+    // Rails' member helper is SINGULAR (`post_path(1)` for
+    // `DELETE /posts/:id`) and a ZigBase collection is plural, so keying
+    // `choicesFor` on the helper stem meant "own collection first" could
+    // never fire for a member link -- which is most of the mutating links
+    // there are. The operator was offered every DELETE in the document in
+    // operation-id order and had to find theirs in the alphabet.
+    //
+    // The target route's controller is the key now: the same key the
+    // route-level row is grouped by, and the same route `scaffold.linkRoute`
+    // pairs the binding onto.
+    var destroy = linkNode(
+        "link_to \"Destroy\", post_path(1), \"data-turbo-method\" => \"delete\"",
+        "post",
+        "Destroy",
+        1,
+        5,
+    );
+    destroy.attrs = &[_]fragments.Attr{.{ .key = "data-turbo-method", .value = "delete" }};
+    const nodes = [_]fragments.Node{destroy};
+    const tpls = [_]fragments.Template{
+        .{ .path = "app/views/posts/index.html.erb", .nodes = @constCast(&nodes), .error_message = null, .error_line = null, .unreadable = null },
+    };
+    var member = ctrlRoute("DELETE", "/posts/:id", "posts", "destroy", 2);
+    member.name = "post";
+    const rs = [_]routes.Route{member};
+    const vs = [_]classify.Verdict{testVerdict(.backend)};
+    const views = [_]?[]const u8{null};
+    const names = [_][]const u8{"post"};
+    const doc: backend.Document = .{
+        .file = "openapi.json",
+        .contract_version = "1.0.0",
+        .consumer_routes = false,
+        .operations = &link_rank_ops,
+        .auth_collections = &.{},
+    };
+
+    const out = try derive(gpa, .{
+        .templates = &tpls,
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &names,
+        .locale = null,
+        .routes = &rs,
+        .classifications = &vs,
+        .route_views = &views,
+        .backend = doc,
+    });
+    defer free(gpa, out);
+
+    var link: ?Finding = null;
+    for (out) |f| {
+        if (std.mem.eql(u8, f.code, code_backend_endpoint) and
+            std.mem.eql(u8, f.path, "app/views/posts/index.html.erb")) link = f;
+    }
+    const f = link orelse return error.NoLinkFinding;
+    // `posts` is the target route's controller, so its own DELETE comes
+    // first even though `deleteComments` sorts ahead of it.
+    try std.testing.expectEqualStrings("removePosts", f.choices[0]);
+    try std.testing.expectEqualStrings("deleteComments", f.choices[1]);
+}
+
+test "derive: a mutating link whose target route this run never resolved ranks nothing first" {
+    const gpa = std.testing.allocator;
+    // The other half. With no target route there is no resource, and the flat
+    // same-verb group in operation-id order is the honest offer -- inventing
+    // a resource from the stem is exactly what the change above removes.
+    var destroy = linkNode(
+        "link_to \"Destroy\", post_path(1), \"data-turbo-method\" => \"delete\"",
+        "post",
+        "Destroy",
+        1,
+        5,
+    );
+    destroy.attrs = &[_]fragments.Attr{.{ .key = "data-turbo-method", .value = "delete" }};
+    const nodes = [_]fragments.Node{destroy};
+    const tpls = [_]fragments.Template{
+        .{ .path = "app/views/posts/index.html.erb", .nodes = @constCast(&nodes), .error_message = null, .error_line = null, .unreadable = null },
+    };
+    // `post` is a known helper name (so the node is a link and not a
+    // `RAILS_ROUTE_HELPER_UNKNOWN`), but no route table reached this call.
+    const names = [_][]const u8{"post"};
+    const doc: backend.Document = .{
+        .file = "openapi.json",
+        .contract_version = "1.0.0",
+        .consumer_routes = false,
+        .operations = &link_rank_ops,
+        .auth_collections = &.{},
+    };
+
+    const out = try derive(gpa, .{
+        .templates = &tpls,
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &names,
+        .locale = null,
+        .backend = doc,
+    });
+    defer free(gpa, out);
+
+    try std.testing.expectEqual(@as(usize, 1), out.len);
+    try std.testing.expectEqualStrings("deleteComments", out[0].choices[0]);
+    try std.testing.expectEqualStrings("removePosts", out[0].choices[1]);
+}
+
+test "derive: every API route raises RAILS_BACKEND_ENDPOINT, one per routes.rb line" {
+    const gpa = std.testing.allocator;
+    // `backend` by classification OR by verb, the same pair
+    // `scaffold.routeOutcome` folds into its `backend` status -- so no route
+    // reaches the handoff as `backend` without an id to bind an operation to.
+    const rs = [_]routes.Route{
+        ctrlRoute("POST", "/posts", "posts", "create", 4),
+        ctrlRoute("GET", "/api/posts", "posts", "index", 6),
+        // A page route: not API traffic, and must not acquire the row.
+        ctrlRoute("GET", "/about", "pages", "about", 7),
+    };
+    const vs = [_]classify.Verdict{ testVerdict(.content), testVerdict(.backend), testVerdict(.content) };
+    const doc = testBackendDoc();
+    const out = try derive(gpa, .{
+        .templates = &.{},
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .routes = &rs,
+        .classifications = &vs,
+        .backend = doc,
+    });
+    defer free(gpa, out);
+
+    try std.testing.expectEqual(@as(usize, 2), out.len);
+    try std.testing.expectEqualStrings("RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L4.POST.posts", out[0].id);
+    try std.testing.expectEqualStrings("config/routes.rb", out[0].path);
+    try std.testing.expectEqualStrings("GET /api/posts", out[1].route_id.?);
+    try std.testing.expectEqualStrings("route is API traffic and needs a backend operation: POST /posts", out[0].message);
+    try std.testing.expectEqualStrings("createPosts", out[0].choices[0]);
+    // The GET row is offered GET operations, never the POST ones.
+    try std.testing.expectEqualStrings("route is API traffic and needs a backend operation: GET /api/posts", out[1].message);
+    try std.testing.expectEqual(@as(usize, 3), out[1].choices.len);
+    try std.testing.expectEqualStrings("listPosts", out[1].choices[0]);
+}
+
+fn journeyRoutes() [5]routes.Route {
+    return .{
+        ctrlRoute("GET", "/registration/new", "registrations", "new", 2),
+        ctrlRoute("GET", "/session/new", "sessions", "new", 3),
+        ctrlRoute("POST", "/registration", "registrations", "create", 4),
+        ctrlRoute("POST", "/session", "sessions", "create", 5),
+        ctrlRoute("DELETE", "/session", "sessions", "destroy", 6),
+    };
+}
+
+test "derive: the whole auth journey is ONE finding, keyed on its smallest routes.rb line" {
+    const gpa = std.testing.allocator;
+    const rs = journeyRoutes();
+    const vs = [_]classify.Verdict{
+        testVerdict(.content),
+        testVerdict(.content),
+        testVerdict(.backend),
+        testVerdict(.backend),
+        testVerdict(.backend),
+    };
+    const doc = testBackendDoc();
+    const out = try derive(gpa, .{
+        .templates = &.{},
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .routes = &rs,
+        .classifications = &vs,
+        .backend = doc,
+    });
+    defer free(gpa, out);
+
+    // ONE finding for five routes, and -- assumption A5 -- no
+    // `RAILS_BACKEND_ENDPOINT` for the three journey routes that are API
+    // traffic: the journey is their question.
+    try std.testing.expectEqual(@as(usize, 1), out.len);
+    try std.testing.expectEqualStrings("RAILS_AUTH_JOURNEY", out[0].code);
+    try std.testing.expectEqualStrings("RAILS_AUTH_JOURNEY.config/routes%2Erb.L2", out[0].id);
+    try std.testing.expectEqualStrings("config/routes.rb", out[0].path);
+    try std.testing.expectEqual(@as(?u64, 2), out[0].line);
+    try std.testing.expectEqualStrings("GET /registration/new", out[0].route_id.?);
+    try std.testing.expect(out[0].requires_artifact);
+    try std.testing.expectEqual(@as(usize, 3), out[0].choices.len);
+    try std.testing.expectEqualStrings("island", out[0].choices[0]);
+    try std.testing.expectEqualStrings("retain", out[0].choices[1]);
+    try std.testing.expectEqualStrings("blocked", out[0].choices[2]);
+    try std.testing.expectEqualStrings(
+        "auth journey: GET /registration/new, GET /session/new, POST /registration, POST /session, DELETE /session; island needs artifact = the ZigBase auth collection name (in --backend: users)",
+        out[0].message,
+    );
+}
+
+test "derive: without an auth collection to name, the journey message says to pass --backend" {
+    const gpa = std.testing.allocator;
+    const rs = journeyRoutes();
+    const out = try derive(gpa, .{
+        .templates = &.{},
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .routes = &rs,
+    });
+    defer free(gpa, out);
+    // Five routes, no classifications: three are non-GET, so they are API
+    // traffic by verb -- and still suppressed by the journey.
+    try std.testing.expectEqual(@as(usize, 1), out.len);
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        out[0].message,
+        "island needs artifact = the ZigBase auth collection name (pass --backend to validate the name)",
+    ));
+}
+
+test "derive: the journey's key line and route list do not depend on the route table's order" {
+    const gpa = std.testing.allocator;
+    // The id is keyed on the SMALLEST line the journey occupies and the
+    // message lists the routes in (line, route id) order -- neither is the
+    // order the sidecar happened to emit the route table in, which nothing
+    // promises is stable across machines.
+    const forward = journeyRoutes();
+    var reversed: [5]routes.Route = undefined;
+    for (forward, 0..) |r, i| reversed[forward.len - 1 - i] = r;
+    const base: DeriveInput = .{
+        .templates = &.{},
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+    };
+    var a_in = base;
+    a_in.routes = &forward;
+    var b_in = base;
+    b_in.routes = &reversed;
+    const a = try derive(gpa, a_in);
+    defer free(gpa, a);
+    const b = try derive(gpa, b_in);
+    defer free(gpa, b);
+    try std.testing.expectEqual(@as(usize, 1), a.len);
+    try std.testing.expectEqual(@as(usize, 1), b.len);
+    try std.testing.expectEqualStrings(a[0].id, b[0].id);
+    try std.testing.expectEqualStrings(a[0].message, b[0].message);
+    try std.testing.expectEqualStrings(a[0].route_id.?, b[0].route_id.?);
+    try std.testing.expectEqualStrings("RAILS_AUTH_JOURNEY.config/routes%2Erb.L2", b[0].id);
+    try std.testing.expect(std.mem.startsWith(
+        u8,
+        b[0].message,
+        "auth journey: GET /registration/new, GET /session/new, POST /registration, POST /session, DELETE /session;",
+    ));
+}
+
+test "derive: a document with no auth collection reads like no document at all" {
+    const gpa = std.testing.allocator;
+    // Not a hypothetical: the in-repo `contract/zigbase.openapi.json` is
+    // exactly this document -- three consumer routes and no collections. The
+    // parenthetical exists to NAME the candidates, so with none to name it
+    // must not degrade to `(in --backend: )`, a list pretending to be one.
+    const rs = journeyRoutes();
+    var empty_ops = [_]backend.Operation{
+        backendOp("submitContact", "POST", "/api/contact", null, .custom),
+    };
+    var no_auth = [_][]const u8{};
+    const doc: backend.Document = .{
+        .file = "zigbase.openapi.json",
+        .contract_version = "2026-06-27.1",
+        .consumer_routes = true,
+        .operations = &empty_ops,
+        .auth_collections = &no_auth,
+    };
+    const out = try derive(gpa, .{
+        .templates = &.{},
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .routes = &rs,
+        .backend = doc,
+    });
+    defer free(gpa, out);
+    try std.testing.expectEqual(@as(usize, 1), out.len);
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        out[0].message,
+        "island needs artifact = the ZigBase auth collection name (pass --backend to validate the name)",
+    ));
+}
+
+test "derive: an app with no journey raises no RAILS_AUTH_JOURNEY" {
+    const gpa = std.testing.allocator;
+    const rs = [_]routes.Route{ctrlRoute("GET", "/about", "pages", "about", 2)};
+    const vs = [_]classify.Verdict{testVerdict(.content)};
+    const out = try derive(gpa, .{
+        .templates = &.{},
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .routes = &rs,
+        .classifications = &vs,
+    });
+    defer free(gpa, out);
+    try std.testing.expectEqual(@as(usize, 0), out.len);
+}
+
+test "derive: a guarded page route raises RAILS_ROUTE_AUTH_GUARD (assumption A7)" {
+    const gpa = std.testing.allocator;
+    const rs = [_]routes.Route{
+        ctrlRoute("GET", "/posts", "posts", "index", 3),
+        // Same controller, an action the filter's `only:` excludes.
+        ctrlRoute("GET", "/posts/archive", "posts", "archive", 4),
+        // Guarded by a filter whose name is not an auth heuristic hit.
+        ctrlRoute("GET", "/about", "pages", "about", 5),
+        // Guarded, but API traffic: it never becomes a page, so "a static
+        // page cannot enforce it" is not a question about it.
+        ctrlRoute("POST", "/posts", "posts", "create", 6),
+    };
+    const vs = [_]classify.Verdict{
+        testVerdict(.content),
+        testVerdict(.content),
+        testVerdict(.content),
+        testVerdict(.backend),
+    };
+    const filters = [_]controllers.BeforeAction{
+        .{ .controller = "posts", .name = "require_login", .only = &.{ "index", "create" }, .except = &.{}, .dynamic = false, .line = 2 },
+        .{ .controller = "pages", .name = "set_locale", .only = &.{}, .except = &.{}, .dynamic = false, .line = 2 },
+    };
+    const out = try derive(gpa, .{
+        .templates = &.{},
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .routes = &rs,
+        .classifications = &vs,
+        .filters = .{ .before_actions = &filters },
+    });
+    defer free(gpa, out);
+
+    // The guard row on `GET /posts`, and the POST's own backend row.
+    try std.testing.expectEqual(@as(usize, 2), out.len);
+    try std.testing.expectEqualStrings("RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L6.POST.posts", out[0].id);
+    const guard = out[1];
+    try std.testing.expectEqualStrings("RAILS_ROUTE_AUTH_GUARD", guard.code);
+    try std.testing.expectEqualStrings("RAILS_ROUTE_AUTH_GUARD.config/routes%2Erb.L3", guard.id);
+    try std.testing.expectEqualStrings("config/routes.rb", guard.path);
+    try std.testing.expectEqualStrings("GET /posts", guard.route_id.?);
+    try std.testing.expectEqual(Severity.warn, guard.severity);
+    try std.testing.expect(!guard.requires_artifact);
+    try std.testing.expectEqualStrings(
+        "page is guarded by before_action :require_login on posts; a static page cannot enforce it: GET /posts",
+        guard.message,
+    );
+    try std.testing.expectEqual(@as(usize, 3), guard.choices.len);
+    try std.testing.expectEqualStrings("public", guard.choices[0]);
+    try std.testing.expectEqualStrings("retain", guard.choices[1]);
+    try std.testing.expectEqualStrings("blocked", guard.choices[2]);
+}
+
+test "derive: which authentication filter a guarded route names does not depend on input order" {
+    const gpa = std.testing.allocator;
+    // `before_actions` is flattened across a directory walk of
+    // app/controllers/, so its order is not promised. The filter's name is in
+    // the message, which makes an order-dependent pick an order-dependent
+    // manifest.
+    const rs = [_]routes.Route{ctrlRoute("GET", "/posts", "posts", "index", 3)};
+    const vs = [_]classify.Verdict{testVerdict(.content)};
+    const forward = [_]controllers.BeforeAction{
+        .{ .controller = "posts", .name = "authenticate_user!", .only = &.{}, .except = &.{}, .dynamic = false, .line = 2 },
+        .{ .controller = "posts", .name = "require_login", .only = &.{}, .except = &.{}, .dynamic = false, .line = 3 },
+    };
+    const reverse = [_]controllers.BeforeAction{ forward[1], forward[0] };
+    const base: DeriveInput = .{
+        .templates = &.{},
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .routes = &rs,
+        .classifications = &vs,
+    };
+    var a_in = base;
+    a_in.filters = .{ .before_actions = &forward };
+    var b_in = base;
+    b_in.filters = .{ .before_actions = &reverse };
+    const a = try derive(gpa, a_in);
+    defer free(gpa, a);
+    const b = try derive(gpa, b_in);
+    defer free(gpa, b);
+    try std.testing.expectEqualStrings(a[0].message, b[0].message);
+    try std.testing.expect(std.mem.indexOf(u8, a[0].message, "authenticate_user!") != null);
+}
+
+test "derive: a dynamic before_action guards nothing -- there is no symbol to read" {
+    const gpa = std.testing.allocator;
+    const rs = [_]routes.Route{ctrlRoute("GET", "/posts", "posts", "index", 3)};
+    const vs = [_]classify.Verdict{testVerdict(.content)};
+    const filters = [_]controllers.BeforeAction{
+        .{ .controller = "posts", .name = null, .only = &.{}, .except = &.{}, .dynamic = true, .line = 2 },
+    };
+    const out = try derive(gpa, .{
+        .templates = &.{},
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .routes = &rs,
+        .classifications = &vs,
+        .filters = .{ .before_actions = &filters },
+    });
+    defer free(gpa, out);
+    try std.testing.expectEqual(@as(usize, 0), out.len);
+}
+
+test "derive: a guard declared on ApplicationController reaches the controllers that inherit it" {
+    const gpa = std.testing.allocator;
+    // Fix round 1 (I-1). This is what almost every Rails app looks like:
+    //
+    //   class ApplicationController < ActionController::Base
+    //     before_action :authenticate_user!
+    //   end
+    //   class PostsController < ApplicationController; end
+    //
+    // Matching a filter's own `controller` against the route's saw none of
+    // it, so A7's row fired only for an app that redeclares the filter in
+    // every controller -- i.e. essentially never. `controllers.guardsFor`
+    // walks the chain, and the message names the DECLARING controller,
+    // which is where an operator has to go to read the filter.
+    const rs = [_]routes.Route{ctrlRoute("GET", "/posts", "posts", "index", 3)};
+    const vs = [_]classify.Verdict{testVerdict(.content)};
+    const filters = [_]controllers.BeforeAction{
+        .{ .controller = "application", .name = "authenticate_user!", .only = &.{}, .except = &.{}, .dynamic = false, .line = 2 },
+    };
+    const parents = [_]controllers.ParentEdge{
+        .{ .controller = "posts", .parent = "application" },
+    };
+    const out = try derive(gpa, .{
+        .templates = &.{},
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .routes = &rs,
+        .classifications = &vs,
+        .filters = .{ .before_actions = &filters, .parents = &parents },
+    });
+    defer free(gpa, out);
+    try std.testing.expectEqual(@as(usize, 1), out.len);
+    try std.testing.expectEqualStrings("RAILS_ROUTE_AUTH_GUARD.config/routes%2Erb.L3", out[0].id);
+    try std.testing.expectEqualStrings(
+        "page is guarded by before_action :authenticate_user! on application; a static page cannot enforce it: GET /posts",
+        out[0].message,
+    );
+
+    // The negative control, and the reason this is a chain walk rather than
+    // a wildcard: with no edge, `application`'s filter is invisible from
+    // `posts` -- which is also what Rails does.
+    const unlinked = try derive(gpa, .{
+        .templates = &.{},
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .routes = &rs,
+        .classifications = &vs,
+        .filters = .{ .before_actions = &filters },
+    });
+    defer free(gpa, unlinked);
+    try std.testing.expectEqual(@as(usize, 0), unlinked.len);
+}
+
+test "derive: a skip_before_action leaves the page unguarded, and raises no finding" {
+    const gpa = std.testing.allocator;
+    // The other half of reading the whole `FilterSet`: a filter the
+    // controller explicitly skips does not guard the action, so claiming the
+    // page cannot enforce a guard it does not have would be a question about
+    // nothing. `controllers.guardsFor` applies the skip (including its
+    // placement rule); this file must not second-guess it.
+    const rs = [_]routes.Route{ctrlRoute("GET", "/posts", "posts", "index", 3)};
+    const vs = [_]classify.Verdict{testVerdict(.content)};
+    const filters = [_]controllers.BeforeAction{
+        .{ .controller = "posts", .name = "authenticate_user!", .only = &.{}, .except = &.{}, .dynamic = false, .line = 2 },
+    };
+    const skips = [_]controllers.BeforeAction{
+        .{ .controller = "posts", .name = "authenticate_user!", .only = &.{}, .except = &.{}, .dynamic = false, .line = 3 },
+    };
+    const out = try derive(gpa, .{
+        .templates = &.{},
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .routes = &rs,
+        .classifications = &vs,
+        .filters = .{ .before_actions = &filters, .skips = &skips },
+    });
+    defer free(gpa, out);
+    try std.testing.expectEqual(@as(usize, 0), out.len);
+}
+
+test "derive: a password form in a partial keeps its own backend question" {
+    const gpa = std.testing.allocator;
+    // Fix round 1 (I-2). `shared/_login_form.html.erb` is no route's view, so
+    // it makes no route a journey route and `RAILS_AUTH_JOURNEY` never fires
+    // -- yet the partial's password form used to suppress its own
+    // `RAILS_BACKEND_ENDPOINT` in favour of that non-existent finding, which
+    // left the form with no question at all. Ruling S12: Stage 3 WIDENS these
+    // rows, never removes them.
+    const pw = nodeCode(.form_field, 1, 20, "password_field");
+    const nodes = [_]fragments.Node{ openFormNode(1, 1, "user"), pw, endNodeAt(1, 60) };
+    const tpls = [_]fragments.Template{
+        .{ .path = "app/views/shared/_login_form.html.erb", .nodes = @constCast(&nodes), .error_message = null, .error_line = null, .unreadable = null },
+    };
+    const rs = [_]routes.Route{ctrlRoute("GET", "/", "pages", "home", 2)};
+    const vs = [_]classify.Verdict{testVerdict(.content)};
+    const views = [_]?[]const u8{"app/views/pages/home.html.erb"};
+    // Fix round 2 (NEW-1): the edge IS present -- `pages/home` really does
+    // render this partial -- and it still is not a journey view, because
+    // `pages/home` is not a journey route. Reachability alone is not the
+    // rule; reachability FROM THE JOURNEY is.
+    const home_renders = [_][]const u8{"app/views/shared/_login_form.html.erb"};
+    const graph = [_]TemplateRenders{
+        .{ .path = "app/views/pages/home.html.erb", .renders = &home_renders },
+    };
+    const out = try derive(gpa, .{
+        .templates = &tpls,
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .routes = &rs,
+        .classifications = &vs,
+        .route_views = &views,
+        .render_graph = &graph,
+    });
+    defer free(gpa, out);
+    try std.testing.expectEqual(@as(usize, 1), out.len);
+    try std.testing.expectEqualStrings(
+        "RAILS_BACKEND_ENDPOINT.app/views/shared/_login_form%2Ehtml%2Eerb.L1C1",
+        out[0].id,
+    );
+}
+
+test "derive: a journey view's password partial is the journey's question, not a second one" {
+    const gpa = std.testing.allocator;
+    // Fix round 2 (NEW-1), and the regression fix round 1 introduced. The
+    // sign-in form almost never lives in `sessions/new.html.erb` itself --
+    // it lives in `shared/_login_form`, and the view renders it. Keying the
+    // suppression on "is this a route view" therefore raised BOTH
+    // `RAILS_AUTH_JOURNEY` (the route is a journey route by controller) and
+    // the partial's own `RAILS_BACKEND_ENDPOINT` for ONE form: the double
+    // question assumption A5 exists to prevent.
+    const pw = nodeCode(.form_field, 1, 20, "password_field");
+    const partial_nodes = [_]fragments.Node{ openFormNode(1, 1, "user"), pw, endNodeAt(1, 60) };
+    const view_nodes = [_]fragments.Node{nodeCode(.render_partial, 2, 1, "shared/login_form")};
+    const tpls = [_]fragments.Template{
+        .{ .path = "app/views/shared/_login_form.html.erb", .nodes = @constCast(&partial_nodes), .error_message = null, .error_line = null, .unreadable = null },
+        .{ .path = "app/views/sessions/new.html.erb", .nodes = @constCast(&view_nodes), .error_message = null, .error_line = null, .unreadable = null },
+    };
+    const rs = [_]routes.Route{
+        ctrlRoute("GET", "/session/new", "sessions", "new", 4),
+        ctrlRoute("POST", "/session", "sessions", "create", 5),
+    };
+    const vs = [_]classify.Verdict{ testVerdict(.content), testVerdict(.backend) };
+    const views = [_]?[]const u8{ "app/views/sessions/new.html.erb", null };
+    const new_renders = [_][]const u8{"app/views/shared/_login_form.html.erb"};
+    const graph = [_]TemplateRenders{
+        .{ .path = "app/views/sessions/new.html.erb", .renders = &new_renders },
+    };
+    const out = try derive(gpa, .{
+        .templates = &tpls,
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .routes = &rs,
+        .classifications = &vs,
+        .route_views = &views,
+        .render_graph = &graph,
+    });
+    defer free(gpa, out);
+    try std.testing.expectEqual(@as(usize, 1), out.len);
+    try std.testing.expectEqualStrings("RAILS_AUTH_JOURNEY.config/routes%2Erb.L4", out[0].id);
+}
+
+test "derive: a partial reached from a journey view AND an ordinary one belongs to the journey" {
+    const gpa = std.testing.allocator;
+    // The deliberate choice, stated at `detectJourney`: a shared partial
+    // answered twice is two conflicting bindings for one region, while the
+    // ordinary page it also appears on is still covered -- the journey's
+    // `island` answer scaffolds the `AuthForm` that region becomes wherever
+    // it is rendered. The other direction would ask about the sign-in form
+    // twice.
+    //
+    // The walk is transitive, so this also pins the depth-1 hop: the journey
+    // view renders a wrapper, and the wrapper renders the form.
+    const pw = nodeCode(.form_field, 1, 20, "password_field");
+    const partial_nodes = [_]fragments.Node{ openFormNode(1, 1, "user"), pw, endNodeAt(1, 60) };
+    const tpls = [_]fragments.Template{
+        .{ .path = "app/views/shared/_login_form.html.erb", .nodes = @constCast(&partial_nodes), .error_message = null, .error_line = null, .unreadable = null },
+    };
+    const rs = [_]routes.Route{
+        ctrlRoute("GET", "/session/new", "sessions", "new", 4),
+        ctrlRoute("GET", "/", "pages", "home", 6),
+    };
+    const vs = [_]classify.Verdict{ testVerdict(.content), testVerdict(.content) };
+    const views = [_]?[]const u8{ "app/views/sessions/new.html.erb", "app/views/pages/home.html.erb" };
+    const wrapper_renders = [_][]const u8{"app/views/shared/_login_form.html.erb"};
+    const new_renders = [_][]const u8{"app/views/shared/_auth_panel.html.erb"};
+    const home_renders = [_][]const u8{"app/views/shared/_login_form.html.erb"};
+    const graph = [_]TemplateRenders{
+        .{ .path = "app/views/sessions/new.html.erb", .renders = &new_renders },
+        .{ .path = "app/views/shared/_auth_panel.html.erb", .renders = &wrapper_renders },
+        .{ .path = "app/views/pages/home.html.erb", .renders = &home_renders },
+    };
+    const out = try derive(gpa, .{
+        .templates = &tpls,
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .routes = &rs,
+        .classifications = &vs,
+        .route_views = &views,
+        .render_graph = &graph,
+    });
+    defer free(gpa, out);
+    try std.testing.expectEqual(@as(usize, 1), out.len);
+    try std.testing.expectEqualStrings("RAILS_AUTH_JOURNEY.config/routes%2Erb.L4", out[0].id);
+}
+
+test "derive: a render cycle in the journey walk terminates" {
+    const gpa = std.testing.allocator;
+    // The depth cap, not the visited set, is what guarantees termination:
+    // the graph is built from an operator's source tree and `render`
+    // recursion is not something this stage can rule out, so the walk stops
+    // after `max_journey_render_depth` frontiers whatever the edges say. The
+    // visited set only keeps the work linear -- delete it and this test still
+    // passes. (A real cycle also cannot survive Stage 1's own walk, which is
+    // why this is defence rather than a case anyone has seen.)
+    const pw = nodeCode(.form_field, 1, 20, "password_field");
+    const partial_nodes = [_]fragments.Node{ openFormNode(1, 1, "user"), pw, endNodeAt(1, 60) };
+    const tpls = [_]fragments.Template{
+        .{ .path = "app/views/shared/_login_form.html.erb", .nodes = @constCast(&partial_nodes), .error_message = null, .error_line = null, .unreadable = null },
+    };
+    const rs = [_]routes.Route{ctrlRoute("GET", "/session/new", "sessions", "new", 4)};
+    const vs = [_]classify.Verdict{testVerdict(.content)};
+    const views = [_]?[]const u8{"app/views/sessions/new.html.erb"};
+    const a_renders = [_][]const u8{"app/views/shared/_login_form.html.erb"};
+    const b_renders = [_][]const u8{"app/views/sessions/new.html.erb"};
+    const graph = [_]TemplateRenders{
+        .{ .path = "app/views/sessions/new.html.erb", .renders = &a_renders },
+        .{ .path = "app/views/shared/_login_form.html.erb", .renders = &b_renders },
+    };
+    const out = try derive(gpa, .{
+        .templates = &tpls,
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .routes = &rs,
+        .classifications = &vs,
+        .route_views = &views,
+        .render_graph = &graph,
+    });
+    defer free(gpa, out);
+    try std.testing.expectEqual(@as(usize, 1), out.len);
+    try std.testing.expectEqualStrings("RAILS_AUTH_JOURNEY.config/routes%2Erb.L4", out[0].id);
+}
+
+/// A document shaped for the mixed-verb test below: one collection carrying
+/// all three writing operations, so each verb has exactly one right answer.
+/// File scope for the reason `test_backend_ops` is.
+var test_crud_ops = [_]backend.Operation{
+    backendOp("createPosts", "POST", "/api/collections/posts/records", "posts", .create),
+    backendOp("deletePosts", "DELETE", "/api/collections/posts/records/{id}", "posts", .delete),
+    backendOp("updatePosts", "PATCH", "/api/collections/posts/records/{id}", "posts", .update),
+};
+var test_crud_auth = [_][]const u8{};
+
+fn testCrudDoc() backend.Document {
+    return .{
+        .file = "openapi.json",
+        .contract_version = "1.0.0",
+        .consumer_routes = false,
+        .operations = &test_crud_ops,
+        .auth_collections = &test_crud_auth,
+    };
+}
+
+test "derive: one routes.rb line with three verbs is three answerable findings" {
+    const gpa = std.testing.allocator;
+    // Fix round 1 (ruling I-3). `resources :posts` declares `POST /posts`,
+    // `PATCH /posts/:id` and `DELETE /posts/:id` on ONE line. Ruling S22
+    // folds a line into one finding because one declaration is one decision
+    // -- true for `spa`, false here: the answer is a single ZigBase
+    // OPERATION, and no operation is both a create and a delete. The grouped
+    // row offered only the representative verb's operations, so two of the
+    // three routes had nothing they could be bound to.
+    const rs = [_]routes.Route{
+        ctrlRoute("POST", "/posts", "posts", "create", 7),
+        ctrlRoute("PATCH", "/posts/:id", "posts", "update", 7),
+        ctrlRoute("DELETE", "/posts/:id", "posts", "destroy", 7),
+    };
+    const vs = [_]classify.Verdict{ testVerdict(.backend), testVerdict(.backend), testVerdict(.backend) };
+    const doc = testCrudDoc();
+    const out = try derive(gpa, .{
+        .templates = &.{},
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .routes = &rs,
+        .classifications = &vs,
+        .backend = doc,
+    });
+    defer free(gpa, out);
+
+    try std.testing.expectEqual(@as(usize, 3), out.len);
+    // The verb is a fourth id component, appended after the line, so the
+    // three-part `<code>.<path>.<loc>` shape a reader knows is still there
+    // with one key added. Sorted lexicographically by id within the line.
+    try std.testing.expectEqualStrings("RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L7.DELETE.posts", out[0].id);
+    try std.testing.expectEqualStrings("RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L7.PATCH.posts", out[1].id);
+    try std.testing.expectEqualStrings("RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L7.POST.posts", out[2].id);
+    // Each names only its own verb's routes...
+    try std.testing.expectEqualStrings(
+        "route is API traffic and needs a backend operation: DELETE /posts/:id",
+        out[0].message,
+    );
+    try std.testing.expectEqualStrings("DELETE /posts/:id", out[0].route_id.?);
+    try std.testing.expectEqualStrings(
+        "route is API traffic and needs a backend operation: POST /posts",
+        out[2].message,
+    );
+    // ...and offers only the operations that could serve it.
+    try std.testing.expectEqualStrings("deletePosts", out[0].choices[0]);
+    try std.testing.expectEqualStrings("updatePosts", out[1].choices[0]);
+    try std.testing.expectEqualStrings("createPosts", out[2].choices[0]);
+    for (out) |f| try std.testing.expectEqual(@as(usize, 3), f.choices.len);
+}
+
+test "routeVerbFindingId: the exported builder upper-cases and always emits a resource component" {
+    const gpa = std.testing.allocator;
+    // `scaffold.zig` recomputes this id to look an operator decision up
+    // (Task 4). `routes.Route.verb` being upper-case today is a property of
+    // one producer, not of the type, so the case is fixed HERE rather than
+    // at each call site.
+    const upper = try routeVerbFindingId(gpa, code_backend_endpoint, 7, "POST", "posts");
+    defer gpa.free(upper);
+    const lower = try routeVerbFindingId(gpa, code_backend_endpoint, 7, "post", "posts");
+    defer gpa.free(lower);
+    try std.testing.expectEqualStrings("RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L7.POST.posts", upper);
+    try std.testing.expectEqualStrings(upper, lower);
+
+    // A namespaced controller key survives the escaping like any other
+    // component -- `/` is not special, and `.`/`%` would be escaped.
+    const nested = try routeVerbFindingId(gpa, code_backend_endpoint, 7, "POST", "admin/users");
+    defer gpa.free(nested);
+    try std.testing.expectEqualStrings("RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L7.POST.admin/users", nested);
+
+    // The component is ALWAYS present, so the id has a fixed shape: a route
+    // whose controller never resolved contributes an empty one, which no
+    // real controller key (derived from a file path) can collide with.
+    const anon = try routeVerbFindingId(gpa, code_backend_endpoint, 7, "POST", null);
+    defer gpa.free(anon);
+    try std.testing.expectEqualStrings("RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L7.POST.", anon);
+
+    // The line-only builder is unchanged and is what every other row uses.
+    const plain = try routeFindingId(gpa, code_route_auth_guard, 7);
+    defer gpa.free(plain);
+    try std.testing.expectEqualStrings("RAILS_ROUTE_AUTH_GUARD.config/routes%2Erb.L7", plain);
+}
+
+/// `resources :posts, :comments` -- one line, one verb, two collections.
+var test_two_resource_ops = [_]backend.Operation{
+    backendOp("createComments", "POST", "/api/collections/comments/records", "comments", .create),
+    backendOp("createPosts", "POST", "/api/collections/posts/records", "posts", .create),
+};
+var test_two_resource_auth = [_][]const u8{};
+
+test "derive: one routes.rb line declaring two resources is two answerable findings" {
+    const gpa = std.testing.allocator;
+    // Fix round 2 (NEW-2). `resources :posts, :comments` is one line and one
+    // verb, and `createPosts` cannot serve a comment -- so `(line, verb)`
+    // still put two routes needing two different operations behind one id
+    // and one answer. The key is now `(line, verb, resource)`, which is
+    // exactly the pair `backend.choicesFor` is asked: two routes share a
+    // finding precisely when they would be offered the same answers.
+    const doc: backend.Document = .{
+        .file = "openapi.json",
+        .contract_version = "1.0.0",
+        .consumer_routes = false,
+        .operations = &test_two_resource_ops,
+        .auth_collections = &test_two_resource_auth,
+    };
+    const rs = [_]routes.Route{
+        ctrlRoute("POST", "/posts", "posts", "create", 7),
+        ctrlRoute("POST", "/comments", "comments", "create", 7),
+    };
+    const vs = [_]classify.Verdict{ testVerdict(.backend), testVerdict(.backend) };
+    const out = try derive(gpa, .{
+        .templates = &.{},
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .routes = &rs,
+        .classifications = &vs,
+        .backend = doc,
+    });
+    defer free(gpa, out);
+
+    try std.testing.expectEqual(@as(usize, 2), out.len);
+    try std.testing.expectEqualStrings("RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L7.POST.comments", out[0].id);
+    try std.testing.expectEqualStrings("RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L7.POST.posts", out[1].id);
+    try std.testing.expectEqualStrings(
+        "route is API traffic and needs a backend operation: POST /comments",
+        out[0].message,
+    );
+    try std.testing.expectEqualStrings(
+        "route is API traffic and needs a backend operation: POST /posts",
+        out[1].message,
+    );
+    // Each is offered its OWN resource's operation first. The other one is
+    // still reachable (a Rails controller may write to any collection), but
+    // the answer nine times in ten now ranks first for both.
+    try std.testing.expectEqualStrings("createComments", out[0].choices[0]);
+    try std.testing.expectEqualStrings("createPosts", out[1].choices[0]);
+}
+
+test "derive: resources interleaved by path on one line still group into one finding each" {
+    const gpa = std.testing.allocator;
+    // The grouping walks CONTIGUOUS runs, so the sort has to order by
+    // `resource` and not merely happen to. A hit's id is `"<verb> <path>"`,
+    // which orders by verb for free but says nothing about the controller:
+    // here the paths interleave the two resources (`/a` posts, `/b`
+    // comments, `/c` posts), so an id-only sort splits the `posts` run in
+    // two and emits TWO findings carrying the SAME id -- the one property an
+    // id must never lose. Two findings, and the `posts` one names both of
+    // its routes, is what proves the run was not split.
+    const rs = [_]routes.Route{
+        ctrlRoute("POST", "/a", "posts", "create", 7),
+        ctrlRoute("POST", "/b", "comments", "create", 7),
+        ctrlRoute("POST", "/c", "posts", "publish", 7),
+    };
+    const vs = [_]classify.Verdict{ testVerdict(.backend), testVerdict(.backend), testVerdict(.backend) };
+    const out = try derive(gpa, .{
+        .templates = &.{},
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .routes = &rs,
+        .classifications = &vs,
+    });
+    defer free(gpa, out);
+
+    try std.testing.expectEqual(@as(usize, 2), out.len);
+    try std.testing.expectEqualStrings("RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L7.POST.comments", out[0].id);
+    try std.testing.expectEqualStrings("RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L7.POST.posts", out[1].id);
+    try std.testing.expectEqualStrings(
+        "route is API traffic and needs a backend operation: POST /b",
+        out[0].message,
+    );
+    try std.testing.expectEqualStrings(
+        "route is API traffic and needs a backend operation: POST /a, POST /c",
+        out[1].message,
+    );
+}
+
+test "derive: a route with no controller is its own group, not folded into a neighbour's" {
+    const gpa = std.testing.allocator;
+    // `Route.controller` is optional, and a route whose controller discovery
+    // never recovered has no resource -- so it is NOT the same question as a
+    // route on the same line and verb that does have one, and must not be
+    // handed that resource's operations. The empty fifth id component is
+    // what keeps the two apart; no real controller key (derived from a file
+    // path) is empty, so it cannot collide.
+    var anon = ctrlRoute("POST", "/b", "posts", "create", 7);
+    anon.controller = null;
+    anon.action = null;
+    const rs = [_]routes.Route{ ctrlRoute("POST", "/a", "posts", "create", 7), anon };
+    const vs = [_]classify.Verdict{ testVerdict(.backend), testVerdict(.backend) };
+    const out = try derive(gpa, .{
+        .templates = &.{},
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .routes = &rs,
+        .classifications = &vs,
+    });
+    defer free(gpa, out);
+    try std.testing.expectEqual(@as(usize, 2), out.len);
+    try std.testing.expectEqualStrings("RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L7.POST.", out[0].id);
+    try std.testing.expectEqualStrings("RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L7.POST.posts", out[1].id);
+    try std.testing.expectEqualStrings(
+        "route is API traffic and needs a backend operation: POST /b",
+        out[0].message,
+    );
+}
+
+test "derive: two routes sharing a line AND a verb are still one finding" {
+    const gpa = std.testing.allocator;
+    // The narrowing is `(line, verb)`, not "one finding per route": two POSTs
+    // from one declaration are one question with one answer, and splitting
+    // them would put two identical decisions in front of an operator.
+    const rs = [_]routes.Route{
+        ctrlRoute("POST", "/posts", "posts", "create", 7),
+        ctrlRoute("POST", "/posts/bulk", "posts", "bulk", 7),
+    };
+    const vs = [_]classify.Verdict{ testVerdict(.backend), testVerdict(.backend) };
+    const out = try derive(gpa, .{
+        .templates = &.{},
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .routes = &rs,
+        .classifications = &vs,
+    });
+    defer free(gpa, out);
+    try std.testing.expectEqual(@as(usize, 1), out.len);
+    try std.testing.expectEqualStrings("RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L7.POST.posts", out[0].id);
+    try std.testing.expectEqualStrings(
+        "route is API traffic and needs a backend operation: POST /posts, POST /posts/bulk",
+        out[0].message,
+    );
+}
+
+test "derive: a non-GET redirect route raises no backend-endpoint question" {
+    const gpa = std.testing.allocator;
+    // Fix round 1 (M-1). `scaffold.routeOutcome` reaches its `redirect` arm
+    // FIRST, whatever the verb, so a `post "/legacy" => redirect(...)` never
+    // becomes API traffic this stage can bind. The backend row on it was an
+    // orphan: in the manifest, attached to no route outcome, retirable by no
+    // answer. `RAILS_REDIRECT_HOST_CONFIG` is the question about it, and it
+    // fires whatever the verb.
+    const rs = [_]routes.Route{ctrlRoute("POST", "/legacy", "pages", "legacy", 9)};
+    const vs = [_]classify.Verdict{testVerdict(.redirect)};
+    const out = try derive(gpa, .{
+        .templates = &.{},
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .routes = &rs,
+        .classifications = &vs,
+    });
+    defer free(gpa, out);
+    try std.testing.expectEqual(@as(usize, 1), out.len);
+    try std.testing.expectEqualStrings("RAILS_REDIRECT_HOST_CONFIG.config/routes%2Erb.L9", out[0].id);
+}
+
+test "derive: #182's two route rows name the winning route and the uninterpretable path" {
+    const gpa = std.testing.allocator;
+    // Both used to be bare `addOpenNote` sentences in `scaffold.zig` with no
+    // id behind them, so no decisions file could name them and `complete`
+    // was unreachable for the app. The route indexes come from
+    // `resolve.contentClaims`, which `scaffold.zig` reads too.
+    const rs = [_]routes.Route{
+        ctrlRoute("GET", "/about", "pages", "about", 2),
+        ctrlRoute("GET", "/about/", "pages", "about_alias", 3),
+        ctrlRoute("GET", "/posts(.:format)", "posts", "index", 4),
+    };
+    const vs = [_]classify.Verdict{ testVerdict(.content), testVerdict(.content), testVerdict(.content) };
+    const collisions = [_]resolve.ContentCollision{.{ .route = 1, .with = 0 }};
+    const unsupported = [_]usize{2};
+    const out = try derive(gpa, .{
+        .templates = &.{},
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .routes = &rs,
+        .classifications = &vs,
+        .content_collisions = &collisions,
+        .unsupported_route_paths = &unsupported,
+    });
+    defer free(gpa, out);
+
+    try std.testing.expectEqual(@as(usize, 2), out.len);
+    try std.testing.expectEqualStrings("RAILS_CONTENT_PATH_COLLISION.config/routes%2Erb.L3", out[0].id);
+    try std.testing.expectEqualStrings("content path collision with GET /about: GET /about/", out[0].message);
+    try std.testing.expectEqualStrings("GET /about/", out[0].route_id.?);
+    try std.testing.expectEqual(@as(usize, 2), out[0].choices.len);
+    try std.testing.expectEqualStrings("retain", out[0].choices[0]);
+    try std.testing.expectEqualStrings("blocked", out[0].choices[1]);
+
+    try std.testing.expectEqualStrings("RAILS_ROUTE_PATH_UNSUPPORTED.config/routes%2Erb.L4", out[1].id);
+    try std.testing.expectEqualStrings(
+        "route path contains syntax this stage does not interpret: GET /posts(.:format)",
+        out[1].message,
+    );
+    try std.testing.expectEqual(@as(usize, 2), out[1].choices.len);
+}
+
+test "derive: an omitted content-claims input derives neither #182 row" {
+    const gpa = std.testing.allocator;
+    // Both fields default empty so this file's pre-Stage-3 call literals keep
+    // compiling, and an omitted value must LOSE the row rather than fabricate
+    // one. This is what fails if `rails.zig` stops calling
+    // `resolve.contentClaims`.
+    const rs = [_]routes.Route{
+        ctrlRoute("GET", "/about", "pages", "about", 2),
+        ctrlRoute("GET", "/about/", "pages", "about_alias", 3),
+    };
+    const vs = [_]classify.Verdict{ testVerdict(.content), testVerdict(.content) };
+    const out = try derive(gpa, .{
+        .templates = &.{},
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .routes = &rs,
+        .classifications = &vs,
+    });
+    defer free(gpa, out);
+    try std.testing.expectEqual(@as(usize, 0), out.len);
+}
+
+test "derive: the Stage 3 rows leak nothing under a FailingAllocator" {
+    // The Stage 1 sweep above never reaches the backend document, the
+    // journey, or any of the four new route rows.
+    const pw = nodeCode(.form_field, 1, 20, "password_field");
+    const journey_nodes = [_]fragments.Node{ openFormNode(1, 1, "user"), pw, endNodeAt(1, 60) };
+    var form = openFormNode(1, 1, "post");
+    form.attrs = &[_]fragments.Attr{.{ .key = "method", .value = "patch" }};
+    var link = linkNode("button_to \"Sign out\", session_path, method: :delete", "session", "Sign out", 2, 5);
+    link.attrs = &[_]fragments.Attr{.{ .key = "method", .value = "delete" }};
+    const plain_nodes = [_]fragments.Node{ form, endNodeAt(1, 40), link };
+    // Fix round 2 (NEW-1): the journey form lives in a PARTIAL the sign-in
+    // view renders, so the sweep walks the render graph too -- and the
+    // expected count below would be 8, not 7, if that walk stopped working.
+    const view_nodes = [_]fragments.Node{nodeCode(.render_partial, 2, 1, "shared/login_form")};
+    const tpls = [_]fragments.Template{
+        .{ .path = "app/views/sessions/new.html.erb", .nodes = @constCast(&view_nodes), .error_message = null, .error_line = null, .unreadable = null },
+        .{ .path = "app/views/shared/_login_form.html.erb", .nodes = @constCast(&journey_nodes), .error_message = null, .error_line = null, .unreadable = null },
+        .{ .path = "app/views/posts/edit.html.erb", .nodes = @constCast(&plain_nodes), .error_message = null, .error_line = null, .unreadable = null },
+    };
+    const sweep_renders = [_][]const u8{"app/views/shared/_login_form.html.erb"};
+    const graph = [_]TemplateRenders{
+        .{ .path = "app/views/sessions/new.html.erb", .renders = &sweep_renders },
+    };
+    const rs = [_]routes.Route{
+        ctrlRoute("GET", "/session/new", "sessions", "new", 2),
+        ctrlRoute("POST", "/session", "sessions", "create", 3),
+        ctrlRoute("GET", "/posts/edit", "posts", "edit", 4),
+        ctrlRoute("POST", "/posts", "posts", "create", 5),
+        ctrlRoute("GET", "/about", "pages", "about", 6),
+        ctrlRoute("GET", "/about/", "pages", "about_alias", 7),
+        ctrlRoute("GET", "/legacy(.:format)", "pages", "legacy", 8),
+    };
+    const vs = [_]classify.Verdict{
+        testVerdict(.content),
+        testVerdict(.backend),
+        testVerdict(.content),
+        testVerdict(.backend),
+        testVerdict(.content),
+        testVerdict(.content),
+        testVerdict(.content),
+    };
+    const views = [_]?[]const u8{
+        "app/views/sessions/new.html.erb",
+        null,
+        "app/views/posts/edit.html.erb",
+        null,
+        null,
+        null,
+        null,
+    };
+    const filters = [_]controllers.BeforeAction{
+        .{ .controller = "posts", .name = "require_login", .only = &.{}, .except = &.{}, .dynamic = false, .line = 2 },
+    };
+    const collisions = [_]resolve.ContentCollision{.{ .route = 5, .with = 4 }};
+    const unsupported = [_]usize{6};
+    const doc = testBackendDoc();
+
+    var fail_index: usize = 0;
+    while (true) : (fail_index += 1) {
+        if (fail_index > 2000) return error.SweepNeverReachedSuccess;
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
+        if (derive(failing.allocator(), .{
+            .templates = &tpls,
+            .layouts = &.{},
+            .controller_files = &.{},
+            .route_names = &.{},
+            .locale = null,
+            .routes = &rs,
+            .classifications = &vs,
+            .route_views = &views,
+            .filters = .{ .before_actions = &filters },
+            .content_collisions = &collisions,
+            .unsupported_route_paths = &unsupported,
+            .render_graph = &graph,
+            .backend = doc,
+        })) |out| {
+            defer free(std.testing.allocator, out);
+            // form, link, backend route x1 (the POST /posts; the journey POST
+            // is suppressed), auth journey, auth guard, collision,
+            // unsupported.
+            try std.testing.expectEqual(@as(usize, 7), out.len);
+            break;
+        } else |err| {
+            try std.testing.expectEqual(error.OutOfMemory, err);
+        }
+    }
 }
 
 test "derive: turbo and component roots each get their own code" {

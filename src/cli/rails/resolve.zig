@@ -20,6 +20,8 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const assets = @import("assets.zig");
+const classify = @import("classify.zig");
+const controllers = @import("controllers.zig");
 const routes = @import("routes.zig");
 
 // ---- route helpers -------------------------------------------------------
@@ -208,6 +210,50 @@ pub fn routeUrl(
     // A route with no segments at all is the root route, whose URL is "/".
     if (out.items.len == 0) try out.append(gpa, '/');
     return try out.toOwnedSlice(gpa);
+}
+
+/// Where a controller action's `redirect_to` sends the browser, as a site
+/// URL, or `null` when this run cannot say.
+///
+/// #167 Stage 3. Stage 2 recovered only THAT an action redirects
+/// (`controllers.ActionInfo.only_redirect`), which is why the handoff's
+/// `redirects[].to` was always null and a converted form island had nowhere
+/// to send the browser after a successful mutation. `controllers.
+/// RedirectInfo` now carries the target in one of three shapes, and this is
+/// the one place that turns all three into a URL:
+///
+///  * `name` -- a route-helper stem, resolved through `routeUrl` against the
+///    route table this run recovered (`root` -> `/`, `post` + `{"1"}` ->
+///    `/posts/1`);
+///  * `path` -- a literal string target, taken VERBATIM. It is whatever the
+///    author wrote and may be an absolute URL; normalising it here would
+///    invent a fact the source does not carry;
+///  * `dynamic` -- the sidecar could not reduce the target to anything, so
+///    there is nothing to resolve and the entry is SKIPPED.
+///
+/// The FIRST entry that resolves wins, and a `dynamic` one does not stop the
+/// search: an action whose first `redirect_to` is `redirect_to @post` and
+/// whose second is `redirect_to root_path` really does have a target this
+/// stage can name for the second branch, and reporting none would lose it.
+/// A `name` that resolves to no route is equally skipped -- an unknown
+/// helper is not a URL.
+///
+/// Contract 1 (self-freeing): all scratch is released; the returned URL is
+/// the only allocation that escapes and is the caller's to free.
+pub fn redirectUrl(
+    gpa: Allocator,
+    all: []const routes.Route,
+    list: []const controllers.RedirectInfo,
+) Allocator.Error!?[]const u8 {
+    for (list) |r| {
+        if (r.dynamic) continue;
+        if (r.name) |stem| {
+            if (try routeUrl(gpa, all, stem, r.args)) |url| return url;
+            continue;
+        }
+        if (r.path) |p| return try gpa.dupe(u8, p);
+    }
+    return null;
 }
 
 // ---- asset helpers -------------------------------------------------------
@@ -615,6 +661,189 @@ pub fn spaSegment(route_path: []const u8) []const u8 {
     return "";
 }
 
+// ---- content-path claims (#182) ------------------------------------------
+
+/// True when a route path stands for a family of URLs rather than one: a
+/// `:param` or `*glob` segment.
+///
+/// THE definition, and the only one. It lives here because `isPlaceholder`
+/// -- which `contentPath` uses to decide the very same thing -- lives here,
+/// and "dynamic" is defined as exactly "`contentPath` gives it no single
+/// static page". `findings.isDynamicRoutePath` used to be a second copy of
+/// the loop kept honest by a test; it now delegates, so there is nothing left
+/// to drift.
+///
+/// Contract 3 (caller-buffer): allocates nothing.
+pub fn isDynamicRoutePath(route_path: []const u8) bool {
+    var it = segments(route_path);
+    while (it.next()) |seg| {
+        if (isPlaceholder(seg)) return true;
+    }
+    return false;
+}
+
+/// One route that reduced to a `content/.../index.smd` an EARLIER route had
+/// already claimed. `with` is the index of that earlier route -- the finding
+/// has to name it ("content path collision with GET /about"), which is why
+/// this is a pair and not a bare index.
+pub const ContentCollision = struct {
+    /// Index into the `route_list` `contentClaims` was given.
+    route: usize,
+    /// Index of the route that got the path first.
+    with: usize,
+};
+
+/// Which routes cannot be written as a content page, and why. Both lists
+/// hold indexes into the `route_list` passed to `contentClaims`, ascending.
+///
+/// Contract 2 (owned-result): released by `deinit`.
+pub const ContentClaims = struct {
+    /// Ascending by `route`.
+    collisions: []ContentCollision,
+    /// Ascending. A static GET route whose path `contentPath` refuses --
+    /// `(.:format)` and friends, i.e. route syntax this stage does not
+    /// interpret.
+    unsupported: []usize,
+
+    pub fn deinit(self: ContentClaims, gpa: Allocator) void {
+        gpa.free(self.collisions);
+        gpa.free(self.unsupported);
+    }
+};
+
+/// #182: the two ways a route with a perfectly good classification still
+/// gets no page written for it, computed ONCE so `findings.zig`'s two
+/// route-level rows and `scaffold.zig`'s route walk cannot disagree about
+/// which routes they are. Before this, both were bare `addOpenNote`
+/// sentences in `scaffold.zig` with no finding id behind them, so no
+/// decisions file could name them and `complete` was unreachable for an app
+/// that had one.
+///
+/// The walk mirrors `scaffold.zig`'s `writeRoutes`/`routeOutcome` exactly,
+/// and it has to: the FIRST route to claim a content path is the one that
+/// keeps it, so the answer depends on the order routes are visited in.
+/// That order is `scaffold.routeLessThan` -- (path, verb, controller,
+/// action) -- chosen there so the outcome does not depend on the order the
+/// sidecar happened to emit the route table in, and restated here rather
+/// than exported because `scaffold.zig` imports this file, not the reverse.
+///
+/// The exclusions are scaffold's own earlier branches, in its order: a
+/// `redirect` route, a `backend` route or any non-GET/HEAD verb, and a
+/// dynamic path all return before the content path is ever computed.
+///
+/// **One difference from `scaffold.zig`, deliberately:** scaffold registers
+/// a claim only once the page is actually on disk (`out.artifacts.items.
+/// len > 0`), so a winner that turned out to have no view leaves the path
+/// free for the next route. This function cannot know that -- it has no
+/// template graph -- so it claims on the content path alone. The effect is
+/// confined to a route that both collides AND whose winner is viewless,
+/// which needs a duplicate declaration and a missing template together;
+/// `findings.routeHasNoView` documents the mirror-image gap on the other
+/// side. Task 4 folds `scaffold.zig` onto this function, which is when the
+/// difference disappears.
+///
+/// Contract 2 (owned-result): both slices are fresh `gpa` allocations,
+/// released by `ContentClaims.deinit`.
+pub fn contentClaims(
+    gpa: Allocator,
+    route_list: []const routes.Route,
+    classifications: []const classify.Verdict,
+) Allocator.Error!ContentClaims {
+    const order = try gpa.alloc(usize, route_list.len);
+    defer gpa.free(order);
+    for (order, 0..) |*slot, i| slot.* = i;
+    std.mem.sort(usize, order, route_list, routeLessThan);
+
+    // `path` is owned by this list; `route` is the index that claimed it.
+    const Claim = struct { path: []const u8, route: usize };
+    var claims: std.ArrayListUnmanaged(Claim) = .empty;
+    defer {
+        for (claims.items) |c| gpa.free(c.path);
+        claims.deinit(gpa);
+    }
+
+    var collisions: std.ArrayListUnmanaged(ContentCollision) = .empty;
+    errdefer collisions.deinit(gpa);
+    var unsupported: std.ArrayListUnmanaged(usize) = .empty;
+    errdefer unsupported.deinit(gpa);
+
+    for (order) |i| {
+        const r = route_list[i];
+        // A missing verdict is `null`, not `.backend`: an unclassified route
+        // is one this run has no verdict for, and the same stance
+        // `findings.DeriveInput.classifications` takes.
+        const class: ?classify.Class = if (i < classifications.len) classifications[i].class else null;
+        if (class == classify.Class.redirect) continue;
+        const is_get = std.mem.eql(u8, r.verb, "GET") or std.mem.eql(u8, r.verb, "HEAD");
+        if (class == classify.Class.backend or !is_get) continue;
+        if (isDynamicRoutePath(r.path)) continue;
+
+        const maybe_path = try contentPath(gpa, r.path);
+        const path = maybe_path orelse {
+            try unsupported.append(gpa, i);
+            continue;
+        };
+        var owned = true;
+        defer if (owned) gpa.free(path);
+
+        for (claims.items) |c| {
+            if (!std.mem.eql(u8, c.path, path)) continue;
+            try collisions.append(gpa, .{ .route = i, .with = c.route });
+            break;
+        } else {
+            try claims.append(gpa, .{ .path = path, .route = i });
+            owned = false;
+        }
+    }
+
+    // The walk order is scaffold's; the OUTPUT order is by route index, so a
+    // consumer can zip either list against the route table without sorting.
+    std.mem.sort(ContentCollision, collisions.items, {}, collisionLessThan);
+    std.mem.sort(usize, unsupported.items, {}, ascending);
+
+    const collisions_owned = try collisions.toOwnedSlice(gpa);
+    errdefer gpa.free(collisions_owned);
+    const unsupported_owned = try unsupported.toOwnedSlice(gpa);
+    return .{ .collisions = collisions_owned, .unsupported = unsupported_owned };
+}
+
+fn collisionLessThan(_: void, a: ContentCollision, b: ContentCollision) bool {
+    return a.route < b.route;
+}
+
+fn ascending(_: void, a: usize, b: usize) bool {
+    return a < b;
+}
+
+/// `scaffold.zig`'s own route order, restated (see `contentClaims`).
+fn routeLessThan(list: []const routes.Route, ai: usize, bi: usize) bool {
+    const a = list[ai];
+    const b = list[bi];
+    switch (std.mem.order(u8, a.path, b.path)) {
+        .lt => return true,
+        .gt => return false,
+        .eq => {},
+    }
+    switch (std.mem.order(u8, a.verb, b.verb)) {
+        .lt => return true,
+        .gt => return false,
+        .eq => {},
+    }
+    switch (orderOptional(a.controller, b.controller)) {
+        .lt => return true,
+        .gt => return false,
+        .eq => {},
+    }
+    return orderOptional(a.action, b.action) == .lt;
+}
+
+fn orderOptional(a: ?[]const u8, b: ?[]const u8) std.math.Order {
+    if (a == null and b == null) return .eq;
+    if (a == null) return .lt;
+    if (b == null) return .gt;
+    return std.mem.order(u8, a.?, b.?);
+}
+
 // ---- tests ---------------------------------------------------------------
 
 fn mkRoute(verb: []const u8, path: []const u8, name: ?[]const u8, certain: bool) routes.Route {
@@ -627,6 +856,76 @@ fn mkRoute(verb: []const u8, path: []const u8, name: ?[]const u8, certain: bool)
         .certain = certain,
         .origin = .static_ast,
     };
+}
+
+test "redirectUrl: a helper stem resolves against the route table" {
+    const gpa = std.testing.allocator;
+    const all = [_]routes.Route{
+        mkRoute("GET", "/", "root", true),
+        mkRoute("GET", "/posts/:id", "post", true),
+    };
+    const root = [_]controllers.RedirectInfo{.{ .name = "root", .args = &.{} }};
+    const url = (try redirectUrl(gpa, &all, &root)).?;
+    defer gpa.free(url);
+    try std.testing.expectEqualStrings("/", url);
+
+    const post = [_]controllers.RedirectInfo{.{ .name = "post", .args = &.{"7"} }};
+    const with_arg = (try redirectUrl(gpa, &all, &post)).?;
+    defer gpa.free(with_arg);
+    try std.testing.expectEqualStrings("/posts/7", with_arg);
+}
+
+test "redirectUrl: a literal path is taken verbatim and a dynamic entry is skipped, not fatal" {
+    const gpa = std.testing.allocator;
+    const all = [_]routes.Route{mkRoute("GET", "/about", "about", true)};
+    // A literal target resolves through nothing: it is whatever the author
+    // wrote, and normalising it would invent a fact the source does not carry.
+    const literal = [_]controllers.RedirectInfo{.{ .path = "https://example.com/x" }};
+    const a = (try redirectUrl(gpa, &all, &literal)).?;
+    defer gpa.free(a);
+    try std.testing.expectEqualStrings("https://example.com/x", a);
+
+    // `redirect_to @post` first, `redirect_to about_path` second: the FIRST
+    // that resolves wins, and a dynamic entry does not end the search -- an
+    // action with two branches really does have a target for the second.
+    const mixed = [_]controllers.RedirectInfo{
+        .{ .dynamic = true },
+        .{ .name = "about", .args = &.{} },
+    };
+    const b = (try redirectUrl(gpa, &all, &mixed)).?;
+    defer gpa.free(b);
+    try std.testing.expectEqualStrings("/about", b);
+}
+
+test "redirectUrl: nothing resolvable answers null rather than a guess" {
+    const gpa = std.testing.allocator;
+    const all = [_]routes.Route{mkRoute("GET", "/about", "about", true)};
+    try std.testing.expect(try redirectUrl(gpa, &all, &.{}) == null);
+    const dyn = [_]controllers.RedirectInfo{.{ .dynamic = true }};
+    try std.testing.expect(try redirectUrl(gpa, &all, &dyn) == null);
+    // A helper naming no route this run recovered is not a URL.
+    const ghost = [_]controllers.RedirectInfo{.{ .name = "ghost", .args = &.{} }};
+    try std.testing.expect(try redirectUrl(gpa, &all, &ghost) == null);
+}
+
+test "redirectUrl leaks nothing under a FailingAllocator" {
+    const all = [_]routes.Route{mkRoute("GET", "/posts/:id", "post", true)};
+    const list = [_]controllers.RedirectInfo{
+        .{ .dynamic = true },
+        .{ .name = "post", .args = &.{"a b"} },
+    };
+    var i: usize = 0;
+    while (i < 24) : (i += 1) {
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = i });
+        const gpa = failing.allocator();
+        if (redirectUrl(gpa, &all, &list)) |maybe| {
+            if (maybe) |u| gpa.free(u);
+            break;
+        } else |err| switch (err) {
+            error.OutOfMemory => {},
+        }
+    }
+    try std.testing.expect(i < 24);
 }
 
 test "routeUrl: a zero-param helper is its route's path" {
@@ -1011,4 +1310,137 @@ test "spaSegment: the first path segment names the SPA" {
     try std.testing.expectEqualStrings("posts", spaSegment("/posts/:id"));
     try std.testing.expectEqualStrings("posts", spaSegment("/posts"));
     try std.testing.expectEqualStrings("", spaSegment("/"));
+}
+
+// ---- #182: contentClaims -------------------------------------------------
+
+fn claimRoute(verb: []const u8, path: []const u8, action: []const u8, line: u64) routes.Route {
+    return .{
+        .verb = verb,
+        .path = path,
+        .controller = "pages",
+        .action = action,
+        .name = null,
+        .certain = true,
+        .origin = .static_ast,
+        .source = .{ .file = "config/routes.rb", .line = line },
+    };
+}
+
+fn claimVerdict(class: classify.Class) classify.Verdict {
+    return .{ .class = class, .reason = "test", .candidates = &.{} };
+}
+
+test "contentClaims: the second route reducing to one content path is the collision, whatever the input order" {
+    const gpa = std.testing.allocator;
+    // `/about` and `/about/` are one `content/about/index.smd` after
+    // `contentPath` normalises the trailing slash, and a Rails app can
+    // declare both. The WINNER is decided by scaffold's route order (path,
+    // verb, controller, action), not by the order the sidecar emitted --
+    // so both input orders must name the same pair.
+    const forward = [_]routes.Route{
+        claimRoute("GET", "/about", "about", 2),
+        claimRoute("GET", "/about/", "about_alias", 3),
+        claimRoute("GET", "/help", "help", 4),
+    };
+    const vs = [_]classify.Verdict{ claimVerdict(.content), claimVerdict(.content), claimVerdict(.content) };
+    const a = try contentClaims(gpa, &forward, &vs);
+    defer a.deinit(gpa);
+    try std.testing.expectEqual(@as(usize, 1), a.collisions.len);
+    try std.testing.expectEqual(@as(usize, 1), a.collisions[0].route);
+    try std.testing.expectEqual(@as(usize, 0), a.collisions[0].with);
+    try std.testing.expectEqual(@as(usize, 0), a.unsupported.len);
+
+    const reverse = [_]routes.Route{
+        claimRoute("GET", "/about/", "about_alias", 3),
+        claimRoute("GET", "/about", "about", 2),
+        claimRoute("GET", "/help", "help", 4),
+    };
+    const b = try contentClaims(gpa, &reverse, &vs);
+    defer b.deinit(gpa);
+    try std.testing.expectEqual(@as(usize, 1), b.collisions.len);
+    // Index 0 is now `/about/`, and `/about` (index 1) still sorts first, so
+    // the loser is index 0 and the winner index 1: the same two routes.
+    try std.testing.expectEqual(@as(usize, 0), b.collisions[0].route);
+    try std.testing.expectEqual(@as(usize, 1), b.collisions[0].with);
+}
+
+test "contentClaims: a path contentPath refuses is unsupported, not a collision" {
+    const gpa = std.testing.allocator;
+    const rs = [_]routes.Route{
+        claimRoute("GET", "/posts(.:format)", "index", 2),
+        claimRoute("GET", "/about", "about", 3),
+    };
+    const vs = [_]classify.Verdict{ claimVerdict(.content), claimVerdict(.content) };
+    const c = try contentClaims(gpa, &rs, &vs);
+    defer c.deinit(gpa);
+    try std.testing.expectEqual(@as(usize, 0), c.collisions.len);
+    try std.testing.expectEqual(@as(usize, 1), c.unsupported.len);
+    try std.testing.expectEqual(@as(usize, 0), c.unsupported[0]);
+}
+
+test "contentClaims: redirect, backend, non-GET and dynamic routes never claim a path" {
+    const gpa = std.testing.allocator;
+    // Each of these returns from `scaffold.routeOutcome` before the content
+    // path is computed, so none of them can win or lose one. `/about`
+    // appears four times over and still collides with nothing.
+    const rs = [_]routes.Route{
+        claimRoute("GET", "/about", "about", 2),
+        claimRoute("GET", "/about", "redirected", 3),
+        claimRoute("GET", "/about", "api", 4),
+        claimRoute("POST", "/about", "create", 5),
+        claimRoute("GET", "/posts/:id", "show", 6),
+    };
+    const vs = [_]classify.Verdict{
+        claimVerdict(.content),
+        claimVerdict(.redirect),
+        claimVerdict(.backend),
+        claimVerdict(.content),
+        claimVerdict(.content),
+    };
+    const c = try contentClaims(gpa, &rs, &vs);
+    defer c.deinit(gpa);
+    try std.testing.expectEqual(@as(usize, 0), c.collisions.len);
+    try std.testing.expectEqual(@as(usize, 0), c.unsupported.len);
+}
+
+test "contentClaims: an unclassified route is not treated as backend" {
+    const gpa = std.testing.allocator;
+    // Same stance `findings.DeriveInput.classifications` takes: a SHORT
+    // slice means "no verdict", which must not silently exempt the route.
+    const rs = [_]routes.Route{
+        claimRoute("GET", "/about", "about", 2),
+        claimRoute("GET", "/about/", "alias", 3),
+    };
+    const c = try contentClaims(gpa, &rs, &.{});
+    defer c.deinit(gpa);
+    try std.testing.expectEqual(@as(usize, 1), c.collisions.len);
+}
+
+test "contentClaims under a FailingAllocator leaks nothing on any partial allocation" {
+    const rs = [_]routes.Route{
+        claimRoute("GET", "/about", "about", 2),
+        claimRoute("GET", "/about/", "alias", 3),
+        claimRoute("GET", "/posts(.:format)", "index", 4),
+        claimRoute("GET", "/help", "help", 5),
+    };
+    const vs = [_]classify.Verdict{
+        claimVerdict(.content),
+        claimVerdict(.content),
+        claimVerdict(.content),
+        claimVerdict(.content),
+    };
+    var fail_index: usize = 0;
+    while (true) : (fail_index += 1) {
+        if (fail_index > 500) return error.SweepNeverReachedSuccess;
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
+        if (contentClaims(failing.allocator(), &rs, &vs)) |c| {
+            defer c.deinit(std.testing.allocator);
+            try std.testing.expectEqual(@as(usize, 1), c.collisions.len);
+            try std.testing.expectEqual(@as(usize, 1), c.unsupported.len);
+            break;
+        } else |err| {
+            try std.testing.expectEqual(error.OutOfMemory, err);
+        }
+    }
 }

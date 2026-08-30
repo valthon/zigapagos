@@ -896,6 +896,19 @@ pub const DecisionsInput = struct {
     /// error ones. When null, a private list is used and discarded -- fine
     /// for a caller that only needs the error variant.
     problems: ?*std.ArrayListUnmanaged(decisions.Problem) = null,
+    /// #167 Stage 3: the ZigBase OpenAPI document `--backend FILE` named,
+    /// read and owned by `migrate.zig` (which reports its own parse errors
+    /// as exit 1). It rides in on `DecisionsInput` rather than on a
+    /// parameter of its own because it is read at exactly the same two
+    /// points the decisions file is -- `findings.derive`, which turns its
+    /// operations into `choices`, and `decisions.parse`, which validates an
+    /// auth-collection name against it.
+    ///
+    /// Borrowed for the duration of `discover`. Nothing in the returned
+    /// `Discovery` points into it: `findings.Finding.choices` is a deep copy
+    /// for exactly this reason, so `migrate.zig` may free the document
+    /// whenever it likes.
+    backend: ?backend.Document = null,
 };
 
 pub fn discover(
@@ -1141,6 +1154,36 @@ pub fn discover(
     var route_template_lists: std.ArrayListUnmanaged([]const []const u8) = .empty;
     defer route_template_lists.deinit(gpa);
     for (classify_result.route_templates) |rt| try route_template_lists.append(gpa, rt.templates);
+    // #167 Stage 3: a sixth borrowed scratch list -- the VIEW each route
+    // resolved, index-aligned with the route table. `resolve.viewFor` is the
+    // same lookup `scaffold.zig` and `findings.routeHasNoView` make, so the
+    // journey detection and the form row's resource cannot disagree with
+    // either about which template belongs to which route. Every string
+    // belongs to `classify_result`, which outlives the call.
+    var route_view_list: std.ArrayListUnmanaged(?[]const u8) = .empty;
+    defer route_view_list.deinit(gpa);
+    for (classify_result.route_templates, 0..) |rt, i| {
+        const r = route_result.routes[i];
+        try route_view_list.append(gpa, resolve.viewFor(rt.templates, r.controller, r.action));
+    }
+    // #182: which routes get no content page written for them, computed
+    // ONCE. `scaffold.zig` walks the same claims itself today (Task 4 folds
+    // it onto this call); the two rows below are the operator's half of the
+    // id-less notes it used to emit.
+    const claims = try resolve.contentClaims(gpa, route_result.routes, classifications);
+    defer claims.deinit(gpa);
+    // #167 Stage 3 fix round 2 (NEW-1): a seventh borrowed scratch list --
+    // the render graph, so assumption A5's journey detection can see that
+    // `sessions/new.html.erb` reaches `shared/_login_form.html.erb`. The
+    // edges are Stage 1's own already-resolved ones (`resolvePartialTarget`,
+    // depth-capped at `max_partial_depth`); `findings.zig` only reads them.
+    // Every string belongs to `classify_result.templates`, which outlives
+    // this call and escapes as `Discovery.templates`.
+    var render_graph: std.ArrayListUnmanaged(findings.TemplateRenders) = .empty;
+    defer render_graph.deinit(gpa);
+    for (classify_result.templates) |t| {
+        try render_graph.append(gpa, .{ .path = t.path, .renders = t.renders });
+    }
     const finding_list = try findings.derive(gpa, .{
         .templates = frag_result.templates,
         .layouts = ctrl_result.layouts,
@@ -1173,6 +1216,22 @@ pub fn discover(
         // `Discovery.route_templates`.
         .route_templates = route_template_lists.items,
         .unsupported_templates = unsupported_templates.items,
+        // #167 Stage 3. `ctrl_result` is still alive here (its `defer
+        // controllers.freeResult` fires with this function), so the filters
+        // are read straight from it; `Discovery.before_actions` /
+        // `Discovery.filterSet()` exist for the consumers that run AFTER
+        // `discover` returns.
+        //
+        // The whole `FilterSet` and not just `before_actions` (fix round 1,
+        // I-1): `RAILS_ROUTE_AUTH_GUARD` has to follow `class Child < Parent`
+        // to see `ApplicationController`'s `authenticate_user!`, and honour
+        // any `skip_before_action` that removes it.
+        .filters = ctrl_result.filterSet(),
+        .route_views = route_view_list.items,
+        .content_collisions = claims.collisions,
+        .unsupported_route_paths = claims.unsupported,
+        .render_graph = render_graph.items,
+        .backend = dec.backend,
     });
     // Escapes as `Discovery.findings`; `freeDiscovery` owns it on the
     // success path, this covers every fallible step between here and the
@@ -1197,6 +1256,11 @@ pub fn discover(
             gpa,
             decision_bytes,
             finding_list,
+            // #167 Stage 3: the names an `island` answer on
+            // `RAILS_AUTH_JOURNEY` may give as its artifact. Empty without a
+            // `--backend` document, which `decisions.parse` reads as "no
+            // list to check against" rather than as "no name is valid".
+            if (dec.backend) |doc| doc.auth_collections else &.{},
             dec.problems orelse &local_problems,
         );
         // One blocker per stale answer, `integrity = false` and `.warn`: the
