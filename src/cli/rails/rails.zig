@@ -9,6 +9,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
 pub const assets = @import("assets.zig");
+pub const backend = @import("backend.zig");
 pub const blockers = @import("blockers.zig");
 pub const classify = @import("classify.zig");
 pub const convert = @import("convert.zig");
@@ -247,6 +248,49 @@ pub const Discovery = struct {
     ///
     /// Contract 2: released by `freeDiscovery` via `decisions.free`.
     decisions: decisions.Parsed,
+    /// #167 Stage 3: the controller-action shapes `discoverControllers`
+    /// recovered, so the backend boundary can read `ActionInfo.redirects`
+    /// AFTER `discover` returns -- a bound form island has to send the
+    /// browser where the Rails action sent it, and a `redirect` route's
+    /// handoff `to` is filled from the same fact. Duped rather than
+    /// referenced for the identical reason `routes` above is: `ctrl_result`
+    /// is freed by `discover`'s own `defer controllers.freeResult` before
+    /// this struct reaches its caller.
+    ///
+    /// Contract 2: released by `freeDiscovery` via `controllers.freeActions`.
+    actions: []controllers.ActionInfo,
+    /// #167 Stage 3 (assumption A7): every class-level `before_action` the
+    /// same op recovered, flattened across controllers. A static page cannot
+    /// enforce a Rails auth filter, so `RAILS_ROUTE_AUTH_GUARD` asks the
+    /// operator instead -- which needs the filter's name and scope to reach
+    /// both `findings.derive` (inside `discover`) and the scaffold's note
+    /// (outside it). Duped for the same reason `actions` above is.
+    ///
+    /// Contract 2: released by `freeDiscovery` via
+    /// `controllers.freeBeforeActions`.
+    before_actions: []controllers.BeforeAction,
+    /// #167 Stage 3 fix round 1 (I-1): `skip_before_action` declarations,
+    /// and the `class Child < Parent` edges between controller keys. Both are
+    /// needed to answer "does a filter run for THIS route": a filter declared
+    /// on `ApplicationController` reaches `posts#index` only through
+    /// `parents`, and a `SessionsController` that skips it is only visible
+    /// through `skip_before_actions`. Build the view with `filterSet` below
+    /// rather than pairing the three lists up by hand.
+    ///
+    /// Contract 2: released by `freeDiscovery` via
+    /// `controllers.freeBeforeActions` / `controllers.freeParents`.
+    skip_before_actions: []controllers.BeforeAction,
+    parents: []controllers.ParentEdge,
+
+    /// Contract 3: the borrowed view `controllers.guardsFor` and
+    /// `controllers.authGuardFor` take. See `controllers.FilterSet`.
+    pub fn filterSet(self: Discovery) controllers.FilterSet {
+        return .{
+            .before_actions = self.before_actions,
+            .skips = self.skip_before_actions,
+            .parents = self.parents,
+        };
+    }
 };
 
 /// Contract 2 counterpart to `Discovery`: releases `report` plus the Task 4
@@ -289,6 +333,12 @@ pub fn freeDiscovery(gpa: Allocator, d: Discovery) void {
     // `discover` leaves the two slices empty rather than null, so this is one
     // release path, not two.
     decisions.free(gpa, d.decisions);
+    // #167 Stage 3: both are Discovery-owned deep copies of the
+    // `controllers.Result` `discover` already released; see their own docs.
+    controllers.freeActions(gpa, d.actions);
+    controllers.freeBeforeActions(gpa, d.before_actions);
+    controllers.freeBeforeActions(gpa, d.skip_before_actions);
+    controllers.freeParents(gpa, d.parents);
 }
 
 /// `discovery.ruby`, combined across BOTH sidecar ops. Each op
@@ -1236,6 +1286,23 @@ pub fn discover(
     // only read the paths, so nothing outlives this call.
     fragments.freeI18nErrors(gpa, frag_result.i18n_errors);
 
+    // #167 Stage 3: deep copies, because `ctrl_result` dies with this
+    // function (`defer controllers.freeResult` above) and both fields are
+    // read by consumers that only ever see the returned `Discovery` --
+    // `scaffold.write` takes `&discovery` and nothing else. Same choice, and
+    // the same reason, as `dupeRoutesForDiscovery` above.
+    const owned_actions = try controllers.dupeActions(gpa, ctrl_result.actions);
+    errdefer controllers.freeActions(gpa, owned_actions);
+    const owned_before_actions = try controllers.dupeBeforeActions(gpa, ctrl_result.before_actions);
+    errdefer controllers.freeBeforeActions(gpa, owned_before_actions);
+    const owned_skips = try controllers.dupeBeforeActions(gpa, ctrl_result.skip_before_actions);
+    errdefer controllers.freeBeforeActions(gpa, owned_skips);
+    const owned_parents = try controllers.dupeParents(gpa, ctrl_result.parents);
+    // Nothing allocates after this today, but the `errdefer` does not depend
+    // on that staying true: the next line appended here would otherwise leak
+    // all four of these silently. Same shape as the three above.
+    errdefer controllers.freeParents(gpa, owned_parents);
+
     return .{
         .report = body,
         .integrity_blocker_count = integrity_blocker_count,
@@ -1260,6 +1327,10 @@ pub fn discover(
         .findings = finding_list,
         .i18n_locale = frag_result.locale,
         .decisions = parsed_decisions,
+        .actions = owned_actions,
+        .before_actions = owned_before_actions,
+        .skip_before_actions = owned_skips,
+        .parents = owned_parents,
     };
 }
 

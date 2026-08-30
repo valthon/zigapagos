@@ -403,17 +403,53 @@ end', [
   { verb: "GET", path: "/x", controller: "api/a", action: "b" },
 ]
 
-check_full "singular resource has exactly the 7 non-index actions",
+# #176: the controller is the PLURAL of the resource name while the PATH
+# stays singular. This test used to pin `controller: "profile"`, which is
+# not what Rails does -- SingletonResource#controller is `options[
+# :controller] || plural`, and `plural` is `name.to_s.pluralize`. The wrong
+# pin was load-bearing in the worst way: it made every downstream join
+# (controller file, views directory, the sessions/registrations names the
+# auth journey is detected by) miss on every real app, and the only
+# workaround was an explicit `controller:` override no real app needs.
+check_full "singular resource has exactly the 7 non-index actions, on the PLURAL controller",
            'Rails.application.routes.draw do
   resource :profile
 end', [
-  { verb: "POST",   path: "/profile",      controller: "profile", action: "create" },
-  { verb: "GET",    path: "/profile/new",  controller: "profile", action: "new" },
-  { verb: "GET",    path: "/profile/edit", controller: "profile", action: "edit" },
-  { verb: "GET",    path: "/profile",      controller: "profile", action: "show" },
-  { verb: "PATCH",  path: "/profile",      controller: "profile", action: "update" },
-  { verb: "PUT",    path: "/profile",      controller: "profile", action: "update" },
-  { verb: "DELETE", path: "/profile",      controller: "profile", action: "destroy" },
+  { verb: "POST",   path: "/profile",      controller: "profiles", action: "create" },
+  { verb: "GET",    path: "/profile/new",  controller: "profiles", action: "new" },
+  { verb: "GET",    path: "/profile/edit", controller: "profiles", action: "edit" },
+  { verb: "GET",    path: "/profile",      controller: "profiles", action: "show" },
+  { verb: "PATCH",  path: "/profile",      controller: "profiles", action: "update" },
+  { verb: "PUT",    path: "/profile",      controller: "profiles", action: "update" },
+  { verb: "DELETE", path: "/profile",      controller: "profiles", action: "destroy" },
+]
+
+# The three ways that rule can be got wrong, each pinned separately:
+#
+#   1. an IRREGULAR plural, which "append an s" would spell "persons" --
+#      `resource :person` really is PeopleController in Rails;
+#   2. an explicit `controller:` still winning, so an app that names a
+#      controller Rails would not derive keeps working;
+#   3. `resources` (plural) NOT being pluralized again.
+check_full "a singular resource's controller is the irregular plural, not name + s",
+           'Rails.application.routes.draw do
+  resource :person, only: [:show]
+end', [
+  { verb: "GET", path: "/person", controller: "people", action: "show" },
+]
+
+check_full "an explicit controller: still beats the derived plural",
+           'Rails.application.routes.draw do
+  resource :session, only: [:new], controller: "login"
+end', [
+  { verb: "GET", path: "/session/new", controller: "login", action: "new" },
+]
+
+check_full "a plural resources name is not pluralized a second time",
+           'Rails.application.routes.draw do
+  resources :posts, only: [:index]
+end', [
+  { verb: "GET", path: "/posts", controller: "posts", action: "index" },
 ]
 
 # Discriminates that :line is the ROUTE's own line, not the enclosing
@@ -476,6 +512,21 @@ check_names "singular resource names",
               ["GET", "/profile/edit", "edit_profile"], ["GET", "/profile", "profile"],
               ["PATCH", "/profile", "profile"], ["PUT", "/profile", "profile"],
               ["DELETE", "/profile", "profile"],
+            ]
+
+# #176 from the naming side: a singular resource's route-helper names are
+# untouched by the controller change -- `session_path`, not
+# `sessions_path`. Rails pluralizes the controller and nothing else, so a
+# fix that reached the stem too would break every `<%= session_path %>` in
+# the app it was supposed to make work.
+check_names "a singular resource's names stay singular even though its controller does not",
+            "Rails.application.routes.draw do\n" \
+            "  resource :session, only: [:new, :create, :destroy]\n" \
+            "end\n",
+            [
+              ["POST", "/session", "session"],
+              ["GET", "/session/new", "new_session"],
+              ["DELETE", "/session", "session"],
             ]
 
 check_names "member/collection/new routes inside resources",

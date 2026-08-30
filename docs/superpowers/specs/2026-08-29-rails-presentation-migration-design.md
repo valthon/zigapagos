@@ -95,6 +95,14 @@ veto one without reading the mechanism that follows it.
    conversion run exits non-zero while any user-facing route has neither a
    migrated artifact nor an acknowledged finding. The first run of any real
    app therefore fails, by design. `--strict` keeps its existing meaning.
+
+   *As shipped (Stage 3, ruling S3-R4).* An unusable `--backend` or
+   `--decisions` **path** — missing, a directory, unreadable, over the read
+   cap — prints `error: <flag> <path> could not be read: <OS error>` and
+   returns **1**. It does not take the `fatal.*` path, which panics under a
+   debug build and delivered 134 to every shell e2e. A path the operator typed
+   wrong is their input being wrong, the same class as an unusable decisions
+   file, which already printed and returned 1.
 6. **Digested asset URLs are recorded, not reproduced.** `public/`-rooted
    files keep their exact URL. Pipeline assets are copied undigested and every
    old→new URL pair is written to the handoff so the host can redirect. A
@@ -274,6 +282,18 @@ plus `custom:<path>`, `retain`, `blocked`:
 - every `form` fragment's action;
 - every `link_to`/`button_to` with `method:`/`data-turbo-method`.
 
+*As shipped (Stage 3, rulings A3 and S3-R2).* `custom:/<path>` is accepted by
+the validator on `RAILS_BACKEND_ENDPOINT` only and is **not** enumerated in
+`choices[]` — a free-form token cannot be. And the route-level row does not
+fold a whole `routes.rb` line into one question the way every other
+route-scoped code does: `resources :posts` declares three verbs on one line
+and `resources :posts, :comments` two resources, and one ZigBase operation
+serves neither set. That row alone groups by `(line, verb, resource)`, with an
+id of the shape
+`RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L<line>.<VERB>.<resource>`; the
+`resource` component is always emitted, empty when the controller never
+resolved, so the id has a fixed component count.
+
 A suggestion is evidence, not a decision: the finding is open until the
 operator picks. The chosen operation is written into the generated form
 island as a typed call through `lib/zb.ts`, a generated client factory:
@@ -287,6 +307,24 @@ Sessions and authenticity tokens are replaced by that boundary: same-origin
 cookies, `CookieAuthStore`, no CSRF meta tag. `csrf` fragments are dropped
 with a note rather than a finding because there is nothing to decide.
 
+*As shipped (Stage 3, ruling A1).* Those names were a sketch and none of them
+exists. `@zigbase/client` exports `createClient`, `LocalAuthStore`,
+`CookieAuthStore`, `ZigbaseError` and `isZigbaseError` — there is no `ZigBase`
+class and no `ClientResponseError`. The emitted file is
+
+```ts
+import { createClient, LocalAuthStore } from "@zigbase/client";
+export const zb = createClient("", { authStore: new LocalAuthStore() });
+```
+
+with `authCollection: "<name>"` added when an auth scaffold reached the target.
+`LocalAuthStore` rather than `CookieAuthStore` because the transport sends
+`Authorization: Bearer` and never `credentials` or a CSRF header, so a cookie
+session is unusable through the client — `CookieAuthStore` is a serializer the
+transport never reads. The "same-origin cookies" sentence above is therefore
+wrong about the mechanism, and right about the conclusion: the CSRF meta tag
+is still dropped with a note, because ZigBase does not use one.
+
 **Auth journeys.** Devise routes are already `RAILS_ROUTE_GEM_GENERATED`
 blockers; plain `sessions#new`/`registrations#new` forms are ordinary `form`
 fragments whose fields are `email`/`password`(`_confirmation`). Either way the
@@ -298,6 +336,18 @@ scaffolds `components/AuthForm.island.tsx` — `authWithPassword` for sign-in,
 blog example's shape). `current_user` in a template therefore has a concrete
 `island` choice, not just a blocker.
 
+*As shipped (Stage 3, the complementary-pair ruling).* `AuthStatus` renders
+**both** branches of the question itself, so a nav that greets a signed-in
+visitor and links a signed-out one is two regions mounting one component. A
+complementary pair in ONE template — `if X` beside `unless X` on the same
+predicate, either polarity, `!`/`not` included — is therefore **one mount**:
+the second region is absorbed, its id still settles, and the route's note
+names the folded half. Two regions of the same polarity, two on different
+predicates, and the same pair in two templates are two controls and mount
+twice. The asymmetry is deliberate — a duplicate mount is a visible blemish,
+a wrong pairing silently deletes a control — so every uncertain case falls to
+two mounts.
+
 **Enforcement stays server-side.** Generated islands hide or disable on client
 auth state for convenience only; each carries a header comment saying so, the
 doc says so, and the parity checklist contains a `submit_denied` entry per
@@ -308,6 +358,10 @@ regardless of what the island shows.
 `ClientResponseError.data` field errors in the position the ERB rendered
 `full_messages`; the `validation_error` parity entry submits a required field
 empty and expects the error region to be non-empty.
+
+*As shipped (Stage 3, ruling A1).* The error type is `ZigbaseError`, tested
+with `isZigbaseError(err)`, and its `data` is `Record<string, FieldError>`.
+The `parity[]` half is Stage 5 and is not built.
 
 ### Interactivity and assets
 

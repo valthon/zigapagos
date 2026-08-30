@@ -593,6 +593,11 @@ fn emptyDiscovery() rails.Discovery {
         .findings = &.{},
         .i18n_locale = null,
         .decisions = .empty,
+        // #167 Stage 3: inputs to the backend boundary, not to this emitter.
+        .actions = &.{},
+        .before_actions = &.{},
+        .skip_before_actions = &.{},
+        .parents = &.{},
     };
 }
 

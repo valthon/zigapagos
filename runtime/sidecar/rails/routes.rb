@@ -427,7 +427,20 @@ module RailsRoutes
         end
 
         base = join(sc.path, path_opt || nm)
-        ctrl = ctrl_opt || nm
+        # #176: a SINGULAR `resource` routes to the PLURAL controller.
+        # Rails' SingletonResource#controller is `options[:controller] ||
+        # plural`, and its `plural` is `name.to_s.pluralize` -- so
+        # `resource :session` is SessionsController, served from
+        # app/views/sessions/, while its PATH and its route-helper names
+        # stay singular (`/session`, `session_path`, `new_session_path`).
+        # Deriving "session" here named a controller file no real app has,
+        # so every downstream join (the controller's actions, its views,
+        # the auth-journey detection that keys on the `sessions`/
+        # `registrations` controller names) missed, and the only way to
+        # migrate a real Rails auth flow was an explicit `controller:`
+        # override the app does not need. `resources` is unaffected: its
+        # name is already the plural.
+        ctrl = ctrl_opt || (singular ? Inflect.pluralize(nm) : nm)
         ctrl = sc.module_.empty? ? ctrl : "#{sc.module_}/#{ctrl}"
 
         actions = singular ? %i[new create edit show update destroy] : %i[index create new edit show update destroy]

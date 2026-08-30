@@ -88,6 +88,112 @@ pub const ActionInfo = struct {
     action: []const u8 = "",
     only_redirect: bool = false,
     renders_json: bool = false,
+    /// #167 Stage 3: one entry per `redirect_to` ANYWHERE in the action
+    /// body, in source order -- not just the single-statement case
+    /// `only_redirect` above answers. Contract 2 (owned-result): each
+    /// `name`/`args[]` string is a fresh `gpa` allocation; `freeActions` is
+    /// the release. Empty for an action with no redirect at all, and also
+    /// for a response from a sidecar that predates the field.
+    redirects: []const RedirectInfo = &.{},
+};
+
+/// One `redirect_to` target recovered from a controller action (#167 Stage
+/// 3). Stage 2 recorded only THAT an action was a pure redirect
+/// (`ActionInfo.only_redirect`), which is why the handoff's `redirects[].to`
+/// was always null and a converted form island had nowhere to send the
+/// browser after a successful mutation.
+///
+/// `name` is the route-helper STEM -- `root` for `root_path`, `post` for
+/// `post_url` -- because that is what `resolve.routeUrl` resolves against
+/// the route table this run recovered from `config/routes.rb`.
+///
+/// `path` is the second resolvable variant (fix round 1, I-3): a literal
+/// string target (`redirect_to "/about"`), usable verbatim. It is kept apart
+/// from `name` because it resolves through nothing -- there is no helper to
+/// look up -- and apart from `dynamic` because throwing away a target the
+/// sidecar could read would be a straight loss. The string is EXACTLY as
+/// written and may be an absolute URL; it is neither normalised nor checked
+/// against the route table.
+///
+/// `dynamic` is the sidecar's honest "I could not reduce this to a target at
+/// all": `redirect_to @post`, a local variable, a non-literal helper
+/// argument (`post_path(@post)`), an interpolated string, and
+/// `redirect_back`/`redirect_back_or_to`/`redirect_to :back`, whose
+/// destination is a request-time `Referer`. A `dynamic` entry carries no
+/// `name`, `path` or `args`; a consumer must leave the redirect unresolved
+/// rather than invent a target.
+///
+/// Exactly one of the three is meaningful per entry, but they are three
+/// independent fields rather than a tagged union for the same reason
+/// `LayoutInfo`'s are: the wire shape is not one either.
+///
+/// Contract 2 (owned-result), same as `ActionInfo`: `name`, `path` and every
+/// element of `args` are fresh `gpa` allocations independent of the decoded
+/// response's JSON arena.
+pub const RedirectInfo = struct {
+    name: ?[]const u8 = null,
+    /// The helper's positional arguments, as the literal text a URL needs
+    /// (`post_path(1)` -> `.{"1"}`). Empty for a helper called with none.
+    args: []const []const u8 = &.{},
+    path: ?[]const u8 = null,
+    dynamic: bool = false,
+};
+
+/// One class-level `before_action` declaration (#167 Stage 3, assumption
+/// A7). A static page cannot enforce a Rails filter, so a page route whose
+/// controller runs an auth-looking one has to raise a question rather than
+/// ship silently public -- `guards` and `looksLikeAuthGuard` below are the
+/// two predicates that decide when.
+///
+/// One entry per SYMBOL, not per call: `before_action :a, :b` registers two
+/// independent filters in Rails, and each name is separately something the
+/// heuristic reads. `after_action`/`around_action` are not collected at all
+/// -- they run after or around the response, so they cannot gate whether the
+/// page is reachable.
+///
+/// `dynamic` means the sidecar found a filter it could not read as a name: a
+/// block, a proc/lambda, a constant, or an `only:`/`except:` value that is
+/// not a symbol or an array of symbols. Such an entry carries no `name` and
+/// empty scope lists, and BOTH predicates below answer `false` for it --
+/// see `guards`'s doc for why an unreadable scope must not be treated as an
+/// empty (i.e. all-covering) one.
+///
+/// Contract 2 (owned-result): `controller`, `name` and every element of
+/// `only`/`except` are fresh `gpa` allocations; `freeBeforeActions` is the
+/// release.
+pub const BeforeAction = struct {
+    controller: []const u8 = "",
+    name: ?[]const u8 = null,
+    only: []const []const u8 = &.{},
+    except: []const []const u8 = &.{},
+    dynamic: bool = false,
+    line: u64 = 0,
+};
+
+/// One `class Child < Parent` edge between two controller keys (fix round 1,
+/// I-1). Rails filters INHERIT, and the commonest auth idiom of all declares
+/// `before_action :authenticate_user!` once on `ApplicationController`: that
+/// filter arrives keyed `application` while every route names `posts`,
+/// `pages`, ... , so without this edge no consumer can attribute it and
+/// every guarded page reports as unguarded -- the exact failure
+/// `BeforeAction` exists to prevent.
+///
+/// Both fields are controller keys of the same shape `ActionInfo.controller`
+/// uses. `parent` is derived from the superclass CONSTANT NAME (the child's
+/// source is the only place it appears), so it is a convention-based guess in
+/// the way a path-derived key is not -- see `analyze.rb`'s
+/// `controller_key_from_class_name`. A wrong guess costs only that hop: the
+/// walk finds no filters under that key and stops.
+///
+/// An edge is emitted only when the superclass resolves to an app controller
+/// key; `ApplicationController < ActionController::Base` contributes none, so
+/// the chain terminates at the framework instead of at an invented node.
+///
+/// Contract 2 (owned-result): both strings are fresh `gpa` allocations;
+/// `freeParents` is the release.
+pub const ParentEdge = struct {
+    controller: []const u8 = "",
+    parent: []const u8 = "",
 };
 
 /// One controller's own `layout` declaration, recovered from
@@ -140,6 +246,19 @@ const WireAction = struct {
     action: []const u8,
     only_redirect: bool,
     renders_json: bool,
+    /// #167 Stage 3. Decoded straight into the PUBLIC `RedirectInfo` rather
+    /// than through a separate `WireRedirect`: unlike this struct and
+    /// `WireLayout`, whose wire shapes carry a field the owned type
+    /// deliberately drops (`line`), the redirect shape is field-for-field
+    /// identical on both sides, so a second struct would state nothing and
+    /// would fork `dupeRedirects` in two (`decodeResponse` and `dupeActions`
+    /// both need it). The strings a parse leaves here alias the JSON arena;
+    /// `dupeRedirects` is what makes the escaping copy `gpa`-owned.
+    ///
+    /// Defaulted, not required: a response from a sidecar build that
+    /// predates this field decodes as an empty list, exactly as `layouts`
+    /// below already does.
+    redirects: []const RedirectInfo = &.{},
     // `line` rides the wire (analyze.rb always sends it) but `ActionInfo`
     // has no field for it -- Stage 3's classification rules (the brief this
     // task serves) never need a line number, only the three structural
@@ -170,6 +289,24 @@ const WireResponse = struct {
     /// simply predates this field, and `decodeResponse` below treats that
     /// the same as an explicit empty array (see `Decoded.layouts`'s doc).
     layouts: []const WireLayout = &.{},
+    /// #167 Stage 3: the class-level filters, flattened across every
+    /// controller file the op walked and keyed on the same path-derived
+    /// `controller` string `actions[]` uses. Decoded straight into the
+    /// public `BeforeAction` for the same reason `WireAction.redirects` is
+    /// -- the two shapes are field-for-field identical. Defaulted so an
+    /// older sidecar's response decodes as an empty list.
+    before_actions: []const BeforeAction = &.{},
+    /// #167 Stage 3 fix round 1 (I-1): `skip_before_action` declarations,
+    /// same entry shape. Their OWN array, not a flag on `before_actions`,
+    /// so a consumer that iterated one merged list without checking the flag
+    /// could not read a skip as a guard. Defaulted, same older-sidecar
+    /// tolerance as every field above.
+    skip_before_actions: []const BeforeAction = &.{},
+    /// #167 Stage 3 fix round 1 (I-1): the `class Child < Parent` edges that
+    /// make an inherited filter attributable. Defaulted; an older sidecar's
+    /// response simply has no chain, and `guardsFor` then reports only each
+    /// controller's own filters -- the pre-fix behaviour, not a crash.
+    parents: []const ParentEdge = &.{},
     unresolved: []const WireUnresolved = &.{},
     @"error": ?[]const u8 = null,
     // This op's own half of `discovery.ruby` -- see `routes.zig`'s `Ruby`
@@ -228,17 +365,451 @@ fn dupeAction(gpa: Allocator, wa: WireAction) Allocator.Error!ActionInfo {
     const controller = try gpa.dupe(u8, wa.controller);
     errdefer gpa.free(controller);
     const action = try gpa.dupe(u8, wa.action);
+    errdefer gpa.free(action);
+    const redirects = try dupeRedirects(gpa, wa.redirects);
     return .{
         .controller = controller,
         .action = action,
         .only_redirect = wa.only_redirect,
         .renders_json = wa.renders_json,
+        .redirects = redirects,
     };
 }
 
 fn freeActionFields(gpa: Allocator, a: ActionInfo) void {
     gpa.free(a.controller);
     gpa.free(a.action);
+    freeRedirects(gpa, a.redirects);
+}
+
+/// Contract 2 (owned-result) helper shared by `dupeRedirects` and
+/// `dupeBeforeAction`: a fresh `gpa`-owned copy of a list of strings, with
+/// every element already copied released on a mid-list failure.
+fn dupeStringList(gpa: Allocator, src: []const []const u8) Allocator.Error![]const []const u8 {
+    const out = try gpa.alloc([]const u8, src.len);
+    var filled: usize = 0;
+    errdefer {
+        for (out[0..filled]) |s| gpa.free(s);
+        gpa.free(out);
+    }
+    for (src, 0..) |s, i| {
+        out[i] = try gpa.dupe(u8, s);
+        filled = i + 1;
+    }
+    return out;
+}
+
+fn freeStringList(gpa: Allocator, list: []const []const u8) void {
+    for (list) |s| gpa.free(s);
+    gpa.free(list);
+}
+
+/// Contract 2 (owned-result). Takes `[]const RedirectInfo` on purpose, so
+/// the same function serves BOTH callers: `decodeResponse` (whose source
+/// aliases the JSON arena, since `WireAction.redirects` is this very type)
+/// and `dupeActions` (whose source is another `gpa`-owned copy about to be
+/// freed). `freeRedirects` is the release.
+fn dupeRedirects(gpa: Allocator, src: []const RedirectInfo) Allocator.Error![]const RedirectInfo {
+    const out = try gpa.alloc(RedirectInfo, src.len);
+    var filled: usize = 0;
+    errdefer {
+        for (out[0..filled]) |r| freeRedirectFields(gpa, r);
+        gpa.free(out);
+    }
+    for (src, 0..) |r, i| {
+        const name: ?[]const u8 = if (r.name) |n| try gpa.dupe(u8, n) else null;
+        errdefer if (name) |n| gpa.free(n);
+        const path: ?[]const u8 = if (r.path) |p| try gpa.dupe(u8, p) else null;
+        errdefer if (path) |p| gpa.free(p);
+        out[i] = .{
+            .name = name,
+            .args = try dupeStringList(gpa, r.args),
+            .path = path,
+            .dynamic = r.dynamic,
+        };
+        filled = i + 1;
+    }
+    return out;
+}
+
+fn freeRedirectFields(gpa: Allocator, r: RedirectInfo) void {
+    if (r.name) |n| gpa.free(n);
+    if (r.path) |p| gpa.free(p);
+    freeStringList(gpa, r.args);
+}
+
+fn freeRedirects(gpa: Allocator, list: []const RedirectInfo) void {
+    for (list) |r| freeRedirectFields(gpa, r);
+    gpa.free(list);
+}
+
+/// Contract 2 (owned-result), and the same both-callers argument
+/// `dupeRedirects` documents: `WireResponse.before_actions` IS
+/// `[]const BeforeAction`, so `decodeResponse` and `dupeBeforeActions` share
+/// one implementation. `freeBeforeActions` is the release.
+fn dupeBeforeAction(gpa: Allocator, src: BeforeAction) Allocator.Error!BeforeAction {
+    const controller = try gpa.dupe(u8, src.controller);
+    errdefer gpa.free(controller);
+    const name: ?[]const u8 = if (src.name) |n| try gpa.dupe(u8, n) else null;
+    errdefer if (name) |n| gpa.free(n);
+    const only = try dupeStringList(gpa, src.only);
+    errdefer freeStringList(gpa, only);
+    const except = try dupeStringList(gpa, src.except);
+    return .{
+        .controller = controller,
+        .name = name,
+        .only = only,
+        .except = except,
+        .dynamic = src.dynamic,
+        .line = src.line,
+    };
+}
+
+fn freeBeforeActionFields(gpa: Allocator, b: BeforeAction) void {
+    gpa.free(b.controller);
+    if (b.name) |n| gpa.free(n);
+    freeStringList(gpa, b.only);
+    freeStringList(gpa, b.except);
+}
+
+/// Contract 2 counterpart to `BeforeAction`: releases every owned string on
+/// every entry plus the slice itself, in one call -- the same
+/// one-release-for-the-whole-slice idiom as `freeActions`/`freeLayouts`.
+pub fn freeBeforeActions(gpa: Allocator, list: []BeforeAction) void {
+    for (list) |b| freeBeforeActionFields(gpa, b);
+    gpa.free(list);
+}
+
+/// Contract 2 (owned-result): the `ParentEdge` counterpart to
+/// `dupeBeforeActions`. Serves both `decodeResponse` (source aliases the
+/// JSON arena) and `rails.zig`'s `Discovery` copy, same as its siblings.
+/// `freeParents` is the release.
+pub fn dupeParents(gpa: Allocator, src: []const ParentEdge) Allocator.Error![]ParentEdge {
+    const out = try gpa.alloc(ParentEdge, src.len);
+    var filled: usize = 0;
+    errdefer {
+        for (out[0..filled]) |p| freeParentFields(gpa, p);
+        gpa.free(out);
+    }
+    for (src, 0..) |p, i| {
+        const controller = try gpa.dupe(u8, p.controller);
+        errdefer gpa.free(controller);
+        out[i] = .{ .controller = controller, .parent = try gpa.dupe(u8, p.parent) };
+        filled = i + 1;
+    }
+    return out;
+}
+
+fn freeParentFields(gpa: Allocator, p: ParentEdge) void {
+    gpa.free(p.controller);
+    gpa.free(p.parent);
+}
+
+/// Contract 2 counterpart to `ParentEdge`; one call for the whole slice,
+/// same idiom as `freeActions`/`freeBeforeActions`.
+pub fn freeParents(gpa: Allocator, list: []ParentEdge) void {
+    for (list) |p| freeParentFields(gpa, p);
+    gpa.free(list);
+}
+
+/// Contract 2 (owned-result): a `gpa`-owned deep copy of an action list,
+/// for `rails.zig`'s `Discovery` -- which outlives the `Result` these came
+/// from (`discover`'s own `defer freeResult` runs first), so a shallow copy
+/// would leave the manifest and the scaffold pointing at freed memory. Lives
+/// here rather than in `rails.zig` because this file is the one place that
+/// knows what an `ActionInfo` owns now that it owns a nested graph.
+/// `freeActions` is the release.
+pub fn dupeActions(gpa: Allocator, src: []const ActionInfo) Allocator.Error![]ActionInfo {
+    const out = try gpa.alloc(ActionInfo, src.len);
+    var filled: usize = 0;
+    errdefer {
+        for (out[0..filled]) |a| freeActionFields(gpa, a);
+        gpa.free(out);
+    }
+    for (src, 0..) |a, i| {
+        const controller = try gpa.dupe(u8, a.controller);
+        errdefer gpa.free(controller);
+        const action = try gpa.dupe(u8, a.action);
+        errdefer gpa.free(action);
+        out[i] = .{
+            .controller = controller,
+            .action = action,
+            .only_redirect = a.only_redirect,
+            .renders_json = a.renders_json,
+            .redirects = try dupeRedirects(gpa, a.redirects),
+        };
+        filled = i + 1;
+    }
+    return out;
+}
+
+/// Contract 2 (owned-result): the `BeforeAction` counterpart to
+/// `dupeActions`, for the same `Discovery`-outlives-`Result` reason.
+/// `freeBeforeActions` is the release.
+pub fn dupeBeforeActions(gpa: Allocator, src: []const BeforeAction) Allocator.Error![]BeforeAction {
+    const out = try gpa.alloc(BeforeAction, src.len);
+    var filled: usize = 0;
+    errdefer {
+        for (out[0..filled]) |b| freeBeforeActionFields(gpa, b);
+        gpa.free(out);
+    }
+    for (src, 0..) |b, i| {
+        out[i] = try dupeBeforeAction(gpa, b);
+        filled = i + 1;
+    }
+    return out;
+}
+
+/// Contract 3 (caller-buffer): whether `filter` runs for `action`, by Rails'
+/// own rule -- `only:` decides alone when it is present, and `except:` is
+/// consulted only when it is not. An implementation that ANDed or ORed the
+/// two would disagree with Rails on `only: [:index], except: [:index]`.
+///
+/// A `dynamic` filter answers `false` for every action. Its empty scope
+/// lists are "not read", not "not scoped": treating them as an unscoped
+/// filter would claim a block filter covers every action in the controller,
+/// which is the same over-claim that would mark pages open that Rails serves
+/// publicly.
+pub fn guards(filter: BeforeAction, action: []const u8) bool {
+    if (filter.dynamic) return false;
+    if (filter.only.len > 0) {
+        for (filter.only) |a| {
+            if (std.mem.eql(u8, a, action)) return true;
+        }
+        return false;
+    }
+    for (filter.except) |a| {
+        if (std.mem.eql(u8, a, action)) return false;
+    }
+    return true;
+}
+
+/// Contract 3 (caller-buffer): assumption A7's heuristic -- the filter's
+/// name contains `login`, `auth`, `sign` or `user`, ASCII case-insensitively.
+///
+/// A heuristic, and deliberately a broad one: it decides whether to ASK the
+/// operator (`RAILS_ROUTE_AUTH_GUARD`), never whether to ship or block a
+/// page by itself. A false positive costs one answerable question; a false
+/// negative ships a guarded page silently public, which is exactly what #167
+/// forbids. Matching is on the substring rather than the whole name because
+/// the real-world spellings (`require_login`, `authenticate_user!`,
+/// `require_signed_in`, `current_user_required`) share no common shape.
+///
+/// A `dynamic` filter has no name and answers `false` -- there is nothing to
+/// read. That is a known gap in A7's coverage, not an oversight: a block
+/// filter could be an auth guard, but reporting every one of them as such
+/// would raise the finding on controllers that merely set a locale.
+pub fn looksLikeAuthGuard(filter: BeforeAction) bool {
+    const name = filter.name orelse return false;
+    for ([_][]const u8{ "login", "auth", "sign", "user" }) |needle| {
+        if (std.ascii.indexOfIgnoreCase(name, needle) != null) return true;
+    }
+    return false;
+}
+
+/// The three lists `guardsFor` needs, named rather than passed as three
+/// same-typed positional slices -- two of them ARE the same type, and a call
+/// site that swapped `before_actions` and `skips` would compile and quietly
+/// invert every answer.
+///
+/// Contract 3 (caller-buffer): a borrowed view. It owns nothing and outlives
+/// nothing; build one from a `controllers.Result` (`Result.filterSet`) or
+/// from `rails.Discovery` (`Discovery.filterSet`).
+pub const FilterSet = struct {
+    before_actions: []const BeforeAction = &.{},
+    skips: []const BeforeAction = &.{},
+    parents: []const ParentEdge = &.{},
+};
+
+/// How far `guardsFor` will walk up the `class Child < Parent` chain. Real
+/// Rails hierarchies are two or three deep (`ApplicationController` ->
+/// maybe one `Admin::BaseController` -> the controller); eight is generous
+/// headroom. The cap is a second line of defence only -- the cycle check
+/// below already terminates `A < B < A` -- but a cap that does not depend on
+/// the cycle check being right is worth its four lines in a walker fed by
+/// untrusted source.
+pub const max_parent_chain = 8;
+
+/// Every filter that runs for `controller#action`, own controller first and
+/// then up the inheritance chain, with `skip_before_action` honoured.
+///
+/// An iterator rather than an allocated slice so this is contract 3
+/// (caller-buffer, takes no allocator at all): the chain is bounded by
+/// `max_parent_chain`, so it fits in the iterator itself and a caller that
+/// only wants the FIRST match -- which is what `RAILS_ROUTE_AUTH_GUARD` and
+/// `authGuardFor` below want -- pays for nothing more.
+///
+/// Each yielded `BeforeAction` keeps the `controller` it was DECLARED on,
+/// not the one asked about, which is what a finding message needs to say
+/// ("guarded by before_action :authenticate_user! on application").
+pub const GuardIterator = struct {
+    set: FilterSet,
+    action: []const u8,
+    chain: [max_parent_chain][]const u8,
+    chain_len: usize,
+    chain_i: usize = 0,
+    filter_i: usize = 0,
+
+    pub fn next(self: *GuardIterator) ?BeforeAction {
+        while (self.chain_i < self.chain_len) {
+            const owner = self.chain[self.chain_i];
+            while (self.filter_i < self.set.before_actions.len) {
+                const f = self.set.before_actions[self.filter_i];
+                self.filter_i += 1;
+                if (!std.mem.eql(u8, f.controller, owner)) continue;
+                if (!guards(f, self.action)) continue;
+                if (self.skipped(f)) continue;
+                return f;
+            }
+            self.chain_i += 1;
+            self.filter_i = 0;
+        }
+        return null;
+    }
+
+    /// A `skip_before_action` suppresses a same-named filter for the actions
+    /// the SKIP's own only:/except: scope covers -- but only when the skip is
+    /// declared AT OR BELOW the filter, i.e. on the declaring class itself or
+    /// on a descendant of it.
+    ///
+    /// Position matters, and an earlier round's claim that it does not
+    /// ("a skip is always written in a subclass of whatever declared the
+    /// filter") was simply wrong: `raise: false` makes any placement legal,
+    /// so
+    ///
+    ///     class ApplicationController < ActionController::Base
+    ///       skip_before_action :authenticate_user!, raise: false
+    ///     end
+    ///     class PostsController < ApplicationController
+    ///       before_action :authenticate_user!
+    ///     end
+    ///
+    /// parses fine and Rails still RUNS the filter -- the skip ran against a
+    /// callback chain that did not yet contain it. Suppressing on a name
+    /// match anywhere in the chain reported that page unguarded.
+    ///
+    /// `chain[0]` is the route's own controller and each later index is one
+    /// step further up, so "at or below" is `skip index <= filter index`.
+    /// `chain_i` is the index the filter currently being yielded came from.
+    ///
+    /// WITHIN one class the index is equal and says nothing, so source order
+    /// decides (fix round 3, NEW-2). It is the same rule for the same
+    /// reason -- a skip only removes what the callback chain already holds:
+    ///
+    ///     class PostsController < ApplicationController
+    ///       skip_before_action :authenticate_user!, raise: false  # line 2
+    ///       before_action :authenticate_user!                     # line 3
+    ///     end
+    ///
+    /// runs the filter, because line 2 skipped a chain that did not yet
+    /// contain it; swap the two lines and it does not. So an equal index
+    /// additionally requires `skip.line > filter.line`. Both lines ride the
+    /// wire already.
+    ///
+    /// A `dynamic` skip suppresses nothing -- it has no name to match, and
+    /// `guards` answers false for it. That leaves the filter reported, i.e.
+    /// over-reports the guard, which is the direction A7 requires.
+    fn skipped(self: *const GuardIterator, filter: BeforeAction) bool {
+        const name = filter.name orelse return false;
+        for (self.set.skips) |s| {
+            const sn = s.name orelse continue;
+            if (!std.mem.eql(u8, sn, name)) continue;
+            const at = self.chainIndex(s.controller) orelse continue;
+            if (at > self.chain_i) continue; // declared above the filter: no effect
+            // Same class: the skip has to come after the filter it removes.
+            if (at == self.chain_i and s.line <= filter.line) continue;
+            if (guards(s, self.action)) return true;
+        }
+        return false;
+    }
+
+    /// Position of `controller` in the chain, or null when it is not in it.
+    /// `0` is the route's own controller; larger is further up.
+    fn chainIndex(self: *const GuardIterator, controller: []const u8) ?usize {
+        for (self.chain[0..self.chain_len], 0..) |c, i| {
+            if (std.mem.eql(u8, c, controller)) return i;
+        }
+        return null;
+    }
+
+    fn inChain(self: *const GuardIterator, controller: []const u8) bool {
+        return self.chainIndex(controller) != null;
+    }
+};
+
+/// Contract 3 (caller-buffer): builds the controller's inheritance chain and
+/// returns an iterator over the filters that run for `action`. Allocates
+/// nothing.
+///
+/// The chain is resolved eagerly and stops on the first repeat, so a
+/// malformed `class A < B` / `class B < A` pair in the analysed app
+/// terminates instead of looping -- the same "one bad file must not hang the
+/// build" rule the Ruby side's own cycle detection follows. A chain longer
+/// than `max_parent_chain` is truncated, which under-reports filters
+/// declared above the cut rather than spinning.
+pub fn guardsFor(set: FilterSet, controller: []const u8, action: []const u8) GuardIterator {
+    var it: GuardIterator = .{
+        .set = set,
+        .action = action,
+        .chain = undefined,
+        .chain_len = 0,
+    };
+    var current = controller;
+    while (it.chain_len < max_parent_chain) {
+        if (it.inChain(current)) break; // cycle
+        it.chain[it.chain_len] = current;
+        it.chain_len += 1;
+        const parent = parentOf(set.parents, current) orelse break;
+        current = parent;
+    }
+    return it;
+}
+
+fn parentOf(parents: []const ParentEdge, controller: []const u8) ?[]const u8 {
+    for (parents) |p| {
+        if (std.mem.eql(u8, p.controller, controller)) return p.parent;
+    }
+    return null;
+}
+
+/// THE auth filter running for `controller#action` -- what
+/// `RAILS_ROUTE_AUTH_GUARD` asks, in one call. Null when the action runs no
+/// auth-looking filter.
+///
+/// The pick is the smallest `(name, line)`, not the first hit in CHAIN order,
+/// and that is a deliberate choice about determinism: the chain's own order
+/// within one controller is whatever order the sidecar's directory walk
+/// emitted the filters in. This filter's NAME is printed into the manifest
+/// (the finding's message) AND into the handoff (`scaffold`'s `public` note),
+/// so an unstable pick is an unstable artifact.
+///
+/// One function, and not two, for the second half of the same reason. The
+/// note and the finding are two rows about ONE decision; while `findings.zig`
+/// kept its own stable picker and `scaffold.zig` called a chain-order one,
+/// a controller with two auth-looking filters had them naming different
+/// guards, and an operator could not tell which filter their `public` had
+/// been asked about.
+///
+/// A dynamic filter never wins: `looksLikeAuthGuard` answers false for it
+/// (there is no symbol to read), which is the A7-safe direction only because
+/// Task 2's Ruby side keeps the symbol wherever it can see one.
+///
+/// Contract 3 (caller-buffer): allocates nothing; the result borrows `set`.
+pub fn authGuardFor(set: FilterSet, controller: ?[]const u8, action: ?[]const u8) ?BeforeAction {
+    const c = controller orelse return null;
+    const a = action orelse return null;
+    var best: ?BeforeAction = null;
+    var it = guardsFor(set, c, a);
+    while (it.next()) |f| {
+        if (!looksLikeAuthGuard(f)) continue;
+        const cur = best orelse {
+            best = f;
+            continue;
+        };
+        const order = std.mem.order(u8, f.name orelse "", cur.name orelse "");
+        if (order == .lt or (order == .eq and f.line < cur.line)) best = f;
+    }
+    return best;
 }
 
 /// Decodes one sidecar response LINE (`{"ok":true,"actions":[...],
@@ -282,6 +853,14 @@ const Decoded = struct {
     /// `&.{}` -- same reasoning as those branches' `actions = &.{}`: there is
     /// no response to have decoded a layout list FROM.
     layouts: []LayoutInfo,
+    /// Owned (contract 2, see `BeforeAction`'s doc); released by
+    /// `freeBeforeActions`. Empty on every early-return branch, and equally
+    /// empty for a sidecar build that predates the field.
+    before_actions: []BeforeAction,
+    /// Owned; released by `freeBeforeActions`. See `FilterSet`.
+    skip_before_actions: []BeforeAction,
+    /// Owned; released by `freeParents`. See `ParentEdge`.
+    parents: []ParentEdge,
     ruby: sidecar_client.Ruby,
 };
 
@@ -295,7 +874,7 @@ fn decodeResponse(
         error.OutOfMemory => return error.OutOfMemory,
         else => {
             try blockers.append(gpa, blocker_list, "RAILS_CONTROLLERS_UNAVAILABLE", src_path, @errorName(err), false, .@"error", null, null);
-            return .{ .actions = &.{}, .layouts = &.{}, .ruby = .{ .available = false, .version = null } };
+            return .{ .actions = &.{}, .layouts = &.{}, .before_actions = &.{}, .skip_before_actions = &.{}, .parents = &.{}, .ruby = .{ .available = false, .version = null } };
         },
     };
     defer parsed.deinit();
@@ -306,7 +885,7 @@ fn decodeResponse(
 
     if (!resp.ok) {
         try blockers.append(gpa, blocker_list, "RAILS_CONTROLLERS_UNAVAILABLE", src_path, resp.@"error" orelse "sidecar reported failure", false, .@"error", null, null);
-        return .{ .actions = &.{}, .layouts = &.{}, .ruby = ruby };
+        return .{ .actions = &.{}, .layouts = &.{}, .before_actions = &.{}, .skip_before_actions = &.{}, .parents = &.{}, .ruby = ruby };
     }
 
     var actions = try gpa.alloc(ActionInfo, resp.actions.len);
@@ -334,6 +913,15 @@ fn decodeResponse(
         lfilled = i + 1;
     }
 
+    const before_actions = try dupeBeforeActions(gpa, resp.before_actions);
+    errdefer freeBeforeActions(gpa, before_actions);
+
+    const skip_before_actions = try dupeBeforeActions(gpa, resp.skip_before_actions);
+    errdefer freeBeforeActions(gpa, skip_before_actions);
+
+    const parents = try dupeParents(gpa, resp.parents);
+    errdefer freeParents(gpa, parents);
+
     // `route_id` stays `null` here, deliberately (Stage 4 Task 5): each `u`
     // describes an action shape one controller FILE's parse could not
     // resolve, before this run has joined controller/action pairs to any
@@ -358,7 +946,14 @@ fn decodeResponse(
         try blockers.append(gpa, blocker_list, code, blocker_path, detail, false, .warn, null, u.line);
     }
 
-    return .{ .actions = actions, .layouts = layouts, .ruby = ruby };
+    return .{
+        .actions = actions,
+        .layouts = layouts,
+        .before_actions = before_actions,
+        .skip_before_actions = skip_before_actions,
+        .parents = parents,
+        .ruby = ruby,
+    };
 }
 
 /// Contract 2 counterpart to `discoverControllers`/`decodeResponse`:
@@ -408,7 +1003,29 @@ pub const Result = struct {
     actions: []ActionInfo,
     /// Owned; release with `freeLayouts`. See `LayoutInfo`'s doc.
     layouts: []LayoutInfo,
+    /// Owned; release with `freeBeforeActions`. See `BeforeAction`'s doc.
+    /// Flattened across every controller file the op walked -- one list for
+    /// the whole app, keyed on the same path-derived `controller` string
+    /// `actions` uses, so `guards` needs no per-file grouping to answer.
+    before_actions: []BeforeAction,
+    /// Owned; release with `freeBeforeActions`. `skip_before_action`
+    /// declarations -- see `FilterSet` and `GuardIterator.skipped`.
+    skip_before_actions: []BeforeAction,
+    /// Owned; release with `freeParents`. The inheritance edges that make an
+    /// inherited filter attributable -- see `ParentEdge`.
+    parents: []ParentEdge,
     ruby: sidecar_client.Ruby,
+
+    /// Contract 3: the borrowed view `guardsFor`/`authGuardFor` take.
+    /// A method so the three lists cannot be paired up wrongly at a call
+    /// site (see `FilterSet`'s doc).
+    pub fn filterSet(self: Result) FilterSet {
+        return .{
+            .before_actions = self.before_actions,
+            .skips = self.skip_before_actions,
+            .parents = self.parents,
+        };
+    }
 };
 
 /// Contract 2 counterpart to `discoverControllers`: releases every owned
@@ -418,6 +1035,9 @@ pub const Result = struct {
 pub fn freeResult(gpa: Allocator, result: Result) void {
     freeActions(gpa, result.actions);
     freeLayouts(gpa, result.layouts);
+    freeBeforeActions(gpa, result.before_actions);
+    freeBeforeActions(gpa, result.skip_before_actions);
+    freeParents(gpa, result.parents);
     sidecar_client.freeRuby(gpa, result.ruby);
 }
 
@@ -495,7 +1115,7 @@ pub fn discoverControllers(
     // available` is unconditionally `false` here, same as `routes.zig`'s
     // identical `none`. The success path (the final `decodeResponse` call)
     // overrides `.ruby` with whatever the sidecar's own response reported.
-    const none: Result = .{ .actions = &.{}, .layouts = &.{}, .ruby = .{ .available = false, .version = null } };
+    const none: Result = .{ .actions = &.{}, .layouts = &.{}, .before_actions = &.{}, .skip_before_actions = &.{}, .parents = &.{}, .ruby = .{ .available = false, .version = null } };
 
     var controllers_dir = root.openDir(io, "app/controllers", .{ .iterate = true }) catch |err| {
         const code = if (err == error.FileNotFound) "RAILS_CONTROLLERS_MISSING" else "RAILS_CONTROLLERS_UNAVAILABLE";
@@ -619,7 +1239,14 @@ pub fn discoverControllers(
     }
 
     const decoded = try decodeResponse(gpa, line, "app/controllers", blocker_list);
-    return .{ .actions = decoded.actions, .layouts = decoded.layouts, .ruby = decoded.ruby };
+    return .{
+        .actions = decoded.actions,
+        .layouts = decoded.layouts,
+        .before_actions = decoded.before_actions,
+        .skip_before_actions = decoded.skip_before_actions,
+        .parents = decoded.parents,
+        .ruby = decoded.ruby,
+    };
 }
 
 test "a sidecar response decodes into actions, preserving redirect/json flags" {
@@ -695,11 +1322,20 @@ test "decodeResponse: an OOM at any point in a multi-row decode leaves no leak" 
     const line =
         \\{"ok":true,"actions":[
         \\{"controller":"posts","action":"index","only_redirect":false,"renders_json":false,"line":2},
-        \\{"controller":"admin/users","action":"create","only_redirect":true,"renders_json":false,"line":3},
+        \\{"controller":"admin/users","action":"create","only_redirect":true,"renders_json":false,"line":3,
+        \\ "redirects":[{"name":"user","args":["1"]},{"path":"/x"},
+        \\ {"name":"stem","args":["1","2"],"path":"/both"},{"dynamic":true}]},
         \\{"controller":"comments","action":"destroy","only_redirect":false,"renders_json":true,"line":9}],
         \\"layouts":[
         \\{"controller":"pages","value":"marketing","disabled":false,"dynamic":false,"line":2},
         \\{"controller":"api","value":null,"disabled":true,"dynamic":false,"line":3}],
+        \\"before_actions":[
+        \\{"controller":"posts","name":"require_login","only":["index","show"],"except":[],"line":2},
+        \\{"controller":"posts","dynamic":true,"line":3}],
+        \\"skip_before_actions":[
+        \\{"controller":"admin/users","name":"require_login","only":["create"],"except":[],"line":4}],
+        \\"parents":[{"controller":"posts","parent":"application"},
+        \\{"controller":"admin/users","parent":"application"}],
         \\"unresolved":[],
         \\"ruby":{"available":true,"version":"3.3.6"}}
     ;
@@ -720,15 +1356,16 @@ test "decodeResponse: an OOM at any point in a multi-row decode leaves no leak" 
         defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
         if (decodeResponse(failing.allocator(), line, "app/controllers", &blocker_list)) |decoded| {
-            defer freeActions(std.testing.allocator, decoded.actions);
-            defer freeLayouts(std.testing.allocator, decoded.layouts);
-            defer sidecar_client.freeRuby(std.testing.allocator, decoded.ruby);
+            defer freeDecoded(std.testing.allocator, decoded);
             // `fail_index` finally exceeded every allocation this decode
             // needs: confirm it decoded correctly one last time, then the
             // sweep is done -- every earlier index already ran under the
             // leak detector above.
             try std.testing.expectEqual(@as(usize, 3), decoded.actions.len);
             try std.testing.expectEqual(@as(usize, 2), decoded.layouts.len);
+            try std.testing.expectEqual(@as(usize, 2), decoded.before_actions.len);
+            try std.testing.expectEqual(@as(usize, 1), decoded.skip_before_actions.len);
+            try std.testing.expectEqual(@as(usize, 2), decoded.parents.len);
             break;
         } else |err| {
             try std.testing.expectEqual(error.OutOfMemory, err);
@@ -922,6 +1559,491 @@ test "decodeResponse: layouts[] decodes literal, disabled and dynamic shapes; ab
     defer freeLayouts(gpa, old.layouts);
     defer sidecar_client.freeRuby(gpa, old.ruby);
     try std.testing.expectEqual(@as(usize, 0), old.layouts.len);
+}
+
+/// Test-only release for a whole `Decoded`. Spelled once so a field added to
+/// `Decoded` cannot be silently left unfreed by half the tests in this file.
+fn freeDecoded(gpa: Allocator, d: Decoded) void {
+    freeActions(gpa, d.actions);
+    freeLayouts(gpa, d.layouts);
+    freeBeforeActions(gpa, d.before_actions);
+    freeBeforeActions(gpa, d.skip_before_actions);
+    freeParents(gpa, d.parents);
+    sidecar_client.freeRuby(gpa, d.ruby);
+}
+
+test "decodeResponse: redirects[] and before_actions[] decode into owned copies" {
+    const gpa = std.testing.allocator;
+    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    defer blockers.freeList(gpa, &list);
+    const line =
+        \\{"ok":true,"actions":[
+        \\{"controller":"pages","action":"old","only_redirect":true,"renders_json":false,"line":9,
+        \\ "redirects":[{"name":"about","args":[]}]},
+        \\{"controller":"posts","action":"update","only_redirect":false,"renders_json":false,"line":14,
+        \\ "redirects":[{"name":"post","args":["1"]},{"dynamic":true}]},
+        \\{"controller":"posts","action":"index","only_redirect":false,"renders_json":false,"line":4}],
+        \\"before_actions":[
+        \\{"controller":"posts","name":"require_login","only":["index"],"except":[],"line":2},
+        \\{"controller":"posts","dynamic":true,"line":3}],
+        \\"unresolved":[],"ruby":{"available":true,"version":"3.4.10"}}
+    ;
+    const d = try decodeResponse(gpa, line, "app/controllers", &list);
+    defer freeDecoded(gpa, d);
+
+    try std.testing.expectEqual(@as(usize, 0), list.items.len);
+
+    const old = find(d.actions, "pages", "old").?;
+    try std.testing.expectEqual(@as(usize, 1), old.redirects.len);
+    try std.testing.expectEqualStrings("about", old.redirects[0].name.?);
+    try std.testing.expectEqual(@as(usize, 0), old.redirects[0].args.len);
+    try std.testing.expect(!old.redirects[0].dynamic);
+
+    // Source order is load-bearing: Task 4 takes the FIRST non-dynamic
+    // redirect as the island's post-mutation target, so a decode that
+    // reordered or deduplicated these would silently pick the wrong one.
+    const update = find(d.actions, "posts", "update").?;
+    try std.testing.expectEqual(@as(usize, 2), update.redirects.len);
+    try std.testing.expectEqualStrings("post", update.redirects[0].name.?);
+    try std.testing.expectEqual(@as(usize, 1), update.redirects[0].args.len);
+    try std.testing.expectEqualStrings("1", update.redirects[0].args[0]);
+    try std.testing.expect(update.redirects[1].dynamic);
+    try std.testing.expect(update.redirects[1].name == null);
+
+    // An action entry the sidecar sent WITHOUT a `redirects` key at all --
+    // an empty list, not a missing field, is what every consumer sees.
+    try std.testing.expectEqual(@as(usize, 0), find(d.actions, "posts", "index").?.redirects.len);
+
+    try std.testing.expectEqual(@as(usize, 2), d.before_actions.len);
+    try std.testing.expectEqualStrings("posts", d.before_actions[0].controller);
+    try std.testing.expectEqualStrings("require_login", d.before_actions[0].name.?);
+    try std.testing.expectEqual(@as(usize, 1), d.before_actions[0].only.len);
+    try std.testing.expectEqualStrings("index", d.before_actions[0].only[0]);
+    try std.testing.expectEqual(@as(usize, 0), d.before_actions[0].except.len);
+    try std.testing.expect(!d.before_actions[0].dynamic);
+    try std.testing.expectEqual(@as(u64, 2), d.before_actions[0].line);
+    try std.testing.expect(d.before_actions[1].dynamic);
+    try std.testing.expect(d.before_actions[1].name == null);
+}
+
+test "decodeResponse: a sidecar that predates the two new fields decodes them empty, not absent" {
+    // Backward compatibility is the whole reason both fields are defaulted
+    // on the wire structs: `ZIGAPAGOS_RUNTIME_DIR` can point at an installed
+    // runtime older than this binary, and that response must still decode
+    // into the same shape every consumer reads -- an empty list, never a
+    // decode error and never a missing field.
+    const gpa = std.testing.allocator;
+    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    defer blockers.freeList(gpa, &list);
+    const line =
+        \\{"ok":true,"actions":[
+        \\{"controller":"posts","action":"index","only_redirect":false,"renders_json":false,"line":2}],
+        \\"unresolved":[]}
+    ;
+    const d = try decodeResponse(gpa, line, "app/controllers", &list);
+    defer freeDecoded(gpa, d);
+
+    try std.testing.expectEqual(@as(usize, 0), list.items.len);
+    try std.testing.expectEqual(@as(usize, 1), d.actions.len);
+    try std.testing.expectEqual(@as(usize, 0), d.actions[0].redirects.len);
+    try std.testing.expectEqual(@as(usize, 0), d.before_actions.len);
+    // Fix round 1: the same tolerance for the three fields THAT round added.
+    // An older sidecar sends no chain and no skips, and `guardsFor` then
+    // reports each controller's own filters -- the pre-fix answer, not a
+    // crash and not a wrong one.
+    try std.testing.expectEqual(@as(usize, 0), d.skip_before_actions.len);
+    try std.testing.expectEqual(@as(usize, 0), d.parents.len);
+    try std.testing.expect(d.actions[0].redirects.len == 0);
+
+    // And a redirect entry from a sidecar that predates `path` decodes with
+    // `path == null`, not with an empty string that would read as "redirects
+    // to the site root".
+    const older_redirect =
+        \\{"ok":true,"actions":[
+        \\{"controller":"pages","action":"old","only_redirect":true,"renders_json":false,
+        \\ "redirects":[{"name":"about","args":[]}],"line":9}],"unresolved":[]}
+    ;
+    const d2 = try decodeResponse(gpa, older_redirect, "app/controllers", &list);
+    defer freeDecoded(gpa, d2);
+    try std.testing.expect(d2.actions[0].redirects[0].path == null);
+}
+
+test "guards: only wins over except, and both empty guards every action" {
+    const unscoped: BeforeAction = .{ .controller = "posts", .name = "require_login" };
+    try std.testing.expect(guards(unscoped, "index"));
+    try std.testing.expect(guards(unscoped, "destroy"));
+
+    const only: BeforeAction = .{ .controller = "posts", .name = "require_login", .only = &.{ "index", "show" } };
+    try std.testing.expect(guards(only, "index"));
+    try std.testing.expect(guards(only, "show"));
+    try std.testing.expect(!guards(only, "destroy"));
+
+    const except: BeforeAction = .{ .controller = "posts", .name = "set_post", .except = &.{"destroy"} };
+    try std.testing.expect(guards(except, "index"));
+    try std.testing.expect(!guards(except, "destroy"));
+
+    // Rails evaluates `only:` and ignores `except:` when both are given, and
+    // an implementation that ANDed the two would answer `false` for `index`
+    // here while an implementation that ORed them would answer `true` for
+    // `destroy` -- this pair discriminates all three readings.
+    const both: BeforeAction = .{
+        .controller = "posts",
+        .name = "require_login",
+        .only = &.{"index"},
+        .except = &.{"index"},
+    };
+    try std.testing.expect(guards(both, "index"));
+    try std.testing.expect(!guards(both, "destroy"));
+
+    // A filter this walk could not read names no action and guards nothing
+    // it can be asked about: `guards` must not report a dynamic filter as
+    // covering every action just because both scope lists are empty.
+    const dynamic: BeforeAction = .{ .controller = "posts", .dynamic = true };
+    try std.testing.expect(!guards(dynamic, "index"));
+}
+
+test "looksLikeAuthGuard: A7's four substrings, case-insensitively, and nothing else" {
+    try std.testing.expect(looksLikeAuthGuard(.{ .controller = "c", .name = "require_login" }));
+    try std.testing.expect(looksLikeAuthGuard(.{ .controller = "c", .name = "authenticate_user!" }));
+    try std.testing.expect(looksLikeAuthGuard(.{ .controller = "c", .name = "require_signed_in" }));
+    try std.testing.expect(looksLikeAuthGuard(.{ .controller = "c", .name = "current_user_required" }));
+    // Case-insensitive, ASCII: a filter is a Ruby symbol, so this is only
+    // ever about an author writing `Require_Login`, never about Unicode.
+    try std.testing.expect(looksLikeAuthGuard(.{ .controller = "c", .name = "Require_LOGIN" }));
+
+    try std.testing.expect(!looksLikeAuthGuard(.{ .controller = "c", .name = "set_post" }));
+    try std.testing.expect(!looksLikeAuthGuard(.{ .controller = "c", .name = "set_locale" }));
+    // A dynamic filter has no name to read. Answering `true` here would
+    // raise A7's finding on every controller with a block filter; answering
+    // `false` is what the field means -- see `BeforeAction.dynamic`'s doc
+    // for why that direction is the honest one.
+    try std.testing.expect(!looksLikeAuthGuard(.{ .controller = "c", .dynamic = true }));
+}
+
+test "decodeResponse: the two-file app -- a filter on ApplicationController guards posts#index" {
+    // Fix round 1, I-1. This is the commonest Rails auth idiom there is, and
+    // before the `parents` edge existed the filter arrived keyed
+    // `application` while the route names `posts`, so nothing could
+    // attribute it and the page shipped silently public. The wire fixture is
+    // exactly what `analyze.rb` answers for a two-file app.
+    const gpa = std.testing.allocator;
+    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    defer blockers.freeList(gpa, &list);
+    const line =
+        \\{"ok":true,"actions":[
+        \\{"controller":"posts","action":"index","only_redirect":false,"renders_json":false,"line":2}],
+        \\"before_actions":[
+        \\{"controller":"application","name":"authenticate_user!","only":[],"except":[],"line":2}],
+        \\"parents":[{"controller":"posts","parent":"application"}],
+        \\"unresolved":[],"ruby":{"available":true,"version":"3.4.10"}}
+    ;
+    const d = try decodeResponse(gpa, line, "app/controllers", &list);
+    defer freeDecoded(gpa, d);
+
+    const set: FilterSet = .{
+        .before_actions = d.before_actions,
+        .skips = d.skip_before_actions,
+        .parents = d.parents,
+    };
+    const guard = authGuardFor(set, "posts", "index").?;
+    // The DECLARING controller, not the one asked about -- that is what the
+    // finding message has to name.
+    try std.testing.expectEqualStrings("application", guard.controller);
+    try std.testing.expectEqualStrings("authenticate_user!", guard.name.?);
+
+    // Without the edge the same filter is invisible from `posts`, which is
+    // the pre-fix behaviour this test exists to keep out.
+    const chainless: FilterSet = .{ .before_actions = d.before_actions };
+    try std.testing.expect(authGuardFor(chainless, "posts", "index") == null);
+    // And it is still attributable from the controller that declares it.
+    try std.testing.expect(authGuardFor(chainless, "application", "index") != null);
+}
+
+test "guardsFor: own filters first, then the chain; skips suppress; cycles and depth terminate" {
+    const filters = [_]BeforeAction{
+        .{ .controller = "application", .name = "authenticate_user!" },
+        .{ .controller = "application", .name = "set_locale" },
+        .{ .controller = "admin/base", .name = "require_admin" },
+        .{ .controller = "admin/users", .name = "load_record", .only = &.{"show"} },
+    };
+    const parents = [_]ParentEdge{
+        .{ .controller = "admin/users", .parent = "admin/base" },
+        .{ .controller = "admin/base", .parent = "application" },
+    };
+    const set: FilterSet = .{ .before_actions = &filters, .parents = &parents };
+
+    // Own controller first, then up the chain, and `only:` still applies at
+    // every level.
+    var it = guardsFor(set, "admin/users", "show");
+    try std.testing.expectEqualStrings("load_record", it.next().?.name.?);
+    try std.testing.expectEqualStrings("require_admin", it.next().?.name.?);
+    try std.testing.expectEqualStrings("authenticate_user!", it.next().?.name.?);
+    try std.testing.expectEqualStrings("set_locale", it.next().?.name.?);
+    try std.testing.expect(it.next() == null);
+
+    // `load_record` is `only: [:show]`, so it drops out for `index` -- the
+    // chain walk does not bypass `guards`.
+    var idx = guardsFor(set, "admin/users", "index");
+    try std.testing.expectEqualStrings("require_admin", idx.next().?.name.?);
+
+    // A skip anywhere in the chain suppresses the inherited filter for the
+    // actions the SKIP's own scope covers, and only those.
+    const skips = [_]BeforeAction{
+        .{ .controller = "admin/users", .name = "authenticate_user!", .only = &.{"show"} },
+    };
+    const with_skips: FilterSet = .{ .before_actions = &filters, .skips = &skips, .parents = &parents };
+    try std.testing.expect(authGuardFor(with_skips, "admin/users", "show") == null);
+    try std.testing.expect(authGuardFor(with_skips, "admin/users", "index") != null);
+    // A skip declared OUTSIDE this controller's chain must not suppress
+    // anything here.
+    const foreign = [_]BeforeAction{
+        .{ .controller = "pages", .name = "authenticate_user!" },
+    };
+    const foreign_set: FilterSet = .{ .before_actions = &filters, .skips = &foreign, .parents = &parents };
+    try std.testing.expect(authGuardFor(foreign_set, "admin/users", "show") != null);
+    // A dynamic skip names nothing and suppresses nothing -- over-reporting
+    // the guard is the direction A7 requires.
+    const dyn_skip = [_]BeforeAction{.{ .controller = "admin/users", .dynamic = true }};
+    const dyn_set: FilterSet = .{ .before_actions = &filters, .skips = &dyn_skip, .parents = &parents };
+    try std.testing.expect(authGuardFor(dyn_set, "admin/users", "show") != null);
+
+    // A cycle terminates instead of looping, and each controller's filters
+    // are still yielded exactly once.
+    const cyc = [_]ParentEdge{
+        .{ .controller = "a", .parent = "b" },
+        .{ .controller = "b", .parent = "a" },
+    };
+    const cyc_filters = [_]BeforeAction{
+        .{ .controller = "a", .name = "one" },
+        .{ .controller = "b", .name = "two" },
+    };
+    var cit = guardsFor(.{ .before_actions = &cyc_filters, .parents = &cyc }, "a", "index");
+    try std.testing.expectEqualStrings("one", cit.next().?.name.?);
+    try std.testing.expectEqualStrings("two", cit.next().?.name.?);
+    try std.testing.expect(cit.next() == null);
+
+    // A chain longer than the cap truncates rather than spinning; the walk
+    // covers exactly `max_parent_chain` controllers.
+    var deep_parents: [max_parent_chain + 4]ParentEdge = undefined;
+    var deep_filters: [max_parent_chain + 5]BeforeAction = undefined;
+    var names: [max_parent_chain + 5][2]u8 = undefined;
+    for (0..max_parent_chain + 5) |i| {
+        names[i] = .{ 'c', @intCast('0' + i) };
+        deep_filters[i] = .{ .controller = &names[i], .name = "f" };
+    }
+    for (0..max_parent_chain + 4) |i| {
+        deep_parents[i] = .{ .controller = &names[i], .parent = &names[i + 1] };
+    }
+    var dit = guardsFor(.{ .before_actions = &deep_filters, .parents = &deep_parents }, &names[0], "index");
+    var seen: usize = 0;
+    while (dit.next()) |_| seen += 1;
+    try std.testing.expectEqual(@as(usize, max_parent_chain), seen);
+
+    // A controller with no edge at all still reports its own filters.
+    var lone = guardsFor(.{ .before_actions = &filters }, "application", "index");
+    try std.testing.expectEqualStrings("authenticate_user!", lone.next().?.name.?);
+}
+
+test "guardsFor: a skip declared ABOVE the filter it names does not suppress it" {
+    // Fix round 2, N2. `raise: false` makes this parse, and Rails still runs
+    // the filter: the skip ran against a callback chain that did not yet
+    // contain it. Suppressing on a name match anywhere in the chain reported
+    // this page unguarded.
+    const filters = [_]BeforeAction{
+        .{ .controller = "posts", .name = "authenticate_user!" },
+    };
+    const skips = [_]BeforeAction{
+        .{ .controller = "application", .name = "authenticate_user!" },
+    };
+    const parents = [_]ParentEdge{.{ .controller = "posts", .parent = "application" }};
+    const set: FilterSet = .{ .before_actions = &filters, .skips = &skips, .parents = &parents };
+    try std.testing.expect(authGuardFor(set, "posts", "index") != null);
+
+    // The same two declarations the other way up: the filter on the parent,
+    // the skip on the child, which IS the placement Rails honours.
+    const inherited = [_]BeforeAction{
+        .{ .controller = "application", .name = "authenticate_user!" },
+    };
+    const child_skip = [_]BeforeAction{
+        .{ .controller = "posts", .name = "authenticate_user!" },
+    };
+    try std.testing.expect(authGuardFor(.{
+        .before_actions = &inherited,
+        .skips = &child_skip,
+        .parents = &parents,
+    }, "posts", "index") == null);
+
+    // Same class declares both -- "at or below" includes "at", and within one
+    // class source order is what decides (fix round 3, NEW-2). The skip AFTER
+    // the filter removes it...
+    const same_filter = [_]BeforeAction{
+        .{ .controller = "posts", .name = "authenticate_user!", .line = 2 },
+    };
+    const same_skip_after = [_]BeforeAction{
+        .{ .controller = "posts", .name = "authenticate_user!", .line = 3 },
+    };
+    try std.testing.expect(authGuardFor(.{
+        .before_actions = &same_filter,
+        .skips = &same_skip_after,
+        .parents = &parents,
+    }, "posts", "index") == null);
+
+    // ...and the same two lines the other way round do NOT: `raise: false`
+    // makes it parse, but line 2 skipped a callback chain that did not yet
+    // hold the filter, so Rails runs it. Reporting this page public is the
+    // defect NEW-2 names.
+    const same_skip_before = [_]BeforeAction{
+        .{ .controller = "posts", .name = "authenticate_user!", .line = 1 },
+    };
+    try std.testing.expect(authGuardFor(.{
+        .before_actions = &same_filter,
+        .skips = &same_skip_before,
+        .parents = &parents,
+    }, "posts", "index") != null);
+
+    // Equal lines cannot both be true, and the same declaration cannot skip
+    // itself -- `<=` keeps that from reading as a suppression.
+    try std.testing.expect(authGuardFor(.{
+        .before_actions = &same_filter,
+        .skips = &same_filter,
+        .parents = &parents,
+    }, "posts", "index") != null);
+
+    // Line order is a WITHIN-CLASS rule only: a skip in the subclass removes
+    // an inherited filter no matter which line either sits on.
+    const parent_filter = [_]BeforeAction{
+        .{ .controller = "application", .name = "authenticate_user!", .line = 99 },
+    };
+    const child_skip_low = [_]BeforeAction{
+        .{ .controller = "posts", .name = "authenticate_user!", .line = 1 },
+    };
+    try std.testing.expect(authGuardFor(.{
+        .before_actions = &parent_filter,
+        .skips = &child_skip_low,
+        .parents = &parents,
+    }, "posts", "index") == null);
+}
+
+test "decodeResponse: a literal-string redirect decodes as `path`, distinct from a stem and from dynamic" {
+    // Fix round 1, I-3.
+    const gpa = std.testing.allocator;
+    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    defer blockers.freeList(gpa, &list);
+    const line =
+        \\{"ok":true,"actions":[
+        \\{"controller":"pages","action":"old","only_redirect":true,"renders_json":false,"line":9,
+        \\ "redirects":[{"path":"/about"},{"name":"root","args":[]},{"dynamic":true}]}],
+        \\"unresolved":[]}
+    ;
+    const d = try decodeResponse(gpa, line, "app/controllers", &list);
+    defer freeDecoded(gpa, d);
+
+    const r = d.actions[0].redirects;
+    try std.testing.expectEqual(@as(usize, 3), r.len);
+    try std.testing.expectEqualStrings("/about", r[0].path.?);
+    try std.testing.expect(r[0].name == null and !r[0].dynamic);
+    // The three variants stay apart: a stem carries no path, and a dynamic
+    // entry carries neither.
+    try std.testing.expect(r[1].path == null);
+    try std.testing.expectEqualStrings("root", r[1].name.?);
+    try std.testing.expect(r[2].path == null and r[2].name == null and r[2].dynamic);
+}
+
+test "dupeActions/dupeBeforeActions copy the whole graph, and free every allocation on OOM" {
+    const gpa = std.testing.allocator;
+    const src_actions = [_]ActionInfo{
+        .{
+            .controller = "pages",
+            .action = "old",
+            .only_redirect = true,
+            .redirects = &.{.{ .name = "about", .args = &.{} }},
+        },
+        .{
+            .controller = "posts",
+            .action = "update",
+            .redirects = &.{
+                .{ .name = "post", .args = &.{"1"} },
+                .{ .path = "/about" },
+                // All three fields at once: the only shape in which EVERY
+                // per-field `errdefer` in `dupeRedirects` has a later
+                // allocation that can fail. Without it the `path` errdefer
+                // is unreachable and a mutation deleting it survives.
+                .{ .name = "stem", .args = &.{ "1", "2" }, .path = "/both" },
+                .{ .dynamic = true },
+            },
+        },
+    };
+    const src_filters = [_]BeforeAction{
+        .{ .controller = "posts", .name = "require_login", .only = &.{"index"}, .line = 2 },
+        .{ .controller = "posts", .dynamic = true, .line = 3 },
+    };
+
+    const actions = try dupeActions(gpa, &src_actions);
+    defer freeActions(gpa, actions);
+    const filters = try dupeBeforeActions(gpa, &src_filters);
+    defer freeBeforeActions(gpa, filters);
+
+    try std.testing.expectEqual(@as(usize, 2), actions.len);
+    try std.testing.expectEqualStrings("post", actions[1].redirects[0].name.?);
+    try std.testing.expectEqualStrings("1", actions[1].redirects[0].args[0]);
+    // A COPY, not an alias: `Discovery` outlives the `controllers.Result`
+    // these came from, so a shallow copy would leave it pointing at freed
+    // memory the moment `discover`'s `defer freeResult` runs.
+    try std.testing.expect(actions[1].redirects[0].args[0].ptr != src_actions[1].redirects[0].args[0].ptr);
+    try std.testing.expectEqualStrings("/about", actions[1].redirects[1].path.?);
+    try std.testing.expect(actions[1].redirects[1].path.?.ptr != src_actions[1].redirects[1].path.?.ptr);
+    try std.testing.expectEqualStrings("/both", actions[1].redirects[2].path.?);
+    try std.testing.expectEqualStrings("stem", actions[1].redirects[2].name.?);
+    try std.testing.expect(actions[1].redirects[3].dynamic);
+    try std.testing.expectEqualStrings("index", filters[0].only[0]);
+    try std.testing.expect(filters[0].only[0].ptr != src_filters[0].only[0].ptr);
+    try std.testing.expect(filters[1].dynamic);
+    try std.testing.expect(filters[1].name == null);
+
+    // Same sweep discipline as `decodeResponse`'s: every allocation index in
+    // turn, with `std.testing.allocator`'s leak detector -- not an explicit
+    // assertion -- proving each `errdefer` on the nested redirect/arg dupes
+    // actually releases what it claimed.
+    var fail_index: usize = 0;
+    while (true) : (fail_index += 1) {
+        if (fail_index > 200) return error.SweepNeverReachedSuccess;
+        var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = fail_index });
+        if (dupeActions(failing.allocator(), &src_actions)) |out| {
+            freeActions(gpa, out);
+            break;
+        } else |err| try std.testing.expectEqual(error.OutOfMemory, err);
+    }
+    fail_index = 0;
+    while (true) : (fail_index += 1) {
+        if (fail_index > 200) return error.SweepNeverReachedSuccess;
+        var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = fail_index });
+        if (dupeBeforeActions(failing.allocator(), &src_filters)) |out| {
+            freeBeforeActions(gpa, out);
+            break;
+        } else |err| try std.testing.expectEqual(error.OutOfMemory, err);
+    }
+
+    // Fix round 1: the same sweep for the inheritance edges. Two rows, so at
+    // least one failure index lands between the `controller` and `parent`
+    // dupes of the second one, with the first already filled.
+    const src_parents = [_]ParentEdge{
+        .{ .controller = "posts", .parent = "application" },
+        .{ .controller = "admin/users", .parent = "admin/base" },
+    };
+    const owned_parents = try dupeParents(gpa, &src_parents);
+    defer freeParents(gpa, owned_parents);
+    try std.testing.expectEqualStrings("admin/base", owned_parents[1].parent);
+    try std.testing.expect(owned_parents[1].parent.ptr != src_parents[1].parent.ptr);
+
+    fail_index = 0;
+    while (true) : (fail_index += 1) {
+        if (fail_index > 200) return error.SweepNeverReachedSuccess;
+        var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = fail_index });
+        if (dupeParents(failing.allocator(), &src_parents)) |out| {
+            freeParents(gpa, out);
+            break;
+        } else |err| try std.testing.expectEqual(error.OutOfMemory, err);
+    }
 }
 
 test "find matches on (controller, action) pair, not either alone" {

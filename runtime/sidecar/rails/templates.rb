@@ -669,11 +669,147 @@ module RailsTemplates
     end
 
     def all_literal?(nodes) = nodes.all? { |n| literal(n) }
-    def all_literal_opts?(opts) = opts.values.all? { |v| literal(v) || literal_pairs(v) }
+    def all_literal_opts?(opts) = flatten_opts(opts).all? { |_, v| v.is_a?(String) || literal(v) || literal_pairs(v) }
     def literal_args(nodes) = nodes.map { |n| literal(n) }
 
     def literal_attrs(opts)
-      opts.map { |k, v| [k, literal(v) || (literal_pairs(v) ? "{...}" : nil)] }.select { |_, v| v }
+      flatten_opts(opts).map { |k, v| [k, v.is_a?(String) ? v : (literal(v) || (literal_pairs(v) ? "{...}" : nil))] }.select { |_, v| v }
+    end
+
+    # The option keys whose nested hash Rails' tag helpers spell out as
+    # prefixed attributes (ActionView's `TAG_PREFIXES`).
+    TAG_PREFIXES = %w[aria data].freeze
+
+    # `[[key, node-or-String], ...]`: the helper's options with every
+    # `data:`/`aria:` hash of scalar literals flattened the way Rails renders
+    # it -- `data: { turbo_method: :delete }` is `data-turbo-method="delete"`
+    # (`tag_options`: the key dasherised, a nil value skipped, a String/Symbol
+    # value as is and any other scalar JSON-encoded, so `true` is "true").
+    #
+    # Reporting that hash as one `data` key holding the `{...}` sentinel was
+    # a silent loss on every Rails 7 / Turbo template: `findings.mutationVerb`
+    # reads `data-turbo-method` and `convert.confirmText` reads
+    # `data-turbo-confirm`, and neither can read a sentinel -- so
+    # `link_to "Sign out", logout_path, data: { turbo_method: :delete }`
+    # raised no finding and converted to a GET link carrying `data="{...}"`.
+    # The flattening happens here, once, so both readers see the attributes
+    # Rails would have rendered.
+    #
+    # `button_to`'s `form: { data: … }` puts the same attributes on the form
+    # the button builds, which Turbo consults for a confirmation exactly as
+    # it consults the button, so that inner hash lands on the control too;
+    # whatever else `form:` carried keeps the sentinel it always had.
+    #
+    # Only a hash of scalar literals is flattened. A value Rails would
+    # JSON-encode (`data: { params: { a: 1 } }`) or evaluate at request time
+    # is left exactly as written, and `literal_pairs` says of it what it
+    # always said: not literal.
+    # ActiveSupport's `blank?` for the only thing a key can be here: a String,
+    # which `literal` has already made of a symbol/string/integer key. Spelled
+    # out rather than required, because this sidecar deliberately runs on
+    # Prism alone -- no Rails in the operator's toolchain -- and `strip` is not
+    # the same predicate (ActiveSupport's is `/\A[[:space:]]*\z/`, which is
+    # what a non-breaking space would answer differently to).
+    def blank_key?(k) = k.nil? || k.match?(/\A[[:space:]]*\z/)
+
+    # ActionView 8.1.3.1 `tag_option` runs the finished attribute NAME through
+    # `ERB::Util.xml_name_escape` before writing it, so a key XML forbids in a
+    # name comes out with every offending character rewritten to `_`:
+    # `data: { "with space" => "v" }` renders `data-with_space="v"`. Reporting
+    # the raw `data-with space` was not one attribute at all -- an HTML parser
+    # reads `data-with` plus a nameless `space="v"` -- and the converter wrote
+    # that pair straight into the target template.
+    #
+    # The character sets are the XML 1.0 `NameStartChar`/`NameChar` productions
+    # ActiveSupport spells out, transcribed rather than required: this sidecar
+    # deliberately runs on Prism alone, with no Rails in the operator's
+    # toolchain, so `ERB::Util` is not available to call.
+    XML_NAME_START_SET =
+      "@:A-Z_a-z\u{C0}-\u{D6}\u{D8}-\u{F6}\u{F8}-\u{2FF}\u{370}-\u{37D}\u{37F}-\u{1FFF}" \
+      "\u{200C}-\u{200D}\u{2070}-\u{218F}\u{2C00}-\u{2FEF}\u{3001}-\u{D7FF}\u{F900}-\u{FDCF}" \
+      "\u{FDF0}-\u{FFFD}\u{10000}-\u{EFFFF}"
+    XML_NAME_START_RE = /[^#{XML_NAME_START_SET}]/
+    XML_NAME_FOLLOWING_RE = /[^#{XML_NAME_START_SET}\-.0-9\u{B7}\u{0300}-\u{036F}\u{203F}-\u{2040}]/
+    XML_NAME_REPLACEMENT = "_"
+
+    # The first character obeys the stricter production (no digit, no `-`, no
+    # `.`) and the rest the looser one, exactly as `xml_name_escape` splits
+    # them. Every name this is called with already starts with `data-`/`aria-`,
+    # so the strict half never fires in practice -- it is transcribed anyway so
+    # the function is the one ActionView has, not a subset of it that a future
+    # caller would have to re-derive.
+    def xml_name_escape(name)
+      name = name.to_s
+      return "" if blank_key?(name)
+      first = name[0].gsub(XML_NAME_START_RE, XML_NAME_REPLACEMENT)
+      return first if name.size == 1
+      first + name[1..].gsub(XML_NAME_FOLLOWING_RE, XML_NAME_REPLACEMENT)
+    end
+
+    def flatten_opts(opts)
+      opts.flat_map do |k, v|
+        # ActionView 8.1.3.1 `tag_options` opens with `next if key.blank?`, so
+        # Rails renders NOTHING for a blank option key -- and it cannot render
+        # anything else: an attribute with no name is not markup. Reporting it
+        # made the node stream disagree with the page Rails serves, and the
+        # converter faithfully emitted `="3"` into a target template.
+        next [] if blank_key?(k)
+
+        if TAG_PREFIXES.include?(k)
+          prefixed_pairs(k, v) || [[k, v]]
+        elsif k == "form"
+          form_pairs(v) || [[k, v]]
+        else
+          [[k, v]]
+        end
+      end
+    end
+
+    # `[["data-turbo-method", "delete"], ...]` for a hash of scalar literals;
+    # nil when the node is not one.
+    def prefixed_pairs(prefix, node)
+      return nil unless node.is_a?(Prism::HashNode) || node.is_a?(Prism::KeywordHashNode)
+      node.elements.filter_map do |e|
+        return nil unless e.is_a?(Prism::AssocNode)
+        k = literal(e.key)
+        return nil if k.nil?
+        # `next if k.blank? || v.nil?` is the whole of ActionView 8.1.3.1's
+        # filter inside the `data:`/`aria:` arms, and both halves belong here.
+        # `data: { "" => 1 }` rendered as `data-="1"`, an attribute Rails
+        # never writes.
+        next nil if blank_key?(k.to_s)
+        # Before `literal`, which reports a nil as "" -- Rails writes no
+        # attribute at all for a nil value.
+        next nil if e.value.is_a?(Prism::NilNode)
+        v = literal(e.value)
+        return nil if v.nil?
+        [xml_name_escape("#{prefix}-#{k.to_s.tr('_', '-')}"), v]
+      end
+    end
+
+    # `button_to`'s `form:` hash: its `data:`/`aria:` entries as prefixed
+    # pairs, then one `["form", "{...}"]` for whatever else it carried. nil
+    # when anything in it is not a literal, so the caller leaves the node as
+    # it was.
+    def form_pairs(node)
+      return nil unless node.is_a?(Prism::HashNode) || node.is_a?(Prism::KeywordHashNode)
+      out = []
+      rest = 0
+      node.elements.each do |e|
+        return nil unless e.is_a?(Prism::AssocNode)
+        k = literal(e.key)&.to_s
+        return nil if k.nil?
+        if TAG_PREFIXES.include?(k)
+          pairs = prefixed_pairs(k, e.value)
+          return nil if pairs.nil?
+          out.concat(pairs)
+        else
+          return nil if literal(e.value).nil?
+          rest += 1
+        end
+      end
+      out << ["form", "{...}"] if rest > 0
+      out
     end
 
     # A HashNode/KeywordHashNode whose keys and values are all literals -> [[k, v], ...]; else nil.

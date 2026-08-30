@@ -2039,6 +2039,13 @@ fn emptyDiscovery() rails.Discovery {
         .findings = &.{},
         .i18n_locale = null,
         .decisions = .empty,
+        // #167 Stage 3: `ActionInfo.redirects` and the `before_action`
+        // filters reach the scaffold through `Discovery`; empty here because
+        // no test in this file has bound a backend endpoint yet.
+        .actions = &.{},
+        .before_actions = &.{},
+        .skip_before_actions = &.{},
+        .parents = &.{},
     };
 }
 

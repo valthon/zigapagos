@@ -75,5 +75,57 @@ assert_eq "BOX",      Inflect.singularize("BOXES"),      "BOXES case (suffix rul
 # for this input; do not "fix" it back to "CATEGORY".
 assert_eq "CATEGORy", Inflect.singularize("CATEGORIES"), "CATEGORIES case (AS literal-suffix quirk, AS-faithful not tidy)"
 
+# ---------------------------------------------------------------------
+# pluralize (#176). Rails' SingletonResource#controller defaults to
+# `name.to_s.pluralize`, so `resource :session` routes to
+# SessionsController -- this is the function routes.rb calls to name that
+# controller, and getting it wrong names a file no real app has. Same
+# correctness criterion as singularize: every expected value below was
+# read off a live activesupport 8.1.3.1
+# (`ActiveSupport::Inflector.pluralize(w)`), not reasoned out.
+
+# The two names the auth journey is detected by, and the plain case.
+assert_eq "sessions",      Inflect.pluralize("session"),      "session (the #176 case)"
+assert_eq "registrations", Inflect.pluralize("registration"), "registration (the #176 case)"
+assert_eq "profiles",      Inflect.pluralize("profile"),      "regular s"
+
+# Irregular -- what appending "s" gets wrong, each a real resource name.
+assert_eq "people",   Inflect.pluralize("person"),   "person -> people"
+assert_eq "children", Inflect.pluralize("child"),    "child -> children"
+assert_eq "men",      Inflect.pluralize("man"),      "man -> men"
+assert_eq "women",    Inflect.pluralize("woman"),    "woman -> women"
+assert_eq "mice",     Inflect.pluralize("mouse"),    "mouse -> mice"
+assert_eq "oxen",     Inflect.pluralize("ox"),       "ox -> oxen"
+
+# Suffix rules.
+assert_eq "categories", Inflect.pluralize("category"), "y -> ies"
+assert_eq "boxes",      Inflect.pluralize("box"),      "x -> xes"
+assert_eq "buses",      Inflect.pluralize("bus"),      "bus -> buses"
+assert_eq "statuses",   Inflect.pluralize("status"),   "status -> statuses"
+assert_eq "quizzes",    Inflect.pluralize("quiz"),     "quiz -> quizzes"
+assert_eq "analyses",   Inflect.pluralize("analysis"), "sis -> ses"
+assert_eq "knives",     Inflect.pluralize("knife"),    "fe -> ves"
+
+# Uncountable -- `resource :series` is SeriesController, never
+# SeriesesController.
+assert_eq "series",    Inflect.pluralize("series"),    "series"
+assert_eq "equipment", Inflect.pluralize("equipment"), "equipment"
+
+# Idempotent on a word already plural: AS's irregular rules match the
+# plural form too, and its `/s$/ => "s"` catch-all covers the rest. A
+# `resource :sessions` (unusual but legal) must not become "sessionses".
+assert_eq "people",   Inflect.pluralize("people"),   "already plural (irregular)"
+assert_eq "sessions", Inflect.pluralize("sessions"), "already plural (s catch-all)"
+
+# AS-faithful, not English-faithful, exactly as singularize is: the
+# `/s$/ => "s"` catch-all fires before any Latin rule, so a bare "-us"
+# noun is left alone. Do not "fix" this to "campuses".
+assert_eq "campus", Inflect.pluralize("campus"), "campus (AS-faithful, not English-faithful)"
+
+# Case, the same emergent backreference property singularize has: the
+# irregular rules capture and reproduce, the catch-all appends a literal.
+assert_eq "People",   Inflect.pluralize("Person"),  "Person case (backreference-preserving)"
+assert_eq "SESSIONs", Inflect.pluralize("SESSION"), "SESSION case (AS literal-suffix quirk, AS-faithful not tidy)"
+
 abort "#{$failures} inflect failure(s)" if $failures > 0
 puts "PASS: inflect_test.rb"
