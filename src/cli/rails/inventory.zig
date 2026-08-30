@@ -288,44 +288,61 @@ pub fn freeWalkResult(gpa: Allocator, result: WalkResult) void {
     blockers.free(gpa, result.blockers);
 }
 
-/// Contract 2 (owned-result), inherited from `blockers.append`: everything it
-/// allocates escapes into `blocker_list` and is released by `blockers.free`.
+/// The engine label (`"Haml"`, `"Slim"`) for a TEMPLATE entry no converter
+/// handles, or `null` for everything else.
 ///
-/// Appends a `RAILS_TEMPLATE_ENGINE_UNSUPPORTED` blocker for every *template*
-/// entry whose engine has no converter yet (Haml, Slim). Not an integrity
-/// blocker: this is an expected, correctly-detected finding, not evidence the
-/// inventory itself is untrustworthy.
-///
-/// This is the one place template-engine blockers are constructed --
-/// `report.build` only renders whatever blocker list it is given, so there is
-/// a single blocker path rather than the report special-casing engines at
-/// render time on top of a separately-populated blocker list.
+/// Split out of `appendUnsupportedEngineBlockers` because #167 Stage 2 needs
+/// the same verdict for a second artifact: every such template also gets a
+/// `RAILS_TEMPLATE_ENGINE_UNSUPPORTED` *finding* (see `findings.derive`), so
+/// a route rendering it can be acknowledged. Two copies of this gate could
+/// disagree -- a file with a blocker and no finding is a route no operator
+/// can answer; a finding with no blocker is a question the report never
+/// explains -- so both callers read this one function.
 ///
 /// Gated on `Kind`, not just `Engine`: `engineFor` reads the engine off the
 /// compound extension alone, so a non-template file that merely happens to
 /// end in `.haml`/`.slim` (e.g. `public/download.slim`, classified `.asset`)
 /// used to be misreported as an unsupported template even though nothing in
 /// this codebase ever renders it as one (P2 in the PR review that added this
-/// gate). The switch below is explicit and exhaustive over `Kind` rather than
-/// a negative "skip .asset/.controller/..." list, so a future `Kind` variant
+/// gate). The switch is explicit and exhaustive over `Kind` rather than a
+/// negative "skip .asset/.controller/..." list, so a future `Kind` variant
 /// has to be classified as template-or-not deliberately instead of silently
 /// falling into whichever bucket the list-writer forgot.
+///
+/// Contract 3 (caller-buffer): allocates nothing; the result is a literal.
+pub fn unsupportedEngineLabel(e: Entry) ?[]const u8 {
+    const is_template = switch (e.kind) {
+        .view, .layout, .partial, .mailer_view => true,
+        .controller, .helper, .stimulus_controller, .js_entry, .js_module, .asset, .other => false,
+    };
+    if (!is_template) return null;
+    return switch (e.engine) {
+        .haml => "Haml",
+        .slim => "Slim",
+        else => null,
+    };
+}
+
+/// Contract 2 (owned-result), inherited from `blockers.append`: everything it
+/// allocates escapes into `blocker_list` and is released by `blockers.free`.
+///
+/// Appends a `RAILS_TEMPLATE_ENGINE_UNSUPPORTED` blocker for every *template*
+/// entry whose engine has no converter yet (Haml, Slim), as
+/// `unsupportedEngineLabel` decides. Not an integrity blocker: this is an
+/// expected, correctly-detected finding, not evidence the inventory itself is
+/// untrustworthy.
+///
+/// This is the one place template-engine blockers are constructed --
+/// `report.build` only renders whatever blocker list it is given, so there is
+/// a single blocker path rather than the report special-casing engines at
+/// render time on top of a separately-populated blocker list.
 pub fn appendUnsupportedEngineBlockers(
     gpa: Allocator,
     entries: []const Entry,
     blocker_list: *std.ArrayListUnmanaged(Blocker),
 ) Allocator.Error!void {
     for (entries) |e| {
-        const is_template = switch (e.kind) {
-            .view, .layout, .partial, .mailer_view => true,
-            .controller, .helper, .stimulus_controller, .js_entry, .js_module, .asset, .other => false,
-        };
-        if (!is_template) continue;
-        const label = switch (e.engine) {
-            .haml => "Haml",
-            .slim => "Slim",
-            else => continue,
-        };
+        const label = unsupportedEngineLabel(e) orelse continue;
         var buf: [64]u8 = undefined;
         const detail = std.fmt.bufPrint(&buf, "{s} template is not converted", .{label}) catch unreachable;
         // `.warn`: the brief's own canonical example of an expected,

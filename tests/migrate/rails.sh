@@ -449,23 +449,79 @@ grep -q -- "--strict only applies to Rails sources" "$WORK/astro-strict.err" \
   || fail "--strict rejection on a non-Rails source did not explain why"
 [[ ! -e "$WORK/astro-like.md" ]] || fail "a rejected --strict combination must not write a report"
 
-# --- --target DIR: the two discovery artifacts land in DIR, nothing else,
-# byte-identical to the -o run (task-1-brief.md's own "Discriminate"
-# requirement -- a bare "DIR is non-empty" check would also pass an
-# implementation that wrote only one of the two artifacts, or that wrote a
-# scaffold Rails must not produce: converting content/scaffolding islands
-# is #167's job, not this one's). --------------------------------------------
+# --- --target DIR: Rails assembles a real project (#167 Stage 2) ------------
+# The exact listing is the assertion that matters: a bare "DIR is non-empty"
+# check would also pass an implementation that wrote only the discovery
+# artifacts (the pre-Stage-2 behaviour), or that scaffolded a page for a route
+# whose template it could not convert.
+#
+# Exit 3, not 0: this fixture has routes nobody has decided about, and that is
+# the whole point of the new code -- the run wrote everything it meant to and
+# the migration is not finished. `|| fail` would pass on ANY non-zero, so the
+# code is captured and compared exactly.
 TARGET="$WORK/target-dir"
-"$ZIGAPAGOS" migrate "$APP" --target "$TARGET" >/dev/null 2>&1 \
-  || fail "--target should exit 0 on this fixture (blockers present, but none are integrity blockers, and --strict was not passed)"
+set +e
+"$ZIGAPAGOS" migrate "$APP" --target "$TARGET" >"$WORK/target.out" 2>&1
+target_rc=$?
+set -e
+[[ $target_rc -eq 3 ]] \
+  || fail "--target on a fixture with open routes must exit 3 (incomplete handoff), got $target_rc"
+grep -q -- "route(s) open" "$WORK/target.out" \
+  || fail "exit 3 did not say how to make progress"
+grep -q -- "MIGRATION.decisions.json" "$WORK/target.out" \
+  || fail "exit 3 did not name the file the operator has to write"
 
-# Exactly the two discovery artifacts, nothing else -- no components/,
-# content/, assets/, layouts/, build.sh, package.json, .gitignore, etc. (the
-# scaffold the other eight sources' --target assembles).
+# The exact tree. `pages#about` converts under the `application` layout; the
+# `posts` routes that render a dynamic partial stay open (their pages are
+# still written -- an open route is one nobody has decided about, not one that
+# produced nothing); `/posts/old` is a redirect and `/posts/:id` is backend.
+#
+# Note what is NOT here: `assets/assets/.manifest.json`. Ruling S17 --
+# `public/assets/**` is the pipeline's compiled OUTPUT (Propshaft's
+# `.manifest.json`, and a digested copy of every `app/assets/` source), and
+# copying it would ship each asset twice plus a Rails bookkeeping file no
+# Zigapagos site reads. The sources themselves are copied from `app/assets/`
+# (`assets/images/logo.png` below).
 target_listing="$(cd "$TARGET" && find . -type f | sort)"
-expected_listing="$(printf './MIGRATION.manifest.json\n./MIGRATION.md\n' | sort)"
+expected_listing="$(cat <<'LISTING'
+./.gitignore
+./AGENTS.md
+./CLAUDE.md
+./MIGRATION.handoff.json
+./MIGRATION.manifest.json
+./MIGRATION.md
+./assets/favicon.ico
+./assets/images/logo.png
+./build.sh
+./content/about/index.smd
+./content/index.smd
+./content/posts/dashboard/index.smd
+./content/posts/featured/index.smd
+./content/posts/index.smd
+./content/posts/profile/index.smd
+./content/posts/recent/index.smd
+./layouts/pages/about.shtml
+./layouts/posts/dashboard.shtml
+./layouts/posts/featured.shtml
+./layouts/posts/index.shtml
+./layouts/posts/profile.shtml
+./layouts/posts/recent.shtml
+./layouts/templates/application.shtml
+./layouts/templates/posts.shtml
+./zigapagos.ziggy
+LISTING
+)"
 [[ "$target_listing" == "$expected_listing" ]] \
-  || fail "--target must write exactly MIGRATION.md and MIGRATION.manifest.json into DIR and nothing else, got: $target_listing"
+  || fail "--target wrote an unexpected tree. got:
+$target_listing
+want:
+$expected_listing"
+
+# Never clobbers: the scaffold writes with exclusive-create, so a `.new`
+# anywhere in the target would mean something took the `--scaffold` versioning
+# path by mistake.
+[[ -z "$(cd "$TARGET" && find . -name '*.new*' -print -quit)" ]] \
+  || fail "--target must never version a file as .new; it writes into an empty tree"
 
 # Nothing leaked to the default out_path location either. Both artifacts,
 # not just the report: final-review.md F11 found the manifest leaking to the
@@ -477,16 +533,40 @@ expected_listing="$(printf './MIGRATION.manifest.json\n./MIGRATION.md\n' | sort)
 [[ ! -e "$REPO/MIGRATION.manifest.json" ]] \
   || fail "--target must not also write the manifest to the default ./MIGRATION.manifest.json location"
 
-# Byte-identical to the same app's -o run: the report/manifest depend only
-# on the source tree's discovery, never on where the CLI happens to write
-# them.
+# The MANIFEST is byte-identical to the same app's -o run: it is discovery's
+# verdict, and discovery does not depend on where the CLI writes its output or
+# on whether a scaffold was assembled afterwards.
 diff -u "$WORK/one.manifest.json" "$TARGET/MIGRATION.manifest.json" \
   || fail "--target's manifest is not byte-identical to the -o run's manifest"
-diff -u "$WORK/one.md" "$TARGET/MIGRATION.md" \
-  || fail "--target's report is not byte-identical to the -o run's report"
+
+# The REPORT is deliberately NOT identical any more (ruling S2): with a target
+# it gains a Handoff section describing the conversion, which the -o run has
+# nothing to say about. What must still hold is that everything ABOVE that
+# section is unchanged -- the report is the same discovery rendering plus a
+# suffix, not a differently-rendered document.
+sed -n '/^## Handoff$/,$p' "$TARGET/MIGRATION.md" >"$WORK/target-handoff-section.md"
+[[ -s "$WORK/target-handoff-section.md" ]] \
+  || fail "--target's report is missing the Handoff section"
+grep -q '^complete: false$' "$WORK/target-handoff-section.md" \
+  || fail "the Handoff section did not state the completion verdict"
+# Everything strictly above the section, minus the single blank line that
+# separates it, must be the -o report byte for byte. `head -n -N` is a GNU
+# extension and CI also runs macOS, so the line count is taken explicitly.
+awk '/^## Handoff$/{exit} {print}' "$TARGET/MIGRATION.md" >"$WORK/target-head-raw.md"
+head_lines=$(wc -l <"$WORK/target-head-raw.md")
+head -n "$((head_lines - 1))" "$WORK/target-head-raw.md" >"$WORK/target-report-head.md"
+diff -u "$WORK/one.md" "$WORK/target-report-head.md" \
+  || fail "--target's report differs from the -o run's above the Handoff section"
+
+# The handoff carries its own schema marker and agrees with the exit code.
+grep -q '"schema": "zigapagos.rails-handoff/1"' "$TARGET/MIGRATION.handoff.json" \
+  || fail "the handoff does not carry its schema marker"
+grep -q '"complete": false' "$TARGET/MIGRATION.handoff.json" \
+  || fail "the handoff's complete verdict disagrees with the exit code"
 
 # The source tree is still read-only after --target, same invariant as the
-# plain -o path above.
+# plain -o path above. This is the assertion that stops the converter from
+# ever writing back into the Rails app it is reading.
 after_target="$(cd "$APP" && find . -type f | sort | xargs shasum | shasum)"
 [[ "$before" == "$after_target" ]] || fail "--target modified the source tree"
 
@@ -509,6 +589,27 @@ nonempty_rc=$?
 set -e
 [[ $nonempty_rc -ne 0 ]] || fail "--target on a non-empty directory must be rejected"
 [[ ! -e "$NONEMPTY/MIGRATION.md" ]] || fail "a rejected non-empty --target must not write the report"
+
+# ...with exactly one exception (ruling S3): a target holding nothing but
+# MIGRATION.decisions.json is accepted, because that is the state the
+# decide-and-re-run loop leaves behind after the operator wipes the generated
+# output and keeps their answers. The file is also picked up as the default
+# --decisions input without being named on the command line.
+DECIDED="$WORK/decided-target"
+mkdir -p "$DECIDED"
+printf '{"schema": "zigapagos.rails-decisions/1", "decisions": []}\n' >"$DECIDED/MIGRATION.decisions.json"
+set +e
+"$ZIGAPAGOS" migrate "$APP" --target "$DECIDED" >"$WORK/decided.out" 2>&1
+decided_rc=$?
+set -e
+[[ $decided_rc -eq 3 ]] \
+  || fail "--target on a directory holding only MIGRATION.decisions.json must be accepted (exit 3 here, routes still open), got $decided_rc"
+[[ -e "$DECIDED/MIGRATION.handoff.json" ]] \
+  || fail "the decisions-only target was accepted but nothing was assembled into it"
+# The answers file survives the run untouched -- losing it would break the very
+# loop this exception exists for.
+grep -q 'zigapagos.rails-decisions/1' "$DECIDED/MIGRATION.decisions.json" \
+  || fail "--target overwrote the operator's decisions file"
 
 # --- parenthesized Gemfile syntax is still detected (P3 PR-review repro) ----
 # The reviewer's exact repro: `gem("rails")` with config/application.rb

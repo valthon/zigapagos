@@ -44,9 +44,18 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const assets = @import("assets.zig");
 const blockers = @import("blockers.zig");
+const classify = @import("classify.zig");
+// Only for `opensBlock` (ruling S12's form-nesting scope). `convert.zig`
+// imports this file in turn -- a cycle Zig resolves the same way it already
+// resolves `manifest.zig` <-> `rails.zig`. Sharing the predicate is the whole
+// point: see `convert.opensBlock`'s own doc.
+const convert = @import("convert.zig");
 const fragments = @import("fragments.zig");
 const controllers = @import("controllers.zig");
+const resolve = @import("resolve.zig");
+const routes = @import("routes.zig");
 
 pub const Severity = blockers.Severity;
 
@@ -94,7 +103,82 @@ pub const Finding = struct {
 const choices_retain_blocked = [_][]const u8{ "retain", "blocked" };
 const choices_island_retain_blocked = [_][]const u8{ "island", "retain", "blocked" };
 const choices_island_spa_retain_blocked = [_][]const u8{ "island", "spa", "retain", "blocked" };
+const choices_spa_retain_blocked = [_][]const u8{ "spa", "retain", "blocked" };
 const choices_full = [_][]const u8{ "island", "spa", "backend", "retain", "blocked" };
+
+/// The three #167 Stage 2 ROUTE-scoped codes, and the file all of them point
+/// at. Public because `scaffold.zig` has to recompute the very ids `derive`
+/// produced in order to look an operator decision up against them -- see
+/// `routeFindingId`.
+pub const routes_file = "config/routes.rb";
+pub const code_route_dynamic_segment = "RAILS_ROUTE_DYNAMIC_SEGMENT";
+pub const code_redirect_host_config = "RAILS_REDIRECT_HOST_CONFIG";
+
+/// #167 Stage 2 ruling S22, and the last of the "open note with no id" holes
+/// rulings S12/S18/S21 closed elsewhere.
+///
+/// A route whose controller/action pair resolves no view template at all --
+/// `def other; render :about; end` with no `app/views/pages/other.html.erb`,
+/// an action whose template was deleted, a `render` this stage does not
+/// follow -- reached `scaffold.contentRoute`, found nothing to convert, and
+/// left the route `open` with a bare sentence. That sentence carries no id,
+/// so no line in `MIGRATION.decisions.json` could name it and `complete` was
+/// unreachable for the whole app by any answer the operator could give.
+///
+/// `retain`/`blocked` only: there is no template, so no choice this stage
+/// could offer produces a page. Keyed on the `routes.rb` line like the other
+/// two ROUTE-scoped rows, because the route declaration -- not a template
+/// that does not exist -- is the thing an operator can point at.
+///
+/// It is a FINDING and not a change to discovery's classification: whether a
+/// route is `content` is a statement about what the route is for, and it is
+/// still that even with the template missing.
+pub const code_no_template = "RAILS_NO_TEMPLATE";
+
+/// #167 Stage 2 ruling S12: the six node kinds `convert.zig` always turns
+/// into a placeholder but that had NO derivation row -- the plan's Global
+/// Constraints parked their real handling on Stages 3 and 4, and the rows
+/// were left out with them.
+///
+/// That was a hole, not a deferral. A route whose only blemish is a `form`
+/// converted to `<!-- rails:unmapped form -->`, which carries no id; ruling
+/// S6 correctly kept the route `open`, and the operator had nothing to
+/// answer, so the route could never reach `complete` by any route at all --
+/// not even `blocked`. The rows below exist so every region the converter
+/// cannot finish is at least ACKNOWLEDGEABLE.
+///
+/// Their `choices` are `retain`/`blocked` only. Stage 3 widens the two form
+/// codes with the backend operations from `--backend`, and Stage 4 widens the
+/// Turbo/component ones with `island`; neither can be offered honestly today,
+/// and offering a choice this stage cannot carry out is worse than offering
+/// two it can. `RAILS_COMPONENT_ROOT` is new (additive to the spec's code
+/// list); the other four were already reserved there.
+/// #167 Stage 2 ruling S18, the same hole ruling S12 closed for the six
+/// deferred node kinds, in the one place S12 could not reach: a template
+/// whose ENGINE has no converter.
+///
+/// `RAILS_TEMPLATE_ENGINE_UNSUPPORTED` was a blocker and nothing else
+/// (`inventory.appendUnsupportedEngineBlockers`), which is the right verdict
+/// about the FILE -- discovery established the engine, there is nothing to
+/// decide about that. But a ROUTE rendering that file is a different
+/// question: the scaffold cannot convert it, so the route stays `open`, and
+/// with no finding on the view's path there was no id for a decision to name
+/// -- `complete` was unreachable for any app with one Haml view, by any
+/// answer the operator could give. The spec's own sentence ("Haml/Slim stay
+/// `RAILS_TEMPLATE_ENGINE_UNSUPPORTED` from #166; such a route can only reach
+/// `blocked` or `retained`") requires an id to reach either.
+///
+/// The blocker STAYS: it is what the report explains the engine with, and it
+/// is what `--strict` counts. This adds the operator's half of the same fact,
+/// on the same path, so `scaffold.collectTemplateFindings` picks it up for
+/// every route whose view it is. `retain`/`blocked` only -- an engine no
+/// converter reads cannot become an island or a SPA by anyone deciding so.
+pub const code_template_engine_unsupported = "RAILS_TEMPLATE_ENGINE_UNSUPPORTED";
+
+pub const code_backend_endpoint = "RAILS_BACKEND_ENDPOINT";
+pub const code_turbo_frame = "RAILS_TURBO_FRAME";
+pub const code_turbo_stream = "RAILS_TURBO_STREAM";
+pub const code_component_root = "RAILS_COMPONENT_ROOT";
 
 /// Contract 1 (self-freeing): the only allocation is the returned buffer,
 /// which escapes to the caller; nothing else is retained. Maps `%` to
@@ -126,6 +210,43 @@ pub fn findingId(gpa: Allocator, code: []const u8, path: []const u8, loc: []cons
     const loc_esc = try escapePart(gpa, loc);
     defer gpa.free(loc_esc);
     return std.fmt.allocPrint(gpa, "{s}.{s}.{s}", .{ code_esc, path_esc, loc_esc });
+}
+
+/// The id of a ROUTE-scoped finding (#167 Stage 2): `<code>.config/routes.rb.
+/// L<line>`, where `line` is the `routes.rb` line the route was DECLARED on.
+///
+/// Exported because two files have to agree on it byte for byte: `derive`
+/// below produces the finding, and `scaffold.zig` recomputes the same id from
+/// a `routes.Route` to look up the operator's decision. Recomputing rather
+/// than searching `findings[]` by `route_id` is deliberate -- one declaration
+/// can produce several routes (see `deriveRouteFindings`), so `route_id`
+/// names only one of them and is not a key to join on.
+///
+/// Contract 1 (self-freeing): the `loc` scratch is released; only the id
+/// escapes.
+pub fn routeFindingId(gpa: Allocator, code: []const u8, line: u64) Allocator.Error![]u8 {
+    const loc = try lineLoc(gpa, line);
+    defer gpa.free(loc);
+    return findingId(gpa, code, routes_file, loc);
+}
+
+/// True when a route path has a `:param` or `*glob` segment -- i.e. when it
+/// stands for a family of URLs rather than one.
+///
+/// Duplicates the predicate `resolve.zig` keeps private inside `contentPath`
+/// (`isPlaceholder`). The two MUST agree, since "dynamic" is defined here as
+/// exactly "no single static content path", so the agreement is pinned by a
+/// test below rather than left to a comment. Widening `resolve`'s API for a
+/// two-line predicate would have been the alternative; the pinned test is
+/// cheaper and catches drift in the direction that matters.
+///
+/// Contract 3 (caller-buffer): allocates nothing.
+pub fn isDynamicRoutePath(route_path: []const u8) bool {
+    var it = std.mem.splitScalar(u8, route_path, '/');
+    while (it.next()) |seg| {
+        if (seg.len > 1 and (seg[0] == ':' or seg[0] == '*')) return true;
+    }
+    return false;
 }
 
 /// Total order over `(code, path, line orelse 0, id)`. `id` is the key that
@@ -201,6 +322,82 @@ pub const DeriveInput = struct {
     /// ordinary case AND the safe one: a caller that forgets it gets the
     /// pre-R16 message, never a wrong claim about a locale file.
     i18n_error_paths: []const []const u8 = &.{},
+    /// Stage 2 (#167 plan ruling S1): the asset table `assets.scan`
+    /// recovered, so an `asset` node's literal can be resolved the same way
+    /// `convert.zig` resolves it (`resolve.assetFor`) and the two agree on
+    /// which helper calls become a placeholder.
+    ///
+    /// Defaulted empty ONLY so the pre-Stage-2 `derive` call literals in this
+    /// file's tests keep compiling -- unlike `i18n_error_paths`, an omitted
+    /// value here is NOT the safe answer: with no table every literal
+    /// resolves to nothing and every asset helper becomes a finding. The one
+    /// production caller passes the real slice; see the test that pins it.
+    assets: []const assets.Asset = &.{},
+    /// Stage 2 (plan ruling S1): the recovered route table, for the two
+    /// ROUTE-scoped rows (`RAILS_ROUTE_DYNAMIC_SEGMENT`,
+    /// `RAILS_REDIRECT_HOST_CONFIG`). Every other row in this table is
+    /// triggered by a template node, a parse error or a layout declaration;
+    /// these two are triggered by a route, which is why they need their own
+    /// input rather than another `fragments.Template` field.
+    ///
+    /// Defaulted empty ONLY so the pre-Stage-2 `derive` call literals in this
+    /// file's own tests keep compiling. Like `assets` above and unlike
+    /// `i18n_error_paths`, an omitted value is NOT the safe answer: with no
+    /// route table neither row can fire at all, so every dynamic and every
+    /// redirect route silently loses the finding an operator would have
+    /// acknowledged it through. The one production caller passes the real
+    /// slice.
+    routes: []const routes.Route = &.{},
+    /// Index-aligned with `routes` above (`rails.Discovery`'s own alignment
+    /// promise). Read only to EXCLUDE `backend` routes from the dynamic-
+    /// segment row and to SELECT `redirect` routes for the redirect row.
+    ///
+    /// A short or empty slice is not an error and is not treated as
+    /// `backend`: an unclassified route is one this run has no verdict for,
+    /// and suppressing its finding on that basis would hide a route rather
+    /// than surface it. See the "no classifications" test.
+    classifications: []const classify.Verdict = &.{},
+    /// Stage 2 (ruling S22): index-aligned with `routes` above, the template
+    /// paths discovery resolved for each route -- one
+    /// `rails.RouteTemplates.templates` per entry. Read by the
+    /// `RAILS_NO_TEMPLATE` row alone, which asks whether the route's
+    /// `<controller>/<action>` view is among them.
+    ///
+    /// A slice of slices rather than `[]const rails.RouteTemplates` because
+    /// `rails.zig` is this package's ROOT and imports this file; only the
+    /// `templates` half is read, so restating the shape is cheaper than
+    /// reasoning about the cycle (the same call `deriveRouteFindings` makes
+    /// about `rails.formatRouteId`).
+    ///
+    /// A SHORT slice is not an error and does not mean "no templates": an
+    /// entry that is not present is a route this input says nothing about,
+    /// and firing `RAILS_NO_TEMPLATE` on that basis would invent a missing
+    /// template for every route in every caller that omits the field.
+    /// Defaulted empty for that reason, which makes an omitted value LOSE the
+    /// row rather than fabricate it -- the safe direction, and the same
+    /// stance `classifications` above takes. The one production caller passes
+    /// the real slice; see the test that pins it.
+    route_templates: []const []const []const u8 = &.{},
+    /// Stage 2 (ruling S18): the templates whose engine has no converter,
+    /// exactly the set `inventory.unsupportedEngineLabel` accepts, carrying
+    /// that label. Passed in rather than re-derived here so the finding and
+    /// the blocker cannot disagree about which files qualify (see that
+    /// function), and so this file stays free of an `inventory.zig` import it
+    /// otherwise has no use for.
+    ///
+    /// Defaulted empty for the same reason `i18n_error_paths` is, and with
+    /// the same safety: an omitted value only ever LOSES a finding an app
+    /// with no Haml/Slim would not have had anyway. The one production caller
+    /// passes the real slice.
+    unsupported_templates: []const UnsupportedTemplate = &.{},
+};
+
+/// One `unsupported_templates` row: the app-relative template path and the
+/// engine label (`"Haml"`, `"Slim"`) `inventory.unsupportedEngineLabel`
+/// returned for it. Both borrowed for the duration of the `derive` call.
+pub const UnsupportedTemplate = struct {
+    path: []const u8,
+    label: []const u8,
 };
 
 /// True when `name` is not present in `route_names` -- a linear scan, not a
@@ -256,6 +453,212 @@ fn appendFinding(
     });
 }
 
+/// `appendFinding`'s ROUTE-scoped sibling: the same construction with a
+/// non-null `route_id`. Kept as a second function rather than an optional
+/// parameter on the first so the ten existing call sites -- every one of
+/// which is template- or controller-scoped and must keep `route_id = null`
+/// -- read unchanged.
+///
+/// Contract 2 (owned-result), inherited from `derive`: on `OutOfMemory`
+/// every allocation this call made is freed via `errdefer` before
+/// propagating.
+fn appendRouteFinding(
+    gpa: Allocator,
+    list: *std.ArrayListUnmanaged(Finding),
+    code: []const u8,
+    severity: Severity,
+    line: u64,
+    message: []const u8,
+    choices: []const []const u8,
+    route_id: []const u8,
+) Allocator.Error!void {
+    const id = try routeFindingId(gpa, code, line);
+    errdefer gpa.free(id);
+    const path_copy = try gpa.dupe(u8, routes_file);
+    errdefer gpa.free(path_copy);
+    const message_copy = try gpa.dupe(u8, message);
+    errdefer gpa.free(message_copy);
+    const route_id_copy = try gpa.dupe(u8, route_id);
+    errdefer gpa.free(route_id_copy);
+    try list.append(gpa, .{
+        .id = id,
+        .code = code,
+        .severity = severity,
+        .path = path_copy,
+        .line = line,
+        .route_id = route_id_copy,
+        .message = message_copy,
+        .choices = choices,
+        .requires_artifact = false,
+    });
+}
+
+/// Which routes one ROUTE-scoped row fires on.
+const RouteRow = enum {
+    /// A GET/HEAD route with a `:param`/`*glob` segment that discovery did
+    /// NOT call `backend`. A non-GET route has no page to migrate in the
+    /// first place, and a `backend` one is already answered by its own
+    /// classification -- neither has a dynamic-segment decision to make.
+    dynamic_segment,
+    /// A route discovery classified `redirect`, whatever its verb: the
+    /// static tree cannot express a redirect, so the host config owns it and
+    /// the operator acknowledges that (spec, "Conversion: what a route
+    /// becomes").
+    redirect,
+    /// Ruling S22: a route that `scaffold.zig` sends down the content-page
+    /// path and finds no view template for. See `routeHasNoView`.
+    no_template,
+};
+
+/// Ruling S22's predicate, and a deliberate mirror of `scaffold.zig`'s own
+/// route dispatch (`routeOutcome`): a finding attached to no route is worse
+/// than no finding at all, because it sits in `findings[]` as a question that
+/// no `MIGRATION.handoff.json` row ever names and no answer can retire.
+///
+/// So each exclusion below is one of scaffold's own earlier branches. A
+/// `redirect` or `backend` route, and any non-GET verb, never becomes a page.
+/// A dynamic path is answered by `RAILS_ROUTE_DYNAMIC_SEGMENT` and returns
+/// before the view is ever looked up. A path `resolve.contentPath` refuses
+/// (`(.:format)`-style syntax) has no file to write, and ruling S22 leaves
+/// that one an id-less open note on purpose, so it must not gain a row here.
+///
+/// The one branch this cannot mirror is scaffold's content-path COLLISION
+/// check, which depends on route order: two declarations reducing to one
+/// `content/<url>/index.smd` where the loser is ALSO viewless would leave
+/// this row unattached. That needs a duplicate route declaration and a
+/// missing template on the same route.
+///
+/// Contract 1 (self-freeing): the `contentPath` scratch is released here;
+/// nothing escapes.
+fn routeHasNoView(
+    gpa: Allocator,
+    in: DeriveInput,
+    r: routes.Route,
+    index: usize,
+    class: ?classify.Class,
+) Allocator.Error!bool {
+    if (!std.mem.eql(u8, r.verb, "GET") and !std.mem.eql(u8, r.verb, "HEAD")) return false;
+    if (class == classify.Class.backend or class == classify.Class.redirect) return false;
+    if (isDynamicRoutePath(r.path)) return false;
+    // A route this input carries no template list for is a route we know
+    // nothing about; see `DeriveInput.route_templates`.
+    if (index >= in.route_templates.len) return false;
+    if (resolve.viewFor(in.route_templates[index], r.controller, r.action) != null) return false;
+    const content_path = try resolve.contentPath(gpa, r.path);
+    defer if (content_path) |c| gpa.free(c);
+    return content_path != null;
+}
+
+/// One qualifying route, reduced to what the grouping below needs.
+/// `id` is owned by `deriveRouteFindings`'s own scratch list.
+const RouteHit = struct { line: u64, id: []u8 };
+
+fn routeHitLessThan(_: void, a: RouteHit, b: RouteHit) bool {
+    if (a.line != b.line) return a.line < b.line;
+    return std.mem.lessThan(u8, a.id, b.id);
+}
+
+/// Emits ONE finding per `routes.rb` DECLARATION, not per route.
+///
+/// A single `resources :posts` line yields `GET /posts/:id` AND
+/// `GET /posts/:id/edit`, both carrying that line as their `source.line` --
+/// so a finding id of `<code>.config/routes.rb.L<line>` (the shape ruled for
+/// these rows) is shared by both. Emitting one finding per route would put
+/// two entries with the SAME id in `findings[]`, which breaks the one
+/// property the id exists for: being the key a recorded decision is
+/// reconciled against. Folding them is also the honest reading of the
+/// decision itself -- `spa` on a `resources` line means "this whole
+/// declaration becomes a SPA", and every route under it shares the one
+/// `spa/<segment>.spa.tsx` anyway.
+///
+/// `route_id` therefore names ONE of the affected routes (the first in the
+/// total order below), exactly as `blockers.Blocker.route_id` already does
+/// for a shared unreadable template -- see manifest.zig's module doc, point
+/// 2. The `message` names them all, so nothing is lost, only relocated.
+///
+/// Contract 2 (owned-result), inherited from `derive`: every scratch
+/// allocation is released here; only what `appendRouteFinding` puts on
+/// `list` escapes.
+fn deriveRouteFindings(
+    gpa: Allocator,
+    list: *std.ArrayListUnmanaged(Finding),
+    in: DeriveInput,
+    row: RouteRow,
+) Allocator.Error!void {
+    var hits: std.ArrayListUnmanaged(RouteHit) = .empty;
+    defer {
+        for (hits.items) |h| gpa.free(h.id);
+        hits.deinit(gpa);
+    }
+
+    for (in.routes, 0..) |r, i| {
+        // A missing verdict is `null`, not `.backend`: see
+        // `DeriveInput.classifications`.
+        const class: ?classify.Class = if (i < in.classifications.len) in.classifications[i].class else null;
+        const qualifies = switch (row) {
+            // A `redirect` route is excluded for the same reason a `backend`
+            // one is: it already has its own row below, and it never becomes
+            // a page, so "what should this dynamic segment become" is a
+            // question with no answer that could change anything.
+            // `scaffold.zig` reaches the `redirect` arm before it ever asks
+            // whether the path is dynamic, so an unsuppressed row here would
+            // be an orphan finding -- listed in the manifest, attached to no
+            // route outcome, and unanswerable.
+            .dynamic_segment => (std.mem.eql(u8, r.verb, "GET") or std.mem.eql(u8, r.verb, "HEAD")) and
+                class != classify.Class.backend and
+                class != classify.Class.redirect and
+                isDynamicRoutePath(r.path),
+            .redirect => class == classify.Class.redirect,
+            .no_template => try routeHasNoView(gpa, in, r, i, class),
+        };
+        if (!qualifies) continue;
+        // `<verb> <path>`, the same string `rails.formatRouteId` builds.
+        // Formatted here rather than imported because `rails.zig` is this
+        // package's ROOT and imports this file; the two-token format is
+        // simpler to restate than that cycle is to reason about.
+        const id = try std.fmt.allocPrint(gpa, "{s} {s}", .{ r.verb, r.path });
+        errdefer gpa.free(id);
+        try hits.append(gpa, .{ .line = r.source.line, .id = id });
+    }
+
+    // Sorted by (line, route id) so the grouping below is contiguous and the
+    // representative route -- and the message's order -- is the same on every
+    // machine, whatever order the sidecar emitted the route table in.
+    std.mem.sort(RouteHit, hits.items, {}, routeHitLessThan);
+
+    const code = switch (row) {
+        .dynamic_segment => code_route_dynamic_segment,
+        .redirect => code_redirect_host_config,
+        .no_template => code_no_template,
+    };
+    const choices: []const []const u8 = switch (row) {
+        .dynamic_segment => &choices_spa_retain_blocked,
+        .redirect => &choices_retain_blocked,
+        .no_template => &choices_retain_blocked,
+    };
+    const prefix = switch (row) {
+        .dynamic_segment => "route path has a dynamic segment: ",
+        .redirect => "route redirects; the host config owns it, not the static tree: ",
+        .no_template => "no view template resolves for the route's controller and action: ",
+    };
+
+    var i: usize = 0;
+    while (i < hits.items.len) {
+        var j = i + 1;
+        while (j < hits.items.len and hits.items[j].line == hits.items[i].line) j += 1;
+
+        var message: std.ArrayListUnmanaged(u8) = .empty;
+        defer message.deinit(gpa);
+        try message.appendSlice(gpa, prefix);
+        for (hits.items[i..j], 0..) |h, k| {
+            if (k != 0) try message.appendSlice(gpa, ", ");
+            try message.appendSlice(gpa, h.id);
+        }
+        try appendRouteFinding(gpa, list, code, .warn, hits.items[i].line, message.items, choices, hits.items[i].id);
+        i = j;
+    }
+}
+
 /// Formats `"L<line>C<col>"` for a node loc, or `"L<line>"` for a parse
 /// error/layout loc.
 ///
@@ -275,6 +678,13 @@ fn lineLoc(gpa: Allocator, line: u64) Allocator.Error![]u8 {
 /// `derive`.
 const unscanned_loc = "unscanned";
 
+/// The `loc` for `RAILS_TEMPLATE_ENGINE_UNSUPPORTED`, for the same reason
+/// `unscanned_loc` exists: the file was never parsed -- no ERB scan is ever
+/// attempted on a Haml/Slim template -- so there is no line to name and an
+/// `L1` would be a lie. The word says WHY there is none, and one template
+/// yields at most one of these, so `(code, path)` is still unique.
+const unsupported_engine_loc = "engine";
+
 /// Handles the node-triggered rows of the derivation table for one
 /// template. Split out of `derive` because it is the one source with
 /// several codes keyed off `Kind`, so this is where the table's node rows
@@ -289,6 +699,11 @@ fn deriveNode(
     route_names: []const []const u8,
     locale: ?[]const u8,
     in_i18n_error_paths: []const []const u8,
+    asset_list: []const assets.Asset,
+    /// Ruling S12: this node sits inside a `form` block that already carries
+    /// its own `RAILS_BACKEND_ENDPOINT`. Computed by `derive`'s walk, because
+    /// only a walk over the whole stream can know it.
+    in_form: bool,
 ) Allocator.Error!void {
     // A text run (`node.text != null`) is never a finding candidate: per
     // `fragments.zig`'s `Node` doc, a text run's `kind` is always `.unknown`
@@ -378,6 +793,133 @@ fn deriveNode(
             defer gpa.free(message);
             try appendFinding(gpa, list, "RAILS_TEMPLATE_CONTROL_FLOW", .warn, path, node.line, loc, message, &choices_island_spa_retain_blocked);
         },
+        .asset => {
+            // The JS-entry family has no target path to compute: `convert.zig`
+            // DROPS these outright (`@z/runtime` and the island bundle replace
+            // the Rails JS entry wholesale), so a finding here would be a
+            // question with no placeholder in the converted page and no way
+            // for the route ever to close.
+            const helper = node.name orelse return;
+            if (std.mem.eql(u8, helper, "javascript_include_tag") or
+                std.mem.eql(u8, helper, "favicon_link_tag")) return;
+
+            // The same walk `convert.zig` performs, argument for argument, so
+            // the two agree on exactly which helper calls become a
+            // placeholder. `stylesheet_link_tag "a", "b"` is ONE node and two
+            // sheets, and the converter makes the whole node a placeholder
+            // when ANY of them fails -- so reading only `args[0]` here left a
+            // node whose first sheet resolved and whose second did not with a
+            // placeholder and no id behind it. The empty fallback covers a
+            // helper called with no literal argument at all, which `assetFor`
+            // answers `null` for -- the honest result: there is no name to
+            // resolve.
+            const args: []const []const u8 = if (node.args.len > 0) node.args else &.{""};
+            const message = blk: {
+                for (args) |literal| {
+                    // Ruling S23: an absolute URL names a resource on another
+                    // host. `convert.zig` emits it verbatim (same predicate,
+                    // so the two cannot drift), so there is no placeholder in
+                    // the converted page for a finding to be answered
+                    // against, and nothing is missing to report.
+                    if (resolve.isAbsoluteAssetLiteral(literal)) continue;
+                    const found = resolve.assetFor(asset_list, helper, literal) orelse
+                        break :blk try std.fmt.allocPrint(
+                            gpa,
+                            "asset helper `{s}` names `{s}`, which matches no file under app/assets/ or public/",
+                            .{ helper, literal },
+                        );
+                    // The file exists; what could not be derived is the URL it
+                    // is served at (`assets.Asset.deterministic`), so the
+                    // operator is told which file to port rather than sent
+                    // hunting.
+                    if (found.deterministic) continue;
+                    break :blk try std.fmt.allocPrint(
+                        gpa,
+                        "asset `{s}` has no deterministic public URL; its target path cannot be derived without guessing",
+                        .{found.source},
+                    );
+                }
+                // Every argument is emittable, so the converted page holds
+                // the author's own markup and there is nothing to ask about.
+                return;
+            };
+            defer gpa.free(message);
+            const loc = try nodeLoc(gpa, node.line, node.col);
+            defer gpa.free(loc);
+            try appendFinding(gpa, list, "RAILS_ASSET_TRANSFORM", .warn, path, node.line, loc, message, &choices_retain_blocked);
+        },
+
+        // ---- ruling S12 ------------------------------------------------
+        .form, .form_field => {
+            // Only the OUTERMOST form asks the question. A nested form, and
+            // every field inside one, are the same decision -- which backend
+            // operation this submission becomes -- and one form with twelve
+            // fields must not put twelve identical questions in front of an
+            // operator. A `form_field` with no enclosing form is NOT
+            // suppressed: a stray `text_field` still submits somewhere, and
+            // nothing else in the table would report it.
+            if (in_form) return;
+            const loc = try nodeLoc(gpa, node.line, node.col);
+            defer gpa.free(loc);
+            var summary: std.ArrayListUnmanaged(u8) = .empty;
+            defer summary.deinit(gpa);
+            try summary.appendSlice(gpa, "form submits to a Rails action: ");
+            // A `form` node's `name` is the MODEL's param key (`post` from
+            // `@post`) and is null for a model-less `form_with(url: ...)`
+            // (`templates.rb`'s `classify_form`, ruling R9); a `form_field`'s
+            // is the field HELPER (`text_field`). Naming which of the two it
+            // is beats printing a bare word an operator cannot place -- and
+            // "no model" is a real fact about the form, not a missing value.
+            if (node.kind == .form) {
+                if (node.name) |m| {
+                    try summary.appendSlice(gpa, "model `");
+                    try summary.appendSlice(gpa, m);
+                    try summary.append(gpa, '`');
+                } else {
+                    try summary.appendSlice(gpa, "no model");
+                }
+            } else {
+                try summary.appendSlice(gpa, "field `");
+                try summary.appendSlice(gpa, node.name orelse "");
+                try summary.append(gpa, '`');
+            }
+            for (node.attrs) |a| {
+                try summary.append(gpa, ' ');
+                try summary.appendSlice(gpa, a.key);
+                try summary.append(gpa, '=');
+                try summary.appendSlice(gpa, a.value);
+            }
+            try appendFinding(gpa, list, code_backend_endpoint, .warn, path, node.line, loc, summary.items, &choices_retain_blocked);
+        },
+        .errors => {
+            // A separate question from the form's: the form asks where the
+            // submission goes, this asks how the request-time validation
+            // state that comes back is presented. `RAILS_REQUEST_TIME_STATE`
+            // rather than a new code because that is exactly what it is --
+            // the same code an `@post.errors` read through `.ivar` gets.
+            const loc = try nodeLoc(gpa, node.line, node.col);
+            defer gpa.free(loc);
+            const message = try std.fmt.allocPrint(gpa, "validation errors of `{s}`", .{node.name orelse ""});
+            defer gpa.free(message);
+            try appendFinding(gpa, list, "RAILS_REQUEST_TIME_STATE", .warn, path, node.line, loc, message, &choices_retain_blocked);
+        },
+        .turbo_frame, .turbo_stream, .component_root => {
+            const loc = try nodeLoc(gpa, node.line, node.col);
+            defer gpa.free(loc);
+            const name = node.name orelse "";
+            const code = switch (node.kind) {
+                .turbo_frame => code_turbo_frame,
+                .turbo_stream => code_turbo_stream,
+                else => code_component_root,
+            };
+            const message = switch (node.kind) {
+                .turbo_frame => try std.fmt.allocPrint(gpa, "turbo-frame `{s}`", .{name}),
+                .turbo_stream => try std.fmt.allocPrint(gpa, "turbo-stream `{s}`", .{name}),
+                else => try std.fmt.allocPrint(gpa, "React/Vue root `{s}`", .{name}),
+            };
+            defer gpa.free(message);
+            try appendFinding(gpa, list, code, .warn, path, node.line, loc, message, &choices_retain_blocked);
+        },
         else => {},
     }
 }
@@ -409,9 +951,40 @@ pub fn derive(gpa: Allocator, in: DeriveInput) Allocator.Error![]Finding {
         list.deinit(gpa);
     }
 
+    // Ruling S12's form-nesting scope. `frames` records, for each block
+    // currently open, whether it is a `form`; `form_depth` is how many of
+    // those are. Tracked here rather than inside `deriveNode` because it is a
+    // property of the WALK, not of a node.
+    //
+    // A `form` whose source text opens no Ruby block (a bare `form_tag "..."`
+    // with no `do`) pushes no frame, so a following `form_field` is not
+    // suppressed by it -- correct, since that field is not lexically inside
+    // anything, and `convert.zig`'s own region nesting reads the stream the
+    // same way (both go through `convert.opensBlock`).
+    var frames: std.ArrayListUnmanaged(bool) = .empty;
+    defer frames.deinit(gpa);
+
     for (in.templates) |tpl| {
+        frames.clearRetainingCapacity();
+        var form_depth: usize = 0;
         for (tpl.nodes) |node| {
-            try deriveNode(gpa, &list, tpl.path, node, in.route_names, in.locale, in.i18n_error_paths);
+            // Computed BEFORE this node's own frame is pushed, so an
+            // outermost `form` sees `false` and asks its question, while
+            // everything it contains sees `true`.
+            try deriveNode(gpa, &list, tpl.path, node, in.route_names, in.locale, in.i18n_error_paths, in.assets, form_depth > 0);
+            if (node.text != null) continue;
+            if (node.kind == .block_end) {
+                // A stray `block_end` with no frame is dropped rather than
+                // popping an empty stack -- the same defence `convert.zig`'s
+                // `matchingEnd` takes against a malformed stream.
+                if (frames.pop()) |was_form| {
+                    if (was_form) form_depth -= 1;
+                }
+            } else if (convert.opensBlock(node)) {
+                const is_form = node.kind == .form;
+                try frames.append(gpa, is_form);
+                if (is_form) form_depth += 1;
+            }
         }
         if (tpl.error_message) |em| {
             const line = tpl.error_line orelse 0;
@@ -448,6 +1021,21 @@ pub fn derive(gpa: Allocator, in: DeriveInput) Allocator.Error![]Finding {
         defer gpa.free(loc);
         try appendFinding(gpa, &list, "RAILS_LAYOUT_DYNAMIC", .warn, path, layout.line, loc, "controller declares a dynamic layout", &choices_retain_blocked);
     }
+
+    // #167 Stage 2 ruling S18: the operator's half of every
+    // `RAILS_TEMPLATE_ENGINE_UNSUPPORTED` blocker. `line` is null and `loc`
+    // is a word for the reason `unsupported_engine_loc` documents.
+    for (in.unsupported_templates) |t| {
+        const message = try std.fmt.allocPrint(gpa, "{s} template is not converted: no converter reads this engine", .{t.label});
+        defer gpa.free(message);
+        try appendFinding(gpa, &list, code_template_engine_unsupported, .warn, t.path, null, unsupported_engine_loc, message, &choices_retain_blocked);
+    }
+
+    // #167 Stage 2: the three ROUTE-scoped rows. Appended last purely for
+    // readability -- the sort below fixes the output order regardless.
+    try deriveRouteFindings(gpa, &list, in, .dynamic_segment);
+    try deriveRouteFindings(gpa, &list, in, .redirect);
+    try deriveRouteFindings(gpa, &list, in, .no_template);
 
     const out = try list.toOwnedSlice(gpa);
     std.mem.sort(Finding, out, {}, lessThan);
@@ -704,6 +1292,58 @@ test "derive: a template the templates op refused becomes one RAILS_TEMPLATE_UNS
     try std.testing.expect(!out[0].requires_artifact);
 }
 
+test "derive: a template whose engine has no converter becomes an answerable finding (ruling S18)" {
+    const gpa = std.testing.allocator;
+    const unsupported = [_]UnsupportedTemplate{
+        .{ .path = "app/views/posts/legacy.html.haml", .label = "Haml" },
+        .{ .path = "app/views/posts/_row.html.slim", .label = "Slim" },
+    };
+    const out = try derive(gpa, .{
+        .templates = &.{},
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .unsupported_templates = &unsupported,
+    });
+    defer free(gpa, out);
+    try std.testing.expectEqual(@as(usize, 2), out.len);
+    // Sorted by id, so the `_row.html.slim` row comes first.
+    try std.testing.expectEqualStrings(
+        "RAILS_TEMPLATE_ENGINE_UNSUPPORTED.app/views/posts/_row%2Ehtml%2Eslim.engine",
+        out[0].id,
+    );
+    try std.testing.expectEqualStrings("Slim template is not converted: no converter reads this engine", out[0].message);
+    try std.testing.expectEqualStrings(
+        "RAILS_TEMPLATE_ENGINE_UNSUPPORTED.app/views/posts/legacy%2Ehtml%2Ehaml.engine",
+        out[1].id,
+    );
+    try std.testing.expectEqualStrings("app/views/posts/legacy.html.haml", out[1].path);
+    try std.testing.expectEqualStrings("Haml template is not converted: no converter reads this engine", out[1].message);
+    try std.testing.expectEqual(Severity.warn, out[1].severity);
+    // No line: an ERB scan is never attempted on these files, so there is no
+    // position to name.
+    try std.testing.expectEqual(@as(?u64, null), out[1].line);
+    // `retain`/`blocked` and nothing else: an engine no converter reads
+    // cannot become an island or a SPA because someone chose so.
+    try std.testing.expectEqual(@as(usize, 2), out[1].choices.len);
+    try std.testing.expectEqualStrings("retain", out[1].choices[0]);
+    try std.testing.expectEqualStrings("blocked", out[1].choices[1]);
+    try std.testing.expect(!out[1].requires_artifact);
+}
+
+test "derive: no unsupported templates, no engine findings" {
+    const gpa = std.testing.allocator;
+    // The companion to the row above: the input defaults empty, and an app
+    // with no Haml/Slim must not acquire a question about one.
+    const tpls = [_]fragments.Template{
+        .{ .path = "app/views/pages/ok.html.erb", .nodes = &.{}, .error_message = null, .error_line = null, .unreadable = null },
+    };
+    const out = try derive(gpa, .{ .templates = &tpls, .layouts = &.{}, .controller_files = &.{}, .route_names = &.{}, .locale = null });
+    defer free(gpa, out);
+    try std.testing.expectEqual(@as(usize, 0), out.len);
+}
+
 // Ruling R17 (review finding 3): `lessThan`'s total order rests entirely on
 // `id` being unique, and `id` is only as unique as `col`. `templates.rb` used
 // to report `col: 0` for every statement in a tag after the first, so
@@ -767,5 +1407,467 @@ test "derive under a FailingAllocator leaks nothing on any partial allocation" {
         } else |err| {
             try std.testing.expectEqual(error.OutOfMemory, err);
         }
+    }
+}
+
+// `comptime`, so `&.{literal}` is a pointer to a comptime-promoted constant
+// rather than to a stack temporary that dies with this call.
+fn assetNode(comptime helper: []const u8, comptime literal: []const u8, line: u64, col: u64) fragments.Node {
+    var n = nodeCode(.asset, line, col, helper);
+    n.args = &.{literal};
+    return n;
+}
+
+fn deriveAsset(source: []const u8, deterministic: bool) assets.Asset {
+    return .{ .source = source, .public_url = null, .pipeline = null, .deterministic = deterministic };
+}
+
+// Stage 2 (#167, plan Task 3): `convert.zig` needs a finding id to point its
+// `<!-- rails:finding -->` placeholder at whenever an asset helper cannot be
+// turned into a `$site.asset(...).link()` expression. Both causes are one
+// question for the operator -- retain this asset reference as-is, or block
+// the route on it -- so both are one code.
+test "derive: an asset helper with no deterministic target raises RAILS_ASSET_TRANSFORM" {
+    const gpa = std.testing.allocator;
+    const asset_list = [_]assets.Asset{
+        deriveAsset("app/assets/images/logo.png", true),
+        deriveAsset("app/assets/images/hero.png", false),
+    };
+    const nodes = [_]fragments.Node{
+        assetNode("image_tag", "logo.png", 1, 1),
+        assetNode("image_tag", "hero.png", 2, 1),
+        assetNode("image_tag", "ghost.png", 3, 1),
+        // Dropped by the converter, so it must NOT ask a question the
+        // converted page has no placeholder for -- see `deriveNode`'s
+        // `.asset` arm.
+        assetNode("javascript_include_tag", "application", 4, 1),
+    };
+    const tpls = [_]fragments.Template{
+        .{ .path = "app/views/shared/_nav.html.erb", .nodes = @constCast(&nodes), .error_message = null, .error_line = null, .unreadable = null },
+    };
+    const out = try derive(gpa, .{
+        .templates = &tpls,
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .assets = &asset_list,
+    });
+    defer free(gpa, out);
+
+    try std.testing.expectEqual(@as(usize, 2), out.len);
+    try std.testing.expectEqualStrings("RAILS_ASSET_TRANSFORM.app/views/shared/_nav%2Ehtml%2Eerb.L2C1", out[0].id);
+    try std.testing.expectEqualStrings("RAILS_ASSET_TRANSFORM.app/views/shared/_nav%2Ehtml%2Eerb.L3C1", out[1].id);
+    try std.testing.expectEqual(Severity.warn, out[0].severity);
+    try std.testing.expectEqualStrings("retain", out[0].choices[0]);
+    try std.testing.expectEqualStrings("blocked", out[0].choices[1]);
+    // The two causes read differently: one names the file that exists but
+    // cannot be pinned, the other says nothing matched at all.
+    try std.testing.expect(std.mem.indexOf(u8, out[0].message, "app/assets/images/hero.png") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out[1].message, "ghost.png") != null);
+}
+
+// Ruling S23, the derivation half of `convert.zig`'s absolute-URL passthrough.
+// A CDN reference is not an unresolved asset: nothing is missing, nothing has
+// to be copied, and the converter emits the literal verbatim -- so a finding
+// here would be a question about a page that has no placeholder to answer for.
+// Both files read the same predicate (`resolve.isAbsoluteAssetLiteral`) so
+// they cannot drift into asking about a region the other emitted cleanly.
+test "derive: an absolute asset URL raises no RAILS_ASSET_TRANSFORM (ruling S23)" {
+    const gpa = std.testing.allocator;
+    const nodes = [_]fragments.Node{
+        assetNode("image_tag", "https://cdn.example.com/x.png", 1, 1),
+        assetNode("stylesheet_link_tag", "//cdn.example.com/s.css", 2, 1),
+        assetNode("asset_path", "http://cdn.example.com/f.woff", 3, 1),
+        // The control: a local literal that matches nothing still asks.
+        assetNode("image_tag", "ghost.png", 4, 1),
+    };
+    const tpls = [_]fragments.Template{
+        .{ .path = "app/views/shared/_nav.html.erb", .nodes = @constCast(&nodes), .error_message = null, .error_line = null, .unreadable = null },
+    };
+    const out = try derive(gpa, .{
+        .templates = &tpls,
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .assets = &.{},
+    });
+    defer free(gpa, out);
+
+    try std.testing.expectEqual(@as(usize, 1), out.len);
+    try std.testing.expectEqualStrings("RAILS_ASSET_TRANSFORM.app/views/shared/_nav%2Ehtml%2Eerb.L4C1", out[0].id);
+}
+
+// `stylesheet_link_tag "a", "b"` is ONE node and N sheets, and `convert.zig`
+// makes the whole node a placeholder when ANY argument fails to resolve. This
+// file therefore has to walk every argument too: reading only `args[0]` left
+// a node whose first sheet resolved and whose second did not with no finding
+// at all, which is exactly the id-less `rails:unmapped asset` region ruling
+// S6 has to keep the route open on.
+test "derive: a multi-argument asset helper asks about the first argument that does not resolve" {
+    const gpa = std.testing.allocator;
+    const asset_list = [_]assets.Asset{deriveAsset("app/assets/stylesheets/application.css", true)};
+    var multi = nodeCode(.asset, 1, 1, "stylesheet_link_tag");
+    multi.args = &.{ "application", "ghost" };
+    var absolute_then_local = nodeCode(.asset, 2, 1, "stylesheet_link_tag");
+    absolute_then_local.args = &.{ "//cdn.example.com/s.css", "application" };
+    const nodes = [_]fragments.Node{ multi, absolute_then_local };
+    const tpls = [_]fragments.Template{
+        .{ .path = "app/views/shared/_nav.html.erb", .nodes = @constCast(&nodes), .error_message = null, .error_line = null, .unreadable = null },
+    };
+    const out = try derive(gpa, .{
+        .templates = &tpls,
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .assets = &asset_list,
+    });
+    defer free(gpa, out);
+
+    try std.testing.expectEqual(@as(usize, 1), out.len);
+    try std.testing.expectEqualStrings("RAILS_ASSET_TRANSFORM.app/views/shared/_nav%2Ehtml%2Eerb.L1C1", out[0].id);
+    try std.testing.expect(std.mem.indexOf(u8, out[0].message, "ghost") != null);
+}
+
+// `DeriveInput.assets` defaults to empty ONLY so the pre-Stage-2 call
+// literals in this file's own tests keep compiling; it is not a mode. An
+// omitted table means every asset literal resolves to nothing, which is what
+// the code below asserts -- so the one production caller (`rails.zig`'s
+// `discover`) must pass `asset_list`, and this test is what fails if someone
+// deletes that argument.
+test "derive: an omitted asset table resolves nothing, so every asset helper is a finding" {
+    const gpa = std.testing.allocator;
+    const nodes = [_]fragments.Node{assetNode("image_tag", "logo.png", 1, 1)};
+    const tpls = [_]fragments.Template{
+        .{ .path = "app/views/shared/_nav.html.erb", .nodes = @constCast(&nodes), .error_message = null, .error_line = null, .unreadable = null },
+    };
+    const out = try derive(gpa, .{ .templates = &tpls, .layouts = &.{}, .controller_files = &.{}, .route_names = &.{}, .locale = null });
+    defer free(gpa, out);
+    try std.testing.expectEqual(@as(usize, 1), out.len);
+    try std.testing.expectEqualStrings("RAILS_ASSET_TRANSFORM", out[0].code);
+}
+
+// ---- #167 Stage 2: the two ROUTE-scoped rows -----------------------------
+
+fn testRoute(verb: []const u8, path: []const u8, line: u64) routes.Route {
+    return .{
+        .verb = verb,
+        .path = path,
+        .controller = "posts",
+        .action = "show",
+        .name = null,
+        .certain = true,
+        .origin = .static_ast,
+        .source = .{ .file = "config/routes.rb", .line = line },
+    };
+}
+
+fn testVerdict(class: classify.Class) classify.Verdict {
+    return .{ .class = class, .reason = "test", .candidates = &.{} };
+}
+
+test "derive: a dynamic GET route raises RAILS_ROUTE_DYNAMIC_SEGMENT, one per declaration" {
+    const gpa = std.testing.allocator;
+    // `resources :posts` puts BOTH dynamic routes on ONE routes.rb line --
+    // the shared-declaration case the id scheme has to survive (see
+    // `deriveRouteFindings`). `/posts` is static, the POST is not a GET, and
+    // the last one is excluded by classification: two rows, folded into ONE
+    // finding.
+    const rs = [_]routes.Route{
+        testRoute("GET", "/posts", 3),
+        testRoute("GET", "/posts/:id", 3),
+        testRoute("GET", "/posts/:id/edit", 3),
+        testRoute("POST", "/posts/:id/publish", 3),
+        testRoute("GET", "/admin/:id", 9),
+    };
+    const vs = [_]classify.Verdict{
+        testVerdict(.content),
+        testVerdict(.content),
+        testVerdict(.content),
+        testVerdict(.backend),
+        testVerdict(.backend),
+    };
+    const out = try derive(gpa, .{
+        .templates = &.{},
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .routes = &rs,
+        .classifications = &vs,
+    });
+    defer free(gpa, out);
+
+    try std.testing.expectEqual(@as(usize, 1), out.len);
+    try std.testing.expectEqualStrings("RAILS_ROUTE_DYNAMIC_SEGMENT", out[0].code);
+    try std.testing.expectEqualStrings("RAILS_ROUTE_DYNAMIC_SEGMENT.config/routes%2Erb.L3", out[0].id);
+    try std.testing.expectEqualStrings("config/routes.rb", out[0].path);
+    try std.testing.expectEqual(@as(?u64, 3), out[0].line);
+    try std.testing.expectEqual(Severity.warn, out[0].severity);
+    try std.testing.expectEqualStrings("GET /posts/:id", out[0].route_id.?);
+    try std.testing.expectEqual(@as(usize, 3), out[0].choices.len);
+    try std.testing.expectEqualStrings("spa", out[0].choices[0]);
+    try std.testing.expectEqualStrings("retain", out[0].choices[1]);
+    try std.testing.expectEqualStrings("blocked", out[0].choices[2]);
+    // Both routes of the shared declaration are named in the message, so the
+    // one `route_id` naming only the first is not the only evidence left.
+    try std.testing.expect(std.mem.indexOf(u8, out[0].message, "GET /posts/:id/edit") != null);
+}
+
+test "derive: a redirect route raises RAILS_REDIRECT_HOST_CONFIG, whatever its path shape" {
+    const gpa = std.testing.allocator;
+    const rs = [_]routes.Route{
+        testRoute("GET", "/posts/old", 7),
+        testRoute("GET", "/about", 8),
+    };
+    const vs = [_]classify.Verdict{ testVerdict(.redirect), testVerdict(.content) };
+    const out = try derive(gpa, .{
+        .templates = &.{},
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .routes = &rs,
+        .classifications = &vs,
+    });
+    defer free(gpa, out);
+
+    try std.testing.expectEqual(@as(usize, 1), out.len);
+    try std.testing.expectEqualStrings("RAILS_REDIRECT_HOST_CONFIG.config/routes%2Erb.L7", out[0].id);
+    try std.testing.expectEqualStrings("GET /posts/old", out[0].route_id.?);
+    try std.testing.expectEqual(@as(usize, 2), out[0].choices.len);
+    try std.testing.expectEqualStrings("retain", out[0].choices[0]);
+}
+
+test "derive: routes with no classifications still derive; input order does not leak" {
+    const gpa = std.testing.allocator;
+    // Index-alignment is the caller's promise, not something `derive` can
+    // check. A SHORT `classifications` slice must not silently drop rows (an
+    // unclassified route is not a `backend` one), and the output order must
+    // come from the sort, not from the input.
+    const forward = [_]routes.Route{ testRoute("GET", "/a/:id", 2), testRoute("GET", "/b/*rest", 1) };
+    const reverse = [_]routes.Route{ testRoute("GET", "/b/*rest", 1), testRoute("GET", "/a/:id", 2) };
+    const a = try derive(gpa, .{ .templates = &.{}, .layouts = &.{}, .controller_files = &.{}, .route_names = &.{}, .locale = null, .routes = &forward });
+    defer free(gpa, a);
+    const b = try derive(gpa, .{ .templates = &.{}, .layouts = &.{}, .controller_files = &.{}, .route_names = &.{}, .locale = null, .routes = &reverse });
+    defer free(gpa, b);
+    try std.testing.expectEqual(@as(usize, 2), a.len);
+    try std.testing.expectEqual(a.len, b.len);
+    for (a, b) |x, y| {
+        try std.testing.expectEqualStrings(x.id, y.id);
+        try std.testing.expectEqualStrings(x.route_id.?, y.route_id.?);
+    }
+    try std.testing.expectEqualStrings("RAILS_ROUTE_DYNAMIC_SEGMENT.config/routes%2Erb.L1", a[0].id);
+}
+
+// Ruling S22. `scaffold.zig` used to report this shape as a bare sentence
+// ("no view template resolved for this route") with no id behind it, so no
+// decisions file could name it and `complete` was unreachable for the whole
+// app. Every exclusion below is one of scaffold's own earlier branches --
+// see `routeHasNoView` for why a row nothing attaches to is worse than none.
+test "derive: a GET route whose controller/action resolves no view raises RAILS_NO_TEMPLATE" {
+    const gpa = std.testing.allocator;
+    var other = testRoute("GET", "/other", 3);
+    other.action = "other";
+    var about = testRoute("GET", "/about", 4);
+    about.action = "about";
+    var posted = testRoute("POST", "/submit", 5);
+    posted.action = "submit";
+    var api = testRoute("GET", "/api/posts", 6);
+    api.action = "index";
+    const dynamic = testRoute("GET", "/posts/:id", 7);
+    const rs = [_]routes.Route{ other, about, posted, api, dynamic };
+    const vs = [_]classify.Verdict{
+        testVerdict(.content),
+        testVerdict(.content),
+        testVerdict(.content),
+        // A JSON endpoint needs no page, so "it has no view" is not a
+        // question about it.
+        testVerdict(.backend),
+        testVerdict(.content),
+    };
+    const about_view = [_][]const u8{"app/views/posts/about.html.erb"};
+    const show_view = [_][]const u8{"app/views/posts/show.html.erb"};
+    const rts = [_][]const []const u8{
+        // `def other; render :about; end` -- the action has no template of
+        // its own, and the partial list it did resolve is not one.
+        &[_][]const u8{"app/views/posts/_row.html.erb"},
+        &about_view,
+        &.{},
+        &.{},
+        &show_view,
+    };
+    const out = try derive(gpa, .{
+        .templates = &.{},
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .routes = &rs,
+        .classifications = &vs,
+        .route_templates = &rts,
+    });
+    defer free(gpa, out);
+
+    // Two rows: this one, and the dynamic route's own
+    // `RAILS_ROUTE_DYNAMIC_SEGMENT` -- which is the point of excluding a
+    // dynamic path here. `scaffold.zig` answers it in `dynamicRoute` and
+    // never reaches the view lookup, so a second row about its missing
+    // template would be a question no route outcome names.
+    try std.testing.expectEqual(@as(usize, 2), out.len);
+    try std.testing.expectEqualStrings("RAILS_ROUTE_DYNAMIC_SEGMENT.config/routes%2Erb.L7", out[1].id);
+    try std.testing.expectEqualStrings("RAILS_NO_TEMPLATE", out[0].code);
+    try std.testing.expectEqualStrings("RAILS_NO_TEMPLATE.config/routes%2Erb.L3", out[0].id);
+    try std.testing.expectEqualStrings("config/routes.rb", out[0].path);
+    try std.testing.expectEqual(@as(?u64, 3), out[0].line);
+    try std.testing.expectEqual(Severity.warn, out[0].severity);
+    try std.testing.expectEqualStrings("GET /other", out[0].route_id.?);
+    try std.testing.expectEqual(@as(usize, 2), out[0].choices.len);
+    try std.testing.expectEqualStrings("retain", out[0].choices[0]);
+    try std.testing.expectEqualStrings("blocked", out[0].choices[1]);
+}
+
+// `DeriveInput.route_templates` defaults empty so this file's pre-S22 call
+// literals keep compiling, and an omitted value must LOSE the row rather than
+// fabricate one for every route. This is what fails if the production caller
+// (`rails.zig`'s `discover`) stops passing it -- and what would fail loudly,
+// with a finding per route, had the default been read as "no templates".
+test "derive: an omitted route_templates slice derives no RAILS_NO_TEMPLATE at all" {
+    const gpa = std.testing.allocator;
+    const rs = [_]routes.Route{testRoute("GET", "/about", 4)};
+    const vs = [_]classify.Verdict{testVerdict(.content)};
+    const out = try derive(gpa, .{
+        .templates = &.{},
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .routes = &rs,
+        .classifications = &vs,
+    });
+    defer free(gpa, out);
+    try std.testing.expectEqual(@as(usize, 0), out.len);
+}
+
+test "isDynamicRoutePath agrees with resolve.contentPath on what has no static page" {
+    const gpa = std.testing.allocator;
+    // The two predicates must not drift: a route this file calls dynamic is
+    // exactly a route `scaffold.zig` cannot give a `content/<path>/index.smd`
+    // to. (`contentPath` also refuses uninterpretable syntax, a SUPERSET --
+    // hence a one-way implication rather than an equality.)
+    const dynamic = [_][]const u8{ "/posts/:id", "/files/*path", "/a/:id/edit" };
+    for (dynamic) |p| {
+        try std.testing.expect(isDynamicRoutePath(p));
+        const cp = try resolve.contentPath(gpa, p);
+        if (cp) |c| {
+            gpa.free(c);
+            return error.TestUnexpectedResult;
+        }
+    }
+    const static = [_][]const u8{ "/", "/about", "/admin/users", "/posts/legacy" };
+    for (static) |p| {
+        try std.testing.expect(!isDynamicRoutePath(p));
+        const cp = (try resolve.contentPath(gpa, p)).?;
+        gpa.free(cp);
+    }
+    // A bare `:` or `*` is a literal segment, not a placeholder.
+    try std.testing.expect(!isDynamicRoutePath("/a/:/b"));
+}
+
+// ---- ruling S12: the six kinds that used to convert to nothing answerable --
+
+fn endNodeAt(line: u64, col: u64) fragments.Node {
+    var n = nodeCode(.block_end, line, col, null);
+    n.output = false;
+    n.code = "end";
+    return n;
+}
+
+fn openFormNode(line: u64, col: u64, name: []const u8) fragments.Node {
+    var n = nodeCode(.form, line, col, name);
+    n.output = false;
+    n.code = "form_with(model: @post) do |f|";
+    return n;
+}
+
+test "derive: a form is one answerable RAILS_BACKEND_ENDPOINT, not one per field" {
+    const gpa = std.testing.allocator;
+    // Ruling S12. Before this row a `form` region converted to
+    // `<!-- rails:unmapped form -->`, which carries no id -- so `scaffold.zig`
+    // could see the route was unfinished (S6) but the operator had no finding
+    // to answer, and the route could never reach `complete`. Only the
+    // OUTERMOST form asks the question: a nested form and every field inside
+    // one are the same decision.
+    var field = nodeCode(.form_field, 2, 3, "text_field");
+    field.attrs = &[_]fragments.Attr{.{ .key = "name", .value = "title" }};
+    const nodes = [_]fragments.Node{
+        openFormNode(1, 1, "post"),
+        field,
+        nodeCode(.errors, 3, 3, "post"),
+        endNodeAt(4, 1),
+    };
+    const tpls = [_]fragments.Template{
+        .{ .path = "app/views/posts/new.html.erb", .nodes = @constCast(&nodes), .error_message = null, .error_line = null, .unreadable = null },
+    };
+    const out = try derive(gpa, .{ .templates = &tpls, .layouts = &.{}, .controller_files = &.{}, .route_names = &.{}, .locale = null });
+    defer free(gpa, out);
+
+    // The form (one, not two) plus the `errors` region, which is a separate
+    // question: how request-time validation state is presented.
+    try std.testing.expectEqual(@as(usize, 2), out.len);
+    try std.testing.expectEqualStrings("RAILS_BACKEND_ENDPOINT", out[0].code);
+    try std.testing.expectEqualStrings("RAILS_BACKEND_ENDPOINT.app/views/posts/new%2Ehtml%2Eerb.L1C1", out[0].id);
+    try std.testing.expect(std.mem.indexOf(u8, out[0].message, "form submits to a Rails action") != null);
+    // The model's param key, which is what a form node's `name` carries.
+    try std.testing.expect(std.mem.indexOf(u8, out[0].message, "model `post`") != null);
+    try std.testing.expectEqual(@as(usize, 2), out[0].choices.len);
+    try std.testing.expectEqualStrings("retain", out[0].choices[0]);
+    try std.testing.expectEqualStrings("blocked", out[0].choices[1]);
+
+    try std.testing.expectEqualStrings("RAILS_REQUEST_TIME_STATE", out[1].code);
+    try std.testing.expect(std.mem.indexOf(u8, out[1].message, "validation errors of `post`") != null);
+}
+
+test "derive: a form_field outside any form asks its own question" {
+    const gpa = std.testing.allocator;
+    // The suppression above is scoped to an enclosing form, not to the kind:
+    // a stray `text_field` still submits somewhere, and nothing else would
+    // report it.
+    var field = nodeCode(.form_field, 1, 1, "text_field");
+    field.attrs = &[_]fragments.Attr{.{ .key = "name", .value = "q" }};
+    const nodes = [_]fragments.Node{field};
+    const tpls = [_]fragments.Template{
+        .{ .path = "app/views/pages/search.html.erb", .nodes = @constCast(&nodes), .error_message = null, .error_line = null, .unreadable = null },
+    };
+    const out = try derive(gpa, .{ .templates = &tpls, .layouts = &.{}, .controller_files = &.{}, .route_names = &.{}, .locale = null });
+    defer free(gpa, out);
+    try std.testing.expectEqual(@as(usize, 1), out.len);
+    try std.testing.expectEqualStrings("RAILS_BACKEND_ENDPOINT", out[0].code);
+    try std.testing.expect(std.mem.indexOf(u8, out[0].message, "field `text_field` name=q") != null);
+}
+
+test "derive: turbo and component roots each get their own code" {
+    const gpa = std.testing.allocator;
+    const nodes = [_]fragments.Node{
+        nodeCode(.turbo_frame, 1, 1, "posts"),
+        nodeCode(.turbo_stream, 2, 1, "messages"),
+        nodeCode(.component_root, 3, 1, "PostList"),
+    };
+    const tpls = [_]fragments.Template{
+        .{ .path = "app/views/posts/index.html.erb", .nodes = @constCast(&nodes), .error_message = null, .error_line = null, .unreadable = null },
+    };
+    const out = try derive(gpa, .{ .templates = &tpls, .layouts = &.{}, .controller_files = &.{}, .route_names = &.{}, .locale = null });
+    defer free(gpa, out);
+    try std.testing.expectEqual(@as(usize, 3), out.len);
+    // Sorted by code: COMPONENT_ROOT, TURBO_FRAME, TURBO_STREAM.
+    try std.testing.expectEqualStrings("RAILS_COMPONENT_ROOT", out[0].code);
+    try std.testing.expect(std.mem.indexOf(u8, out[0].message, "React/Vue root `PostList`") != null);
+    try std.testing.expectEqualStrings("RAILS_TURBO_FRAME", out[1].code);
+    try std.testing.expectEqualStrings("RAILS_TURBO_STREAM", out[2].code);
+    for (out) |f| {
+        try std.testing.expectEqual(@as(usize, 2), f.choices.len);
+        try std.testing.expectEqual(Severity.warn, f.severity);
     }
 }

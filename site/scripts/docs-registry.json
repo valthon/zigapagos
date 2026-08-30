@@ -130,7 +130,7 @@
     "mirror": "migrate-from-rails.smd",
     "slug": "migrate-from-rails",
     "title": "Migrating from Rails",
-    "description": "A deterministic reference for what Rails source discovery does and does not claim: the six route classifications, the manifest's guarantees, and what `zigapagos migrate --from rails` converts (nothing, yet)."
+    "description": "A deterministic reference for the two halves of `zigapagos migrate --from rails`: what discovery claims (the six route classifications, the manifest's guarantees, the findings vocabulary) and what `--target` converts, decision by decision, until the handoff says complete."
   },
   {
     "canonical": "docs/ROADMAP.md",

@@ -1,31 +1,48 @@
-# Rails → Zigapagos: discovery reference
+# Rails → Zigapagos: discovery and conversion reference
 
-`zigapagos migrate <rails-app> --from rails` is **discovery, plus (as of
-issue #167 Stage 1) per-fragment findings — still no conversion**. It
-recovers what a Rails app's routes, controllers, and views actually do,
-classifies each route with an honest, evidence-gated verdict, resolves each
-`certain` route's Rails helper `name` and each controller's declared
-`layout`, and parses every route-reachable ERB template into a closed
-vocabulary of fragments — surfacing anything a converter would need a human
-decision on as a `findings[]` entry. All of that is written as a human report
-(`MIGRATION.md`) and a versioned JSON manifest (`MIGRATION.manifest.json`).
-**It converts nothing.** Turning a finding's `choices` (or a classified
-route) into an actual Zigapagos target — content pages, islands, a
-`.spa.tsx` — is issue #167 **Stage 2**, and is not implemented yet.
+`zigapagos migrate <rails-app> --from rails` does two jobs, and which one you
+get is decided by a single flag.
 
-This is a deterministic reference for what discovery does and does not claim,
-written for an agent or a human driving the tool unattended — not a tutorial.
+**Without `--target` it is discovery.** It recovers what a Rails app's
+routes, controllers, and views actually do, classifies each route with an
+honest, evidence-gated verdict, resolves each `certain` route's Rails helper
+`name` and each controller's declared `layout`, and parses every
+route-reachable ERB template into a closed vocabulary of fragments —
+surfacing anything a converter needs a human decision on as a `findings[]`
+entry. That is written as a human report (`MIGRATION.md`) and a versioned
+JSON manifest (`MIGRATION.manifest.json`), and nothing else is produced.
+
+**With `--target DIR` it also converts** (issue #167 Stage 2). Every route
+whose whole template graph has a defined conversion becomes a real
+`content/<url>/index.smd` page plus the `.shtml` layouts it extends;
+deterministic assets are copied; a `zigapagos.ziggy`, a `build.sh` and the
+rest of a buildable project are written; and `DIR/MIGRATION.handoff.json`
+records, per route, what it actually became. A route the converter cannot
+finish on its own is reported `open` with the finding ids you have to answer,
+the run exits **3**, and you answer them in `DIR/MIGRATION.decisions.json`
+and run the same command again. When every user-facing route is accounted
+for, the handoff says `"complete": true` and the run exits 0. Sections
+[§13](#13---target-writes-a-project) through [§17](#17-the-re-run-loop)
+are that half of the tool.
+
+Two things are still not converted and say so rather than pretending: an
+`island` choice (Stage 4) and a `backend` choice (Stage 3) are accepted as
+answers, recorded in the handoff, and leave the route `open` with the
+deferral named — see [§15](#15-decisions).
+
+This is a deterministic reference for what the tool does and does not claim,
+written for an agent or a human driving it unattended — not a tutorial.
 If you haven't already, read `astro-to-zigapagos.md` first (this repository's
 `docs/migration/` directory, or the published docs site — not shipped
 alongside this file when it is installed standalone as part of the
 `zigapagos-rails-migration` skill): this document follows the same house
-register (mapping tables, exact command output, explicit gaps) but for a
-narrower job — inventory and classification, not conversion.
+register (mapping tables, exact command output, explicit gaps).
 
 ```sh
 zigapagos migrate path/to/rails-app -o MIGRATION.md
 zigapagos migrate path/to/rails-app --from rails -o MIGRATION.md
-zigapagos migrate path/to/rails-app --target path/to/new-site
+zigapagos migrate path/to/rails-app --from rails --target path/to/new-site
+zigapagos migrate path/to/rails-app --from rails --target DIR --decisions answers.json
 zigapagos migrate path/to/rails-app --strict
 ```
 
@@ -34,10 +51,9 @@ Detection is automatic from conventional Rails evidence (`Gemfile`,
 monorepo or when detection is ambiguous. `--from rails` on a tree with no
 Rails evidence is fatal — it does not write a confident, empty report.
 
-`--scaffold`, `--copy-assets`, and `--convert-content` are all rejected for
-Rails: there is no conversion step for them to drive yet. `--target DIR` **is**
-accepted, but its Rails behavior is narrower than for every other source —
-see [`--target` for Rails](#8---target-for-rails) below.
+`--scaffold`, `--copy-assets`, and `--convert-content` are still rejected for
+Rails: they are the React/Markdown ports, and the Rails conversion is driven
+by `--target` alone.
 
 Source files are read **only**. Route recovery is a **static AST walk** of
 `config/routes.rb` through a Ruby/Prism sidecar — the app is never booted, no
@@ -45,14 +61,23 @@ initializer runs, no database connection is opened.
 
 ## 1. What gets written
 
-Two artifacts, both regenerated on every run (plain overwrite, not the
-`.new`/`.new.2` versioning `--scaffold`/`--copy-assets` use elsewhere — this
-output is not hand-edited so there is nothing to preserve):
+Two artifacts on a plain `-o` run, both regenerated every time (plain
+overwrite, not the `.new`/`.new.2` versioning `--scaffold`/`--copy-assets`
+use elsewhere — this output is not hand-edited so there is nothing to
+preserve):
 
 | File | What it is |
 |---|---|
-| `MIGRATION.md` (or `-o PATH`) | A human-readable rendering: inventory counts, routes with their classification and reason, blockers. |
+| `MIGRATION.md` (or `-o PATH`) | A human-readable rendering: inventory counts, routes with their classification and reason, blockers, findings — and, on a `--target` run, a `## Handoff` section counting the six statuses. |
 | `<same stem>.manifest.json` beside it (e.g. `MIGRATION.manifest.json`) | The `zigapagos.rails-presentation/1` manifest — the **machine-readable contract**. `MIGRATION.md` is a *rendering* of the manifest's data, not an independent source of truth; when the two could be read to disagree, the manifest is authoritative. |
+
+A `--target DIR` run writes both of those into `DIR`, plus
+`DIR/MIGRATION.handoff.json` ([§16](#16-the-handoff)) and the converted
+project itself ([§13](#13---target-writes-a-project)). Given the same app and
+the same decisions input, the manifest is **byte-identical** between a `-o`
+run and a `--target` run (`tests/migrate/rails.sh` pins exactly that): it is
+discovery's verdict and knows nothing about the conversion. Only
+`MIGRATION.md` differs, by the `## Handoff` section appended to it.
 
 The manifest's shape is described by
 `contract/rails-presentation.v1.schema.json` (this repository's root; not
@@ -63,12 +88,12 @@ every manifest object matches the schema's declared property order, and that
 order is part of the wire contract: it is not safe to assume alphabetical or
 arbitrary key ordering when writing a consumer.
 
-As of #167 Stage 1, the manifest also carries a top-level `findings[]` array
-— the **last** key, after `blockers[]` — one entry per per-fragment or
-per-declaration question a converter would need an operator to answer. See
+The manifest also carries a top-level `findings[]` array — the **last** key,
+after `blockers[]` — one entry per per-fragment or per-declaration question
+the converter needs an operator to answer. See
 [§9](#9-route-names-stage-1) through [§12](#12-the-fragment-vocabulary)
 below for what a finding means, its id format, and the closed vocabulary it
-is derived from.
+is derived from, and [§15](#15-decisions) for how you answer one.
 
 ## 2. The six classifications
 
@@ -128,8 +153,8 @@ route from another, or to know which follow-up below applies. Every distinct
 |---|---|
 | `no view template, and controller evidence was unavailable for this run` | Controller-shape discovery degraded wholesale for this run (no Ruby, no sidecar, no `app/controllers/`) — rerun with Ruby/the sidecar available before trusting any verdict near this route, or manually confirm the route's behavior. |
 | `no view template to classify` | An action was recovered but no matching view template exists under `app/views/<controller>/<action>.*` — confirm by hand whether this action actually renders something (a partial name discovery couldn't resolve, an unconventional path) or is genuinely backend-only. |
-| `unsupported template engine, never converted` | The view uses Haml, Slim, Jbuilder, Builder, or an engine discovery couldn't identify. Only ERB is proven-safe today; read the template yourself to decide `content` vs. `island` vs. something else. |
-| `view reads request-time state` / `the resolved layout reads request-time state` / `a rendered partial reads request-time state` | The view, its layout, or a partial it renders references `current_user`, `session`, `flash`, `cookies`, or a non-route `params` read. This is still `unresolved` as a *classification* — resolving *how* that state should be reproduced (a shared runtime store, a fetch, a dropped feature) is issue #167 Stage 2's job, not this stage's. As of Stage 1, the same fragment also surfaces as a `RAILS_REQUEST_TIME_STATE` finding ([§11](#11-findings)) with concrete `choices` — read that finding rather than treating the route as a dead end. |
+| `unsupported template engine, never converted` | The view uses Haml, Slim, Jbuilder, Builder, or an engine discovery couldn't identify. Only ERB is proven-safe today; read the template yourself to decide `content` vs. `island` vs. something else. The conversion cannot migrate such a route at all — what it *can* do is let you acknowledge it, through the `RAILS_TEMPLATE_ENGINE_UNSUPPORTED` finding ([§11](#11-findings)) that accompanies the blocker. |
+| `view reads request-time state` / `the resolved layout reads request-time state` / `a rendered partial reads request-time state` | The view, its layout, or a partial it renders references `current_user`, `session`, `flash`, `cookies`, or a non-route `params` read. This is still `unresolved` as a *classification*, and where the fragment really is request-time state it also surfaces as a `RAILS_REQUEST_TIME_STATE` finding ([§11](#11-findings)) with concrete `choices` — read that finding rather than treating the route as a dead end. The classification does **not** decide what the conversion does: this rule's detection is a coarse substring scan, so a route lands here for a `csrf_meta_tags` call too, and that has a defined conversion. `GET /` and `GET /about` in this repository's fixture classify `unresolved` for exactly that reason and still report `migrated` in the handoff ([§14](#14-the-conversion-rules)). |
 | `view looks static but no controller action was recovered to confirm it` | The view shows no counter-evidence, but with no recovered action there is nothing to confirm it against. Rerun with controller discovery available, or manually verify the action's behavior. |
 
 **A second, disjoint set of `unresolved` reasons comes from the transitive
@@ -170,6 +195,11 @@ deeper analysis exists, turn out to be an SPA entry point classifies as
 `island` today — a true but narrower claim. Do not read the presence of the
 `spa` enum value in the schema as a signal that any route will ever actually
 carry it from this tool.
+
+`spa` is also the name of a **decision choice** on
+`RAILS_ROUTE_DYNAMIC_SEGMENT` ([§14](#14-the-conversion-rules)), and the two
+are unrelated. That one is an instruction you record — "scaffold a `.spa.tsx`
+for this declaration" — not a claim discovery made about the Rails app.
 
 ## 3. `candidates[]` is a separate question from `classification`
 
@@ -289,18 +319,30 @@ blocker as "at least this one route is affected," never as "only this one."
   trustworthiness of the counts) changes. A script should check the exit
   code and `blockers[]`, not assume a written report means a clean one.
 
-## 8. `--target` for Rails
+## 8. `--target` guards
 
-For every other source, `--target DIR` assembles a scaffolded Zigapagos
-project — content conversion, island scaffolding, asset copying. **For
-Rails, which converts nothing, `--target DIR` writes only the same two
-discovery artifacts** — `DIR/MIGRATION.md` and `DIR/MIGRATION.manifest.json`
-— into `DIR` instead of alongside the default `-o` path. No `zigapagos.ziggy`,
-no `content/`, no `components/` — nothing else is assembled. `DIR` must be
-missing or empty, and must not be inside the source tree, the same
-guards every other `--target` use enforces. `--runtime-path` (which only
-matters when there are React island candidates to scaffold) has no effect for
-Rails and is rejected unless a `--target` is also given.
+`DIR` must not be inside the source tree, and must be missing or empty — the
+same two guards every other `--target` use enforces, with **one Rails-only
+exception**: a `DIR` that already exists may contain `MIGRATION.decisions.json`
+and nothing else. That exception is what makes the re-run loop
+([§17](#17-the-re-run-loop)) possible: you delete the generated tree and keep
+your answers. Anything else already in `DIR` is rejected rather than
+half-overwritten:
+
+```
+error: migration target '/tmp/site' already exists and is non-empty (only MIGRATION.decisions.json may be kept between runs).
+```
+
+Every file inside the target is written **exclusive-create**. A pre-existing
+file that the guard above did not catch is a hard failure, not an overwrite:
+it means you are writing into a tree you have not wiped, and clobbering it
+would destroy hand edits.
+
+`--runtime-path PATH` sets the local `@z/runtime` package path in the
+generated `package.json`, which is only written when a `spa` decision
+scaffolded a `.spa.tsx`. It is rejected unless a `--target` is also given.
+
+What `--target` then writes is [§13](#13---target-writes-a-project).
 
 ## 9. Route names (Stage 1)
 
@@ -396,8 +438,12 @@ per-declaration **question for the operator**, not a fact discovery already
 settled. A blocker states what discovery could or could not establish; a
 finding states a decision a converter cannot make on the operator's behalf,
 with a fixed list of `choices`. **A finding is never a blocker in disguise:
-it does not affect the exit code, with or without `--strict`, and it never
-makes `MIGRATION.md` or the manifest any less trustworthy.**
+it never makes `MIGRATION.md` or the manifest any less trustworthy, and it
+does not enter the exit-code check `blockers[]` drives, with or without
+`--strict`.** What it can do is leave a route unanswered on a `--target`
+run, which is exit **3** — a separate outcome from a blocker's exit 1, and
+distinguishable precisely so a loop can tell "decide more" from "this run is
+broken" ([§16](#16-the-handoff)).
 
 A real entry, from this repository's own `tests/migrate/rails-presentation`
 fixture:
@@ -432,14 +478,24 @@ fixture:
   `blockers[]` uses, but per the note above it never touches the exit code
   the way a blocker's `integrity` does.
 - **`source`** — `{file, line}`.
-- **`route_id`** is **always `null` in Stage 1** — every finding is scoped
-  to a template or a controller file, not yet joined to a specific route.
+- **`route_id`** is `null` for every template- or controller-scoped finding,
+  which is most of them. The two **route-scoped** codes —
+  `RAILS_ROUTE_DYNAMIC_SEGMENT` and `RAILS_REDIRECT_HOST_CONFIG` — set it,
+  and their `source` is `config/routes.rb` at the line the route was
+  declared on. Even there it names **one** affected route, not all of them:
+  a single `resources :posts` line yields several dynamic routes that share
+  one finding id, and `message` lists them all (see the table below).
 - **`message`** is human prose, explicitly **not** part of `id`; reword it
   freely without invalidating a previously recorded decision.
-- **`choices`** is the fixed set of answers an operator may record against
-  this finding.
-- **`requires_artifact`** is `false` for every Stage 1 finding — none of
-  them demands generating a component or file yet, only recording a choice.
+- **`choices`** is the fixed set of answers you may record against **this**
+  finding. It is a property of the finding, not of its code: two findings
+  with the same `code` can offer different lists, and
+  `RAILS_REQUEST_TIME_STATE` actually does (below). Read the `choices` array
+  on the finding you are answering — never a remembered list per code.
+- **`requires_artifact`** is `false` for every finding this version emits —
+  none of them demands generating a component or file, only recording a
+  choice. When it is `true`, an answer without an `artifact` path is
+  rejected.
 
 `findings[]` is sorted by `(code, path, line, id)`. `MIGRATION.md` renders a
 separate `## Findings` section, after `## Blockers` on purpose — the two
@@ -451,31 +507,65 @@ per finding — both also real output from the same fixture run:
 ```
 ## Findings
 
+- RAILS_BACKEND_ENDPOINT: 2
 - RAILS_HELPER_UNKNOWN: 1
 - RAILS_I18N_UNRESOLVED: 1
 - RAILS_LAYOUT_DYNAMIC: 1
 ...
 
+- `RAILS_BACKEND_ENDPOINT` `app/views/registrations/new.html.erb:1` — form submits to a Rails action: model `user` (choices: retain, blocked)
 - `RAILS_HELPER_UNKNOWN` `app/views/pages/help.html.erb:1` — unknown helper `number_to_currency` (choices: island, retain, blocked)
 ...
 ```
 
-Stage 1 derives these codes — `src/cli/rails/findings.zig`'s derivation
-table is the single source of truth:
+These are the codes — `src/cli/rails/findings.zig`'s derivation table is the
+single source of truth. The `Choices` column below is what that table
+attaches today; it is documentation of the code path, not a substitute for
+reading the individual finding's own `choices` array.
 
 | Code | Trigger | Choices |
 |---|---|---|
 | `RAILS_HELPER_UNKNOWN` | a fragment classifies `unknown` — outside the closed vocabulary, [§12](#12-the-fragment-vocabulary) | island, retain, blocked |
 | `RAILS_REQUEST_TIME_STATE` | `current_user`/`session`/`flash`/`cookies`/non-route `params`/`request.`/`policy(`/… or a bare `@ivar` | island, spa, backend, retain, blocked |
+| `RAILS_REQUEST_TIME_STATE` (again) | an `errors` fragment — `@x.errors.full_messages`, `errors.any?`, `f.object.errors[:y]`. Same code, **different question**: not "where does this state come from" but "how is the validation state that comes back presented", which Stage 2 cannot answer with an island or a SPA | retain, blocked |
 | `RAILS_I18N_UNRESOLVED` | `t("key")` has no entry under the default locale | retain, blocked |
 | `RAILS_RAW_OUTPUT` | `<%== %>`, `raw(...)`, `.html_safe` | island, retain, blocked |
 | `RAILS_PARTIAL_DYNAMIC` | `render @x`, `collection:`, or non-literal `locals:` | island, spa, retain, blocked |
 | `RAILS_ROUTE_HELPER_DYNAMIC` | a `*_path`/`*_url` helper (or `link_to`'s route target) has non-literal arguments | island, spa, retain, blocked |
 | `RAILS_ROUTE_HELPER_UNKNOWN` | a route helper's name matches no `certain` named route (an unnamed or `uncertain` route) | retain, blocked |
-| `RAILS_TEMPLATE_CONTROL_FLOW` | `if`/`unless`/`case`/`while`/`until` (also a bare `.each`/`.map`/… loop over a plain local) whose branch predicate classifies as `literal`, `local`, or `unknown` — i.e. nothing more specific applies; a request-state/ivar/errors predicate takes that kind instead (and that kind's own finding, or none for `errors`) | island, spa, retain, blocked |
+| `RAILS_TEMPLATE_CONTROL_FLOW` | `if`/`unless`/`case`/`while`/`until` (also a bare loop over a plain local through one of `templates.rb`'s five `CONTROL_CALLS`: `each`, `each_with_index`, `map`, `times`, `each_slice`) whose branch predicate classifies as `literal`, `local`, or `unknown` — i.e. nothing more specific applies; a request-state/ivar/errors predicate takes that kind instead (and that kind's own finding, or none for `errors`) | island, spa, retain, blocked |
 | `RAILS_TEMPLATE_PARSE_ERROR` | a template's Ruby fragments do not assemble into valid Ruby | retain, blocked |
+| `RAILS_TEMPLATE_ENGINE_UNSUPPORTED` | a route-reachable template in an engine no converter reads — Haml, Slim, Jbuilder, Builder, or one discovery could not identify. **Also a blocker**, and the only code that is both: the blocker explains the engine in the report and counts under `--strict`, the finding is what an operator can answer. Its `line` is `null` and its `loc` is the word `engine` (nothing ever parsed the file, the same reason `RAILS_TEMPLATE_UNSCANNED` uses `unscanned`), so its id is e.g. `RAILS_TEMPLATE_ENGINE_UNSUPPORTED.app/views/posts/legacy%2Ehtml%2Ehaml.engine` | retain, blocked |
 | `RAILS_TEMPLATE_UNSCANNED` | the fragment analysis refused the view outright — it resolved outside the app root, or could not be read at the moment the analysis ran (a file replaced or removed mid-run). Distinct from the `RAILS_TEMPLATE_UNREADABLE` *blocker*, which is the earlier template-graph scan failing to read a file: here that scan succeeded, so nothing else in the manifest mentions the view at all. Its `loc` is the word `unscanned`, not an `L<line>` — the file was never parsed, so there is no line to point at | retain, blocked |
 | `RAILS_LAYOUT_DYNAMIC` | a controller's `layout` declaration is a symbol, a proc, or carries `only:`/`except:` | retain, blocked |
+| `RAILS_ASSET_TRANSFORM` | an asset helper (the ten of `templates.rb`'s `ASSET_HELPERS`, minus the two below) whose literal names no file under `app/assets/` or `public/`, **or** names one whose public URL could not be derived without guessing (`assets[].deterministic == false`). `javascript_include_tag` and `favicon_link_tag` never raise it: both are dropped outright with the JS-entry family, so there would be no placeholder for an answer to fill | retain, blocked |
+| `RAILS_ROUTE_DYNAMIC_SEGMENT` | a GET/HEAD route whose path has a `:param` or `*glob` segment, and which is neither `backend` nor `redirect`. **Route-scoped**, one per `routes.rb` *declaration* rather than per route — a `resources :posts` line is one question, and `message` names every route it covers | spa, retain, blocked |
+| `RAILS_REDIRECT_HOST_CONFIG` | a route classified `redirect`. Route-scoped, same one-per-declaration folding. The static tree cannot express a redirect; the host-config emitters own it | retain, blocked |
+| `RAILS_NO_TEMPLATE` | a GET/HEAD route, neither `backend` nor `redirect` nor dynamic, whose `<controller>/<action>` matches none of the templates discovery resolved for it — an action that renders another template (`def other; render :about; end`), or one whose view was deleted. Route-scoped, same one-per-declaration folding, so its id is e.g. `RAILS_NO_TEMPLATE.config/routes%2Erb.L56`. There is no template, so no answer produces a page: the choice is whether the URL stays on Rails or does not ship | retain, blocked |
+| `RAILS_BACKEND_ENDPOINT` | a `form`/`form_field` fragment. Only the **outermost** form asks: one form with twelve fields is one decision, not thirteen. A stray `form_field` outside any form still raises its own | retain, blocked |
+| `RAILS_TURBO_FRAME` | a `turbo_frame_tag` fragment | retain, blocked |
+| `RAILS_TURBO_STREAM` | a `turbo_stream_from`/`turbo_stream.*` fragment | retain, blocked |
+| `RAILS_COMPONENT_ROOT` | a `react_component("Name", {…})` mount point | retain, blocked |
+
+The last four exist so that a region the converter cannot finish is at least
+**acknowledgeable**. Without them, a route whose only blemish was a form
+converted to a `<!-- rails:unmapped form -->` marker — which carries no
+finding id — could never be closed by any answer at all. Their `choices` are
+deliberately narrow: Stage 3 widens the two form-family codes with the real
+backend operations, Stage 4 widens the Turbo/component ones with `island`,
+and offering a choice this version cannot carry out would be worse than
+offering two it can.
+
+`RAILS_TEMPLATE_ENGINE_UNSUPPORTED` is the one code that is a blocker **and**
+a finding, and the pairing is deliberate. Without the finding a Haml view had
+no id any decision could name, so a route reaching one could never be
+answered and `complete` was unreachable for any app with a single Haml
+template. The finding does not make such a route convertible — it can never
+be `migrated` — it makes it *acknowledgeable*, which is what "never silently
+complete" requires.
+
+One more code appears in `blockers[]` only, never `findings[]`:
+`RAILS_DECISION_STALE` — see [§15](#15-decisions).
 
 Only the **default** locale's `t()` keys are resolved (`config.i18n.
 default_locale`, else `en`); a key that only exists in a non-default locale
@@ -523,48 +613,53 @@ sibling is never sent through this op at all — it already carries
 `RAILS_TEMPLATE_ENGINE_UNSUPPORTED` and asking an ERB parser to scan
 non-ERB source would only manufacture a parse error on top of a finding
 that already exists. This table is the design spec's own "Fragment
-vocabulary" table, unchanged, with a fourth column added: what Stage 1
-actually does with each kind today. **Every kind is classified in Stage 1;
-none is converted — conversion, the "conversion" column below, is Stage
-2's job.**
+vocabulary" table with a fourth column added: the **bytes the converter
+actually emits** for that kind, verified against this repository's own
+fixture. Every kind is now either converted outright or turned into an
+answerable region — see [§14](#14-the-conversion-rules) for the three
+markers.
 
-| kind                  | Ruby shape                                                       | conversion                                      | Stage 1 status |
+| kind                  | Ruby shape                                                       | conversion                                      | what `--target` emits |
 | --------------------- | ------------------------------------------------------------------ | ----------------------------------------------- | --- |
-| `yield`               | `yield`                                                          | `<super>` inside the block element `id="main"`  | classified |
-| `yield_named`         | `yield :head`, `content_for?(:x)`                                | named `<super>` block `id="<name>"`             | classified |
-| `content_for`         | `content_for :x do … end`, `provide(:x, "literal")`              | child block `<… id="<name>">`                   | classified |
-| `render_partial`      | `render "x"`, `render partial: "x"` with no `locals:`/`collection:` | inline expansion of the converted partial    | classified |
-| `render_partial_locals` | same with `locals:` of literals only                           | inline expansion with literal substitution      | classified |
-| `render_dynamic`      | `render @x`, `collection:`, non-literal locals                   | finding `RAILS_PARTIAL_DYNAMIC`                 | finding: `RAILS_PARTIAL_DYNAMIC` |
-| `route_helper`        | `<name>_path`, `<name>_url`, no args or literal args             | the route's path, literals substituted          | classified; finding: `RAILS_ROUTE_HELPER_UNKNOWN` when its name matches no `certain` route |
-| `route_helper_dynamic`| args are not literals                                            | finding `RAILS_ROUTE_HELPER_DYNAMIC`            | finding: `RAILS_ROUTE_HELPER_DYNAMIC` |
-| `link_to`             | `link_to "text", <route_helper> [, html_opts literals]`          | `<a href="…">text</a>`                          | classified (also covers `button_to`); finding: `RAILS_ROUTE_HELPER_UNKNOWN` when its route name matches no `certain` route |
-| `asset`               | `image_tag`, `image_path`, `asset_path`, `stylesheet_link_tag`, `javascript_include_tag`, `favicon_link_tag` with a literal | `$site.asset('…').link()` when `assets[]` has it deterministic; else `RAILS_ASSET_TRANSFORM` | classified (no finding yet — asset resolution, and `RAILS_ASSET_TRANSFORM`, land with conversion) |
-| `importmap`           | `javascript_importmap_tags`, `turbo_include_tags`                | dropped; one finding `RAILS_JS_ENTRY` per app   | classified (no finding yet — `RAILS_JS_ENTRY` lands with conversion) |
-| `csrf`                | `csrf_meta_tags`, `csp_meta_tag`                                 | dropped; noted in `MIGRATION.md` (ZigBase cookie/CSRF boundary owns this) | classified (drop-with-note lands with conversion) |
-| `i18n`                | `t("key")`, `t(".key")`, `I18n.t`                                | resolved literal; `RAILS_I18N_UNRESOLVED` if missing | classified; finding: `RAILS_I18N_UNRESOLVED` when the key is missing from the default locale |
-| `literal`             | string/number/`nil`/`true`/`false`                               | HTML-escaped text                               | classified |
-| `form`                | `form_with`/`form_for`/`form_tag` block and its `f.*` builder calls | form island scaffold (see Backend boundary)  | classified (no finding yet — form conversion is a later stage) |
-| `form_field`          | `f.text_field :title`, `f.label`, `f.submit`, `f.check_box`, `f.select` with literal options, `f.text_area`, `f.email_field`, `f.password_field`, `f.hidden_field` | field descriptor inside the enclosing `form` | classified (no finding yet) |
-| `errors`              | `@x.errors.full_messages`, `errors.any?`, `f.object.errors[:y]`   | validation-presentation region of the form island | classified (no finding yet) |
-| `request_state`       | `current_user`, `session`, `flash`, `cookies`, `params` (non-route), `request.`, `signed_in?`, `policy(`, `can?`, `Current.` | finding `RAILS_REQUEST_TIME_STATE`             | finding: `RAILS_REQUEST_TIME_STATE` |
-| `ivar`                | `@anything` outside the shapes above                             | finding `RAILS_REQUEST_TIME_STATE`              | finding: `RAILS_REQUEST_TIME_STATE` |
-| `control`             | `if`/`unless`/`case`/`each` whose condition classifies as `literal`, `local` or `unknown` (a request-state/ivar/errors condition takes that kind instead) | finding `RAILS_TEMPLATE_CONTROL_FLOW`           | finding: `RAILS_TEMPLATE_CONTROL_FLOW` |
-| `turbo_frame`         | `turbo_frame_tag`                                                | see Interactivity                               | classified (no finding yet — `RAILS_TURBO_FRAME` is a later stage) |
-| `turbo_stream`        | `turbo_stream_from`, `turbo_stream.*`                            | finding `RAILS_TURBO_STREAM`                    | classified (no finding yet — `RAILS_TURBO_STREAM` is a later stage) |
-| `component_root`      | `react_component("Name", {…})`                                   | see Interactivity                               | classified (no finding yet — the React-root findings are a later stage) |
-| `raw`                 | `<%== %>`, `raw(...)`, `.html_safe`                              | finding `RAILS_RAW_OUTPUT` — unescaped output is never passed through | finding: `RAILS_RAW_OUTPUT` |
-| `comment`             | `<%# %>`                                                         | dropped                                         | dropped before classification — `erb.rb`'s tokenizer consumes a comment tag and emits no token for it at all, so no `comment` node ever reaches `templates.rb` |
-| `unknown`             | everything else                                                  | finding `RAILS_HELPER_UNKNOWN`                  | finding: `RAILS_HELPER_UNKNOWN` |
+| `yield`               | `yield`                                                          | `<super>` inside the block element `id="main"`  | `<div id="main"><super></div>` |
+| `yield_named`         | `yield :head`, `content_for?(:x)`                                | named `<super>` block `id="<name>"`             | a `<super>` block under that id. `:title` is the exception — see [§14](#14-the-conversion-rules) |
+| `content_for`         | `content_for :x do … end`, `provide(:x, "literal")`              | child block `<… id="<name>">`                   | `<div id="<name>">…</div>`; dropped with an OPEN note when the layout declares no block `x`; `<!-- rails:unmapped content_for … -->` for the one case in [§14](#14-the-conversion-rules)'s marker list — a view's top-level `content_for :title` whose BODY is not a single literal. A computed *name* never reaches this kind at all: `templates.rb`'s classifier requires a literal first argument (`return {kind: "content_for", …} if literal(args.first)`), so `<% content_for(name) do %>` falls through to `unknown` and raises `RAILS_HELPER_UNKNOWN` |
+| `render_partial`      | `render "x"`, `render partial: "x"` with no `locals:`/`collection:` | inline expansion of the converted partial    | the partial's converted bytes, inline at the render site; `<!-- rails:unmapped render_partial … -->` when the target is not a literal name, resolves to no path, is cyclic (a partial that renders itself), or names a template that failed to parse or could not be read |
+| `render_partial_locals` | same with `locals:` of literals only                           | inline expansion with literal substitution      | same, with each literal local substituted — and the same four refusals |
+| `render_dynamic`      | `render @x`, `collection:`, non-literal locals                   | finding `RAILS_PARTIAL_DYNAMIC`                 | `rails:finding` region, `RAILS_PARTIAL_DYNAMIC` |
+| `route_helper`        | `<name>_path`, `<name>_url`, no args or literal args             | the route's path, literals substituted          | the route's URL, each literal argument percent-encoded per RFC 3986; a `rails:finding` region (`RAILS_ROUTE_HELPER_UNKNOWN`) when the name matches no `certain` route |
+| `route_helper_dynamic`| args are not literals                                            | finding `RAILS_ROUTE_HELPER_DYNAMIC`            | `rails:finding` region, `RAILS_ROUTE_HELPER_DYNAMIC` |
+| `link_to`             | `link_to "text", <route_helper> [, html_opts literals]`          | `<a href="…">text</a>`                          | `<a href="/about">About</a>` (also covers `button_to`); a `rails:finding` region when the route name is unknown |
+| `asset`               | the ten helpers in `templates.rb`'s `ASSET_HELPERS`: `image_tag`, `image_path`, `asset_path`, `asset_url`, `stylesheet_link_tag`, `javascript_include_tag`, `favicon_link_tag`, `audio_tag`, `video_tag`, `font_path` | `$site.asset('…').link()` when `assets[]` has it deterministic; else `RAILS_ASSET_TRANSFORM` | `<img src="$site.asset('images/logo.png').link()">` / `<link rel="stylesheet" href="$site.asset('…').link()">` / a bare `$site.asset('…').link()` for `image_path`/`asset_path`/`asset_url`/`font_path`/the media helpers; a `rails:finding` region (`RAILS_ASSET_TRANSFORM`) when any argument does not resolve deterministically. An **absolute URL** argument (`http://…`, `https://…`, or the protocol-relative `//host/…`) is emitted verbatim and raises nothing — `<%= image_tag "https://cdn.example.com/x.png" %>` becomes `<img src="https://cdn.example.com/x.png">`; the resource is on another host, so there is no local file to match and nothing to copy. `stylesheet_link_tag "a", "b"` emits one `<link>` per argument, and one unresolvable argument makes the whole node a region even if another argument was absolute. `javascript_include_tag` and `favicon_link_tag` are the two exceptions — they take the drop path below instead |
+| `importmap`           | `javascript_importmap_tags`, `turbo_include_tags`                | dropped                                          | `<!-- rails: javascript_importmap_tags dropped; @z/runtime replaces the Rails JS entry -->` and an informational note. No finding: `@z/runtime` and the island bundle replace the Rails JS entry wholesale, so there is nothing to decide. `javascript_include_tag`/`favicon_link_tag` take this path too |
+| `csrf`                | all three of `templates.rb`'s `CSRF_HELPERS`: `csrf_meta_tags`, `csrf_meta_tag`, `csp_meta_tag` | dropped; noted in `MIGRATION.md` (ZigBase cookie/CSRF boundary owns this) | `<!-- rails: csrf_meta_tags dropped; the ZigBase cookie/CSRF boundary owns this -->` and an informational note |
+| `i18n`                | `t("key")`, `t(".key")`, `I18n.t`                                | resolved literal; `RAILS_I18N_UNRESOLVED` if missing | the resolved string, HTML-escaped; a `rails:finding` region when the key is missing from the default locale |
+| `literal`             | string/number/`nil`/`true`/`false`                               | HTML-escaped text                               | the value, HTML-escaped |
+| `form`                | `form_with`/`form_for`/`form_tag` block and its `f.*` builder calls | a form bound to a backend operation           | `rails:finding` region, `RAILS_BACKEND_ENDPOINT` (Stage 3 produces the real binding) |
+| `form_field`          | `f.text_field :title`, `f.label`, `f.submit`, `f.check_box`, `f.select` with literal options, `f.text_area`, `f.email_field`, `f.password_field`, `f.hidden_field` | field descriptor inside the enclosing `form` | folded into the enclosing form's one region; only a field with no enclosing form raises its own |
+| `errors`              | `@x.errors.full_messages`, `errors.any?`, `f.object.errors[:y]`   | the form's validation-presentation region       | `rails:finding` region, `RAILS_REQUEST_TIME_STATE` with `retain`/`blocked` only |
+| `request_state`       | a receiverless call to one of `templates.rb`'s fourteen `REQUEST_STATE` names — `current_user`, `session`, `flash`, `cookies`, `params`, `request`, `signed_in?`, `logged_in?`, `user_signed_in?`, `current_account`, `current_organization`, `policy`, `can?`, `authorize` — **or any name starting with `current_`**, which is what generalises an app's own `current_tenant`-style helpers, **or a read of the `Current` constant** (`Current.user`, `Current.account`: Rails' `ActiveSupport::CurrentAttributes` singleton, which is per-request state under a constant rather than a method — `templates.rb`'s `state_or` matches it as a `Prism::ConstantReadNode` named `Current`, and the finding's message names it as `Current`) | finding `RAILS_REQUEST_TIME_STATE`             | `rails:finding` region, `RAILS_REQUEST_TIME_STATE` with all five choices |
+| `ivar`                | `@anything` outside the shapes above                             | finding `RAILS_REQUEST_TIME_STATE`              | same as `request_state` |
+| `control`             | `if`/`unless`/`case`/`each` whose condition classifies as `literal`, `local` or `unknown` (a request-state/ivar/errors condition takes that kind instead) | finding `RAILS_TEMPLATE_CONTROL_FLOW`           | `rails:finding` region around the whole block, with `<!-- rails:else -->` separating its branches |
+| `turbo_frame`         | `turbo_frame_tag`                                                | an island (Stage 4)                             | `rails:finding` region, `RAILS_TURBO_FRAME` |
+| `turbo_stream`        | `turbo_stream_from`, `turbo_stream.*`                            | finding `RAILS_TURBO_STREAM`                    | `rails:finding` region, `RAILS_TURBO_STREAM` |
+| `component_root`      | `react_component("Name", {…})`                                   | an island (Stage 4)                             | `rails:finding` region, `RAILS_COMPONENT_ROOT` |
+| `raw`                 | `<%== %>`, `raw(...)`, `.html_safe`                              | finding `RAILS_RAW_OUTPUT` — unescaped output is never passed through | `rails:finding` region, `RAILS_RAW_OUTPUT`. The unescaped bytes are never emitted |
+| `comment`             | `<%# %>`                                                         | dropped                                         | nothing — `erb.rb`'s tokenizer consumes a comment tag and emits no token for it at all, so no `comment` node ever reaches `templates.rb` |
+| `local`               | a bare template-local (a block param, an `each` variable)         | the value the render site bound to it           | the literal from the render site's `locals:`; `<!-- rails:unmapped local … -->` when nothing bound it |
+| `unknown`             | everything else                                                  | finding `RAILS_HELPER_UNKNOWN`                  | `rails:finding` region, `RAILS_HELPER_UNKNOWN` |
 
-`erb.rb`/`templates.rb` also produce a handful of purely structural node
-kinds this table's spec original does not list because they carry no
-finding of their own and never will: `block_else`/`block_end` (the
-`else`/`elsif`/`when`/`in`/`end` fragment closing an emitted block) and
-`local` (a bare template-local variable, e.g. a block param or a `each` loop
-variable — distinct from `ivar`, which is always request-time state). A
-plain text run between tags never produces a finding either, regardless of
-its content — only a classified Ruby fragment can.
+`erb.rb`/`templates.rb` also produce two purely structural node kinds this
+table's spec original does not list because they carry no finding of their
+own and never will: `block_else`/`block_end` (the
+`else`/`elsif`/`when`/`in`/`end` fragment closing an emitted block). They are
+what makes block structure explicit on the wire rather than inferred from
+indentation, and the converter reads them to place `<!-- rails:else -->` and
+close each region. `local` is listed above but is worth distinguishing here:
+it is a template-local variable (a block param, an `each` loop variable),
+never request-time state — that is `ivar`. A plain text run between tags
+never produces a finding either, regardless of its content — only a
+classified Ruby fragment can.
 
 The `templates` op refuses to read outside the Rails app root: a request
 naming an absolute path, a path containing `..`, or a path that resolves
@@ -574,6 +669,851 @@ applied twice, once cheaply on the unresolved path and once again with
 `File.realpath` on the resolved one, so a symlink that itself points outside
 the root cannot be used to read arbitrary files from the machine running
 discovery.
+
+## 13. `--target` writes a project
+
+This is the exact tree `zigapagos migrate tests/migrate/rails-presentation
+--from rails --target DIR` writes for this repository's own fixture — a
+fourteen-route Rails app — on a first run, with no decisions file:
+
+```
+DIR/.gitignore
+DIR/AGENTS.md
+DIR/CLAUDE.md
+DIR/MIGRATION.handoff.json
+DIR/MIGRATION.manifest.json
+DIR/MIGRATION.md
+DIR/assets/images/logo.png
+DIR/assets/robots.txt
+DIR/assets/stylesheets/application.css
+DIR/build.sh
+DIR/content/about/index.smd
+DIR/content/help/index.smd
+DIR/content/index.smd
+DIR/content/linked/index.smd
+DIR/content/links/index.smd
+DIR/content/posts/index.smd
+DIR/content/registration/new/index.smd
+DIR/content/session/new/index.smd
+DIR/layouts/pages/about.shtml
+DIR/layouts/pages/help.shtml
+DIR/layouts/pages/linked.shtml
+DIR/layouts/pages/links.shtml
+DIR/layouts/posts/index.shtml
+DIR/layouts/registrations/new.shtml
+DIR/layouts/sessions/new.shtml
+DIR/layouts/templates/application.shtml
+DIR/layouts/templates/marketing.shtml
+DIR/zigapagos.ziggy
+```
+
+and it says so on stderr, then exits 3:
+
+```
+Assembled DIR: 8 page(s), 3 asset(s), 8 route(s) open.
+Wrote DIR/MIGRATION.md: Rails, inventory plus 14 recovered route(s).
+Next: follow MIGRATION.md.
+8 route(s) open -- answer the findings in MIGRATION.handoff.json via MIGRATION.decisions.json and re-run.
+```
+
+The last line names the file you have to write. On a first run that is the
+default basename, as above; when you passed `--decisions FILE` it is that
+path verbatim, so the instruction is always one you can act on without
+guessing where your answers live.
+
+| Path | What it is |
+|---|---|
+| `content/<url>/index.smd` | One per migrated route. **Frontmatter only** — the page body lives in the `.shtml`, because SuperMD forbids raw HTML. |
+| `layouts/<view stem>.shtml` | One per converted **view**, named from the view's path under `app/views/` with every extension dropped (`app/views/pages/about.html.erb` → `layouts/pages/about.shtml`). The controller directory is part of the stem on purpose: two controllers routinely have an `index` view. |
+| `layouts/templates/<layout stem>.shtml` | One per converted Rails **layout** (`app/views/layouts/marketing.html.erb` → `layouts/templates/marketing.shtml`), written once however many routes reach it. |
+| `assets/…` | Copied sources, `app/assets/` and `public/` prefixes stripped: `app/assets/images/logo.png` → `assets/images/logo.png`, `public/robots.txt` → `assets/robots.txt`. **`public/assets/**` is excluded**: that is the asset pipeline's compiled output, and every file in it is a digested copy of an `app/assets/` source the conversion already copies from the source side. See [§14](#14-the-conversion-rules). |
+| `zigapagos.ziggy` | `content_dir_path`/`layouts_dir_path`/`assets_dir_path` wired to the three directories above, `.title` from the Rails app's own directory basename (falling back to the target's, then to `migrated_site`), and `.static_assets = ["**"]` only when something was actually copied. `host_url` is `"https://example.com"` — a placeholder you edit, not a value read from Rails config. |
+| `build.sh` | `exec "${ZIGAPAGOS_BIN:-zigapagos}" release --force --output=zig-out/site "$@"`, plus one quoted `--spa='spa/<seg>.spa.tsx\|/<seg>'` per scaffolded SPA and a `bun install` line when there is a `package.json`. |
+| `.gitignore`, `AGENTS.md`, `CLAUDE.md` | The same three files every other source's `--target` writes. |
+| `spa/<segment>.spa.tsx` | Only when a `spa` decision was recorded — [§14](#14-the-conversion-rules). |
+| `package.json`, `tsconfig.json` | Only alongside a `.spa.tsx`: a pure content target builds with the binary alone, and a `package.json` nothing installs would invite `bun install` into a project with no JS. **Its `@z/runtime` dependency is a placeholder unless you passed `--runtime-path`** — see [The generated project builds](#the-generated-project-builds) below, because `bun install` fails on it. |
+
+Note what is **not** here: the fixture has fourteen routes and eight
+`content/` pages. A route that is `backend`, `redirect`, dynamic-and-undecided,
+answered `retain` or `blocked`, or whose view would not convert writes no
+page — and an `open` route may still have written one (its page exists; it is
+the *decision* that is missing). Read the handoff, not the tree, to find out
+which is which.
+
+**A route you answered `retain` or `blocked` writes no page either**, and no
+`layouts/<view stem>.shtml` of its own: `retained` means the page stays on
+Rails, so this target must not answer that URL, and `blocked` means it does
+not ship. Re-running the fixture with its checked-in
+`MIGRATION.decisions.json` therefore produces a *smaller* tree than the one
+above — `content/help`, `content/links`, `content/posts`,
+`content/session/new`, `content/registration/new` and their view files are all
+gone, and only the three migrated routes plus the scaffolded SPA remain. The
+handoff row is the record that the route was considered; the tree holds only
+what the site serves. (`layouts/templates/<layout stem>.shtml` is unaffected —
+a layout is shared chrome, written once per layout rather than per route, so
+one can outlive every page that extended it.)
+
+Everything is a pure function of the discovery result and your decisions
+file: no timestamps, no absolute paths, no ambient state. Two runs over the
+same app produce byte-identical trees.
+
+### The generated project builds
+
+```sh
+ZIGAPAGOS_BIN=/path/to/zigapagos bash DIR/build.sh
+```
+
+That is `zigapagos release --force --output=zig-out/site`, and it produces a
+real static site — `content/about/index.smd` becomes
+`zig-out/site/about/index.html` with the layout's chrome around it, and the
+copied assets land at the URLs the `$site.asset(...).link()` expressions
+resolve to. A route left `open` still builds: its unfinished regions are HTML
+comments, so the page renders and the `rails:finding` markers are visible in
+the output for whoever finishes it by hand.
+
+**A target with a SPA needs `@z/runtime` pointed somewhere real first.** The
+generated `package.json` carries a deliberate placeholder:
+
+```json
+"dependencies": { "@z/runtime": "file:TODO-SET-RUNTIME-PATH" }
+```
+
+and `build.sh` starts with `bun install`, so building it as-is fails before
+`release` is ever reached:
+
+```
+error: Could not find package.json for "file:TODO-SET-RUNTIME-PATH" dependency "@z/runtime"
+error: @z/runtime@file:TODO-SET-RUNTIME-PATH failed to resolve
+```
+
+The handoff says so too — the `spa`-decided route's `note` reads
+`set dependencies.@z/runtime in package.json`. Two ways to fix it, and the
+first is better because it leaves nothing to remember:
+
+- pass **`--runtime-path <path>/runtime`** on the `migrate` call that
+  scaffolds the SPA, and the dependency is written resolved; or
+- edit that one line in `package.json` afterwards.
+
+Either way `bash build.sh` then exits 0. A target with no SPA has no
+`package.json` at all and needs neither.
+
+**A scaffolded SPA renders unstyled until you give it a `head`.** The
+generated `spa/<segment>.spa.tsx` declares `export const spa = { base: … }`
+and no `head`, and a SPA shell has a fixed `<head>` that does not inherit the
+site's stylesheet links — so `release` says so and carries on:
+
+```
+warning: spa 'spa/posts.spa.tsx' declares no spa.head, but the site has stylesheet assets (e.g. '/stylesheets/application.css') — SPA shells have a fixed <head> and do not inherit site styles, so this SPA's routes will render unstyled. Add a stylesheet to `export const spa` (head: [{ rel: "stylesheet", href: "/stylesheets/application.css" }]), or set head: [] to declare the SPA intentionally loads no head links.
+```
+
+The build still succeeds, but the warning is real: add the `head:` the
+message spells out (or `head: []` if the SPA genuinely loads none) as part of
+porting the placeholder components.
+
+**`zigapagos doctor` on the built site reports 0 errors, and a warning per
+link into a route you did not migrate.** On the fixture's answered run that is
+three, all the same one:
+
+```
+warn dangling-internal-link: about/index.html: href '/session/new' resolves to no file in the tree
+warn dangling-internal-link: index.html: href '/session/new' resolves to no file in the tree
+warn dangling-internal-link: linked/index.html: href '/session/new' resolves to no file in the tree
+doctor: 0 errors, 3 warnings across 4 files
+```
+
+That is not a defect in the conversion — it is the honest report of a partial
+migration. `/session/new` was answered `retain`, so Rails still serves it and
+this tree does not, while the shared `_nav` partial inlined into every
+migrated page still links to it. Fix it by migrating the route, by pointing
+the link at the Rails origin, or by accepting it until you do.
+
+## 14. The conversion rules
+
+### What a route becomes
+
+| Discovery says | The conversion writes | Handoff `status` |
+|---|---|---|
+| any GET/HEAD route whose whole template graph converts | `content/<url>/index.smd` + `layouts/<view stem>.shtml` + `layouts/templates/<layout stem>.shtml` | `migrated` |
+| `redirect` | nothing in the tree; a `redirects[]` entry (`to` is always `null` — recovering the target is Stage 3) and a `RAILS_REDIRECT_HOST_CONFIG` finding | `redirect` |
+| `backend`, **or any non-GET/HEAD verb** | nothing | `backend` |
+| a path with a `:param`/`*glob` segment | nothing until a `spa` decision; then `spa/<first segment>.spa.tsx` | `open`, then `migrated` |
+| a route you answered `retain` | **nothing** — no page, no view file. The page stays on Rails, so this tree must not answer that URL | `retained` |
+| a route you answered `blocked` | **nothing**, for the same reason from the other side: it does not ship | `blocked` |
+| anything the converter could not finish and nobody answered | whatever it did write, plus the finding ids and a `note` saying why | `open` |
+
+The two acknowledged rows are worth dwelling on: emitting a page anyway made
+`blocked` a relabelling. The built site served a blank `<main>` for a route
+the handoff called blocked, which is worse than a 404 because it looks
+deliberate. `layouts/templates/<layout stem>.shtml` is the one exception —
+shared chrome, written once per layout rather than per route, so it can
+outlive every page that extended it.
+
+**`status` is the conversion's verdict and `classification` is discovery's,
+and they disagree on purpose.** In this repository's fixture every `pages`
+route classifies `unresolved` ("the resolved layout reads request-time
+state"), and `GET /about` still reports `migrated` — the fragment that
+downgraded the classification was a `csrf_meta_tags` call, which has a
+defined conversion (dropped). The reverse also holds: a `content` route whose
+view holds one unknown helper is `open`. A consumer asking "did this route
+migrate" must read `status`.
+
+### URLs → content paths
+
+`/` → `content/index.smd`; `/about` → `content/about/index.smd`;
+`/admin/users` → `content/admin/users/index.smd`. Always the directory-index
+form, so `/posts` and `/posts/new` cannot collide on a file-versus-directory
+name. A trailing slash normalises away, so `/about` and `/about/` are one
+path — and if a Rails app declares both, the **second** route is reported
+`open` with `content path collision with GET /about` rather than aborting the
+run.
+
+The static tree serves `/about/`. Whether `/about` is a 200 or a redirect is
+the host's call, and that difference is not something this converter can hide.
+
+### The `.smd` file
+
+```
+---
+.title = "About",
+.layout = "pages/about.shtml",
+.custom = {
+    .rails = {
+        .route = "GET /about",
+        .controller = "pages",
+        .action = "about",
+        .source = "app/views/pages/about.html.erb",
+    },
+},
+---
+```
+
+`.title` comes from `content_for :title` / `provide(:title, …)`, else the
+converted page's first `<h1>`, else `"<controller> <action>"`, else the route
+path — in that order. `.description` is emitted only when the view carries a
+`<meta name="description">`. `.custom.rails` is provenance: it is readable
+from a layout as `$page.custom.rails`, and it survives hand edits to either
+side.
+
+### Layouts and views
+
+A converted Rails layout **always** declares both a `head` and a `main`
+block, synthesising them when the ERB never wrote `yield :head` or `yield`.
+That is not tidiness: SuperHTML fatals in both directions — a block with no
+matching `<super>` is an `UNBOUND TOP-LEVEL BLOCK`, a `<super>` with no
+matching block a `MISSING TOP-LEVEL BLOCK` — so the two sides cannot guess
+what the other declared. The converted view therefore emits **exactly** the
+blocks its layout declares, empty where it has no `content_for` to fill them.
+
+`layouts/templates/marketing.shtml`, verbatim except for the `<nav>` the
+`_nav` partial was inlined into (elided at the `…`):
+
+```html
+<!DOCTYPE html>
+<html>
+  <head id="head">
+    <title :text="$page.title"></title>
+    <!-- rails: csrf_meta_tags dropped; the ZigBase cookie/CSRF boundary owns this -->
+    <link rel="stylesheet" href="$site.asset('stylesheets/application.css').link()">
+    <!-- rails: javascript_importmap_tags dropped; @z/runtime replaces the Rails JS entry -->
+  <super></head>
+  <body class="marketing">
+    …
+    <main><div id="main"><super></div></main>
+    <footer>Presentation Fixture</footer>
+  </body>
+</html>
+```
+
+and the view that extends it, in full:
+
+```html
+<!-- layouts/pages/about.shtml -->
+<extend template="marketing.shtml">
+<head id="head"></head>
+<div id="main">
+<h1>About us</h1><p>Static.</p>
+</div>
+```
+
+Two consequences worth knowing before you read a handoff:
+
+- **A `<title>` holding `yield(:title)` is replaced wholesale** by
+  `<title :text="$page.title"></title>`, because SuperHTML's `:text` needs an
+  empty element. Any other text that shared that element is dropped with an
+  informational note. A `yield(:title)` anywhere else becomes
+  `<ctx :text="$page.title"></ctx>`.
+- **One view converts once per layout, and the first route owns the file.** A
+  view's bytes depend on the layout it extends, and the target has one
+  `layouts/<view stem>.shtml`. A second route reaching the same view under a
+  *different* layout is reported `open` with
+  `view shared across layouts: <a> vs <b>` rather than served a page whose
+  `<extend>` points at the wrong parent.
+
+Partials are expanded **inline** at every render site: SuperHTML's
+`<extend>`/`<super>` is inheritance, not composition, so there is no include
+to emit. That is why only partials with literal `locals:` convert.
+
+### The three markers
+
+Conversion **never fails on content**. A fragment it cannot express as static
+HTML becomes a comment with the surrounding markup intact, so a
+half-convertible template still produces a readable page. There are exactly
+three markers, and they are a contract the e2e greps for:
+
+| Marker | Meaning |
+|---|---|
+| `<!-- rails:finding <id> -->` … `<!-- rails:end -->` | A region with a finding id you answer in `MIGRATION.decisions.json`. `<!-- rails:else -->` separates the branches of a control block inside one. Only the **outermost** finding in a nesting emits a marker — a form holding six fields is one region, not seven — but every inner id still lands in the route's `findings[]`. |
+| `<!-- rails:unmapped <kind> L<line>C<col> -->` | A hole, not a question: a construct with **no finding id at all**. Standalone, never paired with an `end`. `<kind>` is the fragment kind, so the marker says which of the cases below it is. It keeps a route `open` that nobody has answered — but it does **not** override an answer: a route whose findings you settled with `retain`/`blocked` is settled, and the region is reported as a footnote in `note` (e.g. `local left unmapped`). A route carrying one and raising *no* finding is the one thing a decisions file cannot reach. |
+| `<!-- rails: <helper> dropped; <why> -->` | A helper whose conversion *is* "delete it" — `csrf_meta_tags`, `csp_meta_tag`, the JS-entry family. Informational: it does not keep a route out of `migrated`, and it also appears in the route's `note` so `MIGRATION.md` records what was removed. |
+
+The one drop that is **not** informational is a `content_for :x` naming a
+block the layout does not declare: its body is markup the author wrote and
+the target does not have, so the route stays `open` with
+`content_for :x dropped: the layout declares no block with that id`.
+
+**`rails:unmapped` is emitted from four places in `convert.zig`**, and knowing
+which one you are looking at is the difference between a fixable template and
+a converter gap. In source order:
+
+| `<kind>` in the marker | When | Can a decision close the route? |
+|---|---|---|
+| `route_helper`, `link_to` (and in principle any finding kind) | `openRegion`'s backstop: a node routed through a finding region whose id lookup found nothing at that exact line and column. It is **not** only a drift guard — the two shapes that reach it routinely are a route helper whose URL could not be built while its *name* was perfectly well known, so no `RAILS_ROUTE_HELPER_UNKNOWN` was derived: `<%= post_path %>` for a `/posts/:id` route (arity mismatch — the `:id` placeholder is never filled) and the same call inside a `link_to`. Reaching it with any *other* kind would mean the id computation drifted, and is a bug | No |
+| `content_for` | a view's top-level `content_for :title` whose body is not a single literal — `<% content_for :title do %><%= @post.title %><% end %>`. The title becomes `.title` frontmatter, and a value only a request can compute is not a title; it cannot fall through to the ordinary `content_for` conversion either, because a `<div id="title">` in the middle of the `id="main"` block is not a SuperHTML top-level block and would render the markup inline as page content. A computed *name* does not reach this row at all — see the `content_for` line in [§12](#12-the-fragment-vocabulary) | No — `content_for` has no derivation row |
+| `local` | a bare template-local with nothing bound to it: the render site passed no `locals:`, or not this key (or the node arrived with no name). The common real-world case, and the one the fixture exercises | No |
+| `render_partial` / `render_partial_locals` | the render target is not a literal name, resolves to no path, is **cyclic** (a partial that renders itself, which Rails would loop on until the request dies), or names a template that failed to parse or could not be read | No |
+
+None of them carries an id, so none is answerable — but they routinely sit on
+routes that raise *other* findings, and answering those settles the route with
+the region demoted to a footnote ([§15](#15-decisions)). It is only a route
+where an unmapped region is the **sole** remaining problem that no decisions
+file can reach.
+
+### Assets
+
+An asset is copied when its public URL was derived by a rule that reproduces
+on every machine — read verbatim out of the app's own compiled Propshaft
+`.manifest.json` or Sprockets `manifest-*.json`, or, for a `public/`-rooted
+file, from the path itself. An asset that is neither is not copied: putting a
+file in the target under a name nothing references would be worse than the
+`RAILS_ASSET_TRANSFORM` finding that says so.
+
+**`public/assets/**` is never copied**, even though it is `public/`-rooted and
+therefore deterministic. That directory is the pipeline's *compiled output*:
+its manifests (`.manifest.json`, `manifest-*.json`) plus a digested copy of
+every `app/assets/` source. The conversion already copies those sources from
+`app/assets/`, which is also where both their target path and their Rails URL
+come from, so copying the compiled directory too would ship each asset twice.
+Discovery's `assets[]` still *lists* them — the Rails app really does serve
+them, and the manifest is a record of what discovery found. What a converted
+site should carry is a conversion question, and it is answered here.
+
+`assets[]` in the handoff records all three paths per asset:
+
+```jsonc
+{ "source": "app/assets/images/logo.png",
+  "rails_url": "/assets/logo-abc123.png",
+  "target_url": "/images/logo.png" }
+```
+
+`rails_url` is what Rails served it at (`null` when the run could not
+establish one); `target_url` is what the built site serves it at.
+
+**An absolute URL is not an asset.** `image_tag "https://cdn.example.com/x.png"`
+(and the protocol-relative `//cdn.example.com/x.png`) names a resource on
+another host: nothing is copied, nothing is listed in `assets[]`, and no
+finding is raised. The literal is written into the emitted markup unchanged.
+Treating it as a local asset that failed to resolve — which is what a bare
+"does any file match this name" lookup answers — turned every CDN reference
+in an app into a `RAILS_ASSET_TRANSFORM` question about a file that was never
+supposed to exist.
+
+### SPAs
+
+A route with a dynamic segment raises `RAILS_ROUTE_DYNAMIC_SEGMENT`. Answer
+it `spa` and the conversion writes **one `.spa.tsx` per first path segment** —
+`/posts/:id` and `/posts/:id/edit` are two routes of one SPA mounted at
+`/posts`, not two SPAs:
+
+```tsx
+// Generated by `zigapagos migrate --from rails`. Every component below is a
+// placeholder: the Rails view it names still has to be ported by hand.
+import { Router } from "@z/runtime";
+
+export const spa = { base: "/posts" };
+
+function PostsShow() {
+  return <p>{"TODO: port GET /posts/:id (posts#show)"}</p>;
+}
+
+export const routes = [
+  { path: "/:id", component: PostsShow, skeleton: false, staticPaths: [] },
+];
+
+export default function App() {
+  return <Router base={spa.base} routes={routes} />;
+}
+```
+
+and `build.sh` grows `--spa='spa/posts.spa.tsx|/posts'`, `package.json` and
+`tsconfig.json` appear beside it, and the route's handoff `note` reads
+`set dependencies.@z/runtime in package.json` — pass `--runtime-path` on this
+run and that is done for you ([§13](#the-generated-project-builds)). The base
+is restated
+on the command line rather than left implicit because `src/spa.zig` skips
+both of its cross-checks — that the file's own `spa.base` agrees with the
+command line, and that two SPAs are not mounted inside one another — on a
+spec with no declared base.
+
+**`spa` is only carried out when the route's first segment is static.**
+`get "/:slug"` has `:slug` as its first segment; honouring the decision there
+would mean a file called `spa/:slug.spa.tsx` mounted at a pattern rather than
+a path, which nothing downstream can build. Such a route stays `open` with
+`spa needs a static first segment`.
+
+## 15. Decisions
+
+`MIGRATION.decisions.json` is your answers to the findings. Schema
+`zigapagos.rails-decisions/1`:
+
+```jsonc
+{
+  "schema": "zigapagos.rails-decisions/1",
+  "decisions": [
+    {
+      "id": "RAILS_HELPER_UNKNOWN.app/views/pages/help%2Ehtml%2Eerb.L1C18",
+      "choice": "retain",
+      "rationale": "number_to_currency is copy on a help page; the literal is fine"
+    }
+  ]
+}
+```
+
+- **`id`** is a `findings[].id`, verbatim. It is stable across a reworded
+  `message` and across edits elsewhere in the same file.
+- **`choice`** must be one of **that finding's own `choices`** — read the
+  array on the finding, not a remembered list per code
+  ([§11](#11-findings)).
+- **`rationale`** is required and must be non-blank. The file outlives the
+  run and is read by the next person to touch the migration; an unexplained
+  `blocked` is a decision nobody can revisit.
+- **`artifact`** is optional, and required only for a finding whose
+  `requires_artifact` is `true` (none, today). `""` is normalised to absent,
+  so it cannot satisfy the requirement.
+
+The file is read from `DIR/MIGRATION.decisions.json` when it exists, or from
+`--decisions FILE` when you name one. The default is existence-gated, not
+read-gated: the first run of every migration has no answers file, and that is
+the normal state, not a failure.
+
+### What each choice does
+
+| Choice | Effect |
+|---|---|
+| `retain` | status `retained` — you are keeping the Rails behaviour as it is. Accounts for the route, and **writes no page**: Rails still serves that URL, so this target must not. |
+| `blocked` | status `blocked` — the converter cannot produce this and you have acknowledged it. Accounts for the route **only** with a decision attached, which by construction it always has. **Writes no page**: a blocked route that still emitted its converted page would serve a blank one, which is worse than a 404 because it looks deliberate. |
+| `spa` | on `RAILS_ROUTE_DYNAMIC_SEGMENT` with a static first segment, scaffolds the `.spa.tsx` and reports `migrated`. |
+| `island` | **accepted and recorded, route stays `open`** with `choice island deferred to Stage 4`. This version cannot produce the island component the choice promises, and recording it as migrated would claim work that does not exist. |
+| `backend` | same: recorded, route stays `open` with `choice backend deferred to Stage 3`. |
+
+When a route has several open findings and you answered more than one, the
+strongest answer decides its status: `blocked` beats `retain`, and both beat
+a deferred `island`/`backend`; ties break on the smaller finding id. An
+operator who blocked a route on one of its gaps has not agreed to ship it
+because another gap was marked `retain`.
+
+**The answer is applied before anything else can veto it.** A route whose
+view the converter refused outright (a parse error, an unsupported engine)
+and a route whose converted bytes hold a `rails:unmapped` region are both
+settled by a `retain`/`blocked` answer — the unmapped region is then reported
+as a **footnote** in `note` (e.g. `local left unmapped`), which records that
+the emitted `.shtml` really does hold the placeholder without pretending the
+route is unanswered. An `island`/`backend` answer still leaves the route
+`open`, and then the note names both the deferral and the region.
+
+The one case no answer reaches: a route with a `rails:unmapped` region and
+**no finding at all**. There is no id to write down, so no decision file can
+name it — see [§17](#17-the-re-run-loop).
+
+### Answering a Haml or Slim route
+
+`RAILS_TEMPLATE_ENGINE_UNSUPPORTED` is how such a route is closed. Its id
+ends in `.engine` rather than a line/column, because nothing parsed the file:
+
+```jsonc
+{
+  "id": "RAILS_TEMPLATE_ENGINE_UNSUPPORTED.app/views/posts/legacy%2Ehtml%2Ehaml.engine",
+  "choice": "blocked",
+  "rationale": "legacy.html.haml is Haml; no converter reads that engine, so /posts/legacy is blocked rather than shipped empty."
+}
+```
+
+`retain` and `blocked` are the only two choices, and neither produces a page:
+the route reports `retained` or `blocked`, never `migrated`. `migrated` is
+not a choice anywhere in the vocabulary, which is what stops anyone declaring
+one of these routes converted.
+
+A Haml or Slim **layout** is the same question asked once for a whole
+controller. Every route that declares it carries that layout's
+`RAILS_TEMPLATE_ENGINE_UNSUPPORTED` id in its own `findings[]`, so one entry
+settles all of them at once. While it is unanswered those routes still emit
+their page — standalone, without the chrome the layout would have supplied —
+and say so in `note`.
+
+### Answering a route with no view template
+
+`RAILS_NO_TEMPLATE` is the route-scoped counterpart: the controller action
+exists and the route resolves, but nothing under `app/views/<controller>/`
+matches the action name. `def other; render :about; end` is the usual cause
+— this stage does not follow a controller's `render`, so it sees an action
+with no template of its own. The id is keyed on the `routes.rb` line, like
+the dynamic-segment and redirect rows:
+
+```jsonc
+{
+  "id": "RAILS_NO_TEMPLATE.config/routes%2Erb.L56",
+  "choice": "retain",
+  "rationale": "pages#other renders the about template; leave /other on Rails until the action is split."
+}
+```
+
+`retain`/`blocked` only, for the same reason: there is no template, so no
+answer this stage can carry out produces a page.
+
+### Validation
+
+Every offending entry is reported, not just the first — a hand-written file
+usually has more than one fault, and re-running once per complaint is the
+failure mode this avoids. **Exit 1**, not 3: the file you wrote is wrong,
+which is a failure of this invocation, not an unfinished migration.
+
+```
+error: DIR/MIGRATION.decisions.json is not a usable decisions file:
+  entry 0 (`RAILS_I18N_UNRESOLVED.app/views/pages/help%2Ehtml%2Eerb.L1C62`): choice "island" is not offered for "RAILS_I18N_UNRESOLVED.app/views/pages/help%2Ehtml%2Eerb.L1C62"; allowed: retain, blocked
+  entry 1 (`RAILS_RAW_OUTPUT.app/views/pages/help%2Ehtml%2Eerb.L1C47`): decision "RAILS_RAW_OUTPUT.app/views/pages/help%2Ehtml%2Eerb.L1C47" has an empty `rationale`; say why, the next reader cannot ask
+  entry 2 (`RAILS_RAW_OUTPUT.app/views/pages/help%2Ehtml%2Eerb.L1C47`): duplicate decision for id "RAILS_RAW_OUTPUT.app/views/pages/help%2Ehtml%2Eerb.L1C47"; each finding may be answered once
+```
+
+A wrong or missing `schema` marker is its own complaint, and is not
+best-effort parsed:
+
+```
+error: DIR/MIGRATION.decisions.json is not a usable decisions file:
+  schema is "zigapagos.rails-decisions/2", expected "zigapagos.rails-decisions/1"
+```
+
+so is a misspelled key (`unrecognized key "reason" in a decision entry;
+expected id/choice/rationale/artifact`) — a typo that a default would
+otherwise hide by silently leaving the real field empty.
+
+### An unknown id is not an error — it is stale
+
+There is no separate "unknown id" failure. An `id` that matches **no finding
+in this run** — whether you mistyped it or its finding really is gone — is
+reported as *stale*, not rejected: one `RAILS_DECISION_STALE` **blocker**
+(`warn`, `integrity: false`) per entry, in `MIGRATION.md` and the manifest,
+with the run's exit code unaffected by it. Nothing can tell a typo from an
+answer whose finding was fixed since, and refusing to run would strand an
+operator whose only sin is a tidied-up template.
+
+```
+- `RAILS_DECISION_STALE` MIGRATION.decisions.json: decision for `RAILS_HELPER_UNKNOWN.app/views/pages/gone%2Ehtml%2Eerb.L1C1` answers no finding in this run; delete it or re-check the id
+```
+
+The reason is the loop itself. Finding ids are derived from the template's
+own text and location, so *fixing* the template you were asked about —
+deleting the helper call, adding the missing translation — is exactly what
+makes your recorded answer's id disappear. Failing there would punish the
+remedy. A stale entry is still held to the id/duplicate/rationale rules: it
+may well be revived by an edit, so it should be well-formed even while it
+applies to nothing.
+
+Note the blocker's path is always the file's **basename** — whatever you
+passed to `--decisions`, absolute or relative, and whatever directory you
+ran from. A relative path encodes where the operator stood just as an
+absolute one does, and this string lands in `MIGRATION.manifest.json`: two
+operators running the same command from different checkouts have to produce
+the same manifest bytes. The stderr advice is not an artifact, so it prints
+the real path you gave.
+
+## 16. The handoff
+
+`DIR/MIGRATION.handoff.json`, schema `zigapagos.rails-handoff/1`, described
+by `contract/rails-handoff.v1.schema.json` (generated from
+`src/cli/rails/handoff.zig`'s own Zig types, like the discovery manifest's
+schema — not hand-maintained). It is a **separate, separately-versioned
+artifact** from `zigapagos.rails-presentation/1`: the manifest records what
+discovery established about the Rails app and does not change when the
+converter improves; the handoff records what the conversion produced and is
+expected to change on every run of the loop.
+
+```jsonc
+{
+  "schema": "zigapagos.rails-handoff/1",
+  "schema_version": 1,
+  "generator": { "tool": "zigapagos", "version": "<the build that wrote it>" },
+  "backend": null,
+  "complete": false,
+  "routes": [
+    {
+      "route_id": "GET /about",
+      "status": "migrated",
+      "artifacts": [
+        "content/about/index.smd",
+        "layouts/pages/about.shtml",
+        "layouts/templates/marketing.shtml"
+      ],
+      "endpoint": null,
+      "decision": null,
+      "findings": [],
+      "note": "csrf_meta_tags dropped; javascript_importmap_tags dropped"
+    },
+    {
+      "route_id": "GET /posts/:id",
+      "status": "open",
+      "artifacts": [],
+      "endpoint": null,
+      "decision": null,
+      "findings": ["RAILS_ROUTE_DYNAMIC_SEGMENT.config/routes%2Erb.L14"],
+      "note": "dynamic route segment: undecided"
+    },
+    {
+      "route_id": "GET /posts/legacy",
+      "status": "open",
+      "artifacts": [],
+      "endpoint": null,
+      "decision": null,
+      "findings": ["RAILS_TEMPLATE_ENGINE_UNSUPPORTED.app/views/posts/legacy%2Ehtml%2Ehaml.engine"],
+      "note": "view app/views/posts/legacy.html.haml was not converted"
+    }
+  ],
+  "assets": [ … ],
+  "redirects": [],
+  "parity": []
+}
+```
+
+| Field | What it is |
+|---|---|
+| `backend` | Always `null` in this version — nothing emits a backend contract yet. Present on the wire anyway so a consumer reads one shape in both versions. |
+| `complete` | The completion verdict, recomputed from `routes[]` rather than supplied — see below. |
+| `routes[].route_id` | `"<VERB> <path>"`. A **label, not a unique key**, exactly as `routes[].id` is in the manifest ([§6](#6-route-identity-routesid-is-not-unique)). |
+| `routes[].status` | One of `migrated`, `open`, `blocked`, `retained`, `backend`, `redirect`. |
+| `routes[].artifacts` | Target-relative paths this route produced, sorted. A shared file (a layout, a `.spa.tsx`) is listed on **every** route that reaches it, and written once. |
+| `routes[].endpoint` | Always `null` in this version; Stage 3 fills it. |
+| `routes[].decision` | `{id, choice, rationale}` — the answer recorded against one of this route's open findings, echoed so a reader does not have to cross-reference the decisions file by hand. A `redirect` route carries it too: the status stays `redirect` whatever you answered, but the acknowledgement is visible rather than silently ignored. |
+| `routes[].findings` | The finding ids this route left **open**, sorted. This is the join key: these are the ids you answer. Non-empty on a `retained`/`blocked` route too — the findings did not go away, they were acknowledged. |
+| `routes[].note` | Free prose. Carries both the conversion's informational drops and the reason a route is not finished. Not identity, not parsed by anything. |
+| `assets[]` | `{source, rails_url, target_url}` per copied asset. |
+| `redirects[]` | `{from, to}`; `to` is always `null` in this version. |
+| `parity[]` | Always empty in this version; Stage 5 fills it. |
+
+Every list is sorted under a **total** order, and every tiebreak compares
+content rather than a row's position in the producer's slice. The claim is
+order-independence, not merely "deterministic for a given input order" —
+which matters because the decide-then-re-run loop assembles the same facts in
+different orders.
+
+### `complete`, and the exit code
+
+> `complete` is true iff **every** route whose verb is GET or HEAD has
+> `status` in `{migrated, redirect, backend}`, or `retained`/`blocked` with a
+> non-null `decision`.
+
+`retained` and `blocked` are the two statuses only an *operator* can produce
+(both come from a choice, never from the conversion), and both mean the target
+serves nothing at that URL. A row carrying either with no `decision` behind it
+would be a URL the migration silently stopped answering, so neither counts as
+accounted without one.
+
+Three things that rule deliberately does *not* do:
+
+- **Non-GET/HEAD routes are not counted at all.** A `POST /session` is form
+  traffic, and leaving it unconverted does not make the site broken to
+  browse.
+- **`backend` counts as accounted, with or without a decision.** It marks a
+  route that needs no *page*, and `complete` asks whether the migrated site
+  is browsable. Treating it as unanswered made exit 3 unreachable for any app
+  with a JSON endpoint. Which endpoint it maps to is a separate question,
+  reopened by its own `RAILS_BACKEND_ENDPOINT` finding in Stage 3.
+- **A user-facing route with no row at all counts as `open`.** Absence is the
+  unanswered case, not an exemption — that is what stops a conversion that
+  silently skipped a route from reporting a complete migration.
+
+The exit code, in order:
+
+| Code | Meaning |
+|---|---|
+| `1` | An `integrity: true` blocker fired (or, under `--strict`, any blocker at all). The artifacts were written but cannot be trusted. **Checked first**: a run that is both broken and incomplete reports broken. Also `1` for an unusable decisions file or a rejected `--target`. |
+| `3` | Everything was written and read correctly, and at least one user-facing route is still unanswered. Only reachable with `--target`: a run with no target has no handoff and therefore no completion question, so it never exits 3. |
+| `0` | Complete — or a `-o` run with no blockers. |
+
+`MIGRATION.md` renders the same verdict as a `## Handoff` section:
+
+```
+## Handoff
+
+complete: false
+
+`MIGRATION.handoff.json` records what each recovered route became.
+
+| Status | Routes |
+| --- | --- |
+| migrated | 3 |
+| open | 8 |
+| blocked | 0 |
+| retained | 0 |
+| backend | 2 |
+| redirect | 1 |
+
+Next: each `open` route in `MIGRATION.handoff.json` lists the
+finding ids still unanswered. Answer each one in
+`MIGRATION.decisions.json` -- `{"id": "<finding id>", "choice":
+"<one of that finding's choices>", "rationale": "why"}` -- then
+delete everything in the target except that file and re-run the
+same command.
+```
+
+It is recomputed from the same rows the JSON's own `complete` came from, so
+the report, the JSON and the exit code cannot disagree.
+
+## 17. The re-run loop
+
+```sh
+zigapagos migrate app --from rails --target site   # exit 3, N routes open
+$EDITOR site/MIGRATION.decisions.json              # answer them
+find site -mindepth 1 -maxdepth 1 ! -name MIGRATION.decisions.json -exec rm -rf {} +
+zigapagos migrate app --from rails --target site   # repeat until exit 0
+```
+
+The wipe is not optional: every file in the target is exclusive-create, so a
+second run into a populated directory is rejected. `MIGRATION.decisions.json`
+is the one basename the non-empty guard tolerates ([§8](#8---target-guards)),
+which is what lets the loop keep its own state. Keeping the decisions file
+somewhere else and passing `--decisions` works equally well, and lets you
+delete the whole target instead.
+
+Then, on exit 0:
+
+```sh
+bash site/build.sh
+```
+
+**If any of your answers was `spa`**, the final `migrate` — the one that
+scaffolds the `.spa.tsx` — needs `--runtime-path` too, or `build.sh`'s
+`bun install` fails on the `file:TODO-SET-RUNTIME-PATH` placeholder before
+`release` runs:
+
+```sh
+zigapagos migrate app --from rails --target site --runtime-path /path/to/runtime
+```
+
+(Editing that one line of the generated `package.json` afterwards works just
+as well — see [The generated project builds](#the-generated-project-builds).)
+
+### The loop, on this repository's own fixture
+
+`tests/migrate/rails-presentation` is a fourteen-route Rails app carrying one
+of nearly every finding the vocabulary can raise, and it ships its own
+`MIGRATION.decisions.json` — so the two runs below are the whole loop, end to
+end, and `tests/migrate/rails-presentation.sh` pins both.
+
+**Run 1**, no decisions file. Exit **3**, `complete: false`, eight routes
+open:
+
+| route | status | why |
+|---|---|---|
+| `GET /`, `GET /about` | `migrated` | one view, one layout; S16 dedupe gives both routes the same `layouts/pages/about.shtml` |
+| `GET /linked` | `migrated` | an ordinary static view |
+| `GET /help` | `open` | `RAILS_HELPER_UNKNOWN` + `RAILS_RAW_OUTPUT` + `RAILS_I18N_UNRESOLVED` |
+| `GET /broken` | `open` | `RAILS_TEMPLATE_PARSE_ERROR`; no page written |
+| `GET /links` | `open` | `RAILS_ROUTE_HELPER_UNKNOWN` |
+| `GET /posts` | `open` | `RAILS_PARTIAL_DYNAMIC` + `RAILS_REQUEST_TIME_STATE` |
+| `GET /posts/:id` | `open` | `RAILS_ROUTE_DYNAMIC_SEGMENT`, undecided |
+| `GET /posts/legacy` | `open` | `RAILS_TEMPLATE_ENGINE_UNSUPPORTED` (Haml); no page written |
+| `GET /session/new` | `open` | `RAILS_BACKEND_ENDPOINT` (the form) |
+| `GET /registration/new` | `open` | `RAILS_BACKEND_ENDPOINT` + 3× `RAILS_REQUEST_TIME_STATE` |
+| `GET /old` | `redirect` | a pure `redirect_to`; complete without a page and without a decision |
+| `POST /session`, `POST /registration` | `backend` | non-GET |
+
+**Answer them.** The fixture's file records fifteen decisions — every open
+route's findings, not one per route. A representative three:
+
+```jsonc
+{
+  "id": "RAILS_TEMPLATE_ENGINE_UNSUPPORTED.app/views/posts/legacy%2Ehtml%2Ehaml.engine",
+  "choice": "blocked",
+  "rationale": "legacy.html.haml is Haml; no converter reads that engine, so /posts/legacy is blocked rather than shipped empty."
+},
+{
+  "id": "RAILS_ROUTE_DYNAMIC_SEGMENT.config/routes%2Erb.L14",
+  "choice": "spa",
+  "rationale": "/posts/:id is one page per record; a client-routed SPA mounted at /posts is the shape this converter can actually produce."
+},
+{
+  "id": "RAILS_REDIRECT_HOST_CONFIG.config/routes%2Erb.L47",
+  "choice": "retain",
+  "rationale": "/old keeps redirecting to /about; the host config owns the rule, so there is nothing for the static tree to carry."
+}
+```
+
+The four findings that reach no route outcome — two in `posts/_post.html.erb`,
+one in `posts/show.html.erb`, and the controller's `RAILS_LAYOUT_DYNAMIC` —
+are left unanswered on purpose. They are not stale (the run really does raise
+them) and answering them would change nothing.
+
+**Run 2**, with that file in the target. Exit **0**, `complete: true`, no
+open route:
+
+- `/help`, `/broken`, `/links`, `/posts/legacy` → **`blocked`**;
+- `/posts`, `/session/new`, `/registration/new` → **`retained`**;
+- `/posts/:id` → **`migrated`**, scaffolding `spa/posts.spa.tsx`,
+  `package.json`, `tsconfig.json` and `build.sh`'s
+  `--spa='spa/posts.spa.tsx|/posts'`;
+- `/old` stays **`redirect`** with its decision *recorded* — the status was
+  already complete, and the answer is echoed rather than acted on.
+
+`/registration/new` is the interesting one: its view contains an unbound
+block local, so its converted bytes hold a `<!-- rails:unmapped local -->`
+placeholder — and because its findings were answered, the route is `retained`
+with `local left unmapped` as a footnote in `note`, not held open by it.
+(Nothing is written for it: `retained` is an answer, and the footnote is what
+records what the conversion would have carried.)
+
+Then `build.sh` on that target builds a real site — three pages and the SPA.
+`/posts` itself is retained, so the built tree has no `posts/index.html`; the
+SPA still mounts at that base, giving `posts/_shell.html`,
+`posts/routing-manifest.json` and `posts/.spa`. `doctor` reports **0 errors**
+and three `dangling-internal-link` warnings, all of them the shared `_nav`
+partial's link to `/session/new` — a retained route Rails still serves and
+this tree deliberately does not. That is the honest shape of a partial
+migration, and it is pinned as such.
+
+### The one thing a decision cannot close
+
+**A `rails:unmapped` region on a route with no finding at all.** The
+placeholder carries no id by construction, so there is nothing for a
+decisions file to name, and the route stays `open` with the region in its
+`note`. Every other unfinished shape has an id: a parse error has
+`RAILS_TEMPLATE_PARSE_ERROR`, an unsupported engine has
+`RAILS_TEMPLATE_ENGINE_UNSUPPORTED`, an unread view has
+`RAILS_TEMPLATE_UNSCANNED`, an action with no template at all has
+`RAILS_NO_TEMPLATE` — all answerable, none of which makes the route
+`migrated`.
+
+In practice that means one of the `rails:unmapped` cases
+([§14](#14-the-conversion-rules)) landing in a view that raises nothing else:
+most often an unbound template local (`<%= m %>` inside a loop whose render
+site passed no `locals:`), otherwise an unresolvable or cyclic `render`
+target, a `content_for :title` whose body is not a literal, or a route helper
+called with the wrong arity (`<%= post_path %>` for `/posts/:id`), which
+reaches the backstop with a route name that is *known* and so raises nothing.
+The honest fix is in the converter — inline or drop the construct rather than
+leave a placeholder — not in the decision plumbing, so no answer you can
+write today helps. If you hit it, the route has to be finished by hand. It is
+tracked as issue #181, and a route's `note` says so: an unmapped region whose
+kind no later stage owns is reported as `<kind>: converter gap (see #181)`,
+against `<kind>: deferred to Stage 3`/`Stage 4` for the form and
+Turbo/component families that a later stage really does own.
 
 ## Procedure (for an agent)
 
@@ -595,11 +1535,21 @@ discovery.
    follow-up it names.
 4. **Read `findings[]`.** Each is a question with a fixed set of `choices` —
    see [§11](#11-findings) for the field list and [§12](#12-the-fragment-vocabulary)
-   for what fragment kind produced it. Nothing converts yet: recording an
-   answer has nowhere to go until issue #167 Stage 2 adds a
-   `MIGRATION.decisions.json` input this tool reads back.
-5. **Do not attempt conversion here.** This stage's output is an honest
-   inventory, classification, and a set of findings — not a target project.
-   Turning a classified route or an answered finding into actual Zigapagos
-   content, an island, or a `.spa.tsx` route is issue #167 **Stage 2**, not
-   yet implemented.
+   for what fragment kind produced it. Read each finding's **own** `choices`
+   array; the same `code` can offer different lists.
+5. **Convert.** Re-run with `--target DIR`
+   ([§13](#13---target-writes-a-project)). Read the exit code: `1` means the
+   run is broken and no amount of deciding will help; `3` means it worked and
+   the migration is not finished; `0` means it is.
+6. **On exit 3, read `DIR/MIGRATION.handoff.json`, not the tree.** Each
+   `status: "open"` route lists the finding ids it left open in `findings[]`
+   and says why in `note`. Answer every id on every open route; a route whose
+   only remaining problem is a `rails:unmapped` region with no finding at all
+   is the one shape no answer reaches — see [§17](#17-the-re-run-loop).
+7. **Answer them** in `DIR/MIGRATION.decisions.json`
+   ([§15](#15-decisions)), one `{id, choice, rationale}` per finding.
+   `island` and `backend` are accepted but do not close a route in this
+   version.
+8. **Delete the generated tree, keeping the decisions file, and re-run.**
+   Repeat until exit 0 and `"complete": true`, then build the target with
+   `bash DIR/build.sh`.

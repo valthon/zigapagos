@@ -70,14 +70,18 @@ const usage =
     \\files to their Zigapagos targets. The source is auto-detected or selected
     \\with --from.
     \\
-    \\Rails is discovery-only: its MIGRATION.md is a presentation-and-route
-    \\inventory (recovered routes come from a static AST walk of
-    \\config/routes.rb, never by booting the app) with no target mapping.
-    \\--scaffold, --copy-assets and --convert-content are all rejected for
-    \\it -- Rails converts nothing (that's a separate migration stage).
-    \\--target IS supported, but only writes the two discovery artifacts
-    \\(MIGRATION.md and its manifest) into DIR; it assembles no project
-    \\scaffold.
+    \\Rails discovery inventories the presentation layer and the recovered
+    \\route graph (routes come from a static AST walk of config/routes.rb,
+    \\never by booting the app). --scaffold, --copy-assets and
+    \\--convert-content are all rejected for it -- those are React/Markdown
+    \\ports with no Rails equivalent.
+    \\
+    \\With --target, Rails ALSO assembles a real Zigapagos project: every
+    \\provably static route becomes a layout plus a .smd page, deterministic
+    \\assets are copied, and DIR/MIGRATION.handoff.json records what each
+    \\route became. A route nobody has decided about leaves the run
+    \\incomplete (exit 3); answer its findings in DIR/MIGRATION.decisions.json
+    \\(see --decisions) and re-run until it exits 0.
     \\
     \\Source files are read-only. The command always writes a MIGRATION.md
     \\worklist. With --scaffold it also performs the deterministic React part of
@@ -94,15 +98,39 @@ const usage =
     \\                         supported for the detected source: content
     \\                         conversion, React island scaffolding, and fixed-URL
     \\                         asset copying. Writes the worklist to DIR/MIGRATION.md.
-    \\                         For Rails, which converts nothing, this instead
-    \\                         writes only the two discovery artifacts --
-    \\                         DIR/MIGRATION.md and DIR/MIGRATION.manifest.json --
-    \\                         with no scaffold. Mutually exclusive with
-    \\                         --output, --scaffold, --convert-content, and
-    \\                         --copy-assets.
-    \\  --runtime-path PATH    With --target and React island candidates, set the
-    \\                         local @z/runtime package path. Otherwise the emitted
-    \\                         package.json contains a visible TODO placeholder.
+    \\                         For Rails it converts every provably static
+    \\                         route into a layout and a .smd page, copies
+    \\                         deterministic assets, and writes three artifacts
+    \\                         into DIR -- MIGRATION.md,
+    \\                         MIGRATION.manifest.json and
+    \\                         MIGRATION.handoff.json -- beside the project
+    \\                         tree itself (zigapagos.ziggy, build.sh,
+    \\                         content/, layouts/, assets/).
+    \\                         DIR must be missing or empty -- except that a
+    \\                         Rails DIR may already hold
+    \\                         MIGRATION.decisions.json and nothing else, so
+    \\                         the decide-and-re-run loop can wipe its output
+    \\                         without losing the answers. Mutually exclusive
+    \\                         with --output, --scaffold, --convert-content,
+    \\                         and --copy-assets.
+    \\  --decisions FILE       Rails only: the operator's answers to this app's
+    \\                         findings (schema zigapagos.rails-decisions/1).
+    \\                         Defaults to DIR/MIGRATION.decisions.json when
+    \\                         --target is given and that file exists. A choice
+    \\                         the finding does not offer, a missing rationale
+    \\                         or a duplicate entry is fatal, with every
+    \\                         offending entry named. An id matching no finding
+    \\                         in this run is NOT fatal: it is reported as a
+    \\                         RAILS_DECISION_STALE blocker and the exit code
+    \\                         is unaffected, because fixing the template you
+    \\                         were asked about is what makes its id disappear.
+    \\  --runtime-path PATH    With --target, set the local @z/runtime package
+    \\                         path in the generated package.json. Written only
+    \\                         when the target has JS to install: React island
+    \\                         scaffolds, or -- for Rails -- the .spa.tsx a
+    \\                         `spa` decision produced. Without it that
+    \\                         dependency is a visible TODO placeholder and
+    \\                         the target's own build.sh cannot install it.
     \\  --scaffold DIR         Write a starter TSX island per island into DIR.
     \\                         Supported for Astro, Next.js, and Gatsby React
     \\                         sources only.
@@ -595,6 +623,242 @@ test "railsExitError: --strict fails on any blocker, not just integrity ones" {
     try std.testing.expect(railsExitError(true, 0, 3));
 }
 
+/// The one file a Rails `--target DIR` may already contain (ruling S3), and
+/// the default `--decisions` location. Named once: the guard that tolerates
+/// it, the default-path join and the exit-3 instruction must all mean the same
+/// file, and three literals would eventually not.
+const rails_decisions_basename = "MIGRATION.decisions.json";
+
+/// Rails' exit code, the whole mapping in one pure function.
+///
+/// `1` first: an integrity blocker (or `--strict` with any blocker) means the
+/// artifacts this run wrote cannot be trusted, and reporting the migration
+/// merely "incomplete" would understate that -- `railsExitError`'s own
+/// conditions have not changed, they are just no longer the only way to fail.
+///
+/// `3` is the new outcome (#167 Stage 2): everything was written and read
+/// correctly, and at least one user-facing route is still unanswered. It has
+/// to be distinct from `1`, because the decide-and-re-run loop is a script
+/// that must tell "keep going, here are the questions" apart from "this run
+/// is broken, stop".
+///
+/// `complete` is `null` for a run with no `--target`: there is no scaffold, so
+/// there is no handoff and no completion question to answer. Such a run
+/// therefore never exits 3, which is why the parameter is an optional rather
+/// than a bool defaulting to true -- "no verdict" and "a verdict of complete"
+/// are different facts and only one of them is true here.
+///
+/// Contract 3 (caller-buffer): allocates nothing.
+fn railsExitCode(strict: bool, integrity_blocker_count: usize, blocker_count: usize, complete: ?bool) u8 {
+    if (railsExitError(strict, integrity_blocker_count, blocker_count)) return 1;
+    if (complete) |c| if (!c) return 3;
+    return 0;
+}
+
+test "railsExitCode: an incomplete handoff exits 3, and a hard failure still outranks it" {
+    // No target: no completion verdict, so the pre-existing two-way mapping
+    // is unchanged. This is the assertion that stops a future refactor from
+    // making a plain `-o` Rails run start exiting 3.
+    try std.testing.expectEqual(@as(u8, 0), railsExitCode(false, 0, 0, null));
+    try std.testing.expectEqual(@as(u8, 0), railsExitCode(false, 0, 3, null));
+    try std.testing.expectEqual(@as(u8, 1), railsExitCode(false, 1, 1, null));
+    try std.testing.expectEqual(@as(u8, 1), railsExitCode(true, 0, 3, null));
+
+    // With a target: complete is 0, incomplete is 3.
+    try std.testing.expectEqual(@as(u8, 0), railsExitCode(false, 0, 0, true));
+    try std.testing.expectEqual(@as(u8, 3), railsExitCode(false, 0, 0, false));
+    // Blockers that do not fail the run do not upgrade 3 into 1 either --
+    // a warn-severity blocker is normal on an incomplete migration.
+    try std.testing.expectEqual(@as(u8, 3), railsExitCode(false, 0, 5, false));
+
+    // The discriminating case, and the reason the order inside the function
+    // matters: a run that is BOTH broken and incomplete reports broken. An
+    // implementation that checked `complete` first would return 3 here and
+    // send a CI loop off answering findings for a discovery it cannot trust.
+    try std.testing.expectEqual(@as(u8, 1), railsExitCode(false, 2, 2, false));
+    try std.testing.expectEqual(@as(u8, 1), railsExitCode(true, 0, 1, false));
+    // ... and 1 also wins over a COMPLETE migration: the artifacts are still
+    // the untrustworthy ones.
+    try std.testing.expectEqual(@as(u8, 1), railsExitCode(false, 1, 1, true));
+}
+
+/// `targetHasEntries`, with one basename tolerated. Split out rather than
+/// given a `?[]const u8` parameter on `targetHasEntries` itself so the eight
+/// non-Rails sources keep the plain empty-or-missing rule at their call site,
+/// visibly: this exception is Rails' alone (ruling S3).
+fn targetHasEntriesExcept(io: Io, path: []const u8, allowed: []const u8) bool {
+    var dir = Io.Dir.cwd().openDir(io, path, .{ .iterate = true }) catch |err| switch (err) {
+        error.FileNotFound => return false,
+        else => fatal.dir(path, err),
+    };
+    defer dir.close(io);
+    var it = dir.iterateAssumeFirstIteration();
+    while (it.next(io) catch |err| fatal.dir(path, err)) |entry| {
+        // Name AND kind: a DIRECTORY called MIGRATION.decisions.json is not
+        // the answers file, and letting it through would hand the scaffold a
+        // target it cannot write into for reasons the error would not explain.
+        if (entry.kind == .file and std.mem.eql(u8, entry.name, allowed)) continue;
+        return true;
+    }
+    return false;
+}
+
+/// Truncate-or-create write of one regenerated Rails artifact. The two call
+/// sites had identical five-line bodies differing only in the path; the
+/// duplication is what let the report and the manifest drift into being
+/// written in a fixed order that #167 Stage 2 then had to swap.
+///
+/// Contract 3 (caller-buffer): allocates nothing.
+fn writeRailsArtifact(io: Io, path: []const u8, bytes: []const u8) void {
+    const f = Io.Dir.cwd().createFile(io, path, .{}) catch |err| fatal.file(path, err);
+    defer f.close(io);
+    var fw = f.writer(io, &.{});
+    fw.interface.writeAll(bytes) catch |err| fatal.file(path, err);
+}
+
+/// The generated site's title and package name (`scaffold.Input.app_name`).
+///
+/// The SOURCE directory's basename, not the target's: the site being migrated
+/// is the Rails app, and `migrate ./blog --target out` should produce a site
+/// called `blog`, not one called `out`. Falls back to the target's basename
+/// when the source path names no directory of its own (`.`, `..`, a trailing
+/// slash), and to a fixed string when neither does -- `assembleTarget`'s
+/// `targetProjectName` makes the same last-resort choice.
+///
+/// Contract 3 (caller-buffer): returns a borrowed slice of its arguments or a
+/// literal; allocates nothing.
+fn railsAppName(source_path: []const u8, target: []const u8) []const u8 {
+    if (usableBasename(source_path)) |b| return b;
+    if (usableBasename(target)) |b| return b;
+    return "migrated_site";
+}
+
+fn usableBasename(path: []const u8) ?[]const u8 {
+    const b = std.fs.path.basename(path);
+    if (b.len == 0) return null;
+    if (std.mem.eql(u8, b, ".") or std.mem.eql(u8, b, "..")) return null;
+    return b;
+}
+
+test "railsAppName: the site is named after the Rails app, not the output directory" {
+    try std.testing.expectEqualStrings("blog", railsAppName("./blog", "out"));
+    try std.testing.expectEqualStrings("blog", railsAppName("/srv/apps/blog/", "out"));
+    // The fallbacks, in order: a source path naming no directory hands over
+    // to the target, and only a pair that names neither reaches the literal.
+    try std.testing.expectEqualStrings("out", railsAppName(".", "out"));
+    try std.testing.expectEqualStrings("out", railsAppName("..", "./out"));
+    try std.testing.expectEqualStrings("migrated_site", railsAppName(".", "."));
+}
+
+/// Distinct `content/` pages the scaffold wrote, for the CLI summary line.
+///
+/// Distinct, not summed: `RouteOutcome.artifacts` lists every file a route
+/// reached, and a page shared by two routes appears on both. Counting
+/// occurrences would report more pages than exist on disk. O(n^2) over a
+/// handful of routes, which is cheaper than the allocation a set would need.
+///
+/// Contract 3 (caller-buffer): allocates nothing.
+fn railsPageCount(result: rails.scaffold.Result) usize {
+    var n: usize = 0;
+    for (result.routes, 0..) |o, ri| {
+        for (o.artifacts) |a| {
+            if (!std.mem.startsWith(u8, a, "content/")) continue;
+            var seen = false;
+            for (result.routes[0..ri]) |prev| {
+                for (prev.artifacts) |pa| {
+                    if (std.mem.eql(u8, pa, a)) {
+                        seen = true;
+                        break;
+                    }
+                }
+                if (seen) break;
+            }
+            if (!seen) n += 1;
+        }
+    }
+    return n;
+}
+
+/// `scaffold.Status` -> `handoff.Status`. An explicit exhaustive switch rather
+/// than `@enumFromInt`/`stringToEnum`: the two enums are declared in different
+/// files for good reasons (one is a conversion outcome, one is a wire value),
+/// and a rename or a new member on either side must break the build here
+/// instead of silently re-mapping a route's status.
+fn railsHandoffStatus(s: rails.scaffold.Status) rails.handoff.Status {
+    return switch (s) {
+        .migrated => .migrated,
+        .open => .open,
+        .blocked => .blocked,
+        .retained => .retained,
+        .backend => .backend,
+        .redirect => .redirect,
+    };
+}
+
+/// `scaffold.Result.routes` -> `handoff.RouteRow[]` (ruling S5: `handoff.zig`
+/// takes its own input rows so it could be built in parallel with the
+/// scaffold, and this is the adapter that ruling promised).
+///
+/// Every string is BORROWED from `result` and `parsed`, both of which outlive
+/// the `handoff.build` call this feeds. `RouteRow.decision` is looked up by
+/// `decision_id` rather than carried by the scaffold, because the handoff
+/// echoes the operator's `choice`/`rationale` and only the decisions file has
+/// those. Note that `decision_id != null` does NOT mean the route was
+/// acknowledged: an `island`/`backend` choice, or a `spa` refused for a
+/// dynamic first segment, records the decision and leaves the route `open`
+/// (task-4-report.md, item 4). The status is copied across verbatim, so that
+/// distinction survives.
+///
+/// Contract 1 (self-freeing): the returned slice is the single allocation and
+/// is `gpa.free`d by the caller; nothing inside it is owned.
+fn railsHandoffRoutes(
+    gpa: Allocator,
+    result: rails.scaffold.Result,
+    parsed: rails.decisions.Parsed,
+) []rails.handoff.RouteRow {
+    const rows = gpa.alloc(rails.handoff.RouteRow, result.routes.len) catch fatal.oom();
+    for (result.routes, 0..) |o, i| {
+        var decision: ?rails.handoff.DecisionRef = null;
+        if (o.decision_id) |id| {
+            if (rails.decisions.lookup(parsed, id)) |d| {
+                decision = .{ .id = d.id, .choice = d.choice, .rationale = d.rationale };
+            }
+        }
+        rows[i] = .{
+            .route_index = o.route_index,
+            .status = railsHandoffStatus(o.status),
+            .artifacts = o.artifacts,
+            .decision = decision,
+            .findings = o.open_finding_ids,
+            .note = o.note,
+        };
+    }
+    return rows;
+}
+
+/// `scaffold.Result.assets` -> `handoff.AssetRow[]`. The two structs carry the
+/// same three fields; they are separate types because one is a conversion
+/// outcome and the other is an input to a wire format whose field ORDER is a
+/// contract. Contract 1, as `railsHandoffRoutes`.
+fn railsHandoffAssets(gpa: Allocator, result: rails.scaffold.Result) []rails.handoff.AssetRow {
+    const rows = gpa.alloc(rails.handoff.AssetRow, result.assets.len) catch fatal.oom();
+    for (result.assets, 0..) |a, i| {
+        rows[i] = .{ .source = a.source, .rails_url = a.rails_url, .target_url = a.target_url };
+    }
+    return rows;
+}
+
+/// `scaffold.Result.redirects` -> `handoff.Redirect[]`. `to` is always null in
+/// Stage 2 (discovery recovers that an action redirects, not where to), and
+/// both types already allow that. Contract 1, as `railsHandoffRoutes`.
+fn railsHandoffRedirects(gpa: Allocator, result: rails.scaffold.Result) []rails.handoff.Redirect {
+    const rows = gpa.alloc(rails.handoff.Redirect, result.redirects.len) catch fatal.oom();
+    for (result.redirects, 0..) |r, i| {
+        rows[i] = .{ .from = r.from, .to = r.to };
+    }
+    return rows;
+}
+
 /// Slots `railsRootEvidence` needs: one per positive-evidence field
 /// `detect.Evidence` declares (`has_application_rb`, `has_routes_rb`,
 /// `has_app_views`, `gemfile_declares_rails`) -- `has_jekyll_config` and the
@@ -719,7 +983,16 @@ test "railsManifestPath: two different -o STEMS in the same directory never coll
     try std.testing.expect(!std.mem.eql(u8, a, b));
 }
 
-pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *const std.process.Environ.Map) bool {
+/// Returns the process exit code directly (`main.zig` passes it through) rather
+/// than the `any_error` bool every other command returns. #167 Stage 2 needs a
+/// THIRD outcome that the bool cannot express: `0` success, `1` the pre-existing
+/// hard failure (an integrity blocker, or `--strict` with any blocker), and `3`
+/// "the run worked, wrote everything, and the migration is not finished yet"
+/// -- a Rails `--target` whose handoff says `complete: false`. Collapsing 3
+/// into 1 would make a CI loop unable to tell a broken discovery from an
+/// unanswered question, which is the whole point of the decide-and-re-run
+/// loop. See `railsExitCode`.
+pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *const std.process.Environ.Map) u8 {
     var project_dir: ?[]const u8 = null;
     var requested_source: ?Source = null;
     var out_path: []const u8 = "MIGRATION.md";
@@ -732,6 +1005,7 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
     var doctor_path: ?[]const u8 = null;
     var json: bool = false;
     var strict: bool = false;
+    var decisions_path: ?[]const u8 = null;
 
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
@@ -771,6 +1045,10 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
             i += 1;
             if (i >= args.len) fatal.usageError("error: --doctor needs a path\n\n" ++ usage, .{});
             doctor_path = args[i];
+        } else if (std.mem.eql(u8, a, "--decisions")) {
+            i += 1;
+            if (i >= args.len) fatal.usageError("error: --decisions needs a file path\n\n" ++ usage, .{});
+            decisions_path = args[i];
         } else if (std.mem.eql(u8, a, "--json")) {
             json = true;
         } else if (std.mem.eql(u8, a, "--strict")) {
@@ -782,8 +1060,8 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
         }
     }
 
-    if (doctor_path != null and (scaffold_dir != null or content_dir != null or assets_dir != null or target_dir != null)) {
-        fatal.usageError("error: --doctor is mutually exclusive with --target, --scaffold, --convert-content, and --copy-assets\n\n" ++ usage, .{});
+    if (doctor_path != null and (scaffold_dir != null or content_dir != null or assets_dir != null or target_dir != null or decisions_path != null)) {
+        fatal.usageError("error: --doctor is mutually exclusive with --target, --decisions, --scaffold, --convert-content, and --copy-assets\n\n" ++ usage, .{});
     }
     if (target_dir != null and (output_set or scaffold_dir != null or content_dir != null or assets_dir != null)) fatal.usageError(
         "error: --target is mutually exclusive with --output, --scaffold, --convert-content, and --copy-assets\n\n" ++ usage,
@@ -797,7 +1075,7 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
         "error: --runtime-path may not contain quotes, backslashes, or control characters\n\n" ++ usage,
         .{},
     );
-    if (doctor_path) |dp| return doctor(io, gpa, dp, json);
+    if (doctor_path) |dp| return @intFromBool(doctor(io, gpa, dp, json));
 
     const dir_path = project_dir orelse fatal.usageError("error: missing <project-dir>\n\n" ++ usage, .{});
 
@@ -827,6 +1105,17 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
         "error: --strict only applies to Rails sources; {s} has no blocker concept yet\n\n" ++ usage,
         .{source.name()},
     );
+    // Same reasoning as `--strict` directly above: findings and the decisions
+    // that answer them are a Rails-adapter concept, so the flag has no
+    // defined effect anywhere else and is rejected rather than silently
+    // ignored ("report, never omit silently"). Unlike `--runtime-path`,
+    // `--decisions` is NOT gated on `--target`: without a target it still
+    // validates the file against this run's findings and reports stale
+    // answers as blockers, which is a useful check on its own.
+    if (decisions_path != null and source != .rails) fatal.usageError(
+        "error: --decisions only applies to Rails sources; {s} raises no findings to decide\n\n" ++ usage,
+        .{source.name()},
+    );
     if (source == .rails) {
         // scanOther is Astro-shaped (it walks and classifies content dirs
         // that don't exist in a Rails tree) and must never see a Rails
@@ -836,11 +1125,11 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
         // dispatch preempts, so a Rails source hitting it here would
         // otherwise silently produce a MIGRATION.md and a no-op instead of
         // an error -- reject it before doing any Rails work, per the
-        // "report, never omit silently" rule. `--target` is NOT rejected:
-        // Rails converts nothing (that's #167), but the spec's `--target DIR`
-        // contract ("produces both in DIR") still applies to the two
-        // discovery artifacts themselves -- see the `target_dir` handling
-        // below, right before they are written.
+        // "report, never omit silently" rule. `--target` is NOT rejected: it
+        // is how Rails assembles a project at all (#167 Stage 2), and the
+        // spec's `--target DIR` contract ("produces both in DIR") covers the
+        // discovery artifacts that go with it -- see the `target_dir`
+        // handling below, right before they are written.
         if (assets_dir != null) fatal.usageError(
             "error: --copy-assets is not yet supported for Rails sources; asset copying lands in a later stage\n\n" ++ usage,
             .{},
@@ -882,8 +1171,84 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
             );
         }
 
-        const discovery = rails.discover(io, gpa, root, dir_path, environ_map) catch |err| switch (err) {
+        // #167 Stage 2: the operator's answers. Read BEFORE `discover`,
+        // because `discover` is what validates them -- an answer is checked
+        // against the findings this run derives, which do not exist until it
+        // has run (see `rails.DecisionsInput`). The default location is
+        // inside the target, which is where the decide-and-re-run loop leaves
+        // it and the one file a pre-existing Rails target may contain.
+        var default_decisions_buf: ?[]u8 = null;
+        defer if (default_decisions_buf) |p| gpa.free(p);
+        const effective_decisions_path: ?[]const u8 = if (decisions_path) |p| p else blk: {
+            const target = target_dir orelse break :blk null;
+            const joined = std.fs.path.join(gpa, &.{ target, rails_decisions_basename }) catch fatal.oom();
+            // Existence-gated, not read-gated: the FIRST run of every
+            // migration has no answers file, and that is the normal state,
+            // not a failure. An explicit --decisions is held to a higher
+            // standard below, because the operator named it.
+            if (!targetPathExists(io, joined)) {
+                gpa.free(joined);
+                break :blk null;
+            }
+            default_decisions_buf = joined;
+            break :blk joined;
+        };
+        const decisions_bytes: ?[]const u8 = if (effective_decisions_path) |p|
+            Io.Dir.cwd().readFileAlloc(io, p, gpa, .limited(4 * 1024 * 1024)) catch |err| fatal.file(p, err)
+        else
+            null;
+        defer if (decisions_bytes) |b| gpa.free(b);
+        // The path a RAILS_DECISION_STALE blocker names, and therefore a
+        // string that lands in MIGRATION.manifest.json. ALWAYS the basename:
+        // "no absolute paths in any artifact" is a hard determinism rule (two
+        // operators running the same command from different checkouts must
+        // produce the same manifest bytes), and a relative path is no safer
+        // than an absolute one -- `--decisions ../answers/x.json` or the
+        // default `out/MIGRATION.decisions.json` both encode where the
+        // operator happened to stand when they ran the command, so two runs
+        // of the same migration from different directories would differ in
+        // the manifest. The basename still points at the right file, and the
+        // stderr messages (which are not artifacts) print the full path.
+        const decisions_label: []const u8 = if (effective_decisions_path) |p|
+            std.fs.path.basename(p)
+        else
+            rails_decisions_basename;
+
+        var decision_problems: std.ArrayListUnmanaged(rails.decisions.Problem) = .empty;
+        defer rails.decisions.freeProblems(gpa, &decision_problems);
+        // Resolve the source once, up front. The report titles itself by the
+        // source's basename and the scaffold names the site by it, and `.`
+        // or `./` has no basename until it is resolved -- so both consumers
+        // read the real path and cannot disagree (#178).
+        const source_real = Io.Dir.cwd().realPathFileAlloc(io, dir_path, gpa) catch |err| fatal.dir(dir_path, err);
+        defer gpa.free(source_real);
+
+        const discovery = rails.discover(io, gpa, root, source_real, environ_map, .{
+            .bytes = decisions_bytes,
+            .path = decisions_label,
+            .problems = &decision_problems,
+        }) catch |err| switch (err) {
             error.OutOfMemory => fatal.oom(),
+            // EVERY complaint, not just the first. A hand-written answers
+            // file usually has more than one fault, and `decisions.parse`
+            // accumulates rather than short-circuiting precisely so the
+            // operator fixes them in one pass instead of re-running per typo.
+            // Exit 1, not 3: the file the operator wrote is wrong, which is a
+            // failure of this invocation, not an unfinished migration.
+            error.InvalidJson, error.WrongSchema, error.Invalid => {
+                std.debug.print(
+                    "error: {s} is not a usable decisions file:\n",
+                    .{effective_decisions_path orelse rails_decisions_basename},
+                );
+                for (decision_problems.items) |p| {
+                    if (p.id) |id| {
+                        std.debug.print("  entry {d} (`{s}`): {s}\n", .{ p.index, id, p.message });
+                    } else {
+                        std.debug.print("  {s}\n", .{p.message});
+                    }
+                }
+                return 1;
+            },
         };
         // Stage 4 Task 4 widened `Discovery` to own the template graph
         // (`route_templates`/`templates`) alongside `report` -- a bare
@@ -891,34 +1256,40 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
         // is `rails.Discovery`'s own paired release.
         defer rails.freeDiscovery(gpa, discovery);
 
-        // `--target DIR`: unlike the eight other sources, Rails converts
-        // nothing (that's #167's job, not this one's), so there is no
-        // scaffold to assemble here -- only the two discovery artifacts
-        // Rails already produces, redirected into DIR instead of alongside
-        // `out_path`. Reuses `assembleTarget`'s own nested/non-empty guards
-        // (`pathIsInside`/`targetHasEntries`/`canonicalTargetPath`) so a
-        // Rails target is rejected on exactly the conditions every other
+        // `--target DIR`: reuses `assembleTarget`'s own nested/non-empty
+        // guards (`pathIsInside`/`targetHasEntries`/`canonicalTargetPath`) so
+        // a Rails target is rejected on the same conditions every other
         // source rejects it on, and `createDirPathOpen` so a missing DIR is
-        // created the same way `assembleTarget` creates one. Computed AFTER
-        // `discover()` runs (not before) to match every other source, where
-        // the scan also happens unconditionally ahead of `assembleTarget`'s
-        // own validation.
+        // created the same way. Computed AFTER `discover()` runs (not before)
+        // to match every other source, where the scan also happens
+        // unconditionally ahead of `assembleTarget`'s own validation.
         var target_out_path_buf: ?[]u8 = null;
         defer if (target_out_path_buf) |p| gpa.free(p);
         const effective_out_path: []const u8 = if (target_dir) |target| blk: {
-            const source_abs = Io.Dir.cwd().realPathFileAlloc(io, dir_path, gpa) catch |err| fatal.dir(dir_path, err);
-            defer gpa.free(source_abs);
+            const source_abs = source_real;
             const cwd_abs = Io.Dir.cwd().realPathFileAlloc(io, ".", gpa) catch |err| fatal.dir(".", err);
             defer gpa.free(cwd_abs);
             const target_abs = canonicalTargetPath(io, gpa, cwd_abs, target);
             defer gpa.free(target_abs);
             if (pathIsInside(source_abs, target_abs)) {
                 std.debug.print("error: migration target '{s}' must not be inside source '{s}'.\n", .{ target, dir_path });
-                return true;
+                return 1;
             }
-            if (targetHasEntries(io, target)) {
-                std.debug.print("error: migration target '{s}' already exists and is non-empty.\n", .{target});
-                return true;
+            // #167 Stage 2 (ruling S3): the ONE exception to "missing or
+            // empty". The loop is: run, read the handoff, write answers into
+            // DIR/MIGRATION.decisions.json, delete the generated tree, re-run.
+            // Deleting the answers along with the output would make the loop
+            // lose its own state, so that one basename is tolerated -- and
+            // only that one, so an operator who forgot to wipe the previous
+            // target still gets told rather than getting a half-overwritten
+            // tree. Rails-only: every other source's `assembleTarget` keeps
+            // the plain empty-or-missing rule.
+            if (targetHasEntriesExcept(io, target, rails_decisions_basename)) {
+                std.debug.print(
+                    "error: migration target '{s}' already exists and is non-empty (only {s} may be kept between runs).\n",
+                    .{ target, rails_decisions_basename },
+                );
+                return 1;
             }
             var target_root = Io.Dir.cwd().createDirPathOpen(io, target, .{}) catch |err| fatal.dir(target, err);
             target_root.close(io);
@@ -927,24 +1298,24 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
             break :blk joined;
         } else out_path;
 
-        const rf = Io.Dir.cwd().createFile(io, effective_out_path, .{}) catch |err|
-            fatal.file(effective_out_path, err);
-        defer rf.close(io);
-        var rfw = rf.writer(io, &.{});
-        rfw.interface.writeAll(discovery.report) catch |err| fatal.file(effective_out_path, err);
-
         // The manifest: "the deliverable; MIGRATION.md is a rendering of
         // it" (design spec, "The manifest"), "written beside the report".
-        // `createFile(..., .{})` truncates-or-creates, exactly like the
-        // report write two lines up -- this is regenerated output, not
-        // hand-edited, so it follows the report's own overwrite-in-place
-        // behavior rather than the `--scaffold`/`--copy-assets` `.new*`
-        // rule (see `tests/migrate/rails.sh`'s "repeat run overwrites the
-        // report" case, which this manifest write is now covered by too).
-        // Derived from `effective_out_path`, not `out_path`, so `--target
-        // DIR` produces `DIR/MIGRATION.manifest.json` beside `DIR/
-        // MIGRATION.md` -- both artifacts in DIR, matching the spec's
-        // "produces both in DIR" and nothing written outside it.
+        // `createFile(..., .{})` truncates-or-creates -- this is regenerated
+        // output, not hand-edited, so it follows the report's own
+        // overwrite-in-place behavior rather than the `--scaffold`/
+        // `--copy-assets` `.new*` rule (see `tests/migrate/rails.sh`'s
+        // "repeat run overwrites the report" case, which this manifest write
+        // is covered by too). Derived from `effective_out_path`, not
+        // `out_path`, so `--target DIR` produces `DIR/MIGRATION.manifest.json`
+        // beside `DIR/MIGRATION.md` and nothing outside DIR.
+        //
+        // #167 Stage 2 moved this AHEAD of the report write. The manifest is
+        // discovery's verdict and knows nothing about the conversion, so it
+        // must stay byte-identical between a `-o` run and a `--target` run
+        // (`tests/migrate/rails.sh` pins exactly that); the report now carries
+        // a Handoff section that only exists once the scaffold has run, so it
+        // has to be written last. Writing them in artifact order rather than
+        // in two different orders per branch keeps one code path.
         var evidence_buf: [max_root_evidence][]const u8 = undefined;
         const root_evidence = railsRootEvidence(evidence, &evidence_buf);
         const manifest_bytes = rails.manifest.build(gpa, .{
@@ -958,11 +1329,104 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
 
         const manifest_path = railsManifestPath(gpa, effective_out_path);
         defer gpa.free(manifest_path);
-        const mf = Io.Dir.cwd().createFile(io, manifest_path, .{}) catch |err|
-            fatal.file(manifest_path, err);
-        defer mf.close(io);
-        var mfw = mf.writer(io, &.{});
-        mfw.interface.writeAll(manifest_bytes) catch |err| fatal.file(manifest_path, err);
+        writeRailsArtifact(io, manifest_path, manifest_bytes);
+
+        // #167 Stage 2: the conversion. Only with `--target` -- without one
+        // there is nowhere to put a project, and a handoff describing a
+        // scaffold that was never written would be a document about nothing.
+        var handoff_summary: ?rails.report.HandoffSummary = null;
+        if (target_dir) |target| {
+            var last_error_path: ?[]const u8 = null;
+            defer if (last_error_path) |p| gpa.free(p);
+            var last_error: ?anyerror = null;
+            const app_name = railsAppName(source_real, target);
+            const result = rails.scaffold.write(io, gpa, .{
+                .discovery = &discovery,
+                .decisions = discovery.decisions,
+                .source_root = root,
+                .target = target,
+                .app_name = app_name,
+                .runtime_path = runtime_path,
+                // `scaffold.zig` lives in the std-only `rails/` directory and
+                // cannot `@embedFile` across it, so the bytes are passed in --
+                // the same two files `assembleTarget` writes for every other
+                // source, from the same place.
+                .agents_md = @embedFile("init/AGENTS.md"),
+                .claude_md = @embedFile("init/CLAUDE.md"),
+            }, &last_error_path, &last_error) catch |err| switch (err) {
+                error.OutOfMemory => fatal.oom(),
+                // Both members render through `fatal.file`, which is the one
+                // call that prints "path: reason". Which filesystem the path
+                // is on is already legible from the path itself, and
+                // `last_error` carries the OS cause that would otherwise
+                // collapse into the error name (ruling S14) -- the difference
+                // between "wipe the target and re-run" and "fix a permission".
+                error.TargetWrite, error.SourceRead => fatal.file(
+                    last_error_path orelse target,
+                    last_error orelse err,
+                ),
+            };
+            defer rails.scaffold.freeResult(gpa, result);
+
+            const route_rows = railsHandoffRoutes(gpa, result, discovery.decisions);
+            defer gpa.free(route_rows);
+            const asset_rows = railsHandoffAssets(gpa, result);
+            defer gpa.free(asset_rows);
+            const redirect_rows = railsHandoffRedirects(gpa, result);
+            defer gpa.free(redirect_rows);
+
+            const handoff_bytes = rails.handoff.build(gpa, .{
+                .generator_version = options.version,
+                .discovery = &discovery,
+                .routes = route_rows,
+                .assets = asset_rows,
+                .redirects = redirect_rows,
+            }) catch |err| switch (err) {
+                error.OutOfMemory => fatal.oom(),
+            };
+            defer gpa.free(handoff_bytes);
+            // Exclusive-create, like every other file in the target: a
+            // handoff already sitting in a directory this run believes it
+            // just created means the guard above was wrong, and overwriting
+            // would hide that.
+            writeTargetFile(io, gpa, target, "MIGRATION.handoff.json", handoff_bytes);
+
+            // Recomputed here rather than parsed back out of the bytes, but
+            // from the SAME rows `build` embedded its own `complete` from --
+            // `isComplete` is a pure function of them, so the report, the
+            // JSON and the exit code cannot disagree.
+            var summary: rails.report.HandoffSummary = .{
+                .complete = rails.handoff.isComplete(&discovery, route_rows),
+            };
+            for (result.routes) |o| switch (o.status) {
+                .migrated => summary.migrated += 1,
+                .open => summary.open += 1,
+                .blocked => summary.blocked += 1,
+                .retained => summary.retained += 1,
+                .backend => summary.backend += 1,
+                .redirect => summary.redirect += 1,
+            };
+            handoff_summary = summary;
+
+            std.debug.print(
+                "Assembled {s}: {d} page(s), {d} asset(s), {d} route(s) open.\n",
+                .{ target, railsPageCount(result), result.assets.len, summary.open },
+            );
+        }
+
+        // The report, written LAST: with `--target` it carries a Handoff
+        // section describing a scaffold that does not exist until the block
+        // above has run. Without one it is `discovery.report` unchanged, so
+        // the no-target path is byte-for-byte what it always was.
+        const report_bytes: []const u8 = if (handoff_summary) |s| blk: {
+            const tail = rails.report.handoffSection(gpa, s) catch |err| switch (err) {
+                error.OutOfMemory => fatal.oom(),
+            };
+            defer gpa.free(tail);
+            break :blk std.mem.concat(gpa, u8, &.{ discovery.report, tail }) catch fatal.oom();
+        } else discovery.report;
+        defer if (handoff_summary != null) gpa.free(report_bytes);
+        writeRailsArtifact(io, effective_out_path, report_bytes);
 
         // Mirrors report.zig's own three-way Routes-section conclusion
         // exactly (same predicate: `route_mode == "static_ast"` and no
@@ -1002,24 +1466,34 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
                 .{ effective_out_path, discovery.integrity_blocker_count },
             );
         }
-        // migrate()'s bool is `any_error` (main.zig: `@intFromBool(any_error)`);
-        // the astro/other success path a few lines below returns `false` for
-        // the same reason. The brief's snippet had `return true` unconditionally
-        // here, which would have exited 1 on every successful Rails run --
-        // deviation, not the brief's intent, caught by the end-to-end fixture
-        // run. `integrity_blocker_count > 0` is the actual signal for a
-        // non-zero exit.
-        //
-        // Stage 4 Task 11 widens this with `--strict` via `railsExitError`
-        // -- see that function's own doc for why `strict` must NOT also
-        // gate the report/manifest content above, only this return value.
-        return railsExitError(strict, discovery.integrity_blocker_count, discovery.blockers.len);
+
+        const complete: ?bool = if (handoff_summary) |s| s.complete else null;
+        const code = railsExitCode(strict, discovery.integrity_blocker_count, discovery.blockers.len, complete);
+        // Only on 3, and only when nothing worse happened: an operator whose
+        // run also failed for an integrity reason is told about THAT, and a
+        // second "here is what to do next" line under it would be advice they
+        // cannot act on yet.
+        if (code == 3) {
+            // The path the operator actually has to edit, not the basename:
+            // this line is stderr advice, not an artifact, so the determinism
+            // rule that reduces `decisions_label` does not apply -- and
+            // telling someone who ran `--decisions answers/prod.json` to edit
+            // "MIGRATION.decisions.json" points them at a file that may not
+            // exist. Falls back to the basename only when there is no
+            // effective path at all, i.e. the first run of a migration, where
+            // the name IS the instruction.
+            std.debug.print(
+                "{d} route(s) open -- answer the findings in MIGRATION.handoff.json via {s} and re-run.\n",
+                .{ handoff_summary.?.open, effective_decisions_path orelse rails_decisions_basename },
+            );
+        }
+        return code;
     }
 
     var res = if (source == .astro) scan(io, gpa, root) else scanOther(io, gpa, root, source);
     defer freeScanResult(gpa, &res);
 
-    if (target_dir) |target| return assembleTarget(io, gpa, root, dir_path, target, runtime_path, source, res);
+    if (target_dir) |target| return @intFromBool(assembleTarget(io, gpa, root, dir_path, target, runtime_path, source, res));
 
     const report = if (source == .astro)
         buildReport(gpa, dir_path, res.entries, res.has_config, scaffold_dir != null, res.has_astro_sitemap, assets_dir != null, null)
@@ -1057,7 +1531,7 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
     if (content_dir) |cdir| convertContent(io, gpa, root, cdir, source.contentSource().?, res.entries);
     if (assets_dir) |adir| copyAssets(io, gpa, root, adir, source);
 
-    return false;
+    return 0;
 }
 
 /// Recursively collect non-hidden files under `rel` (relative to `base`).

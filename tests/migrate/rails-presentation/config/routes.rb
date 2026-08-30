@@ -39,6 +39,12 @@ Rails.application.routes.draw do
   # emit should appear at least once. broken.html.erb has an unclosed
   # `<% if x %>` (no matching `<% end %>`); links.html.erb calls a route
   # helper (`ghost_path`) that names no route this run recovered.
+  # #167 Stage 2: pages#old is a pure redirect (classifier rule 3), so this
+  # route becomes `redirect` in the handoff and raises
+  # RAILS_REDIRECT_HOST_CONFIG -- the host config owns it, not the static
+  # tree. It is the fixture's only route that is COMPLETE without a page and
+  # without an operator decision.
+  get "/old", to: "pages#old"
   get "/broken", to: "pages#broken"
   get "/links", to: "pages#links"
   # R15: linked.html.erb is swapped for a symlink out of the app tree by

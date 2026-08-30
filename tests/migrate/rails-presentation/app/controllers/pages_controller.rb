@@ -16,6 +16,14 @@ class PagesController < ApplicationController
   def help
   end
 
+  # #167 Stage 2: nothing but a `redirect_to` in the body -- classifier rule
+  # 3. There is no app/views/pages/old.html.erb and there must not be one:
+  # the point of this action is that the route never renders anything, so the
+  # conversion has nothing to write and the handoff says `redirect`.
+  def old
+    redirect_to about_path
+  end
+
   # broken.html.erb has an unclosed `<% if x %>` -- exercises
   # RAILS_TEMPLATE_PARSE_ERROR (self-review coverage, not in the core pins).
   def broken
