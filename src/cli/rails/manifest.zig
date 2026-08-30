@@ -645,6 +645,7 @@ fn emptyDiscovery() rails.Discovery {
         .fragments = &.{},
         .findings = &.{},
         .i18n_locale = null,
+        .decisions = .empty,
     };
 }
 
@@ -1130,9 +1131,9 @@ test "build: two runs from differently-named directories produce byte-identical 
     defer env_map.deinit();
     try env_map.put("ZIGAPAGOS_RUNTIME_DIR", "runtime");
 
-    const da = try rails.discover(io, gpa, dir_a, name_a, &env_map);
+    const da = try rails.discover(io, gpa, dir_a, name_a, &env_map, .{});
     defer rails.freeDiscovery(gpa, da);
-    const db = try rails.discover(io, gpa, dir_b, name_b, &env_map);
+    const db = try rails.discover(io, gpa, dir_b, name_b, &env_map, .{});
     defer rails.freeDiscovery(gpa, db);
 
     if (!std.mem.eql(u8, da.route_mode, "static_ast")) {

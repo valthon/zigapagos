@@ -388,7 +388,7 @@ test "validate: the REAL fixture manifest validates against the generated schema
     defer env_map.deinit();
     try env_map.put("ZIGAPAGOS_RUNTIME_DIR", "runtime");
 
-    const d = try rails.discover(io, gpa, app_dir, "tests/migrate/rails-sample", &env_map);
+    const d = try rails.discover(io, gpa, app_dir, "tests/migrate/rails-sample", &env_map, .{});
     defer rails.freeDiscovery(gpa, d);
 
     if (!std.mem.eql(u8, d.route_mode, "static_ast")) return error.SkipZigTest;

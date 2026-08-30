@@ -11,12 +11,15 @@ const Allocator = std.mem.Allocator;
 pub const assets = @import("assets.zig");
 pub const blockers = @import("blockers.zig");
 pub const classify = @import("classify.zig");
+pub const convert = @import("convert.zig");
+pub const decisions = @import("decisions.zig");
 pub const detect = @import("detect.zig");
 pub const fragments = @import("fragments.zig");
 pub const findings = @import("findings.zig");
 pub const inventory = @import("inventory.zig");
 pub const integrations = @import("integrations.zig");
 pub const report = @import("report.zig");
+pub const resolve = @import("resolve.zig");
 pub const routes = @import("routes.zig");
 pub const controllers = @import("controllers.zig");
 pub const sidecar_client = @import("sidecar_client.zig");
@@ -36,11 +39,13 @@ test {
     _ = assets;
     _ = blockers;
     _ = classify;
+    _ = decisions;
     _ = detect;
     _ = findings;
     _ = inventory;
     _ = integrations;
     _ = report;
+    _ = resolve;
     _ = routes;
     _ = controllers;
     _ = sidecar_client;
@@ -222,6 +227,23 @@ pub const Discovery = struct {
     /// Contract 2: MOVED out of `fragments.Result` alongside `fragments`
     /// above; freed here, never by `fragments.freeResult`.
     i18n_locale: ?[]const u8,
+    /// #167 Stage 2: the operator's answers, parsed and validated against
+    /// `findings` above. Empty (`&.{}` / `&.{}`) when no decisions file was
+    /// supplied -- a run with no answers yet, which is the first run of every
+    /// migration, not a degradation.
+    ///
+    /// Parsed HERE rather than by `migrate.zig` after `discover` returns for
+    /// one reason the plan calls out: validation needs `findings`, which only
+    /// exists inside this function, and a `stale` answer has to become a
+    /// `RAILS_DECISION_STALE` blocker in THIS run's `blocker_list` -- the list
+    /// is created and consumed inside `discover`, so there is no later seam
+    /// for that blocker to land in and still reach the manifest. The
+    /// alternative (a public `appendBlocker` that mutates a returned
+    /// `Discovery`) would have to re-derive `integrity_blocker_count` and the
+    /// severity counts alongside it, i.e. duplicate the counting loop below.
+    ///
+    /// Contract 2: released by `freeDiscovery` via `decisions.free`.
+    decisions: decisions.Parsed,
 };
 
 /// Contract 2 counterpart to `Discovery`: releases `report` plus the Task 4
@@ -260,6 +282,10 @@ pub fn freeDiscovery(gpa: Allocator, d: Discovery) void {
         .ruby = .{ .available = false, .version = null },
     });
     findings.free(gpa, d.findings);
+    // #167 Stage 2: always safe, including the no-decisions-file run --
+    // `discover` leaves the two slices empty rather than null, so this is one
+    // release path, not two.
+    decisions.free(gpa, d.decisions);
 }
 
 /// `discovery.ruby`, combined across BOTH sidecar ops. Each op
@@ -793,13 +819,40 @@ fn dupeRoutesForDiscovery(gpa: Allocator, list: []const routes.Route) Allocator.
 /// `errdefer` (the path where the move never happened) and releases the
 /// remaining `ruby` half by itself just before returning. See both call
 /// sites' own comments.
+/// What `discover` can fail with. An ALIAS of `decisions.ParseError` rather
+/// than a hand-written union of the same members: the three non-allocation
+/// variants exist only because this function now parses the decisions file,
+/// and a second declaration would be one more thing to keep in step with
+/// `decisions.zig` for no reader's benefit. `migrate.zig` switches on it.
+pub const DiscoverError = decisions.ParseError;
+
+/// The operator's answers, as `discover` receives them. A struct rather than
+/// three positional parameters because the common call (`.{}`) is "no
+/// decisions file", and every existing call site says exactly that.
+pub const DecisionsInput = struct {
+    /// The decisions file's bytes, or `null` when the run has none.
+    bytes: ?[]const u8 = null,
+    /// The path rendered in a `RAILS_DECISION_STALE` blocker. Relative on
+    /// purpose: an artifact must carry no absolute paths (plan, Global
+    /// Constraints). The default names the conventional location so a caller
+    /// that only has bytes still produces a blocker an operator can act on.
+    path: []const u8 = "MIGRATION.decisions.json",
+    /// Out-list for `decisions.parse`'s complaints, so the caller can print
+    /// EVERY offending entry rather than the first. Caller-owned and
+    /// caller-freed (`decisions.freeProblems`) on every path including the
+    /// error ones. When null, a private list is used and discarded -- fine
+    /// for a caller that only needs the error variant.
+    problems: ?*std.ArrayListUnmanaged(decisions.Problem) = null,
+};
+
 pub fn discover(
     io: Io,
     gpa: Allocator,
     root: Io.Dir,
     app_path: []const u8,
     environ_map: *const std.process.Environ.Map,
-) Allocator.Error!Discovery {
+    dec: DecisionsInput,
+) DiscoverError!Discovery {
     var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
     // Canonical release (fix round B / B8): every `Blocker` here was
     // appended via `blockers.append`/`appendCopy`, so `path`/`detail` are
@@ -1016,6 +1069,25 @@ pub fn discover(
     var i18n_error_paths: std.ArrayListUnmanaged([]const u8) = .empty;
     defer i18n_error_paths.deinit(gpa);
     for (frag_result.i18n_errors) |e| try i18n_error_paths.append(gpa, e.path);
+    // #167 Stage 2 (ruling S18): a fourth borrowed scratch list, built from
+    // the SAME predicate that produced the engine blockers a few lines above
+    // (`inventory.unsupportedEngineLabel`), so the blocker set and the
+    // finding set are one set. Every string belongs to `wr.entries`, which
+    // outlives the call.
+    var unsupported_templates: std.ArrayListUnmanaged(findings.UnsupportedTemplate) = .empty;
+    defer unsupported_templates.deinit(gpa);
+    for (wr.entries) |e| {
+        const label = inventory.unsupportedEngineLabel(e) orelse continue;
+        try unsupported_templates.append(gpa, .{ .path = e.path, .label = label });
+    }
+    // #167 Stage 2 (ruling S22): a fifth borrowed scratch list -- the
+    // `templates` half of each `RouteTemplates`, index-aligned with the route
+    // table, for the `RAILS_NO_TEMPLATE` row. Every slice belongs to
+    // `classify_result`, which outlives the call and escapes as
+    // `Discovery.route_templates`.
+    var route_template_lists: std.ArrayListUnmanaged([]const []const u8) = .empty;
+    defer route_template_lists.deinit(gpa);
+    for (classify_result.route_templates) |rt| try route_template_lists.append(gpa, rt.templates);
     const finding_list = try findings.derive(gpa, .{
         .templates = frag_result.templates,
         .layouts = ctrl_result.layouts,
@@ -1023,11 +1095,84 @@ pub fn discover(
         .route_names = route_names.items,
         .locale = frag_result.locale,
         .i18n_error_paths = i18n_error_paths.items,
+        // #167 Stage 2 (ruling S1): `RAILS_ASSET_TRANSFORM` is derived from
+        // the same asset table `convert.zig` resolves against, so the finding
+        // and the placeholder the converted page carries are decided by one
+        // lookup rather than two that can disagree. Borrowed, like the three
+        // scratch lists above: `asset_list` outlives this call and escapes as
+        // `Discovery.assets`.
+        .assets = asset_list,
+        // #167 Stage 2 (ruling S1): the two ROUTE-scoped rows
+        // (`RAILS_ROUTE_DYNAMIC_SEGMENT`, `RAILS_REDIRECT_HOST_CONFIG`) are
+        // derived from the route table and its verdicts, so a dynamic or
+        // redirecting route carries an id `scaffold.zig` can look an operator
+        // decision up against. Both borrowed and index-aligned:
+        // `route_result.routes` and `classifications` outlive this call and
+        // escape as `Discovery.routes`/`Discovery.classifications`.
+        .routes = route_result.routes,
+        .classifications = classifications,
+        // #167 Stage 2 (ruling S22): `RAILS_NO_TEMPLATE` needs to know which
+        // templates each route resolved, and `RouteTemplates` is not visible
+        // from `findings.zig` (this file is the package root and imports it),
+        // so only the `templates` half is handed over. Borrowed and
+        // index-aligned like the two slices above: `classify_result.
+        // route_templates` outlives this call and escapes as
+        // `Discovery.route_templates`.
+        .route_templates = route_template_lists.items,
+        .unsupported_templates = unsupported_templates.items,
     });
     // Escapes as `Discovery.findings`; `freeDiscovery` owns it on the
     // success path, this covers every fallible step between here and the
     // return.
     errdefer findings.free(gpa, finding_list);
+
+    // #167 Stage 2: the decisions file, parsed HERE and nowhere else -- see
+    // `Discovery.decisions`'s doc for why this cannot be `migrate.zig`'s job.
+    // Placed immediately after `derive` (which produces the `findings` every
+    // answer is validated against) and BEFORE the blocker counting loop,
+    // `report.build` and `blocker_list.toOwnedSlice` below, so a stale answer's
+    // blocker is counted, rendered and emitted like every other blocker rather
+    // than arriving after the list has been handed away.
+    var parsed_decisions: decisions.Parsed = .empty;
+    errdefer decisions.free(gpa, parsed_decisions);
+    if (dec.bytes) |decision_bytes| {
+        // A private list when the caller wants none: `parse` writes to it on
+        // every rejection, so it can never be optional at the callee.
+        var local_problems: std.ArrayListUnmanaged(decisions.Problem) = .empty;
+        defer if (dec.problems == null) decisions.freeProblems(gpa, &local_problems);
+        parsed_decisions = try decisions.parse(
+            gpa,
+            decision_bytes,
+            finding_list,
+            dec.problems orelse &local_problems,
+        );
+        // One blocker per stale answer, `integrity = false` and `.warn`: the
+        // run's own counts are entirely trustworthy (nothing was misread) --
+        // what happened is that a question the operator answered no longer
+        // exists, usually because the template it was about was fixed. The
+        // answer is dead weight in their file and they should delete it, which
+        // is a warning, not a failure. `route_id` is null: a finding id is not
+        // a route, and this run has no finding to look one up from.
+        for (parsed_decisions.stale) |s| {
+            const detail = try std.fmt.allocPrint(
+                gpa,
+                "decision for `{s}` answers no finding in this run; delete it or re-check the id",
+                .{s.id},
+            );
+            defer gpa.free(detail);
+            try blockers.append(
+                gpa,
+                &blocker_list,
+                "RAILS_DECISION_STALE",
+                dec.path,
+                detail,
+                false,
+                .warn,
+                null,
+                null,
+            );
+        }
+    }
 
     var integrity_blocker_count: usize = 0;
     var route_blocker = false;
@@ -1111,6 +1256,7 @@ pub fn discover(
         .fragments = frag_result.templates,
         .findings = finding_list,
         .i18n_locale = frag_result.locale,
+        .decisions = parsed_decisions,
     };
 }
 
@@ -3569,7 +3715,7 @@ test "discover: the fixture's blockers break down 0 error / 5 warn -- the fixtur
     defer env_map.deinit();
     try env_map.put("ZIGAPAGOS_RUNTIME_DIR", "runtime");
 
-    const d = try discover(io, gpa, app_dir, "tests/migrate/rails-sample", &env_map);
+    const d = try discover(io, gpa, app_dir, "tests/migrate/rails-sample", &env_map, .{});
     defer freeDiscovery(gpa, d);
 
     if (!std.mem.eql(u8, d.route_mode, "static_ast")) {
@@ -3619,7 +3765,7 @@ test "discover: the fixture's assets discriminate -- logo.png is deterministic, 
     defer env_map.deinit();
     try env_map.put("ZIGAPAGOS_RUNTIME_DIR", "runtime");
 
-    const d = try discover(io, gpa, app_dir, "tests/migrate/rails-sample", &env_map);
+    const d = try discover(io, gpa, app_dir, "tests/migrate/rails-sample", &env_map, .{});
     defer freeDiscovery(gpa, d);
 
     // 4 Kind.asset entries: app/assets/images/logo.png,
@@ -3706,7 +3852,7 @@ test "discover: reachability -- source.version, per-route source{file,line}/cert
     defer env_map.deinit();
     try env_map.put("ZIGAPAGOS_RUNTIME_DIR", "runtime");
 
-    const d = try discover(io, gpa, app_dir, "tests/migrate/rails-sample", &env_map);
+    const d = try discover(io, gpa, app_dir, "tests/migrate/rails-sample", &env_map, .{});
     defer freeDiscovery(gpa, d);
 
     if (!std.mem.eql(u8, d.route_mode, "static_ast")) {
@@ -3882,7 +4028,7 @@ test "discover: config/routes.rb absent but app/controllers/ present still repor
     defer env_map.deinit();
     try env_map.put("ZIGAPAGOS_RUNTIME_DIR", "runtime");
 
-    const d = try discover(io, gpa, tmp.dir, root_abs, &env_map);
+    const d = try discover(io, gpa, tmp.dir, root_abs, &env_map, .{});
     defer freeDiscovery(gpa, d);
 
     if (!d.ruby.available) {
@@ -3905,4 +4051,134 @@ test "discover: config/routes.rb absent but app/controllers/ present still repor
     // for some unrelated reason.
     try std.testing.expectEqualStrings("none", d.route_mode);
     try std.testing.expect(std.mem.indexOf(u8, d.report, "RAILS_ROUTES_MISSING") != null);
+}
+
+// ---- #167 Stage 2: the decisions file -------------------------------------
+//
+// These three run against an EMPTY temp directory on purpose. Every one of
+// them is about the decisions plumbing (`DecisionsInput` in, `Discovery.
+// decisions` and a `RAILS_DECISION_STALE` blocker out), and an empty app has
+// no findings at all -- which is exactly the state that makes every answer
+// stale and keeps the tests hermetic (no ruby, no sidecar, no fixture).
+
+/// The three tests below need a discovery run and nothing from it but the
+/// decisions plumbing; this is the whole setup.
+///
+/// Contract 2 (owned-result): `Environ.Map.put` DUPES both strings, so the
+/// returned map owns heap memory and every caller `deinit`s it. (It was
+/// labelled contract 3 when the literals it stores made it look allocation-
+/// free; the allocation is inside `put`, not in this body.)
+fn emptyAppEnv(gpa: Allocator) Allocator.Error!std.process.Environ.Map {
+    var env_map: std.process.Environ.Map = .init(gpa);
+    errdefer env_map.deinit();
+    try env_map.put("ZIGAPAGOS_RUNTIME_DIR", "runtime");
+    return env_map;
+}
+
+test "discover: a stale decision becomes one warn RAILS_DECISION_STALE blocker at the decisions file's path" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+
+    var env_map = try emptyAppEnv(gpa);
+    defer env_map.deinit();
+
+    const bytes =
+        \\{"schema": "zigapagos.rails-decisions/1", "decisions": [
+        \\  {"id": "RAILS_HELPER_UNKNOWN.app/views/gone%2Ehtml%2Eerb.L1C1", "choice": "blocked", "rationale": "the view was deleted"}
+        \\]}
+    ;
+    const d = try discover(io, gpa, tmp.dir, "app", &env_map, .{
+        .bytes = bytes,
+        .path = "out/MIGRATION.decisions.json",
+    });
+    defer freeDiscovery(gpa, d);
+
+    // The answer survives onto `Discovery` as STALE, not as a live decision:
+    // a scaffold that read it out of `decisions` would apply an answer to a
+    // question this run never asked.
+    try std.testing.expectEqual(@as(usize, 0), d.decisions.decisions.len);
+    try std.testing.expectEqual(@as(usize, 1), d.decisions.stale.len);
+
+    var stale_blockers: usize = 0;
+    for (d.blockers) |b| {
+        if (!std.mem.eql(u8, b.code, "RAILS_DECISION_STALE")) continue;
+        stale_blockers += 1;
+        // Non-integrity: nothing was misread, so the run's counts are still
+        // trustworthy and the exit code must not turn on this.
+        try std.testing.expect(!b.integrity);
+        try std.testing.expectEqual(blockers.Severity.warn, b.severity);
+        // The path the CALLER gave, so the operator is sent to the file they
+        // actually wrote rather than to the conventional default.
+        try std.testing.expectEqualStrings("out/MIGRATION.decisions.json", b.path);
+        // The detail names the dead id -- the whole point of the blocker is
+        // that the operator can find and delete the entry.
+        try std.testing.expect(std.mem.indexOf(u8, b.detail, "RAILS_HELPER_UNKNOWN.app/views/gone%2Ehtml%2Eerb.L1C1") != null);
+    }
+    try std.testing.expectEqual(@as(usize, 1), stale_blockers);
+    // It is counted like every other blocker: appended BEFORE the counting
+    // loop, not after (which is what would happen if the parse were bolted on
+    // to the end of `discover`).
+    try std.testing.expect(d.severity_warn_count >= 1);
+    try std.testing.expectEqual(@as(usize, 0), d.integrity_blocker_count);
+}
+
+test "discover: a malformed decisions entry fails the whole run and names the offender" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+
+    var env_map = try emptyAppEnv(gpa);
+    defer env_map.deinit();
+
+    var problems: std.ArrayListUnmanaged(decisions.Problem) = .empty;
+    defer decisions.freeProblems(gpa, &problems);
+
+    // Two faults in one file, deliberately: `parse` accumulates rather than
+    // short-circuiting, and `migrate.zig` prints them all -- an
+    // implementation that stopped at the first would make the operator
+    // re-run once per typo.
+    const bytes =
+        \\{"schema": "zigapagos.rails-decisions/1", "decisions": [
+        \\  {"id": "A.L1", "choice": "blocked", "rationale": "  "},
+        \\  {"id": "", "choice": "retain", "rationale": "why"}
+        \\]}
+    ;
+    const err = discover(io, gpa, tmp.dir, "app", &env_map, .{
+        .bytes = bytes,
+        .problems = &problems,
+    });
+    try std.testing.expectError(error.Invalid, err);
+    try std.testing.expectEqual(@as(usize, 2), problems.items.len);
+    try std.testing.expectEqualStrings("A.L1", problems.items[0].id.?);
+    try std.testing.expect(std.mem.indexOf(u8, problems.items[0].message, "rationale") != null);
+    try std.testing.expectEqual(@as(usize, 1), problems.items[1].index);
+}
+
+test "discover: no decisions file leaves the parse untriggered -- empty answers, no blocker" {
+    // The discriminating companion to the stale test: an implementation that
+    // appended a blocker unconditionally, or that left `decisions` undefined
+    // on the no-file path (making `freeDiscovery` free garbage), passes
+    // neither this nor the leak check the testing allocator runs after it.
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+
+    var env_map = try emptyAppEnv(gpa);
+    defer env_map.deinit();
+
+    const d = try discover(io, gpa, tmp.dir, "app", &env_map, .{});
+    defer freeDiscovery(gpa, d);
+
+    try std.testing.expectEqual(@as(usize, 0), d.decisions.decisions.len);
+    try std.testing.expectEqual(@as(usize, 0), d.decisions.stale.len);
+    for (d.blockers) |b| {
+        try std.testing.expect(!std.mem.eql(u8, b.code, "RAILS_DECISION_STALE"));
+    }
 }

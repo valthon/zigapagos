@@ -882,8 +882,13 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
             );
         }
 
-        const discovery = rails.discover(io, gpa, root, dir_path, environ_map) catch |err| switch (err) {
+        const discovery = rails.discover(io, gpa, root, dir_path, environ_map, .{}) catch |err| switch (err) {
             error.OutOfMemory => fatal.oom(),
+            // `discover` can now reject a decisions file, but this command
+            // does not pass one yet (the `--decisions` flag arrives with the
+            // `--target` assembly), so the empty options above cannot fail
+            // that way.
+            else => unreachable,
         };
         // Stage 4 Task 4 widened `Discovery` to own the template graph
         // (`route_templates`/`templates`) alongside `report` -- a bare

@@ -232,7 +232,9 @@ raw HTML. The `.smd` carries `.title` (from `content_for :title`, `provide`, a
 `.custom.rails = { .route = "GET /about", .controller, .action, .source }` so
 `$page.custom` can be inspected from a layout and the provenance survives
 edits. Rails URLs map to content paths: `/` → `content/index.smd`, `/about` →
-`content/about.smd`, `/admin/users` → `content/admin/users.smd`. The static
+`content/about/index.smd`, `/admin/users` → `content/admin/users/index.smd`
+(always a directory index, so `/posts` and `/posts/:id` cannot collide on a
+file-versus-directory name). The static
 tree serves `/about/`; whether `/about` is a redirect or a 200 is the host's
 call, and that difference is a parity check, not something this converter can
 hide.
@@ -387,11 +389,32 @@ generated from Zig types with the same `@typeInfo` walker as the manifest
 ```
 
 `complete` is true iff every route whose verb is GET or HEAD has `status ∈
-{migrated, retained, redirect}` or `status = blocked` with a decision
+{migrated, redirect, backend}` (a `backend` route — a GET that
+renders JSON — needs no page, so it never blocks completion; Stage 3's
+endpoint mapping reopens it through its own finding) or `status ∈ {retained,
+blocked}` with a decision
 (`retained` and `blocked` both require a decision with a rationale). Exit code:
 0 when complete, a new non-zero value when not, distinct from the existing
 integrity failure so an agent loop can tell "decide more" from "discovery
 broke". `--strict` continues to fail on any blocker.
+
+**One code is both a blocker and a finding: `RAILS_TEMPLATE_ENGINE_UNSUPPORTED`**
+(ruling S18). Every route-reachable template in an engine no converter reads —
+Haml, Slim, Jbuilder, Builder, or unidentified — keeps its #166 blocker (which
+is what explains the engine in the report and counts under `--strict`) and
+ALSO derives a finding with `choices: [retain, blocked]`, `line: null`, and
+`loc` the word `engine` (the `RAILS_TEMPLATE_UNSCANNED` precedent: nothing
+ever parsed the file, so there is no line to point at). Both sets come off one
+exported gate (`inventory.unsupportedEngineLabel`), so the blocker set and the
+finding set cannot drift.
+
+That finding is precisely how a Haml route reaches `blocked` or `retained`.
+Without it such a route has no id any decision can name, so `complete` is
+unreachable for any app containing a single Haml view, by every answer an
+operator could give — ruling S12's hole in the one place S12 did not reach.
+The finding does not make the route convertible: `migrated` is not a choice
+anywhere in the vocabulary, so the route can only ever be acknowledged, which
+is what "never silently complete" requires.
 
 Parity kinds: `navigate` (status, `<title>`, first `<h1>`, links present),
 `asset` (URL returns 200 and the content type), `signup`, `signin`,
@@ -413,13 +436,16 @@ validation_error`.
 
 Emitted for the first time (all were declared reserved by #166 or are new):
 `RAILS_REQUEST_TIME_STATE`, `RAILS_HELPER_UNKNOWN`, `RAILS_ASSET_TRANSFORM`,
-`RAILS_NO_TEMPLATE` (a `content`/`island` route whose view vanished between
-discovery and conversion), `RAILS_PARTIAL_DYNAMIC`,
+`RAILS_NO_TEMPLATE` (a GET `content`/`island` route whose
+`<controller>/<action>` resolves no view by convention — `render :other`
+with no `other.html.erb`, or an action-less route; answered `retain` or
+`blocked`), `RAILS_PARTIAL_DYNAMIC`,
 `RAILS_ROUTE_HELPER_DYNAMIC`, `RAILS_ROUTE_HELPER_UNKNOWN` (a helper whose
 route is `uncertain` or unnamed), `RAILS_I18N_UNRESOLVED`,
 `RAILS_TEMPLATE_CONTROL_FLOW`, `RAILS_JS_ENTRY`, `RAILS_BACKEND_ENDPOINT`,
 `RAILS_AUTH_JOURNEY`, `RAILS_REDIRECT_HOST_CONFIG`,
 `RAILS_ROUTE_DYNAMIC_SEGMENT`, `RAILS_TURBO_FRAME`, `RAILS_TURBO_STREAM`,
+`RAILS_COMPONENT_ROOT` (a React/Vue mount point in an ERB template),
 `RAILS_STIMULUS_CONTROLLER`, `RAILS_COMPONENT_PROPS_DYNAMIC`,
 `RAILS_COMPONENT_VUE_UNSUPPORTED`, `RAILS_DECISION_STALE`,
 `RAILS_LAYOUT_DYNAMIC` (a controller `layout` that is a method or conditional),
@@ -437,8 +463,26 @@ it, the locale file is simply broken).
 Additive-only, stable, every one with a source location except
 `RAILS_TEMPLATE_UNSCANNED` as noted.
 
-Haml/Slim stay `RAILS_TEMPLATE_ENGINE_UNSUPPORTED` from #166; such a route can
-only reach `blocked` or `retained`, never `migrated`, and the fixture pins it.
+**Stage 2 derives every code a converted template can reach, with the choices
+it can actually carry out** (ruling S12). The six fragment kinds whose real
+handling belongs to later stages -- `form`/`form_field`
+(`RAILS_BACKEND_ENDPOINT`), `errors` (`RAILS_REQUEST_TIME_STATE`),
+`turbo_frame`, `turbo_stream`, `component_root` -- are derived NOW with
+`choices: [retain, blocked]`. Deferring the ROWS as well as the handling was
+the mistake: the converter emits a `rails:unmapped` placeholder for a kind
+with no finding, that placeholder carries no id, and a route holding one can
+therefore never be acknowledged by any choice at all -- not even `blocked`.
+Stage 3 widens the two form codes with the backend operations from
+`--backend`; Stage 4 widens the Turbo/component codes with `island`. Only one
+finding per form: the outermost `form` in a nesting asks the question, and the
+fields inside it are the same decision. An orphan `form_field` outside any
+form keeps its own.
+
+Haml/Slim stay `RAILS_TEMPLATE_ENGINE_UNSUPPORTED` from #166 — as a blocker
+AND, per ruling S18 above, as a `retain`/`blocked` finding on the same
+template. That finding is the id an operator answers, so such a route reaches
+`blocked` or `retained` and never `migrated`; the fixture pins both the
+finding (`…/legacy%2Ehtml%2Ehaml.engine`) and the `blocked` outcome.
 
 ## Failure behavior
 
