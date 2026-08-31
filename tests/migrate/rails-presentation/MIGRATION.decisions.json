@@ -123,6 +123,11 @@
       "rationale": "The runtime compatibility bridge is React-only, so the Vue root blocks /live rather than shipping inert markup."
     },
     {
+      "id": "RAILS_BACKEND_ENDPOINT.app/views/posts/new%2Ehtml%2Eerb.L3C5",
+      "choice": "createPosts",
+      "rationale": "Stage 5 binds the conventional posts#new title/body form to the conditional createPosts ZigBase operation so the generated island and parity replay share one endpoint."
+    },
+    {
       "id": "RAILS_JS_ENTRY.app/javascript/application%2Ejs.entry",
       "choice": "drop",
       "rationale": "The generated islands replace the reviewed Turbo and controller imports; the Rails application entry itself is not copied."

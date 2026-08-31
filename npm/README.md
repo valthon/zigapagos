@@ -87,11 +87,10 @@ The zigbase one is the reason this gate exists. npm installs the declared range 
 `PATH` miss downloads the pin, so a divergence would leave `zigapagos dev` running a
 different zigbase depending on how the user installed zigapagos. Note it must be the
 **scoped** `@zigbase/server`: the bare `zigbase` alias was published exactly once, so
-`0.12.0` is the only version it will ever have and it cannot follow a pin. It equals
-the pin today, which is why the gate rejects the alias on presence rather than on the
-version it resolves to — and since these are *optional* dependencies, npm skips a range
-it cannot resolve without failing the install, so the next bump would split the two
-install paths silently.
+`0.12.0` is the only version it will ever have and it cannot follow the current pin.
+The gate rejects the alias on presence rather than on the version it resolves to; since
+these are *optional* dependencies, npm can skip an unresolvable range without failing
+the install, so using the alias would split the two install paths silently.
 
 `npm/check-toolchain.mjs` generates the manifest through the tree's own generator and
 checks it against parsers of its own — deliberately not the generator's, since a

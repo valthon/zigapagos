@@ -291,8 +291,7 @@ const handoff_description =
     "emitter always writes every key -- `null` included -- rather than " ++
     "omitting absent ones. Schema `/1` has not shipped in a release, so " ++
     "its shape is still being completed and a required field may still " ++
-    "be added to it (`backend`, `routes[].endpoint` and `parity[]` are " ++
-    "the declared-but-unfilled parts a later stage populates). Once a " ++
+    "be added while the remaining Stage 5 parity contract is completed. Once a " ++
     "release carries `/1`, that stops: adding a required key to a " ++
     "published version would make two documents claiming the same " ++
     "version id disagree about what a conforming document contains. " ++
@@ -368,19 +367,18 @@ const handoff_overrides = [_]Override{
     .{
         .type_name = "handoff.Handoff",
         .field = "backend",
-        .text = "The backend contract this migration produced. ALWAYS " ++
-            "`null` in the version of the tool that generated this " ++
-            "schema -- nothing emits a backend contract yet.",
+        .text = "The backend contract this migration used, or `null` when " ++
+            "the operator supplied no `--backend` document. Its file is a " ++
+            "basename so the handoff never leaks a machine path.",
     },
     .{
         .type_name = "handoff.Handoff",
         .field = "parity",
-        .text = "Replayable checks comparing the migrated site against " ++
-            "the running Rails app. ALWAYS empty in the version of the " ++
-            "tool that generated this schema. The per-kind `expect` " ++
-            "object the design sketches is deliberately not declared " ++
-            "yet: it varies by `kind`, and guessing its shape before the " ++
-            "kinds exist would publish a contract nothing produces.",
+        .text = "Deterministic replayable checks derived from written " ++
+            "migration artifacts or applied endpoints. Each `kind` is " ++
+            "correlated with its typed `expect` payload by the `oneOf` " ++
+            "arms. An empty array means this run produced no replayable " ++
+            "evidence, not that parity was proved.",
     },
     .{
         .type_name = "handoff.AssetEntry",
@@ -553,6 +551,62 @@ fn structSchema(
     return .{ .object = o };
 }
 
+/// Schema for a tagged union whose type declares `json_schema_tag_field` and
+/// whose custom JSON serializer flattens each struct payload, inserting that
+/// tag after the payload's first field. The metadata lives on the wire type,
+/// so this remains a structural walk rather than a ParityEntry special case.
+fn flattenedTaggedUnionSchema(
+    comptime T: type,
+    comptime table: []const Override,
+    hits: []u32,
+    arena: Allocator,
+) Allocator.Error!std.json.Value {
+    if (!@hasDecl(T, "json_schema_tag_field")) {
+        @compileError("rails schema_gen: tagged union needs json_schema_tag_field: " ++ @typeName(T));
+    }
+    const tag_field: []const u8 = @field(T, "json_schema_tag_field");
+    const info = @typeInfo(T).@"union";
+    if (info.tag_type == null) {
+        @compileError("rails schema_gen: untagged union unsupported: " ++ @typeName(T));
+    }
+
+    var arms: std.json.Array = .init(arena);
+    inline for (info.fields) |variant| {
+        const payload_info = @typeInfo(variant.type);
+        if (payload_info != .@"struct") {
+            @compileError("rails schema_gen: flattened union payload must be a struct: " ++ @typeName(variant.type));
+        }
+
+        var props: std.json.ObjectMap = .empty;
+        var required: std.json.Array = .init(arena);
+        inline for (std.meta.fields(variant.type), 0..) |field, i| {
+            var field_schema = try schemaFor(field.type, table, hits, arena);
+            if (overrideFor(table, hits, @typeName(variant.type), field.name)) |text| {
+                try field_schema.object.put(arena, "description", strVal(text));
+            }
+            try props.put(arena, field.name, field_schema);
+            try required.append(strVal(field.name));
+            if (i == 0) {
+                var tag_schema: std.json.ObjectMap = .empty;
+                try tag_schema.put(arena, "type", strVal("string"));
+                try tag_schema.put(arena, "const", strVal(variant.name));
+                try props.put(arena, tag_field, .{ .object = tag_schema });
+                try required.append(strVal(tag_field));
+            }
+        }
+        var arm: std.json.ObjectMap = .empty;
+        try arm.put(arena, "type", strVal("object"));
+        try arm.put(arena, "properties", .{ .object = props });
+        try arm.put(arena, "required", .{ .array = required });
+        try arm.put(arena, "additionalProperties", .{ .bool = false });
+        try arms.append(.{ .object = arm });
+    }
+
+    var out: std.json.ObjectMap = .empty;
+    try out.put(arena, "oneOf", .{ .array = arms });
+    return .{ .object = out };
+}
+
 /// The comptime type walk. Every branch returns a JSON Schema OBJECT value
 /// (never a bare scalar), so a caller may always widen the result via
 /// `field_schema.object.put(arena, ...)` (`structSchema` does exactly that to
@@ -588,6 +642,7 @@ fn schemaFor(
             break :blk .{ .object = o };
         },
         .@"struct" => structSchema(T, table, hits, arena),
+        .@"union" => flattenedTaggedUnionSchema(T, table, hits, arena),
         else => @compileError("rails schema_gen: unsupported type " ++ @typeName(T)),
     };
 }
@@ -986,6 +1041,35 @@ test "generateHandoff: backend and routes[].endpoint are nullable objects, not b
     try testing.expectEqual(@as(usize, 2), endpoint_types.len);
     try testing.expectEqualStrings("object", endpoint_types[0].string);
     try testing.expectEqualStrings("null", endpoint_types[1].string);
+}
+
+test "generateHandoff: parity oneOf correlates each kind with its expect payload" {
+    const gpa = testing.allocator;
+    const out = try generateHandoff(gpa);
+    defer gpa.free(out);
+
+    var parsed = try std.json.parseFromSlice(std.json.Value, gpa, out, .{});
+    defer parsed.deinit();
+    const parity_items = parsed.value.object.get("properties").?.object
+        .get("parity").?.object.get("items").?.object;
+    const arms = parity_items.get("oneOf").?.array.items;
+    try testing.expectEqual(@as(usize, 7), arms.len);
+    const kinds = [_][]const u8{ "navigate", "asset", "signup", "signin", "submit_allowed", "submit_denied", "validation_error" };
+    for (kinds, arms) |kind, arm| {
+        try testing.expectEqualStrings(kind, arm.object.get("properties").?.object.get("kind").?.object.get("const").?.string);
+    }
+
+    const navigate = arms[0].object;
+    const required = navigate.get("required").?.array.items;
+    const want = [_][]const u8{ "id", "kind", "url", "expect" };
+    try testing.expectEqual(want.len, required.len);
+    for (want, required) |expected, actual| try testing.expectEqualStrings(expected, actual.string);
+    const props = navigate.get("properties").?.object;
+    try testing.expectEqualStrings("navigate", props.get("kind").?.object.get("const").?.string);
+    const expect_required = props.get("expect").?.object.get("required").?.array.items;
+    const expect_want = [_][]const u8{ "status", "title", "h1", "links" };
+    try testing.expectEqual(expect_want.len, expect_required.len);
+    for (expect_want, expect_required) |expected, actual| try testing.expectEqualStrings(expected, actual.string);
 }
 
 test "generate/generateHandoff: the two documents do not share an override table" {

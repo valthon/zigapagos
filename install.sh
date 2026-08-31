@@ -40,7 +40,7 @@ BUN_VERSION="1.3.14"
 # Mirrors `pinned_version` in src/cli/zigbase.zig — the binary looks for exactly
 # this version in exactly the path below, so a different one here would be
 # downloaded and then ignored.
-ZIGBASE_VERSION="v0.12.0"
+ZIGBASE_VERSION="v0.13.0"
 ZIGBASE_REPO="valthon/zigbase"
 
 # --- defaults, overridable ---------------------------------------------------

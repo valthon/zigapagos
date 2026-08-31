@@ -1,0 +1,9 @@
+<% content_for :title, "New post" %>
+<h1>New post</h1>
+<%= form_with model: @post do |form| %>
+  <%= form.label :title, "Title" %>
+  <%= form.text_field :title, required: true %>
+  <%= form.label :body, "Body" %>
+  <%= form.text_area :body %>
+  <%= form.submit "Create post" %>
+<% end %>

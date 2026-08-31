@@ -31,18 +31,13 @@ const fatal = @import("../fatal.zig");
 /// verified against this harness. (The `.spa`-marker contract needs >= 0.10.0;
 /// the `serve` CLI flags used by e2e are identical from v0.10.0 through main.)
 ///
-/// v0.12.0 ships four BREAKING changes, none of which reach this consumer:
-/// they are all library/embedding API (`RequestArena` replacing bare
-/// `Allocator` on the request seams, `jwt.sign` gaining `error.TokenTooLarge`),
-/// a build option only a from-source embedder passes (`-Ddev-clock` renamed
-/// `-Ddev-mode`), or a file-download token rule for hand-built URLs. zigapagos
-/// drives a PREBUILT zigbase as a standalone binary over its `serve` CLI, and
-/// that surface is byte-identical across the two tags: diffing `src/cli.zig`
-/// between v0.11.0 and v0.12.0 shows the only additions are the new `import`
-/// subcommand and `typegen --lang/--package`, with `serve`'s flags
+/// v0.13.0 is the first stock release with the declarative `schema apply`
+/// surface used by generated migration parity tests. Zigapagos still drives a
+/// PREBUILT zigbase through the unchanged standalone `serve` flags
 /// (`--http-host`, `--http-port`, `--data-dir`, `--serve-static`,
-/// `--insecure-cookies`) and their defaults untouched.
-pub const pinned_version = "v0.12.0";
+/// `--insecure-cookies`); the new CLI surface initializes the same isolated
+/// data directory before that server starts.
+pub const pinned_version = "v0.13.0";
 
 /// The GitHub repo the pinned release is published under.
 pub const release_repo = "valthon/zigbase";
@@ -382,7 +377,7 @@ test "e2e zigbase: cachedPath honors XDG_CACHE_HOME, then HOME/.cache" {
 }
 
 test "e2e zigbase: release asset name + URL match the channel's naming" {
-    // Verified against `gh release view v0.12.0` (valthon/zigbase): assets are
+    // Verified against `gh release view v0.13.0` (valthon/zigbase): assets are
     // zigbase-<ver>-<target>.tar.gz plus SHA256SUMS, under
     // github.com/valthon/zigbase/releases/download/<tag>/.
     const gpa = std.testing.allocator;

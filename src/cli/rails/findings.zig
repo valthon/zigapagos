@@ -1886,6 +1886,10 @@ fn frameUrl(gpa: Allocator, in: DeriveInput, node: fragments.Node) Allocator.Err
 fn frameIsApi(in: DeriveInput, node: fragments.Node, url: []const u8) bool {
     if (std.mem.endsWith(u8, url, ".json")) return true;
     for (in.routes, 0..) |route, i| {
+        // A frame navigation is a browser GET. Rails commonly gives GET and
+        // POST collection routes the same helper/path (`posts_path`); the
+        // create route must not turn the page route into API traffic.
+        if (!std.mem.eql(u8, route.verb, "GET") and !std.mem.eql(u8, route.verb, "HEAD")) continue;
         const same_route = if (attrValue(node, "src") != null)
             std.mem.eql(u8, route.path, url)
         else if (node.value) |name|
@@ -4894,6 +4898,25 @@ test "derive: Stage 4 interactivity rows expose only buildable choices" {
     for ([_][]const u8{ "inline", "retain", "blocked" }, out[5].choices) |want, got| try std.testing.expectEqualStrings(want, got);
     try std.testing.expectEqualStrings(code_turbo_stream, out[6].code);
     try std.testing.expect(std.mem.indexOf(u8, out[6].message, "a realtime subscription has no converter") != null);
+}
+
+test "frame navigation ignores a POST route sharing its helper and path" {
+    var create_posts = testRoute("POST", "/posts", 1);
+    create_posts.name = "posts";
+    var get_posts = testRoute("GET", "/posts", 1);
+    get_posts.name = "posts";
+    const route_list = [_]routes.Route{ create_posts, get_posts };
+    const verdicts = [_]classify.Verdict{ testVerdict(.backend), testVerdict(.content) };
+    const node: fragments.Node = .{ .text = null, .kind = .turbo_frame, .line = 1, .col = 1, .output = true, .code = "turbo_frame_tag", .name = "latest", .value = "posts", .args = &.{}, .attrs = &.{}, .missing = false, .dynamic = false };
+    try std.testing.expect(!frameIsApi(.{
+        .templates = &.{},
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .routes = &route_list,
+        .classifications = &verdicts,
+    }, node, "/posts"));
 }
 
 test "derive: ivar islands require a portable record body and name backend collections" {

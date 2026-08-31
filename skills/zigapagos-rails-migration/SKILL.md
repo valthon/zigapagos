@@ -1,6 +1,6 @@
 ---
 name: zigapagos-rails-migration
-description: Migrate a Rails app's presentation layer to zigapagos — discover and classify routes, convert them into a real project, bind forms and record-backed views to ZigBase, and port supported Stimulus, Turbo-frame and React interactivity by explicit decision. Use when asked to inventory, scan, assess, or port a Rails project for zigapagos.
+description: Migrate a Rails app's presentation layer to zigapagos — discover and classify routes, convert and decide a real project, bind ZigBase forms/data, port supported interactivity, and replay typed parity before backend handoff. Use when asked to inventory, assess, or port Rails to zigapagos.
 license: MIT
 metadata:
   source: https://github.com/valthon/zigapagos
@@ -265,7 +265,7 @@ whoever owns the backend, and come back with an `openapi.json`.
    `RAILS_TEMPLATE_ENGINE_UNSUPPORTED.<path>.engine` — note the `engine` tail
    instead of a line/column, because nothing parsed the file.
 
-8. **Wipe the target except the decisions file, and re-run.**
+8. **Re-run to complete, build, replay parity, and hand off.**
 
    ```sh
    find <new-site> -mindepth 1 -maxdepth 1 ! -name MIGRATION.decisions.json -exec rm -rf {} +
@@ -283,21 +283,17 @@ whoever owns the backend, and come back with an `openapi.json`.
    `ZIGAPAGOS_RUNTIME_DIR` environment variable the run already reads for the
    sidecar; or editing the generated `package.json` afterwards. Without any of
    them the dependency is the placeholder `file:TODO-SET-RUNTIME-PATH` and
-   step 9's `bun install` fails with
+   the build below fails during `bun install` with
    `Could not find package.json for "file:TODO-SET-RUNTIME-PATH"`. The
    handoff says so too — that route's `note` reads
    `set dependencies.@z/runtime in package.json`. A target with no SPA and no
    island has no `package.json` and needs none of them.
 
-   When the target contains generated islands, run `bun test` in the target
-   after the successful re-run. Its happy-dom hydration tests exercise action
-   wiring, frame fetches, the React bridge, and record-backed rendering that a
-   server-side release alone cannot prove.
-
-9. **Build the migrated site.**
+   Build only after exit 0:
 
    ```sh
    bash <new-site>/build.sh
+   zigapagos doctor <new-site>/zig-out/site
    ```
 
    That is `bun install` (only when there is a `package.json`) then
@@ -313,16 +309,39 @@ whoever owns the backend, and come back with an `openapi.json`.
    its Rails layout in `spa.head`. Review that list when the old app computed
    head assets dynamically.
 
-   Then audit it: `zigapagos doctor <new-site>/zig-out/site`. Expect **0
-   errors**, and one `dangling-internal-link` warning per link into a route
+   Expect **0 errors**, and one `dangling-internal-link` warning per link into a route
    you answered `retain` or `blocked` — those routes write no page, so the
    static tree genuinely does not answer those URLs while Rails still does.
    That is the honest report of a partial migration, not a conversion defect.
 
-10. **Finish the leftovers by hand.** A route left `open` still builds: its
-    unfinished regions are `<!-- rails:finding … -->` HTML comments, visible
-    in the built page. Grep the emitted tree for `rails:finding`,
-    `rails:unmapped` and `rails: ` to find every one.
+   A nonempty `parity[]` also writes two fixed runners. Initialize the same
+   schema that produced the OpenAPI document into an isolated data directory,
+   then run both through stock ZigBase (never substitute the development
+   stub):
+
+   ```sh
+   d="$(mktemp -d)"
+   zigbase migrate --data-dir "$d"
+   zigbase schema apply <path>/schema.json --data-dir "$d"
+   zigapagos e2e --site=<new-site>/zig-out/site --data-dir="$d" -- \
+     bun <new-site>/test/parity.ts
+   zigapagos e2e --site=<new-site>/zig-out/site --data-dir="$d" -- \
+     python3 <new-site>/test/journey_playwright.py
+   ```
+
+   `test/parity.ts` replays page, asset, auth, authorization, mutation and
+   validation facts from `MIGRATION.handoff.json`; it contains no per-route
+   generated logic. `test/journey_playwright.py` drives signup,
+   signout/signin, allowed submit, and the rendered validation error in system
+   Chrome. `RAILS_ORIGIN` is an optional copied-asset oracle, not proof that
+   the source Rails app boots. Missing Playwright/Chrome may skip the browser
+   journey loudly; a located browser/server failure is a failure.
+
+   Finish open leftovers by hand: grep for `rails:finding`, `rails:unmapped`
+   and `rails: `. Then hand the schema/OpenAPI document and remaining model,
+   rule, consumer-route and data work to `zigbase-zigapagos-fullstack` (or
+   `zigbase-migrate-rails-api` for the API-only half). This skill stops at the
+   presentation target and replay evidence; it does not author backend policy.
 
 ## Rules
 

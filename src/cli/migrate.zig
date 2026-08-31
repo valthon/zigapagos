@@ -1490,6 +1490,17 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
             defer gpa.free(asset_rows);
             const redirect_rows = railsHandoffRedirects(gpa, result);
             defer gpa.free(redirect_rows);
+            const parity_result = rails.parity.build(gpa, &discovery, result, backend_doc) catch |err| switch (err) {
+                error.OutOfMemory => fatal.oom(),
+            };
+            defer rails.parity.free(gpa, parity_result);
+            rails.scaffold.writeParityRunners(io, gpa, target, parity_result.entries.len > 0, &last_error_path, &last_error) catch |err| switch (err) {
+                error.OutOfMemory => fatal.oom(),
+                error.TargetWrite, error.SourceRead => fatal.file(
+                    last_error_path orelse target,
+                    last_error orelse err,
+                ),
+            };
 
             const handoff_bytes = rails.handoff.build(gpa, .{
                 .generator_version = options.version,
@@ -1504,6 +1515,7 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
                     .file = doc.file,
                     .contract_version = doc.contract_version,
                 } else null,
+                .parity = parity_result.entries,
             }) catch |err| switch (err) {
                 error.OutOfMemory => fatal.oom(),
             };

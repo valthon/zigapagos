@@ -175,16 +175,112 @@ pub const RedirectEntry = struct {
     to: ?[]const u8,
 };
 
-/// One replayable parity check. Stage 5's type; declared so `parity[]` has a
-/// walked element schema rather than an untyped hole, and left at the three
-/// fields every kind shares. The `expect` object the spec sketches varies by
-/// `kind` and is deliberately NOT guessed at here -- adding it later is free
-/// while `/1` has not shipped in a release, and every Stage 2 document emits
-/// `parity: []`, so no document can be affected by the gap in the meantime.
-pub const ParityEntry = struct {
-    id: []const u8,
-    kind: []const u8,
-    url: []const u8,
+/// One form field the fixed parity runner submits. Values are strings on the
+/// wire because Rails form controls submit strings even when the backend later
+/// coerces them to another scalar type. `invalid_value` is `null` unless this
+/// field is the deterministic validation target.
+pub const RequestField = struct {
+    name: []const u8,
+    value: []const u8,
+    invalid_value: ?[]const u8,
+};
+
+pub const NavigateExpect = struct {
+    status: u16,
+    title: ?[]const u8,
+    h1: ?[]const u8,
+    links: []const []const u8,
+};
+
+pub const AssetExpect = struct {
+    status: u16,
+    content_type: []const u8,
+    rails_url: ?[]const u8,
+};
+
+pub const AuthExpect = struct { status: u16, collection: []const u8, page_url: []const u8 };
+
+pub const SubmitAllowedExpect = struct {
+    status_family: u8,
+    operation_id: []const u8,
+    method: []const u8,
+    collection: ?[]const u8,
+    page_url: []const u8,
+    fields: []const RequestField,
+};
+
+pub const SubmitDeniedExpect = struct {
+    statuses: []const u16,
+    operation_id: []const u8,
+    method: []const u8,
+    collection: ?[]const u8,
+    fields: []const RequestField,
+};
+
+pub const ValidationErrorExpect = struct {
+    status: u16,
+    operation_id: []const u8,
+    method: []const u8,
+    collection: ?[]const u8,
+    page_url: []const u8,
+    field: []const u8,
+    fields: []const RequestField,
+};
+
+pub const NavigateParity = struct { id: []const u8, url: []const u8, expect: NavigateExpect };
+pub const AssetParity = struct { id: []const u8, url: []const u8, expect: AssetExpect };
+pub const SignupParity = struct { id: []const u8, url: []const u8, expect: AuthExpect };
+pub const SigninParity = struct { id: []const u8, url: []const u8, expect: AuthExpect };
+pub const SubmitAllowedParity = struct { id: []const u8, url: []const u8, expect: SubmitAllowedExpect };
+pub const SubmitDeniedParity = struct { id: []const u8, url: []const u8, expect: SubmitDeniedExpect };
+pub const ValidationErrorParity = struct { id: []const u8, url: []const u8, expect: ValidationErrorExpect };
+
+pub const ParityKind = enum { navigate, asset, signup, signin, submit_allowed, submit_denied, validation_error };
+
+/// The tag is serialized as `kind` and the payload is flattened to
+/// `{id,kind,url,expect}`. A mismatched kind/expect pair is unrepresentable.
+pub const ParityEntry = union(ParityKind) {
+    navigate: NavigateParity,
+    asset: AssetParity,
+    signup: SignupParity,
+    signin: SigninParity,
+    submit_allowed: SubmitAllowedParity,
+    submit_denied: SubmitDeniedParity,
+    validation_error: ValidationErrorParity,
+
+    /// Structural metadata consumed by schema_gen's generic tagged-union
+    /// walker. It describes this custom wire serializer without naming this
+    /// particular union in the generator.
+    pub const json_schema_tag_field = "kind";
+
+    pub fn id(self: ParityEntry) []const u8 {
+        return switch (self) {
+            inline else => |row| row.id,
+        };
+    }
+
+    pub fn url(self: ParityEntry) []const u8 {
+        return switch (self) {
+            inline else => |row| row.url,
+        };
+    }
+
+    pub fn jsonStringify(self: ParityEntry, jws: anytype) !void {
+        try jws.beginObject();
+        switch (self) {
+            inline else => |row, tag| {
+                try jws.objectField("id");
+                try jws.write(row.id);
+                try jws.objectField(json_schema_tag_field);
+                try jws.write(@tagName(tag));
+                try jws.objectField("url");
+                try jws.write(row.url);
+                try jws.objectField("expect");
+                try jws.write(row.expect);
+            },
+        }
+        try jws.endObject();
+    }
 };
 
 /// Field order is the wire contract, top to bottom: `schema`,
@@ -276,6 +372,9 @@ pub const BuildInput = struct {
     /// every caller that predates Stage 3 -- and a wrong `null` here is
     /// visible in one line of the report, not hidden in a status rule.
     backend: ?Backend = null,
+    /// Borrowed and never reordered in place; `build` takes a private sorted
+    /// copy before serialization.
+    parity: []const ParityEntry = &.{},
 };
 
 /// The verbs a visitor can reach by following a link -- the ones `complete`
@@ -402,6 +501,105 @@ fn redirectLessThan(_: void, a: RedirectEntry, b: RedirectEntry) bool {
         .gt => false,
         .eq => report.orderOptionalString(a.to, b.to) == .lt,
     };
+}
+
+/// A parity row plus its compact wire bytes. The bytes are the final
+/// tiebreaker after `(id, kind, url)`, making the order total even if a buggy
+/// caller supplies the same identity with two different expectations.
+const ParityPair = struct {
+    entry: ParityEntry,
+    wire: []const u8,
+};
+
+fn requestFieldLessThan(_: void, a: RequestField, b: RequestField) bool {
+    const name = std.mem.order(u8, a.name, b.name);
+    if (name != .eq) return name == .lt;
+    const value = std.mem.order(u8, a.value, b.value);
+    if (value != .eq) return value == .lt;
+    return report.orderOptionalString(a.invalid_value, b.invalid_value) == .lt;
+}
+
+fn sortedFields(scratch: Allocator, fields: []const RequestField) Allocator.Error![]const RequestField {
+    const copy = try scratch.dupe(RequestField, fields);
+    std.mem.sort(RequestField, copy, {}, requestFieldLessThan);
+    return copy;
+}
+
+fn u16LessThan(_: void, a: u16, b: u16) bool {
+    return a < b;
+}
+
+fn sortedStatuses(scratch: Allocator, statuses: []const u16) Allocator.Error![]const u16 {
+    const copy = try scratch.dupe(u16, statuses);
+    std.mem.sort(u16, copy, {}, u16LessThan);
+    return copy;
+}
+
+/// Normalize every nested list without reaching through the caller's borrows.
+/// This keeps parity bytes independent of both row order and per-row list
+/// order; all strings remain borrowed because sorting only moves slice values.
+fn normalizedParity(scratch: Allocator, entry: ParityEntry) Allocator.Error!ParityEntry {
+    return switch (entry) {
+        .navigate => |row| .{ .navigate = .{
+            .id = row.id,
+            .url = row.url,
+            .expect = .{
+                .status = row.expect.status,
+                .title = row.expect.title,
+                .h1 = row.expect.h1,
+                .links = try sortedCopy(scratch, row.expect.links),
+            },
+        } },
+        .asset => |row| .{ .asset = row },
+        .signup => |row| .{ .signup = row },
+        .signin => |row| .{ .signin = row },
+        .submit_allowed => |row| .{ .submit_allowed = .{
+            .id = row.id,
+            .url = row.url,
+            .expect = .{
+                .status_family = row.expect.status_family,
+                .operation_id = row.expect.operation_id,
+                .method = row.expect.method,
+                .collection = row.expect.collection,
+                .page_url = row.expect.page_url,
+                .fields = try sortedFields(scratch, row.expect.fields),
+            },
+        } },
+        .submit_denied => |row| .{ .submit_denied = .{
+            .id = row.id,
+            .url = row.url,
+            .expect = .{
+                .statuses = try sortedStatuses(scratch, row.expect.statuses),
+                .operation_id = row.expect.operation_id,
+                .method = row.expect.method,
+                .collection = row.expect.collection,
+                .fields = try sortedFields(scratch, row.expect.fields),
+            },
+        } },
+        .validation_error => |row| .{ .validation_error = .{
+            .id = row.id,
+            .url = row.url,
+            .expect = .{
+                .status = row.expect.status,
+                .operation_id = row.expect.operation_id,
+                .method = row.expect.method,
+                .collection = row.expect.collection,
+                .page_url = row.expect.page_url,
+                .field = row.expect.field,
+                .fields = try sortedFields(scratch, row.expect.fields),
+            },
+        } },
+    };
+}
+
+fn parityLessThan(_: void, a: ParityPair, b: ParityPair) bool {
+    const id = std.mem.order(u8, a.entry.id(), b.entry.id());
+    if (id != .eq) return id == .lt;
+    const kind = std.mem.order(u8, @tagName(std.meta.activeTag(a.entry)), @tagName(std.meta.activeTag(b.entry)));
+    if (kind != .eq) return kind == .lt;
+    const url = std.mem.order(u8, a.entry.url(), b.entry.url());
+    if (url != .eq) return url == .lt;
+    return std.mem.lessThan(u8, a.wire, b.wire);
 }
 
 /// Element-wise lexicographic order over two already-sorted string lists,
@@ -571,6 +769,23 @@ pub fn build(gpa: Allocator, in: BuildInput) Allocator.Error![]u8 {
     }
     std.mem.sort(RedirectEntry, redirect_entries, {}, redirectLessThan);
 
+    // --- parity[] --------------------------------------------------------
+    // Serialize once into the private arena to obtain a total content
+    // tiebreak without writing a second hand-maintained expectation
+    // comparator. The final Handoff serialization still writes the typed
+    // entries, so these bytes are scratch only.
+    const parity_pairs = try scratch.alloc(ParityPair, in.parity.len);
+    for (in.parity, 0..) |entry, i| {
+        const normalized = try normalizedParity(scratch, entry);
+        parity_pairs[i] = .{
+            .entry = normalized,
+            .wire = try std.json.Stringify.valueAlloc(scratch, normalized, .{}),
+        };
+    }
+    std.mem.sort(ParityPair, parity_pairs, {}, parityLessThan);
+    const parity_entries = try scratch.alloc(ParityEntry, parity_pairs.len);
+    for (parity_pairs, 0..) |pair, i| parity_entries[i] = pair.entry;
+
     const value: Handoff = .{
         .generator = .{ .version = in.generator_version },
         .backend = in.backend,
@@ -578,7 +793,7 @@ pub fn build(gpa: Allocator, in: BuildInput) Allocator.Error![]u8 {
         .routes = route_entries,
         .assets = asset_entries,
         .redirects = redirect_entries,
-        .parity = &.{},
+        .parity = parity_entries,
     };
 
     var out = try std.json.Stringify.valueAlloc(gpa, value, .{ .whitespace = .indent_2 });
@@ -1345,5 +1560,86 @@ test "build under a FailingAllocator leaks nothing on any partial allocation" {
         } else |err| {
             try testing.expectEqual(error.OutOfMemory, err);
         }
+    }
+}
+
+test "build: parity is typed, flattened, and sorted by stable wire identity" {
+    const gpa = testing.allocator;
+    const d = emptyDiscovery();
+    var links = [_][]const u8{ "/posts", "/" };
+    const rows = [_]ParityEntry{
+        .{ .asset = .{ .id = "parity:z", .url = "/z.css", .expect = .{ .status = 200, .content_type = "text/css", .rails_url = "/assets/z.css" } } },
+        .{ .navigate = .{ .id = "parity:a", .url = "/a", .expect = .{ .status = 200, .title = "A", .h1 = null, .links = &links } } },
+    };
+    const out = try build(gpa, .{
+        .generator_version = "v",
+        .discovery = &d,
+        .routes = &.{},
+        .assets = &.{},
+        .redirects = &.{},
+        .parity = &rows,
+    });
+    defer gpa.free(out);
+
+    var parsed = try std.json.parseFromSlice(std.json.Value, gpa, out, .{});
+    defer parsed.deinit();
+    const parity = parsed.value.object.get("parity").?.array.items;
+    try testing.expectEqual(@as(usize, 2), parity.len);
+    try testing.expectEqualStrings("parity:a", parity[0].object.get("id").?.string);
+    try testing.expectEqualStrings("navigate", parity[0].object.get("kind").?.string);
+    try testing.expectEqualStrings("/a", parity[0].object.get("url").?.string);
+    try testing.expectEqual(@as(i64, 200), parity[0].object.get("expect").?.object.get("status").?.integer);
+    try testing.expectEqualStrings("/", parity[0].object.get("expect").?.object.get("links").?.array.items[0].string);
+    try testing.expectEqualStrings("/posts", links[0]);
+    try testing.expect(parity[0].object.get("navigate") == null);
+    try testing.expectEqualStrings("parity:z", parity[1].object.get("id").?.string);
+}
+
+test "build: parity expectation bytes break identity ties without mutating the caller" {
+    const gpa = testing.allocator;
+    const d = emptyDiscovery();
+    const a: ParityEntry = .{ .navigate = .{ .id = "same", .url = "/", .expect = .{ .status = 200, .title = "A", .h1 = null, .links = &.{} } } };
+    const b: ParityEntry = .{ .navigate = .{ .id = "same", .url = "/", .expect = .{ .status = 200, .title = "B", .h1 = null, .links = &.{} } } };
+    var forward = [_]ParityEntry{ a, b };
+    const backward = [_]ParityEntry{ b, a };
+    const out_a = try build(gpa, .{ .generator_version = "v", .discovery = &d, .routes = &.{}, .assets = &.{}, .redirects = &.{}, .parity = &forward });
+    defer gpa.free(out_a);
+    const out_b = try build(gpa, .{ .generator_version = "v", .discovery = &d, .routes = &.{}, .assets = &.{}, .redirects = &.{}, .parity = &backward });
+    defer gpa.free(out_b);
+    try testing.expectEqualStrings(out_a, out_b);
+    try testing.expectEqualStrings("A", switch (forward[0]) {
+        .navigate => |row| row.expect.title.?,
+        else => unreachable,
+    });
+    try testing.expectEqualStrings("B", switch (forward[1]) {
+        .navigate => |row| row.expect.title.?,
+        else => unreachable,
+    });
+}
+
+test "build: populated parity path is leak-free under every allocation failure" {
+    const d = emptyDiscovery();
+    const parity = [_]ParityEntry{.{ .submit_denied = .{
+        .id = "submit_denied:createPosts",
+        .url = "/api/collections/posts/records",
+        .expect = .{
+            .statuses = &.{ 401, 403 },
+            .operation_id = "createPosts",
+            .method = "POST",
+            .collection = "posts",
+            .fields = &.{.{ .name = "title", .value = "zigapagos parity", .invalid_value = "" }},
+        },
+    } }};
+    const in: BuildInput = .{ .generator_version = "v", .discovery = &d, .routes = &.{}, .assets = &.{}, .redirects = &.{}, .parity = &parity };
+
+    var fail_index: usize = 0;
+    while (true) : (fail_index += 1) {
+        if (fail_index > 1000) return error.SweepNeverReachedSuccess;
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
+        const gpa = failing.allocator();
+        if (build(gpa, in)) |out| {
+            gpa.free(out);
+            break;
+        } else |err| try testing.expectEqual(error.OutOfMemory, err);
     }
 }

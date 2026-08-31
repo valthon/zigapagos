@@ -66,7 +66,7 @@ export function versionFromBuildZon(repoRoot) {
 //
 // Every range below is read out of the file that already owns that number, so
 // there is no second copy to drift. That is the whole design: a hand-written
-// `"@zigbase/server": "0.12.0"` in this file would be correct exactly until
+// `"@zigbase/server": "0.13.0"` in this file would be correct exactly until
 // someone bumped `pinned_version` in the Zig source and not here, at which point
 // `zigapagos dev` would resolve one zigbase from npm and download a DIFFERENT one
 // into the cache — the same tool at two versions depending on how the user
@@ -104,17 +104,16 @@ export function runtimeDepsFromPackageJson(repoRoot) {
  * WHICH PACKAGE, AND WHY IT IS THE SCOPED ONE. zigbase is on npm twice: the bare
  * `zigbase` alias, published once and therefore only ever `0.12.0`, and
  * `@zigbase/server`, which carries the full history back to `0.4.0`. Only the
- * scoped package can follow a pin at all. That the alias happens to equal the
- * current pin (`v0.12.0`) makes it MORE dangerous, not less: it resolves today,
- * so nothing complains, and the next bump leaves the npm path installing 0.12.0
- * while the download fallback fetches the new pin — one zigapagos running two
+ * scoped package can follow a pin at all. The alias already differs from the
+ * current pin, so using it leaves the npm path installing 0.12.0 while the
+ * download fallback fetches the verified release — one zigapagos running two
  * different zigbases depending on how it was installed. Worse, this lands in
  * `optionalDependencies` (see genPackages), where npm SKIPS a range it cannot
  * resolve without failing the install, so the alias's failure mode is silence
  * either way. check-toolchain.mjs rejects the alias by name for that reason.
  *
  * Exact, not a caret range, for the same reason the platform packages are exact:
- * the pin names the one build this harness was verified against, and `^0.12.0`
+ * the pin names the one build this harness was verified against, and `^0.13.0`
  * would let npm install a zigbase the download path would never produce.
  */
 export function zigbaseDepFromZig(repoRoot) {

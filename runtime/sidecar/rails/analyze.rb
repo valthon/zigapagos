@@ -484,7 +484,14 @@ module RailsAnalyze
           next { path: rel, unreadable: "#{e.class}: #{e.message.gsub(real, rel)}" }
         end
       res = RailsTemplates.analyze(source, path: rel, i18n: table)
-      res[:error] ? { path: rel, error: res[:error], line: res[:line] } : { path: rel, nodes: res[:nodes] }
+      res[:error] ? { path: rel, error: res[:error], line: res[:line] } : {
+        path: rel,
+        nodes: res[:nodes],
+        parity_h1: res[:parity_h1],
+        parity_h1_node: res[:parity_h1_node],
+        parity_links: res[:parity_links],
+        parity_link_nodes: res[:parity_link_nodes],
+      }
     end
     { ok: true, locale: table.locale, templates: templates, i18n_errors: table.errors, ruby: RUBY_INFO }
   end

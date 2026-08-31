@@ -17,6 +17,7 @@
 #
 # Never evaluates anything. Templates under migration are untrusted input.
 require "json"
+require "cgi"
 require "prism"
 require_relative "erb"
 require_relative "i18n"
@@ -55,7 +56,14 @@ module RailsTemplates
     end
     walker = Walker.new(path, i18n, code_tokens, line_map, col_map, text_tokens)
     walker.walk_program(result.value)
-    { nodes: walker.nodes }
+    presentation = presentation_facts(walker.nodes)
+    {
+      nodes: walker.nodes,
+      parity_h1: presentation[:h1],
+      parity_h1_node: presentation[:h1_node],
+      parity_links: presentation[:links],
+      parity_link_nodes: presentation[:link_nodes],
+    }
   rescue StandardError, SystemStackError => e
     # Same boundary rationale as controllers.rb: a bug in this walker, or a
     # SystemStackError out of Prism itself on pathologically nested but valid
@@ -63,6 +71,51 @@ module RailsTemplates
     # down. SystemStackError is named explicitly because it is not a
     # StandardError.
     { error: "#{e.class}: #{e.message}", line: 1 }
+  end
+
+  # Static browser-visible facts for Stage 5 parity. Code tokens become a NUL
+  # barrier, so a heading or attribute split by ERB is dynamic and cannot
+  # accidentally match across the gap. This sidecar is already the template's
+  # HTML-aware boundary; Zig receives facts and never reparses emitted HTML.
+  def self.presentation_facts(nodes)
+    marker = /\u0001(\d+)\u0002/
+    text = nodes.each_with_index.map do |node, index|
+      prefix = "\u0001#{index}\u0002"
+      if node[:t] == "text"
+        prefix + node[:text]
+      elsif node[:output] && %w[literal i18n].include?(node[:kind]) && node[:value]
+        prefix + CGI.escapeHTML(node[:value].to_s)
+      elsif %w[stimulus turbo_frame component_root vue_root block_end].include?(node[:kind])
+        prefix
+      else
+        prefix + "\0"
+      end
+    end.join
+    text = text.gsub(/<!--.*?-->/m, "")
+    text = text.gsub(%r{<(script|style)\b[^>]*>.*?</\1\s*>}im, "")
+
+    node_before = lambda do |offset|
+      text[0...offset].scan(marker).last&.first&.to_i
+    end
+
+    heading = nil
+    heading_node = nil
+    if (m = /<h1\b[^>]*>([^<\0]*)<\/h1\s*>/im.match(text))
+      heading_node = node_before.call(m.begin(0))
+      heading = CGI.unescapeHTML(m[1].gsub(marker, "")).gsub(/\s+/, " ").strip
+      heading = nil if heading.empty?
+      heading_node = nil if heading.nil?
+    end
+
+    links = []
+    text.to_enum(:scan, /<a\b([^>\0]*)>/im).each do
+      match = Regexp.last_match
+      attrs = match[1].gsub(marker, "")
+      href = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i.match(attrs)
+      links << [CGI.unescapeHTML(href.captures.compact.first), node_before.call(match.begin(0))] if href
+    end
+    links = links.uniq.sort_by { |value, node| [value, node || -1] }
+    { h1: heading, h1_node: heading_node, links: links.map(&:first), link_nodes: links.map(&:last) }
   end
 
   # Compiles the token stream to
