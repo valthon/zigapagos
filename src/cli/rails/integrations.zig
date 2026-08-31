@@ -23,6 +23,76 @@ pub const Integration = struct {
     evidence: []const u8,
 };
 
+/// One installable package declaration copied from package.json. Both
+/// fields are owned because the JSON parse tree is released before this
+/// value reaches discovery's consumers.
+pub const NpmDep = struct {
+    name: []const u8,
+    version: []const u8,
+};
+
+/// Contract 2 (owned-result): returns every string-valued dependency and
+/// devDependency, sorted by name, with both fields freshly allocated.
+/// `dependencies` wins when a malformed package declares the same name in
+/// both sections, matching package managers' effective dependency view.
+/// Malformed JSON yields an empty owned slice: `scan` is the single place
+/// that reports `RAILS_PACKAGE_JSON_MALFORMED` for the same bytes.
+pub fn dependencyVersions(gpa: Allocator, package_json: []const u8) Allocator.Error![]NpmDep {
+    var parsed = std.json.parseFromSlice(std.json.Value, gpa, package_json, .{}) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return gpa.alloc(NpmDep, 0),
+    };
+    defer parsed.deinit();
+
+    var list: std.ArrayListUnmanaged(NpmDep) = .empty;
+    errdefer {
+        for (list.items) |dep| {
+            gpa.free(dep.name);
+            gpa.free(dep.version);
+        }
+        list.deinit(gpa);
+    }
+    if (parsed.value == .object) {
+        for ([_][]const u8{ "dependencies", "devDependencies" }) |section| {
+            const deps = parsed.value.object.get(section) orelse continue;
+            if (deps != .object) continue;
+            var it = deps.object.iterator();
+            while (it.next()) |entry| {
+                if (entry.value_ptr.* != .string) continue;
+                var duplicate = false;
+                for (list.items) |existing| {
+                    if (std.mem.eql(u8, existing.name, entry.key_ptr.*)) {
+                        duplicate = true;
+                        break;
+                    }
+                }
+                if (duplicate) continue;
+                const name = try gpa.dupe(u8, entry.key_ptr.*);
+                errdefer gpa.free(name);
+                const version = try gpa.dupe(u8, entry.value_ptr.string);
+                errdefer gpa.free(version);
+                try list.append(gpa, .{ .name = name, .version = version });
+            }
+        }
+    }
+    const out = try list.toOwnedSlice(gpa);
+    std.mem.sort(NpmDep, out, {}, struct {
+        fn lessThan(_: void, a: NpmDep, b: NpmDep) bool {
+            return std.mem.order(u8, a.name, b.name) == .lt;
+        }
+    }.lessThan);
+    return out;
+}
+
+/// Contract 2 counterpart to `dependencyVersions`.
+pub fn freeDependencyVersions(gpa: Allocator, items: []NpmDep) void {
+    for (items) |dep| {
+        gpa.free(dep.name);
+        gpa.free(dep.version);
+    }
+    gpa.free(items);
+}
+
 /// Test helper: runs `scan` with a throwaway blocker list and asserts it came
 /// back empty, so every existing happy-path test doesn't have to thread one
 /// through by hand. Malformed-JSON tests below construct the list directly
@@ -104,6 +174,33 @@ test "devDependencies are scanned too" {
     defer freeIntegrations(std.testing.allocator, items);
     try std.testing.expectEqual(@as(usize, 1), items.len);
     try std.testing.expectEqualStrings("vite", items[0].name);
+}
+
+test "dependencyVersions returns every string dependency sorted by name" {
+    const gpa = std.testing.allocator;
+    const items = try dependencyVersions(gpa,
+        \\{"dependencies":{"react":"19.0.0","x":{"workspace":"*"}},"devDependencies":{"@types/react":"19.0.1","react":"ignored-duplicate"}}
+    );
+    defer freeDependencyVersions(gpa, items);
+
+    try std.testing.expectEqual(@as(usize, 2), items.len);
+    try std.testing.expectEqualStrings("@types/react", items[0].name);
+    try std.testing.expectEqualStrings("19.0.1", items[0].version);
+    try std.testing.expectEqualStrings("react", items[1].name);
+    try std.testing.expectEqualStrings("19.0.0", items[1].version);
+}
+
+test "dependencyVersions: FailingAllocator sweep" {
+    var fail_index: usize = 0;
+    while (true) : (fail_index += 1) {
+        if (fail_index > 200) return error.SweepNeverReachedSuccess;
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
+        if (dependencyVersions(failing.allocator(), "{\"dependencies\":{\"react\":\"19\",\"d3\":\"7\"}}")) |items| {
+            defer freeDependencyVersions(std.testing.allocator, items);
+            try std.testing.expectEqual(@as(usize, 2), items.len);
+            break;
+        } else |err| try std.testing.expectEqual(error.OutOfMemory, err);
+    }
 }
 
 test "malformed package.json emits a blocker, not a silent zero integrations" {

@@ -120,9 +120,45 @@ pub const Kind = enum {
     turbo_frame,
     turbo_stream,
     component_root,
+    /// An element carrying `data-controller`, found in a TEXT run rather than
+    /// in a Ruby fragment: Rails writes Stimulus, Turbo frames and React
+    /// roots as ordinary HTML, so `templates.rb` scans the runs for them (see
+    /// its element-scan section) and closes each into a region with a
+    /// `block_end` whose `code` is the close TAG. `name` is the
+    /// `data-controller` value VERBATIM -- it may name several identifiers --
+    /// and `value` is the tag name.
+    stimulus,
+    /// An element carrying `data-vue-component`. Vue is out of scope (spec
+    /// decision 7), so this node exists to be REPORTED -- as a blocker and a
+    /// finding -- never to be built from.
+    vue_root,
     raw,
     unknown,
 };
+
+/// What a `component_root`'s prop VALUE was before it was rendered to text.
+///
+/// A React prop's type is part of it: `points: 3` has to reach the target as
+/// `.points = 3`, not `"3"`, because the island's `Props` interface is
+/// typechecked and a number arriving as a string fails the build with an
+/// error about the generated file rather than about the template. Every
+/// OTHER `attrs` consumer wants the rendered HTML attribute and is served by
+/// the default, which is why this rides on the existing pair instead of
+/// forking `attrs` in two.
+pub const ValueKind = enum { string, number, boolean, null };
+
+/// Contract 3 (caller-buffer): takes no allocator and allocates nothing.
+/// Unrecognised names degrade to `.string` rather than erroring, for the
+/// reason `kindFromWire` degrades to `.unknown`: `templates.rb` may grow a
+/// type this build has never heard of, and refusing the attribute would
+/// shorten a props list the target is typechecked against. The same
+/// `inline for` keeps the enum the single source of truth.
+pub fn valueKindFromWire(s: []const u8) ValueKind {
+    inline for (@typeInfo(ValueKind).@"enum".fields) |f| {
+        if (std.mem.eql(u8, f.name, s)) return @field(ValueKind, f.name);
+    }
+    return .string;
+}
 
 /// Contract 3 (caller-buffer): takes no allocator and allocates nothing --
 /// the returned `Kind` is a plain value and `s` is only read. The `inline
@@ -149,6 +185,12 @@ pub fn kindFromWire(s: []const u8) Kind {
 pub const Attr = struct {
     key: []const u8,
     value: []const u8,
+    /// What the value WAS before it was rendered to text. `.string` for every
+    /// pair the sidecar sends as a two-element array -- which is every pair
+    /// but a `component_root`'s props -- so a consumer that does not care
+    /// about types reads exactly what it always read, and a sidecar predating
+    /// the third element decodes unchanged.
+    kind: ValueKind = .string,
 };
 
 /// One entry in a template's node stream, in source order.
@@ -191,7 +233,12 @@ pub const Node = struct {
     value: ?[]const u8,
     args: []const []const u8,
     attrs: []const Attr,
-    /// `i18n` only: the key resolved to no translation in the loaded locale.
+    /// Two readings, one per family of node -- both of them "the thing this
+    /// node names was looked for and not found". On an `i18n` node: the key
+    /// resolved to no translation in the loaded locale. On an ELEMENT node
+    /// (`stimulus`, `vue_root`, an HTML-form `turbo_frame`/`component_root`):
+    /// no close tag was found at the same Ruby block depth, so the region has
+    /// no extent and nothing that needs one may be offered for it (B11).
     missing: bool,
     /// The construct was recognised but one of its operands is not a
     /// literal, so no name/value could be recovered statically.
@@ -313,11 +360,13 @@ const WireNode = struct {
     /// argument it could not read as a literal; `dupeNode` decodes those as
     /// `""` (see `Attr`'s doc for the same call on the value side).
     args: []const ?[]const u8 = &.{},
-    /// A two-element `[key, value]` array per attribute, with a nullable
-    /// value -- `templates.rb` emits pairs, not an object, so key order
-    /// survives the round trip. Typed as a slice-of-slices rather than a
-    /// tuple because std.json has no fixed-arity array type; `dupeNode`
-    /// tolerates a pair of any length (see there).
+    /// A `[key, value]` array per attribute, with a nullable value --
+    /// `templates.rb` emits pairs, not an object, so key order survives the
+    /// round trip. A `component_root`'s props add a THIRD element naming the
+    /// value's type (`ValueKind`); every other node sends two. Typed as a
+    /// slice-of-slices rather than a tuple because std.json has no
+    /// fixed-arity array type; `dupeNode` tolerates a pair of any length
+    /// (see there).
     attrs: []const []const ?[]const u8 = &.{},
     missing: bool = false,
     dynamic: bool = false,
@@ -412,16 +461,23 @@ fn dupeNode(gpa: Allocator, wn: WireNode) Allocator.Error!Node {
         gpa.free(attrs);
     }
     for (wn.attrs, 0..) |pair, i| {
-        // Defensive against a pair that isn't exactly two elements: the
-        // sidecar always emits `[key, value]`, but this decoder must not
-        // index out of bounds on a future/garbled shape -- a missing half
-        // reads as the same `""` a JSON `null` does.
+        // Length-tolerant on purpose. A `component_root`'s props carry a
+        // THIRD element (the `ValueKind`) and every other node carries two,
+        // so the arity is genuinely variable -- and a future/garbled shape
+        // must not index out of bounds either. A missing half reads as the
+        // same `""` a JSON `null` does; a missing type reads as `.string`,
+        // which is what every pair meant before the type existed.
         const key_src: ?[]const u8 = if (pair.len > 0) pair[0] else null;
         const val_src: ?[]const u8 = if (pair.len > 1) pair[1] else null;
+        const kind_src: ?[]const u8 = if (pair.len > 2) pair[2] else null;
         const key = try gpa.dupe(u8, key_src orelse "");
         errdefer gpa.free(key);
         const val = try gpa.dupe(u8, val_src orelse "");
-        attrs[i] = .{ .key = key, .value = val };
+        attrs[i] = .{
+            .key = key,
+            .value = val,
+            .kind = if (kind_src) |k| valueKindFromWire(k) else .string,
+        };
         attrs_filled = i + 1;
     }
 
@@ -918,8 +974,14 @@ test "decodeResponse: OOM at any point leaves no leak" {
     // one of those too. `std.testing.allocator`'s leak detector
     // (reached through `FailingAllocator.internal_allocator`) is what
     // actually fails the test; nothing here asserts it explicitly.
+    //
+    // Stage 4 added a THIRD element to an attribute pair. It allocates
+    // nothing of its own (`ValueKind` is a plain value), but the fixture
+    // carries a `component_root` triple anyway so the sweep keeps exercising
+    // the arity the decoder actually meets in the field -- a later change
+    // that started duping the type string would otherwise sweep untested.
     const line =
-        \\{"ok":true,"locale":"en","templates":[{"path":"a.html.erb","nodes":[{"t":"text","text":"x","line":1},{"t":"code","kind":"asset","line":1,"col":2,"output":true,"code":"image_tag \"l\"","name":"image_tag","args":["l"],"attrs":[["alt","L"]]}]}],"i18n_errors":[{"path":"config/locales/en.yml","detail":"Psych::SyntaxError"}],"ruby":{"available":true,"version":"3.4.10"}}
+        \\{"ok":true,"locale":"en","templates":[{"path":"a.html.erb","nodes":[{"t":"text","text":"x","line":1},{"t":"code","kind":"asset","line":1,"col":2,"output":true,"code":"image_tag \"l\"","name":"image_tag","args":["l"],"attrs":[["alt","L"]]},{"t":"code","kind":"component_root","line":2,"col":1,"output":false,"code":"<div data-react-class=\"C\">","name":"C","value":"div","attrs":[["p","3","number"]]}]}],"i18n_errors":[{"path":"config/locales/en.yml","detail":"Psych::SyntaxError"}],"ruby":{"available":true,"version":"3.4.10"}}
     ;
     var fail_index: usize = 0;
     var reached_success = false;
@@ -984,6 +1046,108 @@ test "decodeResponse: an absent or empty i18n_errors decodes as an empty slice" 
     const e = try decodeResponse(gpa, "not json", &list);
     defer freeResult(gpa, e);
     try std.testing.expectEqual(@as(usize, 0), e.i18n_errors.len);
+}
+
+// #167 Stage 4 Task 1: the sidecar's element vocabulary. Rails writes three
+// of the four interactive constructs as ORDINARY HTML, so `templates.rb` now
+// finds them in the TEXT runs and closes each into a region with a
+// `block_end` whose `code` is the close TAG (not a Ruby `end`). Two things
+// here can silently get it wrong: a new `kind` decoding as `.unknown`
+// (harmless for an unknown helper, a deleted island for a `stimulus` node),
+// and an `attrs` triple's third element being dropped, which turns a React
+// `points: 3` into the string `"3"` and fails the target's typecheck.
+test "decodeResponse: element nodes, typed attr triples and a close-tag block_end" {
+    const gpa = std.testing.allocator;
+    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    defer blockers.freeList(gpa, &list);
+    const line =
+        \\{"ok":true,"templates":[{"path":"a.html.erb","nodes":[
+        \\{"t":"code","kind":"stimulus","line":2,"col":3,"output":false,"code":"<div data-controller=\"reveal\">","name":"reveal","value":"div","attrs":[["data-action","click->reveal#toggle"]]},
+        \\{"t":"text","text":"<div data-controller=\"reveal\">x</div>","line":2},
+        \\{"t":"code","kind":"block_end","line":2,"col":34,"output":false,"code":"</div>"},
+        \\{"t":"code","kind":"vue_root","line":3,"col":1,"output":false,"code":"<div data-vue-component=\"Widget\">","name":"Widget","missing":true},
+        \\{"t":"code","kind":"component_root","line":4,"col":1,"output":false,"code":"<div data-react-class=\"Chart\">","name":"Chart","attrs":[["series","a","string"],["points","3","number"],["on","true","boolean"],["off","","null"]]}
+        \\]}],"ruby":{"available":true,"version":"3.4.10"}}
+    ;
+    const d = try decodeResponse(gpa, line, &list);
+    defer freeResult(gpa, d);
+    try std.testing.expectEqual(@as(usize, 0), list.items.len);
+    const n = d.templates[0].nodes;
+    try std.testing.expectEqual(@as(usize, 5), n.len);
+
+    try std.testing.expectEqual(Kind.stimulus, n[0].kind);
+    try std.testing.expectEqualStrings("reveal", n[0].name.?);
+    try std.testing.expectEqualStrings("div", n[0].value.?);
+    try std.testing.expectEqual(@as(u64, 3), n[0].col);
+    try std.testing.expect(!n[0].missing);
+    // A stimulus attribute is a plain string pair: the third element is
+    // absent, and the decoder must not read past the pair it was given.
+    try std.testing.expectEqual(ValueKind.string, n[0].attrs[0].kind);
+    try std.testing.expectEqualStrings("click->reveal#toggle", n[0].attrs[0].value);
+
+    // The element node consumes no bytes -- the tag itself still rides
+    // through as an ordinary text run, so the converter can pass it on.
+    try std.testing.expectEqualStrings("<div data-controller=\"reveal\">x</div>", n[1].text.?);
+
+    try std.testing.expectEqual(Kind.block_end, n[2].kind);
+    try std.testing.expectEqualStrings("</div>", n[2].code);
+
+    try std.testing.expectEqual(Kind.vue_root, n[3].kind);
+    try std.testing.expectEqualStrings("Widget", n[3].name.?);
+    // `missing` on an ELEMENT node means the sidecar found no close tag at
+    // the same block depth -- the region has no extent, so no choice that
+    // needs one may be offered for it.
+    try std.testing.expect(n[3].missing);
+
+    try std.testing.expectEqual(Kind.component_root, n[4].kind);
+    try std.testing.expectEqual(@as(usize, 4), n[4].attrs.len);
+    try std.testing.expectEqual(ValueKind.string, n[4].attrs[0].kind);
+    try std.testing.expectEqual(ValueKind.number, n[4].attrs[1].kind);
+    try std.testing.expectEqualStrings("3", n[4].attrs[1].value);
+    try std.testing.expectEqual(ValueKind.boolean, n[4].attrs[2].kind);
+    try std.testing.expectEqual(ValueKind.null, n[4].attrs[3].kind);
+    try std.testing.expectEqualStrings("", n[4].attrs[3].value);
+}
+
+// Forward AND backward compatibility, in one payload: a sidecar predating
+// Stage 4 sends two-element pairs and no `col` on a text run, and this build
+// must read it exactly as the Stage 3 build did. The wire is additive on
+// purpose -- an operator can upgrade the binary and the runtime dir
+// separately -- so the defaults are the contract, not an accident.
+test "decodeResponse: a pre-Stage-4 payload decodes exactly as before" {
+    const gpa = std.testing.allocator;
+    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    defer blockers.freeList(gpa, &list);
+    const line =
+        \\{"ok":true,"templates":[{"path":"a.html.erb","nodes":[
+        \\{"t":"code","kind":"component_root","line":1,"col":5,"output":true,"code":"react_component(\"Hello\", { name: \"n\" })","name":"Hello","attrs":[["name","n"]]},
+        \\{"t":"code","kind":"turbo_frame","line":2,"col":5,"output":true,"code":"turbo_frame_tag \"x\" do","name":"x","dynamic":false}
+        \\]}],"ruby":{"available":true,"version":"3.4.10"}}
+    ;
+    const d = try decodeResponse(gpa, line, &list);
+    defer freeResult(gpa, d);
+    const n = d.templates[0].nodes;
+    try std.testing.expectEqual(@as(usize, 1), n[0].attrs.len);
+    try std.testing.expectEqualStrings("name", n[0].attrs[0].key);
+    try std.testing.expectEqualStrings("n", n[0].attrs[0].value);
+    // The whole point: a pair with no type element is a STRING, which is what
+    // every pre-Stage-4 `attrs` consumer already assumed.
+    try std.testing.expectEqual(ValueKind.string, n[0].attrs[0].kind);
+    try std.testing.expectEqual(Kind.turbo_frame, n[1].kind);
+    try std.testing.expect(!n[1].dynamic);
+    try std.testing.expectEqual(@as(usize, 0), n[1].attrs.len);
+}
+
+test "valueKindFromWire covers every enum tag and falls back to string" {
+    inline for (@typeInfo(ValueKind).@"enum".fields) |f| {
+        try std.testing.expectEqual(@field(ValueKind, f.name), valueKindFromWire(f.name));
+    }
+    // An unrecognised type name degrades to the kind every pre-Stage-4 pair
+    // had, for the same reason `kindFromWire` degrades to `.unknown`: the
+    // sidecar may grow a type this build has never heard of, and dropping the
+    // attribute would shorten a props list the target is typechecked against.
+    try std.testing.expectEqual(ValueKind.string, valueKindFromWire("bigint"));
+    try std.testing.expectEqual(ValueKind.string, valueKindFromWire(""));
 }
 
 test "kindFromWire covers every enum tag and falls back to unknown" {

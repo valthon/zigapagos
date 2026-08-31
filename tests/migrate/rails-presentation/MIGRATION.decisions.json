@@ -37,14 +37,14 @@
       "rationale": "/old keeps redirecting to /about; the host config owns the rule, so there is nothing for the static tree to carry."
     },
     {
-      "id": "RAILS_PARTIAL_DYNAMIC.app/views/posts/index%2Ehtml%2Eerb.L1C61",
-      "choice": "retain",
-      "rationale": "the render call names its partial dynamically, so the index cannot be converted faithfully; Rails keeps serving /posts and this target emits no page for it."
+      "id": "RAILS_REQUEST_TIME_STATE.app/views/posts/index%2Ehtml%2Eerb.L1C33",
+      "choice": "backend",
+      "rationale": "#184 and Stage 4 ruling B7: @posts is a portable collection read, so the generated data island calls the backend document's listPosts operation and owns the dynamic partial beneath it."
     },
     {
-      "id": "RAILS_REQUEST_TIME_STATE.app/views/posts/index%2Ehtml%2Eerb.L1C33",
-      "choice": "retain",
-      "rationale": "@posts is request-time state; the list stays on Rails with the rest of /posts. Only the per-record page below moves, as a SPA."
+      "id": "RAILS_REQUEST_TIME_STATE.app/views/posts/show%2Ehtml%2Eerb.L1C9",
+      "choice": "backend",
+      "rationale": "Stage 4 ruling B7: @post is a portable record read, so the generated SPA view calls the backend document's viewPosts operation."
     },
     {
       "id": "RAILS_ROUTE_AUTH_GUARD.config/routes%2Erb.L14",
@@ -91,6 +91,41 @@
       "id": "RAILS_REQUEST_TIME_STATE.app/views/registrations/new%2Ehtml%2Eerb.L1C36",
       "choice": "island",
       "rationale": "the `full_messages.each do |m|` loop inside that same summary. Answering it `island` is also what closes #181 here: the unbound `|m|` block local never reaches the converter at all once the island owns the region, so the route no longer carries an id-less `rails:unmapped local` that no answer could settle."
+    },
+    {
+      "id": "RAILS_STIMULUS_CONTROLLER.app/views/pages/widgets%2Ehtml%2Eerb.L2C1",
+      "choice": "island",
+      "rationale": "The reveal controller has a portable structural contract; preserve its element and targets in a generated island while flagging the untranslated action body at runtime."
+    },
+    {
+      "id": "RAILS_TURBO_FRAME.app/views/pages/widgets%2Ehtml%2Eerb.L6C5",
+      "choice": "island",
+      "rationale": "The latest frame has a static HTML route source, so a client island can fetch /posts and replace the frame body."
+    },
+    {
+      "id": "RAILS_TURBO_FRAME.app/views/pages/widgets%2Ehtml%2Eerb.L7C5",
+      "choice": "inline",
+      "rationale": "The static frame has no source; preserve its turbo-frame markup without adding a client island."
+    },
+    {
+      "id": "RAILS_COMPONENT_ROOT.app/views/pages/widgets%2Ehtml%2Eerb.L8C5",
+      "choice": "island",
+      "rationale": "Chart has literal serialisable props and a discovered React source, so the compatibility bridge can copy, render, and hydrate it."
+    },
+    {
+      "id": "RAILS_TURBO_STREAM.app/views/pages/live%2Ehtml%2Eerb.L1C5",
+      "choice": "blocked",
+      "rationale": "Realtime Turbo streams are deliberately outside Stage 4; /live does not ship until the follow-up converter exists."
+    },
+    {
+      "id": "RAILS_COMPONENT_VUE_UNSUPPORTED.app/views/pages/live%2Ehtml%2Eerb.L1C33",
+      "choice": "blocked",
+      "rationale": "The runtime compatibility bridge is React-only, so the Vue root blocks /live rather than shipping inert markup."
+    },
+    {
+      "id": "RAILS_JS_ENTRY.app/javascript/application%2Ejs.entry",
+      "choice": "drop",
+      "rationale": "The generated islands replace the reviewed Turbo and controller imports; the Rails application entry itself is not copied."
     }
   ]
 }

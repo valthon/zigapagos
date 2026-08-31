@@ -59,4 +59,8 @@ Rails.application.routes.draw do
   # RAILS_TEMPLATE_UNSCANNED closes. It needs a route to be reached at all:
   # the templates op only ever sees route-reachable views.
   get "/linked", to: "pages#linked"
+  # Stage 4 interactivity: Stimulus, Turbo frames, a React root, and Turbo attributes.
+  get "/widgets", to: "pages#widgets"
+  # Stage 4 blockers: Turbo streams and an unsupported Vue root.
+  get "/live", to: "pages#live"
 end

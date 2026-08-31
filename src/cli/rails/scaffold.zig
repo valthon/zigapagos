@@ -113,6 +113,7 @@ const convert = @import("convert.zig");
 const decisions = @import("decisions.zig");
 const findings = @import("findings.zig");
 const fragments = @import("fragments.zig");
+const port = @import("port.zig");
 const rails = @import("rails.zig");
 const resolve = @import("resolve.zig");
 const route_mod = @import("routes.zig");
@@ -389,6 +390,7 @@ const Acc = struct {
     /// are BORROWED from `Discovery.findings`, which outlives `write`, so
     /// only the list itself is an allocation.
     island_ids: std.ArrayListUnmanaged([]const u8) = .empty,
+    spa_uses_client: bool = false,
 
     fn deinit(self: *Acc, gpa: Allocator) void {
         for (self.routes.items) |o| {
@@ -530,7 +532,10 @@ fn run(ctx: *Ctx, acc: *Acc) WriteError!void {
     defer views.deinit(ctx.gpa);
     var spa_routes: std.ArrayListUnmanaged(SpaRoute) = .empty;
     defer {
-        for (spa_routes.items) |s| ctx.gpa.free(s.segment);
+        for (spa_routes.items) |s| {
+            ctx.gpa.free(s.segment);
+            if (s.port_js) |body| ctx.gpa.free(body);
+        }
         spa_routes.deinit(ctx.gpa);
     }
 
@@ -839,6 +844,10 @@ const SpaRoute = struct {
     outcome_index: usize,
     /// Position in `Discovery.routes`.
     route_index: usize,
+    /// Ported record-view body for a dynamic SPA route; owned when present.
+    port_js: ?[]u8 = null,
+    collection: ?[]const u8 = null,
+    param: ?[]const u8 = null,
 };
 
 /// Total order over routes: `(path, verb, controller, action)`. Mirrors
@@ -1008,25 +1017,47 @@ const Bindings = struct {
     ///
     /// The slice is owned; every string in it borrows `Discovery`.
     status_origins: []StatusOrigin = &.{},
+    identifier_slices: [][]const []const u8 = &.{},
+    stimulus_paths: []InteractionPath = &.{},
+    component_paths: []InteractionPath = &.{},
+    alias_slices: [][]const port.Alias = &.{},
 
     fn deinit(self: Bindings, gpa: Allocator) void {
         gpa.free(self.status_origins);
+        for (self.identifier_slices) |slice| gpa.free(slice);
+        gpa.free(self.identifier_slices);
+        gpa.free(self.stimulus_paths);
+        gpa.free(self.component_paths);
+        for (self.alias_slices) |slice| gpa.free(slice);
+        gpa.free(self.alias_slices);
         gpa.free(self.all);
         gpa.free(self.endpoints);
         freeStrings(gpa, self.owned);
     }
 };
 
+const InteractionPath = struct { identifier: []const u8, path: []const u8 };
+
 /// Mutable state `buildBindings` and its helpers append into.
 const BindingAcc = struct {
     all: std.ArrayListUnmanaged(convert.Binding) = .empty,
     owned: std.ArrayListUnmanaged([]const u8) = .empty,
     endpoints: []?EndpointRef,
+    identifier_slices: std.ArrayListUnmanaged([]const []const u8) = .empty,
+    stimulus_paths: std.ArrayListUnmanaged(InteractionPath) = .empty,
+    component_paths: std.ArrayListUnmanaged(InteractionPath) = .empty,
+    alias_slices: std.ArrayListUnmanaged([]const port.Alias) = .empty,
 
     fn deinit(self: *BindingAcc, gpa: Allocator) void {
         self.all.deinit(gpa);
         for (self.owned.items) |s| gpa.free(s);
         self.owned.deinit(gpa);
+        for (self.identifier_slices.items) |slice| gpa.free(slice);
+        self.identifier_slices.deinit(gpa);
+        self.stimulus_paths.deinit(gpa);
+        self.component_paths.deinit(gpa);
+        for (self.alias_slices.items) |slice| gpa.free(slice);
+        self.alias_slices.deinit(gpa);
     }
 
     /// Takes ownership of `s` and returns it, so a caller can write
@@ -1040,6 +1071,49 @@ const BindingAcc = struct {
         errdefer gpa.free(s);
         try self.owned.append(gpa, s);
         return s;
+    }
+
+    fn keepIdentifiers(self: *BindingAcc, gpa: Allocator, names: []const []const u8) Allocator.Error![]const []const u8 {
+        const copy = try gpa.dupe([]const u8, names);
+        errdefer gpa.free(copy);
+        try self.identifier_slices.append(gpa, copy);
+        return copy;
+    }
+
+    fn keepAliases(self: *BindingAcc, gpa: Allocator, aliases: []const port.Alias) Allocator.Error![]const port.Alias {
+        const copy = try gpa.dupe(port.Alias, aliases);
+        errdefer gpa.free(copy);
+        try self.alias_slices.append(gpa, copy);
+        return copy;
+    }
+
+    fn stimulusPath(self: *BindingAcc, gpa: Allocator, identifier: []const u8) Allocator.Error![]const u8 {
+        for (self.stimulus_paths.items) |item| if (std.mem.eql(u8, item.identifier, identifier)) return item.path;
+        var ordinal: usize = 1;
+        const path = while (true) : (ordinal += 1) {
+            const candidate = try flattenedInteractionPath(gpa, "components/stimulus/", identifier, ordinal);
+            var taken = islandTaken(self.all.items, candidate);
+            for (self.stimulus_paths.items) |item| if (std.mem.eql(u8, item.path, candidate)) {
+                taken = true;
+                break;
+            };
+            if (!taken) break try self.keep(gpa, candidate);
+            gpa.free(candidate);
+        };
+        try self.stimulus_paths.append(gpa, .{ .identifier = identifier, .path = path });
+        return path;
+    }
+
+    fn componentPath(self: *BindingAcc, gpa: Allocator, name: []const u8) Allocator.Error![]const u8 {
+        for (self.component_paths.items) |item| if (std.mem.eql(u8, item.identifier, name)) return item.path;
+        var reserved: std.ArrayListUnmanaged([]const u8) = .empty;
+        defer reserved.deinit(gpa);
+        try reserved.appendSlice(gpa, &.{ "components/AuthForm.island.tsx", "components/AuthStatus.island.tsx", turbo_frame_island_path });
+        for (self.stimulus_paths.items) |item| try reserved.append(gpa, item.path);
+        for (self.component_paths.items) |item| try reserved.append(gpa, item.path);
+        const path = try self.keep(gpa, try uniqueInteractionPath(gpa, self.all.items, "components/", name, reserved.items));
+        try self.component_paths.append(gpa, .{ .identifier = name, .path = path });
+        return path;
     }
 };
 
@@ -1880,10 +1954,24 @@ fn buildBindings(ctx: *Ctx) Allocator.Error!Bindings {
     // every string in it. Allocating `status_origins` while that window was
     // open leaked eight strings on one FailingAllocator index. Nothing between
     // the two `toOwnedSlice` calls on `acc` may fail, so nothing goes there.
+    const identifier_slices = try acc.identifier_slices.toOwnedSlice(gpa);
+    errdefer {
+        for (identifier_slices) |slice| gpa.free(slice);
+        gpa.free(identifier_slices);
+    }
     const status_origins = try origins.toOwnedSlice(gpa);
     errdefer gpa.free(status_origins);
     const all = try acc.all.toOwnedSlice(gpa);
     errdefer gpa.free(all);
+    const stimulus_paths = try acc.stimulus_paths.toOwnedSlice(gpa);
+    errdefer gpa.free(stimulus_paths);
+    const component_paths = try acc.component_paths.toOwnedSlice(gpa);
+    errdefer gpa.free(component_paths);
+    const alias_slices = try acc.alias_slices.toOwnedSlice(gpa);
+    errdefer {
+        for (alias_slices) |slice| gpa.free(slice);
+        gpa.free(alias_slices);
+    }
     const owned = try acc.owned.toOwnedSlice(gpa);
     return .{
         .all = all,
@@ -1891,6 +1979,10 @@ fn buildBindings(ctx: *Ctx) Allocator.Error!Bindings {
         .owned = owned,
         .scaffold = journey,
         .status_origins = status_origins,
+        .identifier_slices = identifier_slices,
+        .stimulus_paths = stimulus_paths,
+        .component_paths = component_paths,
+        .alias_slices = alias_slices,
     };
 }
 
@@ -1908,6 +2000,122 @@ fn buildBindings(ctx: *Ctx) Allocator.Error!Bindings {
 /// allocates is handed straight to `BindingAcc` (through `keep`), and
 /// `Bindings.deinit` is the release. `seen` grows with BORROWED template
 /// paths and is the caller's to `deinit`.
+fn attrEquals(attrs: []const fragments.Attr, key: []const u8, value: []const u8) bool {
+    for (attrs) |attr| if (std.mem.eql(u8, attr.key, key) and std.mem.eql(u8, attr.value, value)) return true;
+    return false;
+}
+
+fn flattenedInteractionPath(gpa: Allocator, prefix: []const u8, name: []const u8, ordinal: usize) Allocator.Error![]u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(gpa);
+    try out.appendSlice(gpa, prefix);
+    var previous_separator = false;
+    for (name) |ch| {
+        const separator = ch == '-' or ch == '/' or ch == ':';
+        if (separator) {
+            if (!previous_separator) try out.append(gpa, '_');
+        } else try out.append(gpa, ch);
+        previous_separator = separator;
+    }
+    if (ordinal > 1) try out.print(gpa, "_{d}", .{ordinal});
+    try out.appendSlice(gpa, ".island.tsx");
+    return out.toOwnedSlice(gpa);
+}
+
+fn uniqueInteractionPath(gpa: Allocator, built: []const convert.Binding, prefix: []const u8, name: []const u8, reserved: []const []const u8) Allocator.Error![]u8 {
+    var ordinal: usize = 1;
+    while (true) : (ordinal += 1) {
+        const candidate = try flattenedInteractionPath(gpa, prefix, name, ordinal);
+        var taken = islandTaken(built, candidate);
+        for (reserved) |path| {
+            if (std.mem.eql(u8, path, candidate)) taken = true;
+        }
+        if (!taken) return candidate;
+        gpa.free(candidate);
+    }
+}
+
+fn componentProps(gpa: Allocator, attrs: []const fragments.Attr) Allocator.Error![]u8 {
+    const sorted = try gpa.dupe(fragments.Attr, attrs);
+    defer gpa.free(sorted);
+    std.mem.sort(fragments.Attr, sorted, {}, struct {
+        fn lessThan(_: void, a: fragments.Attr, b: fragments.Attr) bool {
+            return std.mem.order(u8, a.key, b.key) == .lt;
+        }
+    }.lessThan);
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(gpa);
+    try out.appendSlice(gpa, "{");
+    var count: usize = 0;
+    for (sorted) |attr| {
+        if (attr.kind == .null) continue;
+        if (count == 0) try out.append(gpa, ' ') else try out.appendSlice(gpa, ", ");
+        try out.print(gpa, ".{s} = ", .{attr.key});
+        if (attr.kind == .string) {
+            try out.append(gpa, '"');
+            try appendJsEscaped(gpa, &out, attr.value);
+            try out.append(gpa, '"');
+        } else try out.appendSlice(gpa, attr.value);
+        count += 1;
+    }
+    if (count > 0) try out.appendSlice(gpa, " }") else try out.append(gpa, '}');
+    return out.toOwnedSlice(gpa);
+}
+
+fn frameProps(gpa: Allocator, route_list: []const route_mod.Route, node: fragments.Node) Allocator.Error![]u8 {
+    var url: ?[]const u8 = null;
+    defer if (url) |u| gpa.free(u);
+    for (node.attrs) |attr| {
+        if (std.mem.eql(u8, attr.key, "src") and std.mem.startsWith(u8, attr.value, "/")) {
+            url = try gpa.dupe(u8, attr.value);
+            break;
+        }
+    }
+    if (url == null) {
+        const stem = node.value orelse "";
+        url = try resolve.routeUrl(gpa, route_list, stem, node.args);
+    }
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(gpa);
+    try out.appendSlice(gpa, "{ .id = \"");
+    try appendJsEscaped(gpa, &out, node.name orelse "");
+    try out.appendSlice(gpa, "\", .src = \"");
+    try appendJsEscaped(gpa, &out, url orelse "");
+    try out.appendSlice(gpa, "\" }");
+    return out.toOwnedSlice(gpa);
+}
+
+fn dataIslandPath(gpa: Allocator, built: []const convert.Binding, view_path: []const u8) Allocator.Error![]u8 {
+    var ordinal: usize = 1;
+    while (true) : (ordinal += 1) {
+        var out: std.ArrayListUnmanaged(u8) = .empty;
+        errdefer out.deinit(gpa);
+        try out.appendSlice(gpa, "components/data/");
+        for (resolve.viewStem(view_path)) |ch| try out.append(gpa, if (ch == '/') '_' else ch);
+        if (ordinal > 1) try out.print(gpa, "_{d}", .{ordinal});
+        try out.appendSlice(gpa, ".island.tsx");
+        const candidate = try out.toOwnedSlice(gpa);
+        if (!islandTaken(built, candidate)) return candidate;
+        gpa.free(candidate);
+    }
+}
+
+fn dataBlockParam(code: []const u8) ?[]const u8 {
+    const first = std.mem.indexOfScalar(u8, code, '|') orelse return null;
+    const rest = code[first + 1 ..];
+    const last = std.mem.indexOfScalar(u8, rest, '|') orelse return null;
+    const value = std.mem.trim(u8, rest[0..last], " \t\r\n");
+    if (value.len == 0 or std.mem.indexOfScalar(u8, value, ',') != null) return null;
+    return value;
+}
+
+fn collectionHasOperation(doc: backend_mod.Document, collection: []const u8, kind: backend_mod.Kind) bool {
+    for (doc.operations) |operation| {
+        if (operation.kind == kind and operation.collection != null and std.mem.eql(u8, operation.collection.?, collection)) return true;
+    }
+    return false;
+}
+
 fn bindTemplate(
     ctx: *Ctx,
     acc: *BindingAcc,
@@ -1933,10 +2141,109 @@ fn bindTemplate(
     for (tpl.nodes) |n| {
         if (n.text != null) continue;
         switch (n.kind) {
-            .render_partial, .render_partial_locals => {
+            .render_partial, .render_partial_locals, .render_dynamic => {
                 const target = n.name orelse continue;
                 const p = convert.partialPathIn(d.fragments, view, target) orelse continue;
                 try bindTemplate(ctx, acc, route_index, p, seen);
+                continue;
+            },
+            .stimulus, .turbo_frame, .component_root => {
+                const id = convert.findingIdFor(d.findings, view, n.line, n.col) orelse continue;
+                const dec = decisions.lookup(ctx.in.decisions, id) orelse continue;
+                if (n.kind == .stimulus and (std.mem.eql(u8, dec.choice, "island") or std.mem.eql(u8, dec.choice, "drop"))) {
+                    var names: std.ArrayListUnmanaged([]const u8) = .empty;
+                    defer names.deinit(gpa);
+                    var it = std.mem.tokenizeAny(u8, n.name orelse "", " \t\r\n");
+                    while (it.next()) |name| try names.append(gpa, name);
+                    const identifiers = try acc.keepIdentifiers(gpa, names.items);
+                    var island: []const u8 = "";
+                    if (std.mem.eql(u8, dec.choice, "island")) for (identifiers, 0..) |identifier, index| {
+                        const path = try acc.stimulusPath(gpa, identifier);
+                        if (index == 0) island = path;
+                    };
+                    try acc.all.append(gpa, .{
+                        .finding_id = id,
+                        .kind = if (std.mem.eql(u8, dec.choice, "drop")) .drop else .stimulus,
+                        .verb = "",
+                        .path = "",
+                        .operation_id = "",
+                        .collection = null,
+                        .island = island,
+                        .redirect_to = null,
+                        .wrap = std.mem.eql(u8, dec.choice, "island"),
+                        .identifiers = identifiers,
+                    });
+                    continue;
+                }
+                if (n.kind == .turbo_frame and (std.mem.eql(u8, dec.choice, "island") or std.mem.eql(u8, dec.choice, "inline"))) {
+                    const props = if (std.mem.eql(u8, dec.choice, "island"))
+                        try acc.keep(gpa, try frameProps(gpa, d.routes, n))
+                    else
+                        null;
+                    try acc.all.append(gpa, .{
+                        .finding_id = id,
+                        .kind = if (std.mem.eql(u8, dec.choice, "inline")) .@"inline" else .turbo_frame,
+                        .verb = "",
+                        .path = "",
+                        .operation_id = "",
+                        .collection = null,
+                        .island = if (std.mem.eql(u8, dec.choice, "island")) turbo_frame_island_path else "",
+                        .redirect_to = null,
+                        .props = props,
+                        .wrap = std.mem.eql(u8, dec.choice, "island"),
+                        .directive = if (attrEquals(n.attrs, "loading", "lazy")) "client:visible" else "client:load",
+                    });
+                    continue;
+                }
+                if (n.kind == .component_root and std.mem.eql(u8, dec.choice, "island")) {
+                    const name = n.name orelse continue;
+                    const island = try acc.componentPath(gpa, name);
+                    const props = try acc.keep(gpa, try componentProps(gpa, n.attrs));
+                    try acc.all.append(gpa, .{
+                        .finding_id = id,
+                        .kind = .component,
+                        .verb = "",
+                        .path = "",
+                        .operation_id = "",
+                        .collection = null,
+                        .island = island,
+                        .redirect_to = null,
+                        .props = props,
+                    });
+                    continue;
+                }
+                continue;
+            },
+            .ivar => {
+                const id = convert.findingIdFor(d.findings, view, n.line, n.col) orelse continue;
+                const dec = decisions.lookup(ctx.in.decisions, id) orelse continue;
+                if (!std.mem.eql(u8, dec.choice, "island") and !std.mem.eql(u8, dec.choice, "backend")) continue;
+                const doc = ctx.in.backend orelse continue;
+                const ivar = n.name orelse continue;
+                const stem = std.mem.trim(u8, ivar, "@");
+                const collection = dec.artifact orelse resolve.collectionFor(doc, stem) orelse continue;
+                if (!collectionHasOperation(doc, collection, .list)) continue;
+                var aliases_buf: [2]port.Alias = undefined;
+                var aliases_len: usize = 0;
+                if (dataBlockParam(n.code)) |param| {
+                    aliases_buf[aliases_len] = .{ .ruby = param, .js = "rec" };
+                    aliases_len += 1;
+                }
+                aliases_buf[aliases_len] = .{ .ruby = ivar, .js = "rec" };
+                aliases_len += 1;
+                const aliases = try acc.keepAliases(gpa, aliases_buf[0..aliases_len]);
+                const island = try acc.keep(gpa, try dataIslandPath(gpa, acc.all.items, view));
+                try acc.all.append(gpa, .{
+                    .finding_id = id,
+                    .kind = .data_list,
+                    .verb = "GET",
+                    .path = "",
+                    .operation_id = "list",
+                    .collection = collection,
+                    .island = island,
+                    .redirect_to = null,
+                    .aliases = aliases,
+                });
                 continue;
             },
             .form, .form_field, .link_to => {},
@@ -2334,10 +2641,22 @@ fn dynamicRoute(
         }
         const segment = try gpa.dupe(u8, seg);
         errdefer gpa.free(segment);
+        out.status = .migrated;
+        out.settle(gpa, id);
+        const spa_port = try spaViewPort(ctx, out, route_index);
+        errdefer if (spa_port) |p| gpa.free(p.js);
+        if (out.status == .retained or out.status == .blocked) {
+            if (spa_port) |p| gpa.free(p.js);
+            gpa.free(segment);
+            return;
+        }
         try spa_routes.append(gpa, .{
             .segment = segment,
             .outcome_index = outcome_index,
             .route_index = route_index,
+            .port_js = if (spa_port) |p| p.js else null,
+            .collection = if (spa_port) |p| p.collection else null,
+            .param = if (spa_port) |p| p.param else null,
         });
         // Minor C: with no `--runtime-path`, the generated `package.json`
         // carries a placeholder `file:` dependency that `bun install` cannot
@@ -2349,10 +2668,82 @@ fn dynamicRoute(
         // `migrated` here and not after pass 3: the `.spa.tsx` is written
         // unconditionally for every collected route, so the only way this is
         // wrong is a write failure, which aborts the whole run.
-        out.status = .migrated;
         return;
     }
     try applyAcknowledgement(ctx, out, r, decision, &.{}, &.{});
+}
+
+const SpaViewPort = struct {
+    js: []u8,
+    collection: []const u8,
+    param: []const u8,
+};
+
+fn soleRouteParam(path: []const u8) ?[]const u8 {
+    var found: ?[]const u8 = null;
+    var it = std.mem.splitScalar(u8, path, '/');
+    while (it.next()) |segment| {
+        if (segment.len < 2 or segment[0] != ':') continue;
+        if (found != null) return null;
+        found = segment[1..];
+    }
+    return found;
+}
+
+fn spaViewPort(ctx: *Ctx, out: *Outcome, route_index: usize) WriteError!?SpaViewPort {
+    const gpa = ctx.gpa;
+    const d = ctx.in.discovery;
+    if (route_index >= d.route_templates.len) return null;
+    const route = d.routes[route_index];
+    const view = pickView(d.route_templates[route_index].templates, route) orelse return null;
+    const tpl = findTemplate(d.fragments, view) orelse return null;
+    const param = soleRouteParam(route.path) orelse return null;
+    for (tpl.nodes) |node| {
+        if (node.text != null or node.kind != .ivar) continue;
+        const id = convert.findingIdFor(d.findings, view, node.line, node.col) orelse continue;
+        try appendOwnedUnique(gpa, &out.open_ids, id);
+        const dec = decisions.lookup(ctx.in.decisions, id) orelse {
+            try out.addOpenNote(gpa, "request-time state on SPA route: undecided", .{});
+            return null;
+        };
+        if (!std.mem.eql(u8, dec.choice, "island") and !std.mem.eql(u8, dec.choice, "backend")) {
+            if (std.mem.eql(u8, dec.choice, "retain") or std.mem.eql(u8, dec.choice, "blocked")) {
+                if (out.decision_id) |old| gpa.free(old);
+                out.decision_id = try gpa.dupe(u8, dec.id);
+            }
+            try applyAcknowledgement(ctx, out, route, dec, &.{}, &.{});
+            return null;
+        }
+        const doc = ctx.in.backend orelse {
+            try out.addOpenNote(gpa, "choice {s} on RAILS_REQUEST_TIME_STATE needs a --backend document with a view operation for collection `{s}`", .{ dec.choice, dataCollectionForDecision(ctx, dec) });
+            return null;
+        };
+        const ivar = node.name orelse continue;
+        const collection = dec.artifact orelse resolve.collectionFor(doc, std.mem.trim(u8, ivar, "@")) orelse {
+            try out.addOpenNote(gpa, "choice {s} on RAILS_REQUEST_TIME_STATE needs a --backend document with a view operation for collection `{s}`", .{ dec.choice, dataCollectionForDecision(ctx, dec) });
+            return null;
+        };
+        if (!collectionHasOperation(doc, collection, .view)) {
+            try out.addOpenNote(gpa, "choice {s} on RAILS_REQUEST_TIME_STATE needs a --backend document with a view operation for collection `{s}`", .{ dec.choice, collection });
+            return null;
+        }
+        const aliases = [_]port.Alias{.{ .ruby = ivar, .js = "rec" }};
+        const body = try port.recordBody(gpa, .{
+            .routes = d.routes,
+            .assets = d.assets,
+            .fragments = d.fragments,
+            .findings = &.{},
+            .layout_stem = null,
+        }, view, tpl.nodes, &aliases);
+        if (body.unportable) |bad| {
+            defer port.freeBody(gpa, body);
+            try out.addOpenNote(gpa, "choice {s} on RAILS_REQUEST_TIME_STATE: the view is not portable ({s} at L{d}C{d})", .{ dec.choice, bad.why, bad.line, bad.col });
+            return null;
+        }
+        out.settle(gpa, id);
+        return .{ .js = body.js, .collection = collection, .param = param };
+    }
+    return null;
 }
 
 /// The issue tracking assumption A6: `backend` is a choice `RAILS_
@@ -2440,7 +2831,7 @@ fn applyAcknowledgements(
         } else try answers.append(gpa, dec);
     }
     if (answers.items.len == 0) return;
-    std.mem.sort(decisions.Decision, answers.items, {}, strongerAnswer);
+    std.mem.sort(decisions.Decision, answers.items, ctx, strongerAnswer);
 
     out.decision_id = try gpa.dupe(u8, answers.items[0].id);
     const entry_status = out.status;
@@ -2465,9 +2856,9 @@ fn applyAcknowledgements(
 /// not depend on that.
 ///
 /// Contract 3 (caller-buffer): allocates nothing.
-fn strongerAnswer(_: void, a: decisions.Decision, b: decisions.Decision) bool {
-    const ra = rank(a.choice);
-    const rb = rank(b.choice);
+fn strongerAnswer(ctx: *Ctx, a: decisions.Decision, b: decisions.Decision) bool {
+    const ra = rank(a.choice, backendProducesDataIsland(ctx, a));
+    const rb = rank(b.choice, backendProducesDataIsland(ctx, b));
     if (ra != rb) return ra > rb;
     return std.mem.order(u8, a.id, b.id) == .lt;
 }
@@ -2576,6 +2967,22 @@ fn applyAcknowledgement(
         }
         return;
     }
+    if (std.mem.eql(u8, choice, "drop") and (std.mem.eql(u8, code, findings.code_stimulus_controller) or std.mem.eql(u8, code, findings.code_js_entry))) {
+        out.settle(gpa, dec.id);
+        const finding = findingById(ctx.in.discovery.findings, dec.id).?;
+        if (std.mem.eql(u8, code, findings.code_js_entry)) {
+            try out.addNote(gpa, "{s} dropped by decision", .{finding.path});
+        } else {
+            try out.addNote(gpa, "stimulus `{s}` dropped by decision", .{firstBacktickValue(finding.message)});
+        }
+        return;
+    }
+    if (std.mem.eql(u8, choice, "inline") and std.mem.eql(u8, code, findings.code_turbo_frame)) {
+        out.settle(gpa, dec.id);
+        const finding = findingById(ctx.in.discovery.findings, dec.id).?;
+        try out.addNote(gpa, "turbo-frame `{s}` inlined", .{firstBacktickValue(finding.message)});
+        return;
+    }
     if (std.mem.eql(u8, choice, "island")) {
         // #167 Stage 3 Task 5. An `island` the converter CARRIED OUT settles,
         // exactly like a bound backend operation: the region is gone from the
@@ -2599,12 +3006,22 @@ fn applyAcknowledgement(
         // pointing at the wrong stage.
         if (std.mem.eql(u8, code, findings.code_auth_journey)) {
             try out.addOpenNote(gpa, "choice island on {s} needs the auth scaffolds", .{code});
+        } else if (std.mem.eql(u8, code, findings.code_request_time_state) and findingIsIvar(ctx, dec.id)) {
+            try out.addOpenNote(gpa, "choice island on RAILS_REQUEST_TIME_STATE needs a --backend document with a list operation for collection `{s}`", .{dataCollectionForDecision(ctx, dec)});
         } else {
             try out.addOpenNote(gpa, "choice island deferred to Stage 4", .{});
         }
         return;
     }
     if (std.mem.eql(u8, choice, "backend")) {
+        if (std.mem.eql(u8, code, findings.code_request_time_state) and findingIsIvar(ctx, dec.id)) {
+            if (boundBy(ctx.bindings.all, dec.id)) {
+                out.settle(gpa, dec.id);
+            } else {
+                try out.addOpenNote(gpa, "choice backend on RAILS_REQUEST_TIME_STATE needs a --backend document with a list operation for collection `{s}`", .{dataCollectionForDecision(ctx, dec)});
+            }
+            return;
+        }
         // Assumption A6.
         try out.addOpenNote(
             gpa,
@@ -2618,6 +3035,31 @@ fn applyAcknowledgement(
     // future choice added to the vocabulary but not here is visible in
     // the handoff instead of silently behaving like `retain`.
     try out.addOpenNote(gpa, "choice {s} is not implemented by this stage", .{choice});
+}
+
+fn dataCollectionForDecision(ctx: *Ctx, dec: decisions.Decision) []const u8 {
+    if (dec.artifact) |artifact| return artifact;
+    const finding = findingById(ctx.in.discovery.findings, dec.id) orelse return "?";
+    const ivar = firstBacktickValue(finding.message);
+    const stem = std.mem.trim(u8, ivar, "@");
+    if (ctx.in.backend) |doc| return resolve.collectionFor(doc, stem) orelse stem;
+    return stem;
+}
+
+fn findingIsIvar(ctx: *Ctx, id: []const u8) bool {
+    for (ctx.in.discovery.fragments) |tpl| for (tpl.nodes) |node| {
+        if (node.text != null or node.kind != .ivar) continue;
+        const node_id = convert.findingIdFor(ctx.in.discovery.findings, tpl.path, node.line, node.col) orelse continue;
+        if (std.mem.eql(u8, node_id, id)) return true;
+    };
+    return false;
+}
+
+fn firstBacktickValue(message: []const u8) []const u8 {
+    const start = std.mem.indexOfScalar(u8, message, '`') orelse return message;
+    const tail = message[start + 1 ..];
+    const end = std.mem.indexOfScalar(u8, tail, '`') orelse return tail;
+    return tail[0..end];
 }
 
 /// Ruling S3-R6: settles an answer that a bigger answer had already covered,
@@ -3001,12 +3443,21 @@ fn contentRoute(
     // regions on one page yield two `IslandFile`s under one path -- and
     // listing it twice reads as two components.
     for (v.islands) |f| try appendOwnedUnique(gpa, &out.artifacts, f.path);
-    var mounts_island = v.islands.len > 0;
+    var mounts_client = false;
+    var mounts_stimulus = false;
+    for (v.islands) |f| {
+        mounts_client = mounts_client or islandCallsClient(ctx, f.path);
+        mounts_stimulus = mounts_stimulus or std.mem.startsWith(u8, f.path, "components/stimulus/");
+    }
     if (layout_index) |li| {
         for (layouts.items.items[li].islands) |f| try appendOwnedUnique(gpa, &out.artifacts, f.path);
-        if (layouts.items.items[li].islands.len > 0) mounts_island = true;
+        for (layouts.items.items[li].islands) |f| {
+            mounts_client = mounts_client or islandCallsClient(ctx, f.path);
+            mounts_stimulus = mounts_stimulus or std.mem.startsWith(u8, f.path, "components/stimulus/");
+        }
     }
-    if (mounts_island) try appendOwned(gpa, &out.artifacts, client_lib_path);
+    if (mounts_client) try appendOwned(gpa, &out.artifacts, client_lib_path);
+    if (mounts_stimulus) try appendOwned(gpa, &out.artifacts, "lib/stimulus.ts");
 
     if (unmapped) |kind| {
         // Ruling S6's net, now the LAST word rather than the first: an
@@ -3019,6 +3470,18 @@ fn contentRoute(
     }
 
     if (out.open_ids.items.len == 0 and !out.unfinished) out.status = .migrated;
+}
+
+fn islandCallsClient(ctx: *Ctx, path: []const u8) bool {
+    if (std.mem.eql(u8, path, auth_form_island_path) or std.mem.eql(u8, path, auth_status_island_path)) return true;
+    for (ctx.bindings.all) |binding| {
+        if (!std.mem.eql(u8, binding.island, path)) continue;
+        return switch (binding.kind) {
+            .operation, .custom, .auth_signin, .auth_signup, .auth_logout, .data_list => true,
+            .stimulus, .turbo_frame, .component, .@"inline", .drop => false,
+        };
+    }
+    return false;
 }
 
 /// The decision that decides a route with several open findings.
@@ -3045,8 +3508,8 @@ fn pickDecision(parsed: decisions.Parsed, ids: []const []const u8) ?decisions.De
             best = dec;
             continue;
         };
-        const r = rank(dec.choice);
-        const br = rank(b.choice);
+        const r = rank(dec.choice, false);
+        const br = rank(b.choice, false);
         if (r > br or (r == br and std.mem.order(u8, dec.id, b.id) == .lt)) best = dec;
     }
     return best;
@@ -3058,9 +3521,10 @@ fn pickDecision(parsed: decisions.Parsed, ids: []const []const u8) ?decisions.De
 ///
 /// The bottom tier is enumerated rather than the tier above it, because the
 /// producing tier cannot be: an operation id is whatever the ZigBase document
-/// happens to call an operation. `backend` is the only choice word that
-/// defers unconditionally -- assumption A6, no stage has a converter for it --
-/// so it is the only one listed. (`island` defers on a
+/// happens to call an operation. `backend` normally defers, but B7 makes it
+/// producing for a portable ivar whose data-island binding exists; the caller
+/// supplies that fact because the word alone cannot distinguish the two
+/// finding shapes. (`island` defers on a
 /// `RAILS_REQUEST_TIME_STATE` and on the journey until Task 5's scaffolds
 /// exist, but it produces on every other row, and `rank` sees the choice
 /// without its finding. Ranking it as producing is the safe direction: the
@@ -3069,11 +3533,23 @@ fn pickDecision(parsed: decisions.Parsed, ids: []const []const u8) ?decisions.De
 /// than a route silently claimed as finished.)
 ///
 /// Contract 3 (caller-buffer): allocates nothing.
-fn rank(choice: []const u8) u8 {
+fn rank(choice: []const u8, backend_produces: bool) u8 {
     if (std.mem.eql(u8, choice, "blocked")) return 4;
     if (std.mem.eql(u8, choice, "retain")) return 3;
-    if (std.mem.eql(u8, choice, "backend")) return 1;
+    if (std.mem.eql(u8, choice, "backend")) return if (backend_produces) 2 else 1;
     return 2;
+}
+
+/// B7's code-specific rank: only a bound ivar has carried `backend` out.
+fn backendProducesDataIsland(ctx: *Ctx, dec: decisions.Decision) bool {
+    return std.mem.eql(u8, dec.choice, "backend") and
+        findingIsIvar(ctx, dec.id) and
+        boundBy(ctx.bindings.all, dec.id);
+}
+
+test "rank: backend is producing only for a bound data island" {
+    try std.testing.expectEqual(@as(u8, 2), rank("backend", true));
+    try std.testing.expectEqual(@as(u8, 1), rank("backend", false));
 }
 
 /// Appends one `convert.Output.dropped` note, as a reason or as a footnote
@@ -3192,6 +3668,22 @@ fn findTemplate(list: []const fragments.Template, path: []const u8) ?fragments.T
     return null;
 }
 
+fn templateHasImportmap(tpl: fragments.Template) bool {
+    for (tpl.nodes) |node| if (node.text == null and node.kind == .importmap) return true;
+    return false;
+}
+
+fn dupeStringsWith(gpa: Allocator, values: []const []const u8, extra: ?[]const u8) Allocator.Error![][]const u8 {
+    var out: std.ArrayListUnmanaged([]const u8) = .empty;
+    errdefer {
+        for (out.items) |item| gpa.free(item);
+        out.deinit(gpa);
+    }
+    for (values) |value| try appendOwnedUnique(gpa, &out, value);
+    if (extra) |value| try appendOwnedUnique(gpa, &out, value);
+    return out.toOwnedSlice(gpa);
+}
+
 /// Converts and writes `layouts/templates/<stem>.shtml` once per distinct
 /// layout. Returns its index in the cache, or `null` when the layout has no
 /// analysed fragment stream (unsupported engine, unreadable) or does not
@@ -3225,7 +3717,7 @@ fn ensureLayout(ctx: *Ctx, acc: *Acc, cache: *LayoutCache, layout_path: []const 
 
     const source = try gpa.dupe(u8, layout_path);
     errdefer gpa.free(source);
-    const ids = try dupeStrings(gpa, output.open_finding_ids);
+    const ids = try dupeStringsWith(gpa, output.open_finding_ids, if (templateHasImportmap(tpl)) firstFindingWithCode(ctx.in.discovery.findings, findings.code_js_entry) else null);
     errdefer freeStrings(gpa, ids);
     const blocks = try dupeStrings(gpa, output.block_ids);
     errdefer freeStrings(gpa, blocks);
@@ -3327,7 +3819,7 @@ fn ensureView(
     errdefer if (title) |t| gpa.free(t);
     const description = if (output.description) |x| try gpa.dupe(u8, x) else null;
     errdefer if (description) |x| gpa.free(x);
-    const ids = try dupeStrings(gpa, output.open_finding_ids);
+    const ids = try dupeStringsWith(gpa, output.open_finding_ids, if (templateHasImportmap(tpl)) firstFindingWithCode(ctx.in.discovery.findings, findings.code_js_entry) else null);
     errdefer freeStrings(gpa, ids);
     const bound_ids = try dupeStrings(gpa, output.bound_finding_ids);
     errdefer freeStrings(gpa, bound_ids);
@@ -3387,6 +3879,33 @@ fn emitIslands(
         out.deinit(gpa);
     }
     for (specs) |spec| {
+        if (spec.binding.kind == .turbo_frame) {
+            const path = try gpa.dupe(u8, turbo_frame_island_path);
+            errdefer gpa.free(path);
+            const bytes = try emitFrameIsland(gpa);
+            errdefer gpa.free(bytes);
+            try out.append(gpa, .{ .path = path, .bytes = bytes, .finding_id = turbo_frame_island_path });
+            continue;
+        }
+        if (spec.binding.kind == .stimulus) {
+            for (spec.binding.identifiers, 0..) |identifier, index| {
+                const controller = (try port.stimulusSource(gpa, identifier, ctx.in.discovery.js_sources)) orelse continue;
+                defer port.freeController(gpa, controller);
+                const mounts = try stimulusMounts(gpa, ctx, identifier);
+                defer gpa.free(mounts);
+                const descriptors = try stimulusDescriptors(gpa, ctx, identifier);
+                defer gpa.free(descriptors);
+                const mapped = for (ctx.bindings.stimulus_paths) |item| {
+                    if (std.mem.eql(u8, item.identifier, identifier)) break item.path;
+                } else spec.island;
+                const path = if (index == 0) try gpa.dupe(u8, spec.island) else try gpa.dupe(u8, mapped);
+                errdefer gpa.free(path);
+                const bytes = try emitStimulusIsland(gpa, controller, descriptors, mounts);
+                errdefer gpa.free(bytes);
+                try out.append(gpa, .{ .path = path, .bytes = bytes, .finding_id = identifier });
+            }
+            continue;
+        }
         const path = try gpa.dupe(u8, spec.island);
         errdefer gpa.free(path);
         const bytes = try emitIslandFor(ctx, spec);
@@ -3416,12 +3935,132 @@ fn emitIslands(
 /// borrowed -- from `Discovery.findings`, or from `Bindings.owned` by way of
 /// `JourneyScaffold`.
 fn islandIdentity(ctx: *Ctx, spec: convert.IslandSpec) []const u8 {
+    if (spec.binding.kind == .component) return spec.binding.island;
+    if (spec.binding.kind == .turbo_frame) return turbo_frame_island_path;
     const j = ctx.bindings.scaffold orelse return spec.binding.finding_id;
     return switch (spec.binding.kind) {
         .auth_signin, .auth_signup => j.finding_id,
         .auth_logout => j.status_id,
-        .operation, .custom => spec.binding.finding_id,
+        .operation, .custom, .stimulus, .turbo_frame, .component, .data_list, .@"inline", .drop => spec.binding.finding_id,
     };
+}
+
+fn stimulusMounts(gpa: Allocator, ctx: *Ctx, identifier: []const u8) Allocator.Error![]StatusOrigin {
+    var out: std.ArrayListUnmanaged(StatusOrigin) = .empty;
+    errdefer out.deinit(gpa);
+    for (ctx.in.discovery.fragments) |tpl| for (tpl.nodes) |node| {
+        if (node.text != null or node.kind != .stimulus) continue;
+        var names = std.mem.tokenizeAny(u8, node.name orelse "", " \t\r\n");
+        var found = false;
+        while (names.next()) |name| if (std.mem.eql(u8, name, identifier)) {
+            found = true;
+            break;
+        };
+        if (!found) continue;
+        const id = convert.findingIdFor(ctx.in.discovery.findings, tpl.path, node.line, node.col) orelse continue;
+        const decision = decisions.lookup(ctx.in.decisions, id) orelse continue;
+        if (!std.mem.eql(u8, decision.choice, "island")) continue;
+        try out.append(gpa, .{ .path = tpl.path, .line = node.line, .col = node.col, .code = node.code, .finding_id = id, .absorbed = false, .enclosed = false });
+    };
+    std.mem.sort(StatusOrigin, out.items, {}, struct {
+        fn lessThan(_: void, a: StatusOrigin, b: StatusOrigin) bool {
+            const order = std.mem.order(u8, a.path, b.path);
+            return order == .lt or (order == .eq and a.line < b.line);
+        }
+    }.lessThan);
+    return out.toOwnedSlice(gpa);
+}
+
+fn stimulusDescriptors(gpa: Allocator, ctx: *Ctx, identifier: []const u8) Allocator.Error![]port.Descriptor {
+    var out: std.ArrayListUnmanaged(port.Descriptor) = .empty;
+    errdefer out.deinit(gpa);
+    for (ctx.in.discovery.fragments) |tpl| {
+        for (tpl.nodes, 0..) |node, i| {
+            if (node.text != null or node.kind != .stimulus) continue;
+            var names = std.mem.tokenizeAny(u8, node.name orelse "", " \t\r\n");
+            var found = false;
+            while (names.next()) |name| if (std.mem.eql(u8, name, identifier)) {
+                found = true;
+                break;
+            };
+            if (!found) continue;
+            var extent: std.ArrayListUnmanaged(u8) = .empty;
+            defer extent.deinit(gpa);
+            const end = convert.matchingEnd(tpl.nodes, i) orelse i;
+            for (tpl.nodes[i .. end + 1]) |part| try extent.appendSlice(gpa, part.text orelse part.code);
+            const actions = try port.actionDescriptors(gpa, extent.items, identifier);
+            defer gpa.free(actions.list);
+            try out.appendSlice(gpa, actions.list);
+        }
+    }
+    return out.toOwnedSlice(gpa);
+}
+
+fn emitStimulusIsland(
+    gpa: Allocator,
+    controller: port.Controller,
+    descriptors: []const port.Descriptor,
+    mounts: []const StatusOrigin,
+) Allocator.Error![]u8 {
+    _ = descriptors;
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(gpa);
+    try out.print(gpa, "// Ported STRUCTURALLY from {s} -- targets, values,\n// classes and action bindings are wired; the method bodies are quoted below and NOT translated.\n// Behavioural parity is not claimed. Mounted at: ", .{controller.path});
+    for (mounts, 0..) |mount, i| {
+        if (i > 0) try out.appendSlice(gpa, ", ");
+        try out.print(gpa, "{s}:{d}", .{ mount.path, mount.line });
+    }
+    try out.appendSlice(gpa, ".\n");
+    if (controller.lifecycle.len > 0) {
+        try out.appendSlice(gpa, "// Lifecycle present: ");
+        for (controller.lifecycle, 0..) |name, i| {
+            if (i > 0) try out.appendSlice(gpa, ", ");
+            try out.appendSlice(gpa, name);
+        }
+        try out.appendSlice(gpa, "; port them into the effect.\n");
+    }
+    try out.appendSlice(gpa, "import { useEffect, useRef, type ComponentChildren } from \"@z/runtime\";\nimport { bindActions, targetsOf, valuesOf, classesOf } from \"../../lib/stimulus\";\n\nexport interface Props {}\n\nexport default function ");
+    try appendPascal(gpa, &out, controller.identifier);
+    try out.appendSlice(gpa, "(props: Props & { children?: ComponentChildren }) {\n  const root = useRef<HTMLDivElement>(null);\n  useEffect(() => {\n    const el = root.current!;\n    const targets = targetsOf(el, \"");
+    try appendJsEscaped(gpa, &out, controller.identifier);
+    try out.appendSlice(gpa, "\", [");
+    for (controller.targets, 0..) |name, i| {
+        if (i > 0) try out.appendSlice(gpa, ", ");
+        try out.append(gpa, '"');
+        try appendJsEscaped(gpa, &out, name);
+        try out.append(gpa, '"');
+    }
+    try out.appendSlice(gpa, "]);\n    const values = valuesOf(el, \"");
+    try appendJsEscaped(gpa, &out, controller.identifier);
+    try out.appendSlice(gpa, "\", {");
+    for (controller.values, 0..) |value, i| {
+        if (i > 0) try out.appendSlice(gpa, ",");
+        try out.print(gpa, " {s}: \"{s}\"", .{ value.name, @tagName(value.kind) });
+    }
+    if (controller.values.len > 0) try out.append(gpa, ' ');
+    try out.appendSlice(gpa, "});\n    const classes = classesOf(el, \"");
+    try appendJsEscaped(gpa, &out, controller.identifier);
+    try out.appendSlice(gpa, "\", [");
+    for (controller.classes, 0..) |name, i| {
+        if (i > 0) try out.appendSlice(gpa, ", ");
+        try out.print(gpa, "\"{s}\"", .{name});
+    }
+    try out.appendSlice(gpa, "]);\n");
+    for (controller.methods) |method| {
+        try out.print(gpa, "    // {s} -- original:\n", .{method.name});
+        var lines = std.mem.splitScalar(u8, method.source, '\n');
+        while (lines.next()) |line| try out.print(gpa, "    //   {s}\n", .{line});
+        try out.print(gpa, "    function {s}(event: Event) {{\n      console.warn(\"zigapagos: {s}#{s} is not ported\");\n      // TODO: port the body above using targets, values and classes.\n      void event;\n    }}\n", .{ method.name, controller.identifier, method.name });
+    }
+    try out.appendSlice(gpa, "    return bindActions(el, \"");
+    try appendJsEscaped(gpa, &out, controller.identifier);
+    try out.appendSlice(gpa, "\", {");
+    for (controller.methods, 0..) |method, i| {
+        if (i > 0) try out.appendSlice(gpa, ", ");
+        try out.appendSlice(gpa, method.name);
+    }
+    try out.appendSlice(gpa, "});\n  }, []);\n  return <div ref={root} style=\"display:contents\">{props.children}</div>;\n}\n");
+    return out.toOwnedSlice(gpa);
 }
 
 /// One island's source: the per-region form emitter, or one of the two
@@ -3455,7 +4094,127 @@ fn emitIslandFor(ctx: *Ctx, spec: convert.IslandSpec) Allocator.Error![]u8 {
             if (spec.click) |click| return emitClickIsland(gpa, spec, click);
             return emitIsland(gpa, spec);
         },
+        .turbo_frame => return emitFrameIsland(gpa),
+        .component => return emitComponentIslandFor(ctx, spec),
+        .data_list => return emitDataIsland(gpa, spec),
+        // Task 5 replaces these generic compile-time fallbacks with the
+        // dedicated Stage 4 emitters. Task 4 produces the specs but no
+        // scaffold binding can construct these kinds yet.
+        .stimulus, .@"inline", .drop => return emitIsland(gpa, spec),
     }
+}
+
+fn emitDataIsland(gpa: Allocator, spec: convert.IslandSpec) Allocator.Error![]u8 {
+    const body_js = spec.port orelse "";
+    const collection = spec.binding.collection orelse "";
+    const name = try islandComponentName(gpa, spec.island);
+    defer gpa.free(name);
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(gpa);
+    try out.print(gpa,
+        \\// Generated by `zigapagos migrate --from rails` from {s}:{d}.
+        \\// Replaces: {s}
+        \\// Reads collection `{s}` through lib/zb.ts; the collection's list rule decides what a visitor sees.
+        \\import {{ useEffect, useState }} from "@z/runtime";
+        \\import {{ isZigbaseError }} from "@zigbase/client";
+        \\import {{ zb }} from "../../lib/zb";
+        \\
+        \\export interface Props {{}}
+        \\
+        \\const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({{ "&": "&amp;", "<": "&lt;", ">": "&gt;", '\"': "&quot;", "'": "&#39;" }})[c]!);
+        \\
+        \\function body(rec: any): string {{
+        \\  let h = "";
+        \\
+    , .{ spec.source, spec.line, spec.original, collection });
+    var lines = std.mem.splitScalar(u8, body_js, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        try out.appendSlice(gpa, "  ");
+        try out.appendSlice(gpa, line);
+        try out.append(gpa, '\n');
+    }
+    try out.print(gpa,
+        \\  return h;
+        \\}}
+        \\
+        \\export default function {s}(_props: Props) {{
+        \\  const [html, setHtml] = useState<string | null>(null);
+        \\  const [error, setError] = useState<string | null>(null);
+        \\  useEffect(() => {{
+        \\    zb.collection("{s}").getList(1, 50)
+        \\      .then((page) => setHtml(page.items.map(body).join("")))
+        \\      .catch((err) => setError(isZigbaseError(err) ? err.message : String(err)));
+        \\  }}, []);
+        \\  if (error !== null) return <p>{{"Could not load {s}: " + error}}</p>;
+        \\  if (html === null) return <p>{{"Loading…"}}</p>;
+        \\  return <div dangerouslySetInnerHTML={{{{ __html: html }}}} />;
+        \\}}
+        \\
+    , .{ name, collection, collection });
+    return out.toOwnedSlice(gpa);
+}
+
+fn componentNode(ctx: *Ctx, spec: convert.IslandSpec) ?fragments.Node {
+    const tpl = findTemplate(ctx.in.discovery.fragments, spec.source) orelse return null;
+    for (tpl.nodes) |node| {
+        if (node.text == null and node.kind == .component_root and node.line == spec.line) return node;
+    }
+    return null;
+}
+
+fn componentSource(sources: []const port.JsSource, name: []const u8) ?port.JsSource {
+    const exts = [_][]const u8{ ".jsx", ".tsx", ".js", ".ts" };
+    for (exts) |ext| for (sources) |source| {
+        const prefix = "app/javascript/components/";
+        if (!std.mem.startsWith(u8, source.path, prefix)) continue;
+        const rel = source.path[prefix.len..];
+        if (rel.len == name.len + ext.len and std.mem.startsWith(u8, rel, name) and std.mem.eql(u8, rel[name.len..], ext)) return source;
+    };
+    return null;
+}
+
+fn copiedComponentPath(gpa: Allocator, source_path: []const u8) Allocator.Error![]u8 {
+    const component_prefix = "app/javascript/components/";
+    const javascript_prefix = "app/javascript/";
+    if (std.mem.startsWith(u8, source_path, component_prefix))
+        return std.fmt.allocPrint(gpa, "components/react/{s}", .{source_path[component_prefix.len..]});
+    if (std.mem.startsWith(u8, source_path, javascript_prefix))
+        return std.fmt.allocPrint(gpa, "components/react/_/{s}", .{source_path[javascript_prefix.len..]});
+    return gpa.dupe(u8, source_path);
+}
+
+fn emitComponentIslandFor(ctx: *Ctx, spec: convert.IslandSpec) Allocator.Error![]u8 {
+    const gpa = ctx.gpa;
+    const node = componentNode(ctx, spec) orelse return emitIsland(gpa, spec);
+    const name = node.name orelse return emitIsland(gpa, spec);
+    const source = componentSource(ctx.in.discovery.js_sources, name) orelse return emitIsland(gpa, spec);
+    const copied = try copiedComponentPath(gpa, source.path);
+    defer gpa.free(copied);
+    const import_path = if (std.mem.startsWith(u8, copied, "components/")) copied["components/".len..] else copied;
+
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(gpa);
+    try out.print(gpa, "// Generated by `zigapagos migrate --from rails` from {s}:{d}.\n// Replaces: {s}\n// The component is {s}, copied unchanged to {s};\n// its `react` imports resolve to the shared runtime through z-runtime.config.json (docs/migration/react-spa-bridge.md).\nimport {s} from \"./{s}\";\n\nexport interface Props {{", .{ spec.source, spec.line, spec.original, source.path, copied, name, import_path });
+    const attrs = try gpa.dupe(fragments.Attr, node.attrs);
+    defer gpa.free(attrs);
+    std.mem.sort(fragments.Attr, attrs, {}, struct {
+        fn lessThan(_: void, a: fragments.Attr, b: fragments.Attr) bool {
+            return std.mem.order(u8, a.key, b.key) == .lt;
+        }
+    }.lessThan);
+    for (attrs, 0..) |attr, i| {
+        if (i > 0) try out.appendSlice(gpa, ";");
+        try out.print(gpa, " {s}{s}: {s}", .{ attr.key, if (attr.kind == .null) "?" else "", switch (attr.kind) {
+            .string => "string",
+            .number => "number",
+            .boolean => "boolean",
+            .null => "null",
+        } });
+    }
+    if (attrs.len > 0) try out.append(gpa, ' ');
+    try out.print(gpa, "}}\n\nexport default function {s}Island(props: Props) {{\n  return <{s} {{...props}} />;\n}}\n", .{ name, name });
+    return out.toOwnedSlice(gpa);
 }
 
 /// `components/AuthForm.island.tsx`, byte for byte.
@@ -4325,6 +5084,10 @@ fn writeSpas(ctx: *Ctx, acc: *Acc, list: []const SpaRoute) WriteError!void {
         const source = try emitSpa(ctx, segment, list, order[i..j]);
         defer gpa.free(source);
         try ctx.writeFile(path, source);
+        for (order[i..j]) |k| if (list[k].port_js != null) {
+            acc.spa_uses_client = true;
+            break;
+        };
 
         for (order[i..j]) |k| {
             const oc = &acc.routes.items[list[k].outcome_index];
@@ -4338,6 +5101,14 @@ fn writeSpas(ctx: *Ctx, acc: *Acc, list: []const SpaRoute) WriteError!void {
             oc.artifacts = artifacts;
             artifacts[artifacts.len - 1] = copy;
             std.mem.sort([]const u8, artifacts, {}, lessThanStr);
+            if (list[k].port_js != null) {
+                const client_copy = try gpa.dupe(u8, client_lib_path);
+                errdefer gpa.free(client_copy);
+                const with_client_artifact = try gpa.realloc(oc.artifacts, oc.artifacts.len + 1);
+                oc.artifacts = with_client_artifact;
+                with_client_artifact[with_client_artifact.len - 1] = client_copy;
+                std.mem.sort([]const u8, with_client_artifact, {}, lessThanStr);
+            }
         }
         try acc.spa_files.append(gpa, path);
         i = j;
@@ -4384,19 +5155,86 @@ fn emitSpa(ctx: *Ctx, segment: []const u8, list: []const SpaRoute, group: []cons
     var out: std.ArrayListUnmanaged(u8) = .empty;
     errdefer out.deinit(gpa);
 
-    try out.appendSlice(gpa,
-        \\// Generated by `zigapagos migrate --from rails`. Every component below is a
-        \\// placeholder: the Rails view it names still has to be ported by hand.
-        \\import { Router } from "@z/runtime";
-        \\
-        \\
-    );
+    var heads: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer {
+        for (heads.items) |head| gpa.free(head);
+        heads.deinit(gpa);
+    }
+    for (group) |k| {
+        const route_index = list[k].route_index;
+        if (route_index >= ctx.in.discovery.route_templates.len) continue;
+        const layout = ctx.in.discovery.route_templates[route_index].layout orelse continue;
+        const tpl = findTemplate(ctx.in.discovery.fragments, layout) orelse continue;
+        for (tpl.nodes) |node| {
+            if (node.text != null or node.kind != .asset or !std.mem.eql(u8, node.name orelse "", "stylesheet_link_tag")) continue;
+            for (node.args) |literal| {
+                const asset = resolve.assetFor(ctx.in.discovery.assets, "stylesheet_link_tag", literal) orelse continue;
+                if (!asset.deterministic) continue;
+                const target = try resolve.assetTargetPath(gpa, asset.source);
+                defer gpa.free(target);
+                const href = try std.fmt.allocPrint(gpa, "/{s}", .{target});
+                errdefer gpa.free(href);
+                if (contains(heads.items, href)) {
+                    gpa.free(href);
+                } else try heads.append(gpa, href);
+            }
+        }
+    }
+    std.mem.sort([]const u8, heads.items, {}, lessThanStr);
+
+    var has_port = false;
+    for (group) |k| if (list[k].port_js != null) {
+        has_port = true;
+        break;
+    };
+
+    try out.appendSlice(gpa, "// Generated by `zigapagos migrate --from rails`. Unported components below remain placeholders.\n");
+    if (has_port) {
+        try out.appendSlice(gpa, "import { Router, useParams, useEffect, useState } from \"@z/runtime\";\nimport { isZigbaseError } from \"@zigbase/client\";\nimport { zb } from \"../lib/zb\";\n\n");
+    } else try out.appendSlice(gpa, "import { Router } from \"@z/runtime\";\n\n");
     try out.appendSlice(gpa, "export const spa = { base: \"/");
     try out.appendSlice(gpa, segment);
-    try out.appendSlice(gpa, "\" };\n\n");
+    try out.appendSlice(gpa, "\", head: [");
+    for (heads.items, 0..) |href, i| {
+        if (i > 0) try out.appendSlice(gpa, ", ");
+        try out.appendSlice(gpa, "{ rel: \"stylesheet\", href: \"");
+        try appendJsEscaped(gpa, &out, href);
+        try out.appendSlice(gpa, "\" }");
+    }
+    try out.appendSlice(gpa, "] };\n\n");
+
+    if (has_port) try out.appendSlice(gpa, port.esc_helper ++ "\n\n");
 
     for (group, names.items) |k, name| {
         const r = routes_all[list[k].route_index];
+        if (list[k].port_js) |body_js| {
+            try out.appendSlice(gpa, "function body");
+            try out.appendSlice(gpa, name);
+            try out.appendSlice(gpa, "(rec: any): string {\n  let h = \"\";\n");
+            var body_lines = std.mem.splitScalar(u8, body_js, '\n');
+            while (body_lines.next()) |line| {
+                if (line.len == 0) continue;
+                try out.appendSlice(gpa, "  ");
+                try out.appendSlice(gpa, line);
+                try out.append(gpa, '\n');
+            }
+            try out.appendSlice(gpa, "  return h;\n}\n\nfunction ");
+            try out.appendSlice(gpa, name);
+            try out.appendSlice(gpa, "() {\n  const params = useParams<{ ");
+            try out.appendSlice(gpa, list[k].param.?);
+            try out.appendSlice(gpa, ": string }>();\n  const [html, setHtml] = useState<string | null>(null);\n  const [error, setError] = useState<string | null>(null);\n  useEffect(() => {\n    zb.collection(\"");
+            try appendJsEscaped(gpa, &out, list[k].collection.?);
+            try out.appendSlice(gpa, "\").getOne(params.");
+            try out.appendSlice(gpa, list[k].param.?);
+            try out.appendSlice(gpa, ")\n      .then((rec) => setHtml(body");
+            try out.appendSlice(gpa, name);
+            try out.appendSlice(gpa, "(rec)))\n      .catch((err) => setError(isZigbaseError(err) ? err.message : String(err)));\n  }, [params.");
+            try out.appendSlice(gpa, list[k].param.?);
+            try out.appendSlice(gpa, "]);\n  if (error !== null) return <p>{\"Could not load ");
+            try appendJsEscaped(gpa, &out, list[k].collection.?);
+            try out.appendSlice(gpa, ": \" + error}</p>;\n  if (html === null) return <p>{\"Loading…\"}</p>;\n  return <div dangerouslySetInnerHTML={{ __html: html }} />;\n}\n\n");
+            continue;
+        }
         try out.appendSlice(gpa, "function ");
         try out.appendSlice(gpa, name);
         try out.appendSlice(gpa, "() {\n  return <p>{\"TODO: port ");
@@ -4432,7 +5270,7 @@ fn emitSpa(ctx: *Ctx, segment: []const u8, list: []const SpaRoute, group: []cons
         // because the SPA is grouped by first segment: `/posts/:id` and
         // `/posts/new` can share one `.spa.tsx`, and the second one's entry
         // path (`/new`) has no param to enumerate.
-        try out.appendSlice(gpa, ", skeleton: false");
+        try out.appendSlice(gpa, ", skeleton: false as const");
         if (findings.isDynamicRoutePath(rest)) {
             try out.appendSlice(gpa, ", staticPaths: []");
         }
@@ -4543,7 +5381,10 @@ const target_tsconfig =
     \\    "jsxImportSource": "@z/runtime",
     \\    "moduleResolution": "bundler",
     \\    "strict": true,
-    \\    "skipLibCheck": true
+    \\    "skipLibCheck": true,
+    \\    "allowJs": true,
+    \\    "allowImportingTsExtensions": true,
+    \\    "noEmit": true
     \\  }
     \\}
     \\
@@ -4565,6 +5406,79 @@ pub const client_lib_path = "lib/zb.ts";
 /// prop, and two copies would be two components to keep in step by hand.
 pub const auth_form_island_path = "components/AuthForm.island.tsx";
 pub const auth_status_island_path = "components/AuthStatus.island.tsx";
+pub const turbo_frame_island_path = "components/TurboFrame.island.tsx";
+
+const stimulus_runtime =
+    \\// Generated by `zigapagos migrate --from rails`.
+    \\// Keep the action-token grammar in sync with `port.actionDescriptors`.
+    \\export function targetsOf(root: HTMLElement, id: string, names: string[]) {
+    \\  const out: Record<string, HTMLElement[]> = {};
+    \\  for (const name of names) out[name] = Array.from(root.querySelectorAll<HTMLElement>(`[data-${id}-target~="${name}"]`));
+    \\  return out;
+    \\}
+    \\
+    \\export function valuesOf(root: HTMLElement, id: string, types: Record<string, string>) {
+    \\  const owner = root.matches(`[data-controller~="${id}"]`) ? root : root.querySelector<HTMLElement>(`[data-controller~="${id}"]`);
+    \\  const out: Record<string, unknown> = {};
+    \\  for (const [name, type] of Object.entries(types)) {
+    \\    const raw = owner?.getAttribute(`data-${id}-${name}-value`);
+    \\    if (raw === null || raw === undefined) continue;
+    \\    out[name] = type === "boolean" ? raw === "true" : type === "number" ? Number(raw) : type === "array" || type === "object" ? JSON.parse(raw) : raw;
+    \\  }
+    \\  return out;
+    \\}
+    \\
+    \\export function classesOf(root: HTMLElement, id: string, names: string[]) {
+    \\  const owner = root.matches(`[data-controller~="${id}"]`) ? root : root.querySelector<HTMLElement>(`[data-controller~="${id}"]`);
+    \\  const out: Record<string, string> = {};
+    \\  for (const name of names) {
+    \\    const value = owner?.getAttribute(`data-${id}-${name}-class`);
+    \\    if (value !== null && value !== undefined) out[name] = value;
+    \\  }
+    \\  return out;
+    \\}
+    \\
+    \\export function bindActions(root: HTMLElement, id: string, handlers: Record<string, (event: Event) => void>) {
+    \\  const removers: Array<() => void> = [];
+    \\  for (const el of [root, ...root.querySelectorAll<HTMLElement>("[data-action]")]) {
+    \\    for (const token of (el.getAttribute("data-action") ?? "").split(/\s+/)) {
+    \\      const match = token.match(new RegExp(`^(?:(\\w[\\w:.-]*)->)?${id}#(\\w+)((?::\\w+)*)$`));
+    \\      if (!match || !handlers[match[2]]) continue;
+    \\      const event = match[1] ?? ({ A: "click", BUTTON: "click", FORM: "submit", INPUT: "input", SELECT: "change", TEXTAREA: "input" } as Record<string, string>)[el.tagName] ?? "click";
+    \\      const options = match[3].split(":").filter(Boolean);
+    \\      const wrapped = (e: Event) => { if (options.includes("prevent")) e.preventDefault(); if (options.includes("stop")) e.stopPropagation(); handlers[match[2]](e); };
+    \\      el.addEventListener(event, wrapped);
+    \\      removers.push(() => el.removeEventListener(event, wrapped));
+    \\    }
+    \\  }
+    \\  return () => { for (const remove of removers) remove(); };
+    \\}
+    \\
+;
+
+fn emitFrameIsland(gpa: Allocator) Allocator.Error![]u8 {
+    return gpa.dupe(u8,
+        \\// Generated by `zigapagos migrate --from rails`.
+        \\// The Rails application continues to serve `src`; this island replaces Turbo's browser-side frame navigation.
+        \\import { useEffect, useState, type ComponentChildren } from "@z/runtime";
+        \\
+        \\export interface Props { id: string; src: string }
+        \\
+        \\export default function TurboFrame(props: Props & { children?: ComponentChildren }) {
+        \\  const [html, setHtml] = useState<string | null>(null);
+        \\  useEffect(() => {
+        \\    fetch(props.src, { credentials: "same-origin", headers: { Accept: "text/html" } })
+        \\      .then((response) => response.text())
+        \\      .then((html) => new DOMParser().parseFromString(html, "text/html"))
+        \\      .then((doc) => doc.getElementById(props.id) ?? doc.querySelector("main") ?? doc.body)
+        \\      .then((el) => setHtml(el.innerHTML))
+        \\      .catch(() => { setHtml(null); console.warn("zigapagos: turbo-frame " + props.id + " could not load " + props.src); });
+        \\  }, [props.id, props.src]);
+        \\  return <div id={props.id}>{html === null ? props.children : <div dangerouslySetInnerHTML={{ __html: html }} />}</div>;
+        \\}
+        \\
+    );
+}
 
 /// `lib/zb.ts`, byte for byte.
 ///
@@ -4590,11 +5504,11 @@ fn writeClientLib(ctx: *Ctx, auth_collection: ?[]const u8) WriteError!void {
     const gpa = ctx.gpa;
     const bytes = if (auth_collection) |c| try std.fmt.allocPrint(gpa,
         \\import {{ createClient, LocalAuthStore }} from "@zigbase/client";
-        \\export const zb = createClient("", {{ authStore: new LocalAuthStore(), authCollection: "{s}" }});
+        \\export const zb = createClient("", {{ authStore: new LocalAuthStore(), authCollection: "{s}", fetch: (input, init) => globalThis.fetch(input, init) }});
         \\
     , .{c}) else try gpa.dupe(u8,
         \\import { createClient, LocalAuthStore } from "@zigbase/client";
-        \\export const zb = createClient("", { authStore: new LocalAuthStore() });
+        \\export const zb = createClient("", { authStore: new LocalAuthStore(), fetch: (input, init) => globalThis.fetch(input, init) });
         \\
     );
     defer gpa.free(bytes);
@@ -4620,6 +5534,14 @@ fn writeProjectFiles(ctx: *Ctx, acc: *Acc) WriteError!void {
     try ctx.writeFile("CLAUDE.md", ctx.in.claude_md);
 
     const bound = acc.island_files.items.len > 0;
+    var with_client = acc.spa_uses_client;
+    for (ctx.bindings.all) |binding| {
+        if (!contains(acc.island_files.items, binding.island)) continue;
+        switch (binding.kind) {
+            .operation, .custom, .auth_signin, .auth_signup, .auth_logout, .data_list => with_client = true,
+            .stimulus, .turbo_frame, .component, .@"inline", .drop => {},
+        }
+    }
     // #167 Stage 3 Task 5: `authCollection` arms the client's own 401
     // refresh, and it is set exactly when an auth scaffold reached the target
     // -- not merely when a journey was answered. Naming a collection nothing
@@ -4630,18 +5552,137 @@ fn writeProjectFiles(ctx: *Ctx, acc: *Acc) WriteError!void {
             contains(acc.island_files.items, auth_status_island_path)) j.collection else null)
     else
         null;
-    if (bound) try writeClientLib(ctx, auth_collection);
+    if (with_client) try writeClientLib(ctx, auth_collection);
+    var with_stimulus = false;
+    for (acc.island_files.items) |path| if (std.mem.startsWith(u8, path, "components/stimulus/")) {
+        with_stimulus = true;
+        break;
+    };
+    if (with_stimulus) try ctx.writeFile("lib/stimulus.ts", stimulus_runtime);
+
+    const component_sources = try collectComponentSources(gpa, ctx, acc.island_files.items);
+    defer gpa.free(component_sources);
+    var npm_compat: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer npm_compat.deinit(gpa);
+    for (component_sources) |source| {
+        const target_path = try copiedComponentPath(gpa, source.path);
+        defer gpa.free(target_path);
+        try ctx.writeFile(target_path, source.bytes);
+        const imports = try port.reactImports(gpa, source.bytes);
+        defer gpa.free(imports.list);
+        for (imports.list) |imp| {
+            if (!imp.relative and !port.isBridgeResolved(imp.spec)) try appendBorrowedUnique(gpa, &npm_compat, imp.spec);
+        }
+    }
+    std.mem.sort([]const u8, npm_compat.items, {}, lessThanStr);
+    if (component_sources.len > 0) {
+        const bridge = try emitReactBridgeConfig(gpa, npm_compat.items);
+        defer gpa.free(bridge);
+        try ctx.writeFile("z-runtime.config.json", bridge);
+    }
 
     // Only a SPA or an island needs a bundler at all: a pure content target
     // builds with the binary and nothing else, and emitting a `package.json`
     // that nothing installs would invite `bun install` into a project with no
     // JS.
     if (acc.spa_files.items.len > 0 or bound) {
-        const pkg = try emitPackage(gpa, ctx.in.app_name, runtimePath(ctx.in), bound);
+        const pkg = try emitPackageCompat(gpa, ctx.in.app_name, runtimePath(ctx.in), with_client, npm_compat.items, ctx.in.discovery.npm_dependencies);
         defer gpa.free(pkg);
         try ctx.writeFile("package.json", pkg);
         try ctx.writeFile("tsconfig.json", target_tsconfig);
     }
+}
+
+fn appendBorrowedUnique(gpa: Allocator, list: *std.ArrayListUnmanaged([]const u8), value: []const u8) Allocator.Error!void {
+    if (!contains(list.items, value)) try list.append(gpa, value);
+}
+
+fn bindingById(bindings: []const convert.Binding, id: []const u8) ?convert.Binding {
+    for (bindings) |binding| if (std.mem.eql(u8, binding.finding_id, id)) return binding;
+    return null;
+}
+
+fn sourceByPath(sources: []const port.JsSource, path: []const u8) ?port.JsSource {
+    for (sources) |source| if (std.mem.eql(u8, source.path, path)) return source;
+    return null;
+}
+
+fn relativeJsSource(gpa: Allocator, sources: []const port.JsSource, importer: []const u8, spec: []const u8) Allocator.Error!?port.JsSource {
+    const dir = std.fs.path.dirname(importer) orelse return null;
+    var parts: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer parts.deinit(gpa);
+    var base_it = std.mem.splitScalar(u8, dir, '/');
+    while (base_it.next()) |part| if (part.len > 0) try parts.append(gpa, part);
+    var spec_it = std.mem.splitScalar(u8, spec, '/');
+    while (spec_it.next()) |part| {
+        if (part.len == 0 or std.mem.eql(u8, part, ".")) continue;
+        if (std.mem.eql(u8, part, "..")) {
+            if (parts.items.len <= 2) return null;
+            _ = parts.pop();
+        } else try parts.append(gpa, part);
+    }
+    const joined = try std.mem.join(gpa, "/", parts.items);
+    defer gpa.free(joined);
+    for ([_][]const u8{ "", ".jsx", ".tsx", ".js", ".ts", "/index.jsx", "/index.tsx", "/index.js", "/index.ts" }) |suffix| {
+        const candidate = try std.fmt.allocPrint(gpa, "{s}{s}", .{ joined, suffix });
+        defer gpa.free(candidate);
+        if (sourceByPath(sources, candidate)) |source| return source;
+    }
+    return null;
+}
+
+fn collectComponentSources(gpa: Allocator, ctx: *Ctx, written: []const []const u8) Allocator.Error![]port.JsSource {
+    var queue: std.ArrayListUnmanaged(port.JsSource) = .empty;
+    errdefer queue.deinit(gpa);
+    for (ctx.in.discovery.fragments) |tpl| for (tpl.nodes) |node| {
+        if (node.text != null or node.kind != .component_root) continue;
+        const id = convert.findingIdFor(ctx.in.discovery.findings, tpl.path, node.line, node.col) orelse continue;
+        const binding = bindingById(ctx.bindings.all, id) orelse continue;
+        if (binding.kind != .component or !contains(written, binding.island)) continue;
+        const source = componentSource(ctx.in.discovery.js_sources, node.name orelse "") orelse continue;
+        var seen = false;
+        for (queue.items) |have| if (std.mem.eql(u8, have.path, source.path)) {
+            seen = true;
+            break;
+        };
+        if (!seen) try queue.append(gpa, source);
+    };
+    var index: usize = 0;
+    while (index < queue.items.len) : (index += 1) {
+        const source = queue.items[index];
+        const imports = try port.reactImports(gpa, source.bytes);
+        defer gpa.free(imports.list);
+        for (imports.list) |imp| {
+            if (!imp.relative) continue;
+            const child = (try relativeJsSource(gpa, ctx.in.discovery.js_sources, source.path, imp.spec)) orelse continue;
+            var seen = false;
+            for (queue.items) |have| if (std.mem.eql(u8, have.path, child.path)) {
+                seen = true;
+                break;
+            };
+            if (!seen) try queue.append(gpa, child);
+        }
+    }
+    std.mem.sort(port.JsSource, queue.items, {}, struct {
+        fn lessThan(_: void, a: port.JsSource, b: port.JsSource) bool {
+            return std.mem.order(u8, a.path, b.path) == .lt;
+        }
+    }.lessThan);
+    return queue.toOwnedSlice(gpa);
+}
+
+fn emitReactBridgeConfig(gpa: Allocator, compat: []const []const u8) Allocator.Error![]u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(gpa);
+    try out.appendSlice(gpa, "{\"islandImports\":{\"firstParty\":[],\"npmCompat\":[");
+    for (compat, 0..) |name, i| {
+        if (i > 0) try out.append(gpa, ',');
+        try out.append(gpa, '"');
+        try appendJsEscaped(gpa, &out, name);
+        try out.append(gpa, '"');
+    }
+    try out.appendSlice(gpa, "]},\"resolve\":{\"react\":\"@z/runtime/compat\",\"react-dom\":\"@z/runtime/compat\",\"react-dom/client\":\"@z/runtime/compat/client\",\"react/jsx-runtime\":\"@z/runtime/jsx-runtime\",\"react/jsx-dev-runtime\":\"@z/runtime/jsx-dev-runtime\"}}\n");
+    return out.toOwnedSlice(gpa);
 }
 
 /// #179 option 1: the `file:` path a generated `package.json` points
@@ -4786,6 +5827,40 @@ fn emitPackage(
         // change `createClient`'s options under it.
         if (with_client) ", \"@zigbase/client\": \"" ++ zigbase_client_version ++ "\"" else "",
     });
+}
+
+fn emitPackageCompat(
+    gpa: Allocator,
+    app_name: []const u8,
+    runtime_path: ?[]const u8,
+    with_client: bool,
+    compat: []const []const u8,
+    dependencies: []const @import("integrations.zig").NpmDep,
+) Allocator.Error![]u8 {
+    const base = try emitPackage(gpa, app_name, runtime_path, with_client);
+    defer gpa.free(base);
+    if (compat.len == 0) return gpa.dupe(u8, base);
+    const marker = " }\n}\n";
+    const at = std.mem.lastIndexOf(u8, base, marker) orelse return gpa.dupe(u8, base);
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(gpa);
+    try out.appendSlice(gpa, base[0..at]);
+    for (compat) |name| {
+        var version: ?[]const u8 = null;
+        for (dependencies) |dep| if (std.mem.eql(u8, dep.name, name)) {
+            version = dep.version;
+            break;
+        };
+        if (version) |v| {
+            try out.appendSlice(gpa, ", \"");
+            try appendJsEscaped(gpa, &out, name);
+            try out.appendSlice(gpa, "\": \"");
+            try appendJsEscaped(gpa, &out, v);
+            try out.append(gpa, '"');
+        }
+    }
+    try out.appendSlice(gpa, base[at..]);
+    return out.toOwnedSlice(gpa);
 }
 
 /// The `@zigbase/client` release the emitted islands are written against.
@@ -5743,11 +6818,10 @@ test "write: a dynamic route is open until a spa decision scaffolds one .spa.tsx
         const spa_src = try readTarget(gpa, &tmp, "spa/posts.spa.tsx");
         defer gpa.free(spa_src);
         try testing.expectEqualStrings(
-            \\// Generated by `zigapagos migrate --from rails`. Every component below is a
-            \\// placeholder: the Rails view it names still has to be ported by hand.
+            \\// Generated by `zigapagos migrate --from rails`. Unported components below remain placeholders.
             \\import { Router } from "@z/runtime";
             \\
-            \\export const spa = { base: "/posts" };
+            \\export const spa = { base: "/posts", head: [] };
             \\
             \\function PostsShow() {
             \\  return <p>{"TODO: port GET /posts/:id (posts#show)"}</p>;
@@ -5758,8 +6832,8 @@ test "write: a dynamic route is open until a spa decision scaffolds one .spa.tsx
             \\}
             \\
             \\export const routes = [
-            \\  { path: "/:id", component: PostsShow, skeleton: false, staticPaths: [] },
-            \\  { path: "/:id/edit", component: PostsEdit, skeleton: false, staticPaths: [] },
+            \\  { path: "/:id", component: PostsShow, skeleton: false as const, staticPaths: [] },
+            \\  { path: "/:id/edit", component: PostsEdit, skeleton: false as const, staticPaths: [] },
             \\];
             \\
             \\export default function App() {
@@ -6481,7 +7555,7 @@ test "write: staticPaths is emitted only for a spa entry whose own path is dynam
     const spa_src = try readTarget(gpa, &tmp, "spa/posts.spa.tsx");
     defer gpa.free(spa_src);
     // `/posts/:id` -> `/:id`: dynamic, so it enumerates.
-    try testing.expect(std.mem.indexOf(u8, spa_src, "{ path: \"/:id\", component: PostsShow, skeleton: false, staticPaths: [] }") != null);
+    try testing.expect(std.mem.indexOf(u8, spa_src, "{ path: \"/:id\", component: PostsShow, skeleton: false as const, staticPaths: [] }") != null);
     // `/posts/new` is NOT dynamic, so it never reached the SPA at all -- it
     // took the content path. Only the dynamic one is here.
     try testing.expectEqual(@as(usize, 1), std.mem.count(u8, spa_src, "path: \""));
@@ -7664,7 +8738,7 @@ test "write: one lib/zb.ts, one package.json dependency pair, one --island flag"
     // `LocalAuthStore`, not the spec's sketched `new ZigBase(...)`.
     try testing.expectEqualStrings(
         \\import { createClient, LocalAuthStore } from "@zigbase/client";
-        \\export const zb = createClient("", { authStore: new LocalAuthStore() });
+        \\export const zb = createClient("", { authStore: new LocalAuthStore(), fetch: (input, init) => globalThis.fetch(input, init) });
         \\
     , zb);
 
@@ -8800,7 +9874,7 @@ test "write: two bound controls on one route each settle their own finding (ruli
     try testing.expectEqual(Status.open, page.status);
 }
 
-test "write: assumption A6 -- `backend` on RAILS_REQUEST_TIME_STATE names the issue, not a stage" {
+test "write: data backend choice without a document names the required list operation" {
     const gpa = testing.allocator;
     // The choice is still offered (a `@posts` read could in principle become a
     // data-fetching island) and no stage has a converter for it. Stage 2's
@@ -8866,7 +9940,7 @@ test "write: assumption A6 -- `backend` on RAILS_REQUEST_TIME_STATE names the is
     try testing.expect(std.mem.indexOf(
         u8,
         res.routes[0].note orelse "",
-        "choice backend on RAILS_REQUEST_TIME_STATE has no converter (see #184)",
+        "choice backend on RAILS_REQUEST_TIME_STATE needs a --backend document with a list operation for collection `posts`",
     ) != null);
 }
 
@@ -10986,7 +12060,7 @@ test "write: lib/zb.ts names the auth collection when a journey is bound" {
     defer gpa.free(lib);
     try testing.expectEqualStrings(
         \\import { createClient, LocalAuthStore } from "@zigbase/client";
-        \\export const zb = createClient("", { authStore: new LocalAuthStore(), authCollection: "users" });
+        \\export const zb = createClient("", { authStore: new LocalAuthStore(), authCollection: "users", fetch: (input, init) => globalThis.fetch(input, init) });
         \\
     , lib);
 }
@@ -13162,4 +14236,379 @@ test "write: the AuthStatus header is in source order, not fragment-stream order
     const home = std.mem.indexOf(u8, island, "app/views/pages/home.html.erb:1").?;
     const nav = std.mem.indexOf(u8, island, "app/views/shared/_nav.html.erb:1").?;
     try testing.expect(home < nav);
+}
+
+test "Stage 4 shared interactivity emitters have their runtime contracts" {
+    const gpa = testing.allocator;
+    const frame = try emitFrameIsland(gpa);
+    defer gpa.free(frame);
+    try testing.expect(std.mem.indexOf(u8, frame, "fetch(props.src") != null);
+    try testing.expect(std.mem.indexOf(u8, frame, "dangerouslySetInnerHTML") != null);
+    try testing.expect(std.mem.indexOf(u8, stimulus_runtime, "root.querySelectorAll<HTMLElement>(\"[data-action]\")") != null);
+    try testing.expect(std.mem.indexOf(u8, stimulus_runtime, "split(/\\s+/)") != null);
+    try testing.expect(std.mem.indexOf(u8, stimulus_runtime, "new RegExp(`^(?:(\\\\w[\\\\w:.-]*)->)?${id}#(\\\\w+)((?::\\\\w+)*)$`)") != null);
+}
+
+test "write: a Stimulus-only island emits its shared runtime without ZigBase" {
+    const gpa = testing.allocator;
+    const nodes = [_]fragments.Node{
+        tOpen(.stimulus, 1, 1, "reveal", "<div data-controller=\"reveal\">"),
+        tText("<button data-action=\"click->reveal#toggle:prevent\">Show</button>", 2),
+        tEnd(3, 1),
+    };
+    const templates = [_]fragments.Template{tTemplate("app/views/pages/widgets.html.erb", &nodes)};
+    var routes = [_]route_mod.Route{tRoute("GET", "/widgets", "pages", "widgets", 1)};
+    var verdicts = [_]classify.Verdict{tVerdict(.content)};
+    var template_paths = [_][]const u8{"app/views/pages/widgets.html.erb"};
+    var route_templates = [_]rails.RouteTemplates{.{ .templates = &template_paths, .layout = null }};
+    const route_views = [_]?[]const u8{"app/views/pages/widgets.html.erb"};
+    const route_names = [_][]const u8{"widgets"};
+    const sources = [_]port.JsSource{.{
+        .path = "app/javascript/controllers/reveal_controller.js",
+        .bytes = "export default class extends Controller { static targets = [\"details\"]; toggle() { this.detailsTarget.hidden = false } }",
+    }};
+    const finding_list = try findings.derive(gpa, .{
+        .templates = &templates,
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &route_names,
+        .locale = null,
+        .routes = &routes,
+        .classifications = &verdicts,
+        .route_views = &route_views,
+        .js_sources = &sources,
+    });
+    defer findings.free(gpa, finding_list);
+    var stimulus_id: []const u8 = "";
+    for (finding_list) |finding| {
+        if (std.mem.eql(u8, finding.code, findings.code_stimulus_controller)) stimulus_id = finding.id;
+    }
+    try testing.expect(stimulus_id.len > 0);
+    var decided = [_]decisions.Decision{.{ .id = stimulus_id, .choice = "island", .rationale = "port structure", .artifact = null }};
+    var discovery = emptyDiscovery();
+    discovery.routes = &routes;
+    discovery.classifications = &verdicts;
+    discovery.route_templates = &route_templates;
+    discovery.fragments = @constCast(&templates);
+    discovery.findings = finding_list;
+    discovery.js_sources = @constCast(&sources);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const target = try tmpTarget(gpa, &tmp);
+    defer gpa.free(target);
+    var error_path: ?[]const u8 = null;
+    defer if (error_path) |path| gpa.free(path);
+    var error_cause: ?anyerror = null;
+    const result = try write(std.testing.io, gpa, .{
+        .discovery = &discovery,
+        .decisions = .{ .decisions = &decided, .stale = &.{} },
+        .source_root = tmp.dir,
+        .target = target,
+        .app_name = "Widgets",
+        .runtime_path = "../runtime",
+        .agents_md = "",
+        .claude_md = "",
+    }, &error_path, &error_cause);
+    defer freeResult(gpa, result);
+
+    try testing.expect(targetHas(&tmp, "components/stimulus/reveal.island.tsx"));
+    try testing.expect(targetHas(&tmp, "lib/stimulus.ts"));
+    try testing.expect(!targetHas(&tmp, client_lib_path));
+    const package = try readTarget(gpa, &tmp, "package.json");
+    defer gpa.free(package);
+    try testing.expect(std.mem.indexOf(u8, package, "@zigbase/client") == null);
+
+    var fail_index: usize = 0;
+    while (fail_index < 500) : (fail_index += 1) {
+        var failing_tmp = std.testing.tmpDir(.{});
+        defer failing_tmp.cleanup();
+        const failing_target = try tmpTarget(gpa, &failing_tmp);
+        defer gpa.free(failing_target);
+        var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = fail_index });
+        const fa = failing.allocator();
+        var failing_path: ?[]const u8 = null;
+        defer if (failing_path) |path| fa.free(path);
+        var failing_cause: ?anyerror = null;
+        if (write(std.testing.io, fa, .{
+            .discovery = &discovery,
+            .decisions = .{ .decisions = &decided, .stale = &.{} },
+            .source_root = failing_tmp.dir,
+            .target = failing_target,
+            .app_name = "Widgets",
+            .runtime_path = "../runtime",
+            .agents_md = "",
+            .claude_md = "",
+        }, &failing_path, &failing_cause)) |swept| {
+            freeResult(fa, swept);
+            break;
+        } else |err| switch (err) {
+            error.OutOfMemory => {},
+            else => return err,
+        }
+    }
+    try testing.expect(fail_index < 500);
+}
+
+test "Stage 4 interactivity paths and React project metadata are deterministic" {
+    const gpa = testing.allocator;
+    var acc: BindingAcc = .{ .endpoints = &.{} };
+    defer acc.deinit(gpa);
+    const first = try acc.stimulusPath(gpa, "a-b");
+    const second = try acc.stimulusPath(gpa, "a--b");
+    try testing.expectEqualStrings("components/stimulus/a_b.island.tsx", first);
+    try testing.expectEqualStrings("components/stimulus/a_b_2.island.tsx", second);
+    try testing.expectEqualStrings(first, try acc.stimulusPath(gpa, "a-b"));
+    const chart = try acc.componentPath(gpa, "Chart");
+    try testing.expectEqualStrings("components/Chart.island.tsx", chart);
+    try testing.expectEqualStrings(chart, try acc.componentPath(gpa, "Chart"));
+    try testing.expectEqualStrings("components/AuthForm_2.island.tsx", try acc.componentPath(gpa, "AuthForm"));
+
+    const config = try emitReactBridgeConfig(gpa, &.{ "d3", "zod" });
+    defer gpa.free(config);
+    try testing.expectEqualStrings("{\"islandImports\":{\"firstParty\":[],\"npmCompat\":[\"d3\",\"zod\"]},\"resolve\":{\"react\":\"@z/runtime/compat\",\"react-dom\":\"@z/runtime/compat\",\"react-dom/client\":\"@z/runtime/compat/client\",\"react/jsx-runtime\":\"@z/runtime/jsx-runtime\",\"react/jsx-dev-runtime\":\"@z/runtime/jsx-dev-runtime\"}}\n", config);
+    const deps = [_]@import("integrations.zig").NpmDep{.{ .name = "d3", .version = "7.9.0" }};
+    const package = try emitPackageCompat(gpa, "Charts", "../runtime", false, &.{"d3"}, &deps);
+    defer gpa.free(package);
+    try testing.expect(std.mem.indexOf(u8, package, "\"d3\": \"7.9.0\"") != null);
+    try testing.expect(std.mem.indexOf(u8, target_tsconfig, "\"allowJs\": true") != null);
+    try testing.expect(std.mem.indexOf(u8, target_tsconfig, "\"allowImportingTsExtensions\": true") != null);
+    try testing.expect(std.mem.indexOf(u8, target_tsconfig, "\"noEmit\": true") != null);
+}
+
+test "emitStimulusIsland: every allocation failure is clean" {
+    const gpa = testing.allocator;
+    const methods = [_]port.Method{.{ .name = "toggle", .source = "toggle() { this.openValue = !this.openValue }" }};
+    const controller: port.Controller = .{
+        .identifier = "reveal",
+        .path = "app/javascript/controllers/reveal_controller.js",
+        .targets = &.{"details"},
+        .values = &.{.{ .name = "open", .kind = .boolean }},
+        .classes = &.{},
+        .methods = &methods,
+        .lifecycle = &.{"connect"},
+        .unsupported = null,
+    };
+    const mounts = [_]StatusOrigin{.{ .path = "app/views/pages/widgets.html.erb", .line = 2, .col = 1, .code = "", .finding_id = "f", .absorbed = false }};
+    var fail_index: usize = 0;
+    while (fail_index < 100) : (fail_index += 1) {
+        var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = fail_index });
+        const fa = failing.allocator();
+        if (emitStimulusIsland(fa, controller, &.{}, &mounts)) |bytes| {
+            fa.free(bytes);
+            break;
+        } else |err| switch (err) {
+            error.OutOfMemory => {},
+        }
+    }
+    try testing.expect(fail_index < 100);
+}
+
+test "emitDataIsland carries the ported record body and collection contract" {
+    const gpa = testing.allocator;
+    const binding: convert.Binding = .{ .finding_id = "f", .kind = .data_list, .verb = "GET", .path = "", .operation_id = "list", .collection = "posts", .island = "components/data/posts_index.island.tsx", .redirect_to = null };
+    const spec: convert.IslandSpec = .{ .island = binding.island, .fields = &.{}, .errors_model = null, .submit_label = "Save", .click = null, .binding = binding, .original = "@posts.each do |post|", .line = 1, .source = "app/views/posts/index.html.erb", .port = @constCast("h += \"<h2>\" + esc(String(rec.title ?? \"\")) + \"</h2>\";\n") };
+    const bytes = try emitDataIsland(gpa, spec);
+    defer gpa.free(bytes);
+    try testing.expect(std.mem.indexOf(u8, bytes, "zb.collection(\"posts\").getList(1, 50)") != null);
+    try testing.expect(std.mem.indexOf(u8, bytes, "  h += \"<h2>\"") != null);
+    try testing.expect(std.mem.indexOf(u8, bytes, "dangerouslySetInnerHTML") != null);
+}
+
+test "data island paths number a second region and emitter OOM paths are clean" {
+    const gpa = testing.allocator;
+    const first = try dataIslandPath(gpa, &.{}, "app/views/posts/index.html.erb");
+    defer gpa.free(first);
+    const binding: convert.Binding = .{ .finding_id = "a", .kind = .data_list, .verb = "GET", .path = "", .operation_id = "list", .collection = "posts", .island = first, .redirect_to = null };
+    const second = try dataIslandPath(gpa, &.{binding}, "app/views/posts/index.html.erb");
+    defer gpa.free(second);
+    try testing.expectEqualStrings("components/data/posts_index_2.island.tsx", second);
+
+    const spec: convert.IslandSpec = .{ .island = binding.island, .fields = &.{}, .errors_model = null, .submit_label = "Save", .click = null, .binding = binding, .original = "@posts.each do |post|", .line = 1, .source = "app/views/posts/index.html.erb", .port = @constCast("h += esc(String(rec.title ?? \"\"));\n") };
+    var fail_index: usize = 0;
+    while (fail_index < 100) : (fail_index += 1) {
+        var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = fail_index });
+        const fa = failing.allocator();
+        if (emitDataIsland(fa, spec)) |bytes| {
+            fa.free(bytes);
+            break;
+        } else |err| switch (err) {
+            error.OutOfMemory => {},
+        }
+    }
+    try testing.expect(fail_index < 100);
+}
+
+test "write: island and backend choices emit the same document-backed data island" {
+    const gpa = testing.allocator;
+    const document = try backend_mod.parse(gpa,
+        \\{"openapi":"3.1.0","info":{"version":"1"},"paths":{"/api/collections/notes/records":{"get":{"operationId":"listNotes"}},"/api/collections/posts/records":{"get":{"operationId":"listPosts"}},"/api/collections/posts/records/{id}":{"get":{"operationId":"viewPosts"}}}}
+    , "openapi.json");
+    defer backend_mod.free(gpa, document);
+    var local = tNode(.local, 2, 3, "post");
+    local.code = "post.title";
+    const nodes = [_]fragments.Node{
+        tOpen(.ivar, 1, 1, "@posts", "@posts.each do |post|"),
+        tText("<h2>", 2),
+        local,
+        tText("</h2>", 2),
+        tEnd(3, 1),
+    };
+    const templates = [_]fragments.Template{tTemplate("app/views/posts/index.html.erb", &nodes)};
+    var routes = [_]route_mod.Route{tNamed("GET", "/posts", "posts", "index", 1, "posts")};
+    var verdicts = [_]classify.Verdict{tVerdict(.content)};
+    var paths = [_][]const u8{"app/views/posts/index.html.erb"};
+    var route_templates = [_]rails.RouteTemplates{.{ .templates = &paths, .layout = null }};
+    const route_views = [_]?[]const u8{"app/views/posts/index.html.erb"};
+    const finding_list = try findings.derive(gpa, .{ .templates = &templates, .layouts = &.{}, .controller_files = &.{}, .route_names = &[_][]const u8{"posts"}, .locale = null, .routes = &routes, .classifications = &verdicts, .route_views = &route_views, .backend = document });
+    defer findings.free(gpa, finding_list);
+    var data_id: []const u8 = "";
+    for (finding_list) |finding| if (std.mem.eql(u8, finding.code, findings.code_request_time_state)) {
+        data_id = finding.id;
+        break;
+    };
+    try testing.expect(data_id.len > 0);
+    var discovery = emptyDiscovery();
+    discovery.routes = &routes;
+    discovery.classifications = &verdicts;
+    discovery.route_templates = &route_templates;
+    discovery.fragments = @constCast(&templates);
+    discovery.findings = finding_list;
+    var first_bytes: ?[]u8 = null;
+    defer if (first_bytes) |bytes| gpa.free(bytes);
+    const cases = [_]struct { choice: []const u8, artifact: ?[]const u8, collection: []const u8 }{
+        .{ .choice = "island", .artifact = null, .collection = "posts" },
+        .{ .choice = "backend", .artifact = null, .collection = "posts" },
+        .{ .choice = "island", .artifact = "notes", .collection = "notes" },
+    };
+    for (cases, 0..) |case, run_index| {
+        var decided = [_]decisions.Decision{.{ .id = data_id, .choice = case.choice, .rationale = "load records", .artifact = case.artifact }};
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        const target = try tmpTarget(gpa, &tmp);
+        defer gpa.free(target);
+        var error_path: ?[]const u8 = null;
+        defer if (error_path) |path| gpa.free(path);
+        var error_cause: ?anyerror = null;
+        const result = try write(std.testing.io, gpa, .{ .discovery = &discovery, .decisions = .{ .decisions = &decided, .stale = &.{} }, .source_root = tmp.dir, .target = target, .app_name = "Posts", .runtime_path = "../runtime", .backend = document, .agents_md = "", .claude_md = "" }, &error_path, &error_cause);
+        defer freeResult(gpa, result);
+        try testing.expectEqual(Status.migrated, result.routes[0].status);
+        try testing.expect(result.routes[0].endpoint == null);
+        const bytes = try readTarget(gpa, &tmp, "components/data/posts_index.island.tsx");
+        const collection_call = try std.fmt.allocPrint(gpa, "zb.collection(\"{s}\").getList", .{case.collection});
+        defer gpa.free(collection_call);
+        try testing.expect(std.mem.indexOf(u8, bytes, collection_call) != null);
+        if (run_index == 0) {
+            first_bytes = bytes;
+        } else if (run_index == 1) {
+            defer gpa.free(bytes);
+            try testing.expectEqualStrings(first_bytes.?, bytes);
+        } else {
+            defer gpa.free(bytes);
+        }
+        try testing.expect(targetHas(&tmp, client_lib_path));
+    }
+    var swept_decision = [_]decisions.Decision{.{ .id = data_id, .choice = "backend", .rationale = "load records", .artifact = null }};
+    var fail_index: usize = 0;
+    while (fail_index < 500) : (fail_index += 1) {
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        const target = try tmpTarget(gpa, &tmp);
+        defer gpa.free(target);
+        var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = fail_index });
+        const fa = failing.allocator();
+        var error_path: ?[]const u8 = null;
+        defer if (error_path) |path| fa.free(path);
+        var error_cause: ?anyerror = null;
+        if (write(std.testing.io, fa, .{ .discovery = &discovery, .decisions = .{ .decisions = &swept_decision, .stale = &.{} }, .source_root = tmp.dir, .target = target, .app_name = "Posts", .runtime_path = "../runtime", .backend = document, .agents_md = "", .claude_md = "" }, &error_path, &error_cause)) |result| {
+            freeResult(fa, result);
+            break;
+        } else |err| switch (err) {
+            error.OutOfMemory => {},
+            else => return err,
+        }
+    }
+    try testing.expect(fail_index < 500);
+}
+
+test "write: a dynamic route ports its record view into the SPA and carries layout styles" {
+    const gpa = testing.allocator;
+    const document = try backend_mod.parse(gpa,
+        \\{"openapi":"3.1.0","info":{"version":"1"},"paths":{"/api/collections/posts/records":{"get":{"operationId":"listPosts"}},"/api/collections/posts/records/{id}":{"get":{"operationId":"viewPosts"}}}}
+    , "openapi.json");
+    defer backend_mod.free(gpa, document);
+    var ivar = tNode(.ivar, 1, 5, "@post");
+    ivar.output = true;
+    ivar.code = "@post.title";
+    const view_nodes = [_]fragments.Node{ tText("<h2>", 1), ivar, tText("</h2>", 1) };
+    const edit_nodes = [_]fragments.Node{tText("<h2>Edit</h2>", 1)};
+    var stylesheet = tNode(.asset, 1, 1, "stylesheet_link_tag");
+    stylesheet.args = &.{"application"};
+    const layout_nodes = [_]fragments.Node{ stylesheet, tNode(.yield, 2, 1, null) };
+    const templates = [_]fragments.Template{
+        tTemplate("app/views/layouts/application.html.erb", &layout_nodes),
+        tTemplate("app/views/posts/show.html.erb", &view_nodes),
+        tTemplate("app/views/posts/edit.html.erb", &edit_nodes),
+    };
+    var routes = [_]route_mod.Route{
+        tNamed("GET", "/posts/:id", "posts", "show", 1, "post"),
+        tNamed("GET", "/posts/:id/edit", "posts", "edit", 2, "edit_post"),
+    };
+    var verdicts = [_]classify.Verdict{ tVerdict(.content), tVerdict(.content) };
+    var show_paths = [_][]const u8{"app/views/posts/show.html.erb"};
+    var edit_paths = [_][]const u8{"app/views/posts/edit.html.erb"};
+    var route_templates = [_]rails.RouteTemplates{
+        .{ .templates = &show_paths, .layout = "app/views/layouts/application.html.erb" },
+        .{ .templates = &edit_paths, .layout = "app/views/layouts/application.html.erb" },
+    };
+    const route_views = [_]?[]const u8{ "app/views/posts/show.html.erb", "app/views/posts/edit.html.erb" };
+    var assets = [_]asset_mod.Asset{.{ .source = "app/assets/stylesheets/application.css", .public_url = "/stylesheets/application.css", .pipeline = .sprockets, .deterministic = true }};
+    const finding_list = try findings.derive(gpa, .{ .templates = &templates, .layouts = &.{}, .controller_files = &.{}, .route_names = &[_][]const u8{ "post", "edit_post" }, .locale = null, .routes = &routes, .classifications = &verdicts, .route_views = &route_views, .assets = &assets, .backend = document });
+    defer findings.free(gpa, finding_list);
+    var show_dynamic_id: []const u8 = "";
+    var edit_dynamic_id: []const u8 = "";
+    var data_id: []const u8 = "";
+    for (finding_list) |finding| {
+        if (std.mem.eql(u8, finding.code, findings.code_route_dynamic_segment)) {
+            if (finding.line == 1) show_dynamic_id = finding.id;
+            if (finding.line == 2) edit_dynamic_id = finding.id;
+        }
+        if (std.mem.eql(u8, finding.code, findings.code_request_time_state)) data_id = finding.id;
+    }
+    try testing.expect(show_dynamic_id.len > 0 and edit_dynamic_id.len > 0 and data_id.len > 0);
+    var decided = [_]decisions.Decision{
+        .{ .id = show_dynamic_id, .choice = "spa", .rationale = "client route", .artifact = null },
+        .{ .id = edit_dynamic_id, .choice = "spa", .rationale = "client route", .artifact = null },
+        .{ .id = data_id, .choice = "backend", .rationale = "load record", .artifact = null },
+    };
+    var discovery = emptyDiscovery();
+    discovery.routes = &routes;
+    discovery.classifications = &verdicts;
+    discovery.route_templates = &route_templates;
+    discovery.fragments = @constCast(&templates);
+    discovery.findings = finding_list;
+    discovery.assets = &assets;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var styles_dir = try tmp.dir.createDirPathOpen(std.testing.io, "app/assets/stylesheets", .{});
+    styles_dir.close(std.testing.io);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "app/assets/stylesheets/application.css", .data = "body{}\n" });
+    const target = try tmpTarget(gpa, &tmp);
+    defer gpa.free(target);
+    var error_path: ?[]const u8 = null;
+    defer if (error_path) |path| gpa.free(path);
+    var error_cause: ?anyerror = null;
+    const result = try write(std.testing.io, gpa, .{ .discovery = &discovery, .decisions = .{ .decisions = &decided, .stale = &.{} }, .source_root = tmp.dir, .target = target, .app_name = "Posts", .runtime_path = "../runtime", .backend = document, .agents_md = "", .claude_md = "" }, &error_path, &error_cause);
+    defer freeResult(gpa, result);
+    for (result.routes) |outcome| {
+        try testing.expectEqual(Status.migrated, outcome.status);
+        try testing.expectEqual(@as(usize, 0), outcome.open_finding_ids.len);
+    }
+    const spa = try readTarget(gpa, &tmp, "spa/posts.spa.tsx");
+    defer gpa.free(spa);
+    try testing.expect(std.mem.indexOf(u8, spa, "head: [{ rel: \"stylesheet\", href: \"/stylesheets/application.css\" }]") != null);
+    try testing.expect(std.mem.indexOf(u8, spa, "zb.collection(\"posts\").getOne(params.id)") != null);
+    try testing.expect(std.mem.indexOf(u8, spa, "h += esc(String(rec.title ?? \"\"));") != null);
+    try testing.expect(std.mem.indexOf(u8, spa, "TODO: port GET /posts/:id/edit (posts#edit)") != null);
+    try testing.expect(targetHas(&tmp, client_lib_path));
 }

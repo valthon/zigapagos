@@ -28,6 +28,7 @@ pub const controllers = @import("controllers.zig");
 pub const sidecar_client = @import("sidecar_client.zig");
 pub const template_scan = @import("template_scan.zig");
 pub const manifest = @import("manifest.zig");
+pub const port = @import("port.zig");
 pub const schema_gen = @import("schema_gen.zig");
 pub const schema_validate = @import("schema_validate.zig");
 
@@ -221,6 +222,18 @@ pub const Discovery = struct {
     ///
     /// Contract 2: released by `findings.free`.
     findings: []findings.Finding,
+    /// #167 Stage 4 Task 3: only JavaScript/TypeScript files named by a
+    /// reachable Stimulus or React element, including the React root's
+    /// transitive relative-import closure. Both fields of every item are
+    /// owned; release through `freeDiscovery`.
+    js_sources: []port.JsSource = &.{},
+    /// The sole top-level app/javascript entry, when the inventory has
+    /// exactly one. Owned; multiple entries deliberately yield null because
+    /// choosing one would hide executable application code.
+    js_entry: ?[]const u8 = null,
+    /// Every string-valued package.json dependency/devDependency, sorted by
+    /// name and owned through `integrations.freeDependencyVersions`.
+    npm_dependencies: []integrations.NpmDep = &.{},
     /// #167 Stage 1: the I18n locale the templates op loaded for this run
     /// (`fragments.Result.locale`), `null` when it could not determine one.
     /// One locale per run, not per template -- every `i18n` node in every
@@ -329,6 +342,9 @@ pub fn freeDiscovery(gpa: Allocator, d: Discovery) void {
         .ruby = .{ .available = false, .version = null },
     });
     findings.free(gpa, d.findings);
+    freeJsSources(gpa, d.js_sources);
+    if (d.js_entry) |entry| gpa.free(entry);
+    integrations.freeDependencyVersions(gpa, d.npm_dependencies);
     // #167 Stage 2: always safe, including the no-decisions-file run --
     // `discover` leaves the two slices empty rather than null, so this is one
     // release path, not two.
@@ -859,6 +875,269 @@ fn dupeRoutesForDiscovery(gpa: Allocator, list: []const routes.Route) Allocator.
     return out;
 }
 
+/// Contract 2 counterpart for the owned source graph returned by
+/// `discoverJsSources`.
+fn freeJsSources(gpa: Allocator, sources: []port.JsSource) void {
+    for (sources) |source| {
+        gpa.free(source.path);
+        gpa.free(source.bytes);
+    }
+    gpa.free(sources);
+}
+
+/// Contract 3 (caller-buffer): inventory entries are already sorted, so an
+/// exact lookup is deterministic and returns a borrowed path.
+fn inventoryPath(entries: []const inventory.Entry, path: []const u8) ?[]const u8 {
+    for (entries) |entry| {
+        if (std.mem.eql(u8, entry.path, path)) return entry.path;
+    }
+    return null;
+}
+
+fn hasJsSource(sources: []const port.JsSource, path: []const u8) bool {
+    for (sources) |source| if (std.mem.eql(u8, source.path, path)) return true;
+    return false;
+}
+
+/// Contract 1 (self-freeing): scratch path segments are released and only
+/// the normalized app-relative path escapes. A `..` that would leave
+/// app/javascript is refused rather than normalized into another app tree.
+fn relativeJsPath(gpa: Allocator, importer: []const u8, spec: []const u8) Allocator.Error!?[]u8 {
+    if (!std.mem.startsWith(u8, spec, "./") and !std.mem.startsWith(u8, spec, "../")) return null;
+    const dir = std.fs.path.dirname(importer) orelse return null;
+    var parts: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer parts.deinit(gpa);
+    var base_it = std.mem.splitScalar(u8, dir, '/');
+    while (base_it.next()) |part| if (part.len > 0) try parts.append(gpa, part);
+    var spec_it = std.mem.splitScalar(u8, spec, '/');
+    while (spec_it.next()) |part| {
+        if (part.len == 0 or std.mem.eql(u8, part, ".")) continue;
+        if (std.mem.eql(u8, part, "..")) {
+            if (parts.items.len <= 2) return null;
+            _ = parts.pop();
+            continue;
+        }
+        try parts.append(gpa, part);
+    }
+    if (parts.items.len < 2 or
+        !std.mem.eql(u8, parts.items[0], "app") or
+        !std.mem.eql(u8, parts.items[1], "javascript")) return null;
+    return try std.mem.join(gpa, "/", parts.items);
+}
+
+const js_source_exts = [_][]const u8{ ".jsx", ".tsx", ".js", ".ts" };
+
+fn hasJsExtension(path: []const u8) bool {
+    for (js_source_exts) |ext| if (std.mem.endsWith(u8, path, ext)) return true;
+    return false;
+}
+
+/// Contract 1 (self-freeing): all candidate formatting is scratch; the
+/// returned path, when present, is a fresh allocation.
+fn resolveJsModule(gpa: Allocator, entries: []const inventory.Entry, importer: []const u8, spec: []const u8) Allocator.Error!?[]u8 {
+    const base = (try relativeJsPath(gpa, importer, spec)) orelse return null;
+    defer gpa.free(base);
+    if (hasJsExtension(base)) {
+        if (inventoryPath(entries, base) != null) return try gpa.dupe(u8, base);
+        return null;
+    }
+    for (js_source_exts) |ext| {
+        const candidate = try std.fmt.allocPrint(gpa, "{s}{s}", .{ base, ext });
+        defer gpa.free(candidate);
+        if (inventoryPath(entries, candidate) != null) return try gpa.dupe(u8, candidate);
+    }
+    for (js_source_exts) |ext| {
+        const candidate = try std.fmt.allocPrint(gpa, "{s}/index{s}", .{ base, ext });
+        defer gpa.free(candidate);
+        if (inventoryPath(entries, candidate) != null) return try gpa.dupe(u8, candidate);
+    }
+    return null;
+}
+
+/// Contract 2 (owned-result): reads one named source into fresh path/byte
+/// allocations and appends it. Read failures are an honest absence; the
+/// finding layer reports the named source as unavailable. Returns true only
+/// when a new source was appended.
+fn appendJsSource(
+    io: Io,
+    gpa: Allocator,
+    root: Io.Dir,
+    entries: []const inventory.Entry,
+    sources: *std.ArrayListUnmanaged(port.JsSource),
+    path: []const u8,
+) Allocator.Error!bool {
+    if (hasJsSource(sources.items, path)) return false;
+    const actual = inventoryPath(entries, path) orelse return false;
+    const bytes = root.readFileAlloc(io, actual, gpa, .limited(256 * 1024)) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return false,
+    };
+    errdefer gpa.free(bytes);
+    const path_copy = try gpa.dupe(u8, actual);
+    errdefer gpa.free(path_copy);
+    try sources.append(gpa, .{ .path = path_copy, .bytes = bytes });
+    return true;
+}
+
+/// Contract 2 (owned-result): reads only the sources named by reachable
+/// element nodes. Each React root gets an independent 32-file traversal
+/// budget; the final shared result is deduplicated and sorted by path.
+fn discoverJsSources(
+    io: Io,
+    gpa: Allocator,
+    root: Io.Dir,
+    entries: []const inventory.Entry,
+    templates: []const fragments.Template,
+) Allocator.Error![]port.JsSource {
+    var list: std.ArrayListUnmanaged(port.JsSource) = .empty;
+    errdefer {
+        for (list.items) |source| {
+            gpa.free(source.path);
+            gpa.free(source.bytes);
+        }
+        list.deinit(gpa);
+    }
+
+    for (templates) |template| {
+        for (template.nodes) |node| {
+            if (node.text != null) continue;
+            if (node.kind == .stimulus) {
+                var identifiers = std.mem.tokenizeAny(u8, node.name orelse "", " \t\r\n");
+                while (identifiers.next()) |identifier| {
+                    var stem_buf: [512]u8 = undefined;
+                    const stem = port.controllerStem(&stem_buf, identifier);
+                    if (stem.len == 0) continue;
+                    for ([_][]const u8{ ".js", ".ts", ".jsx", ".tsx" }) |ext| {
+                        const candidate = try std.fmt.allocPrint(gpa, "{s}{s}", .{ stem, ext });
+                        defer gpa.free(candidate);
+                        if (try appendJsSource(io, gpa, root, entries, &list, candidate)) break;
+                    }
+                }
+                continue;
+            }
+            if (node.kind != .component_root or node.dynamic) continue;
+            const name = node.name orelse continue;
+            var root_path: ?[]u8 = null;
+            for (js_source_exts) |ext| {
+                const candidate = try std.fmt.allocPrint(gpa, "app/javascript/components/{s}{s}", .{ name, ext });
+                if (inventoryPath(entries, candidate) != null) {
+                    root_path = candidate;
+                    break;
+                }
+                gpa.free(candidate);
+            }
+            const first = root_path orelse continue;
+            defer gpa.free(first);
+            const start = list.items.len;
+            _ = try appendJsSource(io, gpa, root, entries, &list, first);
+            var cursor = start;
+            var traversed: usize = 0;
+            while (cursor < list.items.len and traversed < 32) : ({
+                cursor += 1;
+                traversed += 1;
+            }) {
+                const source = list.items[cursor];
+                const imports = try port.reactImports(gpa, source.bytes);
+                defer gpa.free(imports.list);
+                for (imports.list) |imp| {
+                    if (!imp.relative) continue;
+                    const resolved = (try resolveJsModule(gpa, entries, source.path, imp.spec)) orelse continue;
+                    defer gpa.free(resolved);
+                    if (traversed + (list.items.len - cursor) >= 32) break;
+                    _ = try appendJsSource(io, gpa, root, entries, &list, resolved);
+                }
+            }
+        }
+    }
+    // The sole executable entry is itself a named source: Task 3's finding
+    // reports its static imports before the operator decides to drop it.
+    var entry_path: ?[]const u8 = null;
+    var entry_count: usize = 0;
+    for (entries) |entry| {
+        if (entry.kind != .js_entry) continue;
+        entry_count += 1;
+        entry_path = entry.path;
+    }
+    if (entry_count == 1) _ = try appendJsSource(io, gpa, root, entries, &list, entry_path.?);
+    const out = try list.toOwnedSlice(gpa);
+    std.mem.sort(port.JsSource, out, {}, struct {
+        fn lessThan(_: void, a: port.JsSource, b: port.JsSource) bool {
+            return std.mem.order(u8, a.path, b.path) == .lt;
+        }
+    }.lessThan);
+    return out;
+}
+
+/// Contract 1 (self-freeing): returns an owned copy only when exactly one
+/// entrypoint exists; it allocates no scratch.
+fn soleJsEntry(gpa: Allocator, entries: []const inventory.Entry) Allocator.Error!?[]u8 {
+    var found: ?[]const u8 = null;
+    for (entries) |entry| {
+        if (entry.kind != .js_entry) continue;
+        if (found != null) return null;
+        found = entry.path;
+    }
+    return if (found) |path| try gpa.dupe(u8, path) else null;
+}
+
+test "discoverJsSources reads only a named root and caps its closure at 32 files" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var entries: [33]inventory.Entry = undefined;
+    var paths: [33][]u8 = undefined;
+    defer for (paths) |path| gpa.free(path);
+    for (0..33) |i| {
+        paths[i] = if (i == 0)
+            try gpa.dupe(u8, "app/javascript/components/Root.jsx")
+        else
+            try std.fmt.allocPrint(gpa, "app/javascript/components/{d}.jsx", .{i});
+        entries[i] = .{ .path = paths[i], .kind = .js_module, .engine = .none };
+        const bytes = if (i < 32)
+            try std.fmt.allocPrint(gpa, "import './{d}';", .{i + 1})
+        else
+            try gpa.dupe(u8, "export default 32;");
+        defer gpa.free(bytes);
+        try writeTemplate(tmp, io, paths[i], bytes);
+    }
+    const nodes = [_]fragments.Node{.{ .text = null, .kind = .component_root, .line = 1, .col = 1, .output = true, .code = "react_component", .name = "Root", .value = null, .args = &.{}, .attrs = &.{}, .missing = false, .dynamic = false }};
+    const templates = [_]fragments.Template{.{ .path = "app/views/root.html.erb", .nodes = @constCast(&nodes), .error_message = null, .error_line = null, .unreadable = null }};
+
+    const sources = try discoverJsSources(io, gpa, tmp.dir, &entries, &templates);
+    defer freeJsSources(gpa, sources);
+    try std.testing.expectEqual(@as(usize, 32), sources.len);
+    try std.testing.expect(sourceByPathForTest(sources, "app/javascript/components/31.jsx"));
+    try std.testing.expect(!sourceByPathForTest(sources, "app/javascript/components/32.jsx"));
+}
+
+fn sourceByPathForTest(sources: []const port.JsSource, path: []const u8) bool {
+    for (sources) |source| if (std.mem.eql(u8, source.path, path)) return true;
+    return false;
+}
+
+test "discoverJsSources: FailingAllocator sweep" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeTemplate(tmp, io, "app/javascript/components/Root.jsx", "export default function Root() {}");
+    const entries = [_]inventory.Entry{.{ .path = "app/javascript/components/Root.jsx", .kind = .js_module, .engine = .none }};
+    const nodes = [_]fragments.Node{.{ .text = null, .kind = .component_root, .line = 1, .col = 1, .output = true, .code = "react_component", .name = "Root", .value = null, .args = &.{}, .attrs = &.{}, .missing = false, .dynamic = false }};
+    const templates = [_]fragments.Template{.{ .path = "app/views/root.html.erb", .nodes = @constCast(&nodes), .error_message = null, .error_line = null, .unreadable = null }};
+
+    var fail_index: usize = 0;
+    while (true) : (fail_index += 1) {
+        if (fail_index > 100) return error.SweepNeverReachedSuccess;
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
+        if (discoverJsSources(io, failing.allocator(), tmp.dir, &entries, &templates)) |sources| {
+            defer freeJsSources(std.testing.allocator, sources);
+            try std.testing.expectEqual(@as(usize, 1), sources.len);
+            break;
+        } else |err| try std.testing.expectEqual(error.OutOfMemory, err);
+    }
+}
+
 /// Contract 2 (owned-result), widened by Stage 4 Task 4: every intermediate
 /// (entries, blockers, integrations, file reads) is still released here, but
 /// the returned `Discovery` is no longer contract 1 -- `route_templates`/
@@ -1090,6 +1369,16 @@ pub fn discover(
     // `errdefer` only fires on the path where the move never happened.
     errdefer fragments.freeResult(gpa, frag_result);
 
+    const js_sources = try discoverJsSources(io, gpa, root, wr.entries, frag_result.templates);
+    errdefer freeJsSources(gpa, js_sources);
+    const js_entry = try soleJsEntry(gpa, wr.entries);
+    errdefer if (js_entry) |entry| gpa.free(entry);
+    const npm_dependencies = if (pkg) |package_json|
+        try integrations.dependencyVersions(gpa, package_json)
+    else
+        try gpa.alloc(integrations.NpmDep, 0);
+    errdefer integrations.freeDependencyVersions(gpa, npm_dependencies);
+
     // R16: one blocker per locale file that failed to load, appended BEFORE
     // the counts loop and `report.build` below read `blocker_list` (this is
     // the last pass that can add to it). `appendI18nErrorBlockers` copies
@@ -1097,6 +1386,24 @@ pub fn discover(
     // released at the end of this function alongside `ruby` -- the other half
     // of the same split.
     try appendI18nErrorBlockers(gpa, &blocker_list, frag_result.i18n_errors);
+
+    for (classify_result.templates) |template| {
+        for (template.component_roots) |technology| {
+            if (!std.mem.eql(u8, technology, "data-vue-component")) continue;
+            try blockers.append(
+                gpa,
+                &blocker_list,
+                findings.code_component_vue_unsupported,
+                template.path,
+                "Vue roots have no runtime bridge; React only",
+                false,
+                .warn,
+                null,
+                null,
+            );
+            break;
+        }
+    }
 
     // `discovery.ruby`, combined across all three sidecar ops -- see
     // `combineRuby`'s own doc for why no single op's `.ruby` half may be
@@ -1119,9 +1426,14 @@ pub fn discover(
     //   re-keyed with `controllerKeyOf` (see its doc) to join the two.
     var route_names: std.ArrayListUnmanaged([]const u8) = .empty;
     defer route_names.deinit(gpa);
+    var route_params: std.ArrayListUnmanaged(findings.RouteParam) = .empty;
+    defer route_params.deinit(gpa);
     for (route_result.routes) |r| {
         if (!r.certain) continue;
-        if (r.name) |n| try route_names.append(gpa, n);
+        if (r.name) |n| {
+            try route_names.append(gpa, n);
+            try route_params.append(gpa, .{ .name = n, .path = r.path });
+        }
     }
     var controller_files: std.ArrayListUnmanaged(findings.ControllerFile) = .empty;
     defer controller_files.deinit(gpa);
@@ -1181,8 +1493,11 @@ pub fn discover(
     // this call and escapes as `Discovery.templates`.
     var render_graph: std.ArrayListUnmanaged(findings.TemplateRenders) = .empty;
     defer render_graph.deinit(gpa);
+    var stimulus_markers: std.ArrayListUnmanaged(findings.TemplateStimulusMarkers) = .empty;
+    defer stimulus_markers.deinit(gpa);
     for (classify_result.templates) |t| {
         try render_graph.append(gpa, .{ .path = t.path, .renders = t.renders });
+        try stimulus_markers.append(gpa, .{ .path = t.path, .names = t.stimulus_controllers });
     }
     const finding_list = try findings.derive(gpa, .{
         .templates = frag_result.templates,
@@ -1232,6 +1547,11 @@ pub fn discover(
         .unsupported_route_paths = claims.unsupported,
         .render_graph = render_graph.items,
         .backend = dec.backend,
+        .js_sources = js_sources,
+        .js_entry = js_entry,
+        .npm_dependencies = npm_dependencies,
+        .route_params = route_params.items,
+        .stimulus_markers = stimulus_markers.items,
     });
     // Escapes as `Discovery.findings`; `freeDiscovery` owns it on the
     // success path, this covers every fallible step between here and the
@@ -1247,12 +1567,29 @@ pub fn discover(
     // than arriving after the list has been handed away.
     var parsed_decisions: decisions.Parsed = .empty;
     errdefer decisions.free(gpa, parsed_decisions);
+    var backend_collections: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer backend_collections.deinit(gpa);
+    if (dec.backend) |doc| {
+        for (doc.operations) |operation| {
+            const collection = operation.collection orelse continue;
+            var duplicate = false;
+            for (backend_collections.items) |existing| {
+                if (std.mem.eql(u8, existing, collection)) duplicate = true;
+            }
+            if (!duplicate) try backend_collections.append(gpa, collection);
+        }
+        std.mem.sort([]const u8, backend_collections.items, {}, struct {
+            fn lessThan(_: void, a: []const u8, b: []const u8) bool {
+                return std.mem.order(u8, a, b) == .lt;
+            }
+        }.lessThan);
+    }
     if (dec.bytes) |decision_bytes| {
         // A private list when the caller wants none: `parse` writes to it on
         // every rejection, so it can never be optional at the callee.
         var local_problems: std.ArrayListUnmanaged(decisions.Problem) = .empty;
         defer if (dec.problems == null) decisions.freeProblems(gpa, &local_problems);
-        parsed_decisions = try decisions.parse(
+        parsed_decisions = try decisions.parseWithCollections(
             gpa,
             decision_bytes,
             finding_list,
@@ -1261,6 +1598,7 @@ pub fn discover(
             // `--backend` document, which `decisions.parse` reads as "no
             // list to check against" rather than as "no name is valid".
             if (dec.backend) |doc| doc.auth_collections else &.{},
+            backend_collections.items,
             dec.problems orelse &local_problems,
         );
         // One blocker per stale answer, `integrity = false` and `.warn`: the
@@ -1324,6 +1662,21 @@ pub fn discover(
     });
     errdefer gpa.free(body);
 
+    // #167 Stage 3: deep copies, because `ctrl_result` dies with this
+    // function. These must happen before the blocker-list ownership transfer
+    // and before the moved fragment result is partially released: each copy
+    // allocates, so placing them after either operation made an OOM leak the
+    // owned blocker slice and double-free `frag_result.ruby` through its
+    // still-armed whole-result errdefer.
+    const owned_actions = try controllers.dupeActions(gpa, ctrl_result.actions);
+    errdefer controllers.freeActions(gpa, owned_actions);
+    const owned_before_actions = try controllers.dupeBeforeActions(gpa, ctrl_result.before_actions);
+    errdefer controllers.freeBeforeActions(gpa, owned_before_actions);
+    const owned_skips = try controllers.dupeBeforeActions(gpa, ctrl_result.skip_before_actions);
+    errdefer controllers.freeBeforeActions(gpa, owned_skips);
+    const owned_parents = try controllers.dupeParents(gpa, ctrl_result.parents);
+    errdefer controllers.freeParents(gpa, owned_parents);
+
     // Stage 4 Task 8: the LAST read of `blocker_list.items` in this
     // function (the counts loop above and `report.build` just above both
     // already finished with it) -- `toOwnedSlice` invalidates the
@@ -1350,23 +1703,6 @@ pub fn discover(
     // only read the paths, so nothing outlives this call.
     fragments.freeI18nErrors(gpa, frag_result.i18n_errors);
 
-    // #167 Stage 3: deep copies, because `ctrl_result` dies with this
-    // function (`defer controllers.freeResult` above) and both fields are
-    // read by consumers that only ever see the returned `Discovery` --
-    // `scaffold.write` takes `&discovery` and nothing else. Same choice, and
-    // the same reason, as `dupeRoutesForDiscovery` above.
-    const owned_actions = try controllers.dupeActions(gpa, ctrl_result.actions);
-    errdefer controllers.freeActions(gpa, owned_actions);
-    const owned_before_actions = try controllers.dupeBeforeActions(gpa, ctrl_result.before_actions);
-    errdefer controllers.freeBeforeActions(gpa, owned_before_actions);
-    const owned_skips = try controllers.dupeBeforeActions(gpa, ctrl_result.skip_before_actions);
-    errdefer controllers.freeBeforeActions(gpa, owned_skips);
-    const owned_parents = try controllers.dupeParents(gpa, ctrl_result.parents);
-    // Nothing allocates after this today, but the `errdefer` does not depend
-    // on that staying true: the next line appended here would otherwise leak
-    // all four of these silently. Same shape as the three above.
-    errdefer controllers.freeParents(gpa, owned_parents);
-
     return .{
         .report = body,
         .integrity_blocker_count = integrity_blocker_count,
@@ -1389,6 +1725,9 @@ pub fn discover(
         // call site), so `freeDiscovery` is the single release for both.
         .fragments = frag_result.templates,
         .findings = finding_list,
+        .js_sources = js_sources,
+        .js_entry = js_entry,
+        .npm_dependencies = npm_dependencies,
         .i18n_locale = frag_result.locale,
         .decisions = parsed_decisions,
         .actions = owned_actions,
@@ -3992,6 +4331,16 @@ test "discover: reachability -- source.version, per-route source{file,line}/cert
 
     const d = try discover(io, gpa, app_dir, "tests/migrate/rails-sample", &env_map, .{});
     defer freeDiscovery(gpa, d);
+
+    // Stage 4 Task 3: only sources named by reachable element nodes are
+    // read. The fixture names reveal+modal, has reveal on disk, and also has
+    // an unreferenced toggle controller which must stay out of the result.
+    try std.testing.expectEqual(@as(usize, 2), d.js_sources.len);
+    try std.testing.expectEqualStrings("app/javascript/application.js", d.js_sources[0].path);
+    try std.testing.expectEqualStrings("app/javascript/controllers/reveal_controller.js", d.js_sources[1].path);
+    try std.testing.expect(std.mem.indexOf(u8, d.js_sources[1].bytes, "export default class") != null);
+    try std.testing.expectEqualStrings("app/javascript/application.js", d.js_entry.?);
+    try std.testing.expectEqual(@as(usize, 0), d.npm_dependencies.len);
 
     if (!std.mem.eql(u8, d.route_mode, "static_ast")) {
         // Ruby genuinely unavailable in this environment -- `d.routes` is

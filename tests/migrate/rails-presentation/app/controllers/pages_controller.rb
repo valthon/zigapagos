@@ -40,4 +40,10 @@ class PagesController < ApplicationController
   # scan reads it, and RAILS_TEMPLATE_UNSCANNED is what says so (R15).
   def linked
   end
+
+  def widgets
+  end
+
+  def live
+  end
 end

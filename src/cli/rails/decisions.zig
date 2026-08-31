@@ -160,6 +160,21 @@ pub fn parse(
     auth_collections: []const []const u8,
     problems: *std.ArrayListUnmanaged(Problem),
 ) ParseError!Parsed {
+    return parseWithCollections(gpa, bytes, finding_list, auth_collections, &.{}, problems);
+}
+
+/// Stage 4's widened validator. Kept beside the original `parse` entrypoint
+/// so existing callers that have only auth metadata retain their exact
+/// behaviour, while Rails discovery can also validate data-island artifacts
+/// against every collection in the backend document.
+pub fn parseWithCollections(
+    gpa: Allocator,
+    bytes: []const u8,
+    finding_list: []const findings.Finding,
+    auth_collections: []const []const u8,
+    collections: []const []const u8,
+    problems: *std.ArrayListUnmanaged(Problem),
+) ParseError!Parsed {
     // Two-stage on purpose: the `Value` tree from stage one is what stage
     // two's `error.UnknownField` gets interrogated against to name the bad
     // key. Parsing straight from the slice would leave nothing to inspect.
@@ -301,6 +316,12 @@ pub fn parse(
                     const known = try joinChoices(gpa, auth_collections);
                     defer gpa.free(known);
                     try addProblem(gpa, problems, i, w.id, "artifact \"{s}\" is not an auth collection in the backend document; auth collections: {s}", .{ a, known });
+                    entry_ok = false;
+                }
+                if (unknownDataCollection(f, w.choice, a, collections)) {
+                    const known = try joinChoices(gpa, collections);
+                    defer gpa.free(known);
+                    try addProblem(gpa, problems, i, w.id, "artifact \"{s}\" is not a collection in the backend document; collections: {s}", .{ a, known });
                     entry_ok = false;
                 }
             }
@@ -493,6 +514,18 @@ fn unknownAuthCollection(
     return !containsString(auth_collections, artifact);
 }
 
+fn unknownDataCollection(
+    f: findings.Finding,
+    choice: []const u8,
+    artifact: []const u8,
+    collections: []const []const u8,
+) bool {
+    if (collections.len == 0) return false;
+    if (!std.mem.eql(u8, f.code, findings.code_request_time_state)) return false;
+    if (!std.mem.eql(u8, choice, "island") and !std.mem.eql(u8, choice, "backend")) return false;
+    return !containsString(collections, artifact);
+}
+
 fn containsString(choices: []const []const u8, choice: []const u8) bool {
     for (choices) |c| {
         if (std.mem.eql(u8, c, choice)) return true;
@@ -549,6 +582,8 @@ fn findUnknownKey(root: std.json.Value) ?UnknownKey {
 
 const retain_blocked = [_][]const u8{ "retain", "blocked" };
 const island_spa_retain_blocked = [_][]const u8{ "island", "spa", "retain", "blocked" };
+const island_spa_backend_retain_blocked = [_][]const u8{ "island", "spa", "backend", "retain", "blocked" };
+const drop_inline_blocked = [_][]const u8{ "drop", "inline", "blocked" };
 
 /// Findings are read-only inputs to `parse`, so a test fixture can hand it
 /// static literals: nothing here is ever passed to `findings.free`.
@@ -1143,6 +1178,45 @@ test "parse: an auth-journey artifact must be an auth collection the document ca
     const parsed = try parse(gpa, good, &fs, &users_collection, &problems2);
     defer free(gpa, parsed);
     try std.testing.expectEqual(@as(usize, 0), problems2.items.len);
+}
+
+test "parse: a request-time island artifact must name a backend collection" {
+    const gpa = std.testing.allocator;
+    const fs = [_]findings.Finding{codedFixture("RAILS_REQUEST_TIME_STATE", "S", &island_spa_backend_retain_blocked, false)};
+    const collections = [_][]const u8{ "posts", "users" };
+    const bytes =
+        \\{"schema":"zigapagos.rails-decisions/1","decisions":[
+        \\  {"id":"S","choice":"backend","rationale":"fetch it","artifact":"foo"}
+        \\]}
+    ;
+    var problems: std.ArrayListUnmanaged(Problem) = .empty;
+    defer freeProblems(gpa, &problems);
+    try std.testing.expectError(error.Invalid, parseWithCollections(gpa, bytes, &fs, &.{}, &collections, &problems));
+    try std.testing.expectEqual(@as(usize, 1), problems.items.len);
+    try std.testing.expectEqualStrings(
+        "artifact \"foo\" is not a collection in the backend document; collections: posts, users",
+        problems.items[0].message,
+    );
+}
+
+test "parse: drop and inline are ordinary offered choices" {
+    const gpa = std.testing.allocator;
+    const fs = [_]findings.Finding{
+        codedFixture("RAILS_STIMULUS_CONTROLLER", "D", &drop_inline_blocked, false),
+        codedFixture("RAILS_TURBO_FRAME", "I", &drop_inline_blocked, false),
+    };
+    const bytes =
+        \\{"schema":"zigapagos.rails-decisions/1","decisions":[
+        \\  {"id":"D","choice":"drop","rationale":"replace it"},
+        \\  {"id":"I","choice":"inline","rationale":"render it"}
+        \\]}
+    ;
+    var problems: std.ArrayListUnmanaged(Problem) = .empty;
+    defer freeProblems(gpa, &problems);
+    const parsed = try parse(gpa, bytes, &fs, &.{}, &problems);
+    defer free(gpa, parsed);
+    try std.testing.expectEqual(@as(usize, 2), parsed.decisions.len);
+    try std.testing.expectEqual(@as(usize, 0), problems.items.len);
 }
 
 test "parse: without a backend document an auth collection name is accepted verbatim" {

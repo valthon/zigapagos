@@ -91,6 +91,7 @@ const Allocator = std.mem.Allocator;
 const assets = @import("assets.zig");
 const findings = @import("findings.zig");
 const fragments = @import("fragments.zig");
+const port = @import("port.zig");
 const resolve = @import("resolve.zig");
 const routes = @import("routes.zig");
 
@@ -213,7 +214,16 @@ pub const Binding = struct {
     /// finish.
     absorbed: bool = false,
 
-    pub const Kind = enum { operation, custom, auth_signin, auth_signup, auth_logout };
+    /// Stage 4 bindings can preserve a region as an island slot instead of
+    /// replacing it. `directive` applies only to an emitted island.
+    wrap: bool = false,
+    directive: []const u8 = "client:load",
+    /// Every Stimulus identifier on the element, outermost first.
+    identifiers: []const []const u8 = &.{},
+    /// Aliases used to reproduce a data island's record body.
+    aliases: []const port.Alias = &.{},
+
+    pub const Kind = enum { operation, custom, auth_signin, auth_signup, auth_logout, stimulus, turbo_frame, component, data_list, @"inline", drop };
 
     /// A source position in one template, as `fragments.Node` reports it.
     pub const At = struct { path: []const u8, line: u64, col: u64 };
@@ -265,12 +275,10 @@ pub const Click = struct {
 /// One island a bound region becomes. `scaffold.zig` turns this into the
 /// `.island.tsx` file `binding.island` names.
 ///
-/// Mixed ownership, and the split is deliberate: `original` is the only
-/// field with no home in the inputs (it is BUILT from a run of nodes), so it
-/// is the only allocation. Everything else borrows -- `binding` from
-/// `Context.bindings`, the rest from the template's node stream -- because
-/// duping strings that already outlive the `Output` would be pure churn.
-/// `freeOutput` frees `fields` and `original`, and nothing else.
+/// Mixed ownership, and the split is deliberate: `fields`, `original`, and
+/// optional `port` are owned; `binding`, `extent`, and the remaining strings
+/// borrow from the conversion inputs. `freeOutput` releases only the owned
+/// members.
 pub const IslandSpec = struct {
     /// `binding.island`, repeated so a consumer sorting or writing island
     /// files does not have to reach through the binding.
@@ -302,6 +310,10 @@ pub const IslandSpec = struct {
     /// walk, and the header comment has to name the file an operator would
     /// actually open.
     source: []const u8,
+    /// Owned data-island body; null for every other island kind.
+    port: ?[]u8 = null,
+    /// Borrowed source extent for a wrapping island's review header.
+    extent: ?[]const u8 = null,
 };
 
 /// Which of the three SuperHTML shapes to assemble. A `partial` is converted
@@ -398,11 +410,12 @@ pub fn freeOutput(gpa: Allocator, out: Output) void {
     freeStrings(gpa, out.open_finding_ids);
     freeStrings(gpa, out.dropped);
     freeStrings(gpa, out.block_ids);
-    // `IslandSpec`'s two owned members, and nothing else -- see its doc for
-    // why every other string in it is borrowed.
+    // `IslandSpec`'s owned members, and nothing else -- see its doc for why
+    // every other string in it is borrowed.
     for (out.islands) |s| {
         gpa.free(s.fields);
         gpa.free(s.original);
+        if (s.port) |body| gpa.free(body);
     }
     gpa.free(out.islands);
     freeStrings(gpa, out.bound_finding_ids);
@@ -414,6 +427,122 @@ pub fn freeOutput(gpa: Allocator, out: Output) void {
 fn freeStrings(gpa: Allocator, list: [][]const u8) void {
     for (list) |s| gpa.free(s);
     gpa.free(list);
+}
+
+const StripMode = enum { turbo, stimulus };
+const Stripped = struct { bytes: []u8, dropped: bool };
+
+fn stimulusAttrFor(key: []const u8, identifiers: []const []const u8) bool {
+    if (std.mem.eql(u8, key, "data-controller") or std.mem.eql(u8, key, "data-action")) return true;
+    if (!std.mem.startsWith(u8, key, "data-")) return false;
+    const rest = key["data-".len..];
+    for (identifiers) |identifier| {
+        if (!std.mem.startsWith(u8, rest, identifier)) continue;
+        if (rest.len <= identifier.len or rest[identifier.len] != '-') continue;
+        const tail = rest[identifier.len + 1 ..];
+        if (std.mem.eql(u8, tail, "target")) return true;
+        if ((std.mem.endsWith(u8, tail, "-value") or std.mem.endsWith(u8, tail, "-class")) and
+            std.mem.indexOfScalar(u8, tail, '-') != null) return true;
+    }
+    return false;
+}
+
+fn shouldStripAttr(key: []const u8, mode: StripMode, identifiers: []const []const u8) bool {
+    return switch (mode) {
+        .stimulus => stimulusAttrFor(key, identifiers),
+        .turbo => std.mem.eql(u8, key, "data-turbo") or
+            std.mem.eql(u8, key, "data-turbo-action") or
+            std.mem.eql(u8, key, "data-turbo-track") or
+            std.mem.eql(u8, key, "data-turbo-permanent") or
+            std.mem.eql(u8, key, "data-turbo-prefetch"),
+    };
+}
+
+fn tagEnd(text: []const u8, start: usize) ?usize {
+    var quote: ?u8 = null;
+    var i = start + 1;
+    while (i < text.len) : (i += 1) {
+        const ch = text[i];
+        if (quote) |q| {
+            if (ch == q) quote = null;
+        } else if (ch == '\'' or ch == '"') {
+            quote = ch;
+        } else if (ch == '>') return i + 1;
+    }
+    return null;
+}
+
+fn stripTagAttrs(
+    gpa: Allocator,
+    out: *List,
+    tag: []const u8,
+    mode: StripMode,
+    identifiers: []const []const u8,
+    dropped: *bool,
+) Allocator.Error!void {
+    if (tag.len < 3 or tag[0] != '<' or tag[1] == '/' or tag[1] == '!' or tag[1] == '?') {
+        try out.appendSlice(gpa, tag);
+        return;
+    }
+    var i: usize = 1;
+    while (i < tag.len and !std.ascii.isWhitespace(tag[i]) and tag[i] != '>' and tag[i] != '/') : (i += 1) {}
+    try out.appendSlice(gpa, tag[0..i]);
+    while (i < tag.len) {
+        const whitespace = i;
+        while (i < tag.len and std.ascii.isWhitespace(tag[i])) : (i += 1) {}
+        if (i >= tag.len or tag[i] == '>' or tag[i] == '/') {
+            try out.appendSlice(gpa, tag[whitespace..]);
+            return;
+        }
+        const key_start = i;
+        while (i < tag.len and !std.ascii.isWhitespace(tag[i]) and tag[i] != '=' and tag[i] != '>' and tag[i] != '/') : (i += 1) {}
+        if (i == key_start) {
+            try out.appendSlice(gpa, tag[whitespace .. i + 1]);
+            i += 1;
+            continue;
+        }
+        const key = tag[key_start..i];
+        while (i < tag.len and std.ascii.isWhitespace(tag[i])) : (i += 1) {}
+        if (i < tag.len and tag[i] == '=') {
+            i += 1;
+            while (i < tag.len and std.ascii.isWhitespace(tag[i])) : (i += 1) {}
+            if (i < tag.len and (tag[i] == '\'' or tag[i] == '"')) {
+                const quote = tag[i];
+                i += 1;
+                while (i < tag.len and tag[i] != quote) : (i += 1) {}
+                if (i < tag.len) i += 1;
+            } else {
+                while (i < tag.len and !std.ascii.isWhitespace(tag[i]) and tag[i] != '>') : (i += 1) {}
+            }
+        }
+        if (shouldStripAttr(key, mode, identifiers)) {
+            dropped.* = true;
+        } else {
+            try out.appendSlice(gpa, tag[whitespace..i]);
+        }
+    }
+}
+
+/// Contract 1 (self-freeing): the returned bytes are the sole allocation.
+/// Only attributes inside real start tags are considered; quotes may contain
+/// `>` without ending the tag.
+fn stripLexicalAttrs(gpa: Allocator, text: []const u8, mode: StripMode, identifiers: []const []const u8) Allocator.Error!Stripped {
+    var out: List = .empty;
+    errdefer out.deinit(gpa);
+    var dropped = false;
+    var at: usize = 0;
+    while (std.mem.indexOfScalarPos(u8, text, at, '<')) |start| {
+        try out.appendSlice(gpa, text[at..start]);
+        const end = tagEnd(text, start) orelse {
+            try out.appendSlice(gpa, text[start..]);
+            at = text.len;
+            break;
+        };
+        try stripTagAttrs(gpa, &out, text[start..end], mode, identifiers, &dropped);
+        at = end;
+    }
+    if (at < text.len) try out.appendSlice(gpa, text[at..]);
+    return .{ .bytes = try out.toOwnedSlice(gpa), .dropped = dropped };
 }
 
 // ---- escaping ------------------------------------------------------------
@@ -488,7 +617,16 @@ fn unescape(gpa: Allocator, text: []const u8) Allocator.Error![]u8 {
 /// Contract 3 (caller-buffer): allocates nothing.
 pub fn opensBlock(node: fragments.Node) bool {
     if (node.text != null) return false;
+    if (node.kind == .stimulus or node.kind == .vue_root) return !node.missing;
+    if (node.kind == .component_root and !node.output) return !node.missing;
+    if (node.kind == .turbo_frame and node.value != null and std.mem.eql(u8, node.value.?, "turbo-frame")) return !node.missing;
     switch (node.kind) {
+        // Element regions are paired with a synthetic `block_end` carrying
+        // their closing tag. They do not contain Ruby `do`, so the lexical
+        // fallback below cannot see them. A missing element has no close and
+        // must remain a one-node region. The component arm is retained per
+        // the Stage 1 ledger ruling even though Stage 4 replaces portable
+        // React roots: an unanswered HTML root still needs a bounded marker.
         // `emit_statement` always pairs these with a `block_end`, whatever
         // their source text looks like (`if x` carries no `do`).
         .control => return true,
@@ -612,9 +750,16 @@ fn isFindingKind(kind: fragments.Kind) bool {
         .turbo_frame,
         .turbo_stream,
         .component_root,
+        .stimulus,
+        .vue_root,
         => true,
         else => false,
     };
+}
+
+fn isElementNode(node: fragments.Node) bool {
+    return node.kind == .stimulus or node.kind == .vue_root or (node.kind == .component_root and !node.output) or
+        (node.kind == .turbo_frame and node.value != null and std.mem.eql(u8, node.value.?, "turbo-frame"));
 }
 
 /// The kinds an operator's `RAILS_BACKEND_ENDPOINT` answer can turn into an
@@ -818,6 +963,10 @@ const Converter = struct {
     dropped: std.ArrayListUnmanaged([]const u8) = .empty,
     /// Partial paths currently being inlined -- the cycle guard.
     stack: std.ArrayListUnmanaged([]const u8) = .empty,
+    /// Active Stimulus `drop` extent and templates that already reported a
+    /// Turbo Drive attribute removal.
+    drop_identifiers: []const []const u8 = &.{},
+    turbo_noted_paths: std.ArrayListUnmanaged([]const u8) = .empty,
     /// Nesting depth of finding regions; only depth 0 emits a marker.
     finding_depth: usize = 0,
     /// Borrowed from the node that supplied it.
@@ -838,11 +987,13 @@ const Converter = struct {
         for (c.islands.items) |s| {
             c.gpa.free(s.fields);
             c.gpa.free(s.original);
+            if (s.port) |body| c.gpa.free(body);
         }
         c.islands.deinit(c.gpa);
         for (c.dropped.items) |d| c.gpa.free(d);
         c.dropped.deinit(c.gpa);
         c.stack.deinit(c.gpa);
+        c.turbo_noted_paths.deinit(c.gpa);
         c.named_yields.deinit(c.gpa);
         for (c.blocks.items) |b| {
             b.buf.deinit(c.gpa);
@@ -892,22 +1043,47 @@ const Converter = struct {
         try c.dropped.append(c.gpa, s);
     }
 
-    fn emitText(c: *Converter, text: []const u8) Allocator.Error!void {
+    fn noteTurboDrop(c: *Converter, path: []const u8) Allocator.Error!void {
+        for (c.turbo_noted_paths.items) |seen| if (std.mem.eql(u8, seen, path)) return;
+        try c.turbo_noted_paths.append(c.gpa, path);
+        try c.note("data-turbo attributes dropped; Turbo Drive is ordinary navigation here", .{});
+    }
+
+    /// Applies the two lexical attribute policies before bytes enter any
+    /// output sink. The returned slice is always owned by the caller.
+    fn filtered(c: *Converter, path: []const u8, text: []const u8) Allocator.Error![]u8 {
+        const turbo = try stripLexicalAttrs(c.gpa, text, .turbo, &.{});
+        defer c.gpa.free(turbo.bytes);
+        if (turbo.dropped) try c.noteTurboDrop(path);
+        if (c.drop_identifiers.len == 0) return try c.gpa.dupe(u8, turbo.bytes);
+        const stimulus = try stripLexicalAttrs(c.gpa, turbo.bytes, .stimulus, c.drop_identifiers);
+        return stimulus.bytes;
+    }
+
+    fn putFiltered(c: *Converter, path: []const u8, text: []const u8) Allocator.Error!void {
+        const clean = try c.filtered(path, text);
+        defer c.gpa.free(clean);
+        try c.put(clean);
+    }
+
+    fn emitText(c: *Converter, path: []const u8, text: []const u8) Allocator.Error!void {
+        const clean = try c.filtered(path, text);
+        defer c.gpa.free(clean);
         if (c.consuming_title) {
             // Everything between the rewritten `<title>` and the original
             // `</title>` is swallowed: `:text` fills an element that must be
             // EMPTY, so a `<title><%= yield(:title) %> · MyApp</title>` has
             // nowhere to keep the ` · MyApp`.
-            if (std.mem.indexOf(u8, text, "</title>")) |at| {
-                try c.put(text[0..at]);
+            if (std.mem.indexOf(u8, clean, "</title>")) |at| {
+                try c.put(clean[0..at]);
                 try c.endTitleConsume();
-                try c.put(text[at + "</title>".len ..]);
+                try c.put(clean[at + "</title>".len ..]);
                 return;
             }
-            try c.put(text);
+            try c.put(clean);
             return;
         }
-        try c.put(text);
+        try c.put(clean);
     }
 
     fn beginTitleConsume(c: *Converter) void {
@@ -1065,6 +1241,127 @@ const Converter = struct {
         }
     }
 
+    /// Data islands replace rendered partials as part of the same region, so
+    /// their findings are enclosed by the outer ivar answer even though the
+    /// nodes live in a different template stream.
+    fn bindRegionDeep(c: *Converter, path: []const u8, region: []const fragments.Node, by: []const u8) Allocator.Error!void {
+        try c.bindRegion(path, region, by);
+        for (region) |node| {
+            if (node.text != null or (node.kind != .render_partial and node.kind != .render_partial_locals and node.kind != .render_dynamic)) continue;
+            const target = node.name orelse continue;
+            const partial = partialPathIn(c.ctx.fragments, path, target) orelse continue;
+            var cyclic = false;
+            for (c.stack.items) |seen| {
+                if (std.mem.eql(u8, seen, partial)) cyclic = true;
+            }
+            if (cyclic) continue;
+            const tpl = templateFor(c.ctx.fragments, partial) orelse continue;
+            if (tpl.error_message != null or tpl.unreadable != null) continue;
+            try c.stack.append(c.gpa, partial);
+            try c.bindRegionDeep(partial, tpl.nodes, by);
+            _ = c.stack.pop();
+        }
+    }
+
+    fn bindHead(c: *Converter, b: Binding) Allocator.Error!void {
+        try c.bound.append(c.gpa, b.finding_id);
+    }
+
+    fn appendSimpleIsland(c: *Converter, path: []const u8, b: Binding, head: fragments.Node, extent: ?[]const u8) Allocator.Error!void {
+        const original = try oneLine(c.gpa, head.code);
+        errdefer c.gpa.free(original);
+        const fields = try c.gpa.alloc(Field, 0);
+        errdefer c.gpa.free(fields);
+        try c.islands.append(c.gpa, .{
+            .island = b.island,
+            .fields = fields,
+            .errors_model = null,
+            .submit_label = "Save",
+            .click = null,
+            .binding = b,
+            .original = original,
+            .line = head.line,
+            .source = path,
+            .extent = extent,
+        });
+    }
+
+    fn putIslandOpen(c: *Converter, island: []const u8, b: Binding) Allocator.Error!void {
+        try c.putFmt("<island src=\"{s}\" {s}", .{ island, b.directive });
+        if (b.props) |props| try c.putFmt(" :props='{s}'", .{props});
+        try c.put(">");
+    }
+
+    fn flattenedStimulusPath(c: *Converter, identifier: []const u8) Allocator.Error![]u8 {
+        var stem: List = .empty;
+        defer stem.deinit(c.gpa);
+        var i: usize = 0;
+        while (i < identifier.len) {
+            if (identifier[i] == '-') {
+                try stem.append(c.gpa, '_');
+                while (i < identifier.len and identifier[i] == '-') : (i += 1) {}
+            } else {
+                try stem.append(c.gpa, identifier[i]);
+                i += 1;
+            }
+        }
+        return try std.fmt.allocPrint(c.gpa, "components/stimulus/{s}.island.tsx", .{stem.items});
+    }
+
+    fn emitWrapped(c: *Converter, path: []const u8, b: Binding, region: []const fragments.Node, locals: []const fragments.Attr) Allocator.Error!void {
+        const head = region[0];
+        try c.bindHead(b);
+        try c.appendSimpleIsland(path, b, head, head.code);
+        const single = [_][]const u8{""};
+        const identifiers: []const []const u8 = if (b.kind == .stimulus and b.identifiers.len > 0) b.identifiers else &single;
+        for (identifiers, 0..) |identifier, index| {
+            if (index == 0) {
+                try c.putIslandOpen(b.island, b);
+            } else {
+                const island = try c.flattenedStimulusPath(identifier);
+                defer c.gpa.free(island);
+                try c.putIslandOpen(island, b);
+            }
+        }
+        const has_end = region.len > 1 and region[region.len - 1].kind == .block_end;
+        if (head.kind == .stimulus) try c.putFiltered(path, head.code);
+        if (has_end) try c.walk(path, region[1 .. region.len - 1], locals);
+        if (head.kind == .stimulus and has_end) try c.putFiltered(path, region[region.len - 1].code);
+        // Both helper and HTML Turbo frames discard their Rails wrapper: the
+        // generated island renders its own id-bearing div. A helper's body
+        // has already been walked above; a self-closing frame has none.
+        var close_count = identifiers.len;
+        while (close_count > 0) : (close_count -= 1) try c.put("</island>");
+    }
+
+    fn emitInline(c: *Converter, path: []const u8, b: Binding, region: []const fragments.Node, locals: []const fragments.Attr) Allocator.Error!void {
+        const head = region[0];
+        try c.bindHead(b);
+        const has_end = region.len > 1 and region[region.len - 1].kind == .block_end;
+        const html_frame = head.value != null and std.mem.eql(u8, head.value.?, "turbo-frame");
+        if (html_frame) {
+            try c.putFiltered(path, head.code);
+        } else {
+            try c.put("<turbo-frame id=\"");
+            try c.putEscaped(head.name orelse "");
+            try c.put("\">");
+        }
+        if (has_end) try c.walk(path, region[1 .. region.len - 1], locals);
+        if (html_frame and has_end) try c.putFiltered(path, region[region.len - 1].code) else try c.put("</turbo-frame>");
+    }
+
+    fn emitDropped(c: *Converter, path: []const u8, b: Binding, region: []const fragments.Node, locals: []const fragments.Attr) Allocator.Error!void {
+        const head = region[0];
+        try c.bindHead(b);
+        const previous = c.drop_identifiers;
+        c.drop_identifiers = b.identifiers;
+        defer c.drop_identifiers = previous;
+        try c.putFiltered(path, head.code);
+        const has_end = region.len > 1 and region[region.len - 1].kind == .block_end;
+        if (has_end) try c.walk(path, region[1 .. region.len - 1], locals);
+        if (has_end) try c.putFiltered(path, region[region.len - 1].code);
+    }
+
     /// An `errors` region a bound form's island takes over, and the form it
     /// belongs to.
     /// `by` is the absorbing form's binding id -- what `bindRegion` records as
@@ -1121,8 +1418,8 @@ const Converter = struct {
     /// does nothing until it scrolls into view.
     ///
     /// Contract 2 (owned-result), inherited from `convert`: the `IslandSpec`
-    /// it appends owns exactly two allocations (`fields` and `original`, see
-    /// that type's doc) and `freeOutput` releases them. On an `OutOfMemory`
+    /// it appends owns `fields`, `original`, and for a data island `port`;
+    /// `freeOutput` releases them. On an `OutOfMemory`
     /// after either is built, the `errdefer`s here release it and nothing
     /// escapes half-owned.
     fn emitIsland(
@@ -1138,11 +1435,27 @@ const Converter = struct {
         // mode word), never out of author text, so there is no quote in it to
         // close the attribute early.
         if (b.props) |p| {
-            try c.putFmt("<island src=\"{s}\" client:load :props='{s}'></island>", .{ b.island, p });
+            try c.putFmt("<island src=\"{s}\" {s} :props='{s}'></island>", .{ b.island, b.directive, p });
         } else {
-            try c.putFmt("<island src=\"{s}\" client:load></island>", .{b.island});
+            try c.putFmt("<island src=\"{s}\" {s}></island>", .{ b.island, b.directive });
         }
-        try c.bindRegion(path, region, b.finding_id);
+        if (b.kind == .data_list)
+            try c.bindRegionDeep(path, region, b.finding_id)
+        else
+            try c.bindRegion(path, region, b.finding_id);
+
+        var owned_port: ?[]u8 = null;
+        errdefer if (owned_port) |body| c.gpa.free(body);
+        if (b.kind == .data_list) {
+            const body_region = if (!region[0].output and region.len > 1) region[1 .. region.len - 1] else region;
+            const body = try port.recordBody(c.gpa, c.ctx, path, body_region, b.aliases);
+            if (body.unportable) |bad| {
+                c.gpa.free(bad.why);
+                c.gpa.free(body.js);
+            } else {
+                owned_port = body.js;
+            }
+        }
 
         var fields: std.ArrayListUnmanaged(Field) = .empty;
         errdefer fields.deinit(c.gpa);
@@ -1204,7 +1517,9 @@ const Converter = struct {
             .original = original,
             .line = head.line,
             .source = path,
+            .port = owned_port,
         });
+        owned_port = null;
     }
 
     fn walk(
@@ -1228,7 +1543,7 @@ const Converter = struct {
         while (i < nodes.len) : (i += 1) {
             const n = nodes[i];
             if (n.text) |t| {
-                try c.emitText(t);
+                try c.emitText(path, t);
                 continue;
             }
             switch (n.kind) {
@@ -1244,8 +1559,8 @@ const Converter = struct {
                     // keeps the rest of the template converting.
                     const f = frames.pop() orelse continue;
                     if (f.is_finding) c.finding_depth -= 1;
-                    if (f.emitted) try c.put("<!-- rails:end -->");
                     if (f.close.len > 0) try c.put(f.close);
+                    if (f.emitted) try c.put("<!-- rails:end -->");
                     if (f.prev_sink) |p| c.sink = p;
                     continue;
                 },
@@ -1355,7 +1670,16 @@ const Converter = struct {
                             for (absorbed_errors.items) |a| {
                                 if (a.form == i) model = a.model;
                             }
-                            try c.emitIsland(path, b, nodes[i .. end + 1], model);
+                            const region = nodes[i .. end + 1];
+                            if (b.kind == .@"inline") {
+                                try c.emitInline(path, b, region, locals);
+                            } else if (b.kind == .drop) {
+                                try c.emitDropped(path, b, region, locals);
+                            } else if (b.wrap) {
+                                try c.emitWrapped(path, b, region, locals);
+                            } else {
+                                try c.emitIsland(path, b, region, model);
+                            }
                         }
                         i = end;
                         consumed = true;
@@ -1373,8 +1697,14 @@ const Converter = struct {
             // finding still standing (round 4).
             if (isFindingKind(n.kind) or try c.linkSubmits(n)) {
                 const emitted = try c.openRegion(path, n);
+                const element = isElementNode(n);
+                if (element) try c.putFiltered(path, n.code);
                 if (opens) {
-                    try frames.append(c.gpa, .{ .close = "", .is_finding = true, .emitted = emitted, .prev_sink = null });
+                    const close = if (element) blk: {
+                        const end = matchingEnd(nodes, i) orelse break :blk "";
+                        break :blk nodes[end].code;
+                    } else "";
+                    try frames.append(c.gpa, .{ .close = close, .is_finding = true, .emitted = emitted, .prev_sink = null });
                     c.finding_depth += 1;
                 } else if (emitted) {
                     try c.put("<!-- rails:end -->");
@@ -2177,6 +2507,7 @@ pub fn convert(gpa: Allocator, ctx: Context, tpl: fragments.Template, kind: Kind
         for (islands) |s| {
             gpa.free(s.fields);
             gpa.free(s.original);
+            if (s.port) |port_body| gpa.free(port_body);
         }
         gpa.free(islands);
     }
@@ -2285,6 +2616,221 @@ fn mkTemplate(path: []const u8, nodes: []const fragments.Node) fragments.Templat
         .error_line = null,
         .unreadable = null,
     };
+}
+
+fn stage4Binding(id: []const u8, kind: Binding.Kind, island: []const u8) Binding {
+    return .{
+        .finding_id = id,
+        .kind = kind,
+        .verb = "",
+        .path = "",
+        .operation_id = "",
+        .collection = null,
+        .island = island,
+        .redirect_to = null,
+    };
+}
+
+test "convert: a multi-controller Stimulus island wraps markup without swallowing inner findings" {
+    const gpa = std.testing.allocator;
+    const path = "app/views/pages/widgets.html.erb";
+    var head = openNode(.stimulus, 2, 1, "reveal modal", "<div data-controller=\"reveal modal\">");
+    head.value = "div";
+    var missing = cNode(.i18n, 3, 3, ".missing");
+    missing.missing = true;
+    missing.code = "t(\".missing\")";
+    var close = endNode(4, 1);
+    close.code = "</div>";
+    const nodes = [_]fragments.Node{ head, tNode("<button>Show</button>", 2), missing, close };
+    const finding_list = [_]findings.Finding{
+        mkFinding("RAILS_STIMULUS_CONTROLLER.app/views/pages/widgets%2Ehtml%2Eerb.L2C1", "RAILS_STIMULUS_CONTROLLER", path, 2),
+        mkFinding("RAILS_I18N_MISSING.app/views/pages/widgets%2Ehtml%2Eerb.L3C3", "RAILS_I18N_MISSING", path, 3),
+    };
+    var binding = stage4Binding(finding_list[0].id, .stimulus, "components/stimulus/reveal.island.tsx");
+    binding.wrap = true;
+    binding.identifiers = &.{ "reveal", "modal" };
+    const out = try convert(gpa, .{ .routes = &.{}, .assets = &.{}, .fragments = &.{}, .findings = &finding_list, .layout_stem = null, .bindings = &.{binding} }, mkTemplate(path, &nodes), .view);
+    defer freeOutput(gpa, out);
+    try std.testing.expectEqualStrings(
+        "<island src=\"components/stimulus/reveal.island.tsx\" client:load><island src=\"components/stimulus/modal.island.tsx\" client:load><div data-controller=\"reveal modal\"><button>Show</button><!-- rails:finding RAILS_I18N_MISSING.app/views/pages/widgets%2Ehtml%2Eerb.L3C3 --><!-- rails:end --></div></island></island>\n",
+        out.bytes,
+    );
+    try std.testing.expectEqual(@as(usize, 1), out.open_finding_ids.len);
+    try std.testing.expectEqualStrings(finding_list[1].id, out.open_finding_ids[0]);
+    try std.testing.expectEqual(@as(usize, 1), out.bound_finding_ids.len);
+    try std.testing.expectEqualStrings(finding_list[0].id, out.bound_finding_ids[0]);
+    try std.testing.expectEqual(@as(usize, 0), out.enclosed.len);
+}
+
+test "convert: lazy and inline Turbo frames preserve only the promised markup" {
+    const gpa = std.testing.allocator;
+    const path = "app/views/pages/x.html.erb";
+    var lazy = openNode(.turbo_frame, 1, 1, "latest", "turbo_frame_tag \"latest\" do");
+    lazy.value = "posts";
+    var lazy_close = endNode(1, 40);
+    lazy_close.code = "end";
+    const lazy_nodes = [_]fragments.Node{ lazy, tNode("<p>Loading</p>", 1), lazy_close };
+    const lazy_finding = [_]findings.Finding{mkFinding("RAILS_TURBO_FRAME.x.L1C1", "RAILS_TURBO_FRAME", path, 1)};
+    var lazy_binding = stage4Binding(lazy_finding[0].id, .turbo_frame, "components/TurboFrame.island.tsx");
+    lazy_binding.wrap = true;
+    lazy_binding.directive = "client:visible";
+    lazy_binding.props = "{ .id = \"latest\", .src = \"/posts\" }";
+    const lazy_out = try convert(gpa, .{ .routes = &.{}, .assets = &.{}, .fragments = &.{}, .findings = &lazy_finding, .layout_stem = null, .bindings = &.{lazy_binding} }, mkTemplate(path, &lazy_nodes), .view);
+    defer freeOutput(gpa, lazy_out);
+    try std.testing.expectEqualStrings("<island src=\"components/TurboFrame.island.tsx\" client:visible :props='{ .id = \"latest\", .src = \"/posts\" }'><p>Loading</p></island>\n", lazy_out.bytes);
+
+    const plain = openNode(.turbo_frame, 2, 1, "static", "turbo_frame_tag \"static\" do");
+    var plain_close = endNode(2, 50);
+    plain_close.code = "end";
+    const plain_nodes = [_]fragments.Node{ plain, tNode("<p>Just markup</p>", 2), plain_close };
+    const plain_finding = [_]findings.Finding{mkFinding("RAILS_TURBO_FRAME.x.L2C1", "RAILS_TURBO_FRAME", path, 2)};
+    const plain_binding = stage4Binding(plain_finding[0].id, .@"inline", "");
+    const plain_out = try convert(gpa, .{ .routes = &.{}, .assets = &.{}, .fragments = &.{}, .findings = &plain_finding, .layout_stem = null, .bindings = &.{plain_binding} }, mkTemplate(path, &plain_nodes), .view);
+    defer freeOutput(gpa, plain_out);
+    try std.testing.expectEqualStrings("<turbo-frame id=\"static\"><p>Just markup</p></turbo-frame>\n", plain_out.bytes);
+}
+
+test "convert: drop strips only Stimulus attributes in the bound extent" {
+    const gpa = std.testing.allocator;
+    const path = "app/views/pages/x.html.erb";
+    var head = openNode(.stimulus, 1, 1, "reveal", "<div class=\"box\" data-controller=\"reveal\" data-reveal-open-value=\"true\">");
+    head.value = "div";
+    var close = endNode(2, 1);
+    close.code = "</div>";
+    const nodes = [_]fragments.Node{ head, tNode("<button class=\"go\" data-action=\"click->reveal#toggle\" data-reveal-target=\"details\">Go</button>", 1), close };
+    const finding_list = [_]findings.Finding{mkFinding("RAILS_STIMULUS_CONTROLLER.x.L1C1", "RAILS_STIMULUS_CONTROLLER", path, 1)};
+    var binding = stage4Binding(finding_list[0].id, .drop, "");
+    binding.identifiers = &.{"reveal"};
+    const out = try convert(gpa, .{ .routes = &.{}, .assets = &.{}, .fragments = &.{}, .findings = &finding_list, .layout_stem = null, .bindings = &.{binding} }, mkTemplate(path, &nodes), .view);
+    defer freeOutput(gpa, out);
+    try std.testing.expectEqualStrings("<div class=\"box\"><button class=\"go\">Go</button></div>\n", out.bytes);
+    try std.testing.expectEqual(@as(usize, 1), out.bound_finding_ids.len);
+}
+
+test "convert: component props are emitted verbatim and Turbo Drive attributes get one note" {
+    const gpa = std.testing.allocator;
+    const path = "app/views/pages/x.html.erb";
+    const component = cNode(.component_root, 1, 1, "Chart");
+    const finding_list = [_]findings.Finding{mkFinding("RAILS_COMPONENT_ROOT.x.L1C1", "RAILS_COMPONENT_ROOT", path, 1)};
+    var binding = stage4Binding(finding_list[0].id, .component, "components/Chart.island.tsx");
+    binding.props = "{ .active = true, .points = 3, .series = \"a\\\"b\" }";
+    const nodes = [_]fragments.Node{ tNode("<main data-turbo-action=\"advance\">", 1), component, tNode("</main><a data-turbo-prefetch=\"false\">x</a>", 2) };
+    const out = try convert(gpa, .{ .routes = &.{}, .assets = &.{}, .fragments = &.{}, .findings = &finding_list, .layout_stem = null, .bindings = &.{binding} }, mkTemplate(path, &nodes), .view);
+    defer freeOutput(gpa, out);
+    try std.testing.expectEqualStrings("<main><island src=\"components/Chart.island.tsx\" client:load :props='{ .active = true, .points = 3, .series = \"a\\\"b\" }'></island></main><a>x</a>\n", out.bytes);
+    try std.testing.expectEqual(@as(usize, 1), out.dropped.len);
+    try std.testing.expectEqualStrings("data-turbo attributes dropped; Turbo Drive is ordinary navigation here", out.dropped[0]);
+    const again = try convert(gpa, .{ .routes = &.{}, .assets = &.{}, .fragments = &.{}, .findings = &finding_list, .layout_stem = null, .bindings = &.{binding} }, mkTemplate(path, &nodes), .view);
+    defer freeOutput(gpa, again);
+    try std.testing.expectEqualStrings(out.bytes, again.bytes);
+    try std.testing.expectEqualStrings(out.dropped[0], again.dropped[0]);
+}
+
+test "convert: a data island binds findings reached through rendered partials" {
+    const gpa = std.testing.allocator;
+    const path = "app/views/posts/index.html.erb";
+    const partial_path = "app/views/posts/_post.html.erb";
+    var outer = openNode(.ivar, 1, 1, "@posts", "@posts.each do |post|");
+    outer.output = false;
+    const render = cNode(.render_partial, 2, 3, "post");
+    const close = endNode(3, 1);
+    const nodes = [_]fragments.Node{ outer, render, close };
+    var literal = cNode(.literal, 1, 1, null);
+    literal.value = "card";
+    const partial_nodes = [_]fragments.Node{literal};
+    const partial = mkTemplate(partial_path, &partial_nodes);
+    const finding_list = [_]findings.Finding{
+        mkFinding("RAILS_REQUEST_TIME_STATE.app/views/posts/index%2Ehtml%2Eerb.L1C1", "RAILS_REQUEST_TIME_STATE", path, 1),
+        mkFinding("RAILS_TEMPLATE_CONTROL_FLOW.app/views/posts/_post%2Ehtml%2Eerb.L1C1", "RAILS_TEMPLATE_CONTROL_FLOW", partial_path, 1),
+    };
+    var binding = stage4Binding(finding_list[0].id, .data_list, "components/data/posts_index.island.tsx");
+    binding.collection = "posts";
+    binding.aliases = &.{
+        .{ .ruby = "@posts", .js = "rec" },
+        .{ .ruby = "post", .js = "rec" },
+    };
+    const out = try convert(gpa, .{ .routes = &.{}, .assets = &.{}, .fragments = &.{partial}, .findings = &finding_list, .layout_stem = null, .bindings = &.{binding} }, mkTemplate(path, &nodes), .view);
+    defer freeOutput(gpa, out);
+    try std.testing.expectEqualStrings("<island src=\"components/data/posts_index.island.tsx\" client:load></island>\n", out.bytes);
+    try std.testing.expectEqual(@as(usize, 2), out.bound_finding_ids.len);
+    try std.testing.expectEqual(@as(usize, 1), out.enclosed.len);
+    try std.testing.expectEqualStrings(finding_list[1].id, out.enclosed[0].id);
+    try std.testing.expectEqualStrings(finding_list[0].id, out.enclosed[0].by);
+    try std.testing.expect(out.islands[0].port != null);
+}
+
+test "convert: a missing Stimulus element is one complete open region" {
+    const gpa = std.testing.allocator;
+    const path = "app/views/pages/x.html.erb";
+    var node = openNode(.stimulus, 1, 1, "split", "<div data-controller=\"split\">");
+    node.missing = true;
+    const finding_list = [_]findings.Finding{mkFinding("RAILS_STIMULUS_CONTROLLER.x.L1C1", "RAILS_STIMULUS_CONTROLLER", path, 1)};
+    const out = try convert(gpa, .{ .routes = &.{}, .assets = &.{}, .fragments = &.{}, .findings = &finding_list, .layout_stem = null }, mkTemplate(path, &.{node}), .view);
+    defer freeOutput(gpa, out);
+    try std.testing.expectEqualStrings("<!-- rails:finding RAILS_STIMULUS_CONTROLLER.x.L1C1 --><div data-controller=\"split\"><!-- rails:end -->\n", out.bytes);
+
+    node.missing = false;
+    var close = endNode(2, 1);
+    close.code = "</div>";
+    const closed_nodes = [_]fragments.Node{ node, tNode("<span>x</span>", 1), close };
+    const closed = try convert(gpa, .{ .routes = &.{}, .assets = &.{}, .fragments = &.{}, .findings = &finding_list, .layout_stem = null }, mkTemplate(path, &closed_nodes), .view);
+    defer freeOutput(gpa, closed);
+    try std.testing.expectEqualStrings("<!-- rails:finding RAILS_STIMULUS_CONTROLLER.x.L1C1 --><div data-controller=\"split\"><span>x</span></div><!-- rails:end -->\n", closed.bytes);
+}
+
+test "convert: Stage 4 binding branches survive every allocation failure" {
+    const path = "app/views/pages/all.html.erb";
+    var wrap_head = openNode(.stimulus, 1, 1, "reveal", "<div data-controller=\"reveal\">");
+    wrap_head.value = "div";
+    var wrap_close = endNode(1, 30);
+    wrap_close.code = "</div>";
+    var drop_head = openNode(.stimulus, 2, 1, "modal", "<div class=\"m\" data-controller=\"modal\">");
+    drop_head.value = "div";
+    var drop_close = endNode(2, 30);
+    drop_close.code = "</div>";
+    var ivar = cNode(.ivar, 4, 1, "@post");
+    ivar.code = "@post.title";
+    const nodes = [_]fragments.Node{
+        tNode("<main data-turbo=\"false\">", 1),
+        wrap_head,
+        tNode("<button data-action=\"reveal#toggle\">x</button>", 1),
+        wrap_close,
+        drop_head,
+        tNode("<span data-modal-target=\"body\">y</span>", 2),
+        drop_close,
+        cNode(.component_root, 3, 1, "Chart"),
+        ivar,
+        tNode("</main>", 5),
+    };
+    const finding_list = [_]findings.Finding{
+        mkFinding("S.x.L1C1", "RAILS_STIMULUS_CONTROLLER", path, 1),
+        mkFinding("D.x.L2C1", "RAILS_STIMULUS_CONTROLLER", path, 2),
+        mkFinding("C.x.L3C1", "RAILS_COMPONENT_ROOT", path, 3),
+        mkFinding("I.x.L4C1", "RAILS_REQUEST_TIME_STATE", path, 4),
+    };
+    var wrap = stage4Binding(finding_list[0].id, .stimulus, "components/stimulus/reveal.island.tsx");
+    wrap.wrap = true;
+    wrap.identifiers = &.{"reveal"};
+    var drop = stage4Binding(finding_list[1].id, .drop, "");
+    drop.identifiers = &.{"modal"};
+    var component = stage4Binding(finding_list[2].id, .component, "components/Chart.island.tsx");
+    component.props = "{ .points = 3 }";
+    var data = stage4Binding(finding_list[3].id, .data_list, "components/data/post.island.tsx");
+    data.collection = "posts";
+    data.aliases = &.{.{ .ruby = "@post", .js = "rec" }};
+    const bindings = [_]Binding{ wrap, drop, component, data };
+
+    var fail_index: usize = 0;
+    while (true) : (fail_index += 1) {
+        if (fail_index > 2000) return error.SweepNeverReachedSuccess;
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
+        if (convert(failing.allocator(), .{ .routes = &.{}, .assets = &.{}, .fragments = &.{}, .findings = &finding_list, .layout_stem = null, .bindings = &bindings }, mkTemplate(path, &nodes), .view)) |out| {
+            defer freeOutput(std.testing.allocator, out);
+            try std.testing.expectEqual(@as(usize, 3), out.islands.len);
+            try std.testing.expectEqual(@as(usize, 4), out.bound_finding_ids.len);
+            break;
+        } else |err| try std.testing.expectEqual(error.OutOfMemory, err);
+    }
 }
 
 test "convert: a layout turns yield into an id=main super block, rewrites <title>, drops csrf and resolves a stylesheet" {
@@ -3329,7 +3875,7 @@ test "convert: an unclosed <title> cannot outlive the block it was opened in" {
     , out.bytes);
 }
 
-test "convert: attributes on the rewritten <title> are reported, not silently lost" {
+test "convert: Turbo Drive attributes on a rewritten title use the template-level drop note" {
     const gpa = std.testing.allocator;
     const nodes = [_]fragments.Node{
         tNode("<head><title data-turbo-track=\"reload\">", 1),
@@ -3347,7 +3893,7 @@ test "convert: attributes on the rewritten <title> are reported, not silently lo
     try std.testing.expect(std.mem.indexOf(u8, out.bytes, "<title :text=\"$page.title\"></title>") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.bytes, "data-turbo-track") == null);
     try std.testing.expectEqualStrings(
-        "<title> attributes 'data-turbo-track=\"reload\"' dropped: the converted element carries only :text",
+        "data-turbo attributes dropped; Turbo Drive is ordinary navigation here",
         out.dropped[0],
     );
 }
@@ -3445,6 +3991,20 @@ test "convert under a FailingAllocator leaks nothing on any partial allocation" 
             try std.testing.expectEqual(error.OutOfMemory, err);
         }
     }
+}
+
+test "opensBlock treats closed element regions as blocks but never missing ones" {
+    for ([_]fragments.Kind{ .stimulus, .vue_root, .component_root }) |kind| {
+        var node = openNode(kind, 1, 1, "x", "<div>");
+        try std.testing.expect(opensBlock(node));
+        node.missing = true;
+        try std.testing.expect(!opensBlock(node));
+    }
+    var frame = openNode(.turbo_frame, 1, 1, "x", "<turbo-frame>");
+    frame.value = "turbo-frame";
+    try std.testing.expect(opensBlock(frame));
+    frame.missing = true;
+    try std.testing.expect(!opensBlock(frame));
 }
 
 test "convert: a bound region becomes one <island>, and every id inside it is answered" {

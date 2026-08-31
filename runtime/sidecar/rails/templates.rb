@@ -16,6 +16,7 @@
 # a `line_map` translates every position Prism reports back to a source line.
 #
 # Never evaluates anything. Templates under migration are untrusted input.
+require "json"
 require "prism"
 require_relative "erb"
 require_relative "i18n"
@@ -41,7 +42,7 @@ module RailsTemplates
 
   def self.analyze(src, path:, i18n:)
     tokens = RailsErb.scan(src)
-    program, code_tokens, line_map, col_map = compile(tokens)
+    program, code_tokens, line_map, col_map, text_tokens = compile(tokens)
     result = Prism.parse(program)
     if result.failure?
       err = result.errors.first
@@ -52,7 +53,7 @@ module RailsTemplates
       gen = err&.location&.start_line || 1
       return { error: err&.message || "parse error", line: (line_map[gen] || last).clamp(1, last) }
     end
-    walker = Walker.new(path, i18n, code_tokens, line_map, col_map)
+    walker = Walker.new(path, i18n, code_tokens, line_map, col_map, text_tokens)
     walker.walk_program(result.value)
     { nodes: walker.nodes }
   rescue StandardError, SystemStackError => e
@@ -64,7 +65,8 @@ module RailsTemplates
     { error: "#{e.class}: #{e.message}", line: 1 }
   end
 
-  # Compiles the token stream to `[program, code_tokens, line_map]`.
+  # Compiles the token stream to
+  # `[program, code_tokens, line_map, col_map, text_tokens]`.
   #
   # The whole program is wrapped in one method body because `yield` is a
   # PARSE error outside a method -- and `<%= yield %>` is in every Rails
@@ -96,6 +98,13 @@ module RailsTemplates
   def self.compile(tokens)
     out = +"def _zigapagos_template\n"
     code_tokens = []
+    # Text tokens by the generated line their `_buf << '...'` statement opens.
+    # A code fragment always terminates its own generated line and a `flush`
+    # never emits two text tokens in a row, so that line identifies exactly
+    # one text token -- which is the only carrier of a text run's true source
+    # COLUMN (`line_map`/`col_map` describe fragments, and a text run's
+    # generated column is `_buf << '` plus whatever escaping did).
+    text_tokens = {}
     line_map = [nil, 1] # 1-based; generated line 1 is the method header
     col_map = [nil, 1]
     gen = 2
@@ -108,6 +117,7 @@ module RailsTemplates
     tokens.each do |t|
       code = t[:type] == :code
       code_tokens << t if code
+      text_tokens[gen] = t unless code
       written = code ? "#{fragment_source(t)}\n" : text_source(t)
       out << written
 
@@ -142,7 +152,7 @@ module RailsTemplates
       end
     end
     out << "\nend"
-    [out, code_tokens, forward_fill(line_map, gen + 2), col_map]
+    [out, code_tokens, forward_fill(line_map, gen + 2), col_map, text_tokens]
   end
 
   # A generated line with no token of its own belongs to the last fragment
@@ -192,12 +202,26 @@ module RailsTemplates
   class Walker
     attr_reader :nodes
 
-    def initialize(path, i18n, code_tokens, line_map, col_map)
+    def initialize(path, i18n, code_tokens, line_map, col_map, text_tokens = {})
       @path = path
       @i18n = i18n
       @nodes = []
       @line_map = line_map
       @col_map = col_map
+      @text_tokens = text_tokens
+      # Ruby block nesting, so an element's close tag is only accepted where
+      # its opening tag was (B11): a `</div>` inside `<% if x %>` closes
+      # nothing that was opened outside the branch, because a region that
+      # straddles a branch is not a region the converter can wrap.
+      @block_depth = 0
+      # Elements whose extent is still open: `{name, depth, count, node}`.
+      # `count` is the same-name nesting depth, so an inner `<div>` does not
+      # let the first `</div>` close a `<div data-controller>`.
+      @open_elements = []
+      # Set while inside a comment or a raw-text element, so a tag written
+      # inside one is text and not markup. Carried ACROSS text runs: an ERB
+      # tag inside a `<script>` body splits it into several runs.
+      @skip_until = nil
       # Tokens by SOURCE line, consumed in walk order, so a node's :code comes
       # from the tag it was written as. (Its :col does NOT: see `emit`. A tag
       # can hold several statements, and only one of them can own the tag's
@@ -212,6 +236,10 @@ module RailsTemplates
     def walk_program(program)
       defn = program.statements&.body&.first
       walk_statements(defn.is_a?(Prism::DefNode) ? statements_of(defn.body) : [])
+      # Anything still open when the template ends never found its close tag,
+      # so it has no extent -- which is the whole difference between a region
+      # an island can wrap and one it cannot (B11).
+      close_elements_at(0)
     end
 
     def walk_statements(stmts)
@@ -224,7 +252,8 @@ module RailsTemplates
       node = unwrap(node)
       line = src_line(node.location.start_line)
       if buf_append?(node)
-        @nodes << { t: "text", text: node.arguments.arguments.first.unescaped, line: line }
+        tok = @text_tokens[node.location.start_line]
+        emit_text_run(node.arguments.arguments.first.unescaped, tok ? tok[:line] : line, tok ? tok[:col] : 1)
         return
       end
       case out_kind(node)
@@ -244,11 +273,11 @@ module RailsTemplates
       case node
       when Prism::IfNode, Prism::UnlessNode
         emit(control_info(node.predicate, node.is_a?(Prism::IfNode) ? "if" : "unless"), node)
-        walk_statements(statements_of(node.statements))
+        with_block_depth { walk_statements(statements_of(node.statements)) }
         sub = node.is_a?(Prism::IfNode) ? node.subsequent : node.else_clause
         while sub
           block_else(sub)
-          walk_statements(statements_of(sub.statements))
+          with_block_depth { walk_statements(statements_of(sub.statements)) }
           # An `elsif` is itself an IfNode; an `else` ends the chain.
           sub = sub.is_a?(Prism::IfNode) ? sub.subsequent : nil
         end
@@ -257,12 +286,12 @@ module RailsTemplates
         emit(control_info(node.predicate, "case"), node)
         (node.conditions + [node.else_clause].compact).each do |branch|
           block_else(branch)
-          walk_statements(statements_of(branch.statements))
+          with_block_depth { walk_statements(statements_of(branch.statements)) }
         end
         block_end(node)
       when Prism::WhileNode, Prism::UntilNode
         emit(control_info(node.predicate, node.is_a?(Prism::WhileNode) ? "while" : "until"), node)
-        walk_statements(statements_of(node.statements))
+        with_block_depth { walk_statements(statements_of(node.statements)) }
         block_end(node)
       when Prism::CallNode
         info = classify(node, output: false)
@@ -314,9 +343,297 @@ module RailsTemplates
       # A form builder is only in scope inside its own block, and nested forms
       # nest, so this is a stack rather than a single name.
       @form_builders.push(block_param_name(blk)) if info[:kind] == "form"
-      walk_statements(statements_of(blk.body))
+      with_block_depth { walk_statements(statements_of(blk.body)) }
       @form_builders.pop if info[:kind] == "form"
       block_end(node)
+    end
+
+    # Ruby block nesting for the element extents (B11). An element still open
+    # when its own block ends is orphaned: a close tag found afterwards sits
+    # at another depth, and accepting it would make the region straddle the
+    # branch. So it is dropped here with `missing: true` rather than left to
+    # be closed by the wrong tag.
+    def with_block_depth
+      @block_depth += 1
+      yield
+    ensure
+      close_elements_at(@block_depth)
+      @block_depth -= 1
+    end
+
+    def close_elements_at(depth)
+      while (e = @open_elements.last) && e[:depth] >= depth
+        @open_elements.pop
+        e[:node][:missing] = true
+      end
+    end
+
+    # ---- element scan of text runs -----------------------------------------
+    #
+    # Rails writes three of the four interactive constructs as ORDINARY HTML:
+    # `<div data-controller="reveal">`, `<turbo-frame id="x" src="/posts">`,
+    # `<div data-react-class="Chart" data-react-props='…'>` (and its Vue
+    # sibling). They are not Ruby fragments, so the Prism walk above cannot
+    # see them -- and nothing on the Zig side parses HTML. This is the one
+    # place that has both halves: the text runs AND the block structure an
+    # extent has to be measured against.
+    #
+    # The tag grammar is HTML5's start-tag production, cut down to what a
+    # template can contain: a name, then attributes with double-quoted,
+    # single-quoted or unquoted values. It is a scanner, not a parser --
+    # nothing here builds a tree, and nothing here needs to.
+
+    # `\G`, not `\A`: both are matched at an OFFSET into the run
+    # (`match(text, lt)`), so anchoring to the start of the string would mean
+    # slicing a fresh remainder for every `<` in the template.
+    ELEMENT_OPEN = /\G<([A-Za-z][A-Za-z0-9:-]*)((?:\s+[^\s"'>\/=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'>`]*))?)*)\s*(\/?)>/m
+    ELEMENT_CLOSE = %r{\G</([A-Za-z][A-Za-z0-9:-]*)\s*>}m
+    # Just the NAME of a start tag: what is left of one whose attributes hold
+    # an ERB tag, so the run ends before the `>`. See `scan_text_run`.
+    ELEMENT_NAME = /\G<([A-Za-z][A-Za-z0-9:-]*)/
+    ATTRIBUTE = /([^\s"'>\/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>`]+)))?/
+    # Elements whose content is text, not markup: a `<div data-controller>`
+    # written inside one is a string, and reporting it would raise a finding
+    # about markup the browser never builds.
+    RAW_TEXT = %w[script style].freeze
+    # HTML void elements. A void element has no content and no close tag, so
+    # there is no extent to find -- `missing: true`, immediately.
+    VOID_ELEMENTS = %w[input img br hr meta link area base col embed source track wbr].freeze
+    # The four Stimulus attribute families the port reads: the action
+    # descriptors, the targets, the values and the classes. Everything else on
+    # the tag (`class`, `id`, an author's own `data-*`) is presentation the
+    # controller never saw, and copying it into an island's props would make
+    # the port claim behaviour it does not have.
+    STIMULUS_ATTR = /\Adata-action\z|\Adata-.+-target\z|\Adata-.+-.+-value\z|\Adata-.+-.+-class\z/
+    private_constant :ELEMENT_OPEN, :ELEMENT_CLOSE, :ELEMENT_NAME, :ATTRIBUTE, :RAW_TEXT, :VOID_ELEMENTS,
+                     :STIMULUS_ATTR
+
+    # Emits one text run, split at every element node and every close tag that
+    # ends an extent. An element node is a MARKER: it consumes no bytes, so
+    # the emitted text nodes still concatenate to the run byte for byte and
+    # the converter passes the author's own markup through. A `block_end` is
+    # placed AFTER the close tag, so `nodes[element..block_end]` spans the
+    # whole element -- opening tag, body and close tag.
+    def emit_text_run(text, line, col)
+      cuts = scan_text_run(text, line, col)
+      return @nodes << { t: "text", text: text, line: line } if cuts.empty?
+
+      pos = 0
+      cuts.each do |cut|
+        @nodes << { t: "text", text: text[pos...cut[:at]], line: advance_pos(line, col, text[0, pos])[0] } if cut[:at] > pos
+        @nodes << cut[:node]
+        pos = cut[:at]
+      end
+      @nodes << { t: "text", text: text[pos..], line: advance_pos(line, col, text[0, pos])[0] } if pos < text.length
+    end
+
+    # `[{at:, node:}, ...]` in offset order: where the run is split and what
+    # goes in the gap. Also carries the extent bookkeeping, because both need
+    # the same left-to-right tag scan and doing it twice would let the two
+    # disagree about what is inside a comment.
+    def scan_text_run(text, line, col)
+      cuts = []
+      i = 0
+      while i < text.length
+        if @skip_until
+          m = @skip_until.match(text, i)
+          # No terminator in THIS run: the comment/raw element continues into
+          # the next one, and the state stays set.
+          break unless m
+          @skip_until = nil
+          i = m.end(0)
+          next
+        end
+        lt = text.index("<", i)
+        break unless lt
+        if text[lt, 4] == "<!--"
+          @skip_until = /-->/m
+          i = lt + 4
+          next
+        end
+        if (m = ELEMENT_CLOSE.match(text, lt))
+          i = lt + m[0].length
+          cut = close_element(m[1].downcase, m[0], line, col, text, lt, i)
+          cuts << cut if cut
+          next
+        end
+        unless (m = ELEMENT_OPEN.match(text, lt))
+          # A start tag this run cannot see the end of. Almost always one
+          # whose attributes hold an ERB tag -- `<div class="<%= cls %>">` is
+          # ubiquitous -- which splits the run mid-tag, so no run holds a
+          # complete tag and the grammar above matches nothing.
+          #
+          # It still NESTS, and that is the half that must not be lost: a
+          # tracked `<div data-controller>` whose count never learns about the
+          # inner `<div` ends its region at the INNER `</div>`, which is a
+          # WRONG extent, not a missing one -- B10's wrapping island closes
+          # halfway through the element it wraps, and a replacing one deletes
+          # the rest of it. Counting the bare name instead makes the worst
+          # case an element whose count never returns to zero, i.e.
+          # `missing: true`, which B11 already refuses to offer an extent-
+          # needing choice for. Deliberately one-sided: the CLOSE side is left
+          # alone, so a split close tag degrades the same conservative way.
+          bump_open_elements(ELEMENT_NAME.match(text, lt)&.[](1)&.downcase)
+          i = lt + 1
+          next
+        end
+        name = m[1].downcase
+        i = lt + m[0].length
+        if RAW_TEXT.include?(name)
+          @skip_until = /<\/#{name}[^>]*>/im
+          next
+        end
+        cut = open_element(name, m, line, col, text, lt)
+        cuts << cut if cut
+      end
+      cuts
+    end
+
+    # A same-name tag deepens every open element's count first (so the tag
+    # cannot close the element it is nested in), THEN this tag becomes an open
+    # element of its own if it qualifies.
+    def open_element(name, m, line, col, text, lt)
+      bump_open_elements(name)
+      info = element_info(name, parse_attrs(m[2]))
+      return nil unless info
+
+      l, c = advance_pos(line, col, text[0, lt])
+      node = { t: "code", line: l, col: c, output: false, code: m[0] }.merge(info)
+      if VOID_ELEMENTS.include?(name) || m[3] == "/"
+        node[:missing] = true
+      else
+        @open_elements << { name: name, depth: @block_depth, count: 1, node: node }
+      end
+      { at: lt, node: node }
+    end
+
+    # Every tracked element of this name at this block depth is now one level
+    # deeper, so its own close tag is not the next `</name>` but the one after
+    # the nested element's. A `nil` name (the caller recovered none: `<` not
+    # followed by a letter) matches nothing -- every tracked element's name
+    # came from a matched tag -- so no `nil` guard is needed here, and one
+    # would be a line no test could ever fail on.
+    def bump_open_elements(name)
+      @open_elements.each { |e| e[:count] += 1 if e[:depth] == @block_depth && e[:name] == name }
+    end
+
+    def close_element(name, src, line, col, text, lt, after)
+      idx = @open_elements.rindex { |e| e[:depth] == @block_depth && e[:name] == name }
+      return nil unless idx
+      e = @open_elements[idx]
+      e[:count] -= 1
+      return nil if e[:count] > 0
+      @open_elements.delete_at(idx)
+      l, c = advance_pos(line, col, text[0, lt])
+      # Positioned at the `<` of the close tag (that is where its `code` is),
+      # but SPLIT after it, so the tag itself stays inside the region.
+      { at: after, node: { t: "code", kind: "block_end", line: l, col: c, output: false, code: src } }
+    end
+
+    # `(line, col)` advanced over `prefix`, counting the way a text editor
+    # does: a newline moves to the next line and resets the column to 1.
+    def advance_pos(line, col, prefix)
+      newlines = prefix.count("\n")
+      return [line, col + prefix.length] if newlines.zero?
+      [line + newlines, prefix.length - prefix.rindex("\n")]
+    end
+
+    # `[[name, value-or-nil], ...]` in source order, names lowercased (HTML
+    # attribute names are case-insensitive), values verbatim.
+    #
+    # Two stated limits, both of them "report less rather than report wrong":
+    #
+    # 1. A value is NOT entity-decoded, so
+    #    `data-react-props="{&quot;a&quot;:1}"` reads as non-JSON and the root
+    #    is reported `dynamic`. The alternative is a half-decoder that gets a
+    #    prop wrong.
+    # 2. An element whose OWN start tag is split by an ERB tag
+    #    (`<div data-controller="reveal" <%= extra %>>`, or a
+    #    `data-react-props="<%= @props.to_json %>"`) produces NO node at all:
+    #    no run holds a complete start tag, so there is nothing to classify
+    #    and nothing to position. Guessing at the half-tag would invent
+    #    attributes the page does not have. But silence here is not
+    #    acceptable either -- the template would migrate to inert markup with
+    #    no finding to answer -- so the BACKSTOP belongs one layer up, and is
+    #    the finding pass's job (Stage 4 Task 3): Stage 1's lexical
+    #    `template_scan` markers are purely textual (`data-controller=` is
+    #    found by `indexOfPos`, not by parsing a tag), so they still see this
+    #    element. The comparison must be by NAME and not by COUNT --
+    #    `Markers.stimulus_controllers` is an `addUnique` SET of identifiers,
+    #    and `component_roots` names technologies, not occurrences: a marker
+    #    name that no element node of this template covers (a `stimulus`
+    #    node's `name` is the verbatim `data-controller` value, so split it on
+    #    whitespace first) is a tag the parser could not reach, and the
+    #    finding is raised from the MARKER. Such a finding has no extent, so
+    #    it can offer `retain`/`blocked` only -- never `island`/`inline`.
+    #    (An INNER tag split the same way needs none of this: it only has to
+    #    be COUNTED, and `scan_text_run`'s name-only fallback counts it.)
+    def parse_attrs(src)
+      return [] if src.nil? || src.empty?
+      src.scan(ATTRIBUTE).map { |name, dq, sq, uq| [name.downcase, dq || sq || uq] }
+    end
+
+    # The node an opening tag becomes, or nil for the overwhelming majority of
+    # tags, which are just markup. One node per tag: a tag carrying two of
+    # these markers is pathological, and the first match in this order wins.
+    def element_info(name, attrs)
+      # First occurrence wins, as an HTML parser resolves a duplicate
+      # attribute -- `to_h` would keep the LAST, which is the value the
+      # browser ignores.
+      at = {}
+      attrs.each { |k, v| at[k] = v unless at.key?(k) }
+      if (identifiers = at["data-controller"])
+        # Verbatim: `data-controller="reveal modal"` is two identifiers, and
+        # splitting it belongs in the one reader that binds them.
+        return { kind: "stimulus", name: identifiers, value: name,
+                 attrs: attrs.select { |k, _| STIMULUS_ATTR.match?(k) }.map { |k, v| [k, v.to_s] } }
+      end
+      if name == "turbo-frame"
+        frame = []
+        frame << ["src", at["src"].to_s] if at.key?("src")
+        frame << ["loading", at["loading"].to_s] if at.key?("loading")
+        # Turbo requires an `id`; without one there is nothing for the island
+        # to render into and nothing to name the finding after.
+        return { kind: "turbo_frame", name: at["id"], value: "turbo-frame", attrs: frame, dynamic: at["id"].nil? }.compact
+      end
+      if (component = at["data-react-class"])
+        props = json_props(at["data-react-props"])
+        return props ? { kind: "component_root", name: component, attrs: props }
+                     : { kind: "component_root", name: component, dynamic: true }
+      end
+      return { kind: "vue_root", name: at["data-vue-component"] } if at["data-vue-component"]
+
+      nil
+    end
+
+    # `data-react-props`' JSON as typed triples, or nil when this stage cannot
+    # carry it: absent, unparseable, not an object, or holding a nested value.
+    # Nil is not a loss -- it is what `dynamic: true` reports, and the target's
+    # `:props` literal is typechecked, so a prop this stage cannot spell is a
+    # question for the operator rather than a guess.
+    def json_props(raw)
+      return nil if raw.nil?
+      parsed =
+        begin
+          JSON.parse(raw)
+        rescue JSON::ParserError
+          nil
+        end
+      return nil unless parsed.is_a?(Hash)
+      parsed.map do |k, v|
+        type = json_value_type(v)
+        return nil if type.nil?
+        [k.to_s, v.nil? ? "" : v.to_s, type]
+      end
+    end
+
+    def json_value_type(value)
+      case value
+      when String then "string"
+      when Integer, Float then "number"
+      when true, false then "boolean"
+      when nil then "null"
+      end
     end
 
     def block_end(node)
@@ -405,9 +722,11 @@ module RailsTemplates
       when "form_with", "form_for", "form_tag"
         return classify_form(args, opts)
       when "turbo_frame_tag"
-        return { kind: "turbo_frame", name: literal(args.first), dynamic: literal(args.first).nil? }.compact
+        return classify_turbo_frame(args, opts)
       when "turbo_stream_from"
-        return { kind: "turbo_stream" }
+        # The stream's own name, so the finding can say WHICH stream is not
+        # carried. Without it every one of them read "turbo-stream ``".
+        return { kind: "turbo_stream", name: literal(args.first) }.compact
       when "react_component"
         return classify_component(args)
       end
@@ -420,7 +739,10 @@ module RailsTemplates
       if name.end_with?("_path", "_url")
         stem = name.sub(/_(path|url)\z/, "")
         return { kind: "route_helper", name: stem, args: literal_args(args), attrs: literal_attrs(opts) } if all_literal?(args) && all_literal_opts?(opts)
-        return { kind: "route_helper_dynamic", name: stem }
+        # The argument SOURCES, not their values -- there are none until
+        # request time. A port re-expresses them (`post` -> `rec.id`), which
+        # it cannot do without knowing what was written.
+        return { kind: "route_helper_dynamic", name: stem, args: args.map { |a| safe_slice(a) } }
       end
       # A bare identifier Prism could not prove is a method call is a template
       # local (`post`). Checked LAST of the receiverless cases, because
@@ -458,36 +780,89 @@ module RailsTemplates
 
     def classify_render(args, opts)
       target = opts["partial"] || (args.first.is_a?(Prism::StringNode) ? args.first : nil)
+      # `{ post: post }` is not a literal hash, so this render is `dynamic` --
+      # but it is still PORTABLE: the pairs say which template local the
+      # partial is handed, which is the one thing a data island has to rename
+      # (`post` -> the record it is iterating). Without them the port had to
+      # guess the partial's parameter names.
+      locals = local_pairs(opts["locals"])
+      dynamic = lambda do |name|
+        info = { kind: "render_dynamic", name: name }
+        locals ? info.merge(attrs: locals) : info
+      end
       # `render @post` and friends: the TARGET is runtime state, which is
       # exactly what render_dynamic says -- so no state_or here, an `ivar`
       # node would lose the fact that this is a partial at all.
-      return { kind: "render_dynamic", name: safe_slice(args.first) } if target.nil?
+      return dynamic.call(safe_slice(args.first)) if target.nil?
       lit = literal(target)
-      return { kind: "render_dynamic", name: safe_slice(target) } if lit.nil?
-      return { kind: "render_dynamic", name: lit } if opts["collection"] || opts["object"] || opts["layout"]
+      return dynamic.call(safe_slice(target)) if lit.nil?
+      return dynamic.call(lit) if opts["collection"] || opts["object"] || opts["layout"]
       if opts["locals"]
         pairs = literal_pairs(opts["locals"])
-        return { kind: "render_dynamic", name: lit } if pairs.nil?
+        return dynamic.call(lit) if pairs.nil?
         return { kind: "render_partial_locals", name: lit, attrs: pairs }
       end
       { kind: "render_partial", name: lit }
     end
 
+    # `turbo_frame_tag "latest", src: posts_path, loading: :lazy do … end`.
+    #
+    # The `src:` is what makes a frame an island rather than inert markup, and
+    # a route helper is how Rails templates spell one -- so it is resolved to
+    # a route STEM plus its literal arguments (`value`/`args`, the same shape
+    # `route_helper` uses). Anything else in `src:` leaves the node `dynamic`:
+    # the island fetches a URL, and a URL this run cannot build is not a
+    # choice it can offer.
+    #
+    # A route-helper `src:` never reaches `attrs` to begin with -- it is a
+    # CallNode, and `literal_attrs` keeps only options it could read a VALUE
+    # for -- so there is nothing to remove here. (An explicit reject stood
+    # here and was dead code: the one mutant this file's tests could not kill.
+    # A LITERAL `src: "/posts"` does survive into `attrs`, and stays there on
+    # purpose: it is `dynamic` for want of a route stem, and the string is
+    # still the only description of the frame's target anyone downstream has.)
+    def classify_turbo_frame(args, opts)
+      id = literal(args.first)
+      info = { kind: "turbo_frame", name: id }
+      dynamic = id.nil?
+      if (src = opts["src"])
+        if src.is_a?(Prism::CallNode) && src.receiver.nil? && src.name.to_s.end_with?("_path", "_url") &&
+           all_literal?(positional(src.arguments))
+          info[:value] = src.name.to_s.sub(/_(path|url)\z/, "")
+          info[:args] = literal_args(positional(src.arguments))
+        else
+          dynamic = true
+        end
+      end
+      info.merge(attrs: literal_attrs(opts), dynamic: dynamic).compact
+    end
+
+    # The TARGET is examined before the text, not after. `link_to post.title,
+    # post_path(post)` is dynamic because of its text, but the route it points
+    # at is perfectly well known -- and reporting it as `link_to` named no
+    # route at all, so the finding read "route helper `link_to` has
+    # non-literal arguments" and a port had nothing to rebuild the href from.
+    #
+    # `value` is the link TEXT's source and `args` the target's argument
+    # sources: between them a port can re-express the whole control, which is
+    # the difference between a question and an answerable one.
     def classify_link(args, opts)
       text, target = args[0], args[1]
-      return { kind: "route_helper_dynamic", name: "link_to" } unless literal(text)
+      text_lit = literal(text)
       if target.is_a?(Prism::CallNode) && target.receiver.nil? && target.name.to_s.end_with?("_path", "_url")
         stem = target.name.to_s.sub(/_(path|url)\z/, "")
         targs = positional(target.arguments)
-        if all_literal?(targs) && all_literal_opts?(opts)
-          return { kind: "link_to", name: stem, args: [literal(text)] + literal_args(targs), attrs: literal_attrs(opts) }
+        if text_lit && all_literal?(targs) && all_literal_opts?(opts)
+          return { kind: "link_to", name: stem, args: [text_lit] + literal_args(targs), attrs: literal_attrs(opts) }
         end
         # Same reasoning as classify_render: the route is the finding, and
         # route_helper_dynamic already says its argument is runtime state.
-        return { kind: "route_helper_dynamic", name: stem }
+        return { kind: "route_helper_dynamic", name: stem, value: safe_slice(text), args: targs.map { |a| safe_slice(a) } }
       end
-      return { kind: "link_to", name: nil, args: [literal(text), literal(target)], attrs: literal_attrs(opts) } if literal(target) && all_literal_opts?(opts)
-      { kind: "route_helper_dynamic", name: "link_to" }
+      if text_lit
+        return { kind: "link_to", name: nil, args: [text_lit, literal(target)], attrs: literal_attrs(opts) } if literal(target) && all_literal_opts?(opts)
+      end
+      { kind: "route_helper_dynamic", name: "link_to", value: safe_slice(text), args: [] }
     end
 
     def classify_i18n(args)
@@ -518,7 +893,12 @@ module RailsTemplates
       return { kind: "unknown", name: "react_component" } if name.nil?
       props = args[1]
       return { kind: "component_root", name: name, attrs: [] } if props.nil?
-      pairs = literal_pairs(props)
+      # TYPED pairs here, and only here: a React prop's type is part of it.
+      # `points: 3` has to reach the target as `.points = 3`, not `"3"` -- the
+      # island's `Props` interface is typechecked, and a number arriving as a
+      # string fails the build with an error about the generated file rather
+      # than about the template that caused it.
+      pairs = typed_pairs(props)
       pairs ? { kind: "component_root", name: name, attrs: pairs } : { kind: "component_root", name: name, dynamic: true }
     end
 
@@ -821,6 +1201,61 @@ module RailsTemplates
         v = literal(e.value)
         return nil if k.nil? || v.nil?
         [k.to_s, v]
+      end
+    end
+
+    # `literal_pairs` plus the Prism node CLASS as a type name -- the same
+    # pairs, with the one fact JSON has and a Ruby literal's rendered text
+    # does not: whether `3` was a number or the string "3". Used only by
+    # `classify_component`, because it is the only reader whose output is
+    # typechecked; every other `attrs` consumer wants the rendered attribute.
+    def typed_pairs(node)
+      return nil unless node.is_a?(Prism::HashNode) || node.is_a?(Prism::KeywordHashNode)
+      node.elements.map do |e|
+        return nil unless e.is_a?(Prism::AssocNode)
+        k = literal(e.key)
+        v = literal(e.value)
+        type = ruby_value_type(e.value)
+        return nil if k.nil? || v.nil? || type.nil?
+        [k.to_s, v, type]
+      end
+    end
+
+    # A Symbol is a `string`: Rails serialises `on: :yes` into the React props
+    # JSON as `"yes"`, and there is no other honest mapping for it.
+    def ruby_value_type(node)
+      case node
+      when Prism::StringNode, Prism::SymbolNode, Prism::InterpolatedStringNode then "string"
+      when Prism::IntegerNode, Prism::FloatNode then "number"
+      when Prism::TrueNode, Prism::FalseNode then "boolean"
+      when Prism::NilNode then "null"
+      end
+    end
+
+    # `[[key, <source>], ...]` for a hash whose every value is a bare template
+    # local; nil otherwise (including for an empty hash, which names nothing).
+    # `bare` matters: `{ post: post.first }` is a call the port cannot rename
+    # by substituting one identifier, and reporting it as if it could would
+    # produce a body that reads a field off the wrong thing.
+    def local_pairs(node)
+      return nil unless node.is_a?(Prism::HashNode) || node.is_a?(Prism::KeywordHashNode)
+      pairs = node.elements.map do |e|
+        return nil unless e.is_a?(Prism::AssocNode)
+        k = literal(e.key)
+        return nil if k.nil? || !bare_local?(e.value)
+        [k.to_s, safe_slice(e.value)]
+      end
+      pairs.empty? ? nil : pairs
+    end
+
+    # A template local reaches Prism as a LocalVariableReadNode only when the
+    # compiled program assigns it somewhere (a block parameter); an ordinary
+    # `post` handed in by the render site is a bare-identifier call instead.
+    def bare_local?(node)
+      case node
+      when Prism::LocalVariableReadNode then true
+      when Prism::CallNode then node.receiver.nil? && node.arguments.nil? && node.block.nil? && node.variable_call?
+      else false
       end
     end
 

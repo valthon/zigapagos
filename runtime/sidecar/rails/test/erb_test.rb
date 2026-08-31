@@ -88,6 +88,24 @@ unless got[1] && got[1][:col] == 4
   warn "FAIL col: #{got.inspect}"; $failures += 1
 end
 
+# #167 Stage 4: a TEXT token carries its column too. `templates.rb` finds the
+# HTML elements a migration has to answer for (`<div data-controller>`,
+# `<turbo-frame>`) inside these runs, and the only position Prism can offer
+# for one is inside the GENERATED program, where the run is written as
+# `_buf << '...'`. Without this every such element reported column 1.
+got = RailsErb.scan("<p>\n  <%= x %>ab")
+text_pos = got.select { |t| t[:type] == :text }.map { |t| [t[:text], t[:line], t[:col]] }
+unless text_pos == [["<p>\n  ", 1, 1], ["ab", 2, 11]]
+  warn "FAIL text token line/col: #{text_pos.inspect}"; $failures += 1
+end
+# The column is where the run's FIRST byte sits -- which for a run that opens
+# with the whitespace an untrimmed tag left behind is that whitespace's own
+# position, not the following markup's.
+got = RailsErb.scan("<%= a %>  <b>")
+unless got[1] && got[1][:type] == :text && got[1][:col] == 9
+  warn "FAIL text token col after a tag: #{got.inspect}"; $failures += 1
+end
+
 check "an unterminated tag is text (Erubi does the same)",
       "<p><% oops\n",
       [{ type: :text, text: "<p><% oops\n", line: 1 }]

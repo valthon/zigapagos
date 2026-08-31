@@ -1,0 +1,9 @@
+<% content_for :title do %>Widgets<% end %>
+<div data-controller="reveal" data-reveal-open-value="false">
+  <button data-action="click->reveal#toggle">Show details</button>
+  <p data-reveal-target="details" class="hidden">Details</p>
+</div>
+<%= turbo_frame_tag "latest", src: posts_path do %><p>Loading latest…</p><% end %>
+<%= turbo_frame_tag "static" do %><p>Just markup</p><% end %>
+<%= react_component("Chart", { series: "a", points: 3 }) %>
+<a href="/about" data-turbo-action="advance">About</a>

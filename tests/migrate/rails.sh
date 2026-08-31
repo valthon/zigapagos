@@ -233,6 +233,11 @@ if command -v ruby >/dev/null 2>&1; then
   [[ "$(jq -r '.routes[] | select(.path == "/admin/health") | .name' "$MANIFEST")" == "null" ]] || fail "an uncertain route must stay unnamed"
   jq -e '.findings[] | select(.code == "RAILS_REQUEST_TIME_STATE" and .source.file == "app/views/posts/profile.html.erb")' "$MANIFEST" >/dev/null || fail "profile finding"
   jq -e '.findings[] | select(.code == "RAILS_PARTIAL_DYNAMIC" and .source.file == "app/views/posts/featured.html.erb")' "$MANIFEST" >/dev/null || fail "featured render @post finding"
+  dashboard_finding='RAILS_STIMULUS_CONTROLLER.app/views/posts/dashboard%2Ehtml%2Eerb.L2C1'
+  jq -e --arg id "$dashboard_finding" '.findings[] | select(.id == $id and .message == "stimulus `reveal modal` on <div>; source not found (app/javascript/controllers/modal_controller.{js,ts,jsx,tsx})" and (.choices == ["drop","retain","blocked"]))' "$MANIFEST" >/dev/null \
+    || fail "dashboard must follow the empty reveal controller, report missing modal, and refuse an unbuildable island choice"
+  jq -e '.findings[] | select(.id == "RAILS_JS_ENTRY.app/javascript/application%2Ejs.entry" and .source.line == null and (.choices == ["drop","blocked"]))' "$MANIFEST" >/dev/null \
+    || fail "the Rails sample's application.js must become the global JS-entry question"
 else
   echo "SKIP: route assertions (no ruby on PATH)"
 fi
@@ -579,8 +584,8 @@ backend: none
 
 | Status | Routes |
 | --- | --- |
-| migrated | 2 |
-| open | 6 |
+| migrated | 1 |
+| open | 7 |
 | blocked | 0 |
 | retained | 0 |
 | backend | 11 |
