@@ -155,9 +155,8 @@ contains "  ...and says to fix the source, not the manifest" "Fix the source of 
 
 # --- 3. Depending on the bare `zigbase` alias -------------------------------
 # The alias was published exactly once, so 0.12.0 is the only version it will
-# ever have and it cannot follow a pin. It equals the pin RIGHT NOW, which is
-# why the gate rejects it on presence rather than on the version it resolves to:
-# a value check would go quiet today and the split would return at the next bump.
+# ever have and it cannot follow a pin. The gate rejects it on presence rather
+# than on the version it resolves to, so moving the pin cannot silence the test.
 # Called out by name because it is the obvious dependency to reach for, and the
 # one that splits behaviour by install path.
 root="$(fixture bare-alias)"

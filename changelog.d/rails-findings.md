@@ -6,6 +6,6 @@
 ### Known limitations
 
 - Findings are questions, not decisions: a finding never affects the exit-code check `blockers[]` drives, and never makes the report or the manifest less trustworthy. What answers one is `MIGRATION.decisions.json`, added by the conversion later in this release, where an unanswered finding on a route is what leaves a `--target` run incomplete.
-- `route_id` is always `null` on every Stage 1 finding — a finding is scoped to a template or a controller file, not yet joined to the specific route(s) that reach it.
+- `route_id` is `null` on every template- or controller-scoped Stage 1 finding. Later route-scoped findings in this release set it to one affected route while retaining stable finding ids.
 - Only the default i18n locale resolves `t()` keys; every other locale is out of scope, not a partial best-effort.
 - A singular `resource :x` still derives controller `x`; Rails itself maps a singular resource to the plural controller (`resource :profile` → `ProfilesController`). Pass `controller:` explicitly until this is fixed.

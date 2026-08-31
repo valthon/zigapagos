@@ -37,6 +37,8 @@ grep -q 'no `serve` command' "$WORK/AGENTS.md" || fail "AGENTS.md missing the se
 grep -q -- '--format=json' "$WORK/AGENTS.md" || fail "AGENTS.md missing the --format=json fix loop"
 grep -q 'explain-code' "$WORK/AGENTS.md" || fail "AGENTS.md missing explain-code"
 grep -q 'Match on `code`' "$WORK/AGENTS.md" || fail "AGENTS.md missing the match-on-code rule"
+grep -q 'test/parity.ts' "$WORK/AGENTS.md" || fail "AGENTS.md missing the Rails parity runner guidance"
+grep -q 'authorization remains enforced by ZigBase rules' "$WORK/AGENTS.md" || fail "AGENTS.md moved enforcement into the browser"
 
 # Re-run: both files must be skipped, not clobbered (a user may have edited
 # AGENTS.md; init's exclusive-create + warn path covers this already, pin it

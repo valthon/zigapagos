@@ -495,7 +495,10 @@ grep -q -- "MIGRATION.decisions.json" "$WORK/target.out" \
 # (`assets/images/logo.png` below).
 #
 # Also note what #167 Stage 3 did NOT add: no `package.json`, no
-# `tsconfig.json`, no `lib/zb.ts`, no `components/`. This fixture has no
+# `tsconfig.json`, no `lib/zb.ts`, no `components/`. Stage 5 DOES add the two
+# fixed handoff-driven runners because the migrated content pages now carry
+# navigate/asset parity rows; they do not require island machinery. This
+# fixture has no
 # answered `RAILS_BACKEND_ENDPOINT` and therefore no binding, and a run with
 # no binding must emit no island machinery at all -- the listing is the only
 # assertion that can catch a scaffolder that writes `lib/zb.ts`
@@ -526,6 +529,8 @@ expected_listing="$(cat <<'LISTING'
 ./layouts/posts/recent.shtml
 ./layouts/templates/application.shtml
 ./layouts/templates/posts.shtml
+./test/journey_playwright.py
+./test/parity.ts
 ./zigapagos.ziggy
 LISTING
 )"

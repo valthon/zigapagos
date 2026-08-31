@@ -11,7 +11,7 @@ Rails.application.routes.draw do
   # RAILS_LAYOUT_DYNAMIC) falls back to the app-wide convention; and #167
   # Stage 3's `before_action :require_login, only: [:index]` puts a
   # RAILS_ROUTE_AUTH_GUARD on THIS line, answerable `public`.
-  resources :posts, only: [:index, :show]
+  resources :posts, only: [:index, :show, :new, :create]
   # #167 Stage 3: a GET route whose action renders JSON, not a view. It is
   # the one route assumption A2 bites on -- a user-facing GET the handoff
   # calls `backend` stays UNACCOUNTED until an operation is chosen for it,

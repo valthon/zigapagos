@@ -1870,8 +1870,9 @@ implicitly**:
 3. the pinned release in the zigapagos cache:
    `~/.cache/zigapagos/zigbase/<pinned_version>/zigbase` (respects `XDG_CACHE_HOME`;
    `%LOCALAPPDATA%` on Windows). The pin is the `pinned_version` constant in
-   `src/cli/zigbase.zig` (currently `v0.12.0`, the latest release; the `.spa`-marker
-   contract needs ≥ 0.10.0).
+   `src/cli/zigbase.zig` (currently `v0.13.0`, the first stock release that also
+   provides the `schema apply` surface used by migration parity; the
+   `.spa`-marker contract itself needs ≥ 0.10.0).
 
 When nothing is found, the command fails fast with these instructions — **unless** you
 opted in with `--download-zigbase`, in which

@@ -25,8 +25,9 @@
 - Decision ranking treats `backend` as a producing answer when the ivar body
   port has proved it can emit the data island.
 - Generated TypeScript enables `allowJs`, `allowImportingTsExtensions`, and
-  `noEmit` so copied `.js`/`.jsx` components and explicit TypeScript imports
-  are checked in the same target.
+  `noEmit`, supplies the `@z/runtime` JSX import/types, and passes `tsc` across
+  copied `.js`/`.jsx` components and explicit TypeScript imports. This closes
+  #185.
 - Turbo Drive data attributes and reviewed Rails JavaScript entries are
   dropped because ordinary navigation and the generated island runtime own
   those roles in the target.

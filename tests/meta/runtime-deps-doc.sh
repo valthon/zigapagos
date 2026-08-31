@@ -94,7 +94,7 @@ if [ -n "$PIN" ]; then
   while IFS= read -r v; do
     [ "$v" = "$PIN" ] || bad "$DOC names version '$v', but the pin is '$PIN'"
   done < <(grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' "$DOC" | sort -u)
-  # The bare (v-less) spelling too: `@zigbase/server@0.12.0` in prose.
+  # The bare (v-less) spelling too: `@zigbase/server@0.13.0` in prose.
   while IFS= read -r v; do
     [ "$v" = "${PIN#v}" ] || bad "$DOC names @zigbase/server@$v, but the pin is ${PIN#v}"
   done < <(grep -oE '@zigbase/server@[0-9][^ `)]*' "$DOC" | sed 's/^@zigbase\/server@//' | sort -u)

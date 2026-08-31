@@ -68,7 +68,7 @@ function generatorFor(root) {
 // same three files with the same patterns. Asking the generator what it thinks
 // the zigbase pin is, and then checking that against what the generator put in
 // the manifest, compares a value with itself: a generator that hardcoded
-// `"0.12.0"` in both places would agree with itself perfectly while disagreeing
+// `"0.13.0"` in both places would agree with itself perfectly while disagreeing
 // with the Zig source, and the gate would print PASS. check-targets.mjs is built
 // the same way and for the same reason — it parses build/release.zig itself
 // rather than trusting targets.json to describe it.
@@ -199,9 +199,8 @@ export async function check(root) {
   }
   // The bare `zigbase` alias exists on npm but was published exactly once, so
   // 0.12.0 is the only version it will ever have and it cannot follow a pin.
-  // Rejected on PRESENCE, not on the version it resolves to: the pin currently
-  // sits at 0.12.0, so a value check would go quiet exactly now and the split
-  // would reappear at the next bump — and because this lives in
+  // Rejected on PRESENCE, not on the version it resolves to, so the check stays
+  // correct across every future pin — and because this lives in
   // optionalDependencies, npm skips an unresolvable range silently rather than
   // failing the install. Depending on the alias is how the two paths diverge
   // with nothing to read; name that specifically.

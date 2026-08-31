@@ -7,4 +7,4 @@
 ### Known limitations
 
 - Route recovery is **static AST parsing only**. The schema's `actiondispatch` mode (booting the target app and asking a real `RouteSet`) and `routes_import` mode (consuming a JSON dump produced by `rails routes`) are declared but not implemented — `static_ast` is the only mode Stage 2 ships, and it is the one designed to work on an app that cannot boot at all.
-- Recovered routes are not yet classified. Whether a route serves static content, an island, an SPA shell, a redirect, or genuine backend logic that has no Zigapagos equivalent is Stage 3's job; Stage 2 only answers "what routes exist and how sure are we."
+- At this point recovered routes were not yet classified: Stage 2 only answered "what routes exist and how sure are we." The later classification work in this release assigns `content`, `island`, `spa`, `redirect`, `backend`, or `unresolved` from the recovered evidence.

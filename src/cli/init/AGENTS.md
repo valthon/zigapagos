@@ -20,6 +20,13 @@ ported")` means the surrounding targets, values, classes, props, or action
 binding is wired, but that behavior still needs a human port and a hydration
 test. Do not delete the warning or claim parity until the TODO is implemented.
 
+A completed Rails migration may include fixed `test/parity.ts` and
+`test/journey_playwright.py` runners. They read typed facts from
+`MIGRATION.handoff.json`; do not replace them with route-specific generated
+tests. Run them through `zigapagos e2e` against stock ZigBase after applying
+the target schema to the same isolated data directory. Browser auth state is
+presentation only: authorization remains enforced by ZigBase rules.
+
 ## The build/fix loop
 
 Use machine-readable diagnostics; never parse the prose output.

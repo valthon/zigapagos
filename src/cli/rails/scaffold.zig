@@ -371,6 +371,287 @@ pub fn write(
     };
 }
 
+pub const parity_runner_path = "test/parity.ts";
+pub const journey_runner_path = "test/journey_playwright.py";
+
+/// Fixed Bun parity runner. It contains no route-specific source: every
+/// request, replay value, and expectation comes from MIGRATION.handoff.json.
+pub const parity_runner_ts =
+    \\type Row = { id: string; kind: string; url: string; expect: any };
+    \\const handoff = await (globalThis as any).Bun.file(new URL("../MIGRATION.handoff.json", import.meta.url)).json() as { schema_version: number; parity: Row[] };
+    \\if (handoff.schema_version !== 1 || !Array.isArray(handoff.parity)) {
+    \\  throw new Error(`unsupported migration handoff schema: ${String(handoff.schema_version)}`);
+    \\}
+    \\const env = (globalThis as any).process.env as Record<string, string | undefined>;
+    \\const configuredOrigin = env.ZIGAPAGOS_ORIGIN?.replace(/\/$/, "");
+    \\if (!configuredOrigin) throw new Error("ZIGAPAGOS_ORIGIN is required (run through `zigapagos e2e`)");
+    \\const origin: string = configuredOrigin;
+    \\const railsOrigin = env.RAILS_ORIGIN?.replace(/\/$/, "");
+    \\const failures: string[] = [];
+    \\const credentials = new Map<string, { email: string; password: string }>();
+    \\const clients = new Map<string, any>();
+    \\
+    \\function fail(row: Row, message: string): void { failures.push(`${row.id}: ${message}`); }
+    \\function values(row: Row, invalid = false): Record<string, string> {
+    \\  return Object.fromEntries(row.expect.fields.map((field: any) => [field.name,
+    \\    invalid && field.invalid_value !== null ? field.invalid_value : field.value]));
+    \\}
+    \\function decodeHtml(value: string): string {
+    \\  return value.replace(/&quot;/g, '"').replace(/&#39;|&#x27;/gi, "'")
+    \\    .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+    \\}
+    \\function visibleText(value: string): string {
+    \\  return decodeHtml(value.replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim();
+    \\}
+    \\function header(res: Response, name: string): string {
+    \\  return (res.headers.get(name) ?? "").split(";")[0].trim().toLowerCase();
+    \\}
+    \\function equalBytes(a: ArrayBuffer, b: ArrayBuffer): boolean {
+    \\  const x = new Uint8Array(a), y = new Uint8Array(b);
+    \\  return x.length === y.length && x.every((value, index) => value === y[index]);
+    \\}
+    \\async function client(collection: string): Promise<any> {
+    \\  const old = clients.get(collection); if (old) return old;
+    \\  const { createClient, MemoryAuthStore } = await import("@zigbase/client");
+    \\  const value = createClient(origin, { authStore: new MemoryAuthStore(), authCollection: collection, fetch });
+    \\  clients.set(collection, value); return value;
+    \\}
+    \\function credential(collection: string): { email: string; password: string } {
+    \\  const old = credentials.get(collection); if (old) return old;
+    \\  const nonce = crypto.randomUUID();
+    \\  const value = { email: `parity+${nonce}@example.invalid`, password: `zigapagos-parity-${nonce}` };
+    \\  credentials.set(collection, value); return value;
+    \\}
+    \\async function request(row: Row, body?: unknown, token?: string): Promise<Response> {
+    \\  const method = String(row.expect.method ?? "GET").toUpperCase();
+    \\  const carriesBody = body !== undefined && method !== "GET" && method !== "HEAD";
+    \\  const headers: Record<string, string> = {};
+    \\  if (carriesBody) headers["content-type"] = "application/json";
+    \\  if (token) headers.authorization = `Bearer ${token}`;
+    \\  return fetch(origin + row.url, { method, headers,
+    \\    body: carriesBody ? JSON.stringify(body) : undefined });
+    \\}
+    \\
+    \\for (const row of handoff.parity.filter((r) => r.kind === "navigate" || r.kind === "asset")) {
+    \\  try {
+    \\    const res = await fetch(origin + row.url);
+    \\    if (res.status !== row.expect.status) fail(row, `status ${res.status}, expected ${row.expect.status}`);
+    \\    if (row.kind === "asset") {
+    \\      if (header(res, "content-type") !== row.expect.content_type.toLowerCase())
+    \\        fail(row, `content-type ${header(res, "content-type")}, expected ${row.expect.content_type}`);
+    \\      if (railsOrigin && row.expect.rails_url) {
+    \\        const [targetBytes, railsRes] = await Promise.all([res.arrayBuffer(), fetch(railsOrigin + row.expect.rails_url)]);
+    \\        const railsBytes = await railsRes.arrayBuffer();
+    \\        if (railsRes.status !== row.expect.status || header(railsRes, "content-type") !== row.expect.content_type.toLowerCase())
+    \\          fail(row, "Rails oracle status/content-type differs");
+    \\        if (!equalBytes(targetBytes, railsBytes)) fail(row, "Rails oracle bytes differ");
+    \\      }
+    \\      continue;
+    \\    }
+    \\    const html = await res.text();
+    \\    const title = html.match(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i);
+    \\    const h1 = html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1\s*>/i);
+    \\    const actualTitle = title ? visibleText(title[1]) : null;
+    \\    const actualH1 = h1 ? visibleText(h1[1]) : null;
+    \\    if (row.expect.title !== null && actualTitle !== row.expect.title) fail(row, `title ${JSON.stringify(actualTitle)}, expected ${JSON.stringify(row.expect.title)}`);
+    \\    if (row.expect.h1 !== null && actualH1 !== row.expect.h1) fail(row, `h1 ${JSON.stringify(actualH1)}, expected ${JSON.stringify(row.expect.h1)}`);
+    \\    const links = new Set(Array.from(html.matchAll(/<a\b[^>]*\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/gi),
+    \\      (m) => decodeHtml(m[1] ?? m[2] ?? m[3])));
+    \\    for (const link of row.expect.links) if (!links.has(link)) fail(row, `missing link ${link}`);
+    \\  } catch (err) { fail(row, String(err)); }
+    \\}
+    \\
+    \\for (const row of handoff.parity.filter((r) => r.kind === "signup")) {
+    \\  try {
+    \\    const c = await client(row.expect.collection); const cred = credential(row.expect.collection);
+    \\    const res = await c.fetch("POST", row.url, { body: { email: cred.email, password: cred.password, passwordConfirm: cred.password } });
+    \\    if (res.status !== row.expect.status) fail(row, `status ${res.status}, expected ${row.expect.status}: ${await res.text()}`);
+    \\  } catch (err) { fail(row, String(err)); }
+    \\}
+    \\for (const row of handoff.parity.filter((r) => r.kind === "signin")) {
+    \\  try {
+    \\    const c = await client(row.expect.collection); const cred = credential(row.expect.collection);
+    \\    const res = await c.fetch("POST", row.url, { body: { identity: cred.email, password: cred.password } });
+    \\    if (res.status !== row.expect.status) { fail(row, `status ${res.status}, expected ${row.expect.status}: ${await res.text()}`); continue; }
+    \\    const auth = await res.json() as any; c.authStore.save(auth.token, auth.record);
+    \\  } catch (err) { fail(row, String(err)); }
+    \\}
+    \\for (const row of handoff.parity.filter((r) => r.kind === "submit_denied")) {
+    \\  try {
+    \\    const res = await request(row, values(row));
+    \\    if (!row.expect.statuses.includes(res.status)) fail(row, `status ${res.status}, expected one of ${row.expect.statuses.join(", ")}`);
+    \\  } catch (err) { fail(row, String(err)); }
+    \\}
+    \\for (const row of handoff.parity.filter((r) => r.kind === "submit_allowed" || r.kind === "validation_error")) {
+    \\  try {
+    \\    const requiresAuth = handoff.parity.some((candidate) =>
+    \\      candidate.kind === "submit_denied" && candidate.expect.operation_id === row.expect.operation_id);
+    \\    let token: string | undefined;
+    \\    if (requiresAuth) {
+    \\      const c = Array.from(clients.values()).find((candidate) => candidate.authStore.isValid);
+    \\      if (!c) throw new Error("no authenticated session");
+    \\      token = c.authStore.token ?? undefined;
+    \\    }
+    \\    const res = await request(row, values(row, row.kind === "validation_error"), token);
+    \\    if (row.kind === "submit_allowed" && Math.floor(res.status / 100) !== row.expect.status_family)
+    \\      fail(row, `status ${res.status}, expected ${row.expect.status_family}xx: ${await res.text()}`);
+    \\    if (row.kind === "validation_error" && res.status !== row.expect.status)
+    \\      fail(row, `status ${res.status}, expected ${row.expect.status}: ${await res.text()}`);
+    \\  } catch (err) { fail(row, String(err)); }
+    \\}
+    \\if (failures.length) { console.error(failures.join("\n")); (globalThis as any).process.exit(1); }
+    \\console.log(`PASS: ${handoff.parity.length} Rails migration parity row(s)`);
+    \\
+;
+
+/// Fixed Playwright journey runner. Selectors follow the generated AuthForm
+/// and bound-form accessibility contract; row data supplies every page/field.
+pub const journey_runner_py =
+    \\import json, os, sys, uuid
+    \\from pathlib import Path
+    \\from playwright.sync_api import sync_playwright
+    \\
+    \\handoff = json.loads((Path(__file__).resolve().parent.parent / "MIGRATION.handoff.json").read_text())
+    \\if handoff.get("schema_version") != 1 or not isinstance(handoff.get("parity"), list):
+    \\    raise SystemExit(f"unsupported migration handoff schema: {handoff.get('schema_version')}")
+    \\origin = os.environ.get("ZIGAPAGOS_ORIGIN", "").rstrip("/")
+    \\if not origin:
+    \\    raise SystemExit("ZIGAPAGOS_ORIGIN is required (run through `zigapagos e2e`)")
+    \\rows = handoff["parity"]
+    \\credentials = {}
+    \\
+    \\def credential(collection):
+    \\    if collection not in credentials:
+    \\        nonce = uuid.uuid4().hex
+    \\        credentials[collection] = (f"parity+{nonce}@example.invalid", f"zigapagos-parity-{nonce}")
+    \\    return credentials[collection]
+    \\
+    \\def wait_island(page):
+    \\    page.wait_for_selector("[data-z-island][data-z-hydrated]", timeout=10000)
+    \\
+    \\def fill_fields(page, row, invalid=False):
+    \\    form = page.locator("form").last
+    \\    for field in row["expect"]["fields"]:
+    \\        value = field.get("invalid_value") if invalid and field["name"] == row["expect"].get("field") else field["value"]
+    \\        control = form.locator(f'[name={json.dumps(field["name"])}]')
+    \\        if control.get_attribute("type") == "checkbox":
+    \\            control.set_checked(str(value).lower() == "true")
+    \\        elif control.evaluate("el => el.tagName") == "SELECT":
+    \\            control.select_option(str(value))
+    \\        else:
+    \\            control.fill(str(value))
+    \\    return form
+    \\def consume_validation_console(errors):
+    \\    for index, message in enumerate(errors):
+    \\        if message.startswith("Failed to load resource:") and "status of 400" in message:
+    \\            errors.pop(index)
+    \\            return
+    \\
+    \\def main():
+    \\    with sync_playwright() as p:
+    \\        browser = p.chromium.launch(channel="chrome")
+    \\        page = browser.new_page()
+    \\        errors = []
+    \\        page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
+    \\        page.on("pageerror", lambda e: errors.append(str(e)))
+    \\        page.route("**/favicon.ico", lambda route: route.fulfill(status=204))
+    \\        for row in [r for r in rows if r["kind"] == "signup"]:
+    \\            try:
+    \\                email, password = credential(row["expect"]["collection"])
+    \\                page.goto(origin + row["expect"]["page_url"], wait_until="networkidle")
+    \\                wait_island(page)
+    \\                page.locator('input[name="email"]').fill(email)
+    \\                page.locator('input[name="password"]').fill(password)
+    \\                page.locator('input[name="passwordConfirm"]').fill(password)
+    \\                with page.expect_navigation(wait_until="networkidle"):
+    \\                    page.get_by_role("button", name="Sign up").click()
+    \\            except Exception as exc: raise AssertionError(f'{row["id"]}: {exc}') from exc
+    \\        for row in [r for r in rows if r["kind"] == "signin"]:
+    \\            try:
+    \\                email, password = credential(row["expect"]["collection"])
+    \\                page.goto(origin + "/", wait_until="networkidle")
+    \\                wait_island(page)
+    \\                signout = page.get_by_role("button", name="Sign out")
+    \\                if signout.count():
+    \\                    with page.expect_navigation(wait_until="networkidle"): signout.click()
+    \\                page.goto(origin + row["expect"]["page_url"], wait_until="networkidle")
+    \\                wait_island(page)
+    \\                page.locator('input[name="email"]').fill(email)
+    \\                page.locator('input[name="password"]').fill(password)
+    \\                with page.expect_navigation(wait_until="networkidle"):
+    \\                    page.get_by_role("button", name="Sign in").click()
+    \\                page.get_by_role("button", name="Sign out").wait_for(timeout=10000)
+    \\            except Exception as exc: raise AssertionError(f'{row["id"]}: {exc}') from exc
+    \\        for row in [r for r in rows if r["kind"] == "submit_allowed"]:
+    \\            try:
+    \\                page.goto(origin + row["expect"]["page_url"], wait_until="networkidle")
+    \\                wait_island(page)
+    \\                form = fill_fields(page, row)
+    \\                form.get_by_role("button").click()
+    \\                page.get_by_text("Done.", exact=True).wait_for(timeout=10000)
+    \\            except Exception as exc: raise AssertionError(f'{row["id"]}: {exc}') from exc
+    \\        for row in [r for r in rows if r["kind"] == "validation_error"]:
+    \\            try:
+    \\                page.goto(origin + row["expect"]["page_url"], wait_until="networkidle")
+    \\                wait_island(page)
+    \\                form = fill_fields(page, row, invalid=True)
+    \\                form.get_by_role("button").click()
+    \\                form.locator(".errors").get_by_text(row["expect"]["field"], exact=False).wait_for(timeout=10000)
+    \\                consume_validation_console(errors)
+    \\            except Exception as exc: raise AssertionError(f'{row["id"]}: {exc}') from exc
+    \\        assert not errors, f"console/page errors: {errors}"
+    \\        browser.close()
+    \\    print("PASS: Rails migration browser journey")
+    \\
+    \\main()
+    \\
+;
+
+fn writeRunnerFile(
+    io: Io,
+    gpa: Allocator,
+    target: []const u8,
+    relative: []const u8,
+    bytes: []const u8,
+    last_error_path: *?[]const u8,
+    last_error: *?anyerror,
+) WriteError!void {
+    const full = try std.fs.path.join(gpa, &.{ target, relative });
+    defer gpa.free(full);
+    if (std.fs.path.dirname(full)) |parent| Io.Dir.cwd().createDirPath(io, parent) catch |err| {
+        if (last_error_path.* == null) last_error_path.* = gpa.dupe(u8, parent) catch null;
+        last_error.* = err;
+        return error.TargetWrite;
+    };
+    const file = Io.Dir.cwd().createFile(io, full, .{ .exclusive = true }) catch |err| {
+        if (last_error_path.* == null) last_error_path.* = gpa.dupe(u8, full) catch null;
+        last_error.* = err;
+        return error.TargetWrite;
+    };
+    defer file.close(io);
+    var writer = file.writer(io, &.{});
+    writer.interface.writeAll(bytes) catch |err| {
+        if (last_error_path.* == null) last_error_path.* = gpa.dupe(u8, full) catch null;
+        last_error.* = err;
+        return error.TargetWrite;
+    };
+}
+
+/// Write the two fixed replay programs exactly once when parity evidence
+/// exists. Contract 1 (self-freeing): no allocation escapes on success.
+pub fn writeParityRunners(
+    io: Io,
+    gpa: Allocator,
+    target: []const u8,
+    enabled: bool,
+    last_error_path: *?[]const u8,
+    last_error: *?anyerror,
+) WriteError!void {
+    if (!enabled) return;
+    try writeRunnerFile(io, gpa, target, parity_runner_path, parity_runner_ts, last_error_path, last_error);
+    try writeRunnerFile(io, gpa, target, journey_runner_path, journey_runner_py, last_error_path, last_error);
+}
+
 /// Everything `write` accumulates, in one place so a failure anywhere can
 /// release all of it through one `deinit`.
 const Acc = struct {
@@ -5986,6 +6267,80 @@ fn targetHas(tmp: *std.testing.TmpDir, relative: []const u8) bool {
     defer gpa.free(p);
     tmp.dir.access(std.testing.io, p, .{}) catch return false;
     return true;
+}
+
+test "writeParityRunners pins fixed bytes, absence, and exclusive-create" {
+    const gpa = testing.allocator;
+    var empty = std.testing.tmpDir(.{});
+    defer empty.cleanup();
+    const empty_target = try tmpTarget(gpa, &empty);
+    defer gpa.free(empty_target);
+    var empty_error_path: ?[]const u8 = null;
+    defer if (empty_error_path) |path| gpa.free(path);
+    var empty_error: ?anyerror = null;
+    try writeParityRunners(testing.io, gpa, empty_target, false, &empty_error_path, &empty_error);
+    try testing.expect(!targetHas(&empty, parity_runner_path));
+    try testing.expect(!targetHas(&empty, journey_runner_path));
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const target = try tmpTarget(gpa, &tmp);
+    defer gpa.free(target);
+    var error_path: ?[]const u8 = null;
+    defer if (error_path) |path| gpa.free(path);
+    var error_cause: ?anyerror = null;
+    try writeParityRunners(testing.io, gpa, target, true, &error_path, &error_cause);
+    const parity = try readTarget(gpa, &tmp, parity_runner_path);
+    defer gpa.free(parity);
+    const journey = try readTarget(gpa, &tmp, journey_runner_path);
+    defer gpa.free(journey);
+    try testing.expectEqualStrings(parity_runner_ts, parity);
+    try testing.expectEqualStrings(journey_runner_py, journey);
+    try testing.expect(std.mem.indexOf(u8, parity, "MIGRATION.handoff.json") != null);
+    try testing.expect(std.mem.indexOf(u8, journey, "MIGRATION.handoff.json") != null);
+    // P4: null is an explicit "not statically knowable" marker, not a claim
+    // that the target renderer must omit its own fallback title or heading.
+    try testing.expect(std.mem.indexOf(u8, parity, "row.expect.title !== null") != null);
+    try testing.expect(std.mem.indexOf(u8, parity, "row.expect.h1 !== null") != null);
+    // Literal href facts are target bytes, including relative URLs, queries,
+    // and fragments. Resolving them through URL.pathname would erase that
+    // evidence and make a correct generated anchor fail parity.
+    try testing.expect(std.mem.indexOf(u8, parity, "(m) => decodeHtml(m[1] ?? m[2] ?? m[3])") != null);
+    try testing.expect(std.mem.indexOf(u8, parity, "new URL(decodeHtml") == null);
+    // The mutation collection is the operation's target (`posts`), not the
+    // auth collection (`users`). Authentication comes from the completed auth
+    // phase instead of inventing a relation the OpenAPI document does not say.
+    try testing.expect(std.mem.indexOf(u8, parity, "Array.from(clients.values()).find") != null);
+    // Fetch rejects GET/HEAD requests carrying bodies. Denied endpoint rows
+    // may describe either method, so the fixed runner must suppress both the
+    // JSON body and its content type before it reaches the runtime.
+    try testing.expect(std.mem.indexOf(u8, parity, "method !== \"GET\" && method !== \"HEAD\"") != null);
+    try testing.expect(std.mem.indexOf(u8, parity, "body: carriesBody ? JSON.stringify(body) : undefined") != null);
+    try testing.expect(std.mem.indexOf(u8, journey, "with page.expect_navigation") != null);
+    try testing.expect(std.mem.indexOf(u8, journey, "consume_validation_console(errors)") != null);
+
+    try testing.expectError(error.TargetWrite, writeParityRunners(testing.io, gpa, target, true, &error_path, &error_cause));
+    try testing.expectEqual(error.PathAlreadyExists, error_cause.?);
+    try testing.expect(std.mem.endsWith(u8, error_path.?, parity_runner_path));
+}
+
+test "writeParityRunners is leak-free under every allocation failure" {
+    var fail_index: usize = 0;
+    while (true) : (fail_index += 1) {
+        if (fail_index > 20) return error.SweepNeverReachedSuccess;
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        const target = try tmpTarget(testing.allocator, &tmp);
+        defer testing.allocator.free(target);
+        var failing = testing.FailingAllocator.init(testing.allocator, .{ .fail_index = fail_index });
+        const gpa = failing.allocator();
+        var error_path: ?[]const u8 = null;
+        defer if (error_path) |path| gpa.free(path);
+        var error_cause: ?anyerror = null;
+        if (writeParityRunners(testing.io, gpa, target, true, &error_path, &error_cause)) {
+            break;
+        } else |err| try testing.expectEqual(error.OutOfMemory, err);
+    }
 }
 
 test "write: a static content route becomes a layout, a view and a content page" {

@@ -104,6 +104,7 @@ have_finding 'RAILS_RAW_OUTPUT.app/views/pages/help%2Ehtml%2Eerb.L1C47'
 have_finding 'RAILS_I18N_UNRESOLVED.app/views/pages/help%2Ehtml%2Eerb.L1C62'
 have_finding 'RAILS_REQUEST_TIME_STATE.app/views/posts/index%2Ehtml%2Eerb.L1C33'
 have_finding 'RAILS_REQUEST_TIME_STATE.app/views/posts/show%2Ehtml%2Eerb.L1C9'
+have_finding 'RAILS_BACKEND_ENDPOINT.app/views/posts/new%2Ehtml%2Eerb.L3C5'
 have_finding 'RAILS_ROUTE_HELPER_DYNAMIC.app/views/posts/_post%2Ehtml%2Eerb.L1C14'
 # L3, not L2: #167 Stage 3 put `before_action :require_login` on line 2 of
 # posts_controller.rb and pushed `layout :choose` down one.
@@ -169,18 +170,22 @@ journey_count=$(jq '[.findings[] | select(.code == "RAILS_AUTH_JOURNEY")] | leng
 # `RAILS_BACKEND_ENDPOINT` -- except that the journey is already their
 # question. `GET /feed` is NOT part of the journey and does carry one.
 route_backend_ids=$(jq -r '[.findings[] | select(.code == "RAILS_BACKEND_ENDPOINT") | select(.source.file == "config/routes.rb") | .id] | join(" ")' "$MANIFEST")
-[[ "$route_backend_ids" == "RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L20.GET.posts" ]] \
-  || fail "exactly one route-level backend question (the feed), got: $route_backend_ids"
+[[ "$route_backend_ids" == "RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L14.POST.posts RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L20.GET.posts" ]] \
+  || fail "the posts create and feed route-level backend questions changed: $route_backend_ids"
 # Ruling S3-R2: the route-level row is keyed on (line, VERB, resource), not on
 # the line alone -- one routes.rb line can declare several verbs, and each verb
 # gets different operations offered.
 have_finding 'RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L20.GET.posts'
+have_finding 'RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L14.POST.posts'
 feed_choices=$(jq -r '.findings[] | select(.id == "RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L20.GET.posts") | .choices | join(",")' "$MANIFEST")
 # The document's own GET operations, resource-matching group first, each group
 # by operation id -- then the two reserved answers. No POST/PATCH/DELETE
 # operation may appear: a verb never crosses over.
 [[ "$feed_choices" == "listPosts,viewPosts,listUsers,viewUsers,retain,blocked" ]] \
   || fail "the feed route's choices must be the document's GET operations: $feed_choices"
+create_choices=$(jq -r '.findings[] | select(.id == "RAILS_BACKEND_ENDPOINT.app/views/posts/new%2Ehtml%2Eerb.L3C5") | .choices | join(",")' "$MANIFEST")
+[[ "$create_choices" == "createPosts,createUsers,retain,blocked" ]] \
+  || fail "the posts form must offer POST operations with createPosts first: $create_choices"
 feed_msg=$(jq -r '.findings[] | select(.id == "RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L20.GET.posts") | .message' "$MANIFEST")
 [[ "$feed_msg" == "route is API traffic and needs a backend operation: GET /feed" ]] || fail "feed message: $feed_msg"
 # Assumption A7's new code, on the routes.rb line the guarded route was
@@ -259,7 +264,7 @@ jq -e '.blockers[] | select(.code == "RAILS_TEMPLATE_ENGINE_UNSUPPORTED")' "$MAN
 # the WORDS only, and the operation ids are pinned per finding above.
 bad=$(jq -r '.findings[] | select((.id|type) != "string" or (.choices|length) == 0) | .id' "$MANIFEST")
 [[ -z "$bad" ]] || fail "malformed findings: $bad"
-badwords=$(jq -r '.findings[] | select((.choices - ["island","spa","backend","public","drop","inline","retain","blocked","listPosts","viewPosts","listUsers","viewUsers","deletePosts","deleteUsers"] | length) != 0) | .id' "$MANIFEST")
+badwords=$(jq -r '.findings[] | select((.choices - ["island","spa","backend","public","drop","inline","retain","blocked","listPosts","viewPosts","listUsers","viewUsers","createPosts","createUsers","deletePosts","deleteUsers"] | length) != 0) | .id' "$MANIFEST")
 [[ -z "$badwords" ]] || fail "findings offering a choice outside the vocabulary + this document's ids: $badwords"
 
 # Schema validation of both real instances. `rails_manifest_validate` takes
@@ -276,7 +281,7 @@ grep -q '^## Handoff' "$WORK/out1/MIGRATION.md" || fail "MIGRATION.md lacks a Ha
 grep -qx 'backend: openapi.json (1.0.0)' "$WORK/out1/MIGRATION.md" \
   || fail "the Handoff section must name the backend document by basename and version"
 grep -q "$WORK" "$WORK/out1/MIGRATION.md" && fail "MIGRATION.md embeds the scratch path"
-grep -qx 'endpoints: 0 of the 4 `backend` route(s) are bound to a ZigBase operation.' "$WORK/out1/MIGRATION.md" \
+grep -qx 'endpoints: 0 of the 5 `backend` route(s) are bound to a ZigBase operation.' "$WORK/out1/MIGRATION.md" \
   || fail "run 1 binds nothing, and the report must say so"
 
 # --- run 1: the handoff's verdict, route by route --------------------------
@@ -285,7 +290,7 @@ grep -qx 'endpoints: 0 of the 4 `backend` route(s) are bound to a ZigBase operat
 # a status that moves from `migrated` to `open` (or the reverse) names itself.
 [[ "$(jq -r '.complete' "$HANDOFF")" == "false" ]] || fail "run 1 must not be complete"
 route_count=$(jq '.routes | length' "$HANDOFF")
-[[ "$route_count" == "18" ]] || fail "expected 18 routes in the handoff, got $route_count -- a new route needs a pin below"
+[[ "$route_count" == "20" ]] || fail "expected 20 routes in the handoff, got $route_count -- a new route needs a pin below"
 status_of() { jq -r --arg r "$1" '.routes[] | select(.route_id == $r) | .status' "$HANDOFF"; }
 want_status() {
   local got; got="$(status_of "$1")"
@@ -303,6 +308,7 @@ want_status 'GET /help'              open
 want_status 'GET /broken'            open
 want_status 'GET /links'             open
 want_status 'GET /posts'             open
+want_status 'GET /posts/new'         open
 want_status 'GET /posts/:id'         open
 want_status 'GET /posts/legacy'      open
 want_status 'GET /session/new'       open
@@ -317,6 +323,7 @@ want_status 'POST /session'          backend
 want_status 'DELETE /session'        backend
 want_status 'POST /registration'     backend
 want_status 'GET /feed'              backend
+want_status 'POST /posts'            backend
 # Nothing is bound yet: `--backend` alone widens the questions, it answers
 # none of them.
 unbound=$(jq -r '[.routes[] | select(.endpoint != null) | .route_id] | join(" ")' "$HANDOFF")
@@ -347,7 +354,7 @@ grep -q 'method="delete"' "$run1_nav" && fail 'a method= attribute on an <a> doe
 
 # --- run 1: the converted tree ---------------------------------------------
 listing="$(cd "$WORK/out1" && find . -type f | sort | tr '\n' ' ')"
-expected_listing="./.gitignore ./AGENTS.md ./CLAUDE.md ./MIGRATION.handoff.json ./MIGRATION.manifest.json ./MIGRATION.md ./assets/images/logo.png ./assets/robots.txt ./assets/stylesheets/application.css ./build.sh ./content/about/index.smd ./content/help/index.smd ./content/index.smd ./content/linked/index.smd ./content/links/index.smd ./content/live/index.smd ./content/posts/index.smd ./content/registration/new/index.smd ./content/session/new/index.smd ./content/widgets/index.smd ./layouts/pages/about.shtml ./layouts/pages/help.shtml ./layouts/pages/linked.shtml ./layouts/pages/links.shtml ./layouts/pages/live.shtml ./layouts/pages/widgets.shtml ./layouts/posts/index.shtml ./layouts/registrations/new.shtml ./layouts/sessions/new.shtml ./layouts/templates/application.shtml ./layouts/templates/marketing.shtml ./zigapagos.ziggy "
+expected_listing="./.gitignore ./AGENTS.md ./CLAUDE.md ./MIGRATION.handoff.json ./MIGRATION.manifest.json ./MIGRATION.md ./assets/images/logo.png ./assets/robots.txt ./assets/stylesheets/application.css ./build.sh ./content/about/index.smd ./content/help/index.smd ./content/index.smd ./content/linked/index.smd ./content/links/index.smd ./content/live/index.smd ./content/posts/index.smd ./content/posts/new/index.smd ./content/registration/new/index.smd ./content/session/new/index.smd ./content/widgets/index.smd ./layouts/pages/about.shtml ./layouts/pages/help.shtml ./layouts/pages/linked.shtml ./layouts/pages/links.shtml ./layouts/pages/live.shtml ./layouts/pages/widgets.shtml ./layouts/posts/index.shtml ./layouts/posts/new.shtml ./layouts/registrations/new.shtml ./layouts/sessions/new.shtml ./layouts/templates/application.shtml ./layouts/templates/marketing.shtml ./test/journey_playwright.py ./test/parity.ts ./zigapagos.ziggy "
 [[ "$listing" == "$expected_listing" ]] || fail "run 1 target listing changed:
   got:      $listing
   expected: $expected_listing"
@@ -469,6 +476,7 @@ want2 'GET /links'            blocked
 want2 'GET /posts/legacy'     blocked
 want2 'GET /live'             blocked
 want2 'GET /posts'            migrated
+want2 'GET /posts/new'        migrated
 want2 'GET /posts/:id'        migrated
 want2 'GET /widgets'          migrated
 # The three routes the shared nav kept open in run 1, back to `migrated` now
@@ -503,12 +511,33 @@ endpoint_of() { jq -r --arg r "$1" '.routes[] | select(.route_id == $r) | .endpo
   || fail "DELETE /session endpoint: $(endpoint_of 'DELETE /session')"
 [[ "$(endpoint_of 'POST /registration')" == "createUsers POST /api/collections/users/records" ]] \
   || fail "POST /registration endpoint: $(endpoint_of 'POST /registration')"
-# ...and only those four. A page route must never claim an endpoint.
+[[ "$(endpoint_of 'POST /posts')" == "createPosts POST /api/collections/posts/records" ]] \
+  || fail "POST /posts endpoint: $(endpoint_of 'POST /posts')"
+# ...and only those five. A page route must never claim an endpoint.
 bound_routes=$(jq -r '[.routes[] | select(.endpoint != null) | .route_id] | join(",")' "$HANDOFF2")
-[[ "$bound_routes" == "GET /feed,POST /registration,DELETE /session,POST /session" ]] \
-  || fail "exactly the four backend routes are bound, got: $bound_routes"
-grep -qx 'endpoints: 4 of the 4 `backend` route(s) are bound to a ZigBase operation.' "$WORK/out2/MIGRATION.md" \
+[[ "$bound_routes" == "GET /feed,POST /posts,POST /registration,DELETE /session,POST /session" ]] \
+  || fail "exactly the five backend routes are bound, got: $bound_routes"
+grep -qx 'endpoints: 5 of the 5 `backend` route(s) are bound to a ZigBase operation.' "$WORK/out2/MIGRATION.md" \
   || fail "the report's endpoint tally must say every backend route is bound"
+
+# Stage 5's handoff is pinned as exact canonical JSON, not merely by counts.
+# Kept as a function so the three semantic mutants below must make the SAME
+# production assertion fail rather than a purpose-built mutant assertion.
+assert_stage5_parity() {
+  local handoff="$1" parity_hash
+  parity_hash=$(jq -c '.parity' "$handoff" | shasum -a 256 | awk '{print $1}')
+  [[ "$parity_hash" == "933e5d7504085309d299cfa4692411ede19c0a7afba7e659bbeb04b3fcf6e387" ]] || return 1
+  jq -e '.parity[] | select(.id == "signup:users" and .expect.status == 201)' "$handoff" >/dev/null || return 1
+  jq -e '.parity[] | select(.id == "navigate:GET /about" and (.expect.links | index("/?from=about#top")))' "$handoff" >/dev/null || return 1
+  jq -e '[.parity[] | select(.kind == "navigate" and (.expect.links | index("/account")))] | length == 0' "$handoff" >/dev/null || return 1
+  jq -e '.parity[] | select(.id == "navigate:GET /posts/new" and .expect.title == "New post" and .expect.h1 == "New post")' "$handoff" >/dev/null || return 1
+  jq -e '.parity[] | select(.id == "submit_allowed:createPosts" and .expect.page_url == "/posts/new" and .expect.status_family == 2)' "$handoff" >/dev/null || return 1
+  jq -e '.parity[] | select(.id == "submit_denied:createPosts" and (.expect.statuses == [401,403]))' "$handoff" >/dev/null || return 1
+  jq -e '.parity[] | select(.id == "validation_error:createPosts:title" and .expect.field == "title" and ([.expect.fields[] | select(.name == "title") | .invalid_value] == [""]))' "$handoff" >/dev/null || return 1
+}
+assert_stage5_parity "$HANDOFF2" || fail "the exact Stage 5 parity JSON changed"
+! grep -R -qF '/account' "$WORK/out2/content" "$WORK/out2/layouts" "$WORK/out2/components" \
+  || fail "literal links inside replaced auth regions must reach neither artifacts nor parity"
 
 # The `spa` choice and the `island` answers are the ones that emit code.
 [[ -f "$WORK/out2/spa/posts.spa.tsx" ]] || fail "the spa decision must scaffold spa/posts.spa.tsx"
@@ -549,14 +578,15 @@ grep -q '`if current_user` folded into the AuthStatus island above it' <<<"$root
 # link to the DELETE route survives, and no separate click island was written.
 grep -q 'href="/session">' "$WORK/out2/layouts/templates/marketing.shtml" \
   && fail "the AuthStatus island replaces the sign-out control; no link to /session may survive"
-[[ ! -e "$WORK/out2/components/forms" ]] || fail "this fixture's only mutating control is inside the AuthStatus region; a forms/ island would mean it was bound twice"
+[[ -f "$WORK/out2/components/forms/posts_new.island.tsx" ]] || fail "the bound posts form must scaffold exactly one form island"
+[[ "$(find "$WORK/out2/components/forms" -type f | wc -l)" -eq 1 ]] || fail "the posts form must be the only standalone form island"
 # npm dependencies: the client, pinned, and the runtime at the path we asked
 # for. `--runtime-path` SHADOWS ZIGAPAGOS_RUNTIME_DIR; run 2c covers the
 # variable on its own.
 grep -qF '"@zigbase/client": "0.3.0"' "$WORK/out2/package.json" || fail "package.json must pin @zigbase/client"
 grep -qF "\"@z/runtime\": \"file:$REPO/runtime\"" "$WORK/out2/package.json" || fail "--runtime-path must fill the runtime dependency"
 # Each island reaches `release` once, quoted, in path order.
-for isl in components/AuthForm.island.tsx components/AuthStatus.island.tsx components/Chart.island.tsx components/TurboFrame.island.tsx components/data/posts_index.island.tsx components/stimulus/reveal.island.tsx; do
+for isl in components/AuthForm.island.tsx components/AuthStatus.island.tsx components/Chart.island.tsx components/TurboFrame.island.tsx components/data/posts_index.island.tsx components/forms/posts_new.island.tsx components/stimulus/reveal.island.tsx; do
   n=$(grep -o -- "--island='$isl'" "$WORK/out2/build.sh" | wc -l)
   [[ "$n" -eq 1 ]] || fail "build.sh must carry --island='$isl' exactly once, got $n"
 done
@@ -646,7 +676,7 @@ note2 "DELETE /session"       "<null>"
 # it: a layout is shared chrome, written once per layout rather than per
 # route, and it mounts the AuthStatus island the nav's answer produced.
 listing2="$(cd "$WORK/out2" && find . -type f | sort | tr '\n' ' ')"
-expected_listing2="./.gitignore ./AGENTS.md ./CLAUDE.md ./MIGRATION.handoff.json ./MIGRATION.manifest.json ./MIGRATION.md ./assets/images/logo.png ./assets/robots.txt ./assets/stylesheets/application.css ./build.sh ./components/AuthForm.island.tsx ./components/AuthStatus.island.tsx ./components/Chart.island.tsx ./components/TurboFrame.island.tsx ./components/data/posts_index.island.tsx ./components/react/Chart.jsx ./components/stimulus/reveal.island.tsx ./content/about/index.smd ./content/index.smd ./content/linked/index.smd ./content/posts/index.smd ./content/registration/new/index.smd ./content/session/new/index.smd ./content/widgets/index.smd ./layouts/pages/about.shtml ./layouts/pages/linked.shtml ./layouts/pages/widgets.shtml ./layouts/posts/index.shtml ./layouts/registrations/new.shtml ./layouts/sessions/new.shtml ./layouts/templates/application.shtml ./layouts/templates/marketing.shtml ./lib/stimulus.ts ./lib/zb.ts ./package.json ./spa/posts.spa.tsx ./tsconfig.json ./z-runtime.config.json ./zigapagos.ziggy "
+expected_listing2="./.gitignore ./AGENTS.md ./CLAUDE.md ./MIGRATION.handoff.json ./MIGRATION.manifest.json ./MIGRATION.md ./assets/images/logo.png ./assets/robots.txt ./assets/stylesheets/application.css ./build.sh ./components/AuthForm.island.tsx ./components/AuthStatus.island.tsx ./components/Chart.island.tsx ./components/TurboFrame.island.tsx ./components/data/posts_index.island.tsx ./components/forms/posts_new.island.tsx ./components/react/Chart.jsx ./components/stimulus/reveal.island.tsx ./content/about/index.smd ./content/index.smd ./content/linked/index.smd ./content/posts/index.smd ./content/posts/new/index.smd ./content/registration/new/index.smd ./content/session/new/index.smd ./content/widgets/index.smd ./layouts/pages/about.shtml ./layouts/pages/linked.shtml ./layouts/pages/widgets.shtml ./layouts/posts/index.shtml ./layouts/posts/new.shtml ./layouts/registrations/new.shtml ./layouts/sessions/new.shtml ./layouts/templates/application.shtml ./layouts/templates/marketing.shtml ./lib/stimulus.ts ./lib/zb.ts ./package.json ./spa/posts.spa.tsx ./test/journey_playwright.py ./test/parity.ts ./tsconfig.json ./z-runtime.config.json ./zigapagos.ziggy "
 [[ "$listing2" == "$expected_listing2" ]] || fail "run 2 target listing changed:
   got:      $listing2
   expected: $expected_listing2"
@@ -672,15 +702,72 @@ cmp "$WORK/out2/MIGRATION.md" "$WORK/out2b/MIGRATION.md" || fail "MIGRATION.md n
 # identical runs is not shippable.
 cmp "$WORK/out2/components/AuthForm.island.tsx" "$WORK/out2b/components/AuthForm.island.tsx" || fail "AuthForm not deterministic"
 cmp "$WORK/out2/components/AuthStatus.island.tsx" "$WORK/out2b/components/AuthStatus.island.tsx" || fail "AuthStatus not deterministic"
-for generated in components/Chart.island.tsx components/TurboFrame.island.tsx components/data/posts_index.island.tsx components/react/Chart.jsx components/stimulus/reveal.island.tsx lib/stimulus.ts z-runtime.config.json; do
+for generated in components/Chart.island.tsx components/TurboFrame.island.tsx components/data/posts_index.island.tsx components/forms/posts_new.island.tsx components/react/Chart.jsx components/stimulus/reveal.island.tsx lib/stimulus.ts test/parity.ts test/journey_playwright.py z-runtime.config.json; do
   cmp "$WORK/out2/$generated" "$WORK/out2b/$generated" || fail "$generated not deterministic"
 done
+parity_runner_hash="$(shasum -a 256 "$WORK/out2/test/parity.ts" | awk '{print $1}')"
+[[ "$parity_runner_hash" == "7a8bb6cd2780f69443a1eea954472455cbfae46211a4cf34b5ed8c91d94be2b6" ]] \
+  || fail "fixed Bun parity runner bytes changed: got $parity_runner_hash"
+[[ "$(shasum -a 256 "$WORK/out2/test/journey_playwright.py" | awk '{print $1}')" == "4c0f2f7ba13cebd4efd671c2ce2314f2cb963fc6a4d27a572b694c44d2b206f8" ]] \
+  || fail "fixed Playwright journey runner bytes changed"
+if command -v bun >/dev/null 2>&1; then
+  mkdir -p "$WORK/get-head-parity/test"
+  cp "$WORK/out2/test/parity.ts" "$WORK/get-head-parity/test/parity.ts"
+  cat > "$WORK/get-head-parity/MIGRATION.handoff.json" <<'JSON'
+{"schema_version":1,"parity":[{"id":"submit_denied:getSecret","kind":"submit_denied","url":"/secret","expect":{"operation_id":"getSecret","method":"GET","statuses":[401],"fields":[{"name":"q","value":"x","invalid_value":null}]}},{"id":"submit_denied:headSecret","kind":"submit_denied","url":"/secret-head","expect":{"operation_id":"headSecret","method":"HEAD","statuses":[401],"fields":[{"name":"q","value":"x","invalid_value":null}]}}]}
+JSON
+  (
+    cd "$WORK/get-head-parity"
+    ZIGAPAGOS_ORIGIN=http://example.invalid bun -e '
+      const seen = [];
+      globalThis.fetch = async (_url, init) => {
+        const method = init?.method;
+        if (method !== "GET" && method !== "HEAD") throw new Error(`unexpected method ${method}`);
+        if (init?.body !== undefined) throw new Error(`${method} carried a body`);
+        if (new Headers(init?.headers).has("content-type")) throw new Error(`${method} carried a content type`);
+        seen.push(method);
+        return new Response("", { status: 401 });
+      };
+      await import("./test/parity.ts");
+      if (seen.join(",") !== "GET,HEAD") throw new Error(`unexpected requests ${seen.join(",")}`);
+    '
+  ) || fail "fixed Bun parity runner sent a body with GET/HEAD"
+else
+  echo "SKIP: Bun unavailable; GET/HEAD parity runtime regression not executed"
+fi
 cmp "$WORK/out2/lib/zb.ts" "$WORK/out2b/lib/zb.ts" || fail "lib/zb.ts not deterministic"
 cmp "$WORK/out2/build.sh" "$WORK/out2b/build.sh" || fail "build.sh not deterministic"
 # The fixture is migrated from its scratch copy at $WORK/app, so the basename
 # the title must carry is `app` -- and nothing of the scratch path above it.
 grep -q "^# Migrating app to Zigapagos" "$WORK/out2/MIGRATION.md" || fail "MIGRATION.md title must be the app basename"
 grep -q "$WORK" "$WORK/out2/MIGRATION.md" && fail "MIGRATION.md embeds the scratch path"
+
+# --- Stage 5 semantic mutation checks -------------------------------------
+# Each mutant is fed to the same exact parity assertion used above. If any
+# one survives, the fixture is pinning shape rather than the promised fact.
+jq 'del(.parity[] | select(.id == "navigate:GET /posts/new"))' "$HANDOFF2" > "$WORK/mut-no-navigate.json"
+if assert_stage5_parity "$WORK/mut-no-navigate.json"; then
+  fail "mutation survived: removing one navigate fact must fail the parity pin"
+fi
+
+# Invert the operation's real access evidence and regenerate. Public create
+# must remove submit_denied; merely editing the finished handoff would not
+# exercise backend parsing and parity derivation together.
+jq '(.paths["/api/collections/posts/records"].post["x-zigbase-access"]) = "public"
+    | del(.paths["/api/collections/posts/records"].post["x-zigbase-rule"])' "$BACKEND" > "$WORK/backend-public.json"
+"$ZIGAPAGOS" migrate "$WORK/app" --from rails --target "$WORK/mut-public-access" \
+  --decisions "$DECISIONS" --backend "$WORK/backend-public.json" --runtime-path "$REPO/runtime" >/dev/null
+if assert_stage5_parity "$WORK/mut-public-access/MIGRATION.handoff.json"; then
+  fail "mutation survived: public createPosts must fail the denied-access parity pin"
+fi
+if jq -e '.parity[] | select(.id == "submit_denied:createPosts")' "$WORK/mut-public-access/MIGRATION.handoff.json" >/dev/null; then
+  fail "public createPosts still emitted submit_denied"
+fi
+
+jq '(.parity[] | select(.id == "validation_error:createPosts:title") | .expect.field) = ""' "$HANDOFF2" > "$WORK/mut-blank-validation-field.json"
+if assert_stage5_parity "$WORK/mut-blank-validation-field.json"; then
+  fail "mutation survived: blanking the validation field must fail the parity pin"
+fi
 
 # --- run 2c: the same answers with NO --runtime-path (#179) ----------------
 # `--runtime-path` shadows ZIGAPAGOS_RUNTIME_DIR, so every run above proves
@@ -745,7 +832,9 @@ grep -q 'needs the --backend document' <<<"$root_note_2d" \
 # `DELETE /session` still binds the journey's `logout`, not `custom`.
 grep -q 'href="/session">' "$WORK/out2d/layouts/templates/marketing.shtml" \
   && fail "S3-R6: a superseded answer must not resurrect the control the island replaced"
-[[ ! -e "$WORK/out2d/components/forms" ]] \
+[[ -f "$WORK/out2d/components/forms/posts_new.island.tsx" ]] \
+  || fail "S3-R6: the ordinary posts form island must survive"
+[[ "$(find "$WORK/out2d/components/forms" -type f | wc -l)" -eq 1 ]] \
   || fail "S3-R6: a superseded answer must not scaffold a second click island"
 ep_2d=$(jq -r '.routes[] | select(.route_id == "DELETE /session") | [.endpoint.operation_id, .endpoint.verb, .endpoint.path] | join(" ")' "$HANDOFF2D")
 [[ "$ep_2d" == "logout POST /api/collections/users/auth-logout" ]] \
@@ -768,7 +857,13 @@ if command -v bun >/dev/null; then
   # them, with the props the layout declared.
   [[ -f "$WORK/out2/zig-out/site/islands/AuthForm.island.js" ]] || fail "the AuthForm island was not bundled"
   [[ -f "$WORK/out2/zig-out/site/islands/AuthStatus.island.js" ]] || fail "the AuthStatus island was not bundled"
+  [[ -f "$WORK/out2/zig-out/site/islands/posts_new.island.js" ]] || fail "the posts form island was not bundled"
   [[ -f "$WORK/out2/zig-out/site/session/new/index.html" ]] || fail "the sign-in page was not built"
+  [[ -f "$WORK/out2/zig-out/site/posts/new/index.html" ]] || fail "the posts/new page was not built"
+  grep -q 'data-z-module="/islands/posts_new.island.js"' "$WORK/out2/zig-out/site/posts/new/index.html" \
+    || fail "posts/new does not SSR the bound form island"
+  grep -q 'name="title"' "$WORK/out2/zig-out/site/posts/new/index.html" \
+    || fail "posts/new SSR lost the validation field"
   grep -q 'data-z-props' "$WORK/out2/zig-out/site/session/new/index.html" || fail "the sign-in page carries no SSR'd island"
   grep -qF '{"mode":"signin"}' "$WORK/out2/zig-out/site/session/new/index.html" || fail "the sign-in page's island is not in signin mode"
   grep -qF '{"mode":"signup"}' "$WORK/out2/zig-out/site/registration/new/index.html" || fail "the sign-up page's island is not in signup mode"
@@ -974,6 +1069,7 @@ grep -q 'allowed: retain, blocked' <<<"$nodoc_out" || fail "without a document o
 jq '(.decisions[] | select(.id == "RAILS_AUTH_JOURNEY.config/routes%2Erb.L38") | .choice) = "retain"
     | del(.decisions[] | select(.id == "RAILS_AUTH_JOURNEY.config/routes%2Erb.L38") | .artifact)
     | (.decisions[] | select(.id == "RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L20.GET.posts") | .choice) = "retain"
+    | (.decisions[] | select(.id == "RAILS_BACKEND_ENDPOINT.app/views/posts/new%2Ehtml%2Eerb.L3C5") | .choice) = "retain"
     | (.decisions[] | select(.id == "RAILS_REQUEST_TIME_STATE.app/views/posts/index%2Ehtml%2Eerb.L1C33") | .choice) = "island"
     | (.decisions[] | select(.id == "RAILS_REQUEST_TIME_STATE.app/views/posts/show%2Ehtml%2Eerb.L1C9") | .choice) = "island"' "$DECISIONS" > "$WORK/no-backend-port.json"
 set +e
@@ -1027,7 +1123,7 @@ set +e
 no_js_rc=$?
 set -e
 [[ $no_js_rc -eq 3 ]] || fail "dropping the global JS entry answer must reopen the run, got $no_js_rc"
-for route in 'GET /' 'GET /about' 'GET /linked' 'GET /posts' 'GET /registration/new' 'GET /session/new' 'GET /widgets'; do
+for route in 'GET /' 'GET /about' 'GET /linked' 'GET /posts' 'GET /posts/new' 'GET /registration/new' 'GET /session/new' 'GET /widgets'; do
   jq -e --arg route "$route" '.routes[] | select(.route_id == $route and .status == "open" and (.findings | index("RAILS_JS_ENTRY.app/javascript/application%2Ejs.entry")))' "$WORK/no-js-entry/MIGRATION.handoff.json" >/dev/null || fail "$route must reopen on the unanswered global JS entry"
 done
 for route in 'GET /help' 'GET /links' 'GET /live'; do

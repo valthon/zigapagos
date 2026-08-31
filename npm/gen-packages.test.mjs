@@ -587,9 +587,9 @@ test("zigbaseDepFromZig tracks pinned_version, on the scoped package", () => {
   const dep = zigbaseDepFromZig(REPO_ROOT);
   // The scoped package, never the bare `zigbase` alias: the alias was published
   // once, so 0.12.0 is the only version it will ever have and it cannot follow
-  // a pin — including past the pin's current value, which happens to be 0.12.0.
+  // a pin — including the current value, which has already moved past 0.12.0.
   assert.deepEqual(Object.keys(dep), ["@zigbase/server"]);
-  // Exact, and with the Zig side's leading `v` stripped — `v0.12.0` is not a
+  // Exact, and with the Zig side's leading `v` stripped — `v0.13.0` is not a
   // semver range and npm would reject it.
   assert.match(dep["@zigbase/server"], /^[0-9]+\.[0-9]+\.[0-9]+$/);
   const pinned = readFileSync(join(REPO_ROOT, "src", "cli", "zigbase.zig"), "utf8").match(

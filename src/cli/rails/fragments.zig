@@ -270,6 +270,12 @@ pub const Template = struct {
     /// root`, `path is not a string`). Distinct from `error_message`: the
     /// file was never parsed, so there is no line to point at.
     unreadable: ?[]const u8,
+    /// Stage 5 presentation facts recovered by the sidecar from literal HTML
+    /// text runs. Dynamic markup is absent rather than guessed.
+    parity_h1: ?[]const u8 = null,
+    parity_h1_node: ?usize = null,
+    parity_links: [][]const u8 = &.{},
+    parity_link_nodes: []usize = &.{},
 };
 
 /// One `config/locales/**` file `RailsI18n.load` could not turn into a
@@ -382,6 +388,10 @@ const WireTemplate = struct {
     /// The line `@"error"` points at. Only meaningful alongside it.
     line: ?u64 = null,
     unreadable: ?[]const u8 = null,
+    parity_h1: ?[]const u8 = null,
+    parity_h1_node: ?usize = null,
+    parity_links: []const []const u8 = &.{},
+    parity_link_nodes: []const usize = &.{},
 };
 
 /// One `i18n_errors[]` entry as `analyze.rb` writes it from `Table#errors`.
@@ -526,6 +536,21 @@ fn dupeTemplate(gpa: Allocator, wt: WireTemplate) Allocator.Error!Template {
     const unreadable: ?[]const u8 = if (wt.unreadable) |u| try gpa.dupe(u8, u) else null;
     errdefer if (unreadable) |u| gpa.free(u);
 
+    const parity_h1: ?[]const u8 = if (wt.parity_h1) |h| try gpa.dupe(u8, h) else null;
+    errdefer if (parity_h1) |h| gpa.free(h);
+    const parity_links = try gpa.alloc([]const u8, wt.parity_links.len);
+    var links_filled: usize = 0;
+    errdefer {
+        for (parity_links[0..links_filled]) |link| gpa.free(link);
+        gpa.free(parity_links);
+    }
+    for (wt.parity_links, 0..) |link, i| {
+        parity_links[i] = try gpa.dupe(u8, link);
+        links_filled = i + 1;
+    }
+    const parity_link_nodes = try gpa.dupe(usize, wt.parity_link_nodes);
+    errdefer gpa.free(parity_link_nodes);
+
     const nodes = try gpa.alloc(Node, wt.nodes.len);
     var filled: usize = 0;
     errdefer {
@@ -547,6 +572,10 @@ fn dupeTemplate(gpa: Allocator, wt: WireTemplate) Allocator.Error!Template {
         // line N" to anything that checks `error_line` first.
         .error_line = if (wt.@"error" != null) wt.line else null,
         .unreadable = unreadable,
+        .parity_h1 = parity_h1,
+        .parity_h1_node = wt.parity_h1_node,
+        .parity_links = parity_links,
+        .parity_link_nodes = parity_link_nodes,
     };
 }
 
@@ -556,6 +585,10 @@ fn freeTemplate(gpa: Allocator, t: Template) void {
     gpa.free(t.nodes);
     if (t.error_message) |e| gpa.free(e);
     if (t.unreadable) |u| gpa.free(u);
+    if (t.parity_h1) |h| gpa.free(h);
+    for (t.parity_links) |link| gpa.free(link);
+    gpa.free(t.parity_links);
+    gpa.free(t.parity_link_nodes);
 }
 
 /// Contract 2 counterpart to `discoverTemplates`/`decodeResponse`: releases
@@ -920,6 +953,28 @@ test "decodeResponse: a text run is null-kinded and keeps its position in the st
     try std.testing.expectEqual(@as(?[]const u8, null), d.templates[0].error_message);
 }
 
+test "decodeResponse: presentation facts are owned and old payloads default empty" {
+    const gpa = std.testing.allocator;
+    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    defer blockers.freeList(gpa, &list);
+    const line =
+        \\{"ok":true,"templates":[{"path":"a.html.erb","nodes":[],"parity_h1":"About","parity_h1_node":3,"parity_links":["/","/posts"],"parity_link_nodes":[1,4]}]}
+    ;
+    const d = try decodeResponse(gpa, line, &list);
+    defer freeResult(gpa, d);
+    try std.testing.expectEqualStrings("About", d.templates[0].parity_h1.?);
+    try std.testing.expectEqual(@as(?usize, 3), d.templates[0].parity_h1_node);
+    try std.testing.expectEqual(@as(usize, 2), d.templates[0].parity_links.len);
+    try std.testing.expectEqualStrings("/posts", d.templates[0].parity_links[1]);
+    try std.testing.expectEqualSlices(usize, &.{ 1, 4 }, d.templates[0].parity_link_nodes);
+
+    const old = try decodeResponse(gpa, "{\"ok\":true,\"templates\":[{\"path\":\"old.erb\",\"nodes\":[]}]}", &list);
+    defer freeResult(gpa, old);
+    try std.testing.expect(old.templates[0].parity_h1 == null);
+    try std.testing.expectEqual(@as(usize, 0), old.templates[0].parity_links.len);
+    try std.testing.expectEqual(@as(usize, 0), old.templates[0].parity_link_nodes.len);
+}
+
 test "decodeResponse: ok:false and a malformed line each become ONE RAILS_TEMPLATES_UNAVAILABLE blocker" {
     const gpa = std.testing.allocator;
     var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
@@ -981,7 +1036,7 @@ test "decodeResponse: OOM at any point leaves no leak" {
     // the arity the decoder actually meets in the field -- a later change
     // that started duping the type string would otherwise sweep untested.
     const line =
-        \\{"ok":true,"locale":"en","templates":[{"path":"a.html.erb","nodes":[{"t":"text","text":"x","line":1},{"t":"code","kind":"asset","line":1,"col":2,"output":true,"code":"image_tag \"l\"","name":"image_tag","args":["l"],"attrs":[["alt","L"]]},{"t":"code","kind":"component_root","line":2,"col":1,"output":false,"code":"<div data-react-class=\"C\">","name":"C","value":"div","attrs":[["p","3","number"]]}]}],"i18n_errors":[{"path":"config/locales/en.yml","detail":"Psych::SyntaxError"}],"ruby":{"available":true,"version":"3.4.10"}}
+        \\{"ok":true,"locale":"en","templates":[{"path":"a.html.erb","nodes":[{"t":"text","text":"x","line":1},{"t":"code","kind":"asset","line":1,"col":2,"output":true,"code":"image_tag \"l\"","name":"image_tag","args":["l"],"attrs":[["alt","L"]]},{"t":"code","kind":"component_root","line":2,"col":1,"output":false,"code":"<div data-react-class=\"C\">","name":"C","value":"div","attrs":[["p","3","number"]]}],"parity_h1":"Heading","parity_links":["/","/posts"]}],"i18n_errors":[{"path":"config/locales/en.yml","detail":"Psych::SyntaxError"}],"ruby":{"available":true,"version":"3.4.10"}}
     ;
     var fail_index: usize = 0;
     var reached_success = false;

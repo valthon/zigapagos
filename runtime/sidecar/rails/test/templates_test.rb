@@ -26,6 +26,29 @@ def check_node(label, src, index, expected_subset, path: "app/views/posts/index.
   $failures += 1
 end
 
+def check_presentation(label, src, expected)
+  res = RailsTemplates.analyze(src, path: "app/views/posts/index.html.erb", i18n: I18N)
+  got = res.slice(:parity_h1, :parity_h1_node, :parity_links, :parity_link_nodes)
+  return if got == expected
+  warn "FAIL #{label}\n  expected: #{expected.inspect}\n  actual:   #{got.inspect}"
+  $failures += 1
+end
+
+check_presentation "literal heading and links are explicit parity facts",
+                   '<h1> About &amp; help </h1><a href="/posts">Posts</a><a href=/>Home</a>',
+                   { parity_h1: "About & help", parity_h1_node: 0,
+                     parity_links: ["/", "/posts"], parity_link_nodes: [0, 0] }
+check_presentation "dynamic headings and hrefs are not guessed",
+                   '<h1><%= @title %></h1><a href="<%= post_path(@post) %>">Post</a>',
+                   { parity_h1: nil, parity_h1_node: nil, parity_links: [], parity_link_nodes: [] }
+check_presentation "resolved i18n inside h1 is literal presentation evidence",
+                   '<h1><%= t(".heading") %></h1>',
+                   { parity_h1: "Posts", parity_h1_node: 0, parity_links: [], parity_link_nodes: [] }
+check_presentation "presentation facts retain their source node",
+                   '<a href="/outside">Outside</a><% if current_user %><h1>Account</h1><a href="/account">Account</a><% end %>',
+                   { parity_h1: "Account", parity_h1_node: 2,
+                     parity_links: ["/account", "/outside"], parity_link_nodes: [2, 0] }
+
 check "yield and named yield", "<%= yield %><%= yield :head %><%= content_for?(:side) %>", %w[yield yield_named yield_named]
 check_node "named yield carries its name", "<%= yield :head %>", 0, { name: "head" }
 

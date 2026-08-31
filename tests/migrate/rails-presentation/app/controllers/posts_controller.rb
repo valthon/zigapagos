@@ -8,6 +8,16 @@ class PostsController < ApplicationController
     @posts = Post.all
   end
 
+  # Stage 5 parity: a conventional title/body form whose create route is
+  # bound to the conditional ZigBase createPosts operation.
+  def new
+    @post = Post.new
+  end
+
+  def create
+    # The generated form island owns this mutation after the operator binds it.
+  end
+
   # show.html.erb reads @post.title -- REQUEST_TIME_STATE.
   def show
     @post = Post.find(params[:id])
