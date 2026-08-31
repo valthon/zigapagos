@@ -12,8 +12,15 @@ module RailsErb
   TAG = /<%(={1,2}|-|\#|%)?(.*?)([-=])?%>([ \t]*\r?\n)?/m
 
   # Returns an Array of tokens in source order:
-  #   { type: :text, text:, line: }
+  #   { type: :text, text:, line:, col: }
   #   { type: :code, indicator: ""|"="|"=="|"#"|"-", code:, line:, col: }
+  #
+  # A text token's :col is where its FIRST byte sits in the source, which is
+  # what lets `templates.rb` place an HTML element it finds inside the run:
+  # Prism only ever reports positions in the generated program, and a text run
+  # is written there as `_buf << '...'`, whose column has no relation to the
+  # template's. Without it every element node in a template would report
+  # column 1.
   # `<%#` comments emit no token. Their :line/:col (and every later
   # token's) come from true source positions, not from padding, so no
   # newlines need to be synthesized to keep them honest. In the untrimmed
@@ -25,16 +32,20 @@ module RailsErb
     is_bol = true
     pending_text = +""
     pending_line = 1
+    pending_col = 1
 
     flush = lambda do
       unless pending_text.empty?
-        tokens << { type: :text, text: pending_text, line: pending_line }
+        tokens << { type: :text, text: pending_text, line: pending_line, col: pending_col }
         pending_text = +""
       end
     end
     add_text = lambda do |s, at_pos|
       next if s.nil? || s.empty?
-      pending_line = line_of(src, at_pos) if pending_text.empty?
+      if pending_text.empty?
+        pending_line = line_of(src, at_pos)
+        pending_col = col_of(src, at_pos)
+      end
       pending_text << s
     end
 

@@ -83,7 +83,7 @@ check "control with request state or ivar is that, not control",
 check "turbo and components",
       "<%= turbo_frame_tag \"x\" do %><% end %><%= turbo_stream_from @post %><%= react_component(\"Hello\", { name: \"n\" }) %><%= react_component(\"Hello\", @props) %>",
       %w[turbo_frame block_end turbo_stream component_root component_root]
-check_node "component props literal", "<%= react_component(\"Hello\", { name: \"n\" }) %>", 0, { name: "Hello", attrs: [["name", "n"]] }
+check_node "component props literal", "<%= react_component(\"Hello\", { name: \"n\" }) %>", 0, { name: "Hello", attrs: [["name", "n", "string"]] }
 check_node "component props dynamic", "<%= react_component(\"Hello\", @props) %>", 0, { name: "Hello", dynamic: true }
 
 check "raw", "<%== x %><%= raw(y) %><%= z.html_safe %>", %w[raw raw raw]
@@ -301,6 +301,302 @@ check_node "an attribute name XML forbids is escaped the way ActionView escapes 
 check_node "a dot and a digit inside a name survive the escape",
            "<%= link_to \"x\", root_path, data: { \"a.b2\" => \"v\" } %>", 0,
            { kind: "link_to", attrs: [["data-a.b2", "v"]] }
+
+# ---------------------------------------------------------------------------
+# #167 Stage 4 Task 1: the interactivity vocabulary.
+#
+# Rails writes three of the four interactive constructs as ORDINARY HTML, not
+# as helper calls: `<div data-controller="reveal">`, `<turbo-frame id="x">`,
+# `<div data-react-class="Chart">`. Stage 2 saw none of them -- the walker only
+# classified Ruby fragments, and those tags live in the TEXT runs between them
+# -- so a template's whole interactive layer was invisible to the migration and
+# converted to inert markup with no finding to answer. The sidecar is the only
+# place that can find them (nothing on the Zig side parses HTML), and it is the
+# only place that can CLOSE them into regions: an element's extent is decided
+# by depth-counting its own tag across the text runs that follow, which needs
+# the block structure the walker already has.
+# ---------------------------------------------------------------------------
+
+def all_nodes(src, path: "app/views/posts/index.html.erb")
+  res = RailsTemplates.analyze(src, path: path, i18n: I18N)
+  raise "unexpected error #{res.inspect}" if res[:error]
+  res[:nodes]
+end
+
+# (1) A `data-controller` tag is a `stimulus` node positioned at its `<`, and
+# it carries exactly the four Stimulus attribute families -- `data-action`,
+# `data-<id>-target`, `data-<id>-<name>-value`, `data-<id>-<name>-class`. An
+# ordinary `class` is not one of them: the island binds behaviour, and copying
+# presentation attributes into its props would make the port claim things the
+# controller never read.
+STIMULUS_TAG = "<div data-controller=\"reveal\" data-action=\"click->reveal#toggle\" " \
+               "data-reveal-target=\"panel\" data-reveal-open-value=\"false\" " \
+               "data-reveal-on-class=\"is-on\" class=\"c\">x</div>"
+check "a data-controller element is a stimulus region", STIMULUS_TAG, %w[stimulus block_end]
+check_node "a stimulus node carries its identifiers, its tag and its Stimulus attributes", STIMULUS_TAG, 0,
+           { kind: "stimulus", name: "reveal", value: "div", output: false, line: 1, col: 1,
+             code: "<div data-controller=\"reveal\" data-action=\"click->reveal#toggle\" " \
+                   "data-reveal-target=\"panel\" data-reveal-open-value=\"false\" " \
+                   "data-reveal-on-class=\"is-on\" class=\"c\">",
+             attrs: [["data-action", "click->reveal#toggle"], ["data-reveal-target", "panel"],
+                     ["data-reveal-open-value", "false"], ["data-reveal-on-class", "is-on"]] }
+# `data-controller="reveal modal"` is two identifiers on one element; the
+# value is kept VERBATIM so the reader splits it once, in one place.
+check_node "several identifiers stay one verbatim value",
+           "<div data-controller=\"reveal modal\">x</div>", 0, { kind: "stimulus", name: "reveal modal" }
+# HTML5's tree builder drops a duplicate attribute and keeps the FIRST, so
+# that is the value the browser hands Stimulus. Reporting the last would name
+# a controller the page never instantiates.
+check_node "a duplicate attribute reports the first occurrence, as HTML resolves it",
+           "<div data-controller=\"first\" data-controller=\"second\">x</div>", 0,
+           { kind: "stimulus", name: "first" }
+
+# (2) A tag spanning two lines is positioned at the `<`, not at the attribute
+# that qualified it.
+check_node "a tag spanning two lines reports the line and column of its `<`",
+           "<p>hi</p>\n<div\n  data-controller=\"reveal\">x</div>", 0,
+           { kind: "stimulus", line: 2, col: 1 }
+# The column comes from the text TOKEN's own source position (erb.rb's new
+# `col:`). Prism can only report where `_buf << '…'` sits in the generated
+# program, so without the token every element in every template would land on
+# column 1 -- and every finding id derived from one would collide with the
+# next element on the same line.
+check_node "an element part-way along a line reports its own column",
+           "<p>x</p><div data-controller=\"reveal\">y</div>", 0,
+           { kind: "stimulus", line: 1, col: 9 }
+check_node "a column after a newline counts from the start of that line",
+           "a\n  <div data-controller=\"reveal\">y</div>", 0,
+           { kind: "stimulus", line: 2, col: 3 }
+# The discriminating case for the token: a run that does NOT begin at column
+# 1, because an ERB tag preceded it. Counting from the run's first byte alone
+# would report column 1 here.
+check_node "a run that starts after a tag counts from the tag's end",
+           "<%= 1 %><div data-controller=\"reveal\">y</div>", 1,
+           { kind: "stimulus", line: 1, col: 9 }
+
+# (3) A tag inside an HTML comment is not markup Rails renders, and a tag
+# inside `<script>`/`<style>` is text, not an element. Reporting either would
+# raise a finding an operator cannot act on and (worse) open an extent that
+# never closes.
+check "a commented-out element yields nothing", "<!-- <div data-controller=\"x\"> --><p>a</p>", []
+check "an element inside <script> yields nothing",
+      "<script>var s = '<div data-controller=\"x\">';</script><p>a</p>", []
+check "an element inside <style> yields nothing",
+      "<style>/* <div data-controller=\"x\"> */</style><p>a</p>", []
+
+# (4) `<turbo-frame>` is recognised by its TAG NAME, and its `src`/`loading`
+# are the two attributes the island needs; a frame with no `id` is dynamic
+# (the id is the frame's identity, and Turbo requires one).
+check_node "a turbo-frame element carries id, src and loading",
+           "<turbo-frame id=\"latest\" src=\"/posts\" loading=\"lazy\"></turbo-frame>", 0,
+           { kind: "turbo_frame", name: "latest", value: "turbo-frame",
+             attrs: [["src", "/posts"], ["loading", "lazy"]], dynamic: false }
+check_node "a turbo-frame with no id is dynamic",
+           "<turbo-frame src=\"/posts\"></turbo-frame>", 0,
+           { kind: "turbo_frame", name: nil, dynamic: true }
+
+# (5) A React root's props are the JSON Rails' react-rails helper writes into
+# `data-react-props`. A flat object of scalars becomes typed triples; anything
+# else -- absent, unparseable, nested -- is `dynamic`, because the target's
+# `:props` literal is typechecked and a nested value has no Ziggy spelling
+# this stage emits.
+check_node "a data-react-class element carries typed props",
+           "<div data-react-class=\"Chart\" data-react-props='{\"a\":1,\"b\":\"x\",\"c\":true,\"d\":null}'></div>", 0,
+           { kind: "component_root", name: "Chart",
+             attrs: [["a", "1", "number"], ["b", "x", "string"], ["c", "true", "boolean"], ["d", "", "null"]],
+             dynamic: nil }
+check_node "nested React props are dynamic",
+           "<div data-react-class=\"Chart\" data-react-props='{\"a\":{\"b\":1}}'></div>", 0,
+           { kind: "component_root", name: "Chart", dynamic: true }
+check_node "absent React props are dynamic",
+           "<div data-react-class=\"Chart\"></div>", 0, { kind: "component_root", name: "Chart", dynamic: true }
+check_node "unparseable React props are dynamic",
+           "<div data-react-class=\"Chart\" data-react-props='not json'></div>", 0,
+           { kind: "component_root", name: "Chart", dynamic: true }
+
+# (6) Vue: named, and nothing else. Decision 7 makes it a blocker, so the node
+# exists to be reported, never to be built from.
+check_node "a data-vue-component element is a vue_root",
+           "<div data-vue-component=\"Widget\"></div>", 0,
+           { kind: "vue_root", name: "Widget", code: "<div data-vue-component=\"Widget\">" }
+
+# (7) Extent (B11). The close is found by depth-counting the element's OWN tag
+# name, so an inner `<div>` does not close an outer `<div data-controller>`.
+# Without the count the region would end at the first `</div>`, and the island
+# would wrap half its own markup.
+NESTED = "<div data-controller=\"r\"><div>inner</div></div>"
+check "a nested same-name element does not close the region early", NESTED, %w[stimulus block_end]
+check_node "the block_end sits at the OUTER close tag", NESTED, 1,
+           { kind: "block_end", code: "</div>", line: 1, col: 42, output: false }
+# A void element cannot contain anything, so there is no extent to close and
+# the node says so rather than swallowing the rest of the template.
+check "a void element opens no region", "<input data-controller=\"r\"><p>after</p>", %w[stimulus]
+check_node "a void element is missing", "<input data-controller=\"r\">", 0, { kind: "stimulus", missing: true }
+check_node "a self-closing element is missing", "<div data-controller=\"r\"/>", 0, { kind: "stimulus", missing: true }
+# ...and it is missing IMMEDIATELY, not merely by the time the template ends.
+# A void element left on the open stack would be closed by the next same-name
+# close tag -- `</input>` is not markup a browser honours, and a `/>` element
+# has already ended -- which would hand an island an extent the page does not
+# have. (Both of these pass on the wrong implementation if only the LAST node
+# is inspected: `close_elements_at` marks everything still open at the end.)
+check "an author-written close tag does not close a void element",
+      "<input data-controller=\"r\">a</input>", %w[stimulus]
+check "a stray close tag does not close a self-closed element",
+      "<div data-controller=\"r\"/>\n<p>x</p>\n</div>", %w[stimulus]
+# A close tag found at a DIFFERENT Ruby block depth does not close the
+# element: the region would then straddle a branch, and the island would claim
+# markup the template only renders conditionally.
+check "a close inside a branch does not close an element opened outside it",
+      "<div data-controller=\"r\">\n<% if x %>\n</div>\n<% end %>", %w[stimulus control block_end]
+check_node "an element whose close is at another depth is missing",
+           "<div data-controller=\"r\">\n<% if x %>\n</div>\n<% end %>", 0,
+           { kind: "stimulus", missing: true }
+check_node "an element with no close at all is missing",
+           "<div data-controller=\"r\"><p>x</p>", 0, { kind: "stimulus", missing: true }
+# An element orphaned when its own block ends is dropped THERE, not left on
+# the stack until the template ends: two sibling branches are both "depth 1",
+# so an element left over from the first would be closed by a tag in the
+# second -- a region spanning two branches that never render together.
+check "an element orphaned in one branch is not closed by the next branch's tag",
+      "<% if a %><div data-controller=\"r\"><% end %><% if b %></div><% end %>",
+      %w[control stimulus block_end control block_end]
+# Fix round 1, I-1. An inner tag whose OWN attributes hold an ERB tag
+# (`<div class="<%= cls %>">`, ubiquitous in real templates) is split across
+# two text runs, so neither run holds a complete start tag and the opening-tag
+# regex matches nothing. It still NESTS -- and before this it did not deepen
+# the same-name count, so the outer element's region ended at the INNER
+# `</div>`. That is a WRONG extent, not a missing one: B10's wrapping island
+# would have closed halfway through the element it wraps, and a replacing one
+# would have deleted the second half of it. Counting a bare `<name` even when
+# the rest of the tag is out of reach makes the worst case a region that never
+# closes -- `missing: true`, which B11 already refuses to offer `island` for.
+ERB_SPLIT_INNER = "<div data-controller=\"outer\">\n  <div class=\"<%= cls %>\">inner</div>\n</div>\n"
+check "an ERB-split inner tag does not end the region early", ERB_SPLIT_INNER, %w[stimulus local block_end]
+check_node "the region closes at the OUTER tag, past the ERB-split inner one", ERB_SPLIT_INNER, 2,
+           { kind: "block_end", line: 3, col: 1, code: "</div>" }
+# Tag names are case-insensitive in HTML, and the fallback folds them the same
+# way the whole-tag path does.
+check_node "an ERB-split inner tag is matched case-insensitively, like a whole one",
+           "<div data-controller=\"outer\">\n  <DIV class=\"<%= cls %>\">inner</DIV>\n</div>\n", 2,
+           { kind: "block_end", line: 3, col: 1 }
+# The degradation this buys, stated as a test so it is a decision and not a
+# surprise: an ERB-split tag that never closes (or closes at another depth)
+# leaves the element `missing` rather than closing it in the wrong place.
+check_node "an ERB-split inner tag with no close leaves the region missing",
+           "<div data-controller=\"outer\">\n  <div class=\"<%= cls %>\">inner\n", 0,
+           { kind: "stimulus", missing: true }
+# Regressions for the neighbouring shapes the count must NOT move: a complete
+# inner tag (which the regex does see), a `<div/>`, which HTML5 treats as an
+# ordinary start tag -- so it deepens the count and leaves the outer element
+# unclosed, exactly as before this fix -- and a Ruby block, which is not a tag
+# at all.
+check_node "a complete inner tag still closes the region at the outer tag",
+           "<div data-controller=\"outer\">\n  <div class=\"inner\">inner</div>\n</div>\n", 1,
+           { kind: "block_end", line: 3, col: 1 }
+check_node "a `<div/>` inside the region still leaves it missing",
+           "<div data-controller=\"a\"><div/></div>", 0, { kind: "stimulus", missing: true }
+check "a Ruby block inside an element does not disturb its extent",
+      "<div data-controller=\"a\"><% if @x %>i<% end %></div>", %w[stimulus ivar block_end block_end]
+# A `<` that starts no tag at all (`3 < 5`, unescaped, is everywhere in real
+# templates) reaches the same fallback and must recover NO name: it neither
+# raises nor deepens anything, and the region still closes where it should.
+check_node "a bare `<` in text is not a tag and does not move the region",
+           "<div data-controller=\"a\">\n  3 < 5\n</div>\n", 1,
+           { kind: "block_end", line: 3, col: 1 }
+# The depth guard inside the count, from BOTH callers. A same-name tag written
+# inside a Ruby block is a tag the element's own `</div>` will never have to
+# get past -- the block's own close already ended it (`close_elements_at`) --
+# so counting it would leave the region open to the end of the template. The
+# `<%= p %>` variant proves the ERB-split fallback shares the guard rather
+# than counting at whatever depth it happens to be scanning at.
+NESTED_IN_BLOCK = "<div data-controller=\"b\">\n  <% @posts.each do |p| %>\n" \
+                  "    <div>x</div>\n  <% end %>\n</div>\n"
+check_node "a nested tag inside a Ruby block does not deepen the region's count",
+           NESTED_IN_BLOCK, 3, { kind: "block_end", line: 5, col: 1, code: "</div>" }
+check_node "an ERB-split nested tag inside a Ruby block does not deepen it either",
+           "<div data-controller=\"b\">\n  <% @posts.each do |p| %>\n" \
+           "    <div class=\"<%= p %>\">x</div>\n  <% end %>\n</div>\n", 4,
+           { kind: "block_end", line: 5, col: 1, code: "</div>" }
+# The node is a MARKER: it consumes no bytes, so the converter still passes
+# the author's own markup through. Splitting a run and losing a byte of it
+# would silently delete markup from every page carrying an element.
+# ...and the close tag stays INSIDE the region: the marker is placed after it,
+# so `nodes[element..block_end]` spans the author's whole element. Cutting
+# before the close tag instead would leave `</div>` outside the island the
+# opening tag is inside of.
+SPLITS = all_nodes("<div data-controller=\"r\">b</div>tail")
+        .map { |n| n[:t] == "text" ? [:text, n[:text]] : [:code, n[:kind]] }
+unless SPLITS == [[:code, "stimulus"], [:text, "<div data-controller=\"r\">b</div>"], [:code, "block_end"], [:text, "tail"]]
+  warn "FAIL the block_end splits after the close tag: #{SPLITS.inspect}"
+  $failures += 1
+end
+
+REJOIN = "<p>a</p><div data-controller=\"r\">b<span>c</span></div><p>d</p>"
+joined = all_nodes(REJOIN).select { |n| n[:t] == "text" }.map { |n| n[:text] }.join
+unless joined == REJOIN
+  warn "FAIL split text runs re-join byte for byte\n  expected: #{REJOIN.inspect}\n  actual:   #{joined.inspect}"
+  $failures += 1
+end
+
+# (8) `turbo_frame_tag` (the helper form) gains the same facts the HTML form
+# carries: its options as attributes, and a `src:` written as a route helper
+# resolved to a stem plus its literal arguments -- which is what lets the
+# island fetch a URL this run can build. A `src:` it cannot read statically
+# leaves the node dynamic rather than inventing one.
+check_node "turbo_frame_tag with a literal src: helper names the route stem",
+           "<%= turbo_frame_tag \"latest\", src: posts_path do %><% end %>", 0,
+           { kind: "turbo_frame", name: "latest", value: "posts", args: [], attrs: [], dynamic: false }
+check_node "a src: helper's literal arguments ride along",
+           "<%= turbo_frame_tag \"latest\", src: post_path(1) do %><% end %>", 0,
+           { kind: "turbo_frame", name: "latest", value: "post", args: ["1"] }
+check_node "a src: helper with a non-literal argument is dynamic",
+           "<%= turbo_frame_tag \"latest\", src: post_path(@post) do %><% end %>", 0,
+           { kind: "turbo_frame", name: "latest", value: nil, dynamic: true }
+check_node "a frame with no src: has no value and no src attribute",
+           "<%= turbo_frame_tag \"static\" do %><% end %>", 0,
+           { kind: "turbo_frame", name: "static", value: nil, attrs: [], dynamic: false }
+check_node "a literal string src: stays in attrs and leaves the frame dynamic",
+           "<%= turbo_frame_tag \"latest\", src: \"/posts\" do %><% end %>", 0,
+           { kind: "turbo_frame", name: "latest", value: nil, attrs: [["src", "/posts"]], dynamic: true }
+check_node "loading: :lazy arrives as an ordinary attribute",
+           "<%= turbo_frame_tag \"latest\", src: posts_path, loading: :lazy do %><% end %>", 0,
+           { kind: "turbo_frame", value: "posts", attrs: [["loading", "lazy"]] }
+
+# (9) `react_component`'s literal props are typed triples too -- the same
+# shape the HTML form produces, so one reader serves both.
+check_node "react_component props are typed triples",
+           "<%= react_component(\"Chart\", { series: \"a\", points: 3, on: true }) %>", 0,
+           { kind: "component_root", name: "Chart",
+             attrs: [["series", "a", "string"], ["points", "3", "number"], ["on", "true", "boolean"]] }
+
+# (10) Shapes the port reads. A `locals:` hash of bare local variables is not
+# LITERAL, but it is portable: `{ post: post }` says which local the partial
+# is handed, which is exactly what a data island has to rename.
+check_node "render locals of bare locals ride as attrs on render_dynamic",
+           "<%= render partial: \"post\", locals: { post: post } %>", 0,
+           { kind: "render_dynamic", name: "post", attrs: [["post", "post"]] }
+check_node "a non-local locals value leaves render_dynamic without attrs",
+           "<%= render partial: \"post\", locals: { post: @post } %>", 0,
+           { kind: "render_dynamic", name: "post", attrs: nil }
+
+# A dynamic route helper now says WHAT its arguments were, in source, and a
+# `link_to` says what its text was -- the two things a port has to re-express.
+# The name is the route STEM even when the link TEXT is what made it dynamic;
+# before this, `link_to post.title, post_path(post)` reported the helper as
+# `link_to`, which named no route at all.
+check_node "a dynamic link names its route stem, its text and its arguments",
+           "<%= link_to post.title, post_path(post) %>", 0,
+           { kind: "route_helper_dynamic", name: "post", value: "post.title", args: ["post"] }
+check_node "a bare dynamic route helper carries its argument sources",
+           "<%= post_path(@post, anchor) %>", 0,
+           { kind: "route_helper_dynamic", name: "post", args: ["@post", "anchor"] }
+
+# `turbo_stream_from "posts"` names the stream it subscribes to; without it
+# the finding read "turbo-stream ``".
+check_node "turbo_stream_from carries its literal stream name",
+           "<%= turbo_stream_from \"posts\" %>", 0, { kind: "turbo_stream", name: "posts" }
+check_node "a non-literal stream has no name",
+           "<%= turbo_stream_from @post %>", 0, { kind: "turbo_stream", name: nil }
 
 abort "#{$failures} templates failure(s)" if $failures > 0
 puts "PASS: templates_test.rb"

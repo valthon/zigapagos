@@ -54,6 +54,8 @@ const classify = @import("classify.zig");
 // point: see `convert.opensBlock`'s own doc.
 const convert = @import("convert.zig");
 const fragments = @import("fragments.zig");
+const integrations = @import("integrations.zig");
+const port = @import("port.zig");
 const controllers = @import("controllers.zig");
 const resolve = @import("resolve.zig");
 const routes = @import("routes.zig");
@@ -121,6 +123,10 @@ const choices_island_retain_blocked = [_][]const u8{ "island", "retain", "blocke
 const choices_island_spa_retain_blocked = [_][]const u8{ "island", "spa", "retain", "blocked" };
 const choices_spa_retain_blocked = [_][]const u8{ "spa", "retain", "blocked" };
 const choices_full = [_][]const u8{ "island", "spa", "backend", "retain", "blocked" };
+const choices_stimulus = [_][]const u8{ "island", "drop", "retain", "blocked" };
+const choices_drop_retain_blocked = [_][]const u8{ "drop", "retain", "blocked" };
+const choices_inline_retain_blocked = [_][]const u8{ "inline", "retain", "blocked" };
+const choices_drop_blocked = [_][]const u8{ "drop", "blocked" };
 /// #167 Stage 3 assumption A7's new choice word: "ship the page; the ZigBase
 /// rules protect the data". Only `RAILS_ROUTE_AUTH_GUARD` offers it.
 const choices_public_retain_blocked = [_][]const u8{ "public", "retain", "blocked" };
@@ -279,6 +285,14 @@ pub const code_route_path_unsupported = "RAILS_ROUTE_PATH_UNSUPPORTED";
 pub const code_turbo_frame = "RAILS_TURBO_FRAME";
 pub const code_turbo_stream = "RAILS_TURBO_STREAM";
 pub const code_component_root = "RAILS_COMPONENT_ROOT";
+pub const code_stimulus_controller = "RAILS_STIMULUS_CONTROLLER";
+pub const code_component_props_dynamic = "RAILS_COMPONENT_PROPS_DYNAMIC";
+pub const code_component_vue_unsupported = "RAILS_COMPONENT_VUE_UNSUPPORTED";
+pub const code_js_entry = "RAILS_JS_ENTRY";
+
+/// Filled with the follow-up issue number when the Stage 4 PR is opened.
+/// Keeping the reference in one constant makes that PR-time edit mechanical.
+pub const turbo_stream_issue: usize = 189;
 
 /// Contract 1 (self-freeing): the only allocation is the returned buffer,
 /// which escapes to the caller; nothing else is retained. Maps `%` to
@@ -617,6 +631,24 @@ pub const DeriveInput = struct {
     /// Defaulted empty, which loses only the transitive half of the rule: a
     /// form in a journey route's OWN view is still the journey's.
     render_graph: []const TemplateRenders = &.{},
+    /// Stage 4 Task 3 inputs. All are borrowed from `rails.Discovery`'s
+    /// owned graph and default empty so older synthetic derive fixtures lose
+    /// a new row rather than fabricate one.
+    js_sources: []const port.JsSource = &.{},
+    js_entry: ?[]const u8 = null,
+    npm_dependencies: []const integrations.NpmDep = &.{},
+    route_params: []const RouteParam = &.{},
+    stimulus_markers: []const TemplateStimulusMarkers = &.{},
+};
+
+pub const RouteParam = struct {
+    name: []const u8,
+    path: []const u8,
+};
+
+pub const TemplateStimulusMarkers = struct {
+    path: []const u8,
+    names: []const []const u8,
 };
 
 /// One node of the render graph: a template, and the templates it renders.
@@ -1663,6 +1695,371 @@ fn deriveMutationLink(
     return true;
 }
 
+fn isElementRegion(node: fragments.Node) bool {
+    return !node.missing and switch (node.kind) {
+        .stimulus, .vue_root => true,
+        .turbo_frame, .component_root => !node.output,
+        else => false,
+    };
+}
+
+/// Task 4 makes `convert.opensBlock` understand element regions globally.
+/// Until then this derivation-local walk must count the sidecar's element
+/// `block_end`s too, or nested-controller gating would pop the surrounding
+/// Ruby frame instead of closing the element it belongs to.
+fn elementEnd(nodes: []const fragments.Node, open: usize) ?usize {
+    if (!isElementRegion(nodes[open])) return null;
+    var depth: usize = 1;
+    var i = open + 1;
+    while (i < nodes.len) : (i += 1) {
+        const node = nodes[i];
+        if (node.text != null) continue;
+        if (node.kind == .block_end) {
+            depth -= 1;
+            if (depth == 0) return i;
+        } else if (isElementRegion(node) or convert.opensBlock(node)) {
+            depth += 1;
+        }
+    }
+    return null;
+}
+
+fn nestedStimulus(nodes: []const fragments.Node, index: usize) ?fragments.Node {
+    for (nodes[0..index], 0..) |node, i| {
+        if (node.kind != .stimulus or node.missing) continue;
+        const end = elementEnd(nodes, i) orelse continue;
+        if (end > index) return node;
+    }
+    return null;
+}
+
+/// Contract 1 (self-freeing): only the reconstructed extent bytes escape.
+fn extentBytes(gpa: Allocator, nodes: []const fragments.Node, start: usize, end: usize) Allocator.Error![]u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(gpa);
+    for (nodes[start .. end + 1]) |node| {
+        if (node.text) |text| try out.appendSlice(gpa, text) else try out.appendSlice(gpa, node.code);
+    }
+    return out.toOwnedSlice(gpa);
+}
+
+fn sourceByPath(sources: []const port.JsSource, path: []const u8) ?port.JsSource {
+    for (sources) |source| if (std.mem.eql(u8, source.path, path)) return source;
+    return null;
+}
+
+fn npmHas(deps: []const integrations.NpmDep, name: []const u8) bool {
+    for (deps) |dep| if (std.mem.eql(u8, dep.name, name)) return true;
+    return false;
+}
+
+fn stringLessThan(_: void, a: []const u8, b: []const u8) bool {
+    return std.mem.order(u8, a, b) == .lt;
+}
+
+/// Contract 2 (owned-result), inherited from the caller's output list:
+/// formatting scratch is freed before return and only appended bytes remain.
+fn appendFmt(gpa: Allocator, out: *std.ArrayListUnmanaged(u8), comptime fmt: []const u8, args: anytype) Allocator.Error!void {
+    const text = try std.fmt.allocPrint(gpa, fmt, args);
+    defer gpa.free(text);
+    try out.appendSlice(gpa, text);
+}
+
+/// Contract 1 (self-freeing): all controller/action scans are released and
+/// only the complete finding message escapes.
+fn stimulusMessage(
+    gpa: Allocator,
+    in: DeriveInput,
+    nodes: []const fragments.Node,
+    index: usize,
+) Allocator.Error!struct { message: []u8, portable: bool } {
+    const node = nodes[index];
+    var message: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer message.deinit(gpa);
+    try appendFmt(gpa, &message, "stimulus `{s}` on <{s}>", .{ node.name orelse "", node.value orelse "element" });
+    if (node.missing or elementEnd(nodes, index) == null) {
+        try message.appendSlice(gpa, "; element is not closed at its own block depth");
+        return .{ .message = try message.toOwnedSlice(gpa), .portable = false };
+    }
+    if (nestedStimulus(nodes, index)) |outer| {
+        try appendFmt(gpa, &message, "; nested inside the stimulus element at L{d}C{d}", .{ outer.line, outer.col });
+        return .{ .message = try message.toOwnedSlice(gpa), .portable = false };
+    }
+    const end = elementEnd(nodes, index).?;
+    const extent = try extentBytes(gpa, nodes, index, end);
+    defer gpa.free(extent);
+
+    var identifiers = std.mem.tokenizeAny(u8, node.name orelse "", " \t\r\n");
+    var source_path: ?[]const u8 = null;
+    var action_labels: std.ArrayListUnmanaged([]u8) = .empty;
+    defer {
+        for (action_labels.items) |label| gpa.free(label);
+        action_labels.deinit(gpa);
+    }
+    var targets: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer targets.deinit(gpa);
+    while (identifiers.next()) |identifier| {
+        const controller = (try port.stimulusSource(gpa, identifier, in.js_sources)) orelse {
+            var stem_buf: [512]u8 = undefined;
+            const stem = port.controllerStem(&stem_buf, identifier);
+            try appendFmt(gpa, &message, "; source not found ({s}.{{js,ts,jsx,tsx}})", .{stem});
+            return .{ .message = try message.toOwnedSlice(gpa), .portable = false };
+        };
+        defer port.freeController(gpa, controller);
+        if (controller.unsupported) |why| {
+            try appendFmt(gpa, &message, "; port cannot follow: {s}", .{why});
+            return .{ .message = try message.toOwnedSlice(gpa), .portable = false };
+        }
+        if (source_path == null) source_path = controller.path;
+        for (controller.targets) |target| {
+            var duplicate = false;
+            for (targets.items) |existing| {
+                if (std.mem.eql(u8, existing, target)) duplicate = true;
+            }
+            if (!duplicate) try targets.append(gpa, target);
+        }
+        const actions = try port.actionDescriptors(gpa, extent, identifier);
+        defer gpa.free(actions.list);
+        if (actions.unsupported) |why| {
+            try appendFmt(gpa, &message, "; port cannot follow: {s}", .{why});
+            return .{ .message = try message.toOwnedSlice(gpa), .portable = false };
+        }
+        for (actions.list) |action| {
+            const label = try std.fmt.allocPrint(gpa, "{s}->{s}#{s}", .{ action.event, action.identifier, action.method });
+            errdefer gpa.free(label);
+            try action_labels.append(gpa, label);
+        }
+    }
+    std.mem.sort([]u8, action_labels.items, {}, struct {
+        fn lessThan(_: void, a: []u8, b: []u8) bool {
+            return std.mem.order(u8, a, b) == .lt;
+        }
+    }.lessThan);
+    std.mem.sort([]const u8, targets.items, {}, stringLessThan);
+    if (action_labels.items.len > 0) {
+        try message.appendSlice(gpa, "; actions: ");
+        for (action_labels.items, 0..) |label, i| {
+            if (i != 0) try message.appendSlice(gpa, ", ");
+            try message.appendSlice(gpa, label);
+        }
+    }
+    if (targets.items.len > 0) {
+        try message.appendSlice(gpa, "; targets: ");
+        for (targets.items, 0..) |target, i| {
+            if (i != 0) try message.appendSlice(gpa, ", ");
+            try message.appendSlice(gpa, target);
+        }
+    }
+    try appendFmt(gpa, &message, "; source {s}", .{source_path orelse ""});
+    return .{ .message = try message.toOwnedSlice(gpa), .portable = true };
+}
+
+/// Contract 1 (self-freeing): returns the resolved URL as the sole
+/// allocation. `route_params` contains only certain named routes.
+fn frameUrl(gpa: Allocator, in: DeriveInput, node: fragments.Node) Allocator.Error!?[]u8 {
+    if (attrValue(node, "src")) |src| {
+        if (std.mem.startsWith(u8, src, "/")) return try gpa.dupe(u8, src);
+    }
+    const stem = node.value orelse return null;
+    for (in.route_params) |route| {
+        if (!std.mem.eql(u8, route.name, stem)) continue;
+        var out: std.ArrayListUnmanaged(u8) = .empty;
+        errdefer out.deinit(gpa);
+        var arg: usize = 0;
+        var segments = std.mem.splitScalar(u8, route.path, '/');
+        var first = true;
+        while (segments.next()) |segment| {
+            if (!first) try out.append(gpa, '/');
+            first = false;
+            if (segment.len > 1 and (segment[0] == ':' or segment[0] == '*')) {
+                if (arg >= node.args.len) return null;
+                try out.appendSlice(gpa, node.args[arg]);
+                arg += 1;
+            } else try out.appendSlice(gpa, segment);
+        }
+        if (arg != node.args.len) return null;
+        return try out.toOwnedSlice(gpa);
+    }
+    return null;
+}
+
+fn frameIsApi(in: DeriveInput, node: fragments.Node, url: []const u8) bool {
+    if (std.mem.endsWith(u8, url, ".json")) return true;
+    for (in.routes, 0..) |route, i| {
+        const same_route = if (attrValue(node, "src") != null)
+            std.mem.eql(u8, route.path, url)
+        else if (node.value) |name|
+            route.name != null and std.mem.eql(u8, route.name.?, name)
+        else
+            std.mem.eql(u8, route.path, url);
+        if (!same_route) continue;
+        if (i < in.classifications.len and in.classifications[i].class == .backend) return true;
+    }
+    return false;
+}
+
+fn componentSource(in: DeriveInput, name: []const u8) ?port.JsSource {
+    for ([_][]const u8{ ".jsx", ".tsx", ".js", ".ts" }) |ext| {
+        for (in.js_sources) |source| {
+            if (!std.mem.startsWith(u8, source.path, "app/javascript/components/")) continue;
+            const base = source.path["app/javascript/components/".len..];
+            if (base.len == name.len + ext.len and std.mem.startsWith(u8, base, name) and std.mem.eql(u8, base[name.len..], ext)) return source;
+        }
+    }
+    return null;
+}
+
+/// Contract 1 (self-freeing): all normalized-path candidates are scratch;
+/// the returned source is borrowed from `in.js_sources`.
+fn relativeImportSource(gpa: Allocator, in: DeriveInput, importer: []const u8, spec: []const u8) Allocator.Error!?port.JsSource {
+    if (!std.mem.startsWith(u8, spec, "./") and !std.mem.startsWith(u8, spec, "../")) return null;
+    const dir = std.fs.path.dirname(importer) orelse return null;
+    var parts: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer parts.deinit(gpa);
+    var base_it = std.mem.splitScalar(u8, dir, '/');
+    while (base_it.next()) |part| if (part.len > 0) try parts.append(gpa, part);
+    var spec_it = std.mem.splitScalar(u8, spec, '/');
+    while (spec_it.next()) |part| {
+        if (part.len == 0 or std.mem.eql(u8, part, ".")) continue;
+        if (std.mem.eql(u8, part, "..")) {
+            if (parts.items.len <= 2) return null;
+            _ = parts.pop();
+        } else try parts.append(gpa, part);
+    }
+    if (parts.items.len < 2 or !std.mem.eql(u8, parts.items[0], "app") or !std.mem.eql(u8, parts.items[1], "javascript")) return null;
+    const base = try std.mem.join(gpa, "/", parts.items);
+    defer gpa.free(base);
+    for ([_][]const u8{ "", ".jsx", ".tsx", ".js", ".ts", "/index.jsx", "/index.tsx", "/index.js", "/index.ts" }) |suffix| {
+        if (suffix.len == 0) {
+            if (!std.mem.endsWith(u8, base, ".jsx") and !std.mem.endsWith(u8, base, ".tsx") and !std.mem.endsWith(u8, base, ".js") and !std.mem.endsWith(u8, base, ".ts")) continue;
+        }
+        const candidate = try std.fmt.allocPrint(gpa, "{s}{s}", .{ base, suffix });
+        defer gpa.free(candidate);
+        if (sourceByPath(in.js_sources, candidate)) |source| return source;
+    }
+    return null;
+}
+
+/// Contract 1 (self-freeing): returns an owned refusal message, or null when
+/// the root and every source in its copied closure are bundleable.
+fn componentProblem(gpa: Allocator, in: DeriveInput, root: port.JsSource) Allocator.Error!?[]u8 {
+    var queue: std.ArrayListUnmanaged(port.JsSource) = .empty;
+    defer queue.deinit(gpa);
+    try queue.append(gpa, root);
+    var i: usize = 0;
+    while (i < queue.items.len) : (i += 1) {
+        const source = queue.items[i];
+        const imports = try port.reactImports(gpa, source.bytes);
+        defer gpa.free(imports.list);
+        if (imports.unsupported) |why| return try std.fmt.allocPrint(gpa, "port cannot follow {s}: {s}", .{ std.fs.path.basename(source.path), why });
+        for (imports.list) |imp| {
+            if (!imp.relative) {
+                if (port.isBridgeResolved(imp.spec) or npmHas(in.npm_dependencies, imp.spec)) continue;
+                return try std.fmt.allocPrint(gpa, "import \"{s}\" from {s} has no version in package.json", .{ imp.spec, std.fs.path.basename(source.path) });
+            }
+            const child = (try relativeImportSource(gpa, in, source.path, imp.spec)) orelse return try std.fmt.allocPrint(gpa, "import \"{s}\" from {s} cannot be bundled", .{ imp.spec, std.fs.path.basename(source.path) });
+            var seen = false;
+            for (queue.items) |queued| {
+                if (std.mem.eql(u8, queued.path, child.path)) seen = true;
+            }
+            if (!seen) try queue.append(gpa, child);
+        }
+    }
+    return null;
+}
+
+fn blockParam(code: []const u8) ?[]const u8 {
+    const first = std.mem.indexOfScalar(u8, code, '|') orelse return null;
+    const last_rel = std.mem.indexOfScalar(u8, code[first + 1 ..], '|') orelse return null;
+    const value = std.mem.trim(u8, code[first + 1 .. first + 1 + last_rel], " \t\r\n");
+    if (value.len == 0 or std.mem.indexOfScalar(u8, value, ',') != null) return null;
+    return value;
+}
+
+fn collectionMatches(stem: []const u8, collection: []const u8) bool {
+    if (std.mem.eql(u8, stem, collection)) return true;
+    return collection.len == stem.len + 1 and std.mem.startsWith(u8, collection, stem) and collection[stem.len] == 's';
+}
+
+/// Contract 2 (owned-result), inherited from `derive`: the body port is
+/// released here and only bytes appended to the finding message survive.
+fn deriveIvar(
+    gpa: Allocator,
+    list: *std.ArrayListUnmanaged(Finding),
+    in: DeriveInput,
+    path: []const u8,
+    nodes: []const fragments.Node,
+    index: usize,
+) Allocator.Error!void {
+    const node = nodes[index];
+    const loc = try nodeLoc(gpa, node.line, node.col);
+    defer gpa.free(loc);
+    const name = node.name orelse "";
+    var message: std.ArrayListUnmanaged(u8) = .empty;
+    defer message.deinit(gpa);
+    try appendFmt(gpa, &message, "request-time state `{s}`", .{name});
+
+    var aliases_buf: [2]port.Alias = undefined;
+    var aliases_len: usize = 1;
+    aliases_buf[0] = .{ .ruby = name, .js = "rec" };
+    var region = nodes[index .. index + 1];
+    if (!node.output) {
+        const end = convert.matchingEnd(nodes, index);
+        if (end) |closing| {
+            region = nodes[index + 1 .. closing];
+            if (blockParam(node.code)) |param| {
+                aliases_buf[1] = .{ .ruby = param, .js = "rec" };
+                aliases_len = 2;
+            }
+        } else {
+            try appendFinding(gpa, list, code_request_time_state, .warn, path, node.line, loc, message.items, &choices_spa_retain_blocked);
+            return;
+        }
+    }
+    const body = try port.recordBody(gpa, .{
+        .routes = in.routes,
+        .assets = in.assets,
+        .fragments = in.templates,
+        .findings = &.{},
+        .layout_stem = null,
+    }, path, region, aliases_buf[0..aliases_len]);
+    defer port.freeBody(gpa, body);
+    const portable = body.unportable == null;
+
+    if (in.backend) |doc| {
+        const stem = std.mem.trim(u8, name, "@");
+        var collections: std.ArrayListUnmanaged([]const u8) = .empty;
+        defer collections.deinit(gpa);
+        for (doc.operations) |operation| {
+            const collection = operation.collection orelse continue;
+            var duplicate = false;
+            for (collections.items) |existing| {
+                if (std.mem.eql(u8, existing, collection)) duplicate = true;
+            }
+            if (!duplicate) try collections.append(gpa, collection);
+        }
+        std.mem.sort([]const u8, collections.items, {}, stringLessThan);
+        var matched: ?[]const u8 = null;
+        for (collections.items) |collection| {
+            if (collectionMatches(stem, collection)) {
+                matched = collection;
+                break;
+            }
+        }
+        if (matched) |collection| {
+            try appendFmt(gpa, &message, "; collection {s} (in --backend)", .{collection});
+        } else if (collections.items.len > 0) {
+            try message.appendSlice(gpa, "; island/backend need artifact = a collection in --backend (");
+            for (collections.items, 0..) |collection, i| {
+                if (i != 0) try message.appendSlice(gpa, ", ");
+                try message.appendSlice(gpa, collection);
+            }
+            try message.append(gpa, ')');
+        }
+    }
+    try appendFinding(gpa, list, code_request_time_state, .warn, path, node.line, loc, message.items, if (portable) &choices_full else &choices_spa_retain_blocked);
+}
+
 /// Handles the node-triggered rows of the derivation table for one
 /// template. Split out of `derive` because it is the one source with
 /// several codes keyed off `Kind`, so this is where the table's node rows
@@ -1675,6 +2072,8 @@ fn deriveNode(
     in: DeriveInput,
     path: []const u8,
     node: fragments.Node,
+    nodes: []const fragments.Node,
+    node_index: usize,
     /// Ruling S12: this node sits inside a `form` block that already carries
     /// its own `RAILS_BACKEND_ENDPOINT`. Computed by `derive`'s walk, because
     /// only a walk over the whole stream can know it.
@@ -1711,13 +2110,28 @@ fn deriveNode(
             defer gpa.free(message);
             try appendFinding(gpa, list, "RAILS_HELPER_UNKNOWN", .warn, path, node.line, loc, message, &choices_island_retain_blocked);
         },
-        .request_state, .ivar => {
+        .request_state => {
             const loc = try nodeLoc(gpa, node.line, node.col);
             defer gpa.free(loc);
             const name = node.name orelse "";
             const message = try std.fmt.allocPrint(gpa, "request-time state `{s}`", .{name});
             defer gpa.free(message);
             try appendFinding(gpa, list, code_request_time_state, .warn, path, node.line, loc, message, &choices_full);
+        },
+        .ivar => try deriveIvar(gpa, list, in, path, nodes, node_index),
+        .stimulus => {
+            const loc = try nodeLoc(gpa, node.line, node.col);
+            defer gpa.free(loc);
+            const result = try stimulusMessage(gpa, in, nodes, node_index);
+            defer gpa.free(result.message);
+            try appendFinding(gpa, list, code_stimulus_controller, .warn, path, node.line, loc, result.message, if (result.portable) &choices_stimulus else &choices_drop_retain_blocked);
+        },
+        .vue_root => {
+            const loc = try nodeLoc(gpa, node.line, node.col);
+            defer gpa.free(loc);
+            const message = try std.fmt.allocPrint(gpa, "Vue root `{s}`: the runtime bridge is React-only", .{node.name orelse ""});
+            defer gpa.free(message);
+            try appendFinding(gpa, list, code_component_vue_unsupported, .warn, path, node.line, loc, message, &choices_retain_blocked);
         },
         .i18n => {
             if (!node.missing) return;
@@ -1944,22 +2358,74 @@ fn deriveNode(
             // Stage 2 run still applies.
             try appendFinding(gpa, list, code_request_time_state, .warn, path, node.line, loc, message, &choices_island_retain_blocked);
         },
-        .turbo_frame, .turbo_stream, .component_root => {
+        .turbo_frame => {
             const loc = try nodeLoc(gpa, node.line, node.col);
             defer gpa.free(loc);
             const name = node.name orelse "";
-            const code = switch (node.kind) {
-                .turbo_frame => code_turbo_frame,
-                .turbo_stream => code_turbo_stream,
-                else => code_component_root,
-            };
-            const message = switch (node.kind) {
-                .turbo_frame => try std.fmt.allocPrint(gpa, "turbo-frame `{s}`", .{name}),
-                .turbo_stream => try std.fmt.allocPrint(gpa, "turbo-stream `{s}`", .{name}),
-                else => try std.fmt.allocPrint(gpa, "React/Vue root `{s}`", .{name}),
-            };
+            const url = try frameUrl(gpa, in, node);
+            defer if (url) |u| gpa.free(u);
+            const has_src = node.value != null or attrValue(node, "src") != null;
+            const message = if (url) |u|
+                if (frameIsApi(in, node, u))
+                    try std.fmt.allocPrint(gpa, "turbo-frame `{s}` src={s} is API traffic", .{ name, u })
+                else
+                    try std.fmt.allocPrint(gpa, "turbo-frame `{s}` src={s}", .{ name, u })
+            else if (!has_src and !node.missing)
+                try std.fmt.allocPrint(gpa, "turbo-frame `{s}` (no src)", .{name})
+            else
+                try std.fmt.allocPrint(gpa, "turbo-frame `{s}` src is request-time state", .{name});
             defer gpa.free(message);
-            try appendFinding(gpa, list, code, .warn, path, node.line, loc, message, &choices_retain_blocked);
+            const choices: []const []const u8 = if (url != null and !frameIsApi(in, node, url.?))
+                &choices_island_retain_blocked
+            else if (!has_src and !node.missing)
+                &choices_inline_retain_blocked
+            else
+                &choices_retain_blocked;
+            try appendFinding(gpa, list, code_turbo_frame, .warn, path, node.line, loc, message, choices);
+        },
+        .turbo_stream => {
+            const loc = try nodeLoc(gpa, node.line, node.col);
+            defer gpa.free(loc);
+            const message = try std.fmt.allocPrint(gpa, "turbo-stream `{s}`: a realtime subscription has no converter (see #{d})", .{ node.name orelse "", turbo_stream_issue });
+            defer gpa.free(message);
+            try appendFinding(gpa, list, code_turbo_stream, .warn, path, node.line, loc, message, &choices_retain_blocked);
+        },
+        .component_root => {
+            const loc = try nodeLoc(gpa, node.line, node.col);
+            defer gpa.free(loc);
+            const name = node.name orelse "";
+            if (node.dynamic) {
+                const message = try std.fmt.allocPrint(gpa, "React root `{s}` with request-time props", .{name});
+                defer gpa.free(message);
+                try appendFinding(gpa, list, code_component_props_dynamic, .warn, path, node.line, loc, message, &choices_retain_blocked);
+                return;
+            }
+            var message: std.ArrayListUnmanaged(u8) = .empty;
+            defer message.deinit(gpa);
+            try appendFmt(gpa, &message, "React root `{s}` props {{", .{name});
+            var prop_names: std.ArrayListUnmanaged([]const u8) = .empty;
+            defer prop_names.deinit(gpa);
+            for (node.attrs) |attr| try prop_names.append(gpa, attr.key);
+            std.mem.sort([]const u8, prop_names.items, {}, stringLessThan);
+            for (prop_names.items, 0..) |prop, i| {
+                if (i != 0) try message.appendSlice(gpa, ", ");
+                try message.appendSlice(gpa, prop);
+            }
+            try message.append(gpa, '}');
+            const source = componentSource(in, name);
+            const portable = if (source) |src| blk: {
+                if (try componentProblem(gpa, in, src)) |problem| {
+                    defer gpa.free(problem);
+                    try appendFmt(gpa, &message, "; {s}", .{problem});
+                    break :blk false;
+                }
+                try appendFmt(gpa, &message, "; source {s}", .{src.path});
+                break :blk true;
+            } else blk: {
+                try message.appendSlice(gpa, "; source not found under app/javascript/components/");
+                break :blk false;
+            };
+            try appendFinding(gpa, list, code_component_root, .warn, path, node.line, loc, message.items, if (portable) &choices_island_retain_blocked else &choices_retain_blocked);
         },
         else => {},
     }
@@ -2014,11 +2480,11 @@ pub fn derive(gpa: Allocator, in: DeriveInput) Allocator.Error![]Finding {
         // resolved once per file rather than once per node.
         const resource = templateResource(in, tpl.path);
         const journey_view = journey.isJourneyView(tpl.path);
-        for (tpl.nodes) |node| {
+        for (tpl.nodes, 0..) |node, node_index| {
             // Computed BEFORE this node's own frame is pushed, so an
             // outermost `form` sees `false` and asks its question, while
             // everything it contains sees `true`.
-            try deriveNode(gpa, &list, in, tpl.path, node, form_depth > 0, resource, journey_view);
+            try deriveNode(gpa, &list, in, tpl.path, node, tpl.nodes, node_index, form_depth > 0, resource, journey_view);
             if (node.text != null) continue;
             if (node.kind == .block_end) {
                 // A stray `block_end` with no frame is dropped rather than
@@ -2032,6 +2498,26 @@ pub fn derive(gpa: Allocator, in: DeriveInput) Allocator.Error![]Finding {
                 try frames.append(gpa, is_form);
                 if (is_form) form_depth += 1;
             }
+        }
+        for (in.stimulus_markers) |markers| {
+            if (!std.mem.eql(u8, markers.path, tpl.path)) continue;
+            for (markers.names) |marker_name| {
+                var covered = false;
+                for (tpl.nodes) |node| {
+                    if (node.kind != .stimulus) continue;
+                    var identifiers = std.mem.tokenizeAny(u8, node.name orelse "", " \t\r\n");
+                    while (identifiers.next()) |identifier| {
+                        if (std.mem.eql(u8, identifier, marker_name)) covered = true;
+                    }
+                }
+                if (covered) continue;
+                const loc = try std.fmt.allocPrint(gpa, "marker-{s}", .{marker_name});
+                defer gpa.free(loc);
+                const message = try std.fmt.allocPrint(gpa, "stimulus `{s}`; the opening element is split by ERB and has no portable extent", .{marker_name});
+                defer gpa.free(message);
+                try appendFinding(gpa, &list, code_stimulus_controller, .warn, tpl.path, null, loc, message, &choices_retain_blocked);
+            }
+            break;
         }
         if (tpl.error_message) |em| {
             const line = tpl.error_line orelse 0;
@@ -2053,6 +2539,28 @@ pub fn derive(gpa: Allocator, in: DeriveInput) Allocator.Error![]Finding {
             defer gpa.free(message);
             try appendFinding(gpa, &list, "RAILS_TEMPLATE_UNSCANNED", .warn, tpl.path, null, unscanned_loc, message, &choices_retain_blocked);
         }
+    }
+
+    if (in.js_entry) |entry| {
+        var message: std.ArrayListUnmanaged(u8) = .empty;
+        defer message.deinit(gpa);
+        try appendFmt(gpa, &message, "JS entry {s} was not inspected; imports: ", .{entry});
+        var specs: std.ArrayListUnmanaged([]const u8) = .empty;
+        defer specs.deinit(gpa);
+        if (sourceByPath(in.js_sources, entry)) |source| {
+            const imports = try port.reactImports(gpa, source.bytes);
+            defer gpa.free(imports.list);
+            for (imports.list) |imp| try specs.append(gpa, imp.spec);
+        }
+        std.mem.sort([]const u8, specs.items, {}, stringLessThan);
+        if (specs.items.len == 0) {
+            try message.appendSlice(gpa, "none");
+        } else for (specs.items, 0..) |spec, i| {
+            if (i != 0) try message.appendSlice(gpa, ", ");
+            try message.appendSlice(gpa, spec);
+        }
+        try message.appendSlice(gpa, "; the islands replace it — drop after review, or block");
+        try appendFinding(gpa, &list, code_js_entry, .warn, entry, null, "entry", message.items, &choices_drop_blocked);
     }
 
     for (in.layouts) |layout| {
@@ -4333,26 +4841,175 @@ test "derive: the Stage 3 rows leak nothing under a FailingAllocator" {
     }
 }
 
-test "derive: turbo and component roots each get their own code" {
+test "derive: Stage 4 interactivity rows expose only buildable choices" {
     const gpa = std.testing.allocator;
+    const attrs = [_]fragments.Attr{
+        .{ .key = "series", .value = "a", .kind = .string },
+        .{ .key = "points", .value = "3", .kind = .number },
+    };
     const nodes = [_]fragments.Node{
-        nodeCode(.turbo_frame, 1, 1, "posts"),
-        nodeCode(.turbo_stream, 2, 1, "messages"),
-        nodeCode(.component_root, 3, 1, "PostList"),
+        .{ .text = null, .kind = .stimulus, .line = 1, .col = 1, .output = false, .code = "<div data-controller=\"reveal\">", .name = "reveal", .value = "div", .args = &.{}, .attrs = &.{}, .missing = false, .dynamic = false },
+        nodeText("<button data-action=\"click->reveal#toggle\" data-reveal-target=\"details\">Show</button>", 1),
+        .{ .text = null, .kind = .block_end, .line = 1, .col = 90, .output = false, .code = "</div>", .name = null, .value = null, .args = &.{}, .attrs = &.{}, .missing = false, .dynamic = false },
+        .{ .text = null, .kind = .turbo_frame, .line = 2, .col = 1, .output = true, .code = "turbo_frame_tag", .name = "latest", .value = "posts", .args = &.{}, .attrs = &.{}, .missing = false, .dynamic = false },
+        .{ .text = null, .kind = .turbo_frame, .line = 3, .col = 1, .output = true, .code = "turbo_frame_tag", .name = "static", .value = null, .args = &.{}, .attrs = &.{}, .missing = false, .dynamic = false },
+        nodeCode(.turbo_stream, 4, 1, "messages"),
+        .{ .text = null, .kind = .component_root, .line = 5, .col = 1, .output = true, .code = "react_component", .name = "Chart", .value = null, .args = &.{}, .attrs = &attrs, .missing = false, .dynamic = false },
+        .{ .text = null, .kind = .vue_root, .line = 6, .col = 1, .output = false, .code = "<div data-vue-component=\"Widget\">", .name = "Widget", .value = "div", .args = &.{}, .attrs = &.{}, .missing = false, .dynamic = false },
     };
     const tpls = [_]fragments.Template{
         .{ .path = "app/views/posts/index.html.erb", .nodes = @constCast(&nodes), .error_message = null, .error_line = null, .unreadable = null },
     };
-    const out = try derive(gpa, .{ .templates = &tpls, .layouts = &.{}, .controller_files = &.{}, .route_names = &.{}, .locale = null });
+    const sources = [_]port.JsSource{
+        .{ .path = "app/javascript/controllers/reveal_controller.js", .bytes = "export default class extends Controller { static targets = [\"details\"]; toggle() {} }" },
+        .{ .path = "app/javascript/components/Chart.jsx", .bytes = "import React from \"react\"; export default function Chart() {}" },
+    };
+    const route_params = [_]RouteParam{.{ .name = "posts", .path = "/posts" }};
+    const out = try derive(gpa, .{
+        .templates = &tpls,
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .js_sources = &sources,
+        .route_params = &route_params,
+        .js_entry = "app/javascript/application.js",
+    });
     defer free(gpa, out);
-    try std.testing.expectEqual(@as(usize, 3), out.len);
-    // Sorted by code: COMPONENT_ROOT, TURBO_FRAME, TURBO_STREAM.
-    try std.testing.expectEqualStrings("RAILS_COMPONENT_ROOT", out[0].code);
-    try std.testing.expect(std.mem.indexOf(u8, out[0].message, "React/Vue root `PostList`") != null);
-    try std.testing.expectEqualStrings("RAILS_TURBO_FRAME", out[1].code);
-    try std.testing.expectEqualStrings("RAILS_TURBO_STREAM", out[2].code);
-    for (out) |f| {
-        try std.testing.expectEqual(@as(usize, 2), f.choices.len);
-        try std.testing.expectEqual(Severity.warn, f.severity);
+    try std.testing.expectEqual(@as(usize, 7), out.len);
+    try std.testing.expectEqualStrings(code_component_root, out[0].code);
+    try std.testing.expectEqualStrings("React root `Chart` props {points, series}; source app/javascript/components/Chart.jsx", out[0].message);
+    for ([_][]const u8{ "island", "retain", "blocked" }, out[0].choices) |want, got| try std.testing.expectEqualStrings(want, got);
+    try std.testing.expectEqualStrings(code_component_vue_unsupported, out[1].code);
+    try std.testing.expectEqualStrings("RAILS_JS_ENTRY", out[2].code);
+    try std.testing.expectEqual(@as(?u64, null), out[2].line);
+    try std.testing.expectEqualStrings(code_stimulus_controller, out[3].code);
+    try std.testing.expect(std.mem.indexOf(u8, out[3].message, "actions: click->reveal#toggle") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out[3].message, "targets: details") != null);
+    for ([_][]const u8{ "island", "drop", "retain", "blocked" }, out[3].choices) |want, got| try std.testing.expectEqualStrings(want, got);
+    try std.testing.expectEqualStrings(code_turbo_frame, out[4].code);
+    try std.testing.expectEqualStrings("turbo-frame `latest` src=/posts", out[4].message);
+    for ([_][]const u8{ "island", "retain", "blocked" }, out[4].choices) |want, got| try std.testing.expectEqualStrings(want, got);
+    try std.testing.expectEqualStrings("turbo-frame `static` (no src)", out[5].message);
+    for ([_][]const u8{ "inline", "retain", "blocked" }, out[5].choices) |want, got| try std.testing.expectEqualStrings(want, got);
+    try std.testing.expectEqualStrings(code_turbo_stream, out[6].code);
+    try std.testing.expect(std.mem.indexOf(u8, out[6].message, "a realtime subscription has no converter") != null);
+}
+
+test "derive: ivar islands require a portable record body and name backend collections" {
+    const gpa = std.testing.allocator;
+    const nodes = [_]fragments.Node{
+        .{ .text = null, .kind = .ivar, .line = 1, .col = 1, .output = true, .code = "@post.title", .name = "@post", .value = null, .args = &.{}, .attrs = &.{}, .missing = false, .dynamic = false },
+        .{ .text = null, .kind = .ivar, .line = 2, .col = 1, .output = true, .code = "@post.author.name", .name = "@post", .value = null, .args = &.{}, .attrs = &.{}, .missing = false, .dynamic = false },
+    };
+    const tpls = [_]fragments.Template{.{ .path = "app/views/posts/show.html.erb", .nodes = @constCast(&nodes), .error_message = null, .error_line = null, .unreadable = null }};
+    const out = try derive(gpa, .{
+        .templates = &tpls,
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .backend = testBackendDoc(),
+    });
+    defer free(gpa, out);
+    try std.testing.expectEqual(@as(usize, 2), out.len);
+    try std.testing.expectEqual(@as(usize, 5), out[0].choices.len);
+    try std.testing.expectEqualStrings("island", out[0].choices[0]);
+    try std.testing.expect(std.mem.endsWith(u8, out[0].message, "; collection posts (in --backend)"));
+    try std.testing.expectEqual(@as(usize, 3), out[1].choices.len);
+    try std.testing.expectEqualStrings("spa", out[1].choices[0]);
+}
+
+test "derive: ERB-split Stimulus markers are diffed by name, never count" {
+    const gpa = std.testing.allocator;
+    const nodes = [_]fragments.Node{
+        .{ .text = null, .kind = .stimulus, .line = 2, .col = 1, .output = false, .code = "<div data-controller=\"reveal modal\">", .name = "reveal modal", .value = "div", .args = &.{}, .attrs = &.{}, .missing = true, .dynamic = false },
+    };
+    const names = [_][]const u8{ "reveal", "modal", "split" };
+    const tpls = [_]fragments.Template{.{ .path = "app/views/pages/x.html.erb", .nodes = @constCast(&nodes), .error_message = null, .error_line = null, .unreadable = null }};
+    const markers = [_]TemplateStimulusMarkers{.{ .path = tpls[0].path, .names = &names }};
+    const out = try derive(gpa, .{ .templates = &tpls, .layouts = &.{}, .controller_files = &.{}, .route_names = &.{}, .locale = null, .stimulus_markers = &markers });
+    defer free(gpa, out);
+    // One finding for the element (covering reveal+modal), one for only the
+    // marker name no element node covered. A count comparison would invent
+    // two leftovers here because the marker set and node list are not the
+    // same cardinality domain.
+    try std.testing.expectEqual(@as(usize, 2), out.len);
+    try std.testing.expect(std.mem.indexOf(u8, out[0].message, "stimulus `split`") != null);
+    try std.testing.expectEqual(@as(usize, 2), out[0].choices.len);
+    try std.testing.expectEqualStrings("retain", out[0].choices[0]);
+}
+
+test "derive: interactivity refusal paths never offer an emitter they cannot run" {
+    const gpa = std.testing.allocator;
+    const api_attrs = [_]fragments.Attr{.{ .key = "src", .value = "/literal", .kind = .string }};
+    const nodes = [_]fragments.Node{
+        .{ .text = null, .kind = .stimulus, .line = 1, .col = 1, .output = false, .code = "<div data-controller=\"outer\">", .name = "outer", .value = "div", .args = &.{}, .attrs = &.{}, .missing = false, .dynamic = false },
+        .{ .text = null, .kind = .stimulus, .line = 2, .col = 1, .output = false, .code = "<span data-controller=\"inner\">", .name = "inner", .value = "span", .args = &.{}, .attrs = &.{}, .missing = false, .dynamic = false },
+        .{ .text = null, .kind = .block_end, .line = 2, .col = 30, .output = false, .code = "</span>", .name = null, .value = null, .args = &.{}, .attrs = &.{}, .missing = false, .dynamic = false },
+        .{ .text = null, .kind = .block_end, .line = 3, .col = 1, .output = false, .code = "</div>", .name = null, .value = null, .args = &.{}, .attrs = &.{}, .missing = false, .dynamic = false },
+        .{ .text = null, .kind = .stimulus, .line = 4, .col = 1, .output = false, .code = "<div data-controller=\"missing\">", .name = "missing", .value = "div", .args = &.{}, .attrs = &.{}, .missing = true, .dynamic = false },
+        .{ .text = null, .kind = .component_root, .line = 5, .col = 1, .output = true, .code = "react_component", .name = "Chart", .value = null, .args = &.{}, .attrs = &.{}, .missing = false, .dynamic = false },
+        .{ .text = null, .kind = .component_root, .line = 6, .col = 1, .output = true, .code = "react_component", .name = "Dynamic", .value = null, .args = &.{}, .attrs = &.{}, .missing = false, .dynamic = true },
+        .{ .text = null, .kind = .turbo_frame, .line = 7, .col = 1, .output = true, .code = "turbo_frame_tag", .name = "api", .value = "api", .args = &.{"7"}, .attrs = &.{}, .missing = false, .dynamic = false },
+        .{ .text = null, .kind = .turbo_frame, .line = 8, .col = 1, .output = false, .code = "<turbo-frame>", .name = "literal", .value = "turbo-frame", .args = &.{}, .attrs = &api_attrs, .missing = false, .dynamic = false },
+    };
+    const tpls = [_]fragments.Template{.{ .path = "app/views/pages/x.html.erb", .nodes = @constCast(&nodes), .error_message = null, .error_line = null, .unreadable = null }};
+    const sources = [_]port.JsSource{
+        .{ .path = "app/javascript/controllers/outer_controller.js", .bytes = "export default class extends Controller {}" },
+        .{ .path = "app/javascript/controllers/inner_controller.js", .bytes = "export default class extends Controller {}" },
+        .{ .path = "app/javascript/components/Chart.jsx", .bytes = "import d3 from \"d3\"; export default function Chart() {}" },
+    };
+    var api_route = ctrlRoute("GET", "/api/:id", "api", "index", 1);
+    api_route.name = "api";
+    const rs = [_]routes.Route{ api_route, ctrlRoute("GET", "/literal", "api", "literal", 20) };
+    const vs = [_]classify.Verdict{ testVerdict(.backend), testVerdict(.backend) };
+    const route_params = [_]RouteParam{.{ .name = "api", .path = "/api/:id" }};
+    const out = try derive(gpa, .{ .templates = &tpls, .layouts = &.{}, .controller_files = &.{}, .route_names = &.{}, .locale = null, .js_sources = &sources, .routes = &rs, .classifications = &vs, .route_params = &route_params });
+    defer free(gpa, out);
+    for (out) |finding| {
+        if (finding.line == 2) {
+            try std.testing.expectEqualStrings("drop", finding.choices[0]);
+            try std.testing.expect(std.mem.indexOf(u8, finding.message, "nested inside") != null);
+        } else if (finding.line == 4) {
+            try std.testing.expectEqualStrings("drop", finding.choices[0]);
+            try std.testing.expect(std.mem.indexOf(u8, finding.message, "not closed") != null);
+        } else if (finding.line == 5) {
+            try std.testing.expectEqual(@as(usize, 2), finding.choices.len);
+            try std.testing.expect(std.mem.indexOf(u8, finding.message, "d3") != null);
+        } else if (finding.line == 6) {
+            try std.testing.expectEqualStrings(code_component_props_dynamic, finding.code);
+        } else if (finding.line == 7) {
+            try std.testing.expectEqual(@as(usize, 2), finding.choices.len);
+            try std.testing.expectEqualStrings("turbo-frame `api` src=/api/7 is API traffic", finding.message);
+        } else if (finding.line == 8) {
+            try std.testing.expectEqual(@as(usize, 2), finding.choices.len);
+            try std.testing.expectEqualStrings("turbo-frame `literal` src=/literal is API traffic", finding.message);
+        }
+    }
+}
+
+test "derive: Stage 4 interactivity FailingAllocator sweep" {
+    const nodes = [_]fragments.Node{
+        .{ .text = null, .kind = .stimulus, .line = 1, .col = 1, .output = false, .code = "<div data-controller=\"reveal\">", .name = "reveal", .value = "div", .args = &.{}, .attrs = &.{}, .missing = false, .dynamic = false },
+        nodeText("<button data-action=\"reveal#toggle\">x</button>", 1),
+        .{ .text = null, .kind = .block_end, .line = 1, .col = 60, .output = false, .code = "</div>", .name = null, .value = null, .args = &.{}, .attrs = &.{}, .missing = false, .dynamic = false },
+        .{ .text = null, .kind = .component_root, .line = 2, .col = 1, .output = true, .code = "react_component", .name = "Chart", .value = null, .args = &.{}, .attrs = &.{}, .missing = false, .dynamic = false },
+    };
+    const tpls = [_]fragments.Template{.{ .path = "app/views/x.html.erb", .nodes = @constCast(&nodes), .error_message = null, .error_line = null, .unreadable = null }};
+    const sources = [_]port.JsSource{
+        .{ .path = "app/javascript/controllers/reveal_controller.js", .bytes = "export default class extends Controller { toggle() {} }" },
+        .{ .path = "app/javascript/components/Chart.jsx", .bytes = "import React from \"react\"; export default function Chart() {}" },
+        .{ .path = "app/javascript/application.js", .bytes = "import \"./controllers\";" },
+    };
+    var fail_index: usize = 0;
+    while (true) : (fail_index += 1) {
+        if (fail_index > 2000) return error.SweepNeverReachedSuccess;
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
+        if (derive(failing.allocator(), .{ .templates = &tpls, .layouts = &.{}, .controller_files = &.{}, .route_names = &.{}, .locale = null, .js_sources = &sources, .js_entry = "app/javascript/application.js" })) |out| {
+            defer free(std.testing.allocator, out);
+            try std.testing.expectEqual(@as(usize, 3), out.len);
+            break;
+        } else |err| try std.testing.expectEqual(error.OutOfMemory, err);
     }
 }

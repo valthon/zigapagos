@@ -1,6 +1,6 @@
 ---
 name: zigapagos-rails-migration
-description: Migrate a Rails app's presentation layer to zigapagos — discover and classify its routes, convert them into a real zigapagos project, and bind its forms, mutating links and auth journey to a ZigBase backend. Use when asked to inventory, scan, assess, or port a Rails project for zigapagos — covers route recovery via a Ruby/Prism sidecar, the six-way route classification, the JSON manifest contract and its per-fragment `findings[]`, the `--target` decide-and-re-run conversion loop that ends in a buildable site, and `--backend`, which turns an answered finding into a real `@zigbase/client` island. Turbo frames, Turbo streams and component roots (Stage 4) are still not produced: those `island` choices are recorded and leave the route open.
+description: Migrate a Rails app's presentation layer to zigapagos — discover and classify routes, convert them into a real project, bind forms and record-backed views to ZigBase, and port supported Stimulus, Turbo-frame and React interactivity by explicit decision. Use when asked to inventory, scan, assess, or port a Rails project for zigapagos.
 license: MIT
 metadata:
   source: https://github.com/valthon/zigapagos
@@ -195,10 +195,11 @@ whoever owns the backend, and come back with an `openapi.json`.
    What settles a route: `retain`, `blocked`, `spa` (on a dynamic route with a
    static first segment), an **operation id** or `custom:/<path>` on
    `RAILS_BACKEND_ENDPOINT`, `island` on `RAILS_AUTH_JOURNEY` or on an
-   `errors`/`current_user` region, and `public` on `RAILS_ROUTE_AUTH_GUARD`.
-   What does not: `island` on a Turbo/component finding (Stage 4), and the
-   literal word `backend`, which has no converter at all (issue #184) — those
-   are recorded and leave the route `open` with the reason named.
+   `errors`/`current_user` region, `island`/`backend` on a portable `ivar`,
+   `island` on a portable Stimulus controller, Turbo frame, or React root,
+   `inline` on a closed source-less frame, `drop` on Stimulus or the reviewed
+   `RAILS_JS_ENTRY`, and `public` on `RAILS_ROUTE_AUTH_GUARD`. Turbo Streams
+   and Vue roots offer only `retain`/`blocked`.
 
    Three answers need something extra:
 
@@ -218,6 +219,17 @@ whoever owns the backend, and come back with an `openapi.json`.
      rule on the operation protects the data". It settles the guard and
      nothing else, so a route carrying other open findings still needs each of
      them answered too.
+   - **portable `RAILS_REQUEST_TIME_STATE` ivar** — `island` and `backend`
+     use the same record-backed data-island converter. Optional `artifact`
+     names the backend collection and is checked against `--backend`. On a
+     dynamic route it is applied after the route's `spa` answer.
+   - **Stimulus / Turbo frame / React root** — choose `island` only after
+     reading the named source and portability message. `drop` removes
+     Stimulus wiring; `inline` preserves a source-less frame. A wrapping
+     island does not settle findings inside its slot.
+   - **`RAILS_JS_ENTRY`** — read the file and listed imports before choosing
+     `drop`; the generated islands and `@z/runtime` replace it, but discovery
+     deliberately does not execute it.
 
    **Answer every open finding on a route; all of them are applied.** Each
    answered finding is settled by its own choice, and the route's status is
@@ -277,6 +289,11 @@ whoever owns the backend, and come back with an `openapi.json`.
    `set dependencies.@z/runtime in package.json`. A target with no SPA and no
    island has no `package.json` and needs none of them.
 
+   When the target contains generated islands, run `bun test` in the target
+   after the successful re-run. Its happy-dom hydration tests exercise action
+   wiring, frame fetches, the React bridge, and record-backed rendering that a
+   server-side release alone cannot prove.
+
 9. **Build the migrated site.**
 
    ```sh
@@ -292,10 +309,9 @@ whoever owns the backend, and come back with an `openapi.json`.
    `bun install` fetches `@zigbase/client` from npm when any island was
    generated, so the build step needs network the first time.
 
-   A scaffolded SPA declares no `spa.head`, so `release` warns that its
-   routes will render unstyled (a SPA shell's `<head>` is fixed and does not
-   inherit the site's stylesheet links). The build still succeeds; add the
-   `head:` the warning spells out when you port the placeholder components.
+   A scaffolded SPA carries the deterministic stylesheet links recovered from
+   its Rails layout in `spa.head`. Review that list when the old app computed
+   head assets dynamically.
 
    Then audit it: `zigapagos doctor <new-site>/zig-out/site`. Expect **0
    errors**, and one `dangling-internal-link` warning per link into a route

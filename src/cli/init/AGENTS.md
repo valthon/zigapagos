@@ -14,6 +14,12 @@ coding agents; humans are welcome too.
 Run `zigapagos help` for the full command list, and `zigapagos <cmd> --help`
 for per-command flags.
 
+Generated migration islands are intentionally honest scaffolds. A quoted
+source body followed by `TODO` and `console.warn("zigapagos: ... is not
+ported")` means the surrounding targets, values, classes, props, or action
+binding is wired, but that behavior still needs a human port and a hydration
+test. Do not delete the warning or claim parity until the TODO is implemented.
+
 ## The build/fix loop
 
 Use machine-readable diagnostics; never parse the prose output.

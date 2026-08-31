@@ -112,14 +112,30 @@ have_finding 'RAILS_PARTIAL_DYNAMIC.app/views/posts/index%2Ehtml%2Eerb.L1C61'
 have_finding 'RAILS_TEMPLATE_CONTROL_FLOW.app/views/posts/_post%2Ehtml%2Eerb.L8C4'
 have_finding 'RAILS_TEMPLATE_PARSE_ERROR.app/views/pages/broken%2Ehtml%2Eerb.L2'
 have_finding 'RAILS_ROUTE_HELPER_UNKNOWN.app/views/pages/links%2Ehtml%2Eerb.L1C5'
-#
-# Three of ruling S12's codes are NOT pinned here and cannot be until the
-# fixture grows the constructs that raise them: RAILS_TURBO_FRAME,
-# RAILS_TURBO_STREAM and RAILS_COMPONENT_ROOT need a turbo_frame_tag, a
-# turbo_stream and a react_component call respectively, and this app has
-# none. They are covered by findings.zig's own unit tests. Adding them here
-# changes route classification across the fixture, so it is its own change.
-#
+have_finding 'RAILS_STIMULUS_CONTROLLER.app/views/pages/widgets%2Ehtml%2Eerb.L2C1'
+have_finding 'RAILS_TURBO_FRAME.app/views/pages/widgets%2Ehtml%2Eerb.L6C5'
+have_finding 'RAILS_TURBO_FRAME.app/views/pages/widgets%2Ehtml%2Eerb.L7C5'
+have_finding 'RAILS_COMPONENT_ROOT.app/views/pages/widgets%2Ehtml%2Eerb.L8C5'
+have_finding 'RAILS_TURBO_STREAM.app/views/pages/live%2Ehtml%2Eerb.L1C5'
+have_finding 'RAILS_COMPONENT_VUE_UNSUPPORTED.app/views/pages/live%2Ehtml%2Eerb.L1C33'
+have_finding 'RAILS_JS_ENTRY.app/javascript/application%2Ejs.entry'
+finding_field() { jq -r --arg id "$1" --arg field "$2" '.findings[] | select(.id == $id) | if $field == "choices" then (.choices | join(",")) elif $field == "line" then (.source.line | tostring) else .[$field] end' "$MANIFEST"; }
+[[ "$(finding_field 'RAILS_STIMULUS_CONTROLLER.app/views/pages/widgets%2Ehtml%2Eerb.L2C1' choices)" == 'island,drop,retain,blocked' ]] || fail "stimulus choices changed"
+[[ "$(finding_field 'RAILS_STIMULUS_CONTROLLER.app/views/pages/widgets%2Ehtml%2Eerb.L2C1' message)" == 'stimulus `reveal` on <div>; actions: click->reveal#toggle; targets: details; source app/javascript/controllers/reveal_controller.js' ]] || fail "stimulus message changed"
+[[ "$(finding_field 'RAILS_TURBO_FRAME.app/views/pages/widgets%2Ehtml%2Eerb.L6C5' choices)" == 'island,retain,blocked' ]] || fail "dynamic frame choices changed"
+[[ "$(finding_field 'RAILS_TURBO_FRAME.app/views/pages/widgets%2Ehtml%2Eerb.L6C5' message)" == 'turbo-frame `latest` src=/posts' ]] || fail "dynamic frame message changed"
+[[ "$(finding_field 'RAILS_TURBO_FRAME.app/views/pages/widgets%2Ehtml%2Eerb.L7C5' choices)" == 'inline,retain,blocked' ]] || fail "static frame choices changed"
+[[ "$(finding_field 'RAILS_TURBO_FRAME.app/views/pages/widgets%2Ehtml%2Eerb.L7C5' message)" == 'turbo-frame `static` (no src)' ]] || fail "static frame message changed"
+[[ "$(finding_field 'RAILS_COMPONENT_ROOT.app/views/pages/widgets%2Ehtml%2Eerb.L8C5' choices)" == 'island,retain,blocked' ]] || fail "React root choices changed"
+[[ "$(finding_field 'RAILS_COMPONENT_ROOT.app/views/pages/widgets%2Ehtml%2Eerb.L8C5' message)" == 'React root `Chart` props {points, series}; source app/javascript/components/Chart.jsx' ]] || fail "React root message changed"
+stream_msg="$(finding_field 'RAILS_TURBO_STREAM.app/views/pages/live%2Ehtml%2Eerb.L1C5' message)"
+[[ "$stream_msg" == 'turbo-stream `posts`: a realtime subscription has no converter (see #'*')' ]] || fail "Turbo stream message must name posts and its follow-up issue: $stream_msg"
+[[ "$(finding_field 'RAILS_COMPONENT_VUE_UNSUPPORTED.app/views/pages/live%2Ehtml%2Eerb.L1C33' choices)" == 'retain,blocked' ]] || fail "Vue choices changed"
+jq -e '.blockers[] | select(.code == "RAILS_COMPONENT_VUE_UNSUPPORTED" and .severity == "warn" and .integrity == false)' "$MANIFEST" >/dev/null || fail "Vue finding must also carry the non-integrity warning blocker"
+[[ "$(finding_field 'RAILS_JS_ENTRY.app/javascript/application%2Ejs.entry' choices)" == 'drop,blocked' ]] || fail "JS entry choices changed"
+[[ "$(finding_field 'RAILS_JS_ENTRY.app/javascript/application%2Ejs.entry' line)" == 'null' ]] || fail "JS entry must not claim a source line"
+index_state_msg="$(finding_field 'RAILS_REQUEST_TIME_STATE.app/views/posts/index%2Ehtml%2Eerb.L1C33' message)"
+[[ "$index_state_msg" == *'; collection posts (in --backend)' ]] || fail "portable index state must name the backend collection: $index_state_msg"
 # #167 Stage 2 ruling S12 gave each of this fixture's two forms its own
 # `RAILS_BACKEND_ENDPOINT`. #167 Stage 3 assumption A5 replaces BOTH with the
 # one journey finding below: they are the sign-in and sign-up halves of a
@@ -243,7 +259,7 @@ jq -e '.blockers[] | select(.code == "RAILS_TEMPLATE_ENGINE_UNSUPPORTED")' "$MAN
 # the WORDS only, and the operation ids are pinned per finding above.
 bad=$(jq -r '.findings[] | select((.id|type) != "string" or (.choices|length) == 0) | .id' "$MANIFEST")
 [[ -z "$bad" ]] || fail "malformed findings: $bad"
-badwords=$(jq -r '.findings[] | select((.choices - ["island","spa","backend","public","retain","blocked","listPosts","viewPosts","listUsers","viewUsers","deletePosts","deleteUsers"] | length) != 0) | .id' "$MANIFEST")
+badwords=$(jq -r '.findings[] | select((.choices - ["island","spa","backend","public","drop","inline","retain","blocked","listPosts","viewPosts","listUsers","viewUsers","deletePosts","deleteUsers"] | length) != 0) | .id' "$MANIFEST")
 [[ -z "$badwords" ]] || fail "findings offering a choice outside the vocabulary + this document's ids: $badwords"
 
 # Schema validation of both real instances. `rails_manifest_validate` takes
@@ -269,7 +285,7 @@ grep -qx 'endpoints: 0 of the 4 `backend` route(s) are bound to a ZigBase operat
 # a status that moves from `migrated` to `open` (or the reverse) names itself.
 [[ "$(jq -r '.complete' "$HANDOFF")" == "false" ]] || fail "run 1 must not be complete"
 route_count=$(jq '.routes | length' "$HANDOFF")
-[[ "$route_count" == "16" ]] || fail "expected 16 routes in the handoff, got $route_count -- a new route needs a pin below"
+[[ "$route_count" == "18" ]] || fail "expected 18 routes in the handoff, got $route_count -- a new route needs a pin below"
 status_of() { jq -r --arg r "$1" '.routes[] | select(.route_id == $r) | .status' "$HANDOFF"; }
 want_status() {
   local got; got="$(status_of "$1")"
@@ -291,6 +307,8 @@ want_status 'GET /posts/:id'         open
 want_status 'GET /posts/legacy'      open
 want_status 'GET /session/new'       open
 want_status 'GET /registration/new'  open
+want_status 'GET /widgets'           open
+want_status 'GET /live'              open
 # No page, no decision, no question: a pure `redirect_to` action is answered
 # by the host config.
 want_status 'GET /old'               redirect
@@ -321,15 +339,15 @@ grep -q "$WORK" "$HANDOFF" && fail "the handoff embeds the scratch path"
 # layout carries an empty finding region instead of an `<a href="/session">`
 # that would GET the route the control was supposed to DELETE.
 root_ids=$(jq -r '.routes[] | select(.route_id == "GET /") | .findings | join(" ")' "$HANDOFF")
-[[ "$root_ids" == "RAILS_BACKEND_ENDPOINT.app/views/shared/_nav%2Ehtml%2Eerb.L5C54 RAILS_REQUEST_TIME_STATE.app/views/shared/_nav%2Ehtml%2Eerb.L4C6 RAILS_REQUEST_TIME_STATE.app/views/shared/_nav%2Ehtml%2Eerb.L5C28 RAILS_REQUEST_TIME_STATE.app/views/shared/_nav%2Ehtml%2Eerb.L5C6" ]] \
-  || fail "GET / must be open on all four nav findings, got: $root_ids"
+[[ "$root_ids" == "RAILS_BACKEND_ENDPOINT.app/views/shared/_nav%2Ehtml%2Eerb.L5C54 RAILS_JS_ENTRY.app/javascript/application%2Ejs.entry RAILS_REQUEST_TIME_STATE.app/views/shared/_nav%2Ehtml%2Eerb.L4C6 RAILS_REQUEST_TIME_STATE.app/views/shared/_nav%2Ehtml%2Eerb.L5C28 RAILS_REQUEST_TIME_STATE.app/views/shared/_nav%2Ehtml%2Eerb.L5C6" ]] \
+  || fail "GET / must be open on all four nav findings plus the global JS entry, got: $root_ids"
 run1_nav="$WORK/out1/layouts/templates/marketing.shtml"
 grep -q 'href="/session">' "$run1_nav" && fail "an unanswered mutating link must not become a GET link to the DELETE route"
 grep -q 'method="delete"' "$run1_nav" && fail 'a method= attribute on an <a> does nothing in a static site'
 
 # --- run 1: the converted tree ---------------------------------------------
 listing="$(cd "$WORK/out1" && find . -type f | sort | tr '\n' ' ')"
-expected_listing="./.gitignore ./AGENTS.md ./CLAUDE.md ./MIGRATION.handoff.json ./MIGRATION.manifest.json ./MIGRATION.md ./assets/images/logo.png ./assets/robots.txt ./assets/stylesheets/application.css ./build.sh ./content/about/index.smd ./content/help/index.smd ./content/index.smd ./content/linked/index.smd ./content/links/index.smd ./content/posts/index.smd ./content/registration/new/index.smd ./content/session/new/index.smd ./layouts/pages/about.shtml ./layouts/pages/help.shtml ./layouts/pages/linked.shtml ./layouts/pages/links.shtml ./layouts/posts/index.shtml ./layouts/registrations/new.shtml ./layouts/sessions/new.shtml ./layouts/templates/application.shtml ./layouts/templates/marketing.shtml ./zigapagos.ziggy "
+expected_listing="./.gitignore ./AGENTS.md ./CLAUDE.md ./MIGRATION.handoff.json ./MIGRATION.manifest.json ./MIGRATION.md ./assets/images/logo.png ./assets/robots.txt ./assets/stylesheets/application.css ./build.sh ./content/about/index.smd ./content/help/index.smd ./content/index.smd ./content/linked/index.smd ./content/links/index.smd ./content/live/index.smd ./content/posts/index.smd ./content/registration/new/index.smd ./content/session/new/index.smd ./content/widgets/index.smd ./layouts/pages/about.shtml ./layouts/pages/help.shtml ./layouts/pages/linked.shtml ./layouts/pages/links.shtml ./layouts/pages/live.shtml ./layouts/pages/widgets.shtml ./layouts/posts/index.shtml ./layouts/registrations/new.shtml ./layouts/sessions/new.shtml ./layouts/templates/application.shtml ./layouts/templates/marketing.shtml ./zigapagos.ziggy "
 [[ "$listing" == "$expected_listing" ]] || fail "run 1 target listing changed:
   got:      $listing
   expected: $expected_listing"
@@ -345,6 +363,9 @@ expected_listing="./.gitignore ./AGENTS.md ./CLAUDE.md ./MIGRATION.handoff.json 
 [[ ! -e "$WORK/out1/lib" ]] || fail "run 1 binds nothing, so there is no client library to write"
 [[ ! -e "$WORK/out1/components" ]] || fail "run 1 binds nothing, so there is no island to write"
 [[ ! -e "$WORK/out1/package.json" ]] || fail "run 1 needs no npm dependencies"
+widgets_open="$WORK/out1/layouts/pages/widgets.shtml"
+grep -qF '<!-- rails:finding RAILS_STIMULUS_CONTROLLER.app/views/pages/widgets%2Ehtml%2Eerb.L2C1 --><div data-controller="reveal"' "$widgets_open" || fail "the unanswered Stimulus marker must precede its controller element"
+grep -q 'data-turbo-action' "$widgets_open" && fail "Turbo Drive attributes are dropped during conversion"
 # Ruling S17: public/assets/** is the pipeline's compiled OUTPUT. The sources
 # are copied from app/assets/ (see assets/images/logo.png), so copying it too
 # would ship every asset twice plus a Rails bookkeeping file.
@@ -407,6 +428,17 @@ journey_msg_nb=$(jq -r '.findings[] | select(.code == "RAILS_AUTH_JOURNEY") | .m
   || fail "the journey message must say how to get the collection validated: $journey_msg_nb"
 [[ "$(jq -r '.backend' "$WORK/out1b/MIGRATION.handoff.json")" == "null" ]] || fail "no document, no backend object"
 grep -qx 'backend: none' "$WORK/out1b/MIGRATION.md" || fail "the report must say `backend: none` rather than omitting the line"
+index_state_nb=$(jq -r '.findings[] | select(.id == "RAILS_REQUEST_TIME_STATE.app/views/posts/index%2Ehtml%2Eerb.L1C33") | .message' "$M1B")
+[[ "$index_state_nb" == 'request-time state `@posts`' ]] || fail "without --backend the ivar must carry no collection hint: $index_state_nb"
+for id in \
+  'RAILS_STIMULUS_CONTROLLER.app/views/pages/widgets%2Ehtml%2Eerb.L2C1' \
+  'RAILS_TURBO_FRAME.app/views/pages/widgets%2Ehtml%2Eerb.L6C5' \
+  'RAILS_TURBO_FRAME.app/views/pages/widgets%2Ehtml%2Eerb.L7C5' \
+  'RAILS_COMPONENT_ROOT.app/views/pages/widgets%2Ehtml%2Eerb.L8C5'; do
+  with_backend=$(jq -r --arg id "$id" '.findings[] | select(.id == $id) | .choices | join(",")' "$MANIFEST")
+  without_backend=$(jq -r --arg id "$id" '.findings[] | select(.id == $id) | .choices | join(",")' "$M1B")
+  [[ "$with_backend" == "$without_backend" ]] || fail "$id must not depend on --backend: $with_backend != $without_backend"
+done
 
 # --- run 2: the operator's answers -----------------------------------------
 # The checked-in decisions file answers every finding that keeps a route open.
@@ -435,14 +467,10 @@ want2 'GET /help'             blocked
 want2 'GET /broken'           blocked
 want2 'GET /links'            blocked
 want2 'GET /posts/legacy'     blocked
-# `retain` outranks `public`: the two answers on the index view say the page
-# stays on Rails, which moots every other answer about what is on it, so the
-# auth-guard answer changes nothing here (ruling S3-R7 widens which answers
-# run, not the rank that decides the route). The variant run near the end of
-# this script deletes exactly those two, and is where `public` does something
-# visible.
-want2 'GET /posts'            retained
+want2 'GET /live'             blocked
+want2 'GET /posts'            migrated
 want2 'GET /posts/:id'        migrated
+want2 'GET /widgets'          migrated
 # The three routes the shared nav kept open in run 1, back to `migrated` now
 # that its regions are answered -- ruling S21 running in the other direction.
 want2 'GET /'                 migrated
@@ -485,7 +513,9 @@ grep -qx 'endpoints: 4 of the 4 `backend` route(s) are bound to a ZigBase operat
 # The `spa` choice and the `island` answers are the ones that emit code.
 [[ -f "$WORK/out2/spa/posts.spa.tsx" ]] || fail "the spa decision must scaffold spa/posts.spa.tsx"
 [[ -f "$WORK/out2/tsconfig.json" ]] || fail "a SPA needs a tsconfig.json"
-grep -q "^export const spa = { base: \"/posts\" };$" "$WORK/out2/spa/posts.spa.tsx" || fail "the SPA must mount at /posts"
+grep -qF 'head: [{ rel: "stylesheet", href: "/stylesheets/application.css" }]' "$WORK/out2/spa/posts.spa.tsx" || fail "the SPA must carry the Rails layout stylesheet in spa.head"
+grep -qF 'useParams' "$WORK/out2/spa/posts.spa.tsx" || fail "the ported show view must read its dynamic id"
+grep -qF 'getOne(params.id)' "$WORK/out2/spa/posts.spa.tsx" || fail "the ported show view must fetch one record"
 # Quoted in build.sh: `--spa=path|base` unquoted is a shell PIPELINE.
 grep -qF -- "--spa='spa/posts.spa.tsx|/posts'" "$WORK/out2/build.sh" || fail "build.sh must carry a quoted --spa entry"
 # ONE AuthForm file for both halves of the journey (assumption A5: one
@@ -526,10 +556,24 @@ grep -q 'href="/session">' "$WORK/out2/layouts/templates/marketing.shtml" \
 grep -qF '"@zigbase/client": "0.3.0"' "$WORK/out2/package.json" || fail "package.json must pin @zigbase/client"
 grep -qF "\"@z/runtime\": \"file:$REPO/runtime\"" "$WORK/out2/package.json" || fail "--runtime-path must fill the runtime dependency"
 # Each island reaches `release` once, quoted, in path order.
-for isl in components/AuthForm.island.tsx components/AuthStatus.island.tsx; do
+for isl in components/AuthForm.island.tsx components/AuthStatus.island.tsx components/Chart.island.tsx components/TurboFrame.island.tsx components/data/posts_index.island.tsx components/stimulus/reveal.island.tsx; do
   n=$(grep -o -- "--island='$isl'" "$WORK/out2/build.sh" | wc -l)
   [[ "$n" -eq 1 ]] || fail "build.sh must carry --island='$isl' exactly once, got $n"
 done
+
+widgets2="$WORK/out2/layouts/pages/widgets.shtml"
+grep -qF '<island src="components/stimulus/reveal.island.tsx" client:load><div data-controller="reveal"' "$widgets2" || fail "widgets must mount the reveal island around its controller element"
+grep -qF '<island src="components/TurboFrame.island.tsx" client:load :props='"'"'{ .id = "latest", .src = "/posts" }'"'"'><p>Loading latest…</p></island>' "$widgets2" || fail "widgets must mount the fetching Turbo frame"
+grep -qF '<turbo-frame id="static"><p>Just markup</p></turbo-frame>' "$widgets2" || fail "the source-less Turbo frame must stay inline"
+grep -qF '<island src="components/Chart.island.tsx" client:load :props='"'"'{ .points = 3, .series = "a" }'"'"'></island>' "$widgets2" || fail "the React root must mount with sorted literal props"
+grep -q 'data-turbo-action' "$widgets2" && fail "Turbo Drive attributes must not survive run 2"
+grep -qF '<island src="components/data/posts_index.island.tsx" client:load></island>' "$WORK/out2/layouts/posts/index.shtml" || fail "the posts index must be replaced by its data island"
+grep -q 'rails:finding' "$WORK/out2/layouts/posts/index.shtml" && fail "a bound data region must leave no finding marker"
+grep -qF 'getList(1, 50)' "$WORK/out2/components/data/posts_index.island.tsx" || fail "the posts data island must fetch its first 50 records"
+grep -qF '"/posts/" + encodeURIComponent(String(rec.id ?? ""))' "$WORK/out2/components/data/posts_index.island.tsx" || fail "the posts data island must preserve record links"
+cmp "$WORK/app/app/javascript/components/Chart.jsx" "$WORK/out2/components/react/Chart.jsx" || fail "the React source closure must be copied byte-for-byte"
+[[ "$(cat "$WORK/out2/z-runtime.config.json")" == '{"islandImports":{"firstParty":[],"npmCompat":[]},"resolve":{"react":"@z/runtime/compat","react-dom":"@z/runtime/compat","react-dom/client":"@z/runtime/compat/client","react/jsx-runtime":"@z/runtime/jsx-runtime","react/jsx-dev-runtime":"@z/runtime/jsx-dev-runtime"}}' ]] || fail "z-runtime.config.json bytes changed"
+grep -q '"allowJs": true' "$WORK/out2/tsconfig.json" || fail "copied JSX requires allowJs"
 
 # --- run 2: every route's note, exactly (rulings S3-R6 and S3-R7) ----------
 # The note is the whole handoff for a `migrated` route -- the status says the
@@ -555,7 +599,7 @@ note2() {
   want: $2
   got:  $got"
 }
-head2='csrf_meta_tags dropped; javascript_importmap_tags dropped'
+head2='csrf_meta_tags dropped; javascript_importmap_tags dropped; app/javascript/application.js dropped by decision'
 # The two facts the status-region walk reports about the shared nav: the
 # signed-out half folded into its complement, and the greeting inside the
 # region the island replaced.
@@ -575,9 +619,12 @@ note2 "GET /registration/new" "$head2; $absorbed2; $nav2"
 note2 "GET /posts/:id"        "<null>"
 # The unmigrated rows, pinned in the same pass so a change to the walk cannot
 # move a note off a migrated route and onto one of these unnoticed.
-note2 "GET /posts"            "$head2"
-note2 "GET /help"             "$head2"
-note2 "GET /links"            "$head2"
+note2 "GET /posts"            "$head2; guarded by before_action :require_login; shipped public by decision; $nav2"
+widgets_note2='data-turbo attributes dropped; Turbo Drive is ordinary navigation here; csrf_meta_tags dropped; javascript_importmap_tags dropped; app/javascript/application.js dropped by decision; turbo-frame `static` inlined; app/views/shared/_nav.html.erb:5 `if current_user` folded into the AuthStatus island above it; app/views/shared/_nav.html.erb:5 `current_user.email` is inside the region the AuthStatus island replaced, so it mounts nothing of its own'
+note2 "GET /widgets"          "$widgets_note2"
+note2 "GET /help"             "csrf_meta_tags dropped; javascript_importmap_tags dropped"
+note2 "GET /links"            "csrf_meta_tags dropped; javascript_importmap_tags dropped"
+note2 "GET /live"             "csrf_meta_tags dropped; javascript_importmap_tags dropped"
 note2 "GET /broken"           "view app/views/pages/broken.html.erb was not converted"
 note2 "GET /posts/legacy"     "view app/views/posts/legacy.html.haml was not converted"
 note2 "GET /feed"             "<null>"
@@ -599,13 +646,13 @@ note2 "DELETE /session"       "<null>"
 # it: a layout is shared chrome, written once per layout rather than per
 # route, and it mounts the AuthStatus island the nav's answer produced.
 listing2="$(cd "$WORK/out2" && find . -type f | sort | tr '\n' ' ')"
-expected_listing2="./.gitignore ./AGENTS.md ./CLAUDE.md ./MIGRATION.handoff.json ./MIGRATION.manifest.json ./MIGRATION.md ./assets/images/logo.png ./assets/robots.txt ./assets/stylesheets/application.css ./build.sh ./components/AuthForm.island.tsx ./components/AuthStatus.island.tsx ./content/about/index.smd ./content/index.smd ./content/linked/index.smd ./content/registration/new/index.smd ./content/session/new/index.smd ./layouts/pages/about.shtml ./layouts/pages/linked.shtml ./layouts/registrations/new.shtml ./layouts/sessions/new.shtml ./layouts/templates/application.shtml ./layouts/templates/marketing.shtml ./lib/zb.ts ./package.json ./spa/posts.spa.tsx ./tsconfig.json ./zigapagos.ziggy "
+expected_listing2="./.gitignore ./AGENTS.md ./CLAUDE.md ./MIGRATION.handoff.json ./MIGRATION.manifest.json ./MIGRATION.md ./assets/images/logo.png ./assets/robots.txt ./assets/stylesheets/application.css ./build.sh ./components/AuthForm.island.tsx ./components/AuthStatus.island.tsx ./components/Chart.island.tsx ./components/TurboFrame.island.tsx ./components/data/posts_index.island.tsx ./components/react/Chart.jsx ./components/stimulus/reveal.island.tsx ./content/about/index.smd ./content/index.smd ./content/linked/index.smd ./content/posts/index.smd ./content/registration/new/index.smd ./content/session/new/index.smd ./content/widgets/index.smd ./layouts/pages/about.shtml ./layouts/pages/linked.shtml ./layouts/pages/widgets.shtml ./layouts/posts/index.shtml ./layouts/registrations/new.shtml ./layouts/sessions/new.shtml ./layouts/templates/application.shtml ./layouts/templates/marketing.shtml ./lib/stimulus.ts ./lib/zb.ts ./package.json ./spa/posts.spa.tsx ./tsconfig.json ./z-runtime.config.json ./zigapagos.ziggy "
 [[ "$listing2" == "$expected_listing2" ]] || fail "run 2 target listing changed:
   got:      $listing2
   expected: $expected_listing2"
 # ...and the handoff agrees: an acknowledged route claims no artifact, so the
 # record and the tree cannot drift apart.
-for r in 'GET /help' 'GET /links' 'GET /posts'; do
+for r in 'GET /help' 'GET /links' 'GET /live'; do
   n=$(jq -r --arg r "$r" '.routes[] | select(.route_id == $r) | .artifacts | length' "$HANDOFF2")
   [[ "$n" == "0" ]] || fail "$r is acknowledged and must claim no artifact, got $n"
 done
@@ -625,6 +672,9 @@ cmp "$WORK/out2/MIGRATION.md" "$WORK/out2b/MIGRATION.md" || fail "MIGRATION.md n
 # identical runs is not shippable.
 cmp "$WORK/out2/components/AuthForm.island.tsx" "$WORK/out2b/components/AuthForm.island.tsx" || fail "AuthForm not deterministic"
 cmp "$WORK/out2/components/AuthStatus.island.tsx" "$WORK/out2b/components/AuthStatus.island.tsx" || fail "AuthStatus not deterministic"
+for generated in components/Chart.island.tsx components/TurboFrame.island.tsx components/data/posts_index.island.tsx components/react/Chart.jsx components/stimulus/reveal.island.tsx lib/stimulus.ts z-runtime.config.json; do
+  cmp "$WORK/out2/$generated" "$WORK/out2b/$generated" || fail "$generated not deterministic"
+done
 cmp "$WORK/out2/lib/zb.ts" "$WORK/out2b/lib/zb.ts" || fail "lib/zb.ts not deterministic"
 cmp "$WORK/out2/build.sh" "$WORK/out2b/build.sh" || fail "build.sh not deterministic"
 # The fixture is migrated from its scratch copy at $WORK/app, so the basename
@@ -731,14 +781,22 @@ if command -v bun >/dev/null; then
   # as a blank page.
   [[ ! -e "$WORK/out2/zig-out/site/help/index.html" ]] || fail "a blocked route must not be served at all"
   [[ ! -e "$WORK/out2/zig-out/site/links/index.html" ]] || fail "a blocked route must not be served at all"
-  [[ ! -e "$WORK/out2/zig-out/site/posts/index.html" ]] || fail "a retained route stays on Rails; the static tree must not answer it"
-  # A KNOWN GAP, pinned so it flips loudly the day the emitter grows a
-  # `head:`: the scaffolded `.spa.tsx` declares no `spa.head`, so the SPA's
-  # routes render without the site's stylesheet. `release` says so; when the
-  # emitter starts emitting the site's stylesheet assets into `spa.head` this
-  # grep fails and this comment is the instruction to delete it.
-  grep -q "declares no spa.head" "$WORK/release.log" \
-    || fail "the no-spa.head warning is gone -- if the scaffold now emits a head:, delete this pin"
+  [[ ! -e "$WORK/out2/zig-out/site/live/index.html" ]] || fail "the blocked realtime route must not be served"
+  widgets_html="$WORK/out2/zig-out/site/widgets/index.html"
+  grep -qF 'data-z-module="/islands/reveal.island.js"' "$widgets_html" || fail "the reveal island was not bundled into widgets"
+  grep -q 'data-z-slots' "$widgets_html" || fail "the reveal island must carry its original element as a slot"
+  grep -qF '<button type="button">a:3</button>' "$widgets_html" || fail "the React component did not SSR through the compatibility bridge"
+  grep -qF '{"id":"latest","src":"/posts"}' "$widgets_html" || fail "the frame island's SSR props changed"
+  grep -qF '<link rel="stylesheet" href="/stylesheets/application.css">' "$WORK/out2/zig-out/site/posts/_shell.html" || fail "spa.head must reach the built shell"
+  grep -q "declares no spa.head" "$WORK/release.log" && fail "the generated SPA declares a stylesheet head; the old warning must stay gone"
+  set +e
+  ( cd "$WORK/out2" && bunx tsc -p tsconfig.json ) >"$WORK/tsc.log" 2>&1
+  tsc_rc=$?
+  set -e
+  if [[ $tsc_rc -ne 0 ]]; then
+    unexpected_tsc=$(grep -o 'TS[0-9]\{4\}' "$WORK/tsc.log" | sort -u | grep -v '^TS7026$' || true)
+    [[ -z "$unexpected_tsc" ]] || { cat "$WORK/tsc.log"; fail "generated target has unexpected TypeScript diagnostics: $unexpected_tsc"; }
+  fi
   "$ZIGAPAGOS" doctor "$WORK/out2/zig-out/site" >"$WORK/doctor.log" 2>&1 || { cat "$WORK/doctor.log"; fail "doctor failed"; }
   grep -q 'doctor: 0 errors' "$WORK/doctor.log" || { cat "$WORK/doctor.log"; fail "doctor reported errors on the migrated site"; }
   # ZERO warnings, not a permitted set. In Stage 2 the shared `_nav` linked to
@@ -748,6 +806,77 @@ if command -v bun >/dev/null; then
   # one is a regression.
   warns=$(grep '^warn ' "$WORK/doctor.log" || true)
   [[ -z "$warns" ]] || { cat "$WORK/doctor.log"; fail "unexpected doctor warnings: $warns"; }
+
+  mkdir -p "$WORK/out2/test"
+  cat > "$WORK/out2/bunfig.toml" <<'TOML'
+[test]
+preload = ["@z/runtime/testing/preload"]
+TOML
+  cat > "$WORK/out2/test/hydrate.test.ts" <<'TS'
+import { afterEach, expect, mock, test } from "bun:test";
+import { click, flush, renderIsland } from "@z/runtime/testing";
+import { slotVNode } from "@z/runtime/slots";
+import Reveal from "../components/stimulus/reveal.island.tsx";
+import TurboFrame from "../components/TurboFrame.island.tsx";
+import ChartIsland from "../components/Chart.island.tsx";
+import PostsIndex from "../components/data/posts_index.island.tsx";
+
+const originalFetch = globalThis.fetch;
+// Do not call mock.restore() here: the preload's module overrides are Bun
+// mocks too, and restoring them splits generated islands from the harness's
+// one Preact runtime after the first test.
+afterEach(() => { globalThis.fetch = originalFetch; document.body.innerHTML = ""; });
+const settleEffects = async () => { await flush(); await new Promise((resolve) => setTimeout(resolve, 20)); await flush(); };
+
+test("Stimulus action bindings survive hydration", async () => {
+  const originalWarn = console.warn;
+  const warnings: unknown[][] = [];
+  console.warn = (...args: unknown[]) => { warnings.push(args); };
+  const r = renderIsland(Reveal, { children: slotVNode("default", '<div data-controller="reveal" data-reveal-open-value="false"><button data-action="click->reveal#toggle">Show</button><p data-reveal-target="details" class="hidden">D</p></div>') });
+  await settleEffects();
+  await click(r.get("button"));
+  expect(warnings).toContainEqual(["zigapagos: reveal#toggle is not ported"]);
+  console.warn = originalWarn;
+  r.unmount();
+});
+
+test("Turbo frame fetches and replaces its body", async () => {
+  const fetchMock = mock(() => Promise.resolve({ text: async () => '<html><body><div id="latest">loaded</div></body></html>' } as Response));
+  const originalWarn = console.warn;
+  const warnings: unknown[][] = [];
+  console.warn = (...args: unknown[]) => { warnings.push(args); };
+  const r = renderIsland(TurboFrame, { id: "latest", src: "/posts" });
+  // renderIsland installs its mock host (and therefore its default fetch);
+  // replace that fetch before the post-mount effect is flushed.
+  globalThis.fetch = fetchMock as typeof fetch;
+  await settleEffects();
+  expect(fetchMock).toHaveBeenCalled();
+  expect(warnings).toHaveLength(0);
+  expect(r.text()).toContain("loaded");
+  console.warn = originalWarn;
+  r.unmount();
+});
+
+test("React compatibility root hydrates", () => {
+  const r = renderIsland(ChartIsland, { series: "a", points: 3 });
+  expect(r.text()).toBe("a:3");
+  r.unmount();
+});
+
+test("data island fetches and renders records", async () => {
+  const fetchMock = mock(() => Promise.resolve({ ok: true, status: 200, text: async () => JSON.stringify({ items: [{ id: "1", title: "Hello", published: true }], page: 1, perPage: 50, totalItems: 1 }) } as Response));
+  const r = renderIsland(PostsIndex, {});
+  globalThis.fetch = fetchMock as typeof fetch;
+  await settleEffects();
+  expect(fetchMock).toHaveBeenCalled();
+  expect(r.text()).toContain("Hello");
+  expect(r.get("a").getAttribute("href")).toBe("/posts/1");
+  expect(r.text()).toContain("Hello");
+  expect(r.text()).toContain("Published");
+  r.unmount();
+});
+TS
+  ( cd "$WORK/out2" && bun test test/hydrate.test.ts ) || fail "generated islands failed hydration coverage"
 else
   echo "SKIP(partial): bun not on PATH -- the migrated target was not built or audited"
 fi
@@ -811,6 +940,22 @@ set -e
 grep -q 'allowed: listPosts, viewPosts, listUsers, viewUsers, retain, blocked' <<<"$wrongverb_out" \
   || fail "the rejection must name the allowed set: $wrongverb_out"
 
+jq '(.decisions[] | select(.id == "RAILS_TURBO_STREAM.app/views/pages/live%2Ehtml%2Eerb.L1C5") | .choice) = "island"' "$DECISIONS" > "$WORK/stream-island.json"
+set +e
+stream_bad_out="$("$ZIGAPAGOS" migrate "$WORK/app" --from rails --target "$WORK/stream-bad" --decisions "$WORK/stream-island.json" --backend "$BACKEND" 2>&1)"
+stream_bad_rc=$?
+set -e
+[[ $stream_bad_rc -eq 1 ]] || fail "Turbo streams cannot be answered island, got $stream_bad_rc"
+grep -q 'allowed: retain, blocked' <<<"$stream_bad_out" || fail "Turbo stream rejection must name its allowed set: $stream_bad_out"
+
+jq '(.decisions[] | select(.id == "RAILS_REQUEST_TIME_STATE.app/views/posts/index%2Ehtml%2Eerb.L1C33") | .artifact) = "nope"' "$DECISIONS" > "$WORK/bad-data-artifact.json"
+set +e
+data_artifact_out="$("$ZIGAPAGOS" migrate "$WORK/app" --from rails --target "$WORK/data-artifact-bad" --decisions "$WORK/bad-data-artifact.json" --backend "$BACKEND" 2>&1)"
+data_artifact_rc=$?
+set -e
+[[ $data_artifact_rc -eq 1 ]] || fail "an unknown data collection artifact must exit 1, got $data_artifact_rc"
+grep -q 'collections: posts, users' <<<"$data_artifact_out" || fail "the data artifact rejection must list collections: $data_artifact_out"
+
 # The same answers WITHOUT the document: `listPosts` is a word the run cannot
 # check, so it is refused rather than trusted. This is the discrimination for
 # every `--backend` assertion above -- if the flag did nothing, this run would
@@ -822,6 +967,22 @@ set -e
 [[ $nodoc_rc -eq 1 ]] || fail "an operation id without a document must exit 1, got $nodoc_rc"
 grep -q 'choice "listPosts" is not offered' <<<"$nodoc_out" || fail "the rejection must name the choice: $nodoc_out"
 grep -q 'allowed: retain, blocked' <<<"$nodoc_out" || fail "without a document only the two reserved answers are allowed: $nodoc_out"
+
+# A no-document decisions pass that uses only choices still offered without
+# the artifact reaches the scaffold boundary: `island` is the same data port
+# as `backend`, but cannot be generated until a list operation is known.
+jq '(.decisions[] | select(.id == "RAILS_AUTH_JOURNEY.config/routes%2Erb.L38") | .choice) = "retain"
+    | del(.decisions[] | select(.id == "RAILS_AUTH_JOURNEY.config/routes%2Erb.L38") | .artifact)
+    | (.decisions[] | select(.id == "RAILS_BACKEND_ENDPOINT.config/routes%2Erb.L20.GET.posts") | .choice) = "retain"
+    | (.decisions[] | select(.id == "RAILS_REQUEST_TIME_STATE.app/views/posts/index%2Ehtml%2Eerb.L1C33") | .choice) = "island"
+    | (.decisions[] | select(.id == "RAILS_REQUEST_TIME_STATE.app/views/posts/show%2Ehtml%2Eerb.L1C9") | .choice) = "island"' "$DECISIONS" > "$WORK/no-backend-port.json"
+set +e
+"$ZIGAPAGOS" migrate "$WORK/app" --from rails --target "$WORK/no-backend-port" --decisions "$WORK/no-backend-port.json" --runtime-path "$REPO/runtime" >/dev/null
+no_backend_port_rc=$?
+set -e
+[[ $no_backend_port_rc -eq 3 ]] || fail "a data port without --backend must remain open, got $no_backend_port_rc"
+no_backend_posts_note=$(jq -r '.routes[] | select(.route_id == "GET /posts") | .note' "$WORK/no-backend-port/MIGRATION.handoff.json")
+grep -q 'needs a --backend document with a list operation' <<<"$no_backend_posts_note" || fail "the posts data port must say which backend capability is missing: $no_backend_posts_note"
 
 # `custom:/<path>` (assumption A3) is the escape hatch for a route no
 # collection operation matches: accepted on a RAILS_BACKEND_ENDPOINT, never
@@ -860,6 +1021,25 @@ set -e
 [[ $nojourney_rc -eq 3 ]] || fail "dropping the journey answer must reopen the run, got $nojourney_rc"
 [[ ! -e "$WORK/m5/components/AuthForm.island.tsx" ]] || fail "an unanswered journey scaffolds nothing"
 
+jq 'del(.decisions[] | select(.id == "RAILS_JS_ENTRY.app/javascript/application%2Ejs.entry"))' "$DECISIONS" > "$WORK/no-js-entry.json"
+set +e
+"$ZIGAPAGOS" migrate "$WORK/app" --from rails --target "$WORK/no-js-entry" --decisions "$WORK/no-js-entry.json" --backend "$BACKEND" --runtime-path "$REPO/runtime" >/dev/null
+no_js_rc=$?
+set -e
+[[ $no_js_rc -eq 3 ]] || fail "dropping the global JS entry answer must reopen the run, got $no_js_rc"
+for route in 'GET /' 'GET /about' 'GET /linked' 'GET /posts' 'GET /registration/new' 'GET /session/new' 'GET /widgets'; do
+  jq -e --arg route "$route" '.routes[] | select(.route_id == $route and .status == "open" and (.findings | index("RAILS_JS_ENTRY.app/javascript/application%2Ejs.entry")))' "$WORK/no-js-entry/MIGRATION.handoff.json" >/dev/null || fail "$route must reopen on the unanswered global JS entry"
+done
+for route in 'GET /help' 'GET /links' 'GET /live'; do
+  jq -e --arg route "$route" '.routes[] | select(.route_id == $route and (.findings | index("RAILS_JS_ENTRY.app/javascript/application%2Ejs.entry")))' "$WORK/no-js-entry/MIGRATION.handoff.json" >/dev/null || fail "$route must also carry the unanswered global JS entry beside its blocking answer"
+done
+
+jq '(.decisions[] | select(.id == "RAILS_STIMULUS_CONTROLLER.app/views/pages/widgets%2Ehtml%2Eerb.L2C1") | .choice) = "drop"' "$DECISIONS" > "$WORK/drop-stimulus.json"
+"$ZIGAPAGOS" migrate "$WORK/app" --from rails --target "$WORK/drop-stimulus" --decisions "$WORK/drop-stimulus.json" --backend "$BACKEND" --runtime-path "$REPO/runtime" >/dev/null || fail "dropping a portable Stimulus controller must still complete"
+grep -q '<div>' "$WORK/drop-stimulus/layouts/pages/widgets.shtml" || fail "Stimulus drop must keep a plain div"
+grep -q 'data-' "$WORK/drop-stimulus/layouts/pages/widgets.shtml" && fail "Stimulus drop must remove all data attributes from the controller element"
+[[ ! -e "$WORK/drop-stimulus/components/stimulus" ]] || fail "Stimulus drop must scaffold no controller island"
+
 # Delete the feed answer and the run stops completing TOO -- assumption A2 in
 # one assertion. Every other route is answered; the only thing keeping this
 # run open is a user-facing GET the handoff calls `backend` with nothing bound
@@ -884,32 +1064,8 @@ feed_status=$(jq -r '.routes[] | select(.route_id == "GET /feed") | "\(.status) 
 post_status=$(jq -r '.routes[] | select(.route_id == "POST /session") | .status' "$WORK/m6/MIGRATION.handoff.json")
 [[ "$post_status" == "backend" ]] || fail "POST /session should still be backend, got $post_status"
 
-# --- the auth guard on its own (assumption A7) -----------------------------
-# `public` in run 2 is outranked by the two `retain` answers on the same
-# route, so nothing it does is visible there. Here those two are deleted, and
-# nothing else: `public` is then the STRONGEST answer this route has, which is
-# all it now takes. It settles the guard, the page IS written (unlike
-# `retain`/`blocked`), the route stays open on the questions nobody answered,
-# and the note says out loud that a guarded page is shipping public.
-#
-# Ruling S3-R7 is what shrank this drop set from five ids to two. The nav's
-# three `island` answers ride on this route through the layout, tie with
-# `public` on rank, and win the id tie-break -- so while only the single
-# picked answer ran, they had to be deleted too or `public` never executed.
-# That was the defect, not a property of the fixture: every answer on a route
-# is applied now, so the island answers and the guard answer coexist and this
-# arm exercises exactly the shape it claims to. Deleting them anyway would
-# make it pass for the old reason and pin nothing.
-python3 - "$DECISIONS" "$WORK/guardonly.json" <<'PY'
-import json, sys
-drop = {
-    "RAILS_PARTIAL_DYNAMIC.app/views/posts/index%2Ehtml%2Eerb.L1C61",
-    "RAILS_REQUEST_TIME_STATE.app/views/posts/index%2Ehtml%2Eerb.L1C33",
-}
-d = json.load(open(sys.argv[1]))
-d["decisions"] = [x for x in d["decisions"] if x["id"] not in drop]
-json.dump(d, open(sys.argv[2], "w"))
-PY
+# --- the auth guard survives an unanswered data port -----------------------
+jq 'del(.decisions[] | select(.id == "RAILS_REQUEST_TIME_STATE.app/views/posts/index%2Ehtml%2Eerb.L1C33"))' "$DECISIONS" > "$WORK/guardonly.json"
 set +e
 "$ZIGAPAGOS" migrate "$WORK/app" --from rails --target "$WORK/g1" --decisions "$WORK/guardonly.json" \
   --backend "$BACKEND" --runtime-path "$REPO/runtime" >/dev/null
@@ -927,7 +1083,7 @@ grep -q 'guarded by before_action :require_login; shipped public by decision' <<
 # answered still are.
 guard_open=$(jq -r '.routes[] | select(.route_id == "GET /posts") | .findings | join(" ")' "$G")
 grep -q 'RAILS_ROUTE_AUTH_GUARD' <<<"$guard_open" && fail "an answered-and-acted-on guard must not stay open: $guard_open"
-grep -q 'RAILS_PARTIAL_DYNAMIC' <<<"$guard_open" || fail "the unanswered questions must still be listed: $guard_open"
+grep -q 'RAILS_REQUEST_TIME_STATE.app/views/posts/index%2Ehtml%2Eerb.L1C33' <<<"$guard_open" || fail "the unanswered data question must still be listed: $guard_open"
 
 # --- a decisions file that does not fit this run ---------------------------
 # A choice the finding does not offer is a user error, and fatal: exit 1, with

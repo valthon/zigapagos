@@ -23,6 +23,32 @@ const assets = @import("assets.zig");
 const classify = @import("classify.zig");
 const controllers = @import("controllers.zig");
 const routes = @import("routes.zig");
+const backend = @import("backend.zig");
+
+/// The backend collection a Rails model/view stem names: exact first, then
+/// the conventional trailing `s`. The returned name borrows `doc`.
+pub fn collectionFor(doc: backend.Document, stem: []const u8) ?[]const u8 {
+    for (doc.operations) |operation| {
+        const collection = operation.collection orelse continue;
+        if (std.mem.eql(u8, collection, stem)) return collection;
+    }
+    for (doc.operations) |operation| {
+        const collection = operation.collection orelse continue;
+        if (collection.len == stem.len + 1 and std.mem.startsWith(u8, collection, stem) and collection[stem.len] == 's') return collection;
+    }
+    return null;
+}
+
+test "collectionFor prefers the exact stem, then its plural" {
+    const operations = [_]backend.Operation{
+        .{ .operation_id = "listNews", .verb = "GET", .path = "/api/collections/news/records", .collection = "news", .kind = .list, .access = .public },
+        .{ .operation_id = "listPosts", .verb = "GET", .path = "/api/collections/posts/records", .collection = "posts", .kind = .list, .access = .public },
+    };
+    const doc: backend.Document = .{ .file = "openapi.json", .contract_version = "1", .consumer_routes = false, .operations = @constCast(&operations), .auth_collections = &.{} };
+    try std.testing.expectEqualStrings("news", collectionFor(doc, "news").?);
+    try std.testing.expectEqualStrings("posts", collectionFor(doc, "post").?);
+    try std.testing.expect(collectionFor(doc, "comment") == null);
+}
 
 // ---- route helpers -------------------------------------------------------
 
