@@ -248,6 +248,12 @@ pub const code_backend_endpoint = "RAILS_BACKEND_ENDPOINT";
 /// the drift the other `code_*` constants exist to prevent.
 pub const code_request_time_state = "RAILS_REQUEST_TIME_STATE";
 
+/// Issue #181: a view-level `content_for :title` whose body is not one
+/// literal cannot become static frontmatter. The converter swallows that
+/// block rather than rendering title markup in the page body, so the gap
+/// needs its own id that an operator can retain or block.
+pub const code_content_for_dynamic = "RAILS_CONTENT_FOR_DYNAMIC";
+
 /// #167 Stage 3 assumption A5. The sign-in/sign-up/sign-out routes are ONE
 /// decision, not one per route: they share a ZigBase auth collection, an
 /// `AuthForm` and an `AuthStatus`, and answering three of them `island` with
@@ -2092,6 +2098,12 @@ fn deriveNode(
     /// whose ONE `RAILS_AUTH_JOURNEY` finding is already the question its
     /// forms would otherwise each ask.
     journey_view: bool,
+    /// True before this node opens its own frame and only when no outer Ruby
+    /// block is active. Matches `convert.walk`'s interception boundary.
+    top_level: bool,
+    /// True when some recovered route names this exact template as its view.
+    /// Layouts and partials use ordinary `content_for` conversion instead.
+    route_view: bool,
 ) Allocator.Error!void {
     const route_names = in.route_names;
     const locale = in.locale;
@@ -2106,6 +2118,26 @@ fn deriveNode(
     // the majority of nodes in any real template.
     if (node.text != null) return;
     switch (node.kind) {
+        .content_for => {
+            if (!route_view or !top_level) return;
+            if (!std.mem.eql(u8, node.name orelse "", "title")) return;
+            if (node.value != null or !convert.opensBlock(node)) return;
+            const end = convert.matchingEnd(nodes, node_index) orelse return;
+            if (convert.singleLiteralChild(nodes[node_index + 1 .. end]) != null) return;
+            const loc = try nodeLoc(gpa, node.line, node.col);
+            defer gpa.free(loc);
+            try appendFinding(
+                gpa,
+                list,
+                code_content_for_dynamic,
+                .warn,
+                path,
+                node.line,
+                loc,
+                "content_for :title depends on output that cannot become static frontmatter",
+                &choices_retain_blocked,
+            );
+        },
         .unknown => {
             const loc = try nodeLoc(gpa, node.line, node.col);
             defer gpa.free(loc);
@@ -2484,11 +2516,29 @@ pub fn derive(gpa: Allocator, in: DeriveInput) Allocator.Error![]Finding {
         // resolved once per file rather than once per node.
         const resource = templateResource(in, tpl.path);
         const journey_view = journey.isJourneyView(tpl.path);
+        var route_view = false;
+        for (in.route_views) |candidate| {
+            const view = candidate orelse continue;
+            if (std.mem.eql(u8, view, tpl.path)) route_view = true;
+        }
         for (tpl.nodes, 0..) |node, node_index| {
             // Computed BEFORE this node's own frame is pushed, so an
             // outermost `form` sees `false` and asks its question, while
             // everything it contains sees `true`.
-            try deriveNode(gpa, &list, in, tpl.path, node, tpl.nodes, node_index, form_depth > 0, resource, journey_view);
+            try deriveNode(
+                gpa,
+                &list,
+                in,
+                tpl.path,
+                node,
+                tpl.nodes,
+                node_index,
+                form_depth > 0,
+                resource,
+                journey_view,
+                frames.items.len == 0,
+                route_view,
+            );
             if (node.text != null) continue;
             if (node.kind == .block_end) {
                 // A stray `block_end` with no frame is dropped rather than
@@ -2667,6 +2717,73 @@ test "derive: one finding per triggering node, with code/choices/loc from the ta
     try std.testing.expectEqualStrings("retain", out[6].choices[0]);
     try std.testing.expect(out[0].route_id == null);
     try std.testing.expect(!out[0].requires_artifact);
+}
+
+test "derive: a top-level view content_for title with a non-literal body is answerable" {
+    const gpa = std.testing.allocator;
+    const computed = [_]fragments.Node{
+        blk: {
+            var n = nodeCode(.content_for, 1, 1, "title");
+            n.code = "content_for :title do";
+            break :blk n;
+        },
+        nodeText("<span>Account</span>", 1),
+        nodeText(" settings", 1),
+        nodeCode(.block_end, 1, 50, null),
+    };
+    const literal = [_]fragments.Node{
+        blk: {
+            var n = nodeCode(.content_for, 1, 1, "title");
+            n.code = "content_for :title do";
+            break :blk n;
+        },
+        nodeText("Account settings", 1),
+        nodeCode(.block_end, 1, 40, null),
+    };
+    const nested = [_]fragments.Node{
+        blk: {
+            var n = nodeCode(.control, 1, 1, "if");
+            n.code = "if signed_in?";
+            break :blk n;
+        },
+        blk: {
+            var n = nodeCode(.content_for, 2, 3, "title");
+            n.code = "content_for :title do";
+            break :blk n;
+        },
+        nodeText("<span>Account</span>", 2),
+        nodeText(" settings", 2),
+        nodeCode(.block_end, 2, 50, null),
+        nodeCode(.block_end, 3, 1, null),
+    };
+    const tpls = [_]fragments.Template{
+        .{ .path = "app/views/pages/computed.html.erb", .nodes = @constCast(&computed), .error_message = null, .error_line = null, .unreadable = null },
+        .{ .path = "app/views/pages/literal.html.erb", .nodes = @constCast(&literal), .error_message = null, .error_line = null, .unreadable = null },
+        .{ .path = "app/views/pages/nested.html.erb", .nodes = @constCast(&nested), .error_message = null, .error_line = null, .unreadable = null },
+        .{ .path = "app/views/pages/_partial.html.erb", .nodes = @constCast(&computed), .error_message = null, .error_line = null, .unreadable = null },
+        .{ .path = "app/views/layouts/application.html.erb", .nodes = @constCast(&computed), .error_message = null, .error_line = null, .unreadable = null },
+    };
+    const route_views = [_]?[]const u8{
+        "app/views/pages/computed.html.erb",
+        "app/views/pages/literal.html.erb",
+        "app/views/pages/nested.html.erb",
+    };
+    const out = try derive(gpa, .{
+        .templates = &tpls,
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .route_views = &route_views,
+    });
+    defer free(gpa, out);
+
+    try std.testing.expectEqual(@as(usize, 2), out.len);
+    try std.testing.expectEqualStrings("RAILS_CONTENT_FOR_DYNAMIC", out[0].code);
+    try std.testing.expectEqualStrings("RAILS_CONTENT_FOR_DYNAMIC.app/views/pages/computed%2Ehtml%2Eerb.L1C1", out[0].id);
+    try std.testing.expectEqualStrings("retain", out[0].choices[0]);
+    try std.testing.expectEqualStrings("blocked", out[0].choices[1]);
+    try std.testing.expectEqualStrings("RAILS_TEMPLATE_CONTROL_FLOW", out[1].code);
 }
 
 test "derive: input order does not leak into output -- ids and order are identical either way" {
@@ -2947,8 +3064,19 @@ test "derive under a FailingAllocator leaks nothing on any partial allocation" {
     var missing = nodeCode(.i18n, 3, 1, "greeting");
     missing.missing = true;
     const all = nodes ++ [_]fragments.Node{missing};
+    const title_nodes = [_]fragments.Node{
+        blk: {
+            var n = nodeCode(.content_for, 1, 1, "title");
+            n.code = "content_for :title do";
+            break :blk n;
+        },
+        nodeText("<span>Account</span>", 1),
+        nodeText(" settings", 1),
+        nodeCode(.block_end, 1, 50, null),
+    };
     const tpls = [_]fragments.Template{
         .{ .path = "app/views/x.html.erb", .nodes = @constCast(&all), .error_message = null, .error_line = null, .unreadable = null },
+        .{ .path = "app/views/title.html.erb", .nodes = @constCast(&title_nodes), .error_message = null, .error_line = null, .unreadable = null },
         .{ .path = "app/views/broken.html.erb", .nodes = &.{}, .error_message = "bad", .error_line = 9, .unreadable = null },
         // R15's row allocates a formatted message like every other row, so
         // it belongs in the sweep too.
@@ -2960,14 +3088,15 @@ test "derive under a FailingAllocator leaks nothing on any partial allocation" {
     const files = [_]ControllerFile{
         .{ .controller = "posts", .path = "app/controllers/posts_controller.rb" },
     };
+    const route_views = [_]?[]const u8{"app/views/title.html.erb"};
 
     var fail_index: usize = 0;
     while (true) : (fail_index += 1) {
         if (fail_index > 1000) return error.SweepNeverReachedSuccess;
         var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
-        if (derive(failing.allocator(), .{ .templates = &tpls, .layouts = &layouts, .controller_files = &files, .route_names = &.{}, .locale = "en" })) |out| {
+        if (derive(failing.allocator(), .{ .templates = &tpls, .layouts = &layouts, .controller_files = &files, .route_names = &.{}, .locale = "en", .route_views = &route_views })) |out| {
             defer free(std.testing.allocator, out);
-            try std.testing.expectEqual(@as(usize, 6), out.len);
+            try std.testing.expectEqual(@as(usize, 7), out.len);
             break;
         } else |err| {
             try std.testing.expectEqual(error.OutOfMemory, err);

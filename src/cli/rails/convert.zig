@@ -1590,17 +1590,16 @@ const Converter = struct {
             if (c.kind == .view and n.kind == .content_for and frames.items.len == 0) {
                 const name = n.name orelse "";
                 if (std.mem.eql(u8, name, "title")) {
+                    const block_end = if (opens) matchingEnd(nodes, i) else null;
                     if (n.value) |v| {
                         c.setTitle(v);
                         continue;
                     }
-                    if (opens) {
-                        if (matchingEnd(nodes, i)) |e| {
-                            if (singleLiteralChild(nodes[i + 1 .. e])) |t| {
-                                c.setTitle(t);
-                                i = e;
-                                continue;
-                            }
+                    if (block_end) |e| {
+                        if (singleLiteralChild(nodes[i + 1 .. e])) |t| {
+                            c.setTitle(t);
+                            i = e;
+                            continue;
                         }
                     }
                     // A title this stage cannot evaluate is a GAP, not a
@@ -1609,12 +1608,26 @@ const Converter = struct {
                     // in the middle of the `id="main"` block is not a
                     // SuperHTML block (those are top-level only) and would
                     // render the computed title's markup inline as if it were
-                    // page content. `unmapped`, because `content_for` has no
-                    // derivation row to point an operator at.
-                    try c.unmapped(n);
+                    // page content. Its dedicated finding makes the swallowed
+                    // block acknowledgeable; `openRegion` retains the old
+                    // unmapped fallback for incomplete discovery.
+                    const ids_before = c.ids.items.len;
+                    const emitted = try c.openRegion(path, n);
+                    const owns_finding = c.ids.items.len > ids_before;
+                    // Rails captures this body for the title; it is never
+                    // page markup. Skip the complete extent after emitting
+                    // the question so literal runs cannot leak into `main`.
+                    if (block_end) |e| {
+                        if (emitted) try c.put("<!-- rails:end -->");
+                        i = e;
+                        continue;
+                    }
                     if (opens) {
-                        try frames.append(c.gpa, .{ .close = "", .is_finding = true, .emitted = false, .prev_sink = null });
+                        try frames.append(c.gpa, .{ .close = "", .is_finding = true, .owns_finding = owns_finding, .emitted = emitted, .prev_sink = null });
                         c.finding_depth += 1;
+                        if (owns_finding) c.answerable_depth += 1;
+                    } else if (emitted) {
+                        try c.put("<!-- rails:end -->");
                     }
                     continue;
                 } else if (c.fillsBlock(name)) {
@@ -2154,7 +2167,7 @@ fn templateFor(list: []const fragments.Template, path: []const u8) ?fragments.Te
 /// evaluate must stay a gap rather than become a wrong `.title`.
 ///
 /// Contract 3 (caller-buffer): allocates nothing; the result borrows `nodes`.
-fn singleLiteralChild(nodes: []const fragments.Node) ?[]const u8 {
+pub fn singleLiteralChild(nodes: []const fragments.Node) ?[]const u8 {
     var found: ?[]const u8 = null;
     for (nodes) |n| {
         if (n.text) |t| {
@@ -2970,7 +2983,7 @@ test "convert: content_for :head becomes a head block before the main block" {
     try std.testing.expectEqualStrings("A page & more", out.description.?);
 }
 
-test "convert: provide(:title, literal) lifts the title; a computed title stays a marked gap" {
+test "convert: provide(:title, literal) lifts the title; a computed title is an answerable region" {
     const gpa = std.testing.allocator;
     const ctx: Context = .{
         .routes = &.{},
@@ -3002,20 +3015,26 @@ test "convert: provide(:title, literal) lifts the title; a computed title stays 
         endNode(1, 40),
         tNode("<p>x</p>", 2),
     };
-    const out_computed = try convert(gpa, ctx, mkTemplate("app/views/pages/b.html.erb", &computed), .view);
+    const computed_path = "app/views/pages/b.html.erb";
+    const computed_id = "RAILS_CONTENT_FOR_DYNAMIC.app/views/pages/b%2Ehtml%2Eerb.L1C1";
+    const computed_findings = [_]findings.Finding{mkFinding(computed_id, "RAILS_CONTENT_FOR_DYNAMIC", computed_path, 1)};
+    var computed_ctx = ctx;
+    computed_ctx.findings = &computed_findings;
+    const out_computed = try convert(gpa, computed_ctx, mkTemplate(computed_path, &computed), .view);
     defer freeOutput(gpa, out_computed);
     try std.testing.expect(out_computed.title == null);
     try std.testing.expectEqualStrings(
         \\<extend template="marketing.shtml">
         \\<head id="head"></head>
         \\<div id="main">
-        \\<!-- rails:unmapped content_for L1C1 --><p>x</p>
+        \\<!-- rails:finding RAILS_CONTENT_FOR_DYNAMIC.app/views/pages/b%2Ehtml%2Eerb.L1C1 --><!-- rails:end --><p>x</p>
         \\</div>
         \\
     , out_computed.bytes);
     // The `@post` inside the unresolvable title is INSIDE that region, so it
     // emits no marker of its own -- the outermost-only rule.
-    try std.testing.expectEqual(@as(usize, 0), out_computed.open_finding_ids.len);
+    try std.testing.expectEqual(@as(usize, 1), out_computed.open_finding_ids.len);
+    try std.testing.expectEqualStrings(computed_id, out_computed.open_finding_ids[0]);
 }
 
 test "convert: link_to, route_helper and image_tag resolve through resolve.zig" {

@@ -579,6 +579,7 @@ reading the individual finding's own `choices` array.
 | `RAILS_REQUEST_TIME_STATE` | `current_user`/`session`/`flash`/`cookies`/non-route `params`/`request.`/`policy(`/… or a bare `@ivar` | island, spa, backend, retain, blocked |
 | `RAILS_REQUEST_TIME_STATE` (again) | an `errors` fragment — `@x.errors.full_messages`, `errors.any?`, `f.object.errors[:y]`. Same code, **different question**: not "where does this state come from" but "how is the validation state that comes back presented" | island, retain, blocked |
 | `RAILS_I18N_UNRESOLVED` | `t("key")` has no entry under the default locale | retain, blocked |
+| `RAILS_CONTENT_FOR_DYNAMIC` | a view's top-level `content_for :title` block whose body is not one literal value; the block cannot become static `.title` frontmatter and rendering it inline would put title markup in the page body | retain, blocked |
 | `RAILS_RAW_OUTPUT` | `<%== %>`, `raw(...)`, `.html_safe` | island, retain, blocked |
 | `RAILS_PARTIAL_DYNAMIC` | `render @x`, `collection:`, or non-literal `locals:` | island, spa, retain, blocked |
 | `RAILS_ROUTE_HELPER_DYNAMIC` | a `*_path`/`*_url` helper (or `link_to`'s route target) has non-literal arguments | island, spa, retain, blocked |
@@ -678,7 +679,7 @@ markers.
 | --------------------- | ------------------------------------------------------------------ | ----------------------------------------------- | --- |
 | `yield`               | `yield`                                                          | `<super>` inside the block element `id="main"`  | `<div id="main"><super></div>` |
 | `yield_named`         | `yield :head`, `content_for?(:x)`                                | named `<super>` block `id="<name>"`             | a `<super>` block under that id. `:title` is the exception — see [§14](#14-the-conversion-rules) |
-| `content_for`         | `content_for :x do … end`, `provide(:x, "literal")`              | child block `<… id="<name>">`                   | `<div id="<name>">…</div>`; dropped with an OPEN note when the layout declares no block `x`; `<!-- rails:unmapped content_for … -->` for the one case in [§14](#14-the-conversion-rules)'s marker list — a view's top-level `content_for :title` whose BODY is not a single literal. A computed *name* never reaches this kind at all: `templates.rb`'s classifier requires a literal first argument (`return {kind: "content_for", …} if literal(args.first)`), so `<% content_for(name) do %>` falls through to `unknown` and raises `RAILS_HELPER_UNKNOWN` |
+| `content_for`         | `content_for :x do … end`, `provide(:x, "literal")`              | child block `<… id="<name>">`                   | `<div id="<name>">…</div>`; dropped with an OPEN note when the layout declares no block `x`; a view's top-level `content_for :title` whose BODY is not a single literal raises `RAILS_CONTENT_FOR_DYNAMIC`, because request-time output cannot become static `.title` frontmatter. A computed *name* never reaches this kind at all: `templates.rb`'s classifier requires a literal first argument (`return {kind: "content_for", …} if literal(args.first)`), so `<% content_for(name) do %>` falls through to `unknown` and raises `RAILS_HELPER_UNKNOWN` |
 | `render_partial`      | `render "x"`, `render partial: "x"` with no `locals:`/`collection:` | inline expansion of the converted partial    | the partial's converted bytes, inline at the render site; `<!-- rails:unmapped render_partial … -->` when the target is not a literal name, resolves to no path, is cyclic (a partial that renders itself), or names a template that failed to parse or could not be read |
 | `render_partial_locals` | same with `locals:` of literals only                           | inline expansion with literal substitution      | same, with each literal local substituted — and the same four refusals |
 | `render_dynamic`      | `render @x`, `collection:`, non-literal locals                   | finding `RAILS_PARTIAL_DYNAMIC`                 | `rails:finding` region, `RAILS_PARTIAL_DYNAMIC` |
@@ -1083,14 +1084,13 @@ block the layout does not declare: its body is markup the author wrote and
 the target does not have, so the route stays `open` with
 `content_for :x dropped: the layout declares no block with that id`.
 
-**`rails:unmapped` is emitted from four places in `convert.zig`**, and knowing
+**`rails:unmapped` is emitted from three places in `convert.zig`**, and knowing
 which one you are looking at is the difference between a fixable template and
 a converter gap. In source order:
 
 | `<kind>` in the marker | When | Can a decision close the route? |
 |---|---|---|
 | `route_helper`, `link_to` (and in principle any finding kind) | `openRegion`'s backstop: a node routed through a finding region whose id lookup found nothing at that exact line and column. It is **not** only a drift guard — the two shapes that reach it routinely are a route helper whose URL could not be built while its *name* was perfectly well known, so no `RAILS_ROUTE_HELPER_UNKNOWN` was derived: `<%= post_path %>` for a `/posts/:id` route (arity mismatch — the `:id` placeholder is never filled) and the same call inside a `link_to`. Reaching it with any *other* kind would mean the id computation drifted, and is a bug | No |
-| `content_for` | a view's top-level `content_for :title` whose body is not a single literal — `<% content_for :title do %><%= @post.title %><% end %>`. The title becomes `.title` frontmatter, and a value only a request can compute is not a title; it cannot fall through to the ordinary `content_for` conversion either, because a `<div id="title">` in the middle of the `id="main"` block is not a SuperHTML top-level block and would render the markup inline as page content. A computed *name* does not reach this row at all — see the `content_for` line in [§12](#12-the-fragment-vocabulary) | No — `content_for` has no derivation row |
 | `local` | a bare template-local with nothing bound to it: the render site passed no `locals:`, or not this key (or the node arrived with no name). A block local lexically inside an answerable finding is owned by that outer region and emits no second marker; this row covers a local with neither a binding nor an owning finding | No |
 | `render_partial` / `render_partial_locals` | the render target is not a literal name, resolves to no path, is **cyclic** (a partial that renders itself, which Rails would loop on until the request dies), or names a template that failed to parse or could not be read | No |
 
@@ -1765,7 +1765,7 @@ In practice that means one of the `rails:unmapped` cases
 ([§14](#14-the-conversion-rules)) landing in a view that raises nothing else:
 most often an unbound template local outside an answerable region (for example,
 a partial reads `<%= m %>` but its render site passed no `locals:`), otherwise an unresolvable or cyclic `render`
-target, a `content_for :title` whose body is not a literal, or a route helper
+target or a route helper
 called with the wrong arity (`<%= post_path %>` for `/posts/:id`), which
 reaches the backstop with a route name that is *known* and so raises nothing.
 The honest fix is in the converter — inline or drop the construct rather than
