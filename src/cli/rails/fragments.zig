@@ -953,6 +953,27 @@ test "decodeResponse: a text run is null-kinded and keeps its position in the st
     try std.testing.expectEqual(@as(?[]const u8, null), d.templates[0].error_message);
 }
 
+test "decodeResponse preserves one template per requested path in wire order" {
+    const gpa = std.testing.allocator;
+    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    defer blockers.freeList(gpa, &list);
+    const line =
+        \\{"ok":true,"templates":[
+        \\{"path":"app/views/z.html.erb","nodes":[]},
+        \\{"path":"app/views/a.html.erb","unreadable":"missing"},
+        \\{"path":"app/views/m.html.erb","error":"bad","line":7}
+        \\]}
+    ;
+    const d = try decodeResponse(gpa, line, &list);
+    defer freeResult(gpa, d);
+    try std.testing.expectEqual(@as(usize, 3), d.templates.len);
+    try std.testing.expectEqualStrings("app/views/z.html.erb", d.templates[0].path);
+    try std.testing.expectEqualStrings("app/views/a.html.erb", d.templates[1].path);
+    try std.testing.expectEqualStrings("app/views/m.html.erb", d.templates[2].path);
+    try std.testing.expect(d.templates[1].unreadable != null);
+    try std.testing.expectEqual(@as(?u64, 7), d.templates[2].error_line);
+}
+
 test "decodeResponse: presentation facts are owned and old payloads default empty" {
     const gpa = std.testing.allocator;
     var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
@@ -1301,7 +1322,7 @@ test "discoverTemplates spawns the real Ruby sidecar and recovers a node stream"
     if (list.items.len > 0) {
         if (list.items.len == 1 and
             std.mem.eql(u8, list.items[0].code, unavailable_code) and
-            std.mem.eql(u8, list.items[0].detail, "FileNotFound"))
+            std.mem.indexOf(u8, list.items[0].detail, "FileNotFound") != null)
             return error.SkipZigTest;
         std.debug.print("discoverTemplates degraded unexpectedly: {s}: {s}\n", .{
             list.items[list.items.len - 1].code,

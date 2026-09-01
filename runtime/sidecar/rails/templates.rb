@@ -173,6 +173,10 @@ module RailsTemplates
       code_tokens << t if code
       text_tokens[gen] = t unless code
       written = code ? "#{fragment_source(t)}\n" : text_source(t)
+      if code
+        t[:generated_start] = gen
+        t[:generated_end] = gen + t[:code].count("\n")
+      end
       out << written
 
       # A token may START midway through a generated line (text following a
@@ -326,7 +330,8 @@ module RailsTemplates
     def emit_statement(node)
       case node
       when Prism::IfNode, Prism::UnlessNode
-        emit(control_info(node.predicate, node.is_a?(Prism::IfNode) ? "if" : "unless"), node)
+        tok = emit(control_info(node.predicate, node.is_a?(Prism::IfNode) ? "if" : "unless"), node)
+        return if contained_in_token?(node, tok)
         with_block_depth { walk_statements(statements_of(node.statements)) }
         sub = node.is_a?(Prism::IfNode) ? node.subsequent : node.else_clause
         while sub
@@ -337,21 +342,23 @@ module RailsTemplates
         end
         block_end(node)
       when Prism::CaseNode, Prism::CaseMatchNode
-        emit(control_info(node.predicate, "case"), node)
+        tok = emit(control_info(node.predicate, "case"), node)
+        return if contained_in_token?(node, tok)
         (node.conditions + [node.else_clause].compact).each do |branch|
           block_else(branch)
           with_block_depth { walk_statements(statements_of(branch.statements)) }
         end
         block_end(node)
       when Prism::WhileNode, Prism::UntilNode
-        emit(control_info(node.predicate, node.is_a?(Prism::WhileNode) ? "while" : "until"), node)
+        tok = emit(control_info(node.predicate, node.is_a?(Prism::WhileNode) ? "while" : "until"), node)
+        return if contained_in_token?(node, tok)
         with_block_depth { walk_statements(statements_of(node.statements)) }
         block_end(node)
       when Prism::CallNode
         info = classify(node, output: false)
-        emit(info, node)
+        tok = emit(info, node)
         blk = command_block(node)
-        walk_block(blk, info, node) if blk
+        walk_block(blk, info, node) if blk && !contained_in_token?(node, tok)
       else
         emit(classify(node, output: false), node)
       end
@@ -367,9 +374,26 @@ module RailsTemplates
     # wrote (and, for a tag opened on one line and continued on the next, on a
     # different generated line entirely).
     def emit_output(node, info)
-      emit(info, node, inner_arg(node))
+      inner = inner_arg(node)
       blk = command_block(node)
-      walk_block(blk, info, node) if blk
+      if blk && inner.is_a?(Prism::CallNode) && %i[link_to button_to].include?(inner.name)
+        info = classify_link(positional(inner.arguments), hash_opts(inner.arguments), block: true).merge(output: true)
+      end
+      tok = emit(info, node, first_position(inner))
+      walk_block(blk, info, node) if blk && !contained_in_token?(node, tok)
+    end
+
+    # A block whose AST ends before the fragment that opened it ends was
+    # written wholly inside one ERB tag. Its body is Ruby implementation
+    # detail, not separately rendered template content, and it has no later
+    # structural tag to represent as block_end/block_else.
+    def contained_in_token?(node, tok)
+      tok && node.location.end_line <= tok[:generated_end]
+    end
+
+    def first_position(node)
+      return node unless node.is_a?(Prism::ParenthesesNode) && node.body.is_a?(Prism::StatementsNode)
+      node.body.body.first || node
     end
 
     # Finds the block a cross-fragment tag opened, wherever Ruby bound it.
@@ -396,9 +420,10 @@ module RailsTemplates
     def walk_block(blk, info, node)
       # A form builder is only in scope inside its own block, and nested forms
       # nest, so this is a stack rather than a single name.
-      @form_builders.push(block_param_name(blk)) if info[:kind] == "form"
+      builder_scope = info[:kind] == "form" || (info[:kind] == "form_field" && info[:name] == "fields_for")
+      @form_builders.push(block_param_name(blk)) if builder_scope
       with_block_depth { walk_statements(statements_of(blk.body)) }
-      @form_builders.pop if info[:kind] == "form"
+      @form_builders.pop if builder_scope
       block_end(node)
     end
 
@@ -728,6 +753,10 @@ module RailsTemplates
     def classify_inner(node)
       node = unwrap(node)
       case node
+      when Prism::IfNode
+        if (named_default = classify_named_yield_default(node))
+          return named_default
+        end
       when Prism::YieldNode
         args = positional(node.arguments)
         return { kind: "yield" } if args.empty?
@@ -751,6 +780,19 @@ module RailsTemplates
       state_or(node, { kind: "unknown", name: node.class.name.split("::").last })
     end
 
+    def classify_named_yield_default(node)
+      predicate = node.predicate
+      return nil unless predicate.is_a?(Prism::CallNode) && predicate.receiver.nil? && predicate.name == :content_for?
+      name = literal(positional(predicate.arguments).first)
+      truthy = statements_of(node.statements).first
+      fallback = node.subsequent.is_a?(Prism::ElseNode) ? statements_of(node.subsequent.statements).first : nil
+      return nil unless name && truthy.is_a?(Prism::YieldNode)
+      yielded = literal(positional(truthy.arguments).first)
+      return nil unless yielded == name && fallback
+      value = literal(fallback)
+      { kind: "yield_named", name: name, value: value || safe_slice(fallback), dynamic: true }
+    end
+
     def classify_call(node)
       name = node.name.to_s
       args = positional(node.arguments)
@@ -768,7 +810,7 @@ module RailsTemplates
       when "render"
         return classify_render(args, opts)
       when "link_to", "button_to"
-        return classify_link(args, opts)
+        return classify_link(args, opts, block: !node.block.nil?)
       when "raw"
         return { kind: "raw" }
       when "t", "translate"
@@ -790,7 +832,7 @@ module RailsTemplates
       return { kind: "csrf", name: name } if CSRF_HELPERS.include?(name)
       if ASSET_HELPERS.include?(name)
         return { kind: "asset", name: name, args: literal_args(args), attrs: literal_attrs(opts) } if args.empty? || literal(args.first)
-        return state_or(node, { kind: "unknown", name: name })
+        return { kind: "asset", name: name, args: args.map { |arg| safe_slice(arg) }, dynamic: true }
       end
       if name.end_with?("_path", "_url")
         stem = name.sub(/_(path|url)\z/, "")
@@ -906,12 +948,13 @@ module RailsTemplates
     # `value` is the link TEXT's source and `args` the target's argument
     # sources: between them a port can re-express the whole control, which is
     # the difference between a question and an answerable one.
-    def classify_link(args, opts)
-      text, target = args[0], args[1]
+    def classify_link(args, opts, block: false)
+      text, target = block ? [nil, args[0]] : [args[0], args[1]]
       text_lit = literal(text)
       if target.is_a?(Prism::CallNode) && target.receiver.nil? && target.name.to_s.end_with?("_path", "_url")
         stem = target.name.to_s.sub(/_(path|url)\z/, "")
         targs = positional(target.arguments)
+        return { kind: "route_helper_dynamic", name: stem, value: "block body", args: targs.map { |a| safe_slice(a) } } if block
         if text_lit && all_literal?(targs) && all_literal_opts?(opts)
           return { kind: "link_to", name: stem, args: [text_lit] + literal_args(targs), attrs: literal_attrs(opts) }
         end
@@ -1003,6 +1046,7 @@ module RailsTemplates
       tok = take_token(line, loc.start_line)
       @nodes << { t: "code", line: line, col: src_col(loc.start_line, loc.start_column), output: false,
                   code: (tok ? tok[:code].strip : safe_slice(pos)) }.merge(info)
+      tok
     end
 
     # One token per TAG, not per node. A tag holding several statements emits

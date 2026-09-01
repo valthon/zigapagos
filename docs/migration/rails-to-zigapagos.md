@@ -401,7 +401,8 @@ The derivation rules (`runtime/sidecar/rails/routes.rb`'s `emit` /
   many levels deep: `resources :posts do resources :comments do resources
   :replies end end` names `replies`' own routes `post_comment_reply` /
   `post_comment_replies`, never off the plural.
-- `namespace :admin` and `scope as: "x"` push onto an accumulated
+- `namespace :admin` (including its own `as: "manage"` override) and
+  `scope as: "x"` push onto an accumulated
   `as_prefix`, joined with `_`, prepended to every name declared inside —
   independent of the `path:`/`module:` prefixes, which have their own
   overrides.
@@ -731,6 +732,21 @@ applied twice, once cheaply on the unresolved path and once again with
 `File.realpath` on the resolved one, so a symlink that itself points outside
 the root cannot be used to read arbitrary files from the machine running
 discovery.
+
+Inventory includes file symlinks under their authored app-relative paths.
+View symlinks are then accepted only when `File.realpath` remains inside the
+app root; controller symlinks use the same rule inside `app/controllers`.
+This supports shared in-repository views/controllers without allowing either
+sidecar operation to read through an app symlink into unrelated host files.
+
+Self-contained Ruby blocks written wholly inside one ERB tag contribute only
+their enclosing classified node: their Ruby-local body and `end` are not
+separate rendered fragments. `fields_for` introduces its nested form builder,
+block-form `link_to` retains the route helper it targets, and non-literal
+asset helpers remain explicit dynamic asset nodes. A
+`content_for?(:x) ? yield(:x) : default` shape is reported as
+`RAILS_NAMED_YIELD_DEFAULT` with `retain`/`blocked`, because SuperHTML's void
+`<super>` cannot reproduce Rails' conditional fallback without runtime logic.
 
 ## 13. `--target` writes a project
 

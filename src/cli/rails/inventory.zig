@@ -251,7 +251,12 @@ pub fn walk(io: Io, gpa: Allocator, root: Io.Dir) Allocator.Error!WalkResult {
                 break;
             };
             const entry = maybe_entry orelse break;
-            if (entry.kind != .file) continue;
+            // File symlinks are part of a Rails app's presentation surface
+            // (shared engine views and generated partials commonly use
+            // them). Keep the authored path in inventory; the Ruby templates
+            // operation resolves it and applies the inside-root policy before
+            // reading.
+            if (entry.kind != .file and entry.kind != .sym_link) continue;
             const rel = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ top, entry.path });
             errdefer gpa.free(rel);
             // Normalize Windows separators so classification and output are
@@ -423,6 +428,27 @@ test "walk is silent when public/ is simply absent" {
 
     try std.testing.expectEqual(@as(usize, 1), wr.entries.len);
     try std.testing.expectEqual(@as(usize, 0), wr.blockers.len);
+}
+
+test "walk includes a symlinked view under its authored path" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    var views = try tmp.dir.createDirPathOpen(io, "app/views/posts", .{});
+    views.close(io);
+    try tmp.dir.writeFile(io, .{ .sub_path = "app/views/posts/shared.html.erb", .data = "shared" });
+    tmp.dir.symLink(io, "shared.html.erb", "app/views/posts/index.html.erb", .{}) catch |err| switch (err) {
+        error.AccessDenied, error.PermissionDenied => return error.SkipZigTest,
+        else => return err,
+    };
+
+    const wr = try walk(io, gpa, tmp.dir);
+    defer freeWalkResult(gpa, wr);
+    try std.testing.expectEqual(@as(usize, 2), wr.entries.len);
+    try std.testing.expectEqualStrings("app/views/posts/index.html.erb", wr.entries[0].path);
+    try std.testing.expectEqual(Kind.view, wr.entries[0].kind);
 }
 
 test "an unreadable app/ root produces an integrity blocker, not a silent empty inventory" {

@@ -1388,6 +1388,8 @@ rc3=$?
 set -e
 [[ $rc3 -eq 3 ]] || fail "third run should exit 3, got $rc3"
 M3="$WORK/out3/MIGRATION.manifest.json"
+"$REPO/zig-out/bin/rails_manifest_validate" "$REPO/contract/rails-presentation.v1.schema.json" "$M3" || fail "run 3 manifest fails schema"
+"$REPO/zig-out/bin/rails_manifest_validate" "$REPO/contract/rails-handoff.v1.schema.json" "$WORK/out3/MIGRATION.handoff.json" || fail "run 3 handoff fails schema"
 [[ -L "$WORK/app3/app/views/pages/linked.html.erb" ]] || fail "the wrapper never swapped the view; the staging is vacuous"
 jq -e --arg id 'RAILS_TEMPLATE_UNSCANNED.app/views/pages/linked%2Ehtml%2Eerb.unscanned' \
   '.findings[] | select(.id == $id)' "$M3" >/dev/null || fail "missing RAILS_TEMPLATE_UNSCANNED finding"
@@ -1420,6 +1422,8 @@ rc4=$?
 set -e
 [[ $rc4 -eq 3 ]] || fail "fourth run should exit 3, got $rc4"
 M4="$WORK/out4/MIGRATION.manifest.json"
+"$REPO/zig-out/bin/rails_manifest_validate" "$REPO/contract/rails-presentation.v1.schema.json" "$M4" || fail "run 4 manifest fails schema"
+"$REPO/zig-out/bin/rails_manifest_validate" "$REPO/contract/rails-handoff.v1.schema.json" "$WORK/out4/MIGRATION.handoff.json" || fail "run 4 handoff fails schema"
 locale_blocker=$(jq -r '.blockers[] | select(.code == "RAILS_I18N_LOCALE_UNREADABLE") | .source.file' "$M4")
 [[ "$locale_blocker" == "config/locales/en.yml" ]] || fail "no RAILS_I18N_LOCALE_UNREADABLE for the broken locale, got: $locale_blocker"
 jq -e '.blockers[] | select(.code == "RAILS_I18N_LOCALE_UNREADABLE") | select(.integrity == false and .severity == "warn")' "$M4" >/dev/null \

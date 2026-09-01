@@ -28,6 +28,27 @@ end
 
 Dir.mktmpdir do |dir|
   FileUtils.mkdir_p(File.join(dir, "config/locales"))
+  File.write(File.join(dir, "config/application.rb"), "config.i18n.default_locale = :no\n")
+  # YAML 1.1 parses the unquoted key `no` as false. It must not silently
+  # produce an empty translation table.
+  File.write(File.join(dir, "config/locales/no.yml"), "no:\n  greeting: Hei\n")
+  t = RailsI18n.load(dir)
+  check("a YAML-coerced default-locale key reports the empty-table cause", t.errors.any? { |e| e[:detail].include?("default locale") && e[:detail].include?("no") })
+end
+
+Dir.mktmpdir do |dir|
+  FileUtils.mkdir_p(File.join(dir, "config/locales"))
+  File.write(File.join(dir, "config/application.rb"), "# config.i18n.default_locale = :fr\nconfig.i18n.default_locale = :en\n")
+  File.write(File.join(dir, "config/locales/en.yml"), "en:\n  greeting: Hello\n")
+  File.write(File.join(dir, "config/locales/not-a-map.yml"), "- one\n- two\n")
+
+  t = RailsI18n.load(dir)
+  check("a commented default-locale assignment is ignored", t.locale == "en" && t.lookup("greeting") == "Hello")
+  check("a non-mapping locale document is recorded as unreadable", t.errors.any? { |e| e[:path] == "config/locales/not-a-map.yml" && e[:detail].include?("mapping") })
+end
+
+Dir.mktmpdir do |dir|
+  FileUtils.mkdir_p(File.join(dir, "config/locales"))
   File.write(File.join(dir, "config/application.rb"), "module App\n  class Application < Rails::Application\n    config.i18n.default_locale = :\"pt-BR\"\n  end\nend\n")
   File.write(File.join(dir, "config/locales/pt-BR.yml"), "pt-BR:\n  greeting: \"Olá\"\n")
 
