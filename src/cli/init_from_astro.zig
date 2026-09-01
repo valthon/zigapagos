@@ -178,8 +178,9 @@ pub fn emitPackageJson(gpa: Allocator, name: []const u8, runtime_path: []const u
     , .{ name, runtime_path }) catch fatal.oom();
 }
 
-/// Emit the verbatim one-Preact tsconfig.json contract:
-///   jsx=react-jsx, jsxImportSource=@z/runtime, moduleResolution=bundler.
+/// Emit the verbatim one-Preact tsconfig.json contract used by generated
+/// migration targets. Bundler resolution needs an ES module mode, and the
+/// generated project is checked without emitting JavaScript.
 /// This is a comptime constant — no allocation.
 pub fn emitTsconfig() []const u8 {
     return
@@ -187,9 +188,14 @@ pub fn emitTsconfig() []const u8 {
     \\  "compilerOptions": {
     \\    "jsx": "react-jsx",
     \\    "jsxImportSource": "@z/runtime",
+    \\    "module": "ESNext",
     \\    "moduleResolution": "bundler",
+    \\    "target": "ESNext",
     \\    "strict": true,
-    \\    "skipLibCheck": true
+    \\    "skipLibCheck": true,
+    \\    "allowJs": true,
+    \\    "allowImportingTsExtensions": true,
+    \\    "noEmit": true
     \\  }
     \\}
     \\
@@ -909,7 +915,12 @@ test "emitTsconfig is the verbatim one-Preact contract" {
     const ts = emitTsconfig();
     try std.testing.expect(std.mem.indexOf(u8, ts, "\"jsx\": \"react-jsx\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, ts, "\"jsxImportSource\": \"@z/runtime\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ts, "\"module\": \"ESNext\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, ts, "\"moduleResolution\": \"bundler\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ts, "\"target\": \"ESNext\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ts, "\"allowJs\": true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ts, "\"allowImportingTsExtensions\": true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ts, "\"noEmit\": true") != null);
 }
 
 test "emitPackageJson declares exactly one dep @z/runtime at the given path" {

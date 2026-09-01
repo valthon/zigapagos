@@ -884,14 +884,8 @@ if command -v bun >/dev/null; then
   grep -qF '{"id":"latest","src":"/posts"}' "$widgets_html" || fail "the frame island's SSR props changed"
   grep -qF '<link rel="stylesheet" href="/stylesheets/application.css">' "$WORK/out2/zig-out/site/posts/_shell.html" || fail "spa.head must reach the built shell"
   grep -q "declares no spa.head" "$WORK/release.log" && fail "the generated SPA declares a stylesheet head; the old warning must stay gone"
-  set +e
-  ( cd "$WORK/out2" && bunx tsc -p tsconfig.json ) >"$WORK/tsc.log" 2>&1
-  tsc_rc=$?
-  set -e
-  if [[ $tsc_rc -ne 0 ]]; then
-    unexpected_tsc=$(grep -o 'TS[0-9]\{4\}' "$WORK/tsc.log" | sort -u | grep -v '^TS7026$' || true)
-    [[ -z "$unexpected_tsc" ]] || { cat "$WORK/tsc.log"; fail "generated target has unexpected TypeScript diagnostics: $unexpected_tsc"; }
-  fi
+  ( cd "$WORK/out2" && bunx tsc -p tsconfig.json ) >"$WORK/tsc.log" 2>&1 \
+    || { cat "$WORK/tsc.log"; fail "generated target must pass TypeScript without TS7026 or any other diagnostic"; }
   "$ZIGAPAGOS" doctor "$WORK/out2/zig-out/site" >"$WORK/doctor.log" 2>&1 || { cat "$WORK/doctor.log"; fail "doctor failed"; }
   grep -q 'doctor: 0 errors' "$WORK/doctor.log" || { cat "$WORK/doctor.log"; fail "doctor reported errors on the migrated site"; }
   # ZERO warnings, not a permitted set. In Stage 2 the shared `_nav` linked to

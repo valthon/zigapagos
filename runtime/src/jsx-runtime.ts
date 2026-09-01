@@ -3,3 +3,4 @@
 // from here; routing it through @z/runtime keeps the JSX factory on the SAME
 // Preact instance as the loader's hydrate (one instance — hooks work).
 export { jsx, jsxs, jsxDEV, Fragment } from "preact/jsx-runtime";
+export type { JSX } from "preact/jsx-runtime";

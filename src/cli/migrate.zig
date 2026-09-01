@@ -2496,9 +2496,14 @@ const target_tsconfig =
     \\  "compilerOptions": {
     \\    "jsx": "react-jsx",
     \\    "jsxImportSource": "@z/runtime",
+    \\    "module": "ESNext",
     \\    "moduleResolution": "bundler",
+    \\    "target": "ESNext",
     \\    "strict": true,
-    \\    "skipLibCheck": true
+    \\    "skipLibCheck": true,
+    \\    "allowJs": true,
+    \\    "allowImportingTsExtensions": true,
+    \\    "noEmit": true
     \\  }
     \\}
     \\
@@ -3746,6 +3751,14 @@ test "target config publishes copied assets only when the copy wrote files" {
     defer gpa.free(without_assets);
     try std.testing.expect(std.mem.indexOf(u8, with_assets, ".static_assets = [\"**\"]") != null);
     try std.testing.expect(std.mem.indexOf(u8, without_assets, ".static_assets") == null);
+}
+
+test "target TypeScript config supports runtime JSX types" {
+    try std.testing.expect(std.mem.indexOf(u8, target_tsconfig, "\"jsxImportSource\": \"@z/runtime\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, target_tsconfig, "\"module\": \"ESNext\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, target_tsconfig, "\"target\": \"ESNext\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, target_tsconfig, "\"allowImportingTsExtensions\": true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, target_tsconfig, "\"noEmit\": true") != null);
 }
 
 test "Hexo top-level settings produce safe target metadata" {

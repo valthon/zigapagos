@@ -85,7 +85,15 @@ echo "    OK: MIGRATION.md carries the paginate() worklist instruction"
 
 grep -q 'jsxImportSource' "$GEN/site/tsconfig.json" \
   || { echo "FAIL: tsconfig missing jsxImportSource"; exit 1; }
-echo "    OK: tsconfig has jsxImportSource"
+grep -q '"module": "ESNext"' "$GEN/site/tsconfig.json" \
+  || { echo "FAIL: tsconfig missing ES module mode"; exit 1; }
+grep -q '"target": "ESNext"' "$GEN/site/tsconfig.json" \
+  || { echo "FAIL: tsconfig missing language target"; exit 1; }
+grep -q '"allowImportingTsExtensions": true' "$GEN/site/tsconfig.json" \
+  || { echo "FAIL: tsconfig rejects generated TypeScript imports"; exit 1; }
+grep -q '"noEmit": true' "$GEN/site/tsconfig.json" \
+  || { echo "FAIL: tsconfig may emit files during validation"; exit 1; }
+echo "    OK: tsconfig has the JSX and bundler-mode typecheck contract"
 
 grep -q '"@z/runtime": "file:' "$GEN/site/package.json" \
   || { echo "FAIL: package.json missing @z/runtime file: dep"; exit 1; }
