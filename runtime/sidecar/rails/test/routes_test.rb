@@ -496,6 +496,14 @@ def check_names(label, src, expected)
   $failures += 1
 end
 
+check_names "namespace as: overrides its helper prefix",
+            "Rails.application.routes.draw do\n" \
+            "  namespace :admin, as: \"manage\" do\n" \
+            "    resources :users, only: [:index]\n" \
+            "  end\n" \
+            "end\n",
+            [["GET", "/admin/users", "manage_users"]]
+
 check_names "resources derive the seven Rails helper names",
             "Rails.application.routes.draw do\n  resources :posts\nend\n",
             [

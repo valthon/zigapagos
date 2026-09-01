@@ -51,6 +51,9 @@ check_presentation "presentation facts retain their source node",
 
 check "yield and named yield", "<%= yield %><%= yield :head %><%= content_for?(:side) %>", %w[yield yield_named yield_named]
 check_node "named yield carries its name", "<%= yield :head %>", 0, { name: "head" }
+check_node "a named yield with a default keeps both branches explicit",
+           "<%= content_for?(:x) ? yield(:x) : \"default\" %>", 0,
+           { kind: "yield_named", name: "x", value: "default", dynamic: true }
 
 check "content_for block and provide", "<% content_for :title do %>x<% end %><% provide(:title, \"T\") %>",
       %w[content_for block_end content_for]
@@ -90,6 +93,11 @@ check_node "form attrs and model", "<%= form_with(model: @post, url: \"/posts\")
            { attrs: [["url", "/posts"]], name: "post", dynamic: true }
 check_node "form field carries builder method and field", "<%= form_with(url: \"/x\") do |f| %><%= f.email_field :email %><% end %>", 1,
            { name: "email_field", args: ["email"] }
+FIELDS_FOR = "<%= form_with(url: \"/x\") do |f| %><%= f.fields_for :tags do |g| %><%= g.text_field :name %><% end %><% end %>"
+check "fields_for introduces its nested builder", FIELDS_FOR,
+      %w[form form_field form_field block_end block_end]
+check_node "a fields_for child is a form field, not a local", FIELDS_FOR, 2,
+           { kind: "form_field", name: "text_field", args: ["name"] }
 
 check "request state and ivars",
       "<%= current_user.name %><% if signed_in? %><% end %><%= session[:x] %><%= @posts.count %><%= Current.account %>",
@@ -161,18 +169,19 @@ check_positions "every code node reports its true source line and column", LAYOU
                 [["ivar", 4, 4], ["ivar", 5, 13], ["unknown", 5, 34], ["block_end", 6, 1], ["yield", 7, 11]],
                 path: "app/views/layouts/application.html.erb"
 
-# (b) A construct written entirely inside ONE tag has an `end` with no token of
-# its own, so `block_end` must leave the queue alone: the FOLLOWING tag keeps
-# its own column and code. (A one-tag block still leaks its inner statements
-# into the stream as spurious nodes -- a known, separately-tracked limit -- so
-# this pins the token queue on a one-tag block with an empty body, where the
-# leak cannot mask the property under test.)
-check_positions "block_end consumes no token when the `end` had none",
+# (b) A construct written entirely inside ONE tag contributes only the tag's
+# own node. Its Ruby body is not a separately rendered template fragment, and
+# no synthetic block_end with col:0 is emitted. The following tag keeps its
+# own position and code.
+check_positions "a self-contained block emits no synthetic body or block_end",
                 "<% while x do end %><%= 2 %>",
-                [["control", 1, 4], ["block_end", 1, 0], ["literal", 1, 25]]
-check_node "the fragment after it keeps its own code", "<% while x do end %><%= 2 %>", 2, { code: "2", value: "2" }
+                [["control", 1, 4], ["literal", 1, 25]]
+check_node "the fragment after it keeps its own code", "<% while x do end %><%= 2 %>", 1, { code: "2", value: "2" }
 check_node "a self-contained if reports the whole tag as its code", "<% if x then y end %>", 0,
            { kind: "control", code: "if x then y end" }
+check "a self-contained call block does not leak its Ruby body", "<% items.each { |i| x } %>", %w[control]
+check_positions "a multi-statement output tag points at its first expression",
+                "<%= x; y %>", [["unknown", 1, 5]]
 
 # (c) Every code node carries `output:`, statements included -- the node schema
 # says Boolean, and a missing key is not one.
@@ -613,6 +622,12 @@ check_node "a dynamic link names its route stem, its text and its arguments",
 check_node "a bare dynamic route helper carries its argument sources",
            "<%= post_path(@post, anchor) %>", 0,
            { kind: "route_helper_dynamic", name: "post", args: ["@post", "anchor"] }
+check_node "a block-form link retains its route helper target",
+           "<%= link_to root_path do %>Home<% end %>", 0,
+           { kind: "route_helper_dynamic", name: "root", value: "block body" }
+check_node "a non-literal asset remains an asset with source arguments",
+           "<%= image_tag @logo %>", 0,
+           { kind: "asset", name: "image_tag", args: ["@logo"], dynamic: true }
 
 # `turbo_stream_from "posts"` names the stream it subscribes to; without it
 # the finding read "turbo-stream ``".

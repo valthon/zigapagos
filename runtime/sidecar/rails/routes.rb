@@ -332,7 +332,13 @@ module RailsRoutes
                          "namespace path: is not a literal")
         return
       end
+      if dynamic_option?(opts, "as")
+        mark_unresolved("RAILS_ROUTE_DYNAMIC_PATH", line_of(node),
+                         "namespace as: is not a literal")
+        return
+      end
       path_seg = opts["path"] ? literal(opts["path"]) : seg
+      as_seg = opts["as"] ? literal(opts["as"]) : seg
       new_scope = sc.child(
         path: join(sc.path, path_seg),
         module_: sc.module_.empty? ? seg : "#{sc.module_}/#{seg}",
@@ -341,7 +347,7 @@ module RailsRoutes
         # `scope` call) EVEN WHEN `path:`/`module:` are overridden --
         # unlike path_seg/module_, the as_prefix always uses `seg`, the
         # namespace's own name, never path_opt.
-        as_prefix: sc.as_prefix.empty? ? seg : "#{sc.as_prefix}_#{seg}",
+        as_prefix: sc.as_prefix.empty? ? as_seg : "#{sc.as_prefix}_#{as_seg}",
       )
       walk(blk, new_scope, res_ctx)
     end

@@ -254,6 +254,23 @@ const manifest_overrides = [_]Override{
     },
     .{
         .type_name = "manifest.FindingEntry",
+        .field = "route_id",
+        .text = "The one recovered route this question is scoped to, or " ++
+            "`null` for template-, controller-, and application-scoped " ++
+            "questions. This is context, not the finding join key: use " ++
+            "`id` to record a decision, and do not assume route ids are " ++
+            "unique when routes.rb repeats a declaration.",
+    },
+    .{
+        .type_name = "manifest.FindingEntry",
+        .field = "message",
+        .text = "Human-readable explanation of the unresolved choice. " ++
+            "This prose may be clarified between generator versions and " ++
+            "is deliberately not stable identity; join decisions using " ++
+            "`id`, never this field.",
+    },
+    .{
+        .type_name = "manifest.FindingEntry",
         .field = "choices",
         .text = "The fixed set of answers an operator may record against " ++
             "this finding (e.g. \"island\", \"retain\", \"blocked\"). " ++

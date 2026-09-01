@@ -150,6 +150,12 @@ module RailsAnalyze
     root = File.expand_path(root)
 
     controllers_root = File.join(root, "app/controllers")
+    controllers_root_real =
+      begin
+        File.realpath(controllers_root)
+      rescue SystemCallError
+        controllers_root
+      end
     actions = []
     layouts = []
     before_actions = []
@@ -164,9 +170,27 @@ module RailsAnalyze
 
     Dir.glob(File.join(controllers_root, "**", "*.rb")).sort.each do |file|
       rel_file = file.delete_prefix("#{root}/")
+      resolved =
+        begin
+          File.realpath(file)
+        rescue SystemCallError, IOError
+          nil
+        end
+      if resolved && resolved != controllers_root_real && !resolved.start_with?("#{controllers_root_real}#{File::SEPARATOR}")
+        unresolved << {
+          code: "RAILS_CONTROLLER_UNREADABLE",
+          path: rel_file,
+          detail: "controller resolves outside root",
+          line: 1,
+        }
+        next
+      end
+      read_path = resolved || file
       source =
         begin
-          File.read(file)
+          # Read the path that was actually checked. Reading through `file`
+          # again would let a symlink target change between realpath and read.
+          File.read(read_path)
         rescue SystemCallError, IOError => e
           # `e.message` is Ruby's own Errno formatting, generated from
           # whatever path `File.read` was actually given -- the ABSOLUTE
@@ -179,7 +203,7 @@ module RailsAnalyze
           unresolved << {
             code: "RAILS_CONTROLLER_UNREADABLE",
             path: rel_file,
-            detail: "#{e.class}: #{e.message.gsub(file, rel_file)}",
+            detail: "#{e.class}: #{e.message.gsub(read_path, rel_file).gsub(file, rel_file)}",
             line: 1,
           }
           next

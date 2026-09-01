@@ -80,7 +80,11 @@ module RailsI18n
 
   def self.default_locale(root)
     src = File.read(File.join(root, "config/application.rb"))
-    m = DEFAULT_LOCALE_RE.match(src)
+    # A commented-out assignment is documentation, not configuration. Match
+    # the first live assignment line instead of the first byte pattern in the
+    # whole source file.
+    m = src.each_line.lazy.reject { |line| line.lstrip.start_with?("#") }
+           .map { |line| DEFAULT_LOCALE_RE.match(line) }.find(&:itself)
     m ? (m[1] || m[2]) : "en"
   rescue SystemCallError, IOError
     "en"
@@ -89,6 +93,8 @@ module RailsI18n
   def self.load(root)
     root = File.expand_path(root)
     table = Table.new(default_locale(root))
+    locale_docs = []
+    found_locale = false
     Dir.glob(File.join(root, "config/locales/**/*.{yml,yaml}")).sort.each do |file|
       rel = file.delete_prefix("#{root}/")
       begin
@@ -109,9 +115,22 @@ module RailsI18n
         table.errors << { path: rel, detail: "#{e.class}: #{e.message.lines.first.to_s.strip}" }
         next
       end
-      next unless doc.is_a?(Hash)
+      unless doc.is_a?(Hash)
+        table.errors << { path: rel, detail: "locale document must be a mapping" }
+        next
+      end
+      locale_docs << rel
       slice = doc[table.locale] || doc[table.locale.to_sym]
-      table.merge!(slice) if slice.is_a?(Hash)
+      if slice.is_a?(Hash)
+        found_locale = true
+        table.merge!(slice)
+      end
+    end
+    if !locale_docs.empty? && !found_locale
+      table.errors << {
+        path: locale_docs.first,
+        detail: "default locale #{table.locale.inspect} was not found in any locale document",
+      }
     end
     table
   end

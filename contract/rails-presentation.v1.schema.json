@@ -469,10 +469,12 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "The one recovered route this question is scoped to, or `null` for template-, controller-, and application-scoped questions. This is context, not the finding join key: use `id` to record a decision, and do not assume route ids are unique when routes.rb repeats a declaration."
           },
           "message": {
-            "type": "string"
+            "type": "string",
+            "description": "Human-readable explanation of the unresolved choice. This prose may be clarified between generator versions and is deliberately not stable identity; join decisions using `id`, never this field."
           },
           "choices": {
             "type": "array",

@@ -2249,6 +2249,14 @@ fn deriveNode(
             defer gpa.free(loc);
             try appendFinding(gpa, list, "RAILS_RAW_OUTPUT", .warn, path, node.line, loc, "unescaped output", &choices_island_retain_blocked);
         },
+        .yield_named => {
+            if (!node.dynamic) return;
+            const loc = try nodeLoc(gpa, node.line, node.col);
+            defer gpa.free(loc);
+            const message = try std.fmt.allocPrint(gpa, "named yield `{s}` has a default branch `{s}` that cannot be represented statically", .{ node.name orelse "", node.value orelse "" });
+            defer gpa.free(message);
+            try appendFinding(gpa, list, "RAILS_NAMED_YIELD_DEFAULT", .warn, path, node.line, loc, message, &choices_retain_blocked);
+        },
         .render_dynamic => {
             const loc = try nodeLoc(gpa, node.line, node.col);
             defer gpa.free(loc);
@@ -2831,7 +2839,9 @@ pub fn derive(gpa: Allocator, in: DeriveInput) Allocator.Error![]Finding {
 
     for (in.layouts) |layout| {
         if (!layout.dynamic) continue;
-        var path: []const u8 = layout.controller;
+        const fallback_path = try std.fmt.allocPrint(gpa, "app/controllers/{s}_controller.rb", .{layout.controller});
+        defer gpa.free(fallback_path);
+        var path: []const u8 = fallback_path;
         for (in.controller_files) |cf| {
             if (std.mem.eql(u8, cf.controller, layout.controller)) {
                 path = cf.path;
@@ -3116,6 +3126,21 @@ test "lessThan orders ties by id when code/path/line all match" {
     try std.testing.expect(lessThan({}, a, b));
 }
 
+test "derive: a named yield default is an explicit retain-or-block question" {
+    var node = nodeCode(.yield_named, 1, 5, "sidebar");
+    node.value = "fallback";
+    node.dynamic = true;
+    const nodes = [_]fragments.Node{node};
+    const tpls = [_]fragments.Template{
+        .{ .path = "app/views/layouts/application.html.erb", .nodes = @constCast(&nodes), .error_message = null, .error_line = null, .unreadable = null },
+    };
+    const out = try derive(std.testing.allocator, .{ .templates = &tpls, .layouts = &.{}, .controller_files = &.{}, .route_names = &.{}, .locale = null });
+    defer free(std.testing.allocator, out);
+    try std.testing.expectEqual(@as(usize, 1), out.len);
+    try std.testing.expectEqualStrings("RAILS_NAMED_YIELD_DEFAULT", out[0].code);
+    for ([_][]const u8{ "retain", "blocked" }, out[0].choices) |want, got| try std.testing.expectEqualStrings(want, got);
+}
+
 // Ruling R16 (review finding 2): when a locale file failed to load, the
 // translation table is empty (or partial) and EVERY `t()` key looks missing.
 // The finding is still real -- the key does not resolve, and the operator
@@ -3149,6 +3174,25 @@ test "derive: a failed locale file qualifies every RAILS_I18N_UNRESOLVED message
     // it, so a decision recorded against this finding survives the locale
     // file being fixed.
     try std.testing.expectEqualStrings("RAILS_I18N_UNRESOLVED.app/views/posts/index%2Ehtml%2Eerb.L1C5", out[0].id);
+}
+
+test "derive: the failed-locale caveat is clean under every allocation failure" {
+    var missing = nodeCode(.i18n, 1, 5, "posts.index.nope");
+    missing.missing = true;
+    const nodes = [_]fragments.Node{missing};
+    const tpls = [_]fragments.Template{
+        .{ .path = "app/views/posts/index.html.erb", .nodes = @constCast(&nodes), .error_message = null, .error_line = null, .unreadable = null },
+    };
+    const broken = [_][]const u8{"config/locales/en.yml"};
+    var fail_index: usize = 0;
+    while (true) : (fail_index += 1) {
+        if (fail_index > 200) return error.SweepNeverReachedSuccess;
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
+        if (derive(failing.allocator(), .{ .templates = &tpls, .layouts = &.{}, .controller_files = &.{}, .route_names = &.{}, .locale = "en", .i18n_error_paths = &broken })) |out| {
+            free(std.testing.allocator, out);
+            break;
+        } else |err| try std.testing.expectEqual(error.OutOfMemory, err);
+    }
 }
 
 // Ruling R15 (review finding 1): a view the templates op REFUSED --

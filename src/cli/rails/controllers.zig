@@ -2105,7 +2105,7 @@ test "discoverControllers spawns the real Ruby sidecar and recovers PostsControl
     if (result.actions.len == 0 and blocker_list.items.len > 0) {
         if (blocker_list.items.len == 1 and
             std.mem.eql(u8, blocker_list.items[0].code, "RAILS_CONTROLLERS_UNAVAILABLE") and
-            std.mem.eql(u8, blocker_list.items[0].detail, "FileNotFound"))
+            std.mem.indexOf(u8, blocker_list.items[0].detail, "FileNotFound") != null)
             return error.SkipZigTest;
         std.debug.print("discoverControllers degraded unexpectedly: {s}: {s}\n", .{
             blocker_list.items[blocker_list.items.len - 1].code,

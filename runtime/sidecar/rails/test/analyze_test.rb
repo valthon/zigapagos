@@ -312,6 +312,27 @@ Dir.mktmpdir do |dir2|
   end
 end
 
+# Controller discovery follows in-root aliases but must never read through a
+# symlink into a file outside app/controllers.
+Dir.mktmpdir do |dir2|
+  Dir.mktmpdir do |outside|
+    FileUtils.mkdir_p(File.join(dir2, "app/controllers"))
+    File.write(File.join(dir2, "app/controllers/posts_controller.rb"), "class PostsController < ApplicationController\n  def index; end\nend\n")
+    File.write(File.join(outside, "secret_controller.rb"), "class SecretController < ApplicationController\n  def index; end\nend\n")
+    begin
+      File.symlink(File.join(dir2, "app/controllers/posts_controller.rb"), File.join(dir2, "app/controllers/alias_controller.rb"))
+      File.symlink(File.join(outside, "secret_controller.rb"), File.join(dir2, "app/controllers/evil_controller.rb"))
+      res = sidecar_response(script, "controllers", dir2)
+      check("an in-root controller symlink is analyzed", res[:actions].any? { |a| a[:controller] == "alias" && a[:action] == "index" })
+      escaped = res[:unresolved].find { |u| u[:path] == "app/controllers/evil_controller.rb" }
+      check("an out-of-root controller symlink is refused", escaped && escaped[:code] == "RAILS_CONTROLLER_UNREADABLE" && escaped[:detail].include?("outside root"))
+      check("an out-of-root controller contributes no actions", res[:actions].none? { |a| a[:controller] == "evil" })
+    rescue NotImplementedError, Errno::EPERM => e
+      warn "SKIP: controller symlink tests -- #{e.class}"
+    end
+  end
+end
+
 # B1, the ROUTES half: `config/routes.rb`'s reported path is a fixed
 # relative literal now (it is always at the same place relative to `root`),
 # never the absolute `routes_path` `handle_routes` used to compute via
