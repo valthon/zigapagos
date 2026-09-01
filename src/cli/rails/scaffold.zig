@@ -5660,7 +5660,9 @@ const target_tsconfig =
     \\  "compilerOptions": {
     \\    "jsx": "react-jsx",
     \\    "jsxImportSource": "@z/runtime",
+    \\    "module": "ESNext",
     \\    "moduleResolution": "bundler",
+    \\    "target": "ESNext",
     \\    "strict": true,
     \\    "skipLibCheck": true,
     \\    "allowJs": true,
@@ -14726,6 +14728,9 @@ test "Stage 4 interactivity paths and React project metadata are deterministic" 
     const package = try emitPackageCompat(gpa, "Charts", "../runtime", false, &.{"d3"}, &deps);
     defer gpa.free(package);
     try testing.expect(std.mem.indexOf(u8, package, "\"d3\": \"7.9.0\"") != null);
+    try testing.expect(std.mem.indexOf(u8, target_tsconfig, "\"jsxImportSource\": \"@z/runtime\"") != null);
+    try testing.expect(std.mem.indexOf(u8, target_tsconfig, "\"module\": \"ESNext\"") != null);
+    try testing.expect(std.mem.indexOf(u8, target_tsconfig, "\"target\": \"ESNext\"") != null);
     try testing.expect(std.mem.indexOf(u8, target_tsconfig, "\"allowJs\": true") != null);
     try testing.expect(std.mem.indexOf(u8, target_tsconfig, "\"allowImportingTsExtensions\": true") != null);
     try testing.expect(std.mem.indexOf(u8, target_tsconfig, "\"noEmit\": true") != null);

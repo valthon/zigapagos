@@ -2,9 +2,14 @@
   "compilerOptions": {
     "jsx": "react-jsx",
     "jsxImportSource": "@z/runtime",
+    "module": "ESNext",
     "moduleResolution": "bundler",
+    "target": "ESNext",
     "strict": true,
     "skipLibCheck": true,
+    "allowJs": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
     "paths": {
       "react": ["./node_modules/@z/runtime/src/compat/index.ts"],
       "react-dom": ["./node_modules/@z/runtime/src/compat/index.ts"],
@@ -12,5 +17,6 @@
       "react/jsx-runtime": ["./node_modules/@z/runtime/src/jsx-runtime.ts"],
       "react/jsx-dev-runtime": ["./node_modules/@z/runtime/src/jsx-runtime.ts"]
     }
-  }
+  },
+  "include": ["app", "components", "slices", "vendor"]
 }
