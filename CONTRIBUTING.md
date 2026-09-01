@@ -93,7 +93,7 @@ anything Bun-dependent.** Without it `bun test` reports every file as failing
 breakage and are neither.
 
 ```sh
-cd runtime && bun test              # TypeScript suite (685 tests / 57 files)
+cd runtime && bun test              # TypeScript suite (750 tests / 58 files)
 cd runtime && bun test src/router   # one file — the filter is a PATH substring
 ```
 

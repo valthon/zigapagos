@@ -1,3 +1,0 @@
-### Added
-
-- `zigapagos migrate` now auto-detects Next.js, Gatsby, Nuxt/Vue, Hugo, and Jekyll projects (or accepts `--from`) and writes source-specific migration worklists. Next.js and Gatsby React components, including JSX authored in `.js`, can use the existing non-clobbering `--scaffold` path; `--convert-content` normalizes Hugo/Jekyll YAML or TOML frontmatter into a separate Zigapagos content tree while preserving Markdown bodies. Unconverted frontmatter and invalid source dates travel with the generated page as explicit review metadata and produce CLI warnings instead of disappearing silently. Vue and static-template sources remain explicit manual ports.

@@ -204,30 +204,29 @@ export const routes = [
   </section>
 
   <section id="s-astro" class="section wrap">
-    <p class="eyebrow">Coming from Astro</p>
-    <h2>A worklist, not a conversion</h2>
+    <p class="eyebrow">Migrating an existing app</p>
+    <h2>A target, a handoff, and the gaps in between</h2>
     <div class="grid-2">
       <div>
         <p>
-          <code>zigapagos migrate &lt;astro-dir&gt;</code> scans an Astro project
-          and writes <code>MIGRATION.md</code>: every source file mapped to its
-          Zigapagos target, every component that needs a <code>client:</code>
-          directive flagged as a real island, and the standard procedure for
-          each. It does not rewrite your site &mdash; it tells you exactly what to
-          rewrite.
+          <code>zigapagos migrate &lt;source&gt; --target &lt;new-site&gt;</code>
+          recognizes Astro, Next.js, Gatsby, Nuxt/Vue, Hugo, Jekyll, Eleventy,
+          Hexo, and Rails. It writes a buildable target from the deterministic
+          parts and a <code>MIGRATION.md</code> that keeps everything uncertain
+          visible instead of guessing.
         </p>
         <p>
-          The opt-in <code>--scaffold &lt;dir&gt;</code> pass goes one step
-          further for islands specifically: it ports each component's imports
-          from React to <code>@z/runtime</code> and carries over its
-          <code>Props</code> type verbatim, so you are editing a real
-          starting point instead of an empty file. It never overwrites a file
-          you already migrated by hand.
+          Rails goes further: static route and ERB analysis produce versioned
+          discovery and handoff manifests, operator decisions drive conversion,
+          ZigBase operations bind forms and authentication, and generated parity
+          runners state what the migrated presentation must preserve.
         </p>
         <p><a href="$site.page('demos/migrate').link()">Try the migrate demo →</a></p>
       </div>
       <div>
-        <p><a href="$site.page('docs/migrate-from-astro').link()">The full Astro → Zigapagos mapping →</a></p>
+        <p><a href="$site.page('docs/migrate-from-rails').link()">The Rails migration contract →</a></p>
+        <p><a href="$site.page('docs/migrate-from-astro').link()">The Astro mapping →</a></p>
+        <p><a href="$site.page('docs/migrate-from-other-frameworks').link()">Other framework mappings →</a></p>
       </div>
     </div>
   </section>
@@ -260,8 +259,9 @@ export const routes = [
         <h3>Context that ships</h3>
         <p>
           <code>zigapagos init</code> scaffolds <code>AGENTS.md</code> and
-          <code>CLAUDE.md</code> into a new site, and the Astro migration is
-          an installable Agent Skill in the open agentskills.io format.
+          <code>CLAUDE.md</code> into a new site, and both the Astro and Rails
+          migrations are installable Agent Skills in the open agentskills.io
+          format.
         </p>
       </div>
     </div>

@@ -46,6 +46,9 @@
       <a class="card" href="$site.page('docs/migrate-from-other-frameworks').link()">
         <h3>From other frameworks</h3><p>Next.js, Gatsby, Nuxt/Vue, Hugo, Jekyll, Eleventy, and Hexo mappings.</p>
       </a>
+      <a class="card" href="$site.page('docs/migrate-from-rails').link()">
+        <h3>From Rails</h3><p>Discovery, conversion decisions, backend bindings, handoff, and parity.</p>
+      </a>
     </div>
   </div>
 </main>

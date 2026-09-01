@@ -10,7 +10,8 @@
   <a href="https://valthon.github.io/zigapagos/">Website</a> ·
   <a href="docs/islands.md">Islands</a> ·
   <a href="docs/spa.md">SPAs</a> ·
-  <a href="docs/migration/astro-to-zigapagos.md">Migrate from Astro</a>
+  <a href="docs/migration/astro-to-zigapagos.md">Migrate from Astro</a> ·
+  <a href="docs/migration/rails-to-zigapagos.md">Migrate from Rails</a>
 </p>
 
 ---
@@ -66,16 +67,16 @@ map. No island on the page? Zero JavaScript shipped.
   subpages, in a choice of three URL styles; `$page.subpages()` returns the
   current window, so an existing layout loop paginates with no edit.
 - **First-class framework migration** — `zigapagos migrate <source>` detects
-  Astro, Next.js, Gatsby, Nuxt/Vue, Hugo, Jekyll, Eleventy, or Hexo and writes a
-  source-specific `MIGRATION.md` worklist. `--target <new-site>` assembles a
-  minimal valid Zigapagos project in one command, composing every safe
-  deterministic step: React → `@z/runtime` island scaffolding, Markdown/Ziggy
-  frontmatter conversion, and fixed-URL public/static asset copying. Routes,
-  loaders, templates, plugins, and runtime semantics stay explicit review work
-  for a human or AI agent.
-  Ships as an installable [Agent Skill](skills/zigapagos-astro-migration/)
-  (the open `SKILL.md` format read by Claude Code, Codex, Cursor, Gemini CLI,
-  and others).
+  Astro, Next.js, Gatsby, Nuxt/Vue, Hugo, Jekyll, Eleventy, Hexo, or Rails and
+  writes a source-specific `MIGRATION.md`. `--target <new-site>` assembles a
+  minimal valid project from every safe deterministic transform: React →
+  `@z/runtime` islands, Markdown/Ziggy frontmatter, fixed-URL assets, and the
+  supported Rails ERB presentation subset.
+  Rails migrations add versioned discovery and handoff manifests, durable
+  operator decisions, ZigBase backend bindings, and generated parity runners;
+  unsupported or uncertain behavior remains explicit instead of being guessed.
+  The Astro and Rails workflows ship as installable
+  [Agent Skills](skills/) in the open `SKILL.md` format.
   Generated targets must be missing or empty; source files are read-only and
   nested targets are rejected. Astro remains the reference path and retains the
   deeper `init --from-astro` scaffold, while `migrate --target` is the uniform
@@ -184,8 +185,8 @@ Zigapagos is pre-1.0: APIs may change between minor versions. Only the most
 recent release is supported — see
 [releases](https://github.com/valthon/zigapagos/releases) for the current one
 and [CHANGELOG.md](CHANGELOG.md) for what changed. The islands engine, SPA
-support, and Astro migration tooling are complete and covered by unit +
-real-browser e2e tests.
+support, and the Astro and Rails migration workflows are covered by unit,
+shell, and real-browser tests.
 
 ## Contributing
 

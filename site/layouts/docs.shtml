@@ -95,6 +95,14 @@
             </ctx>
           </li>
           <li>
+            <ctx :if="$page.custom.get('slug').eql('migrate-from-rails')">
+              <a aria-current="page" href="$site.page('docs/migrate-from-rails').link()">From Rails</a>
+            </ctx>
+            <ctx :if="$page.custom.get('slug').eql('migrate-from-rails').not()">
+              <a href="$site.page('docs/migrate-from-rails').link()">From Rails</a>
+            </ctx>
+          </li>
+          <li>
             <ctx :if="$page.custom.get('slug').eql('migration-recipes')">
               <a aria-current="page" href="$site.page('docs/migration-recipes').link()">Recipes</a>
             </ctx>
