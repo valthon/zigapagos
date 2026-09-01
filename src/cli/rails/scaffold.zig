@@ -8408,6 +8408,103 @@ test "write: a finding inside an inlined partial reaches the route" {
     try testing.expectEqualStrings(finding_list[0].id, res.routes[0].open_finding_ids[0]);
 }
 
+test "write: a computed content_for title can be blocked through its finding" {
+    const gpa = testing.allocator;
+    const path = "app/views/pages/about.html.erb";
+    const view_nodes = [_]fragments.Node{
+        tOpen(.content_for, 1, 1, "title", "content_for :title do"),
+        tText("<span>Account</span>", 1),
+        tText(" settings", 1),
+        tEnd(1, 50),
+        tText("<p>Body</p>", 2),
+    };
+    const frags = [_]fragments.Template{tTemplate(path, &view_nodes)};
+    const route_views = [_]?[]const u8{path};
+    const finding_list = try findings.derive(gpa, .{
+        .templates = &frags,
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &.{},
+        .locale = null,
+        .route_views = &route_views,
+    });
+    defer findings.free(gpa, finding_list);
+    try testing.expectEqual(@as(usize, 1), finding_list.len);
+    try testing.expectEqualStrings(findings.code_content_for_dynamic, finding_list[0].code);
+
+    var rs = [_]route_mod.Route{tRoute("GET", "/about", "pages", "about", 2)};
+    var vs = [_]classify.Verdict{tVerdict(.content)};
+    var tpls = [_][]const u8{path};
+    var rts = [_]rails.RouteTemplates{.{ .templates = &tpls, .layout = null }};
+    var d = emptyDiscovery();
+    d.routes = &rs;
+    d.classifications = &vs;
+    d.route_templates = &rts;
+    d.fragments = @constCast(&frags);
+    d.findings = finding_list;
+
+    // Unanswered, the emitted page carries the id and the route stays open.
+    {
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        const target = try tmpTarget(gpa, &tmp);
+        defer gpa.free(target);
+        var err_path: ?[]const u8 = null;
+        defer if (err_path) |p| gpa.free(p);
+        var err_cause: ?anyerror = null;
+        const res = try write(std.testing.io, gpa, .{
+            .discovery = &d,
+            .decisions = .{ .decisions = &.{}, .stale = &.{} },
+            .source_root = tmp.dir,
+            .target = target,
+            .app_name = "Blog",
+            .runtime_path = null,
+            .agents_md = "",
+            .claude_md = "",
+        }, &err_path, &err_cause);
+        defer freeResult(gpa, res);
+        try testing.expectEqual(Status.open, res.routes[0].status);
+        try testing.expectEqualStrings(finding_list[0].id, res.routes[0].open_finding_ids[0]);
+        const view = try readTarget(gpa, &tmp, "layouts/pages/about.shtml");
+        defer gpa.free(view);
+        try testing.expect(std.mem.indexOf(u8, view, "<!-- rails:finding RAILS_CONTENT_FOR_DYNAMIC.") != null);
+        try testing.expect(std.mem.indexOf(u8, view, "rails:unmapped content_for") == null);
+        try testing.expect(std.mem.indexOf(u8, view, "<span>Account</span>") == null);
+        try testing.expect(std.mem.indexOf(u8, view, "<p>Body</p>") != null);
+    }
+
+    // The same id is a real decision boundary, so blocked emits no page.
+    {
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        const target = try tmpTarget(gpa, &tmp);
+        defer gpa.free(target);
+        var err_path: ?[]const u8 = null;
+        defer if (err_path) |p| gpa.free(p);
+        var err_cause: ?anyerror = null;
+        var answered = [_]decisions.Decision{.{
+            .id = finding_list[0].id,
+            .choice = "blocked",
+            .rationale = "title requires Rails request state",
+            .artifact = null,
+        }};
+        const res = try write(std.testing.io, gpa, .{
+            .discovery = &d,
+            .decisions = .{ .decisions = &answered, .stale = &.{} },
+            .source_root = tmp.dir,
+            .target = target,
+            .app_name = "Blog",
+            .runtime_path = null,
+            .agents_md = "",
+            .claude_md = "",
+        }, &err_path, &err_cause);
+        defer freeResult(gpa, res);
+        try testing.expectEqual(Status.blocked, res.routes[0].status);
+        try testing.expectEqualStrings(finding_list[0].id, res.routes[0].decision_id.?);
+        try testing.expect(!targetHas(&tmp, "content/about/index.smd"));
+    }
+}
+
 test "write: a description and a quoted title survive into Ziggy frontmatter" {
     const gpa = testing.allocator;
     var tmp = std.testing.tmpDir(.{});
