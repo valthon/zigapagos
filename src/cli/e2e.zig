@@ -234,7 +234,10 @@ pub fn e2e(
     // per-run temp dir; reused across restarts otherwise) -- a no-op when
     // cmd.url_prefix is "" (see stageServedRoot's doc comment).
     const staging_root = std.fs.path.join(gpa, &.{ data_dir, ".served-root" }) catch fatal.oom();
-    const served_root = try stageServedRoot(io, gpa, staging_root, cmd.url_prefix, cmd.site);
+    const served_root = stageServedRoot(io, gpa, staging_root, cmd.url_prefix, cmd.site) catch |err| fatal.msg(
+        "error: e2e: unable to stage the served root: {s}\n",
+        .{@errorName(err)},
+    );
     const ready_path = if (cmd.ready_path_explicit)
         cmd.ready_path
     else
@@ -487,74 +490,77 @@ pub fn substituteArg(
 /// REAL: every regular file under `site_dir_abs` is copied into
 /// `<staging_root_abs>/<trimmed prefix>/`, preserving its relative path.
 ///
-/// `staging_root_abs` is wiped and rebuilt from scratch on every call. That
-/// is what makes it safe to call again after every rebuild (`dev`'s watch
-/// loop does, unconditionally -- this function is a no-op for an unprefixed
-/// site) and is the only way to guarantee two kinds of staleness can't
-/// linger: a page the last build deleted, and a leftover directory tree
-/// staged under a PRIOR, since-changed `url_path_prefix` from an earlier dev
-/// session. The cost is a full re-copy of the tree per call -- cheap next to
-/// the rebuild that just produced `site_dir_abs`, and there is no in-place
-/// alternative: zigbase re-reads the served files live, and a build that
-/// writes via replace-in-place (temp file + rename, the usual atomic-write
-/// pattern) would leave a hard-linked mirror pointing at stale inodes, so a
-/// real copy is the only refresh that is guaranteed current after every kind
-/// of rebuild.
+/// Each refresh is built completely at `<staging_root_abs>.next`, then swapped
+/// into place with directory renames. A running zigbase therefore reads either
+/// the last complete tree or the next complete tree, never a half-copied one.
+/// The retired tree is removed after the swap; stale `.next`/`.previous` trees
+/// from an interrupted prior refresh are removed before touching the live
+/// tree. Re-copying also guarantees deleted pages and a prior, since-changed
+/// `url_path_prefix` cannot linger.
 ///
-/// NO_SLOP.md §2.2a contract 1 (self-freeing): `prefix_dir_abs` is scratch,
-/// freed before return; the only thing that escapes is `staging_root_abs` or
-/// `site_dir_abs`, both borrowed from the caller.
+/// NO_SLOP.md §2.2a contract 1 (self-freeing): all joined paths are scratch
+/// and freed before return; the only thing that escapes is `staging_root_abs`
+/// or `site_dir_abs`, both borrowed from the caller.
 pub fn stageServedRoot(
     io: Io,
     gpa: Allocator,
     staging_root_abs: []const u8,
     prefix: []const u8,
     site_dir_abs: []const u8,
-) error{OutOfMemory}![]const u8 {
+) ![]const u8 {
     const trimmed = std.mem.trim(u8, prefix, "/");
     if (trimmed.len == 0) return site_dir_abs;
 
-    // Wipe first (see the doc comment: this is what retires BOTH a deleted
-    // page and a stale prior-prefix directory). Missing is fine -- the first
-    // call in a fresh data dir has nothing to remove.
-    Io.Dir.cwd().deleteTree(io, staging_root_abs) catch {};
+    const next_root_abs = try std.fmt.allocPrint(gpa, "{s}.next", .{staging_root_abs});
+    defer gpa.free(next_root_abs);
+    const previous_root_abs = try std.fmt.allocPrint(gpa, "{s}.previous", .{staging_root_abs});
+    defer gpa.free(previous_root_abs);
 
-    const prefix_dir_abs = std.fs.path.join(gpa, &.{ staging_root_abs, trimmed }) catch fatal.oom();
+    // Interrupted refreshes may leave either scratch tree behind. Remove them
+    // before building, while the live tree remains untouched. `deleteTree`
+    // deliberately treats FileNotFound as success, so this is also the normal
+    // first-refresh path when neither scratch tree exists.
+    try Io.Dir.cwd().deleteTree(io, next_root_abs);
+    errdefer Io.Dir.cwd().deleteTree(io, next_root_abs) catch {};
+    try Io.Dir.cwd().deleteTree(io, previous_root_abs);
+
+    const prefix_dir_abs = try std.fs.path.join(gpa, &.{ next_root_abs, trimmed });
     defer gpa.free(prefix_dir_abs);
-    Io.Dir.cwd().createDirPath(io, prefix_dir_abs) catch |err| fatal.msg(
-        "error: unable to create the served-root staging dir '{s}': {s}\n",
-        .{ prefix_dir_abs, @errorName(err) },
-    );
+    try Io.Dir.cwd().createDirPath(io, prefix_dir_abs);
 
-    var src_dir = Io.Dir.cwd().openDir(io, site_dir_abs, .{ .iterate = true }) catch |err| fatal.msg(
-        "error: unable to open '{s}' to stage it at the url_path_prefix: {s}\n",
-        .{ site_dir_abs, @errorName(err) },
-    );
-    defer src_dir.close(io);
-    var dst_dir = Io.Dir.cwd().openDir(io, prefix_dir_abs, .{}) catch |err| fatal.msg(
-        "error: unable to open the staged prefix dir '{s}': {s}\n",
-        .{ prefix_dir_abs, @errorName(err) },
-    );
-    defer dst_dir.close(io);
+    // Close the directory handles before the rename, which is required on
+    // platforms that do not permit renaming an open directory.
+    {
+        var src_dir = try Io.Dir.cwd().openDir(io, site_dir_abs, .{ .iterate = true });
+        defer src_dir.close(io);
+        var dst_dir = try Io.Dir.cwd().openDir(io, prefix_dir_abs, .{});
+        defer dst_dir.close(io);
 
-    var it = src_dir.walk(gpa) catch |err| {
-        if (err == error.OutOfMemory) fatal.oom();
-        fatal.msg("error: unable to walk '{s}' while staging the served root: {s}\n", .{ site_dir_abs, @errorName(err) });
-    };
-    defer it.deinit();
-    while (it.next(io) catch |err| fatal.msg(
-        "error: failed scanning '{s}' while staging the served root: {s}\n",
-        .{ site_dir_abs, @errorName(err) },
-    )) |entry| {
-        if (entry.kind != .file) continue;
-        // `entry.dir`/`entry.basename` (not `site_dir_abs`/`entry.path`) as the
-        // SOURCE side avoids `error.NameTooLong` on a deeply nested tree -- see
-        // `Walker.Entry`'s own doc comment.
-        entry.dir.copyFile(entry.basename, dst_dir, entry.path, io, .{ .make_path = true }) catch |err| fatal.msg(
-            "error: failed staging '{s}' at the served root: {s}\n",
-            .{ entry.path, @errorName(err) },
-        );
+        var it = try src_dir.walk(gpa);
+        defer it.deinit();
+        while (try it.next(io)) |entry| {
+            if (entry.kind != .file) continue;
+            // `entry.dir`/`entry.basename` (not `site_dir_abs`/`entry.path`) as
+            // the SOURCE side avoids `error.NameTooLong` on a deeply nested
+            // tree -- see `Walker.Entry`'s own doc comment.
+            try entry.dir.copyFile(entry.basename, dst_dir, entry.path, io, .{ .make_path = true });
+        }
     }
+
+    const moved_live = blk: {
+        Io.Dir.renameAbsolute(staging_root_abs, previous_root_abs, io) catch |err| switch (err) {
+            error.FileNotFound => break :blk false,
+            else => return err,
+        };
+        break :blk true;
+    };
+    Io.Dir.renameAbsolute(next_root_abs, staging_root_abs, io) catch |swap_err| {
+        // Preserve the last good tree if publishing the completed replacement
+        // fails after the first rename.
+        if (moved_live) Io.Dir.renameAbsolute(previous_root_abs, staging_root_abs, io) catch {};
+        return swap_err;
+    };
+    if (moved_live) Io.Dir.cwd().deleteTree(io, previous_root_abs) catch {};
 
     return staging_root_abs;
 }
@@ -577,6 +583,50 @@ pub fn defaultReadyPath(gpa: Allocator, prefix: []const u8) error{OutOfMemory}![
 // --- unit tests (run via `zig build test-e2e`, filter "e2e") -------------------
 // fatal.usageError paths (missing --site, empty command, unknown arg) exit the
 // process and are exercised by tests/dev/e2e.sh instead.
+
+test "e2e stageServedRoot first use swaps complete trees and preserves the last good tree on failure" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const root_abs = try tmp.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(root_abs);
+    const site_abs = try std.fs.path.join(gpa, &.{ root_abs, "site" });
+    defer gpa.free(site_abs);
+    const missing_site_abs = try std.fs.path.join(gpa, &.{ root_abs, "missing-site" });
+    defer gpa.free(missing_site_abs);
+    const staging_abs = try std.fs.path.join(gpa, &.{ root_abs, ".served-root" });
+    defer gpa.free(staging_abs);
+    const staged_page_abs = try std.fs.path.join(gpa, &.{ staging_abs, "docs/v2/index.html" });
+    defer gpa.free(staged_page_abs);
+
+    var site = try tmp.dir.createDirPathOpen(io, "site", .{});
+    defer site.close(io);
+    try site.writeFile(io, .{ .sub_path = "index.html", .data = "version one" });
+
+    try std.testing.expectEqualStrings(
+        staging_abs,
+        try stageServedRoot(io, gpa, staging_abs, "/docs/v2/", site_abs),
+    );
+    var staged = try Io.Dir.cwd().readFileAlloc(io, staged_page_abs, gpa, .unlimited);
+    try std.testing.expectEqualStrings("version one", staged);
+    gpa.free(staged);
+
+    try site.writeFile(io, .{ .sub_path = "index.html", .data = "version two" });
+    _ = try stageServedRoot(io, gpa, staging_abs, "/docs/v2/", site_abs);
+    staged = try Io.Dir.cwd().readFileAlloc(io, staged_page_abs, gpa, .unlimited);
+    try std.testing.expectEqualStrings("version two", staged);
+    gpa.free(staged);
+
+    try std.testing.expectError(
+        error.FileNotFound,
+        stageServedRoot(io, gpa, staging_abs, "/docs/v2/", missing_site_abs),
+    );
+    staged = try Io.Dir.cwd().readFileAlloc(io, staged_page_abs, gpa, .unlimited);
+    defer gpa.free(staged);
+    try std.testing.expectEqualStrings("version two", staged);
+}
 
 test "e2e parse: site + '--' argv, with documented defaults" {
     const gpa = std.testing.allocator;

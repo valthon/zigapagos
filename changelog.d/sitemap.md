@@ -7,3 +7,9 @@
   when they are real pages (a static route or a `staticPaths` concrete entry, never a
   dynamic route's own pattern shell). `zigapagos migrate` now flags `@astrojs/sitemap` in
   the generated `MIGRATION.md` worklist instead of silently dropping it.
+
+### Fixed
+
+- A root `assets/sitemap.xml` selected by `static_assets` now fails with
+  `ZP_STATIC_ASSET_OUTPUT_COLLISION` when sitemap generation is enabled,
+  instead of being silently overwritten during the release build.

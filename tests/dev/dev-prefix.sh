@@ -30,8 +30,8 @@
 #   (d) an island module URL resolves under the staged root
 #       (/docs/v2/islands/Counter.island.js), matching the hot-swap URL
 #       `islandModuleUrl` already computes,
-#   (e) a content edit triggers a rebuild that refreshes the STAGED copy
-#       (not just the underlying site_abs tree),
+#   (e) a content edit triggers a rebuild that swaps in a complete new STAGED
+#       tree (not an in-place wipe/copy of the old tree),
 #   (f) teardown leaves no orphans.
 set -euo pipefail
 export ZIGAPAGOS_DEV_BACKGROUND=0 # keep dev foreground: this harness manages the process itself
@@ -183,6 +183,7 @@ STAGED="$(grep -o -- '--serve-static [^ ]*' "$LOG" | head -1 | awk '{print $2}')
 [[ "$STAGED" != "$OUT" ]] || fail "zigbase was pointed at the raw site tree ($OUT), not a staged prefix mount"
 test -f "$STAGED/docs/v2/index.html" || fail "staged root missing docs/v2/index.html (nested prefix not mounted)"
 grep -q 'PREFIX-DEV-MARKER-V1' "$STAGED/docs/v2/index.html" || fail "staged docs/v2/index.html is not the built page"
+STAGED_INODE_BEFORE="$(ls -di "$STAGED" | awk '{print $1}')"
 echo "PASS: (b) staged served root '$STAGED' has a real docs/v2/ directory carrying the built page"
 
 # --- (c) GET / 404s; GET /docs/v2/ serves the page ----------------------------
@@ -205,7 +206,12 @@ poll 60 bash -c "curl -sf '$ORIGIN/docs/v2/' | grep -q PREFIX-DEV-MARKER-V2" \
   || { cat "$LOG"; fail "edited content never reached the served (staged) output"; }
 grep -q 'PREFIX-DEV-MARKER-V2' "$STAGED/docs/v2/index.html" \
   || fail "the staged copy on disk was not refreshed by the rebuild"
-echo "PASS: (e) a rebuild refreshes the staged served-root mirror"
+STAGED_INODE_AFTER="$(ls -di "$STAGED" | awk '{print $1}')"
+[[ "$STAGED_INODE_AFTER" != "$STAGED_INODE_BEFORE" ]] \
+  || fail "the rebuild modified the staged tree in place instead of swapping a complete replacement"
+test ! -e "$STAGED.next" || fail "successful refresh left the next staging tree behind"
+test ! -e "$STAGED.previous" || fail "successful refresh left the retired staging tree behind"
+echo "PASS: (e) a rebuild swaps in a complete staged served-root tree"
 
 # --- (f) teardown --------------------------------------------------------------
 kill -TERM -- "-$DEV_PID" 2>/dev/null || true

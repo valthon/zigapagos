@@ -45,6 +45,9 @@
 #       does not double the slash in any <loc>. Same no-doubled-slash scan
 #       as (6), against a site built with the trailing slash, so a
 #       regression here fails the same way (6) would.
+#  (13) a root `assets/sitemap.xml` selected by either an exact
+#       `static_assets` entry or a glob fails before install instead of being
+#       silently overwritten by the generated sitemap.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 REPO="$(pwd)"
@@ -531,5 +534,40 @@ printf '%s
 printf '%s
 ' "${TRAIL_LOCS[@]}" | grep -qxF "https://example.com/myprefix/blog/page/2/" || { cat "$TRAIL_SM"; fail "(12) the pagination window's URL (n>1, exercises composePageUrl's tail branch) is missing or malformed"; }
 echo "PASS (12): a trailing-slash host_url does not double the slash in any <loc>, including a pagination window's URL"
+
+# --- (13) static_assets may not claim the generated sitemap path ------------
+for static_entry in '"sitemap.xml"' '"**"'; do
+  STATIC_SITE="$WORK/static-${static_entry//[^a-z]/}"
+  mkdir -p "$STATIC_SITE/content" "$STATIC_SITE/layouts/templates" "$STATIC_SITE/assets"
+  cp "$SITE/layouts/templates/base.shtml" "$STATIC_SITE/layouts/templates/base.shtml"
+  cp "$SITE/layouts/page.shtml" "$STATIC_SITE/layouts/page.shtml"
+  cp "$SITE/content/index.smd" "$STATIC_SITE/content/index.smd"
+  printf '%s\n' 'this must never overwrite the generated sitemap' >"$STATIC_SITE/assets/sitemap.xml"
+  cat >"$STATIC_SITE/zigapagos.ziggy" <<EOF
+Site {
+    .title = "Static Sitemap Collision",
+    .host_url = "https://example.com",
+    .content_dir_path = "content",
+    .layouts_dir_path = "layouts",
+    .assets_dir_path = "assets",
+    .static_assets = [$static_entry],
+    .sitemap = true,
+}
+EOF
+  set +e
+  ( cd "$STATIC_SITE" && "$ZIGAPAGOS" release "--output=$STATIC_SITE/out" --force --format=json ) \
+    >"$STATIC_SITE/out.log" 2>"$STATIC_SITE/err.log"
+  STATIC_RC=$?
+  set -e
+  [[ "$STATIC_RC" -ne 0 ]] || {
+    cat "$STATIC_SITE/out.log" "$STATIC_SITE/err.log"
+    fail "(13) static_assets entry $static_entry silently overwrote the generated sitemap"
+  }
+  grep -q '"code":"ZP_STATIC_ASSET_OUTPUT_COLLISION"' "$STATIC_SITE/err.log" || {
+    cat "$STATIC_SITE/err.log"
+    fail "(13) static_assets entry $static_entry did not emit the stable collision code"
+  }
+done
+echo "PASS (13): exact and glob static_assets entries cannot overwrite the generated sitemap"
 
 echo "PASS: tests/sitemap/sitemap.sh"

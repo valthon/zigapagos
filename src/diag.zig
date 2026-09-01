@@ -177,6 +177,8 @@ pub const Code = enum {
     ZP_STATIC_ASSET_GLOB_EMPTY,
     // emitted by: root.zig, a listed static asset does not exist
     ZP_STATIC_ASSET_MISSING,
+    // emitted by: root.zig, a static asset would overwrite generated output
+    ZP_STATIC_ASSET_OUTPUT_COLLISION,
     // emitted by: root.zig, i18n ziggy file failed to parse
     ZP_I18N_PARSE,
     // emitted by: root.zig, an empty content file was skipped (warning)
@@ -280,6 +282,18 @@ pub fn info(c: Code) Info {
             \\
             \\Check the path for a typo (it's relative to `assets_dir_path`),
             \\and confirm the file wasn't renamed or moved.
+            ,
+        },
+        .ZP_STATIC_ASSET_OUTPUT_COLLISION => .{
+            .summary = "a static asset collides with a generated output file",
+            .explanation =
+            \\A `static_assets` entry selected a file whose installed path is
+            \\also owned by a generated build artifact. Installing both would
+            \\silently overwrite one of them and make the final site depend on
+            \\pass order.
+            \\
+            \\Rename or remove the static asset, narrow the matching glob, or
+            \\disable the generated artifact that owns the path.
             ,
         },
         .ZP_I18N_PARSE => .{

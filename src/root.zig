@@ -911,6 +911,38 @@ fn fatalIfSitemapRootCollision(
     );
 }
 
+fn isSitemapRootAsset(build: *const Build, asset: PathName) bool {
+    return asset.path.slice(&build.pt).len == 0 and
+        std.mem.eql(u8, asset.name.slice(&build.st), sitemap.filename);
+}
+
+fn reportSitemapStaticAssetCollision(
+    gpa: Allocator,
+    build: *Build,
+    configured_path: []const u8,
+) error{OutOfMemory}!void {
+    const message = "static asset '" ++ sitemap.filename ++
+        "' selected by static_assets entry '{s}' collides with the generated sitemap " ++
+        "(zigapagos.ziggy: sitemap = true)";
+    if (diag.format == .json) {
+        var msg_buf: [1024]u8 = undefined;
+        diag.emit(.{
+            .code = .ZP_STATIC_ASSET_OUTPUT_COLLISION,
+            .severity = .@"error",
+            .message = diag.render(&msg_buf, message, .{configured_path}),
+        });
+    } else {
+        std.debug.print("error: " ++ message ++ "\n", .{configured_path});
+    }
+
+    if (build.mode == .memory) {
+        try build.mode.memory.errors.append(gpa, .{
+            .ref = "",
+            .msg = try std.fmt.allocPrint(gpa, "error: " ++ message ++ "\n", .{configured_path}),
+        });
+    }
+}
+
 pub fn run(
     io: Io,
     gpa: Allocator,
@@ -1070,6 +1102,7 @@ pub fn run(
     build.island_manifest_path = if (options.mode == .disk) options.island_manifest_path else null;
 
     var static_assets_errors = false;
+    var sitemap_static_collision_reported = false;
     {
         const tracy_frame = tracy.namedFrame("scan content");
         defer tracy_frame.end();
@@ -1154,6 +1187,14 @@ pub fn run(
                         entry.key_ptr.fmt(&build.st, &build.pt, null, "/"),
                     }) catch continue;
                     if (prefix.len == 0 or std.mem.startsWith(u8, asset_path, prefix)) {
+                        if (build.cfg.getSitemap() and
+                            isSitemapRootAsset(&build, entry.key_ptr.*) and
+                            !sitemap_static_collision_reported)
+                        {
+                            try reportSitemapStaticAssetCollision(gpa, &build, path);
+                            sitemap_static_collision_reported = true;
+                            static_assets_errors = true;
+                        }
                         entry.value_ptr.raw = 1;
                         matched += 1;
                     }
@@ -1196,6 +1237,14 @@ pub fn run(
 
             if (PathName.get(&build.st, &build.pt, path)) |pn| {
                 if (build.site_assets.getPtr(pn)) |rc| {
+                    if (build.cfg.getSitemap() and
+                        isSitemapRootAsset(&build, pn) and
+                        !sitemap_static_collision_reported)
+                    {
+                        try reportSitemapStaticAssetCollision(gpa, &build, path);
+                        sitemap_static_collision_reported = true;
+                        static_assets_errors = true;
+                    }
                     rc.raw = 1;
                     continue;
                 }
