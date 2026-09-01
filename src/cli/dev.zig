@@ -691,9 +691,12 @@ pub fn dev(
     // carry the injected snippet, and staging first would copy the
     // pre-injection HTML. `served_root` (== site_abs when url_path_prefix is
     // "") is the actual `--serve-static` argument from here on; the SAME
-    // staging_root_abs path is reused (and its contents refreshed in place)
+    // staging_root_abs path is reused (and atomically refreshed)
     // after every later rebuild below, so zigbase never needs restarting.
-    const served_root = e2e.stageServedRoot(io, gpa, staging_root_abs, url_path_prefix, site_abs) catch fatal.oom();
+    const served_root = e2e.stageServedRoot(io, gpa, staging_root_abs, url_path_prefix, site_abs) catch |err| fatal.msg(
+        "error: dev: unable to stage the served root: {s}\n",
+        .{@errorName(err)},
+    );
 
     // (2) Locate zigbase (explicit → PATH → pinned cache) and, when nothing is
     // found, fetch the pinned release into the cache (SHA256-verified).
@@ -925,7 +928,10 @@ pub fn dev(
                 // run every time because a rebuild that writes via
                 // replace-in-place would otherwise leave the mirror pointing
                 // at stale content. A no-op when url_path_prefix is "".
-                _ = e2e.stageServedRoot(io, gpa, staging_root_abs, url_path_prefix, site_abs) catch fatal.oom();
+                _ = e2e.stageServedRoot(io, gpa, staging_root_abs, url_path_prefix, site_abs) catch |err| harness.fail(
+                    "unable to refresh the served root: {s}",
+                    .{@errorName(err)},
+                );
                 const island_modules: []const []const u8 = switch (change) {
                     .incremental => |inc| inc.island_modules,
                     .full => &.{},
@@ -943,7 +949,10 @@ pub fn dev(
             } else {
                 // No live-reload: still refresh the mirror so a manual
                 // browser refresh sees the new build (see the comment above).
-                _ = e2e.stageServedRoot(io, gpa, staging_root_abs, url_path_prefix, site_abs) catch fatal.oom();
+                _ = e2e.stageServedRoot(io, gpa, staging_root_abs, url_path_prefix, site_abs) catch |err| harness.fail(
+                    "unable to refresh the served root: {s}",
+                    .{@errorName(err)},
+                );
                 std.debug.print("dev: rebuild OK — refresh the browser\n", .{});
             }
         } else {
