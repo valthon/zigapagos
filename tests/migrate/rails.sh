@@ -933,6 +933,19 @@ grep -q -- "error: --doctor is mutually exclusive with --target, --decisions, --
   "$WORK/backend-doctor.out" \
   || fail "the --doctor exclusion message does not list --backend"
 
+# A missing doctor input is an operator error, not an internal assertion.
+# Debug builds must therefore return the documented non-zero status without
+# aborting and print enough context to identify the rejected argument.
+set +e
+"$ZIGAPAGOS" migrate --doctor "$WORK/no-such-island.tsx" \
+  >"$WORK/doctor-missing.out" 2>&1
+doctor_missing_rc=$?
+set -e
+[[ $doctor_missing_rc -eq 1 ]] \
+  || fail "--doctor at a missing path must exit 1 (not a panic), got $doctor_missing_rc"
+grep -q -- "error: --doctor $WORK/no-such-island.tsx could not be read:" "$WORK/doctor-missing.out" \
+  || fail "--doctor at a missing path did not name the flag, path, and OS error"
+
 # #187. `--runtime-path`'s help described the Rails half as the `.spa.tsx` a
 # `spa` decision produced, which was true before Stage 3 and is not now: every
 # island a backend answer binds emits a `package.json` too, which made

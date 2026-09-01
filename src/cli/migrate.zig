@@ -3169,16 +3169,19 @@ fn islandModuleName(path: []const u8) []const u8 {
 }
 
 /// Analyse a single island file and emit a human or JSON port-doctor report to
-/// stdout. Non-mutating: reads only, writes no files. Returns true when at
-/// least one guardrail violation is found (causes a non-zero process exit).
+/// stdout. Non-mutating: reads only, writes no files. Returns true when the
+/// command must exit non-zero: either the input could not be read or at least
+/// one guardrail violation was found.
 ///
 /// A failure to *write* the report (EPIPE from `… | head -1`, ENOSPC, EIO)
 /// aborts non-zero via `fatal`: exiting 0 after a truncated report would mean
 /// "no guardrail violations found", and would hand downstream tooling
 /// unparseable JSON.
 fn doctor(io: Io, gpa: Allocator, path: []const u8, json: bool) bool {
-    const src = readFileContent(io, gpa, Io.Dir.cwd(), path) catch |err|
-        fatal.file(path, err);
+    const src = readFileContent(io, gpa, Io.Dir.cwd(), path) catch |err| {
+        std.debug.print("error: --doctor {s} could not be read: {t}\n", .{ path, err });
+        return true;
+    };
     defer gpa.free(src);
     if (src.len == 0) fatal.msg("island source is empty, nothing to analyse: {s}\n", .{path});
     var rep = detect.analyze(gpa, islandModuleName(path), src) catch fatal.oom();
