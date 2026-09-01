@@ -197,9 +197,10 @@ whoever owns the backend, and come back with an `openapi.json`.
    `RAILS_BACKEND_ENDPOINT`, `island` on `RAILS_AUTH_JOURNEY` or on an
    `errors`/`current_user` region, `island`/`backend` on a portable `ivar`,
    `island` on a portable Stimulus controller, Turbo frame, or React root,
-   `inline` on a closed source-less frame, `drop` on Stimulus or the reviewed
-   `RAILS_JS_ENTRY`, and `public` on `RAILS_ROUTE_AUTH_GUARD`. Turbo Streams
-   and Vue roots offer only `retain`/`blocked`.
+   `inline` on a closed source-less frame, `island-realtime` on a literal
+   supported Turbo Stream subscription/action, `drop` on Stimulus or the
+   reviewed `RAILS_JS_ENTRY`, and `public` on `RAILS_ROUTE_AUTH_GUARD`.
+   Dynamic Turbo Streams and Vue roots offer only `retain`/`blocked`.
 
    Three answers need something extra:
 

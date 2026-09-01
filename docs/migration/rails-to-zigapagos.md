@@ -603,7 +603,7 @@ reading the individual finding's own `choices` array.
 | `RAILS_ROUTE_PATH_UNSUPPORTED` | a route whose path this stage cannot reduce to a content path at all (`GET /posts(.:format)`). Route-scoped, the other half of #182 | retain, blocked |
 | `RAILS_STIMULUS_CONTROLLER` | an element carrying `data-controller`; the element extent, named controller source and every action descriptor must be structurally followable before `island` is offered | island, drop, retain, blocked when portable; otherwise drop, retain, blocked |
 | `RAILS_TURBO_FRAME` | a `turbo_frame_tag` fragment or `<turbo-frame>` element | island, retain, blocked for a resolvable non-API `src`; inline, retain, blocked for a closed source-less frame; otherwise retain, blocked |
-| `RAILS_TURBO_STREAM` | a `turbo_stream_from`/`turbo_stream.*` fragment | retain, blocked |
+| `RAILS_TURBO_STREAM` | a `turbo_stream_from`/`turbo_stream.*` fragment | island-realtime, retain, blocked when the stream/action target is literal and the action is supported; otherwise retain, blocked |
 | `RAILS_COMPONENT_ROOT` | a `react_component("Name", {…})` mount point with literal props and a bundleable, version-pinned import closure | island, retain, blocked when portable; otherwise retain, blocked |
 | `RAILS_COMPONENT_PROPS_DYNAMIC` | a React component root whose props contain request-time Ruby | retain, blocked |
 | `RAILS_COMPONENT_VUE_UNSUPPORTED` | an element carrying `data-vue-component`; also a non-integrity warning blocker | retain, blocked |
@@ -612,8 +612,9 @@ reading the individual finding's own `choices` array.
 These rows ensure every unfinished interactive region is at least
 **acknowledgeable**. Stage 4 also gives the portable Stimulus, frame and React
 shapes real answers that emit files; the exact gates and output are in
-[§19](#19-interactivity). Turbo streams and Vue stay explicitly
-acknowledgeable rather than acquiring a runtime the converter cannot support.
+[§19](#19-interactivity). Portable Turbo streams gain an explicit realtime
+answer; dynamic stream shapes and Vue stay acknowledgeable rather than being
+approximated.
 
 `RAILS_TEMPLATE_ENGINE_UNSUPPORTED` is the one code that is a blocker **and**
 a finding, and the pairing is deliberate. Without the finding a Haml view had
@@ -701,7 +702,7 @@ markers.
 | `ivar`                | `@anything` outside the shapes above                             | finding `RAILS_REQUEST_TIME_STATE`              | same as `request_state` |
 | `control`             | `if`/`unless`/`case`/`each` whose condition classifies as `literal`, `local` or `unknown` (a request-state/ivar/errors condition takes that kind instead) | finding `RAILS_TEMPLATE_CONTROL_FLOW`           | `rails:finding` region around the whole block, with `<!-- rails:else -->` separating its branches |
 | `turbo_frame`         | `turbo_frame_tag` or `<turbo-frame>`                             | `island` fetches a resolvable `src`; `inline` preserves a closed source-less frame | shared `components/TurboFrame.island.tsx` with `client:load` (`client:visible` for `loading="lazy"`), or the inline frame; otherwise a `RAILS_TURBO_FRAME` region |
-| `turbo_stream`        | `turbo_stream_from`, `turbo_stream.*`                            | finding `RAILS_TURBO_STREAM`                    | `rails:finding` region; realtime conversion is tracked by #189 |
+| `turbo_stream`        | `turbo_stream_from`, `turbo_stream.*`                            | portable literal shapes offer `island-realtime` | shared `components/TurboStream.island.tsx`; dynamic targets and unsupported actions remain a `rails:finding` region |
 | `component_root`      | `react_component("Name", {…})`                                   | literal, bundleable React roots become compatibility islands | `components/<Name>.island.tsx`, unchanged sources under `components/react/`, and literal props; dynamic props become `RAILS_COMPONENT_PROPS_DYNAMIC` |
 | `stimulus`            | an element carrying `data-controller`                            | `island` structurally wires targets, values, classes and actions; `drop` removes its Stimulus data attributes | wrapping `components/stimulus/<controller>.island.tsx`; inner findings remain open |
 | `vue_root`            | an element carrying `data-vue-component`                         | no runtime bridge                               | `rails:finding` region, `RAILS_COMPONENT_VUE_UNSUPPORTED`, plus a warning blocker |
@@ -1602,7 +1603,7 @@ open:
 | `GET /help` | `open` | `RAILS_HELPER_UNKNOWN` + `RAILS_RAW_OUTPUT` + `RAILS_I18N_UNRESOLVED`, plus the nav's four |
 | `GET /broken` | `open` | `RAILS_TEMPLATE_PARSE_ERROR`; no page written, so the nav's ids never reach it |
 | `GET /links` | `open` | `RAILS_ROUTE_HELPER_UNKNOWN`, plus the nav's four |
-| `GET /live` | `open` | an explicitly unsupported Vue root and a Turbo stream whose realtime converter is tracked by #189, plus the nav and JS-entry ids |
+| `GET /live` | `open` | an explicitly unsupported Vue root and a portable Turbo stream that still needs an operator decision, plus the nav and JS-entry ids |
 | `GET /posts` | `open` | `RAILS_PARTIAL_DYNAMIC` + `RAILS_REQUEST_TIME_STATE` + `RAILS_ROUTE_AUTH_GUARD` (a `before_action :require_login`), plus the nav's four |
 | `GET /posts/:id` | `open` | `RAILS_ROUTE_DYNAMIC_SEGMENT`, undecided |
 | `GET /posts/legacy` | `open` | `RAILS_TEMPLATE_ENGINE_UNSUPPORTED` (Haml); no page written |
@@ -2296,8 +2297,9 @@ basename does not apply to it.
   HTML from its migrated URL; that URL must still proxy Rails until the new
   site serves an equivalent fragment. API/JSON routes never receive the
   frame island.
-- **Turbo Streams remain acknowledgeable, not convertible.** Realtime
-  subscription and action parity are tracked by #189.
+- **A realtime island dispatches facts, not rendered Rails partials.** It
+  emits `zigapagos:turbo-stream` with the stream, action, target, and record.
+  The receiving DOM renderer must be reviewed before visual parity is claimed.
 - **A login partial reached only through the layout is not the journey's.**
   Journey membership is seeded from *route views* and widened through the
   render graph, so a `shared/_login_form` that only the application layout
@@ -2474,9 +2476,31 @@ The origin rule matters: the migrated host must proxy that `src` to Rails
 until it serves an equivalent fragment. The island extracts the matching id,
 then `main`, then `body`; it does not call `lib/zb.ts`.
 
-Turbo Streams remain `retain`/`blocked` (B4). Subscriptions and stream-action
-parity are follow-up [#189](https://github.com/valthon/zigapagos/issues/189),
-not a half-generated realtime island.
+`turbo_stream_from "posts"` and the seven literal-target actions `append`,
+`prepend`, `replace`, `update`, `remove`, `before`, and `after` offer
+`island-realtime`. An action must sit in a template with one unambiguous
+literal `turbo_stream_from`, because its own first argument is a DOM target,
+not a subscription topic. They mount one shared
+`components/TurboStream.island.tsx` with separate literal `stream`, `action`,
+and `target` props. The island subscribes via
+`withRealtime(createClient(...))`, then dispatches a bubbling
+`zigapagos:turbo-stream` `CustomEvent`. A subscription maps ZigBase `create`,
+`update`, and `delete` events to `append`, `replace`, and `remove`; an explicit
+`turbo_stream.*` action keeps the named action.
+
+Reconnect and authorization remain ZigBase responsibilities. Its realtime
+client reconnects and re-subscribes active topics, authenticates before
+resubscribing, and the server checks both subscription access and every
+delivered record. A rejected subscription is exposed on the island's
+`data-realtime-error` attribute and dispatches no record. Client-side hiding
+is never an authorization boundary.
+
+The event contains a record, not the HTML Rails rendered from a partial. The
+application must attach a listener that renders that record into the named
+target; do not mark visual parity complete until that renderer is exercised.
+A request-time stream/target, an action with no unambiguous subscription, or
+an unrecognised action therefore keeps only `retain`/`blocked` rather than
+inventing a name or behavior.
 
 ### React, Vue, and the Rails JavaScript entry
 
@@ -2597,7 +2621,8 @@ in `spa.head`; the fixture emits
 - CommonJS `require()` and dynamic imports are not bundled.
 - A frame `src` remains a same-origin Rails fragment until the migrated host
   proxies or replaces that URL; API/JSON routes never get this island.
-- Turbo Streams have no converter; see #189.
+- Realtime islands dispatch portable record/action facts; they do not
+  translate a Rails partial into target DOM HTML.
 
 ## 20. Support and parity handoff
 
@@ -2612,7 +2637,8 @@ matrix is the review boundary for the presentation layer:
 | Portable record-backed ivars | **decided** | A data island, or a SPA view after the dynamic route is answered `spa` |
 | Portable Stimulus controller elements | **decided** | Structural target/value/class/action wiring; method bodies remain visible TODOs |
 | Turbo frames | **decided** | A same-origin fetching island, or source-less `inline` markup |
-| Turbo Streams | **blocked** | No realtime approximation; choose `retain`/`blocked` and follow #189 |
+| Portable Turbo Streams | **decided** | A ZigBase subscription island dispatching typed stream/action/target/record facts; the application still owns DOM rendering |
+| Dynamic or unsupported Turbo Streams | **blocked** | No guessed stream name, target, or action; choose `retain`/`blocked` |
 | Literal-props React roots with a bundleable source closure | **decided** | Copied sources plus a compatibility island |
 | Dynamic React props or unsupported source imports | **blocked** | No guessed props or partial bundle |
 | Vue roots | **blocked** | No compatibility bridge; choose `retain`/`blocked` |
@@ -2674,8 +2700,9 @@ second fresh database, in `tests/migrate/rails-presentation-parity.sh`.
 deliberately non-bootable, so Stage 5 does not claim live Rails HTML parity.
 Nor do these runners replace authorization tests—the browser and its islands
 are visitor-controlled; ZigBase collection/consumer rules remain the
-enforcement boundary. Turbo Streams and Vue produce no converted page and
-therefore no misleading replay row.
+enforcement boundary. A portable Turbo Stream page gets the ordinary
+navigation replay row, never a claim that its application-specific DOM
+renderer is equivalent; Vue produces no converted page.
 
 ## Procedure (for an agent)
 
@@ -2718,8 +2745,9 @@ therefore no misleading replay row.
    `island` **and** an `artifact` naming the auth collection;
    `RAILS_ROUTE_AUTH_GUARD` takes `public`. Portable Stimulus controllers,
    Turbo frames, React roots, and record-backed ivars close with their
-   producing `island`/`backend`/`inline`/`drop` answers; Turbo Streams and Vue
-   remain `retain`/`blocked` rather than approximated.
+   producing `island`/`island-realtime`/`backend`/`inline`/`drop` answers;
+   dynamic Turbo Streams and Vue remain `retain`/`blocked` rather than
+   approximated.
 8. **Delete the generated tree, keeping the decisions file, and re-run** with
    the same flags, `--backend` included. Repeat until exit 0 and
    `"complete": true`, then build the target with `bash DIR/build.sh` — after

@@ -30,6 +30,7 @@ module RailsTemplates
   IMPORTMAP_HELPERS = %w[javascript_importmap_tags turbo_include_tags].freeze
   CSRF_HELPERS = %w[csrf_meta_tags csrf_meta_tag csp_meta_tag].freeze
   CONTROL_CALLS = %w[each each_with_index map times each_slice].freeze
+  TURBO_STREAM_ACTIONS = %w[append prepend replace update remove before after].freeze
 
   # An output tag whose code ends in a block opener, recognised exactly as
   # ActionView's Erubi handler recognises it. See `compile`.
@@ -777,9 +778,11 @@ module RailsTemplates
       when "turbo_frame_tag"
         return classify_turbo_frame(args, opts)
       when "turbo_stream_from"
-        # The stream's own name, so the finding can say WHICH stream is not
-        # carried. Without it every one of them read "turbo-stream ``".
-        return { kind: "turbo_stream", name: literal(args.first) }.compact
+        # A literal subscription is the only shape the realtime port can
+        # carry without evaluating request-time Ruby. `value` distinguishes
+        # this helper from a `turbo_stream.*` DOM action downstream.
+        stream = literal(args.first)
+        return { kind: "turbo_stream", name: stream, value: "subscribe", dynamic: stream.nil? }.compact
       when "react_component"
         return classify_component(args)
       end
@@ -808,7 +811,11 @@ module RailsTemplates
     def classify_method_call(node, name, recv, args, opts)
       return { kind: "raw" } if name == "html_safe"
       return classify_i18n(args) if recv.is_a?(Prism::ConstantReadNode) && recv.name == :I18n && %w[t translate].include?(name)
-      return { kind: "turbo_stream" } if recv.is_a?(Prism::CallNode) && recv.receiver.nil? && recv.name == :turbo_stream
+      if recv.is_a?(Prism::CallNode) && recv.receiver.nil? && recv.name == :turbo_stream
+        target = literal(args.first)
+        action = TURBO_STREAM_ACTIONS.include?(name) ? name : nil
+        return { kind: "turbo_stream", name: target, value: action, dynamic: target.nil? || action.nil? }.compact
+      end
       return { kind: "errors", name: receiver_root_name(recv) } if chain_calls?(node, "errors")
       if form_builder?(recv)
         return { kind: "form_field", name: name, args: literal_args(args), attrs: literal_attrs(opts) }
