@@ -703,7 +703,7 @@ markers.
 | `vue_root`            | an element carrying `data-vue-component`                         | no runtime bridge                               | `rails:finding` region, `RAILS_COMPONENT_VUE_UNSUPPORTED`, plus a warning blocker |
 | `raw`                 | `<%== %>`, `raw(...)`, `.html_safe`                              | finding `RAILS_RAW_OUTPUT` — unescaped output is never passed through | `rails:finding` region, `RAILS_RAW_OUTPUT`. The unescaped bytes are never emitted |
 | `comment`             | `<%# %>`                                                         | dropped                                         | nothing — `erb.rb`'s tokenizer consumes a comment tag and emits no token for it at all, so no `comment` node ever reaches `templates.rb` |
-| `local`               | a bare template-local (a block param, an `each` variable)         | the value the render site bound to it           | the literal from the render site's `locals:`; `<!-- rails:unmapped local … -->` when nothing bound it |
+| `local`               | a bare template-local (a block param, an `each` variable)         | the value the render site bound to it           | the literal from the render site's `locals:`; an unbound block local inside a finding belongs to that answerable region; `<!-- rails:unmapped local … -->` only when nothing binds or owns it |
 | `unknown`             | everything else                                                  | finding `RAILS_HELPER_UNKNOWN`                  | `rails:finding` region, `RAILS_HELPER_UNKNOWN` |
 
 `erb.rb`/`templates.rb` also produce two purely structural node kinds this
@@ -1091,7 +1091,7 @@ a converter gap. In source order:
 |---|---|---|
 | `route_helper`, `link_to` (and in principle any finding kind) | `openRegion`'s backstop: a node routed through a finding region whose id lookup found nothing at that exact line and column. It is **not** only a drift guard — the two shapes that reach it routinely are a route helper whose URL could not be built while its *name* was perfectly well known, so no `RAILS_ROUTE_HELPER_UNKNOWN` was derived: `<%= post_path %>` for a `/posts/:id` route (arity mismatch — the `:id` placeholder is never filled) and the same call inside a `link_to`. Reaching it with any *other* kind would mean the id computation drifted, and is a bug | No |
 | `content_for` | a view's top-level `content_for :title` whose body is not a single literal — `<% content_for :title do %><%= @post.title %><% end %>`. The title becomes `.title` frontmatter, and a value only a request can compute is not a title; it cannot fall through to the ordinary `content_for` conversion either, because a `<div id="title">` in the middle of the `id="main"` block is not a SuperHTML top-level block and would render the markup inline as page content. A computed *name* does not reach this row at all — see the `content_for` line in [§12](#12-the-fragment-vocabulary) | No — `content_for` has no derivation row |
-| `local` | a bare template-local with nothing bound to it: the render site passed no `locals:`, or not this key (or the node arrived with no name). The common real-world case, and the one the fixture exercises | No |
+| `local` | a bare template-local with nothing bound to it: the render site passed no `locals:`, or not this key (or the node arrived with no name). A block local lexically inside an answerable finding is owned by that outer region and emits no second marker; this row covers a local with neither a binding nor an owning finding | No |
 | `render_partial` / `render_partial_locals` | the render target is not a literal name, resolves to no path, is **cyclic** (a partial that renders itself, which Rails would loop on until the request dies), or names a template that failed to parse or could not be read | No |
 
 None of them carries an id, so none is answerable — but they routinely sit on
@@ -1763,8 +1763,8 @@ decisions file to name, and the route stays `open` with the region in its
 
 In practice that means one of the `rails:unmapped` cases
 ([§14](#14-the-conversion-rules)) landing in a view that raises nothing else:
-most often an unbound template local (`<%= m %>` inside a loop whose render
-site passed no `locals:`), otherwise an unresolvable or cyclic `render`
+most often an unbound template local outside an answerable region (for example,
+a partial reads `<%= m %>` but its render site passed no `locals:`), otherwise an unresolvable or cyclic `render`
 target, a `content_for :title` whose body is not a literal, or a route helper
 called with the wrong arity (`<%= post_path %>` for `/posts/:id`), which
 reaches the backstop with a route name that is *known* and so raises nothing.
