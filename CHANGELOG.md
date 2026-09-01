@@ -51,6 +51,175 @@ requests each adding their own fragment merge cleanly, whereas two pull requests
 each appending a bullet to this block collide on the same lines. To see what is
 queued for the next release, read `changelog.d/`.
 
+## [0.5.0] - 2026-09-01
+
+### Added
+
+- Content-authored `<z-island>` elements can receive native SuperMD-rendered
+  children and named slots. `markdown-slot="section-id"` supplies `children`;
+  `markdown-slot-NAME="section-id"` supplies `slots.NAME`; referenced sections
+  are marked with `.attrs('island-slot')`. Their Markdown keeps normal content
+  directives, fenced-code validation, and tree-sitter highlighting, while
+  missing, unused, or duplicate slot references fail the build instead of
+  losing or duplicating content. This completes issue #153's remaining
+  authoring gap.
+- Content-authored `<z-island>` elements can opt into page-bound Scripty
+  `prop-NAME="$…"` values with `scripty:props`; resolved props feed both SSR and
+  the `--island-props-check` TypeScript gate while unmarked fences stay
+  verbatim.
+- `zigapagos migrate` now recognizes Eleventy (`11ty`) and Hexo projects,
+  inventories their conventional content/template trees, and supports
+  non-clobbering Markdown conversion with loss-visible frontmatter review
+  metadata. Ambiguous projects stop with an actionable `--from` prompt instead
+  of guessing from a shared config filename.
+- `zigapagos migrate` now auto-detects Next.js, Gatsby, Nuxt/Vue, Hugo, and
+  Jekyll projects (or accepts `--from`) and writes source-specific migration
+  worklists. Next.js and Gatsby React components, including JSX authored in
+  `.js`, can use the existing non-clobbering `--scaffold` path;
+  `--convert-content` normalizes Hugo/Jekyll YAML or TOML frontmatter into a
+  separate Zigapagos content tree while preserving Markdown bodies. Unconverted
+  frontmatter and invalid source dates travel with the generated page as
+  explicit review metadata and produce CLI warnings instead of disappearing
+  silently. Vue and static-template sources remain explicit manual ports.
+- `zigapagos migrate --copy-assets DIR` now streams conventional framework
+  public/static trees into a separate Zigapagos assets directory while
+  preserving URL-relative paths and source immutability. Existing targets are
+  never overwritten: repeat runs write `.new`, `.new.2`, and later review
+  copies.
+- `zigapagos migrate <source> --target <new-site>` now assembles a minimal valid
+  Zigapagos project by composing each framework adapter's deterministic
+  content, React-island, and fixed-URL asset transforms. It refuses non-empty or
+  source-nested targets and leaves semantic framework behavior explicit in the
+  generated `MIGRATION.md`.
+- `zigapagos migrate` now provides an end-to-end Rails presentation migration
+  workflow. It detects Rails applications, inventories their presentation
+  sources and integrations, statically recovers and classifies routes, and
+  emits deterministic `MIGRATION.md` and versioned manifest artifacts. Every
+  unsupported or uncertain construct is recorded as a stable blocker or
+  answerable finding rather than being silently omitted; `--strict` turns any
+  blocker into a non-zero result for CI and agent loops.
+- `zigapagos migrate <rails-app> --from rails --target DIR` converts the
+  supported ERB subset into a buildable Zigapagos project with content,
+  layouts, partials, deterministic assets, islands, configuration, and build
+  files. `MIGRATION.decisions.json` records durable operator choices, while
+  the versioned `MIGRATION.handoff.json` records what every user-facing route
+  became. Exit code 3 means the target was written successfully but still has
+  unanswered routes; exit code 0 means every route was migrated, redirected,
+  bound to a backend, or explicitly retained or blocked.
+- `--backend openapi.json` binds Rails forms, mutating links, JSON routes, and
+  sign-in/sign-up journeys to operations from a ZigBase OpenAPI contract.
+  Generated islands use `@zigbase/client`, render backend validation errors,
+  preserve confirmed redirects, and keep authentication and authorization
+  enforcement on the server. Controller authentication guards become explicit
+  decisions instead of silently turning protected pages public.
+- Portable presentation behavior can become generated islands: structural
+  Stimulus controllers, Turbo Frames, literal-props React roots and their
+  relative imports, request-backed list and record regions, and literal Turbo
+  Stream subscriptions/actions through the ZigBase realtime client. Dynamic or
+  ambiguous shapes remain explicit `retain` or `blocked` decisions.
+- Handoffs include typed, deterministic parity evidence for migrated pages,
+  assets, authentication, allowed and denied mutations, and validation errors.
+  Generated Bun and Playwright runners replay those facts against an isolated
+  ZigBase instance without booting the source Rails application.
+- The Rails migration reference and installable migration skill document the
+  supported template, route, asset, backend, interactivity, decision, handoff,
+  and parity contracts. Generated JSON Schemas for the presentation manifest
+  and handoff are checked against the emitting Zig types and validated against
+  real fixture output in CI.
+- `sitemap.xml` generation (issue #150): opt in with `.sitemap = true` in
+  `zigapagos.ziggy` (requires `host_url`, already mandatory) and a release build
+  emits `sitemap.xml` at the output root -- one entry per canonical page URL,
+  drafts and alias/alternative duplicates excluded, paginated page-2+ windows
+  included, and prerendered SPA routes included only when they are real pages
+  (a static route or a `staticPaths` concrete entry, never a dynamic route's own
+  pattern shell). `zigapagos migrate` now flags `@astrojs/sitemap` in the
+  generated `MIGRATION.md` worklist instead of silently dropping it.
+
+### Changed
+
+- Singular Rails resources now resolve to their plural controllers, matching
+  ActionDispatch. Generated TypeScript projects include the runtime JSX types
+  and bundler settings needed to type-check copied JavaScript and JSX sources.
+  `--runtime-path` still takes precedence, but generated projects fall back to
+  `ZIGAPAGOS_RUNTIME_DIR` instead of leaving a package placeholder when that
+  installed-runtime path is available.
+- A route's discovery `classification` and migration `status` are deliberately
+  separate claims: classification describes source evidence, while status says
+  what the converter produced after applying decisions. Consumers deciding
+  whether a route migrated should read `MIGRATION.handoff.json`.
+
+### Fixed
+
+- Prefixed `dev` and `e2e` servers now publish fully staged trees with a
+  directory swap, so a refresh cannot expose a partially copied site; a staging
+  failure after the server starts also tears the child server down.
+- Rails discovery retains safe symlinked views and controllers while refusing
+  controller links that resolve outside the application, reports malformed or
+  locale-mismatched translation documents, ignores commented default-locale
+  assignments, honors namespace helper-prefix overrides, and preserves nested
+  `fields_for`, block-form links, dynamic assets, and named-yield defaults as
+  explicit migration facts.
+- Converter gaps are now answerable: block locals inside findings stay owned by
+  those findings; dynamic page titles, genuinely unbound locals, unresolved or
+  cyclic partials, and route helpers whose arguments cannot form a URL receive
+  stable finding ids. Missing `--doctor`, `--backend`, and `--decisions` inputs
+  report the flag, path, and operating-system error and exit 1 instead of
+  aborting a debug build.
+- A root `assets/sitemap.xml` selected by `static_assets` now fails with
+  `ZP_STATIC_ASSET_OUTPUT_COLLISION` when sitemap generation is enabled,
+  instead of being silently overwritten during the release build.
+
+### Known limitations
+
+- Route recovery is static AST analysis and does not boot Rails. Dynamic route
+  generation, engine mounts, external route files, arbitrary helpers, dynamic
+  layouts, Haml/Slim, and runtime-generated assets are reported for manual
+  handling rather than guessed. Only the configured default i18n locale is
+  resolved.
+- Stimulus conversion is structural rather than Ruby-to-JavaScript method
+  transpilation. Nested controllers, unsupported action descriptors, raw-text
+  action elements, React `require()` or dynamic imports, and Vue roots require
+  manual work. A Turbo Frame with a `src` still needs that same-origin endpoint
+  proxied until the migrated site serves equivalent fragment HTML; realtime
+  islands dispatch record facts rather than rendering Rails partials as DOM.
+- Forms declared in layouts cannot yet be replaced with bound islands, and an
+  authentication form reached only through a layout may remain a separate
+  backend question. A generated target uses `https://example.com` as its
+  `host_url` until the operator supplies the deployment host.
+- Parity runners verify observable presentation and API behavior; they do not
+  move authorization into browser code. ZigBase collection and consumer rules
+  remain the enforcement boundary.
+- With `auto_heading_ids` on, a same-page reference through the
+  `$link.ref('slug')` Scripty directive still fails with `unknown ref` because
+  SuperMD validates references before ids can be injected. Plain Markdown
+  links work, and `$link.unsafeRef('slug')` is the workaround.
+- Shared SPA split chunks and `.map` sourcemaps are not tracked per route, so
+  emitted host config gives them the revalidating baseline rather than an
+  immutable policy. The fingerprint rule remains a filename-shape heuristic,
+  not proof that `asset_fingerprint` was enabled.
+- A view transition captures the immediate route flip rather than the settled
+  page. Guard and lazy-route resolution can therefore finish after the
+  transition, and neither SPA nor cross-document transitions automatically
+  disable themselves for `prefers-reduced-motion`.
+- **No Windows support** until the Zig 0.17 port. Inherited watcher and Wuffs
+  code does not compile on stable Zig 0.16.0.
+- **No FreeBSD binary**, and the current source build still lacks a checked-in
+  Wuffs shim and a native watcher selection for that target.
+- **The emitted host config is only a file until you deploy it.** Serving the
+  generated CSP and caching policy, and updating them after a rebuild, remains
+  the host's responsibility. `style-src-attr` still permits `'unsafe-inline'`
+  for framework-authored inline style attributes.
+- **A per-locale `host_url_override` cannot be exercised locally.** `dev`
+  serves one built tree on one origin, so a multi-host locale set must be
+  verified after deployment.
+- **Prebuilt binaries cover four Unix targets**: `x86_64-linux-musl`,
+  `aarch64-linux-musl`, `x86_64-macos`, and `aarch64-macos`. Other hosts need a
+  source build where supported.
+- **AVIF needs an encoder you already have.** Zigapagos never vendors or
+  downloads an AV1 encoder; without `image_optimize.avif_encoder`, image
+  optimization emits WebP and the original only.
+- Pre-1.0: APIs may change between minor versions.
+
 ## [0.4.0] - 2026-08-09
 
 ### Added
@@ -1324,7 +1493,8 @@ what is new from what the port changed and removed.
 - Pre-1.0: APIs may change between minor versions. **Only the most recent
   release is supported** — there are no backports.
 
-[Unreleased]: https://github.com/valthon/zigapagos/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/valthon/zigapagos/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/valthon/zigapagos/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/valthon/zigapagos/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/valthon/zigapagos/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/valthon/zigapagos/compare/v0.1.1...v0.2.0

@@ -41,11 +41,10 @@ Policy:
   macOS; `windows-latest` returns with the port.
 - **arm64 is supported** on Linux and macOS with native release archives, npm
   platform packages, and the shell installer.
-- **FreeBSD requires 15 or newer** for live reload. The `zigapagos dev` file
-  watcher on FreeBSD reuses the inotify-based `LinuxWatcher`; inotify entered
-  the FreeBSD base system in 15. There is no native kqueue backend, so on
-  FreeBSD < 15 live reload does not work. Building and serving static output is
-  unaffected.
+- **FreeBSD is not currently a supported build target.** There is no checked-in
+  Wuffs translation shim for it, no release archive, and `dev` still selects
+  the inotify-based Linux watcher instead of a native kqueue backend. FreeBSD
+  15 added inotify, but that does not close the Wuffs or target-selection gaps.
 
 ---
 
