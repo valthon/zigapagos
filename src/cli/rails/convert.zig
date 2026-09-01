@@ -917,6 +917,7 @@ const List = std.ArrayListUnmanaged(u8);
 const Frame = struct {
     close: []const u8,
     is_finding: bool,
+    owns_finding: bool = false,
     emitted: bool,
     prev_sink: ?*List,
 };
@@ -969,6 +970,9 @@ const Converter = struct {
     turbo_noted_paths: std.ArrayListUnmanaged([]const u8) = .empty,
     /// Nesting depth of finding regions; only depth 0 emits a marker.
     finding_depth: usize = 0,
+    /// Finding regions in scope that have a real id. Unlike
+    /// `finding_depth`, this excludes id-less backstop regions.
+    answerable_depth: usize = 0,
     /// Borrowed from the node that supplied it.
     title: ?[]const u8 = null,
     /// A `yield(:title)` replaced its enclosing `<title>` element wholesale,
@@ -1203,10 +1207,9 @@ const Converter = struct {
     /// emits nothing: the region's markup is replaced by the island, so its
     /// `<%= %>` fragments have no output of their own.
     ///
-    /// This is what closes #181 for the one case Stage 3 owns: the
-    /// `full_messages.each do |m|` block local inside a bound `errors`
-    /// region never reaches `emitLeaf`, so it never becomes an id-less
-    /// `rails:unmapped local` that no answer could settle.
+    /// Applied bindings also consume block locals with their owner region;
+    /// the ordinary walk now follows the same ownership rule while a finding
+    /// is still open, so neither path invents an id-less nested question.
     ///
     /// `by` is the finding the region's own binding was keyed on. Every OTHER
     /// id in the region is recorded in `c.enclosed` as well, because ruling
@@ -1558,6 +1561,7 @@ const Converter = struct {
                     // close anything; dropping it is the only option that
                     // keeps the rest of the template converting.
                     const f = frames.pop() orelse continue;
+                    if (f.owns_finding) c.answerable_depth -= 1;
                     if (f.is_finding) c.finding_depth -= 1;
                     if (f.close.len > 0) try c.put(f.close);
                     if (f.emitted) try c.put("<!-- rails:end -->");
@@ -1696,7 +1700,9 @@ const Converter = struct {
             // recorded no id, let the route report `migrated` with the
             // finding still standing (round 4).
             if (isFindingKind(n.kind) or try c.linkSubmits(n)) {
+                const ids_before = c.ids.items.len;
                 const emitted = try c.openRegion(path, n);
+                const owns_finding = c.ids.items.len > ids_before;
                 const element = isElementNode(n);
                 if (element) try c.putFiltered(path, n.code);
                 if (opens) {
@@ -1704,8 +1710,9 @@ const Converter = struct {
                         const end = matchingEnd(nodes, i) orelse break :blk "";
                         break :blk nodes[end].code;
                     } else "";
-                    try frames.append(c.gpa, .{ .close = close, .is_finding = true, .emitted = emitted, .prev_sink = null });
+                    try frames.append(c.gpa, .{ .close = close, .is_finding = true, .owns_finding = owns_finding, .emitted = emitted, .prev_sink = null });
                     c.finding_depth += 1;
+                    if (owns_finding) c.answerable_depth += 1;
                 } else if (emitted) {
                     try c.put("<!-- rails:end -->");
                 }
@@ -1776,10 +1783,17 @@ const Converter = struct {
             .importmap => try c.drop(n, js_entry_reason),
             .csrf => try c.drop(n, csrf_reason),
             .local => {
-                const name = n.name orelse return c.unmapped(n);
-                for (locals) |l| {
-                    if (std.mem.eql(u8, l.key, name)) return c.putEscaped(l.value);
+                if (n.name) |name| {
+                    for (locals) |l| {
+                        if (std.mem.eql(u8, l.key, name)) return c.putEscaped(l.value);
+                    }
                 }
+                // A block parameter inside an answerable outer region belongs
+                // to that region's decision. Emitting an id-less marker for
+                // it would invent a second question no decision can name;
+                // the outer finding already preserves the whole source span
+                // and an applied island replaces that span wholesale.
+                if (c.answerable_depth > 0) return;
                 // A local with nothing bound to it: the render site passed no
                 // `locals:` (or not this key), so there is no value to
                 // substitute and no finding of its own to point at.
@@ -4861,15 +4875,36 @@ test "convert: a bound form absorbs the errors summary its model names, and noth
 
     // `@post.errors` is the form's own model: absorbed, local and all.
     try std.testing.expect(std.mem.indexOf(u8, out.bytes, "L1C4") == null);
-    // `@user.errors` belongs to something else and stays a finding region --
-    // with its `|m|` still unmapped, which is #181 proper and not this task's.
+    // `@user.errors` belongs to something else and stays a finding region.
+    // Its `|m|` is owned by that answerable region rather than becoming a
+    // second, id-less marker that no decision can name (#181).
     try std.testing.expect(std.mem.indexOf(u8, out.bytes, "L2C4") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out.bytes, "rails:unmapped local") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.bytes, "rails:unmapped local") == null);
     try std.testing.expectEqual(@as(usize, 1), out.open_finding_ids.len);
     try std.testing.expectEqualStrings("RAILS_REQUEST_TIME_STATE.x.L2C4", out.open_finding_ids[0]);
     try std.testing.expectEqual(@as(usize, 2), out.bound_finding_ids.len);
     // The island renders the summary where the ERB had it: at the top.
     try std.testing.expectEqualStrings("@post", out.islands[0].errors_model orelse "");
+}
+
+test "convert: an id-less outer region cannot claim its nested block local" {
+    const gpa = std.testing.allocator;
+    const nodes = [_]fragments.Node{
+        openNode(.errors, 1, 4, "@post", "@post.errors.full_messages.each do |m|"),
+        cNode(.local, 1, 44, "m"),
+        endNode(1, 60),
+    };
+    const out = try convert(gpa, .{
+        .routes = &.{},
+        .assets = &.{},
+        .fragments = &.{},
+        .findings = &.{},
+        .layout_stem = null,
+    }, mkTemplate("app/views/posts/new.html.erb", &nodes), .view);
+    defer freeOutput(gpa, out);
+
+    try std.testing.expect(std.mem.indexOf(u8, out.bytes, "rails:unmapped errors") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.bytes, "rails:unmapped local") != null);
 }
 
 test "convert: a model-less form absorbs the template's error summary whatever it names" {

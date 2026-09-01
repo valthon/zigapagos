@@ -370,6 +370,10 @@ expected_listing="./.gitignore ./AGENTS.md ./CLAUDE.md ./MIGRATION.handoff.json 
 [[ ! -e "$WORK/out1/lib" ]] || fail "run 1 binds nothing, so there is no client library to write"
 [[ ! -e "$WORK/out1/components" ]] || fail "run 1 binds nothing, so there is no island to write"
 [[ ! -e "$WORK/out1/package.json" ]] || fail "run 1 needs no npm dependencies"
+registration_open="$WORK/out1/layouts/registrations/new.shtml"
+grep -q 'rails:finding' "$registration_open" || fail "the unanswered errors region must remain an answerable finding"
+grep -q 'rails:unmapped local' "$registration_open" \
+  && fail "a block local owned by an answerable errors region must not add an id-less marker"
 widgets_open="$WORK/out1/layouts/pages/widgets.shtml"
 grep -qF '<!-- rails:finding RAILS_STIMULUS_CONTROLLER.app/views/pages/widgets%2Ehtml%2Eerb.L2C1 --><div data-controller="reveal"' "$widgets_open" || fail "the unanswered Stimulus marker must precede its controller element"
 grep -q 'data-turbo-action' "$widgets_open" && fail "Turbo Drive attributes are dropped during conversion"

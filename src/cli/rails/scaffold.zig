@@ -3858,8 +3858,8 @@ fn foldDropped(gpa: Allocator, out: *Outcome, note: []const u8) Allocator.Error!
 /// Everything else is not. `link_to`, `content_for`, `local` and
 /// `render_partial` reach a placeholder because THIS stage's converter could
 /// not finish them -- a route helper called with the wrong arity, a
-/// `content_for :title` whose body is not a literal, a block local nothing
-/// bound, a partial that resolves nowhere. No stage owns those; they are
+/// `content_for :title` whose body is not a literal, a local nothing binds or
+/// owns, a partial that resolves nowhere. No stage owns those; they are
 /// converter gaps, tracked as issue #181, and telling an operator they are
 /// "deferred to a later stage" sends them away to wait for a release that
 /// will never mention them. The honest label says the tool fell short.
@@ -9012,9 +9012,8 @@ test "write: a bound form becomes an island, and the ERB region it replaced is g
         "<island src=\"" ++ bound_island ++ "\" client:load></island>",
     ) != null);
     try testing.expect(std.mem.indexOf(u8, view, "rails:finding") == null);
-    // #181, the one case Stage 3 owns: the `|m|` block local inside the bound
-    // `errors` region never reaches the output, so it cannot become an id-less
-    // `rails:unmapped` that no answer could settle.
+    // The applied `errors` binding consumes its `|m|` block local with the
+    // region, just as the open finding owns it before an answer is applied.
     try testing.expect(std.mem.indexOf(u8, view, "rails:unmapped") == null);
 
     const outcome = bound.route("GET", "/posts/new");
@@ -9280,7 +9279,7 @@ test "write: a form in a rendered partial binds too, under the partial's own nam
     }
 }
 
-test "write: an unanswered form is still a rails:unmapped region, not an island" {
+test "write: an unanswered form stays an answerable finding region, not an island" {
     const gpa = testing.allocator;
     var bound = try runBound(gpa, .{ .choice = null });
     defer bound.deinit(gpa);
@@ -9288,9 +9287,10 @@ test "write: an unanswered form is still a rails:unmapped region, not an island"
     const view = try readTarget(gpa, &bound.tmp, "layouts/posts/new.shtml");
     defer gpa.free(view);
     try testing.expect(std.mem.indexOf(u8, view, "<island") == null);
-    // And the `|m|` local is back: #181 is closed by the BINDING, not by the
-    // errors node existing.
-    try testing.expect(std.mem.indexOf(u8, view, "rails:unmapped local") != null);
+    // The `|m|` block local belongs to the surrounding errors finding. It
+    // must not add an id-less marker beside that answerable region (#181).
+    try testing.expect(std.mem.indexOf(u8, view, "rails:unmapped local") == null);
+    try testing.expect(std.mem.indexOf(u8, view, "rails:finding") != null);
     try testing.expect(!targetHas(&bound.tmp, bound_island));
     try testing.expectEqual(Status.open, bound.route("GET", "/posts/new").status);
 }
