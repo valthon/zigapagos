@@ -254,6 +254,14 @@ pub const code_request_time_state = "RAILS_REQUEST_TIME_STATE";
 /// needs its own id that an operator can retain or block.
 pub const code_content_for_dynamic = "RAILS_CONTENT_FOR_DYNAMIC";
 
+/// Issue #181: conditional conversion failures that used to have only an
+/// id-less `rails:unmapped` marker. These are deliberately separate codes:
+/// each names a different operator decision and each is derived only when
+/// the converter would actually fail in the same template/render context.
+pub const code_local_unbound = "RAILS_LOCAL_UNBOUND";
+pub const code_partial_unresolved = "RAILS_PARTIAL_UNRESOLVED";
+pub const code_route_helper_unresolved = "RAILS_ROUTE_HELPER_UNRESOLVED";
+
 /// #167 Stage 3 assumption A5. The sign-in/sign-up/sign-out routes are ONE
 /// decision, not one per route: they share a ZigBase auth collection, an
 /// `AuthForm` and an `AuthStatus`, and answering three of them `island` with
@@ -2237,12 +2245,40 @@ fn deriveNode(
                 if (try deriveMutationLink(gpa, list, in, path, node)) return;
             }
             const name = node.name orelse return;
-            if (!routeNameUnknown(route_names, name)) return;
             const loc = try nodeLoc(gpa, node.line, node.col);
             defer gpa.free(loc);
-            const message = try std.fmt.allocPrint(gpa, "route helper `{s}` matches no certain named route", .{name});
+            if (routeNameUnknown(route_names, name)) {
+                const message = try std.fmt.allocPrint(gpa, "route helper `{s}` matches no certain named route", .{name});
+                defer gpa.free(message);
+                try appendFinding(gpa, list, "RAILS_ROUTE_HELPER_UNKNOWN", .warn, path, node.line, loc, message, &choices_retain_blocked);
+                return;
+            }
+
+            // Older synthetic callers supplied only `route_names`; without
+            // the route records there is no arity/path fact to inspect. The
+            // production caller supplies both, and only that complete input
+            // may raise the more precise unresolved finding.
+            var has_route_record = false;
+            for (in.routes) |route| {
+                if (std.mem.eql(u8, route.name orelse continue, name)) {
+                    has_route_record = true;
+                    break;
+                }
+            }
+            if (!has_route_record) return;
+
+            const args: []const []const u8 = if (node.kind == .link_to)
+                (if (node.args.len > 1) node.args[1..] else &.{})
+            else
+                node.args;
+            const url = try resolve.routeUrl(gpa, in.routes, name, args);
+            if (url) |u| {
+                gpa.free(u);
+                return;
+            }
+            const message = try std.fmt.allocPrint(gpa, "route helper `{s}` cannot be built from {d} literal argument{s}", .{ name, args.len, if (args.len == 1) "" else "s" });
             defer gpa.free(message);
-            try appendFinding(gpa, list, "RAILS_ROUTE_HELPER_UNKNOWN", .warn, path, node.line, loc, message, &choices_retain_blocked);
+            try appendFinding(gpa, list, code_route_helper_unresolved, .warn, path, node.line, loc, message, &choices_retain_blocked);
         },
         .control => {
             const loc = try nodeLoc(gpa, node.line, node.col);
@@ -2467,6 +2503,128 @@ fn deriveNode(
     }
 }
 
+fn isPartialTemplatePath(path: []const u8) bool {
+    const base = if (std.mem.lastIndexOfScalar(u8, path, '/')) |slash| path[slash + 1 ..] else path;
+    return base.len > 0 and base[0] == '_';
+}
+
+fn templateByPath(templates: []const fragments.Template, path: []const u8) ?fragments.Template {
+    for (templates) |tpl| {
+        if (std.mem.eql(u8, tpl.path, path)) return tpl;
+    }
+    return null;
+}
+
+/// Issue #181's render-context-dependent rows. A flat template scan cannot
+/// tell whether a partial local is bound, or which edge closes a render
+/// cycle. Start at every template the converter may convert directly (views
+/// and layouts, never `_partial`s), follow the same literal partial lookup,
+/// carry `locals:`, and mirror the converter's answerable-region scope.
+///
+/// Contract 2 (owned-result), inherited from `derive`: all scratch is freed
+/// here and every appended finding is owned by `derive`'s result list.
+const ContextFailureWalker = struct {
+    gpa: Allocator,
+    list: *std.ArrayListUnmanaged(Finding),
+    templates: []const fragments.Template,
+    stack: std.ArrayListUnmanaged([]const u8) = .empty,
+
+    fn deinit(w: *ContextFailureWalker) void {
+        w.stack.deinit(w.gpa);
+    }
+
+    fn hasFindingAt(w: *ContextFailureWalker, path: []const u8, node: fragments.Node) bool {
+        return convert.findingIdFor(w.list.items, path, node.line, node.col) != null;
+    }
+
+    fn appendOnce(w: *ContextFailureWalker, code: []const u8, path: []const u8, node: fragments.Node, message: []const u8) Allocator.Error!void {
+        if (w.hasFindingAt(path, node)) return;
+        const loc = try nodeLoc(w.gpa, node.line, node.col);
+        defer w.gpa.free(loc);
+        try appendFinding(w.gpa, w.list, code, .warn, path, node.line, loc, message, &choices_retain_blocked);
+    }
+
+    fn render(w: *ContextFailureWalker, path: []const u8, node: fragments.Node, answerable_depth: usize) Allocator.Error!void {
+        const target = node.name orelse return w.appendOnce(code_partial_unresolved, path, node, "partial render has no literal target");
+        const partial_path = convert.partialPathIn(w.templates, path, target) orelse {
+            const message = try std.fmt.allocPrint(w.gpa, "partial `{s}` cannot be located", .{target});
+            defer w.gpa.free(message);
+            return w.appendOnce(code_partial_unresolved, path, node, message);
+        };
+        for (w.stack.items) |ancestor| {
+            if (!std.mem.eql(u8, ancestor, partial_path)) continue;
+            const message = try std.fmt.allocPrint(w.gpa, "partial `{s}` closes a render cycle", .{target});
+            defer w.gpa.free(message);
+            return w.appendOnce(code_partial_unresolved, path, node, message);
+        }
+        const tpl = templateByPath(w.templates, partial_path) orelse unreachable;
+        if (tpl.error_message != null or tpl.unreadable != null) {
+            const message = try std.fmt.allocPrint(w.gpa, "partial `{s}` cannot be converted", .{target});
+            defer w.gpa.free(message);
+            return w.appendOnce(code_partial_unresolved, path, node, message);
+        }
+        try w.stack.append(w.gpa, partial_path);
+        defer _ = w.stack.pop();
+        const locals: []const fragments.Attr = if (node.kind == .render_partial_locals) node.attrs else &.{};
+        try w.walk(partial_path, tpl.nodes, locals, answerable_depth);
+    }
+
+    fn walk(w: *ContextFailureWalker, path: []const u8, nodes: []const fragments.Node, locals: []const fragments.Attr, initial_answerable_depth: usize) Allocator.Error!void {
+        var frames: std.ArrayListUnmanaged(bool) = .empty;
+        defer frames.deinit(w.gpa);
+        var answerable_depth = initial_answerable_depth;
+
+        for (nodes) |node| {
+            if (node.text != null) continue;
+            if (node.kind == .block_end) {
+                if (frames.pop()) |answerable| {
+                    if (answerable) answerable_depth -= 1;
+                }
+                continue;
+            }
+
+            switch (node.kind) {
+                .local => {
+                    var bound = false;
+                    if (node.name) |name| for (locals) |local| {
+                        if (std.mem.eql(u8, local.key, name)) {
+                            bound = true;
+                            break;
+                        }
+                    };
+                    if (!bound and answerable_depth == 0) {
+                        const message = try std.fmt.allocPrint(w.gpa, "template local `{s}` has no literal binding", .{node.name orelse ""});
+                        defer w.gpa.free(message);
+                        try w.appendOnce(code_local_unbound, path, node, message);
+                    }
+                },
+                .render_partial, .render_partial_locals => try w.render(path, node, answerable_depth),
+                else => {},
+            }
+
+            if (convert.opensBlock(node)) {
+                const answerable = w.hasFindingAt(path, node);
+                try frames.append(w.gpa, answerable);
+                if (answerable) answerable_depth += 1;
+            }
+        }
+    }
+};
+
+/// Contract 2 (owned-result), inherited from `derive` through
+/// `ContextFailureWalker` above.
+fn deriveContextFailures(gpa: Allocator, list: *std.ArrayListUnmanaged(Finding), templates: []const fragments.Template) Allocator.Error!void {
+    var walker: ContextFailureWalker = .{ .gpa = gpa, .list = list, .templates = templates };
+    defer walker.deinit();
+    for (templates) |tpl| {
+        if (isPartialTemplatePath(tpl.path)) continue;
+        if (tpl.error_message != null or tpl.unreadable != null) continue;
+        walker.stack.clearRetainingCapacity();
+        try walker.stack.append(gpa, tpl.path);
+        try walker.walk(tpl.path, tpl.nodes, &.{}, 0);
+    }
+}
+
 /// Walks `in.templates` (node findings, then a parse-error finding per
 /// broken template) and then `in.layouts` (`RAILS_LAYOUT_DYNAMIC`),
 /// appending in that order; `std.mem.sort` with `lessThan` at the end is
@@ -2594,6 +2752,8 @@ pub fn derive(gpa: Allocator, in: DeriveInput) Allocator.Error![]Finding {
             try appendFinding(gpa, &list, "RAILS_TEMPLATE_UNSCANNED", .warn, tpl.path, null, unscanned_loc, message, &choices_retain_blocked);
         }
     }
+
+    try deriveContextFailures(gpa, &list, in.templates);
 
     if (in.js_entry) |entry| {
         var message: std.ArrayListUnmanaged(u8) = .empty;
@@ -3260,6 +3420,102 @@ fn testRoute(verb: []const u8, path: []const u8, line: u64) routes.Route {
 
 fn testVerdict(class: classify.Class) classify.Verdict {
     return .{ .class = class, .reason = "test", .candidates = &.{} };
+}
+
+test "derive: conditional local and partial failures are exact to render context" {
+    const gpa = std.testing.allocator;
+    const nav_nodes = [_]fragments.Node{nodeCode(.local, 1, 6, "who")};
+    const loop_nodes = [_]fragments.Node{nodeCode(.render_partial, 1, 4, "shared/loop")};
+    var bound_nav = nodeCode(.render_partial_locals, 1, 1, "shared/nav");
+    bound_nav.attrs = &.{.{ .key = "who", .value = "Ann" }};
+    const view_nodes = [_]fragments.Node{
+        bound_nav,
+        nodeCode(.local, 2, 1, "stray"),
+        nodeCode(.render_partial, 3, 1, "shared/ghost"),
+        nodeCode(.render_partial, 4, 1, "shared/loop"),
+    };
+    const tpls = [_]fragments.Template{
+        .{ .path = "app/views/pages/about.html.erb", .nodes = @constCast(&view_nodes), .error_message = null, .error_line = null, .unreadable = null },
+        .{ .path = "app/views/shared/_nav.html.erb", .nodes = @constCast(&nav_nodes), .error_message = null, .error_line = null, .unreadable = null },
+        .{ .path = "app/views/shared/_loop.html.erb", .nodes = @constCast(&loop_nodes), .error_message = null, .error_line = null, .unreadable = null },
+    };
+    const out = try derive(gpa, .{ .templates = &tpls, .layouts = &.{}, .controller_files = &.{}, .route_names = &.{}, .locale = null });
+    defer free(gpa, out);
+
+    try std.testing.expectEqual(@as(usize, 3), out.len);
+    try std.testing.expectEqualStrings(code_local_unbound, out[0].code);
+    try std.testing.expectEqualStrings("app/views/pages/about.html.erb", out[0].path);
+    try std.testing.expectEqualStrings(code_partial_unresolved, out[1].code);
+    try std.testing.expectEqualStrings("app/views/pages/about.html.erb", out[1].path);
+    try std.testing.expectEqualStrings(code_partial_unresolved, out[2].code);
+    try std.testing.expectEqualStrings("app/views/shared/_loop.html.erb", out[2].path);
+    for (out) |finding| try std.testing.expectEqual(@as(usize, 2), finding.choices.len);
+}
+
+test "derive: known route helpers raise a finding only when literal arity cannot build a URL" {
+    const gpa = std.testing.allocator;
+    var route = testRoute("GET", "/posts/:id", 2);
+    route.name = "post";
+    var valid_helper = nodeCode(.route_helper, 1, 1, "post");
+    valid_helper.args = &.{"7"};
+    var invalid_helper = nodeCode(.route_helper, 2, 1, "post");
+    invalid_helper.args = &.{};
+    var valid_link = nodeCode(.link_to, 3, 1, "post");
+    valid_link.args = &.{ "Read", "7" };
+    var invalid_link = nodeCode(.link_to, 4, 1, "post");
+    invalid_link.args = &.{"Read"};
+    const nodes = [_]fragments.Node{ valid_helper, invalid_helper, valid_link, invalid_link };
+    const tpls = [_]fragments.Template{
+        .{ .path = "app/views/posts/index.html.erb", .nodes = @constCast(&nodes), .error_message = null, .error_line = null, .unreadable = null },
+    };
+    const names = [_][]const u8{"post"};
+    const rs = [_]routes.Route{route};
+    const verdicts = [_]classify.Verdict{testVerdict(.unresolved)};
+    const out = try derive(gpa, .{ .templates = &tpls, .layouts = &.{}, .controller_files = &.{}, .route_names = &names, .locale = null, .routes = &rs, .classifications = &verdicts });
+    defer free(gpa, out);
+
+    var unresolved_lines: [2]u64 = undefined;
+    var unresolved_count: usize = 0;
+    for (out) |finding| {
+        if (!std.mem.eql(u8, finding.code, code_route_helper_unresolved)) continue;
+        unresolved_lines[unresolved_count] = finding.line.?;
+        unresolved_count += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 2), unresolved_count);
+    try std.testing.expectEqual(@as(u64, 2), unresolved_lines[0]);
+    try std.testing.expectEqual(@as(u64, 4), unresolved_lines[1]);
+}
+
+test "derive: issue 181 conditional rows leak nothing under a FailingAllocator" {
+    var route = testRoute("GET", "/posts/:id", 2);
+    route.name = "post";
+    const nodes = [_]fragments.Node{
+        nodeCode(.local, 1, 1, "stray"),
+        nodeCode(.render_partial, 2, 1, "shared/ghost"),
+        nodeCode(.route_helper, 3, 1, "post"),
+    };
+    const tpls = [_]fragments.Template{
+        .{ .path = "app/views/pages/about.html.erb", .nodes = @constCast(&nodes), .error_message = null, .error_line = null, .unreadable = null },
+    };
+    const names = [_][]const u8{"post"};
+    const rs = [_]routes.Route{route};
+
+    var fail_index: usize = 0;
+    while (true) : (fail_index += 1) {
+        if (fail_index > 1000) return error.SweepNeverReachedSuccess;
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
+        if (derive(failing.allocator(), .{ .templates = &tpls, .layouts = &.{}, .controller_files = &.{}, .route_names = &names, .locale = null, .routes = &rs })) |out| {
+            defer free(std.testing.allocator, out);
+            var issue_findings: usize = 0;
+            for (out) |finding| {
+                if (std.mem.eql(u8, finding.code, code_local_unbound) or
+                    std.mem.eql(u8, finding.code, code_partial_unresolved) or
+                    std.mem.eql(u8, finding.code, code_route_helper_unresolved)) issue_findings += 1;
+            }
+            try std.testing.expectEqual(@as(usize, 3), issue_findings);
+            break;
+        } else |err| try std.testing.expectEqual(error.OutOfMemory, err);
+    }
 }
 
 test "derive: a dynamic GET route raises RAILS_ROUTE_DYNAMIC_SEGMENT, one per declaration" {

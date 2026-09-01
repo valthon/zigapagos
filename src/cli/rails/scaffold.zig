@@ -37,11 +37,10 @@
 //!    into either;
 //! 2. an `<!-- rails:unmapped ... -->` region in the converted bytes, which
 //!    carries NO finding id at all (`convert.zig`'s module doc; Stage 2 plan
-//!    ruling S6). Since ruling S12 gave every fragment kind the converter
-//!    treats as a finding its own derivation row, this fires only for a
-//!    genuinely unmapped construct (a partial cycle, an unbound local) -- but
-//!    it stays, because a placeholder with no id is precisely the case that
-//!    an empty `open_finding_ids` cannot see;
+//!    ruling S6). All supported conditional failures now have context-aware
+//!    findings too, so this is a defensive discovery/derivation-drift guard;
+//!    it stays because a placeholder with no id is precisely the case that an
+//!    empty `open_finding_ids` cannot see;
 //! 3. a template `convert` refused outright (`error.Unconvertible`: a parse
 //!    error or a file the templates op never read);
 //! 4. anything else the conversion could not finish, recorded through
@@ -73,10 +72,9 @@
 //! carrying one permanently uncompletable, whatever the operator said. Reason
 //! 2 keeps its force for the route nobody answered: it has no finding id, so
 //! nobody can be asked about it, and it must not reach `migrated` on the
-//! strength of an empty `open_finding_ids`. A route with an unmapped region
-//! and NO finding at all therefore still cannot be completed -- a documented
-//! converter gap (`convert.zig` should inline or drop an unbound local rather
-//! than leave a placeholder), not something a decision file can answer.
+//! strength of an empty `open_finding_ids`. A route with that defensive marker
+//! and no finding therefore still cannot be completed; it indicates discovery
+//! and conversion disagreed and should be reported as a converter bug.
 //!
 //! `RouteOutcome.note` also carries the conversion's own `Output.dropped`
 //! notes, joined with `"; "` -- `MIGRATION.md` is the only place an operator
@@ -3846,29 +3844,12 @@ fn foldDropped(gpa: Allocator, out: *Outcome, note: []const u8) Allocator.Error!
     }
 }
 
-/// Why a fragment kind `convert.zig` left unmapped is unmapped -- the whole
-/// tail of the note, not just a stage number, because the two answers are
-/// different KINDS of answer.
-///
-/// The form family is Stage 3 (it needs the backend boundary) and the
-/// Turbo/component family is Stage 4 (it needs islands): both are work a
-/// later stage of this migration owns, and saying so tells an operator to
-/// wait.
-///
-/// Everything else is not. `link_to`, `content_for`, `local` and
-/// `render_partial` reach a placeholder because THIS stage's converter could
-/// not finish them -- a route helper called with the wrong arity, a
-/// `content_for :title` whose body is not a literal, a local nothing binds or
-/// owns, a partial that resolves nowhere. No stage owns those; they are
-/// converter gaps, tracked as issue #181, and telling an operator they are
-/// "deferred to a later stage" sends them away to wait for a release that
-/// will never mention them. The honest label says the tool fell short.
-fn unmappedReason(kind: []const u8) []const u8 {
-    const stage3 = [_][]const u8{ "form", "form_field", "errors" };
-    for (stage3) |k| if (std.mem.eql(u8, kind, k)) return "deferred to Stage 3";
-    const stage4 = [_][]const u8{ "turbo_frame", "turbo_stream", "component_root" };
-    for (stage4) |k| if (std.mem.eql(u8, kind, k)) return "deferred to Stage 4";
-    return "converter gap (see #181)";
+/// Why a fragment `convert.zig` left unmapped is unmapped. Every supported
+/// fragment kind now has a finding in the current vocabulary. Reaching this
+/// fallback therefore means discovery and conversion disagreed at the node's
+/// exact location, whatever kind the marker names.
+fn unmappedReason(_: []const u8) []const u8 {
+    return "finding derivation drift";
 }
 
 /// Every Stage 1 finding raised against `path`. Used only when `convert`
@@ -6756,7 +6737,7 @@ test "write: an unmapped region keeps the route open even with no finding ids" {
 
     try testing.expectEqual(@as(usize, 0), res.routes[0].open_finding_ids.len);
     try testing.expectEqual(Status.open, res.routes[0].status);
-    try testing.expectEqualStrings("form: deferred to Stage 3", res.routes[0].note.?);
+    try testing.expectEqualStrings("form: finding derivation drift", res.routes[0].note.?);
 }
 
 test "write: an acknowledged route writes no page and no view file (ruling S20)" {
@@ -6947,21 +6928,17 @@ test "write: a shared view is written once, by the first route that needs it (ru
     try testing.expect(targetHas(&tmp, "layouts/pages/about.shtml"));
 }
 
-test "write: an acknowledged route is acknowledged even when a region stayed unmapped (ruling S19)" {
-    // The fixture's `/registration/new`: a form (which DOES derive a finding)
-    // beside an unbound block local (which derives none and converts to
-    // `<!-- rails:unmapped local -->`). Ruling S6 kept such a route `open`
-    // whatever the operator answered, so the route could never complete. S19:
-    // an acknowledgement settles it -- `retain` means the page stays on Rails
-    // and this target does not serve it, so what the converter could not map
-    // is moot. The S6 net still catches the route nobody answered.
+test "write: an unbound local is answerable and participates in route acknowledgement" {
+    // Issue #181: the helper and the standalone local are now two ordinary
+    // findings. With neither answered the route stays open; ruling S19 still
+    // lets a retain answer settle the whole Rails-owned route.
     const gpa = testing.allocator;
 
     const view_nodes = [_]fragments.Node{
         tText("<p>", 1),
         tNode(.unknown, 1, 4, "number_to_currency"),
         // No `locals` at a view's render site, so this one cannot be
-        // substituted: `convert.zig` emits the unmapped marker for it.
+        // substituted and derives RAILS_LOCAL_UNBOUND.
         tNode(.local, 1, 30, "m"),
         tText("</p>", 1),
     };
@@ -6979,9 +6956,12 @@ test "write: an acknowledged route is acknowledged even when a region stayed unm
         .locale = null,
     });
     defer findings.free(gpa, finding_list);
-    // One finding for the helper; the local raises none -- which is the whole
-    // reason ruling S6 exists and the whole reason S19 has to override it.
-    try testing.expectEqual(@as(usize, 1), finding_list.len);
+    try testing.expectEqual(@as(usize, 2), finding_list.len);
+    var local_id: ?[]const u8 = null;
+    for (finding_list) |finding| {
+        if (std.mem.eql(u8, finding.code, findings.code_local_unbound)) local_id = finding.id;
+    }
+    try testing.expect(local_id != null);
 
     var d = emptyDiscovery();
     d.routes = &rs;
@@ -6990,7 +6970,7 @@ test "write: an acknowledged route is acknowledged even when a region stayed unm
     d.fragments = @constCast(&frags);
     d.findings = finding_list;
 
-    // Undecided: ruling S6 still holds, and says which construct it is.
+    // Undecided: both named questions keep the route open.
     {
         var tmp = std.testing.tmpDir(.{});
         defer tmp.cleanup();
@@ -7011,10 +6991,10 @@ test "write: an acknowledged route is acknowledged even when a region stayed unm
         }, &err_path, &err_cause);
         defer freeResult(gpa, res);
         try testing.expectEqual(Status.open, res.routes[0].status);
-        try testing.expect(std.mem.indexOf(u8, res.routes[0].note.?, "local: converter gap (see #181)") != null);
+        try testing.expectEqual(@as(usize, 2), res.routes[0].open_finding_ids.len);
     }
 
-    // Answered `retain`: retained, and the note still names what was dropped.
+    // Answered `retain`: retained by the route-level acknowledgement rule.
     {
         var tmp = std.testing.tmpDir(.{});
         defer tmp.cleanup();
@@ -7042,13 +7022,11 @@ test "write: an acknowledged route is acknowledged even when a region stayed unm
         defer freeResult(gpa, res);
         try testing.expectEqual(Status.retained, res.routes[0].status);
         try testing.expectEqualStrings(finding_list[0].id, res.routes[0].decision_id.?);
-        // The placeholder is still in the emitted bytes, so it is still
-        // reported -- as a footnote, which cannot change the status back.
-        try testing.expect(std.mem.indexOf(u8, res.routes[0].note.?, "local left unmapped") != null);
+        try testing.expect(res.routes[0].note == null or std.mem.indexOf(u8, res.routes[0].note.?, "unmapped") == null);
     }
 
-    // Answered `island`: still open (Stage 4 owns it), and BOTH reasons are
-    // recorded -- the deferral and the unmapped region.
+    // Answered `island`: still open (the helper choice is deferred), and the
+    // local remains independently addressable.
     {
         var tmp = std.testing.tmpDir(.{});
         defer tmp.cleanup();
@@ -7076,7 +7054,113 @@ test "write: an acknowledged route is acknowledged even when a region stayed unm
         defer freeResult(gpa, res);
         try testing.expectEqual(Status.open, res.routes[0].status);
         try testing.expect(std.mem.indexOf(u8, res.routes[0].note.?, "choice island deferred") != null);
-        try testing.expect(std.mem.indexOf(u8, res.routes[0].note.?, "local: converter gap (see #181)") != null);
+        try testing.expect(contains(res.routes[0].open_finding_ids, local_id.?));
+    }
+}
+
+test "write: all issue 181 conditional gaps are named and can block the route" {
+    const gpa = testing.allocator;
+
+    const view_nodes = [_]fragments.Node{
+        tNode(.local, 1, 4, "stray"),
+        tNode(.render_partial, 2, 4, "shared/ghost"),
+        tNode(.route_helper, 3, 4, "post"),
+    };
+    const frags = [_]fragments.Template{tTemplate("app/views/pages/about.html.erb", &view_nodes)};
+    var rs = [_]route_mod.Route{
+        tRoute("GET", "/about", "pages", "about", 2),
+        tRoute("GET", "/posts/:id", "posts", "show", 3),
+    };
+    rs[0].name = "about";
+    rs[1].name = "post";
+    var vs = [_]classify.Verdict{ tVerdict(.content), tVerdict(.backend) };
+    var about_templates = [_][]const u8{"app/views/pages/about.html.erb"};
+    var rts = [_]rails.RouteTemplates{
+        .{ .templates = &about_templates, .layout = null },
+        .{ .templates = &.{}, .layout = null },
+    };
+    const route_names = [_][]const u8{ "about", "post" };
+    const finding_list = try findings.derive(gpa, .{
+        .templates = &frags,
+        .layouts = &.{},
+        .controller_files = &.{},
+        .route_names = &route_names,
+        .locale = null,
+        .routes = &rs,
+        .classifications = &vs,
+    });
+    defer findings.free(gpa, finding_list);
+
+    var issue_ids: [3][]const u8 = undefined;
+    var issue_count: usize = 0;
+    for (finding_list) |finding| {
+        if (!std.mem.eql(u8, finding.code, findings.code_local_unbound) and
+            !std.mem.eql(u8, finding.code, findings.code_partial_unresolved) and
+            !std.mem.eql(u8, finding.code, findings.code_route_helper_unresolved)) continue;
+        issue_ids[issue_count] = finding.id;
+        issue_count += 1;
+    }
+    try testing.expectEqual(@as(usize, 3), issue_count);
+
+    var d = emptyDiscovery();
+    d.routes = &rs;
+    d.classifications = &vs;
+    d.route_templates = &rts;
+    d.fragments = @constCast(&frags);
+    d.findings = finding_list;
+
+    // Unanswered: the content route exposes all three stable ids and no
+    // converter-gap footnote.
+    {
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        const target = try tmpTarget(gpa, &tmp);
+        defer gpa.free(target);
+        var err_path: ?[]const u8 = null;
+        defer if (err_path) |p| gpa.free(p);
+        var err_cause: ?anyerror = null;
+        const res = try write(std.testing.io, gpa, .{
+            .discovery = &d,
+            .decisions = .{ .decisions = &.{}, .stale = &.{} },
+            .source_root = tmp.dir,
+            .target = target,
+            .app_name = "Blog",
+            .runtime_path = null,
+            .agents_md = "",
+            .claude_md = "",
+        }, &err_path, &err_cause);
+        defer freeResult(gpa, res);
+        try testing.expectEqual(Status.open, res.routes[0].status);
+        try testing.expectEqual(@as(usize, 3), res.routes[0].open_finding_ids.len);
+        for (issue_ids) |id| try testing.expect(contains(res.routes[0].open_finding_ids, id));
+        try testing.expect(res.routes[0].note == null or std.mem.indexOf(u8, res.routes[0].note.?, "converter gap") == null);
+    }
+
+    // Every placeholder is independently answerable. Blocking those answers
+    // blocks the route and emits no target page.
+    {
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        const target = try tmpTarget(gpa, &tmp);
+        defer gpa.free(target);
+        var err_path: ?[]const u8 = null;
+        defer if (err_path) |p| gpa.free(p);
+        var err_cause: ?anyerror = null;
+        var decided: [3]decisions.Decision = undefined;
+        for (issue_ids, 0..) |id, i| decided[i] = .{ .id = id, .choice = "blocked", .rationale = "requires manual migration", .artifact = null };
+        const res = try write(std.testing.io, gpa, .{
+            .discovery = &d,
+            .decisions = .{ .decisions = &decided, .stale = &.{} },
+            .source_root = tmp.dir,
+            .target = target,
+            .app_name = "Blog",
+            .runtime_path = null,
+            .agents_md = "",
+            .claude_md = "",
+        }, &err_path, &err_cause);
+        defer freeResult(gpa, res);
+        try testing.expectEqual(Status.blocked, res.routes[0].status);
+        try testing.expect(!targetHas(&tmp, "content/about/index.smd"));
     }
 }
 

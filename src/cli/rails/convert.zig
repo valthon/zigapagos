@@ -19,10 +19,10 @@
 //!   this position -- so there is no id to decide about. It is standalone
 //!   (never paired with an `end`) precisely because it is a hole rather than a
 //!   question. Since ruling S12 every kind in `isFindingKind` HAS a derivation
-//!   row, so this is no longer a standing gap in the vocabulary; it fires for
-//!   a construct with no row at all (a partial cycle, an unbound local) and as
-//!   the backstop for a node whose finding the lookup cannot match. The test
-//!   at the bottom of this file pins the full coverage.
+//!   row, and issue #181 added context-sensitive rows for unbound locals,
+//!   unresolved partials, and route helpers whose literal arguments cannot
+//!   build the named route. It remains only as a defensive backstop for a
+//!   node whose derived finding the lookup cannot match.
 //! - `<!-- rails: <helper> dropped; <why> -->` records a helper whose
 //!   conversion IS "delete it" (`csrf_meta_tags`, the JS-entry family), with
 //!   a matching `Output.dropped` note for `MIGRATION.md`.
@@ -1133,6 +1133,15 @@ const Converter = struct {
         if (try c.openRegion(path, n)) try c.put("<!-- rails:end -->");
     }
 
+    /// Conditional conversion failure. In normal discovery it has a derived
+    /// id and behaves like `inlineRegion`. If discovery itself omitted the
+    /// enclosing finding, keep the nested defensive marker visible rather
+    /// than letting the id-less outer region swallow it.
+    fn failureRegion(c: *Converter, path: []const u8, n: fragments.Node) Allocator.Error!void {
+        if (c.finding_depth > 0 and c.answerable_depth == 0) return c.unmapped(n);
+        return c.inlineRegion(path, n);
+    }
+
     fn drop(c: *Converter, n: fragments.Node, why: []const u8) Allocator.Error!void {
         const name = n.name orelse "";
         try c.putFmt("<!-- rails: {s} dropped; {s} -->", .{ name, why });
@@ -1807,10 +1816,10 @@ const Converter = struct {
                 // the outer finding already preserves the whole source span
                 // and an applied island replaces that span wholesale.
                 if (c.answerable_depth > 0) return;
-                // A local with nothing bound to it: the render site passed no
-                // `locals:` (or not this key), so there is no value to
-                // substitute and no finding of its own to point at.
-                try c.unmapped(n);
+                // The context-sensitive derivation walk follows the same
+                // render/local scope and gives this exact failure a stable
+                // RAILS_LOCAL_UNBOUND id.
+                try c.failureRegion(path, n);
             },
             // Handled by `walk`; unreachable is not used because a future
             // sidecar kind decoding as one of these must not crash a build.
@@ -2076,17 +2085,17 @@ const Converter = struct {
     }
 
     fn inlinePartial(c: *Converter, path: []const u8, n: fragments.Node) Allocator.Error!void {
-        const target = n.name orelse return c.unmapped(n);
-        const p = c.partialPath(path, target) orelse return c.unmapped(n);
+        const target = n.name orelse return c.failureRegion(path, n);
+        const p = c.partialPath(path, target) orelse return c.failureRegion(path, n);
         // Rails renders a self-referential partial until the request dies;
-        // this stage refuses instead. `unmapped`, not a finding: there is no
-        // derivation row for "the partial graph has a cycle", and inventing
-        // one here would be a code the manifest schema has never seen.
+        // this stage refuses instead. The context-sensitive findings walk
+        // follows the same stack and derives RAILS_PARTIAL_UNRESOLVED at the
+        // edge that closes the cycle.
         for (c.stack.items) |s| {
-            if (std.mem.eql(u8, s, p)) return c.unmapped(n);
+            if (std.mem.eql(u8, s, p)) return c.failureRegion(path, n);
         }
-        const tpl = templateFor(c.ctx.fragments, p) orelse return c.unmapped(n);
-        if (tpl.error_message != null or tpl.unreadable != null) return c.unmapped(n);
+        const tpl = templateFor(c.ctx.fragments, p) orelse return c.failureRegion(path, n);
+        if (tpl.error_message != null or tpl.unreadable != null) return c.failureRegion(path, n);
         try c.stack.append(c.gpa, p);
         defer _ = c.stack.pop();
         const locals: []const fragments.Attr = if (n.kind == .render_partial_locals) n.attrs else &.{};
@@ -3199,28 +3208,37 @@ test "convert: render_partial inlines the converted partial; locals substitute l
     try std.testing.expectEqualStrings("<nav>Ann &amp; Bob</nav>\n", out.bytes);
 }
 
-test "convert: a local with no substitution and an unlocatable partial are unmapped, not lost" {
+test "convert: every conditional conversion failure emits an answerable finding" {
     const gpa = std.testing.allocator;
     const nav_nodes = [_]fragments.Node{ tNode("<nav>", 1), cNode(.local, 1, 6, "who"), tNode("</nav>", 1) };
     const frag_list = [_]fragments.Template{mkTemplate("app/views/shared/_nav.html.erb", &nav_nodes)};
     const nodes = [_]fragments.Node{
         cNode(.render_partial, 1, 1, "shared/nav"),
         cNode(.render_partial, 2, 1, "shared/ghost"),
+        cNode(.route_helper, 3, 1, "post"),
     };
     const tpl = mkTemplate("app/views/pages/about.html.erb", &nodes);
+    const derive_templates = [_]fragments.Template{ tpl, frag_list[0] };
+    const route_list = [_]routes.Route{mkRoute("GET", "/posts/:id", "post")};
+    const route_names = [_][]const u8{"post"};
+    const finding_list = try findings.derive(gpa, .{ .templates = &derive_templates, .layouts = &.{}, .controller_files = &.{}, .route_names = &route_names, .locale = null, .routes = &route_list });
+    defer findings.free(gpa, finding_list);
     const out = try convert(gpa, .{
-        .routes = &.{},
+        .routes = &route_list,
         .assets = &.{},
         .fragments = &frag_list,
-        .findings = &.{},
+        .findings = finding_list,
         .layout_stem = null,
     }, tpl, .view);
     defer freeOutput(gpa, out);
     try std.testing.expectEqualStrings(
-        "<nav><!-- rails:unmapped local L1C6 --></nav>" ++
-            "<!-- rails:unmapped render_partial L2C1 -->\n",
+        "<nav><!-- rails:finding RAILS_LOCAL_UNBOUND.app/views/shared/_nav%2Ehtml%2Eerb.L1C6 --><!-- rails:end --></nav>" ++
+            "<!-- rails:finding RAILS_PARTIAL_UNRESOLVED.app/views/pages/about%2Ehtml%2Eerb.L2C1 --><!-- rails:end -->" ++
+            "<!-- rails:finding RAILS_ROUTE_HELPER_UNRESOLVED.app/views/pages/about%2Ehtml%2Eerb.L3C1 --><!-- rails:end -->\n",
         out.bytes,
     );
+    try std.testing.expectEqual(@as(usize, 3), out.open_finding_ids.len);
+    try std.testing.expect(std.mem.indexOf(u8, out.bytes, "rails:unmapped") == null);
 }
 
 test "convert: a partial that renders itself is cut by the cycle guard" {
@@ -3233,15 +3251,18 @@ test "convert: a partial that renders itself is cut by the cycle guard" {
     const frag_list = [_]fragments.Template{mkTemplate("app/views/shared/_loop.html.erb", &loop_nodes)};
     const nodes = [_]fragments.Node{cNode(.render_partial, 1, 1, "shared/loop")};
     const tpl = mkTemplate("app/views/pages/about.html.erb", &nodes);
+    const derive_templates = [_]fragments.Template{ tpl, frag_list[0] };
+    const finding_list = try findings.derive(gpa, .{ .templates = &derive_templates, .layouts = &.{}, .controller_files = &.{}, .route_names = &.{}, .locale = null });
+    defer findings.free(gpa, finding_list);
     const out = try convert(gpa, .{
         .routes = &.{},
         .assets = &.{},
         .fragments = &frag_list,
-        .findings = &.{},
+        .findings = finding_list,
         .layout_stem = null,
     }, tpl, .view);
     defer freeOutput(gpa, out);
-    try std.testing.expectEqualStrings("<a><!-- rails:unmapped render_partial L1C4 --></a>\n", out.bytes);
+    try std.testing.expectEqualStrings("<a><!-- rails:finding RAILS_PARTIAL_UNRESOLVED.app/views/shared/_loop%2Ehtml%2Eerb.L1C4 --><!-- rails:end --></a>\n", out.bytes);
 }
 
 test "convert: a control block keeps its markup between a finding placeholder, an else marker and an end" {

@@ -580,10 +580,13 @@ reading the individual finding's own `choices` array.
 | `RAILS_REQUEST_TIME_STATE` (again) | an `errors` fragment — `@x.errors.full_messages`, `errors.any?`, `f.object.errors[:y]`. Same code, **different question**: not "where does this state come from" but "how is the validation state that comes back presented" | island, retain, blocked |
 | `RAILS_I18N_UNRESOLVED` | `t("key")` has no entry under the default locale | retain, blocked |
 | `RAILS_CONTENT_FOR_DYNAMIC` | a view's top-level `content_for :title` block whose body is not one literal value; the block cannot become static `.title` frontmatter and rendering it inline would put title markup in the page body | retain, blocked |
+| `RAILS_LOCAL_UNBOUND` | a template local has no literal binding from its render site and is not owned by an enclosing answerable region | retain, blocked |
 | `RAILS_RAW_OUTPUT` | `<%== %>`, `raw(...)`, `.html_safe` | island, retain, blocked |
 | `RAILS_PARTIAL_DYNAMIC` | `render @x`, `collection:`, or non-literal `locals:` | island, spa, retain, blocked |
+| `RAILS_PARTIAL_UNRESOLVED` | a literal partial target cannot be located or converted, or the render edge closes a cycle | retain, blocked |
 | `RAILS_ROUTE_HELPER_DYNAMIC` | a `*_path`/`*_url` helper (or `link_to`'s route target) has non-literal arguments | island, spa, retain, blocked |
 | `RAILS_ROUTE_HELPER_UNKNOWN` | a route helper's name matches no `certain` named route (an unnamed or `uncertain` route) | retain, blocked |
+| `RAILS_ROUTE_HELPER_UNRESOLVED` | a known route helper cannot build a URL from the literal arguments supplied, including wrong arity | retain, blocked |
 | `RAILS_TEMPLATE_CONTROL_FLOW` | `if`/`unless`/`case`/`while`/`until` (also a bare loop over a plain local through one of `templates.rb`'s five `CONTROL_CALLS`: `each`, `each_with_index`, `map`, `times`, `each_slice`) whose branch predicate classifies as `literal`, `local`, or `unknown` — i.e. nothing more specific applies; a request-state/ivar/errors predicate takes that kind instead (and that kind's own finding, or none for `errors`) | island, spa, retain, blocked |
 | `RAILS_TEMPLATE_PARSE_ERROR` | a template's Ruby fragments do not assemble into valid Ruby | retain, blocked |
 | `RAILS_TEMPLATE_ENGINE_UNSUPPORTED` | a route-reachable template in an engine no converter reads — Haml, Slim, Jbuilder, Builder, or one discovery could not identify. **Also a blocker**, and the only code that is both: the blocker explains the engine in the report and counts under `--strict`, the finding is what an operator can answer. Its `line` is `null` and its `loc` is the word `engine` (nothing ever parsed the file, the same reason `RAILS_TEMPLATE_UNSCANNED` uses `unscanned`), so its id is e.g. `RAILS_TEMPLATE_ENGINE_UNSUPPORTED.app/views/posts/legacy%2Ehtml%2Ehaml.engine` | retain, blocked |
@@ -680,10 +683,10 @@ markers.
 | `yield`               | `yield`                                                          | `<super>` inside the block element `id="main"`  | `<div id="main"><super></div>` |
 | `yield_named`         | `yield :head`, `content_for?(:x)`                                | named `<super>` block `id="<name>"`             | a `<super>` block under that id. `:title` is the exception — see [§14](#14-the-conversion-rules) |
 | `content_for`         | `content_for :x do … end`, `provide(:x, "literal")`              | child block `<… id="<name>">`                   | `<div id="<name>">…</div>`; dropped with an OPEN note when the layout declares no block `x`; a view's top-level `content_for :title` whose BODY is not a single literal raises `RAILS_CONTENT_FOR_DYNAMIC`, because request-time output cannot become static `.title` frontmatter. A computed *name* never reaches this kind at all: `templates.rb`'s classifier requires a literal first argument (`return {kind: "content_for", …} if literal(args.first)`), so `<% content_for(name) do %>` falls through to `unknown` and raises `RAILS_HELPER_UNKNOWN` |
-| `render_partial`      | `render "x"`, `render partial: "x"` with no `locals:`/`collection:` | inline expansion of the converted partial    | the partial's converted bytes, inline at the render site; `<!-- rails:unmapped render_partial … -->` when the target is not a literal name, resolves to no path, is cyclic (a partial that renders itself), or names a template that failed to parse or could not be read |
-| `render_partial_locals` | same with `locals:` of literals only                           | inline expansion with literal substitution      | same, with each literal local substituted — and the same four refusals |
+| `render_partial`      | `render "x"`, `render partial: "x"` with no `locals:`/`collection:` | inline expansion of the converted partial    | the partial's converted bytes, inline at the render site; `RAILS_PARTIAL_UNRESOLVED` when the target resolves nowhere, is cyclic, or names a template that failed to parse or could not be read |
+| `render_partial_locals` | same with `locals:` of literals only                           | inline expansion with literal substitution      | same, with each literal local substituted — and the same answerable refusals |
 | `render_dynamic`      | `render @x`, `collection:`, non-literal locals                   | finding `RAILS_PARTIAL_DYNAMIC`                 | `rails:finding` region, `RAILS_PARTIAL_DYNAMIC` |
-| `route_helper`        | `<name>_path`, `<name>_url`, no args or literal args             | the route's path, literals substituted          | the route's URL, each literal argument percent-encoded per RFC 3986; a `rails:finding` region (`RAILS_ROUTE_HELPER_UNKNOWN`) when the name matches no `certain` route |
+| `route_helper`        | `<name>_path`, `<name>_url`, no args or literal args             | the route's path, literals substituted          | the route's URL, each literal argument percent-encoded per RFC 3986; `RAILS_ROUTE_HELPER_UNKNOWN` when the name matches no `certain` route, or `RAILS_ROUTE_HELPER_UNRESOLVED` when the literal arguments cannot build it |
 | `route_helper_dynamic`| args are not literals                                            | finding `RAILS_ROUTE_HELPER_DYNAMIC`            | `rails:finding` region, `RAILS_ROUTE_HELPER_DYNAMIC` |
 | `link_to`             | `link_to "text", <route_helper> [, html_opts literals]`          | `<a href="…">text</a>`, unless it mutates       | `<a href="/about">About</a>` for a navigation link (also covers `button_to`); a `rails:finding` region when the route name is unknown. A link that **performs a mutation** — `method:` other than `get`, `data-turbo-method`, or the rails-ujs `data-method`, and every `button_to` without an explicit `get` — is a `RAILS_BACKEND_ENDPOINT` question instead: unanswered it is an empty `rails:finding` region (never an `<a>` that GETs a DELETE route), answered it is a click island ([§18](#18-the-backend-boundary)) |
 | `asset`               | the ten helpers in `templates.rb`'s `ASSET_HELPERS`: `image_tag`, `image_path`, `asset_path`, `asset_url`, `stylesheet_link_tag`, `javascript_include_tag`, `favicon_link_tag`, `audio_tag`, `video_tag`, `font_path` | `$site.asset('…').link()` when `assets[]` has it deterministic; else `RAILS_ASSET_TRANSFORM` | `<img src="$site.asset('images/logo.png').link()">` / `<link rel="stylesheet" href="$site.asset('…').link()">` / a bare `$site.asset('…').link()` for `image_path`/`asset_path`/`asset_url`/`font_path`/the media helpers; a `rails:finding` region (`RAILS_ASSET_TRANSFORM`) when any argument does not resolve deterministically. An **absolute URL** argument (`http://…`, `https://…`, or the protocol-relative `//host/…`) is emitted verbatim and raises nothing — `<%= image_tag "https://cdn.example.com/x.png" %>` becomes `<img src="https://cdn.example.com/x.png">`; the resource is on another host, so there is no local file to match and nothing to copy. `stylesheet_link_tag "a", "b"` emits one `<link>` per argument, and one unresolvable argument makes the whole node a region even if another argument was absolute. `javascript_include_tag` and `favicon_link_tag` are the two exceptions — they take the drop path below instead |
@@ -704,7 +707,7 @@ markers.
 | `vue_root`            | an element carrying `data-vue-component`                         | no runtime bridge                               | `rails:finding` region, `RAILS_COMPONENT_VUE_UNSUPPORTED`, plus a warning blocker |
 | `raw`                 | `<%== %>`, `raw(...)`, `.html_safe`                              | finding `RAILS_RAW_OUTPUT` — unescaped output is never passed through | `rails:finding` region, `RAILS_RAW_OUTPUT`. The unescaped bytes are never emitted |
 | `comment`             | `<%# %>`                                                         | dropped                                         | nothing — `erb.rb`'s tokenizer consumes a comment tag and emits no token for it at all, so no `comment` node ever reaches `templates.rb` |
-| `local`               | a bare template-local (a block param, an `each` variable)         | the value the render site bound to it           | the literal from the render site's `locals:`; an unbound block local inside a finding belongs to that answerable region; `<!-- rails:unmapped local … -->` only when nothing binds or owns it |
+| `local`               | a bare template-local (a block param, an `each` variable)         | the value the render site bound to it           | the literal from the render site's `locals:`; an unbound block local inside a finding belongs to that answerable region; otherwise `RAILS_LOCAL_UNBOUND` |
 | `unknown`             | everything else                                                  | finding `RAILS_HELPER_UNKNOWN`                  | `rails:finding` region, `RAILS_HELPER_UNKNOWN` |
 
 `erb.rb`/`templates.rb` also produce two purely structural node kinds this
@@ -1076,7 +1079,7 @@ three markers, and they are a contract the e2e greps for:
 | Marker | Meaning |
 |---|---|
 | `<!-- rails:finding <id> -->` … `<!-- rails:end -->` | A region with a finding id you answer in `MIGRATION.decisions.json`. `<!-- rails:else -->` separates the branches of a control block inside one. Only the **outermost** finding in a nesting emits a marker — a form holding six fields is one region, not seven — but every inner id still lands in the route's `findings[]`. |
-| `<!-- rails:unmapped <kind> L<line>C<col> -->` | A hole, not a question: a construct with **no finding id at all**. Standalone, never paired with an `end`. `<kind>` is the fragment kind, so the marker says which of the cases below it is. It keeps a route `open` that nobody has answered — but it does **not** override an answer: a route whose findings you settled with `retain`/`blocked` is settled, and the region is reported as a footnote in `note` (e.g. `local left unmapped`). A route carrying one and raising *no* finding is the one thing a decisions file cannot reach. |
+| `<!-- rails:unmapped <kind> L<line>C<col> -->` | A defensive hole, not a question: conversion expected a finding at this exact source location and could not find one. Standalone, never paired with an `end`. Supported conditional failures have stable ids, so seeing this marker indicates finding-derivation drift; it keeps the route `open` rather than silently reporting a finished page. |
 | `<!-- rails: <helper> dropped; <why> -->` | A helper whose conversion *is* "delete it" — `csrf_meta_tags`, `csp_meta_tag`, the JS-entry family. Informational: it does not keep a route out of `migrated`, and it also appears in the route's `note` so `MIGRATION.md` records what was removed. |
 
 The one drop that is **not** informational is a `content_for :x` naming a
@@ -1084,21 +1087,14 @@ block the layout does not declare: its body is markup the author wrote and
 the target does not have, so the route stays `open` with
 `content_for :x dropped: the layout declares no block with that id`.
 
-**`rails:unmapped` is emitted from three places in `convert.zig`**, and knowing
-which one you are looking at is the difference between a fixable template and
-a converter gap. In source order:
-
-| `<kind>` in the marker | When | Can a decision close the route? |
-|---|---|---|
-| `route_helper`, `link_to` (and in principle any finding kind) | `openRegion`'s backstop: a node routed through a finding region whose id lookup found nothing at that exact line and column. It is **not** only a drift guard — the two shapes that reach it routinely are a route helper whose URL could not be built while its *name* was perfectly well known, so no `RAILS_ROUTE_HELPER_UNKNOWN` was derived: `<%= post_path %>` for a `/posts/:id` route (arity mismatch — the `:id` placeholder is never filled) and the same call inside a `link_to`. Reaching it with any *other* kind would mean the id computation drifted, and is a bug | No |
-| `local` | a bare template-local with nothing bound to it: the render site passed no `locals:`, or not this key (or the node arrived with no name). A block local lexically inside an answerable finding is owned by that outer region and emits no second marker; this row covers a local with neither a binding nor an owning finding | No |
-| `render_partial` / `render_partial_locals` | the render target is not a literal name, resolves to no path, is **cyclic** (a partial that renders itself, which Rails would loop on until the request dies), or names a template that failed to parse or could not be read | No |
-
-None of them carries an id, so none is answerable — but they routinely sit on
-routes that raise *other* findings, and answering those settles the route with
-the region demoted to a footnote ([§15](#15-decisions)). It is only a route
-where an unmapped region is the **sole** remaining problem that no decisions
-file can reach.
+`rails:unmapped` is now only `openRegion`'s defensive backstop. The three
+routine conditional failures that formerly reached it are ordinary questions:
+an unbound local is `RAILS_LOCAL_UNBOUND`, an unresolvable or cyclic partial is
+`RAILS_PARTIAL_UNRESOLVED`, and a known route helper whose literal arguments
+cannot build its URL is `RAILS_ROUTE_HELPER_UNRESOLVED`. Bound locals and
+successfully inlined partials derive none of those findings. If an unmapped
+marker appears on supported input, report it as a converter bug; the route is
+kept open so the disagreement cannot pass silently.
 
 ### Assets
 
@@ -1274,17 +1270,11 @@ records it — but never let it change the route's status — `redirect` and
 
 **The answer is applied before anything else can veto it.** A route whose
 view the converter refused outright (a parse error, an unsupported engine)
-and a route whose converted bytes hold a `rails:unmapped` region are both
-settled by a `retain`/`blocked` answer — the unmapped region is then reported
-as a **footnote** in `note` (e.g. `local left unmapped`), which records that
-the emitted `.shtml` really does hold the placeholder without pretending the
-route is unanswered. A `backend` answer, or an `island` on a code no converter
-owns, still leaves the route `open`, and then the note names both the deferral
-and the region.
-
-The one case no answer reaches: a route with a `rails:unmapped` region and
-**no finding at all**. There is no id to write down, so no decision file can
-name it — see [§17](#17-the-re-run-loop).
+is settled by a `retain`/`blocked` answer. A `backend` answer, or an `island`
+on a code no converter owns, still leaves the route `open` and the note names
+the deferral. A defensive `rails:unmapped` marker likewise keeps an otherwise
+unanswered route open, but supported conversion failures now have finding ids
+and should not reach that backstop.
 
 ### Answering a Haml or Slim route
 
@@ -1749,34 +1739,18 @@ the sign-up layout carries no `<!-- rails:unmapped local -->` from the
 `full_messages.each do |m|` block it used to — one instance of issue #181
 closed by the binding rather than by the decision plumbing.
 
-### The one thing a decision cannot close
+### Defensive unmapped markers
 
-**A `rails:unmapped` region on a route with no finding at all.** The
-placeholder carries no id by construction, so there is nothing for a
-decisions file to name, and the route stays `open` with the region in its
-`note`. Every other unfinished shape has an id: a parse error has
-`RAILS_TEMPLATE_PARSE_ERROR`, an unsupported engine has
-`RAILS_TEMPLATE_ENGINE_UNSUPPORTED`, an unread view has
-`RAILS_TEMPLATE_UNSCANNED`, an action with no template at all has
-`RAILS_NO_TEMPLATE` — all answerable, none of which makes the route
-`migrated`.
+Every supported unfinished shape is answerable. In addition to parse,
+unsupported-engine, unread-template, and no-template findings, issue #181's
+three context-sensitive gaps now derive `RAILS_LOCAL_UNBOUND`,
+`RAILS_PARTIAL_UNRESOLVED`, or `RAILS_ROUTE_HELPER_UNRESOLVED`. A bound partial
+local still derives nothing, because the render-site literal is substituted.
 
-In practice that means one of the `rails:unmapped` cases
-([§14](#14-the-conversion-rules)) landing in a view that raises nothing else:
-most often an unbound template local outside an answerable region (for example,
-a partial reads `<%= m %>` but its render site passed no `locals:`), otherwise an unresolvable or cyclic `render`
-target or a route helper
-called with the wrong arity (`<%= post_path %>` for `/posts/:id`), which
-reaches the backstop with a route name that is *known* and so raises nothing.
-The honest fix is in the converter — inline or drop the construct rather than
-leave a placeholder — not in the decision plumbing, so no answer you can
-write today helps. If you hit it, the route has to be finished by hand. It is
-tracked as issue #181, and a route's `note` says so: an unmapped region whose
-kind no later stage owns is reported as `<kind>: converter gap (see #181)`,
-The form family's own **findings** are answerable now
-([§18](#18-the-backend-boundary)), and the supported interactive families are
-answerable through [§19](#19-interactivity); an id-less marker is a converter
-gap rather than a deferred promise.
+The id-less `rails:unmapped` marker remains as a safety net for discovery and
+conversion vocabulary drift. If it appears, the route stays `open` and its
+note says `finding derivation drift`; report that output as a bug rather than
+trying to invent a decision id.
 
 ## 18. The backend boundary
 
@@ -2734,9 +2708,9 @@ therefore no misleading replay row.
    `3` means it worked and the migration is not finished; `0` means it is.
 6. **On exit 3, read `DIR/MIGRATION.handoff.json`, not the tree.** Each
    `status: "open"` route lists the finding ids it left open in `findings[]`
-   and says why in `note`. Answer every id on every open route; a route whose
-   only remaining problem is a `rails:unmapped` region with no finding at all
-   is the one shape no answer reaches — see [§17](#17-the-re-run-loop).
+   and says why in `note`. Answer every id on every open route. If a route has
+   only a defensive `rails:unmapped` marker and no id, report the derivation
+   drift described in [§17](#17-the-re-run-loop).
 7. **Answer them** in `DIR/MIGRATION.decisions.json`
    ([§15](#15-decisions)), one `{id, choice, rationale}` per finding. A
    `RAILS_BACKEND_ENDPOINT` finding's choices are the `--backend` document's
