@@ -223,7 +223,7 @@ pub const Binding = struct {
     /// Aliases used to reproduce a data island's record body.
     aliases: []const port.Alias = &.{},
 
-    pub const Kind = enum { operation, custom, auth_signin, auth_signup, auth_logout, stimulus, turbo_frame, component, data_list, @"inline", drop };
+    pub const Kind = enum { operation, custom, auth_signin, auth_signup, auth_logout, stimulus, turbo_frame, turbo_stream, component, data_list, @"inline", drop };
 
     /// A source position in one template, as `fragments.Node` reports it.
     pub const At = struct { path: []const u8, line: u64, col: u64 };

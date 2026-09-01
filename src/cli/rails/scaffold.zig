@@ -2388,6 +2388,22 @@ fn dataBlockParam(code: []const u8) ?[]const u8 {
     return value;
 }
 
+/// Builds the Ziggy props carried by a portable Turbo Stream mount. Contract
+/// 1 (self-freeing): scratch lives in `out`; the returned slice is the only
+/// allocation and escapes to the caller.
+fn realtimeProps(gpa: Allocator, stream: []const u8, action: []const u8, target: []const u8) Allocator.Error![]u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(gpa);
+    try out.appendSlice(gpa, "{ .stream = \"");
+    try appendZiggyEscaped(gpa, &out, stream);
+    try out.appendSlice(gpa, "\", .action = \"");
+    try appendZiggyEscaped(gpa, &out, action);
+    try out.appendSlice(gpa, "\", .target = \"");
+    try appendZiggyEscaped(gpa, &out, target);
+    try out.appendSlice(gpa, "\" }");
+    return out.toOwnedSlice(gpa);
+}
+
 fn collectionHasOperation(doc: backend_mod.Document, collection: []const u8, kind: backend_mod.Kind) bool {
     for (doc.operations) |operation| {
         if (operation.kind == kind and operation.collection != null and std.mem.eql(u8, operation.collection.?, collection)) return true;
@@ -2426,7 +2442,7 @@ fn bindTemplate(
                 try bindTemplate(ctx, acc, route_index, p, seen);
                 continue;
             },
-            .stimulus, .turbo_frame, .component_root => {
+            .stimulus, .turbo_frame, .turbo_stream, .component_root => {
                 const id = convert.findingIdFor(d.findings, view, n.line, n.col) orelse continue;
                 const dec = decisions.lookup(ctx.in.decisions, id) orelse continue;
                 if (n.kind == .stimulus and (std.mem.eql(u8, dec.choice, "island") or std.mem.eql(u8, dec.choice, "drop"))) {
@@ -2471,6 +2487,22 @@ fn bindTemplate(
                         .props = props,
                         .wrap = std.mem.eql(u8, dec.choice, "island"),
                         .directive = if (attrEquals(n.attrs, "loading", "lazy")) "client:visible" else "client:load",
+                    });
+                    continue;
+                }
+                if (n.kind == .turbo_stream and std.mem.eql(u8, dec.choice, "island-realtime") and n.name != null and n.value != null and !n.dynamic) {
+                    const topic = findings.turboStreamTopic(tpl.nodes, n) orelse continue;
+                    const props = try acc.keep(gpa, try realtimeProps(gpa, topic, n.value.?, n.name.?));
+                    try acc.all.append(gpa, .{
+                        .finding_id = id,
+                        .kind = .turbo_stream,
+                        .verb = "",
+                        .path = "",
+                        .operation_id = n.value.?,
+                        .collection = topic,
+                        .island = turbo_stream_island_path,
+                        .redirect_to = null,
+                        .props = props,
                     });
                     continue;
                 }
@@ -3262,6 +3294,14 @@ fn applyAcknowledgement(
         try out.addNote(gpa, "turbo-frame `{s}` inlined", .{firstBacktickValue(finding.message)});
         return;
     }
+    if (std.mem.eql(u8, choice, "island-realtime") and std.mem.eql(u8, code, findings.code_turbo_stream)) {
+        if (boundBy(ctx.bindings.all, dec.id)) {
+            out.settle(gpa, dec.id);
+        } else {
+            try out.addOpenNote(gpa, "choice island-realtime on RAILS_TURBO_STREAM needs a literal supported stream shape", .{});
+        }
+        return;
+    }
     if (std.mem.eql(u8, choice, "island")) {
         // #167 Stage 3 Task 5. An `island` the converter CARRIED OUT settles,
         // exactly like a bound backend operation: the region is gone from the
@@ -3756,7 +3796,7 @@ fn islandCallsClient(ctx: *Ctx, path: []const u8) bool {
     for (ctx.bindings.all) |binding| {
         if (!std.mem.eql(u8, binding.island, path)) continue;
         return switch (binding.kind) {
-            .operation, .custom, .auth_signin, .auth_signup, .auth_logout, .data_list => true,
+            .operation, .custom, .auth_signin, .auth_signup, .auth_logout, .data_list, .turbo_stream => true,
             .stimulus, .turbo_frame, .component, .@"inline", .drop => false,
         };
     }
@@ -4199,11 +4239,12 @@ fn emitIslands(
 fn islandIdentity(ctx: *Ctx, spec: convert.IslandSpec) []const u8 {
     if (spec.binding.kind == .component) return spec.binding.island;
     if (spec.binding.kind == .turbo_frame) return turbo_frame_island_path;
+    if (spec.binding.kind == .turbo_stream) return turbo_stream_island_path;
     const j = ctx.bindings.scaffold orelse return spec.binding.finding_id;
     return switch (spec.binding.kind) {
         .auth_signin, .auth_signup => j.finding_id,
         .auth_logout => j.status_id,
-        .operation, .custom, .stimulus, .turbo_frame, .component, .data_list, .@"inline", .drop => spec.binding.finding_id,
+        .operation, .custom, .stimulus, .turbo_frame, .turbo_stream, .component, .data_list, .@"inline", .drop => spec.binding.finding_id,
     };
 }
 
@@ -4357,6 +4398,7 @@ fn emitIslandFor(ctx: *Ctx, spec: convert.IslandSpec) Allocator.Error![]u8 {
             return emitIsland(gpa, spec);
         },
         .turbo_frame => return emitFrameIsland(gpa),
+        .turbo_stream => return emitStreamIsland(gpa),
         .component => return emitComponentIslandFor(ctx, spec),
         .data_list => return emitDataIsland(gpa, spec),
         // Task 5 replaces these generic compile-time fallbacks with the
@@ -5671,6 +5713,7 @@ pub const client_lib_path = "lib/zb.ts";
 pub const auth_form_island_path = "components/AuthForm.island.tsx";
 pub const auth_status_island_path = "components/AuthStatus.island.tsx";
 pub const turbo_frame_island_path = "components/TurboFrame.island.tsx";
+pub const turbo_stream_island_path = "components/TurboStream.island.tsx";
 
 const stimulus_runtime =
     \\// Generated by `zigapagos migrate --from rails`.
@@ -5744,6 +5787,48 @@ fn emitFrameIsland(gpa: Allocator) Allocator.Error![]u8 {
     );
 }
 
+fn emitStreamIsland(gpa: Allocator) Allocator.Error![]u8 {
+    return gpa.dupe(u8,
+        \\// Generated by `zigapagos migrate --from rails`.
+        \\// ZigBase re-authorizes the subscription and every delivered record on the server.
+        \\// This port dispatches portable stream facts; verify the receiving DOM renderer before claiming visual parity.
+        \\import { useEffect, useRef, useState } from "@z/runtime";
+        \\import type { RealtimeAction, RealtimeEvent } from "@zigbase/client/realtime";
+        \\import { zb } from "../lib/zb";
+        \\
+        \\export type StreamAction = "append" | "prepend" | "replace" | "update" | "remove" | "before" | "after";
+        \\export interface Props { stream: string; action: "subscribe" | StreamAction; target: string }
+        \\export interface StreamDetail { stream: string; action: StreamAction; target: string; record: Record<string, unknown> }
+        \\
+        \\const actionFor = (action: Props["action"], event: RealtimeAction): StreamAction =>
+        \\  action !== "subscribe" ? action : event === "create" ? "append" : event === "update" ? "replace" : "remove";
+        \\
+        \\export function dispatchStreamAction(root: HTMLElement, props: Props, event: RealtimeEvent) {
+        \\  const detail: StreamDetail = { stream: props.stream, action: actionFor(props.action, event.action), target: props.target, record: event.record };
+        \\  root.dispatchEvent(new CustomEvent<StreamDetail>("zigapagos:turbo-stream", { bubbles: true, detail }));
+        \\}
+        \\
+        \\export default function TurboStream(props: Props) {
+        \\  const root = useRef<HTMLSpanElement>(null);
+        \\  const [error, setError] = useState("");
+        \\  useEffect(() => {
+        \\    let active = true;
+        \\    let unsubscribe: (() => void) | undefined;
+        \\    zb.realtime.subscribe(props.stream, (event) => {
+        \\      if (active && root.current) dispatchStreamAction(root.current, props, event);
+        \\    }).then((stop) => {
+        \\      if (active) unsubscribe = stop; else stop();
+        \\    }).catch((cause) => {
+        \\      if (active) setError(cause instanceof Error ? cause.message : String(cause));
+        \\    });
+        \\    return () => { active = false; unsubscribe?.(); };
+        \\  }, [props.stream, props.action, props.target]);
+        \\  return <span ref={root} hidden data-stream={props.stream} data-realtime-error={error || undefined} />;
+        \\}
+        \\
+    );
+}
+
 /// `lib/zb.ts`, byte for byte.
 ///
 /// Assumption A1, verified against `~/nothlav/zigbase/clients/typescript`:
@@ -5764,9 +5849,9 @@ fn emitFrameIsland(gpa: Allocator) Allocator.Error![]u8 {
 /// Contract 1 (self-freeing): the formatted bytes are the only allocation and
 /// they are released before returning -- nothing escapes, the written file is
 /// the result.
-fn writeClientLib(ctx: *Ctx, auth_collection: ?[]const u8) WriteError!void {
+fn writeClientLib(ctx: *Ctx, auth_collection: ?[]const u8, with_realtime: bool) WriteError!void {
     const gpa = ctx.gpa;
-    const bytes = if (auth_collection) |c| try std.fmt.allocPrint(gpa,
+    const base = if (auth_collection) |c| try std.fmt.allocPrint(gpa,
         \\import {{ createClient, LocalAuthStore }} from "@zigbase/client";
         \\export const zb = createClient("", {{ authStore: new LocalAuthStore(), authCollection: "{s}", fetch: (input, init) => globalThis.fetch(input, init) }});
         \\
@@ -5775,8 +5860,22 @@ fn writeClientLib(ctx: *Ctx, auth_collection: ?[]const u8) WriteError!void {
         \\export const zb = createClient("", { authStore: new LocalAuthStore(), fetch: (input, init) => globalThis.fetch(input, init) });
         \\
     );
-    defer gpa.free(bytes);
-    try ctx.writeFile(client_lib_path, bytes);
+    defer gpa.free(base);
+    if (!with_realtime) return ctx.writeFile(client_lib_path, base);
+
+    const realtime = if (auth_collection) |c| try std.fmt.allocPrint(gpa,
+        \\import {{ createClient, LocalAuthStore }} from "@zigbase/client";
+        \\import {{ withRealtime }} from "@zigbase/client/realtime";
+        \\export const zb = withRealtime(createClient("", {{ authStore: new LocalAuthStore(), authCollection: "{s}", fetch: (input, init) => globalThis.fetch(input, init) }}));
+        \\
+    , .{c}) else try gpa.dupe(u8,
+        \\import { createClient, LocalAuthStore } from "@zigbase/client";
+        \\import { withRealtime } from "@zigbase/client/realtime";
+        \\export const zb = withRealtime(createClient("", { authStore: new LocalAuthStore(), fetch: (input, init) => globalThis.fetch(input, init) }));
+        \\
+    );
+    defer gpa.free(realtime);
+    try ctx.writeFile(client_lib_path, realtime);
 }
 
 fn writeProjectFiles(ctx: *Ctx, acc: *Acc) WriteError!void {
@@ -5799,10 +5898,15 @@ fn writeProjectFiles(ctx: *Ctx, acc: *Acc) WriteError!void {
 
     const bound = acc.island_files.items.len > 0;
     var with_client = acc.spa_uses_client;
+    var with_realtime = false;
     for (ctx.bindings.all) |binding| {
         if (!contains(acc.island_files.items, binding.island)) continue;
         switch (binding.kind) {
             .operation, .custom, .auth_signin, .auth_signup, .auth_logout, .data_list => with_client = true,
+            .turbo_stream => {
+                with_client = true;
+                with_realtime = true;
+            },
             .stimulus, .turbo_frame, .component, .@"inline", .drop => {},
         }
     }
@@ -5816,7 +5920,7 @@ fn writeProjectFiles(ctx: *Ctx, acc: *Acc) WriteError!void {
             contains(acc.island_files.items, auth_status_island_path)) j.collection else null)
     else
         null;
-    if (with_client) try writeClientLib(ctx, auth_collection);
+    if (with_client) try writeClientLib(ctx, auth_collection, with_realtime);
     var with_stimulus = false;
     for (acc.island_files.items) |path| if (std.mem.startsWith(u8, path, "components/stimulus/")) {
         with_stimulus = true;
@@ -15070,6 +15174,75 @@ test "write: island and backend choices emit the same document-backed data islan
         }
     }
     try testing.expect(fail_index < 500);
+}
+
+test "write: island-realtime replaces a portable Turbo Stream with a subscribed island" {
+    const gpa = testing.allocator;
+    var stream = tNode(.turbo_stream, 1, 5, "posts");
+    stream.output = true;
+    stream.code = "turbo_stream_from \"posts\"";
+    stream.value = "subscribe";
+    const nodes = [_]fragments.Node{stream};
+    const templates = [_]fragments.Template{tTemplate("app/views/pages/live.html.erb", &nodes)};
+    var routes = [_]route_mod.Route{tNamed("GET", "/live", "pages", "live", 1, "live")};
+    var verdicts = [_]classify.Verdict{tVerdict(.content)};
+    var paths = [_][]const u8{"app/views/pages/live.html.erb"};
+    var route_templates = [_]rails.RouteTemplates{.{ .templates = &paths, .layout = null }};
+    const route_views = [_]?[]const u8{"app/views/pages/live.html.erb"};
+    const finding_list = try findings.derive(gpa, .{ .templates = &templates, .layouts = &.{}, .controller_files = &.{}, .route_names = &.{}, .locale = null, .routes = &routes, .classifications = &verdicts, .route_views = &route_views });
+    defer findings.free(gpa, finding_list);
+    try testing.expectEqual(@as(usize, 1), finding_list.len);
+    var decided = [_]decisions.Decision{.{ .id = finding_list[0].id, .choice = "island-realtime", .rationale = "port the literal stream", .artifact = null }};
+    var discovery = emptyDiscovery();
+    discovery.routes = &routes;
+    discovery.classifications = &verdicts;
+    discovery.route_templates = &route_templates;
+    discovery.fragments = @constCast(&templates);
+    discovery.findings = finding_list;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const target = try tmpTarget(gpa, &tmp);
+    defer gpa.free(target);
+    var error_path: ?[]const u8 = null;
+    defer if (error_path) |path| gpa.free(path);
+    var error_cause: ?anyerror = null;
+    const result = try write(std.testing.io, gpa, .{ .discovery = &discovery, .decisions = .{ .decisions = &decided, .stale = &.{} }, .source_root = tmp.dir, .target = target, .app_name = "Live", .runtime_path = "../runtime", .agents_md = "", .claude_md = "" }, &error_path, &error_cause);
+    defer freeResult(gpa, result);
+
+    try testing.expectEqual(Status.migrated, result.routes[0].status);
+    const island = try readTarget(gpa, &tmp, "components/TurboStream.island.tsx");
+    defer gpa.free(island);
+    try testing.expect(std.mem.indexOf(u8, island, "zb.realtime.subscribe(props.stream") != null);
+    try testing.expect(std.mem.indexOf(u8, island, "zigapagos:turbo-stream") != null);
+    const client = try readTarget(gpa, &tmp, client_lib_path);
+    defer gpa.free(client);
+    try testing.expectEqualStrings(
+        \\import { createClient, LocalAuthStore } from "@zigbase/client";
+        \\import { withRealtime } from "@zigbase/client/realtime";
+        \\export const zb = withRealtime(createClient("", { authStore: new LocalAuthStore(), fetch: (input, init) => globalThis.fetch(input, init) }));
+        \\
+    , client);
+}
+
+test "realtime props keep topic and target distinct and clean every allocation failure" {
+    const gpa = testing.allocator;
+    const props = try realtimeProps(gpa, "posts", "append", "post_list");
+    defer gpa.free(props);
+    try testing.expectEqualStrings("{ .stream = \"posts\", .action = \"append\", .target = \"post_list\" }", props);
+
+    var fail_index: usize = 0;
+    while (fail_index < 20) : (fail_index += 1) {
+        var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = fail_index });
+        const fa = failing.allocator();
+        if (realtimeProps(fa, "posts", "append", "post_list")) |bytes| {
+            fa.free(bytes);
+            break;
+        } else |err| switch (err) {
+            error.OutOfMemory => {},
+        }
+    }
+    try testing.expect(fail_index < 20);
 }
 
 test "write: a dynamic route ports its record view into the SPA and carries layout styles" {

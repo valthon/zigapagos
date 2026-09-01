@@ -15,8 +15,13 @@
   into `spa.head`, so their shells no longer start unstyled. This closes #180.
 - `RAILS_STIMULUS_CONTROLLER`, `RAILS_COMPONENT_PROPS_DYNAMIC`,
   `RAILS_COMPONENT_VUE_UNSUPPORTED`, and `RAILS_JS_ENTRY` make the new
-  boundaries explicit. Turbo Streams remain `retain`/`blocked` and point to
-  follow-up #189.
+  boundaries explicit.
+- Literal `turbo_stream_from` subscriptions and supported literal-target
+  `turbo_stream.*` actions now offer `island-realtime`. The generated shared
+  island uses the ZigBase realtime entrypoint, dispatches portable
+  stream/action/target/record events, reconnects through the client, and
+  surfaces server authorization denials without dispatching records. Dynamic
+  or unsupported shapes remain `retain`/`blocked`. This closes #189.
 
 ### Changed
 
@@ -40,5 +45,6 @@
 - React `require()` and dynamic imports are not bundled. A frame island still
   needs its same-origin `src` proxied to Rails until equivalent fragment HTML
   is served by the migrated site.
-- Wrapping islands do not settle findings inside their slots. Turbo Streams
-  and Vue roots remain acknowledgeable rather than silently approximated.
+- Wrapping islands do not settle findings inside their slots. Realtime islands
+  dispatch record facts rather than translating Rails partials into DOM HTML;
+  Vue roots remain acknowledgeable rather than silently approximated.

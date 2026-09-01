@@ -118,6 +118,16 @@
       "rationale": "Realtime Turbo streams are deliberately outside Stage 4; /live does not ship until the follow-up converter exists."
     },
     {
+      "id": "RAILS_TURBO_STREAM.app/views/pages/stream%2Ehtml%2Eerb.L1C5",
+      "choice": "island-realtime",
+      "rationale": "The literal posts subscription maps to the ZigBase realtime client and dispatches portable create, update, and delete actions."
+    },
+    {
+      "id": "RAILS_TURBO_STREAM.app/views/pages/stream%2Ehtml%2Eerb.L2C5",
+      "choice": "island-realtime",
+      "rationale": "The literal append target is carried into the same realtime island as an explicit stream action."
+    },
+    {
       "id": "RAILS_COMPONENT_VUE_UNSUPPORTED.app/views/pages/live%2Ehtml%2Eerb.L1C33",
       "choice": "blocked",
       "rationale": "The runtime compatibility bridge is React-only, so the Vue root blocks /live rather than shipping inert markup."

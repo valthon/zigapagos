@@ -617,9 +617,20 @@ check_node "a bare dynamic route helper carries its argument sources",
 # `turbo_stream_from "posts"` names the stream it subscribes to; without it
 # the finding read "turbo-stream ``".
 check_node "turbo_stream_from carries its literal stream name",
-           "<%= turbo_stream_from \"posts\" %>", 0, { kind: "turbo_stream", name: "posts" }
+           "<%= turbo_stream_from \"posts\" %>", 0,
+           { kind: "turbo_stream", name: "posts", value: "subscribe" }
 check_node "a non-literal stream has no name",
-           "<%= turbo_stream_from @post %>", 0, { kind: "turbo_stream", name: nil }
+           "<%= turbo_stream_from @post %>", 0,
+           { kind: "turbo_stream", name: nil, value: "subscribe", dynamic: true }
+check_node "a literal Turbo Stream action carries its action and target",
+           "<%= turbo_stream.append \"posts\", partial: \"posts/post\" %>", 0,
+           { kind: "turbo_stream", name: "posts", value: "append" }
+check_node "a dynamic Turbo Stream target stays unsupported",
+           "<%= turbo_stream.replace dom_id(@post), partial: \"posts/post\" %>", 0,
+           { kind: "turbo_stream", name: nil, value: "replace", dynamic: true }
+check_node "an unknown Turbo Stream action stays unsupported",
+           "<%= turbo_stream.invoke \"posts\" %>", 0,
+           { kind: "turbo_stream", name: "posts", value: nil, dynamic: true }
 
 abort "#{$failures} templates failure(s)" if $failures > 0
 puts "PASS: templates_test.rb"

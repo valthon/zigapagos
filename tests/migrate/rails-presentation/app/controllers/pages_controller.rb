@@ -46,4 +46,7 @@ class PagesController < ApplicationController
 
   def live
   end
+
+  def stream
+  end
 end

@@ -63,4 +63,6 @@ Rails.application.routes.draw do
   get "/widgets", to: "pages#widgets"
   # Stage 4 blockers: Turbo streams and an unsupported Vue root.
   get "/live", to: "pages#live"
+  # #189: literal subscription and action shapes become one shared realtime island.
+  get "/stream", to: "pages#stream"
 end

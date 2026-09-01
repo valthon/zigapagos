@@ -118,6 +118,8 @@ have_finding 'RAILS_TURBO_FRAME.app/views/pages/widgets%2Ehtml%2Eerb.L6C5'
 have_finding 'RAILS_TURBO_FRAME.app/views/pages/widgets%2Ehtml%2Eerb.L7C5'
 have_finding 'RAILS_COMPONENT_ROOT.app/views/pages/widgets%2Ehtml%2Eerb.L8C5'
 have_finding 'RAILS_TURBO_STREAM.app/views/pages/live%2Ehtml%2Eerb.L1C5'
+have_finding 'RAILS_TURBO_STREAM.app/views/pages/stream%2Ehtml%2Eerb.L1C5'
+have_finding 'RAILS_TURBO_STREAM.app/views/pages/stream%2Ehtml%2Eerb.L2C5'
 have_finding 'RAILS_COMPONENT_VUE_UNSUPPORTED.app/views/pages/live%2Ehtml%2Eerb.L1C33'
 have_finding 'RAILS_JS_ENTRY.app/javascript/application%2Ejs.entry'
 finding_field() { jq -r --arg id "$1" --arg field "$2" '.findings[] | select(.id == $id) | if $field == "choices" then (.choices | join(",")) elif $field == "line" then (.source.line | tostring) else .[$field] end' "$MANIFEST"; }
@@ -130,7 +132,10 @@ finding_field() { jq -r --arg id "$1" --arg field "$2" '.findings[] | select(.id
 [[ "$(finding_field 'RAILS_COMPONENT_ROOT.app/views/pages/widgets%2Ehtml%2Eerb.L8C5' choices)" == 'island,retain,blocked' ]] || fail "React root choices changed"
 [[ "$(finding_field 'RAILS_COMPONENT_ROOT.app/views/pages/widgets%2Ehtml%2Eerb.L8C5' message)" == 'React root `Chart` props {points, series}; source app/javascript/components/Chart.jsx' ]] || fail "React root message changed"
 stream_msg="$(finding_field 'RAILS_TURBO_STREAM.app/views/pages/live%2Ehtml%2Eerb.L1C5' message)"
-[[ "$stream_msg" == 'turbo-stream `posts`: a realtime subscription has no converter (see #'*')' ]] || fail "Turbo stream message must name posts and its follow-up issue: $stream_msg"
+[[ "$stream_msg" == 'turbo-stream `posts` subscription can become a realtime island' ]] || fail "portable Turbo subscription message changed: $stream_msg"
+[[ "$(finding_field 'RAILS_TURBO_STREAM.app/views/pages/live%2Ehtml%2Eerb.L1C5' choices)" == 'island-realtime,retain,blocked' ]] || fail "portable live subscription choices changed"
+[[ "$(finding_field 'RAILS_TURBO_STREAM.app/views/pages/stream%2Ehtml%2Eerb.L1C5' choices)" == 'island-realtime,retain,blocked' ]] || fail "portable subscription choices changed"
+[[ "$(finding_field 'RAILS_TURBO_STREAM.app/views/pages/stream%2Ehtml%2Eerb.L2C5' message)" == 'turbo-stream `post_list` action append can become a realtime island' ]] || fail "portable action message changed"
 [[ "$(finding_field 'RAILS_COMPONENT_VUE_UNSUPPORTED.app/views/pages/live%2Ehtml%2Eerb.L1C33' choices)" == 'retain,blocked' ]] || fail "Vue choices changed"
 jq -e '.blockers[] | select(.code == "RAILS_COMPONENT_VUE_UNSUPPORTED" and .severity == "warn" and .integrity == false)' "$MANIFEST" >/dev/null || fail "Vue finding must also carry the non-integrity warning blocker"
 [[ "$(finding_field 'RAILS_JS_ENTRY.app/javascript/application%2Ejs.entry' choices)" == 'drop,blocked' ]] || fail "JS entry choices changed"
@@ -264,7 +269,7 @@ jq -e '.blockers[] | select(.code == "RAILS_TEMPLATE_ENGINE_UNSUPPORTED")' "$MAN
 # the WORDS only, and the operation ids are pinned per finding above.
 bad=$(jq -r '.findings[] | select((.id|type) != "string" or (.choices|length) == 0) | .id' "$MANIFEST")
 [[ -z "$bad" ]] || fail "malformed findings: $bad"
-badwords=$(jq -r '.findings[] | select((.choices - ["island","spa","backend","public","drop","inline","retain","blocked","listPosts","viewPosts","listUsers","viewUsers","createPosts","createUsers","deletePosts","deleteUsers"] | length) != 0) | .id' "$MANIFEST")
+badwords=$(jq -r '.findings[] | select((.choices - ["island","island-realtime","spa","backend","public","drop","inline","retain","blocked","listPosts","viewPosts","listUsers","viewUsers","createPosts","createUsers","deletePosts","deleteUsers"] | length) != 0) | .id' "$MANIFEST")
 [[ -z "$badwords" ]] || fail "findings offering a choice outside the vocabulary + this document's ids: $badwords"
 
 # Schema validation of both real instances. `rails_manifest_validate` takes
@@ -290,7 +295,7 @@ grep -qx 'endpoints: 0 of the 5 `backend` route(s) are bound to a ZigBase operat
 # a status that moves from `migrated` to `open` (or the reverse) names itself.
 [[ "$(jq -r '.complete' "$HANDOFF")" == "false" ]] || fail "run 1 must not be complete"
 route_count=$(jq '.routes | length' "$HANDOFF")
-[[ "$route_count" == "20" ]] || fail "expected 20 routes in the handoff, got $route_count -- a new route needs a pin below"
+[[ "$route_count" == "21" ]] || fail "expected 21 routes in the handoff, got $route_count -- a new route needs a pin below"
 status_of() { jq -r --arg r "$1" '.routes[] | select(.route_id == $r) | .status' "$HANDOFF"; }
 want_status() {
   local got; got="$(status_of "$1")"
@@ -315,6 +320,7 @@ want_status 'GET /session/new'       open
 want_status 'GET /registration/new'  open
 want_status 'GET /widgets'           open
 want_status 'GET /live'              open
+want_status 'GET /stream'            open
 # No page, no decision, no question: a pure `redirect_to` action is answered
 # by the host config.
 want_status 'GET /old'               redirect
@@ -354,7 +360,7 @@ grep -q 'method="delete"' "$run1_nav" && fail 'a method= attribute on an <a> doe
 
 # --- run 1: the converted tree ---------------------------------------------
 listing="$(cd "$WORK/out1" && find . -type f | sort | tr '\n' ' ')"
-expected_listing="./.gitignore ./AGENTS.md ./CLAUDE.md ./MIGRATION.handoff.json ./MIGRATION.manifest.json ./MIGRATION.md ./assets/images/logo.png ./assets/robots.txt ./assets/stylesheets/application.css ./build.sh ./content/about/index.smd ./content/help/index.smd ./content/index.smd ./content/linked/index.smd ./content/links/index.smd ./content/live/index.smd ./content/posts/index.smd ./content/posts/new/index.smd ./content/registration/new/index.smd ./content/session/new/index.smd ./content/widgets/index.smd ./layouts/pages/about.shtml ./layouts/pages/help.shtml ./layouts/pages/linked.shtml ./layouts/pages/links.shtml ./layouts/pages/live.shtml ./layouts/pages/widgets.shtml ./layouts/posts/index.shtml ./layouts/posts/new.shtml ./layouts/registrations/new.shtml ./layouts/sessions/new.shtml ./layouts/templates/application.shtml ./layouts/templates/marketing.shtml ./test/journey_playwright.py ./test/parity.ts ./zigapagos.ziggy "
+expected_listing="./.gitignore ./AGENTS.md ./CLAUDE.md ./MIGRATION.handoff.json ./MIGRATION.manifest.json ./MIGRATION.md ./assets/images/logo.png ./assets/robots.txt ./assets/stylesheets/application.css ./build.sh ./content/about/index.smd ./content/help/index.smd ./content/index.smd ./content/linked/index.smd ./content/links/index.smd ./content/live/index.smd ./content/posts/index.smd ./content/posts/new/index.smd ./content/registration/new/index.smd ./content/session/new/index.smd ./content/stream/index.smd ./content/widgets/index.smd ./layouts/pages/about.shtml ./layouts/pages/help.shtml ./layouts/pages/linked.shtml ./layouts/pages/links.shtml ./layouts/pages/live.shtml ./layouts/pages/stream.shtml ./layouts/pages/widgets.shtml ./layouts/posts/index.shtml ./layouts/posts/new.shtml ./layouts/registrations/new.shtml ./layouts/sessions/new.shtml ./layouts/templates/application.shtml ./layouts/templates/marketing.shtml ./test/journey_playwright.py ./test/parity.ts ./zigapagos.ziggy "
 [[ "$listing" == "$expected_listing" ]] || fail "run 1 target listing changed:
   got:      $listing
   expected: $expected_listing"
@@ -479,6 +485,7 @@ want2 'GET /broken'           blocked
 want2 'GET /links'            blocked
 want2 'GET /posts/legacy'     blocked
 want2 'GET /live'             blocked
+want2 'GET /stream'           migrated
 want2 'GET /posts'            migrated
 want2 'GET /posts/new'        migrated
 want2 'GET /posts/:id'        migrated
@@ -530,11 +537,12 @@ grep -qx 'endpoints: 5 of the 5 `backend` route(s) are bound to a ZigBase operat
 assert_stage5_parity() {
   local handoff="$1" parity_hash
   parity_hash=$(jq -c '.parity' "$handoff" | shasum -a 256 | awk '{print $1}')
-  [[ "$parity_hash" == "933e5d7504085309d299cfa4692411ede19c0a7afba7e659bbeb04b3fcf6e387" ]] || return 1
+  [[ "$parity_hash" == "ca61f3f46c05a149790207470d19c63ec7c66b1a4360594c156d5ac615ec38f9" ]] || return 1
   jq -e '.parity[] | select(.id == "signup:users" and .expect.status == 201)' "$handoff" >/dev/null || return 1
   jq -e '.parity[] | select(.id == "navigate:GET /about" and (.expect.links | index("/?from=about#top")))' "$handoff" >/dev/null || return 1
   jq -e '[.parity[] | select(.kind == "navigate" and (.expect.links | index("/account")))] | length == 0' "$handoff" >/dev/null || return 1
   jq -e '.parity[] | select(.id == "navigate:GET /posts/new" and .expect.title == "New post" and .expect.h1 == "New post")' "$handoff" >/dev/null || return 1
+  jq -e '.parity[] | select(.id == "navigate:GET /stream" and .expect.status == 200)' "$handoff" >/dev/null || return 1
   jq -e '.parity[] | select(.id == "submit_allowed:createPosts" and .expect.page_url == "/posts/new" and .expect.status_family == 2)' "$handoff" >/dev/null || return 1
   jq -e '.parity[] | select(.id == "submit_denied:createPosts" and (.expect.statuses == [401,403]))' "$handoff" >/dev/null || return 1
   jq -e '.parity[] | select(.id == "validation_error:createPosts:title" and .expect.field == "title" and ([.expect.fields[] | select(.name == "title") | .invalid_value] == [""]))' "$handoff" >/dev/null || return 1
@@ -602,6 +610,12 @@ grep -qF '<turbo-frame id="static"><p>Just markup</p></turbo-frame>' "$widgets2"
 grep -qF '<island src="components/Chart.island.tsx" client:load :props='"'"'{ .points = 3, .series = "a" }'"'"'></island>' "$widgets2" || fail "the React root must mount with sorted literal props"
 grep -q 'data-turbo-action' "$widgets2" && fail "Turbo Drive attributes must not survive run 2"
 grep -qF '<island src="components/data/posts_index.island.tsx" client:load></island>' "$WORK/out2/layouts/posts/index.shtml" || fail "the posts index must be replaced by its data island"
+stream2="$WORK/out2/layouts/pages/stream.shtml"
+[[ "$(grep -c '<island src="components/TurboStream.island.tsx"' "$stream2")" == "2" ]] || fail "the portable subscription and action must each mount the shared realtime island"
+grep -qF '.action = "subscribe"' "$stream2" || fail "the subscription mount lost its action prop"
+grep -qF '.action = "append"' "$stream2" || fail "the explicit stream action mount lost its action prop"
+grep -qF '.stream = "posts", .action = "append", .target = "post_list"' "$stream2" || fail "the action mount must keep its subscription topic separate from its DOM target"
+grep -qF 'withRealtime(createClient' "$WORK/out2/lib/zb.ts" || fail "the shared client must enable the realtime entrypoint"
 grep -q 'rails:finding' "$WORK/out2/layouts/posts/index.shtml" && fail "a bound data region must leave no finding marker"
 grep -qF 'getList(1, 50)' "$WORK/out2/components/data/posts_index.island.tsx" || fail "the posts data island must fetch its first 50 records"
 grep -qF '"/posts/" + encodeURIComponent(String(rec.id ?? ""))' "$WORK/out2/components/data/posts_index.island.tsx" || fail "the posts data island must preserve record links"
@@ -659,6 +673,7 @@ note2 "GET /widgets"          "$widgets_note2"
 note2 "GET /help"             "csrf_meta_tags dropped; javascript_importmap_tags dropped"
 note2 "GET /links"            "csrf_meta_tags dropped; javascript_importmap_tags dropped"
 note2 "GET /live"             "csrf_meta_tags dropped; javascript_importmap_tags dropped"
+note2 "GET /stream"           "$head2; $nav2"
 note2 "GET /broken"           "view app/views/pages/broken.html.erb was not converted"
 note2 "GET /posts/legacy"     "view app/views/posts/legacy.html.haml was not converted"
 note2 "GET /feed"             "<null>"
@@ -680,7 +695,7 @@ note2 "DELETE /session"       "<null>"
 # it: a layout is shared chrome, written once per layout rather than per
 # route, and it mounts the AuthStatus island the nav's answer produced.
 listing2="$(cd "$WORK/out2" && find . -type f | sort | tr '\n' ' ')"
-expected_listing2="./.gitignore ./AGENTS.md ./CLAUDE.md ./MIGRATION.handoff.json ./MIGRATION.manifest.json ./MIGRATION.md ./assets/images/logo.png ./assets/robots.txt ./assets/stylesheets/application.css ./build.sh ./components/AuthForm.island.tsx ./components/AuthStatus.island.tsx ./components/Chart.island.tsx ./components/TurboFrame.island.tsx ./components/data/posts_index.island.tsx ./components/forms/posts_new.island.tsx ./components/react/Chart.jsx ./components/stimulus/reveal.island.tsx ./content/about/index.smd ./content/index.smd ./content/linked/index.smd ./content/posts/index.smd ./content/posts/new/index.smd ./content/registration/new/index.smd ./content/session/new/index.smd ./content/widgets/index.smd ./layouts/pages/about.shtml ./layouts/pages/linked.shtml ./layouts/pages/widgets.shtml ./layouts/posts/index.shtml ./layouts/posts/new.shtml ./layouts/registrations/new.shtml ./layouts/sessions/new.shtml ./layouts/templates/application.shtml ./layouts/templates/marketing.shtml ./lib/stimulus.ts ./lib/zb.ts ./package.json ./spa/posts.spa.tsx ./test/journey_playwright.py ./test/parity.ts ./tsconfig.json ./z-runtime.config.json ./zigapagos.ziggy "
+expected_listing2="./.gitignore ./AGENTS.md ./CLAUDE.md ./MIGRATION.handoff.json ./MIGRATION.manifest.json ./MIGRATION.md ./assets/images/logo.png ./assets/robots.txt ./assets/stylesheets/application.css ./build.sh ./components/AuthForm.island.tsx ./components/AuthStatus.island.tsx ./components/Chart.island.tsx ./components/TurboFrame.island.tsx ./components/TurboStream.island.tsx ./components/data/posts_index.island.tsx ./components/forms/posts_new.island.tsx ./components/react/Chart.jsx ./components/stimulus/reveal.island.tsx ./content/about/index.smd ./content/index.smd ./content/linked/index.smd ./content/posts/index.smd ./content/posts/new/index.smd ./content/registration/new/index.smd ./content/session/new/index.smd ./content/stream/index.smd ./content/widgets/index.smd ./layouts/pages/about.shtml ./layouts/pages/linked.shtml ./layouts/pages/stream.shtml ./layouts/pages/widgets.shtml ./layouts/posts/index.shtml ./layouts/posts/new.shtml ./layouts/registrations/new.shtml ./layouts/sessions/new.shtml ./layouts/templates/application.shtml ./layouts/templates/marketing.shtml ./lib/stimulus.ts ./lib/zb.ts ./package.json ./spa/posts.spa.tsx ./test/journey_playwright.py ./test/parity.ts ./tsconfig.json ./z-runtime.config.json ./zigapagos.ziggy "
 [[ "$listing2" == "$expected_listing2" ]] || fail "run 2 target listing changed:
   got:      $listing2
   expected: $expected_listing2"
@@ -862,8 +877,10 @@ if command -v bun >/dev/null; then
   [[ -f "$WORK/out2/zig-out/site/islands/AuthForm.island.js" ]] || fail "the AuthForm island was not bundled"
   [[ -f "$WORK/out2/zig-out/site/islands/AuthStatus.island.js" ]] || fail "the AuthStatus island was not bundled"
   [[ -f "$WORK/out2/zig-out/site/islands/posts_new.island.js" ]] || fail "the posts form island was not bundled"
+  [[ -f "$WORK/out2/zig-out/site/islands/TurboStream.island.js" ]] || fail "the realtime island was not bundled"
   [[ -f "$WORK/out2/zig-out/site/session/new/index.html" ]] || fail "the sign-in page was not built"
   [[ -f "$WORK/out2/zig-out/site/posts/new/index.html" ]] || fail "the posts/new page was not built"
+  [[ -f "$WORK/out2/zig-out/site/stream/index.html" ]] || fail "the portable realtime page was not built"
   grep -q 'data-z-module="/islands/posts_new.island.js"' "$WORK/out2/zig-out/site/posts/new/index.html" \
     || fail "posts/new does not SSR the bound form island"
   grep -q 'name="title"' "$WORK/out2/zig-out/site/posts/new/index.html" \
@@ -970,6 +987,88 @@ test("data island fetches and renders records", async () => {
 });
 TS
   ( cd "$WORK/out2" && bun test test/hydrate.test.ts ) || fail "generated islands failed hydration coverage"
+  cat > "$WORK/out2/test/realtime.test.ts" <<'TS'
+import { expect, test } from "bun:test";
+import { flush, renderIsland } from "@z/runtime/testing";
+
+class FakeSocket {
+  static sockets: FakeSocket[] = [];
+  static readonly OPEN = 1;
+  readyState = 0;
+  sent: Record<string, unknown>[] = [];
+  onopen: ((event: Event) => void) | null = null;
+  onmessage: ((event: MessageEvent) => void) | null = null;
+  onclose: ((event: CloseEvent) => void) | null = null;
+  onerror: ((event: Event) => void) | null = null;
+
+  constructor(_url: string | URL) {
+    FakeSocket.sockets.push(this);
+    queueMicrotask(() => {
+      this.readyState = FakeSocket.OPEN;
+      this.onopen?.(new Event("open"));
+      this.receive({ type: "connect", clientId: `fake-${FakeSocket.sockets.length}` });
+    });
+  }
+
+  send(raw: string) {
+    const frame = JSON.parse(raw) as Record<string, unknown>;
+    this.sent.push(frame);
+    if (frame.action === "subscribe" && frame.topic !== "private") {
+      queueMicrotask(() => this.receive({ type: "ack", topic: frame.topic }));
+    }
+  }
+
+  close() { this.serverClose(); }
+  serverClose() {
+    if (this.readyState === 3) return;
+    this.readyState = 3;
+    this.onclose?.(new CloseEvent("close"));
+  }
+  receive(frame: Record<string, unknown>) {
+    this.onmessage?.({ data: JSON.stringify(frame) } as MessageEvent);
+  }
+}
+
+test("realtime island subscribes, dispatches actions, reconnects, and fails closed on denial", async () => {
+  const originalWebSocket = globalThis.WebSocket;
+  globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket;
+  const { default: TurboStream } = await import("../components/TurboStream.island.tsx");
+  const details: unknown[] = [];
+  document.addEventListener("zigapagos:turbo-stream", (event) => details.push((event as CustomEvent).detail));
+  const settle = async (ms = 20) => { await flush(); await new Promise((resolve) => setTimeout(resolve, ms)); await flush(); };
+
+  const mounted = renderIsland(TurboStream, { stream: "posts", action: "subscribe", target: "posts" });
+  await settle();
+  expect(FakeSocket.sockets).toHaveLength(1);
+  expect(FakeSocket.sockets[0].sent).toContainEqual({ action: "subscribe", topic: "posts" });
+  FakeSocket.sockets[0].receive({ type: "event", topic: "posts", action: "create", record: { id: "p1" } });
+  expect(details).toContainEqual({ stream: "posts", action: "append", target: "posts", record: { id: "p1" } });
+
+  FakeSocket.sockets[0].serverClose();
+  await settle(320);
+  expect(FakeSocket.sockets).toHaveLength(2);
+  expect(FakeSocket.sockets[1].sent).toContainEqual({ action: "subscribe", topic: "posts" });
+  FakeSocket.sockets[1].receive({ type: "event", topic: "posts", action: "update", record: { id: "p1" } });
+  expect(details).toContainEqual({ stream: "posts", action: "replace", target: "posts", record: { id: "p1" } });
+  mounted.unmount();
+
+  const explicit = renderIsland(TurboStream, { stream: "posts", action: "before", target: "post_list" });
+  await settle();
+  FakeSocket.sockets[1].receive({ type: "event", topic: "posts", action: "delete", record: { id: "p2" } });
+  expect(details).toContainEqual({ stream: "posts", action: "before", target: "post_list", record: { id: "p2" } });
+  explicit.unmount();
+
+  const denied = renderIsland(TurboStream, { stream: "private", action: "remove", target: "private" });
+  await settle();
+  FakeSocket.sockets[1].receive({ type: "error", message: "not authorized" });
+  await settle();
+  expect(denied.get("[data-stream='private']").getAttribute("data-realtime-error")).toBe("not authorized");
+  expect(details).toHaveLength(3);
+  denied.unmount();
+  globalThis.WebSocket = originalWebSocket;
+});
+TS
+  ( cd "$WORK/out2" && bun test test/realtime.test.ts ) || fail "generated realtime island failed subscription/reconnect/authorization coverage"
 else
   echo "SKIP(partial): bun not on PATH -- the migrated target was not built or audited"
 fi
@@ -1039,7 +1138,7 @@ stream_bad_out="$("$ZIGAPAGOS" migrate "$WORK/app" --from rails --target "$WORK/
 stream_bad_rc=$?
 set -e
 [[ $stream_bad_rc -eq 1 ]] || fail "Turbo streams cannot be answered island, got $stream_bad_rc"
-grep -q 'allowed: retain, blocked' <<<"$stream_bad_out" || fail "Turbo stream rejection must name its allowed set: $stream_bad_out"
+grep -q 'allowed: island-realtime, retain, blocked' <<<"$stream_bad_out" || fail "Turbo stream rejection must name its allowed set: $stream_bad_out"
 
 jq '(.decisions[] | select(.id == "RAILS_REQUEST_TIME_STATE.app/views/posts/index%2Ehtml%2Eerb.L1C33") | .artifact) = "nope"' "$DECISIONS" > "$WORK/bad-data-artifact.json"
 set +e

@@ -126,6 +126,7 @@ const choices_full = [_][]const u8{ "island", "spa", "backend", "retain", "block
 const choices_stimulus = [_][]const u8{ "island", "drop", "retain", "blocked" };
 const choices_drop_retain_blocked = [_][]const u8{ "drop", "retain", "blocked" };
 const choices_inline_retain_blocked = [_][]const u8{ "inline", "retain", "blocked" };
+const choices_realtime_retain_blocked = [_][]const u8{ "island-realtime", "retain", "blocked" };
 const choices_drop_blocked = [_][]const u8{ "drop", "blocked" };
 /// #167 Stage 3 assumption A7's new choice word: "ship the page; the ZigBase
 /// rules protect the data". Only `RAILS_ROUTE_AUTH_GUARD` offers it.
@@ -304,8 +305,9 @@ pub const code_component_props_dynamic = "RAILS_COMPONENT_PROPS_DYNAMIC";
 pub const code_component_vue_unsupported = "RAILS_COMPONENT_VUE_UNSUPPORTED";
 pub const code_js_entry = "RAILS_JS_ENTRY";
 
-/// Filled with the follow-up issue number when the Stage 4 PR is opened.
-/// Keeping the reference in one constant makes that PR-time edit mechanical.
+/// The follow-up issue remains useful in unsupported-shape diagnostics: #189
+/// adds the portable path but deliberately leaves dynamic targets/actions
+/// acknowledgeable rather than guessed.
 pub const turbo_stream_issue: usize = 189;
 
 /// Contract 1 (self-freeing): the only allocation is the returned buffer,
@@ -1534,6 +1536,46 @@ fn attrValue(node: fragments.Node, key: []const u8) ?[]const u8 {
     return null;
 }
 
+/// The subscription topic for a portable Turbo Stream node. A
+/// `turbo_stream.*` action names a DOM target, not a topic, so it is portable
+/// only beside one unambiguous literal `turbo_stream_from` in the same
+/// template. Contract 3 (caller-buffer): borrows `nodes` and allocates
+/// nothing.
+pub fn turboStreamTopic(nodes: []const fragments.Node, node: fragments.Node) ?[]const u8 {
+    if (node.dynamic or node.name == null or !portableStreamName(node.name.?) or node.value == null) return null;
+    if (std.mem.eql(u8, node.value.?, "subscribe")) return node.name.?;
+    var topic: ?[]const u8 = null;
+    for (nodes) |candidate| {
+        if (candidate.text != null or candidate.kind != .turbo_stream or candidate.dynamic or candidate.name == null or candidate.value == null) continue;
+        if (!std.mem.eql(u8, candidate.value.?, "subscribe") or !portableStreamName(candidate.name.?)) continue;
+        if (topic) |known| {
+            if (!std.mem.eql(u8, known, candidate.name.?)) return null;
+        } else {
+            topic = candidate.name.?;
+        }
+    }
+    return topic;
+}
+
+fn portableStreamName(name: []const u8) bool {
+    if (name.len == 0) return false;
+    for (name) |c| if (!std.ascii.isAlphanumeric(c) and c != '_' and c != '-' and c != '.' and c != ':') return false;
+    return true;
+}
+
+fn portableTurboStream(nodes: []const fragments.Node, node: fragments.Node) bool {
+    if (turboStreamTopic(nodes, node) == null) return false;
+    const action = node.value.?;
+    return std.mem.eql(u8, action, "subscribe") or
+        std.mem.eql(u8, action, "append") or
+        std.mem.eql(u8, action, "prepend") or
+        std.mem.eql(u8, action, "replace") or
+        std.mem.eql(u8, action, "update") or
+        std.mem.eql(u8, action, "remove") or
+        std.mem.eql(u8, action, "before") or
+        std.mem.eql(u8, action, "after");
+}
+
 /// ASCII upper-case. Contract 1 (self-freeing): the returned buffer is the
 /// only allocation and it escapes.
 fn upperAlloc(gpa: Allocator, s: []const u8) Allocator.Error![]u8 {
@@ -2458,9 +2500,19 @@ fn deriveNode(
         .turbo_stream => {
             const loc = try nodeLoc(gpa, node.line, node.col);
             defer gpa.free(loc);
-            const message = try std.fmt.allocPrint(gpa, "turbo-stream `{s}`: a realtime subscription has no converter (see #{d})", .{ node.name orelse "", turbo_stream_issue });
+            const portable = portableTurboStream(nodes, node);
+            const message = if (portable and std.mem.eql(u8, node.value.?, "subscribe"))
+                try std.fmt.allocPrint(gpa, "turbo-stream `{s}` subscription can become a realtime island", .{node.name.?})
+            else if (portable)
+                try std.fmt.allocPrint(gpa, "turbo-stream `{s}` action {s} can become a realtime island", .{ node.name.?, node.value.? })
+            else if (node.dynamic)
+                try std.fmt.allocPrint(gpa, "turbo-stream `{s}` has a request-time stream target or unsupported action (see #{d})", .{ node.name orelse "", turbo_stream_issue })
+            else if (node.value) |action|
+                try std.fmt.allocPrint(gpa, "turbo-stream `{s}` action {s} has no unambiguous literal subscription topic in this template (see #{d})", .{ node.name orelse "", action, turbo_stream_issue })
+            else
+                try std.fmt.allocPrint(gpa, "turbo-stream `{s}`: a realtime subscription has no converter (see #{d})", .{ node.name orelse "", turbo_stream_issue });
             defer gpa.free(message);
-            try appendFinding(gpa, list, code_turbo_stream, .warn, path, node.line, loc, message, &choices_retain_blocked);
+            try appendFinding(gpa, list, code_turbo_stream, .warn, path, node.line, loc, message, if (portable) &choices_realtime_retain_blocked else &choices_retain_blocked);
         },
         .component_root => {
             const loc = try nodeLoc(gpa, node.line, node.col);
@@ -5283,6 +5335,48 @@ test "derive: Stage 4 interactivity rows expose only buildable choices" {
     for ([_][]const u8{ "inline", "retain", "blocked" }, out[5].choices) |want, got| try std.testing.expectEqualStrings(want, got);
     try std.testing.expectEqualStrings(code_turbo_stream, out[6].code);
     try std.testing.expect(std.mem.indexOf(u8, out[6].message, "a realtime subscription has no converter") != null);
+}
+
+test "derive: only literal supported Turbo Stream shapes offer island-realtime" {
+    const gpa = std.testing.allocator;
+    var subscribe = nodeCode(.turbo_stream, 1, 1, "posts");
+    subscribe.value = "subscribe";
+    var append = nodeCode(.turbo_stream, 2, 1, "posts");
+    append.value = "append";
+    var dynamic = nodeCode(.turbo_stream, 3, 1, null);
+    dynamic.value = "replace";
+    dynamic.dynamic = true;
+    var unsafe = nodeCode(.turbo_stream, 4, 1, "bad' stream");
+    unsafe.value = "subscribe";
+    const nodes = [_]fragments.Node{ subscribe, append, dynamic, unsafe };
+    const tpls = [_]fragments.Template{.{ .path = "app/views/posts/live.html.erb", .nodes = @constCast(&nodes), .error_message = null, .error_line = null, .unreadable = null }};
+    const out = try derive(gpa, .{ .templates = &tpls, .layouts = &.{}, .controller_files = &.{}, .route_names = &.{}, .locale = null });
+    defer free(gpa, out);
+
+    try std.testing.expectEqual(@as(usize, 4), out.len);
+    for (out[0..2]) |finding| {
+        for ([_][]const u8{ "island-realtime", "retain", "blocked" }, finding.choices) |want, got| try std.testing.expectEqualStrings(want, got);
+    }
+    try std.testing.expectEqualStrings("turbo-stream `posts` subscription can become a realtime island", out[0].message);
+    try std.testing.expectEqualStrings("turbo-stream `posts` action append can become a realtime island", out[1].message);
+    for ([_][]const u8{ "retain", "blocked" }, out[2].choices) |want, got| try std.testing.expectEqualStrings(want, got);
+    try std.testing.expect(std.mem.indexOf(u8, out[2].message, "request-time stream target") != null);
+    for ([_][]const u8{ "retain", "blocked" }, out[3].choices) |want, got| try std.testing.expectEqualStrings(want, got);
+}
+
+test "derive: a Turbo Stream action without one literal subscription stays unsupported" {
+    const gpa = std.testing.allocator;
+    var action = nodeCode(.turbo_stream, 1, 1, "posts");
+    action.value = "append";
+    const nodes = [_]fragments.Node{action};
+    const tpls = [_]fragments.Template{.{ .path = "app/views/posts/action.html.erb", .nodes = @constCast(&nodes), .error_message = null, .error_line = null, .unreadable = null }};
+    const out = try derive(gpa, .{ .templates = &tpls, .layouts = &.{}, .controller_files = &.{}, .route_names = &.{}, .locale = null });
+    defer free(gpa, out);
+    for ([_][]const u8{ "retain", "blocked" }, out[0].choices) |want, got| try std.testing.expectEqualStrings(want, got);
+    try std.testing.expectEqualStrings(
+        "turbo-stream `posts` action append has no unambiguous literal subscription topic in this template (see #189)",
+        out[0].message,
+    );
 }
 
 test "frame navigation ignores a POST route sharing its helper and path" {
