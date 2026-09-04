@@ -178,7 +178,7 @@ const exe_module: []const ExeModule = &.{
     .{
         .step_name = "test-release",
         .description = "Run release CLI Command.parse + entry-discovery unit tests",
-        .filters = &.{ "parse", "discoverEntries", "containsComponent" },
+        .filters = &.{ "parse", "discoverEntries", "containsComponent", "missingSpaClientAsset" },
     },
     // `zigapagos debug` Command.parse allocation-failure coverage. The filter
     // matches both main.zig's anchor and debug.zig's test.

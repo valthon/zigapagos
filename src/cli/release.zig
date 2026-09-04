@@ -112,6 +112,21 @@ pub fn release(
         .{@errorName(err)},
     );
 
+    // A SPA shell is executable output, not a prerender-only artifact: every
+    // one imports `/spa/<name>.js` and `@z/runtime` resolves to the shared
+    // `/zigapagos-runtime.js` when no slice manifest is attached. The npm path
+    // above registers both after building them. A project-owned build may
+    // register them itself with `--build-asset`, but an explicit `--spa` with
+    // neither path used must not leave a deployable-looking tree whose scripts
+    // all 404.
+    //
+    // Check assets registered by THIS invocation rather than looking in the
+    // output directory after `root.run`: `--force` deliberately preserves
+    // unrelated files, so a stale bundle from an older release could make a
+    // filesystem-existence check pass while the current release produced
+    // nothing.
+    validateSpaClientAssets(gpa, &cmd);
+
     // Incremental content re-render. `zigapagos dev` sets
     // `ZIGAPAGOS_CHANGED_FILES` (newline-separated base-relative content page
     // paths) when — and only when — every changed file is a content page; the
@@ -222,6 +237,87 @@ pub fn release(
     };
 
     return false;
+}
+
+const MissingSpaClientAsset = struct {
+    spa_src: []const u8,
+    install_path: []u8,
+};
+
+/// Return the first browser script a declared SPA references but this release
+/// did not register for installation. The returned path is caller-owned.
+fn missingSpaClientAsset(
+    gpa: Allocator,
+    cmd: *const Command,
+) Allocator.Error!?MissingSpaClientAsset {
+    for (cmd.spas) |sp| {
+        const entry_path = try std.fmt.allocPrint(gpa, "spa/{s}.js", .{spa_mod.spaName(sp.src)});
+        if (!hasBuildAssetInstallPath(&cmd.build_assets, entry_path)) {
+            return .{ .spa_src = sp.src, .install_path = entry_path };
+        }
+        gpa.free(entry_path);
+
+        // `bundleSpas` always registers the shared runtime even when its slice
+        // later wins. A hand-written/external invocation has no slice manifest,
+        // so this is exactly the runtime URL its shells emit.
+        if (!hasBuildAssetInstallPath(&cmd.build_assets, "zigapagos-runtime.js")) {
+            return .{
+                .spa_src = sp.src,
+                .install_path = try gpa.dupe(u8, "zigapagos-runtime.js"),
+            };
+        }
+    }
+    return null;
+}
+
+fn hasBuildAssetInstallPath(
+    assets: *const std.StringArrayHashMapUnmanaged(BuildAsset),
+    wanted: []const u8,
+) bool {
+    for (assets.values()) |asset| {
+        const raw = asset.install_path orelse continue;
+        if (std.mem.eql(u8, std.mem.trimStart(u8, raw, "/"), std.mem.trimStart(u8, wanted, "/"))) return true;
+    }
+    return false;
+}
+
+fn validateSpaClientAssets(gpa: Allocator, cmd: *Command) void {
+    if (missingSpaClientAsset(gpa, cmd) catch fatal.oom()) |missing| {
+        defer gpa.free(missing.install_path);
+        fatal.msg(
+            "error: SPA '{s}' references '/{s}', but this release did not build or register that client asset.\n" ++
+                "  Set ZIGAPAGOS_RUNTIME_DIR to the matching runtime tree so release can bundle the SPA,\n" ++
+                "  or register its browser bundle and /zigapagos-runtime.js with --build-asset and\n" ++
+                "  --install (or --install-always) for their corresponding output paths.\n" ++
+                "  Refusing to emit SPA shells and a routing manifest with missing scripts.\n",
+            .{ missing.spa_src, missing.install_path },
+        );
+    }
+
+    // The generated shells and routing manifest are themselves references to
+    // these build assets. `--install-always` assets already start at rc=1, but
+    // an external orchestrator may correctly use ordinary `--install`; bumping
+    // here makes that declared install happen instead of validating it and then
+    // pruning it as apparently unreferenced during root.run's install pass.
+    for (cmd.spas) |sp| {
+        const entry_path = std.fmt.allocPrint(gpa, "spa/{s}.js", .{spa_mod.spaName(sp.src)}) catch fatal.oom();
+        markBuildAssetReferencedByInstallPath(&cmd.build_assets, entry_path);
+        gpa.free(entry_path);
+        markBuildAssetReferencedByInstallPath(&cmd.build_assets, "zigapagos-runtime.js");
+    }
+}
+
+fn markBuildAssetReferencedByInstallPath(
+    assets: *std.StringArrayHashMapUnmanaged(BuildAsset),
+    wanted: []const u8,
+) void {
+    for (assets.values()) |*asset| {
+        const raw = asset.install_path orelse continue;
+        if (std.mem.eql(u8, std.mem.trimStart(u8, raw, "/"), std.mem.trimStart(u8, wanted, "/"))) {
+            _ = asset.rc.fetchAdd(1, .acq_rel);
+            return;
+        }
+    }
 }
 
 /// Environment variable `zigapagos dev` uses to hand this `release` process the
@@ -1414,6 +1510,37 @@ test "parse collects repeated --spa= args" {
     try std.testing.expectEqualStrings("/app", cmd.spas[0].base);
     try std.testing.expectEqualStrings("admin/Admin.spa.tsx", cmd.spas[1].src);
     try std.testing.expectEqualStrings("/admin", cmd.spas[1].base);
+}
+
+test "missingSpaClientAsset requires each SPA entry and the shared runtime" {
+    const gpa = std.testing.allocator;
+    var cmd = try Command.parse(gpa, &.{"--spa=app/App.spa.tsx|/app"});
+    defer cmd.deinit(gpa);
+
+    var missing = (try missingSpaClientAsset(gpa, &cmd)).?;
+    try std.testing.expectEqualStrings("app/App.spa.tsx", missing.spa_src);
+    try std.testing.expectEqualStrings("spa/App.js", missing.install_path);
+    gpa.free(missing.install_path);
+
+    try cmd.build_assets.put(gpa, "app", .{
+        .input_path = "zig-out/App.spa.js",
+        .install_path = "/spa/App.js",
+        .rc = .{ .raw = 0 },
+    });
+    missing = (try missingSpaClientAsset(gpa, &cmd)).?;
+    try std.testing.expectEqualStrings("zigapagos-runtime.js", missing.install_path);
+    gpa.free(missing.install_path);
+
+    try cmd.build_assets.put(gpa, "runtime", .{
+        .input_path = "zig-out/zigapagos-runtime.js",
+        .install_path = "zigapagos-runtime.js",
+        .rc = .{ .raw = 0 },
+    });
+    try std.testing.expect((try missingSpaClientAsset(gpa, &cmd)) == null);
+
+    validateSpaClientAssets(gpa, &cmd);
+    try std.testing.expectEqual(@as(u32, 1), cmd.build_assets.get("app").?.rc.raw);
+    try std.testing.expectEqual(@as(u32, 1), cmd.build_assets.get("runtime").?.rc.raw);
 }
 
 test "parse tolerates a --spa= value with no '|' (empty declared base)" {

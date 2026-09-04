@@ -263,7 +263,7 @@ fi
 echo "PASS (1): sitemap.xml is not emitted unless 'sitemap = true'"
 
 # --- (2)-(8): the main fixture -------------------------------------------------
-if ! ( cd "$SITE" && "$ZIGAPAGOS" release "${build_args[@]}" ) >"$WORK/build.log" 2>&1; then
+if ! ( cd "$SITE" && ZIGAPAGOS_RUNTIME_DIR="$REPO/runtime" "$ZIGAPAGOS" release "${build_args[@]}" ) >"$WORK/build.log" 2>&1; then
   cat "$WORK/build.log"; fail "the main fixture build failed"
 fi
 [[ -f "$OUT/sitemap.xml" ]] || { cat "$WORK/build.log"; fail "sitemap.xml was not emitted even though 'sitemap = true'"; }

@@ -163,6 +163,12 @@ export default function App() {
 }
 TSX
 
+# This suite inventories root.run's outputs, not the CLI's self-bundling and
+# host-config passes. Register minimal external client assets so the SPA shell
+# is runnable without enabling those additional emitters.
+printf 'export default function App(){}\n' >"$WORK/app.js"
+printf 'export function mountSpa(){}\n' >"$WORK/runtime.js"
+
 # stdout and stderr are captured SEPARATELY: which stream the summary lands on
 # is part of what this test pins (the build log and the pruned-asset warning go
 # to stderr; the report a user asked for by name goes to stdout, so it can be
@@ -172,7 +178,9 @@ build() { # $1 = tag, remaining = extra release args
   set +e
   { ( cd "$SITE" && "$ZIGAPAGOS" release "--output=$WORK/$tag-out" --force \
         "--bun=$BUN" "--island-sidecar=$REPO/runtime/sidecar/render.ts" \
-        --island-src-dir=. "--spa=app/app.spa.tsx|/app" "$@" \
+        --island-src-dir=. "--spa=app/app.spa.tsx|/app" \
+        --build-asset=spa-app "$WORK/app.js" --install-always=spa/app.js \
+        --build-asset=spa-runtime "$WORK/runtime.js" --install-always=zigapagos-runtime.js "$@" \
     ) >"$WORK/$tag.out" 2>"$WORK/$tag.err"; } 2>/dev/null
   echo $? >"$WORK/$tag.rc"
   set -e
