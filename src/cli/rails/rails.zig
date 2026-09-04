@@ -1276,7 +1276,7 @@ pub fn discover(
     // above only at this function's return), and `wr.entries` outlives this
     // call the same way. `errdefer` covers every later fallible step in this
     // function; `freeDiscovery` covers the success path.
-    const asset_list = try assets.scan(io, gpa, root, wr.entries, gemfile, &blocker_list);
+    const asset_list = try assets.scanWithLock(io, gpa, root, wr.entries, gemfile, gemfile_lock, &blocker_list);
     errdefer assets.freeAssets(gpa, asset_list);
 
     // Route discovery threads the SAME blocker_list: every degradation path
