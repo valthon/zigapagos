@@ -2330,9 +2330,10 @@ basename does not apply to it.
   `nested data: on a bound control was not recovered; a confirm guard may be
   missing`. Refusing the answer would leave the operator nothing to do but
   edit the ERB.
-- **A form on a *layout* is not bound.** The layout conversion passes no
-  bindings, so a form declared in `app/views/layouts/*` raises its question and
-  cannot be answered into an island. Rare, and worth knowing.
+- **Layout controls use the same explicit binding decisions as view controls.**
+  Layouts and their rendered partials participate in the binding walk, with
+  first-route ownership for shared templates. Layout-only auth forms still
+  retain a separate endpoint question as described above.
 
 ## 19. Interactivity
 
