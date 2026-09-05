@@ -1,4 +1,4 @@
-//! Control-plane verbs for `zigapagos dev` — `stop`, `status`, `logs` — plus
+//! Control-plane verbs for `zigapagos dev` — `stop`, `status`, `logs`, `wait` — plus
 //! the `--background` parent and agent-environment detection. Deliberately
 //! thread-free: these verbs must work under -Dsingle-threaded, so dev.zig
 //! dispatches here BEFORE its single-threaded gate.
@@ -478,7 +478,7 @@ fn writeStdout(io: Io, bytes: []const u8) void {
     fw.interface.flush() catch |err| fatal.msg("error writing to stdout: {t}\n", .{err});
 }
 
-pub const Verb = enum { stop, status, logs };
+pub const Verb = enum { stop, status, logs, wait };
 
 pub fn run(
     io: Io,
@@ -496,6 +496,7 @@ pub fn run(
         .status => try statusVerb(io, gpa, args),
         .stop => try stopVerb(io, gpa, args),
         .logs => try logsVerb(io, gpa, args),
+        .wait => try waitVerb(io, gpa, args),
     }
 }
 
@@ -516,6 +517,87 @@ pub fn run(
 pub fn classifySession(live: bool, has_facts: bool) enum { none, starting, running } {
     if (!live) return .none;
     return if (has_facts) .running else .starting;
+}
+
+/// Null means a build is pending or the endpoint is not a v1.1 status.
+/// Contract 1: parse scratch is released before returning.
+fn settledBuild(gpa: Allocator, body: []const u8) !?bool {
+    const parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{}) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return null,
+    };
+    defer parsed.deinit();
+    if (parsed.value != .object) return null;
+    const build = parsed.value.object.get("build") orelse return null;
+    if (build != .object) return null;
+    const pending = build.object.get("pending") orelse return null;
+    if (pending != .bool or pending.bool) return null;
+    const status = build.object.get("status") orelse return null;
+    if (status != .string) return null;
+    if (std.mem.eql(u8, status.string, "ok")) return true;
+    if (std.mem.eql(u8, status.string, "failed")) return false;
+    return null;
+}
+
+fn waitVerb(io: Io, gpa: Allocator, args: []const []const u8) error{OutOfMemory}!noreturn {
+    var timeout_ms: u32 = 30000;
+    for (args) |arg| {
+        if (std.mem.startsWith(u8, arg, "--data-dir=")) continue;
+        if (std.mem.startsWith(u8, arg, "--timeout-ms=")) {
+            timeout_ms = std.fmt.parseInt(u32, arg["--timeout-ms=".len..], 10) catch
+                fatal.usageError("error: invalid wait timeout\n", .{});
+        } else fatal.usageError("usage: zigapagos dev wait [--timeout-ms=N] [--data-dir=DIR]\n", .{});
+    }
+    const data_dir = resolveDataDir(io, gpa, args);
+    defer gpa.free(data_dir);
+    const start = Io.Clock.awake.now(io).toMilliseconds();
+    while (Io.Clock.awake.now(io).toMilliseconds() - start < timeout_ms) {
+        if (!dev_lockfile.isLive(io, gpa, data_dir)) fatal.msg("error: no dev server is running\n", .{});
+        var arena = std.heap.ArenaAllocator.init(gpa);
+        defer arena.deinit();
+        if (dev_lockfile.read(arena.allocator(), io, data_dir)) |lf| {
+            const addr = Io.net.IpAddress.parse(probeHost(lf.host), lf.control_port) catch
+                fatal.msg("error: invalid dev control address\n", .{});
+            const remaining = timeout_ms - (Io.Clock.awake.now(io).toMilliseconds() - start);
+            if (remaining <= 0) break;
+            if (fetchBodyTimed(io, gpa, addr, @intCast(@min(remaining, 1000)))) |body| {
+                defer gpa.free(body);
+                if (try settledBuild(gpa, body)) |ok| {
+                    writeStdout(io, body);
+                    writeStdout(io, "\n");
+                    std.process.exit(if (ok) 0 else 1);
+                }
+            } else |_| {} // Session may still be starting; bounded by timeout.
+        }
+        // Match logs --follow: avoid a fresh TCP connection every 50 ms.
+        io.sleep(.fromMilliseconds(200), .awake) catch fatal.msg("error: dev wait interrupted\n", .{});
+    }
+    fatal.msg("error: timed out waiting for dev to settle\n", .{});
+}
+
+/// Contract 1. Bounds response reads, including in single-threaded builds.
+fn fetchBodyTimed(io: Io, gpa: Allocator, address: Io.net.IpAddress, timeout_ms: u32) ![]u8 {
+    return fetchBodyWithTimeout(io, gpa, address, "/_zigapagos/status", timeout_ms);
+}
+
+test "dev wait: never accepts pending or unknown status as settled" {
+    const gpa = std.testing.allocator;
+    try std.testing.expectEqual(@as(?bool, true), try settledBuild(gpa, "{\"build\":{\"pending\":false,\"status\":\"ok\"}}"));
+    try std.testing.expectEqual(@as(?bool, false), try settledBuild(gpa, "{\"build\":{\"pending\":false,\"status\":\"failed\"}}"));
+    for ([_][]const u8{
+        "{\"build\":{\"pending\":true,\"status\":\"ok\"}}",
+        "{\"build\":{\"status\":\"ok\"}}",
+        "{\"build\":{\"pending\":false,\"status\":\"building\"}}",
+        "[]",
+        "invalid",
+    }) |body| try std.testing.expectEqual(@as(?bool, null), try settledBuild(gpa, body));
+}
+
+test "dev wait: a silent control peer times out without a worker thread" {
+    const io = std.testing.io;
+    var listener = try (try Io.net.IpAddress.parse("127.0.0.1", 0)).listen(io, .{});
+    defer listener.deinit(io);
+    try std.testing.expectError(error.Timeout, fetchBodyTimed(io, std.testing.allocator, listener.socket.address, 25));
 }
 
 fn statusVerb(io: Io, gpa: Allocator, args: []const []const u8) error{OutOfMemory}!noreturn {
@@ -753,7 +835,16 @@ fn renderStatusJson(gpa: Allocator, lf: dev_lockfile.LockFile, endpoint_json: ?[
 /// One bounded HTTP GET: connect, send, strip headers, return the body.
 /// Modeled on e2e.zig's probeStatus, which stops at the status line — this
 /// reads to EOF (we send `connection: close`). Contract 1.
+/// Response reads have a 1 s budget and propagate read errors, including a reset
+/// after body bytes arrived; partial data is not accepted as a successful fetch.
 fn fetchBody(io: Io, gpa: Allocator, address: Io.net.IpAddress, path: []const u8) ![]u8 {
+    return fetchBodyWithTimeout(io, gpa, address, path, 1000);
+}
+
+fn fetchBodyWithTimeout(io: Io, gpa: Allocator, address: Io.net.IpAddress, path: []const u8, timeout_ms: u32) ![]u8 {
+    const deadline = Io.Clock.awake.now(io).toMilliseconds() + timeout_ms;
+    // The address is this machine's dev listener. Zig 0.16's threaded I/O
+    // panics for a connect timeout; bound response reads explicitly below.
     var stream = try address.connect(io, .{ .mode = .stream });
     defer stream.close(io);
     var out_buf: [1024]u8 = undefined;
@@ -765,14 +856,23 @@ fn fetchBody(io: Io, gpa: Allocator, address: Io.net.IpAddress, path: []const u8
     try writer.interface.flush();
 
     var in_buf: [4096]u8 = undefined;
-    var reader = stream.reader(io, &in_buf);
+    // Zig 0.16's stream reader exposes no per-read deadline. Use poll/read on
+    // its socket so a peer that never closes cannot hang even single-threaded
+    // dev control. This escape hatch is POSIX-only (our current host targets);
+    // revisit it when Windows support returns with the 0.17 I/O port. The
+    // connect-timeout limitation above is separate from this read deadline.
     var all: std.ArrayListUnmanaged(u8) = .empty;
     defer all.deinit(gpa);
     while (all.items.len < 64 * 1024) {
-        const chunk = reader.interface.peekGreedy(1) catch break;
-        try all.appendSlice(gpa, chunk);
-        reader.interface.toss(chunk.len);
+        const remaining = deadline - Io.Clock.awake.now(io).toMilliseconds();
+        if (remaining <= 0) return error.Timeout;
+        var fds = [_]std.posix.pollfd{.{ .fd = stream.socket.handle, .events = std.posix.POLL.IN, .revents = 0 }};
+        if (try std.posix.poll(&fds, @intCast(@min(remaining, std.math.maxInt(i32)))) == 0) return error.Timeout;
+        const n = try std.posix.read(stream.socket.handle, &in_buf);
+        if (n == 0) break;
+        try all.appendSlice(gpa, in_buf[0..n]);
     }
+    if (all.items.len >= 64 * 1024) return error.ResponseTooLarge;
     const raw = all.items;
     const split = std.mem.indexOf(u8, raw, "\r\n\r\n") orelse return error.MalformedResponse;
     return gpa.dupe(u8, raw[split + 4 ..]);
@@ -1079,7 +1179,7 @@ fn checkBackgroundReady(
         "dev: running in the background at {s} (pid {d})\n" ++
             "dev: control:  http://{s}:{d}/_zigapagos/status\n" ++
             "dev: log file: {s}\n" ++
-            "dev: manage:   zigapagos dev stop | status | logs [--follow]\n",
+            "dev: manage:   zigapagos dev stop | status | wait | logs [--json] [--follow]\n",
         .{ lf.url, lf.pid, probeHost(lf.host), lf.control_port, log_path },
     );
     std.process.exit(0);
@@ -1240,6 +1340,7 @@ pub fn background(
 
 fn logsVerb(io: Io, gpa: Allocator, args: []const []const u8) error{OutOfMemory}!noreturn {
     var follow = false;
+    var json = false;
     for (args) |arg| {
         if (std.mem.startsWith(u8, arg, "--data-dir=")) {
             // Consumed by resolveDataDir below; validated here only (matches
@@ -1247,9 +1348,11 @@ fn logsVerb(io: Io, gpa: Allocator, args: []const []const u8) error{OutOfMemory}
             // copy of a flag resolveDataDir already re-scans args for).
         } else if (std.mem.eql(u8, arg, "--follow") or std.mem.eql(u8, arg, "-f")) {
             follow = true;
+        } else if (std.mem.eql(u8, arg, "--json")) {
+            json = true;
         } else fatal.usageError(
             "error: unexpected 'zigapagos dev logs' argument '{s}'\n" ++
-                "usage: zigapagos dev logs [--follow] [--data-dir=DIR]\n",
+                "usage: zigapagos dev logs [--json] [--follow] [--data-dir=DIR]\n",
             .{arg},
         );
     }
@@ -1259,13 +1362,13 @@ fn logsVerb(io: Io, gpa: Allocator, args: []const []const u8) error{OutOfMemory}
     defer arena_state.deinit();
     const lf = dev_lockfile.read(arena_state.allocator(), io, data_dir_abs);
     const live = dev_lockfile.isLive(io, gpa, data_dir_abs);
-    if (live and lf != null and !lf.?.background) fatal.msg(
+    if (!json and live and lf != null and !lf.?.background) fatal.msg(
         "error: dev logs: this session runs in the FOREGROUND — its output is " ++
             "in the terminal that started it (only --background sessions log to a file)\n",
         .{},
     );
 
-    const log_path = std.fs.path.join(gpa, &.{ data_dir_abs, log_name }) catch fatal.oom();
+    const log_path = std.fs.path.join(gpa, &.{ data_dir_abs, if (json) "dev.ndjson" else log_name }) catch fatal.oom();
     const contents = Io.Dir.cwd().readFileAlloc(io, log_path, gpa, .limited(16 * 1024 * 1024)) catch |err| {
         if (err == error.StreamTooLong) {
             fatal.msg(

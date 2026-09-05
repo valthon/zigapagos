@@ -123,11 +123,13 @@ const help_menu =
     \\                    island/SPA dirs (repeatable; any use replaces them)
     \\  --background      Detach: start the dev loop as a background process,
     \\                    print its URL/PID, and exit. Then: 'zigapagos dev
-    \\                    stop|status|logs [--follow]' (auto-enabled when an
+    \\                    stop|status|wait|logs' (auto-enabled when an
     \\                    AI-agent environment is detected; set
     \\                    ZIGAPAGOS_DEV_BACKGROUND=0 to disable)
     \\  --force           Stop an already-running dev session first
     \\  --ignore-lock     Run untracked alongside an existing session
+    \\  dev wait          Wait for pending builds; --timeout-ms=N (default 30000)
+    \\  dev logs          Read session output; --json for NDJSON, --follow to tail
     \\
     \\End-to-end testing (zigapagos e2e ... -- CMD [ARGS...]):
     \\  Boots the STOCK zigbase binary over the built site on a free port,

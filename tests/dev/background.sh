@@ -215,6 +215,9 @@ if grep -q '"running"' "$WORK/status-json.err"; then
   cat "$WORK/status-json.err"; fail "'dev status --json' JSON body leaked onto stderr"
 fi
 echo "PASS: (b) dev status + dev status --json (payload on stdout, not stderr)"
+( cd "$SITE_DIR" && "$ZIGAPAGOS" dev wait --timeout-ms=5000 ) > "$WORK/wait.json" \
+  || fail "dev wait did not accept the settled initial build"
+grep -q '"pending":false' "$WORK/wait.json" || fail "dev wait returned a pending build"
 
 # --- (c) build-aware loop: the agent workflow -----------------------------------
 # A plain content edit: full rebuild, status flips (back) to "ok".
@@ -231,6 +234,10 @@ sed -i.bak 's/\.layout = "index\.shtml"/.layout = "does-not-exist.shtml"/' "$SIT
   && rm -f "$SITE_DIR/content/index.smd.bak"
 wait_for_generation_past "$GEN"
 [ "$(build_status)" = "failed" ] || { status_json; fail "build status not 'failed' after the broken edit"; }
+if ( cd "$SITE_DIR" && "$ZIGAPAGOS" dev wait --timeout-ms=5000 ) > "$WORK/wait-failed.json"; then
+  fail "dev wait accepted a failed build"
+fi
+grep -q '"status":"failed"' "$WORK/wait-failed.json" || fail "dev wait did not report the failed build"
 status_json | grep -q '"error":"' || { status_json; fail "failed build has no non-null error field"; }
 grep -q 'dev: rebuild FAILED' "$SITE_DIR/.zigbase/dev.log" || fail "dev.log missing the rebuild-FAILED line"
 
@@ -283,6 +290,9 @@ grep -q 'dev: rebuild OK' "$WORK/follow.txt" || { cat "$WORK/follow.txt"; fail "
 kill "$FOLLOW_PID" 2>/dev/null || true
 wait "$FOLLOW_PID" 2>/dev/null || true
 echo "PASS: (e) dev logs + dev logs --follow"
+( cd "$SITE_DIR" && "$ZIGAPAGOS" dev logs --json ) > "$WORK/events.ndjson"
+bun -e 'const text = await Bun.file(process.argv[1]).text(); const events = text.trim().split("\n").map(JSON.parse); if (!events.some(e => e.status === "failed") || !events.some(e => e.status === "ok") || events.some(e => e.kind !== "build" || e.version !== 1)) process.exit(1);' "$WORK/events.ndjson" \
+  || fail "dev logs --json did not produce valid structured build events"
 
 # --- (f) stop ------------------------------------------------------------------
 ( cd "$SITE_DIR" && "$ZIGAPAGOS" dev stop ) > "$WORK/stop1.txt" 2>&1 \

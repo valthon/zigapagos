@@ -674,6 +674,12 @@ pub fn dev(
     );
     const reload_server: *reload.Server = gpa.create(reload.Server) catch fatal.oom();
     reload_server.* = .init(io, gpa, reload_addr);
+    if (!cmd.ignore_lock) {
+        const events_path = std.fs.path.join(gpa, &.{ data_dir_abs, "dev.ndjson" }) catch fatal.oom();
+        defer gpa.free(events_path);
+        reload_server.events_file = Io.Dir.cwd().createFile(io, events_path, .{ .truncate = true }) catch |err|
+            fatal.msg("error: dev: unable to open structured log: {s}\n", .{@errorName(err)});
+    }
     // reload_server.start() now binds synchronously (PR #140 round 2: P2b),
     // so a bind failure lands HERE, before dev.json is ever written — not as
     // a background-thread log line the lockfile's readers would never see.
@@ -825,6 +831,7 @@ pub fn dev(
     var debouncer: Debouncer = .{
         .io = io,
         .cascade_window_ms = cmd.debounce,
+        .activity_counter = &reload_server.watch_generation,
         .channel = &channel,
     };
     debouncer.start() catch |err| harness.fail(
@@ -843,11 +850,16 @@ pub fn dev(
 
     while (true) {
         const event = channel.get(io) catch unreachable;
-        switch (event) {
-            .change => {},
-        }
+        var watch_generation = switch (event) {
+            .change => |generation| generation,
+        };
         // Collapse a burst that outran the debounce window into ONE rebuild.
-        while ((channel.getOrNull(io) catch null) != null) {}
+        while (channel.getOrNull(io) catch null) |queued| {
+            watch_generation = switch (queued) {
+                .change => |generation| generation,
+            };
+        }
+        reload_server.setBuildingAt(watch_generation);
 
         // Classify the change. Snapshot "now" BEFORE walking so an
         // edit that lands mid-walk is caught by the NEXT rebuild rather than
@@ -871,7 +883,6 @@ pub fn dev(
         // release` (via `ZIGAPAGOS_CHANGED_FILES`, which rides through the
         // intervening `zig build`), so it re-renders + re-emits ONLY them.
         // Always cleared afterwards so a later full rebuild never inherits it.
-        reload_server.setBuilding();
         const rebuild: RebuildResult = switch (change) {
             .incremental => |inc| blk: {
                 const joined = std.mem.join(gpa, "\n", inc.pages) catch fatal.oom();
@@ -894,8 +905,6 @@ pub fn dev(
                 break :blk runRebuild(io, gpa, rebuild_argv, environ_map, capture_path);
             },
         };
-        reload_server.setBuildFinished(rebuild.ok, rebuild.duration_ms, rebuild.error_tail);
-        if (rebuild.error_tail) |t| gpa.free(t);
 
         if (rebuild.ok) {
             if (cmd.live_reload) {
@@ -959,6 +968,8 @@ pub fn dev(
             // Keep serving the last good tree; the next change retries.
             std.debug.print("dev: rebuild FAILED (see output above); still serving the previous build\n", .{});
         }
+        reload_server.setBuildFinished(rebuild.ok, rebuild.duration_ms, rebuild.error_tail);
+        if (rebuild.error_tail) |t| gpa.free(t);
     }
 }
 
