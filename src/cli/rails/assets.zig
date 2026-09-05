@@ -27,9 +27,11 @@ const detect = @import("detect.zig");
 const inventory = @import("inventory.zig");
 
 /// The two asset-pipeline gems the spec's manifest distinguishes. An app
-/// declaring neither, or both, has no single active pipeline this stage can
-/// name -- see `detectPipeline`'s doc -- so this type has no third variant
-/// for "unknown"; that case is `Asset.pipeline == null` instead.
+/// with neither direct pipeline evidence nor a supported direct dependency
+/// whose resolution proves a pipeline, or with ambiguous evidence for both,
+/// has no single active pipeline this stage can name --
+/// see `detectPipeline`'s doc -- so this type has no third variant for
+/// "unknown"; that case is `Asset.pipeline == null` instead.
 pub const Pipeline = enum { propshaft, sprockets };
 
 pub const Asset = struct {
@@ -84,8 +86,15 @@ const PipelineDetection = struct {
 
 /// Pure decision over the Gemfile's own declared gems (via
 /// `detect.gemfileDeclares`, the same substring-safe scanner
-/// `integrations.zig` uses). Contract 3 (caller-buffer): allocates nothing,
-/// `unknown_reason` (when set) always points at a static string literal.
+/// `integrations.zig` uses) and the resolved gems in `Gemfile.lock` (via
+/// `detect.lockedVersion`). A lockfile entry alone is not treated as active-
+/// pipeline evidence: Bundler records gems from every group, including gems
+/// that will not be loaded in the current environment. The supported
+/// transitive case therefore requires both a direct `sass-rails`/`sassc-rails`
+/// declaration and its resolved `sprockets-rails` dependency. Direct pipeline
+/// declarations remain authoritative. Contract 3 (caller-buffer): allocates
+/// nothing, `unknown_reason` (when set) always points at a static string
+/// literal.
 ///
 /// An app declaring BOTH `propshaft` and `sprockets-rails` is a real,
 /// if unusual, case -- typically a mid-migration Gemfile with the old gem
@@ -95,58 +104,166 @@ const PipelineDetection = struct {
 /// other would be exactly the false confidence this whole file exists to
 /// avoid; both-declared gets the same `null` verdict as neither-declared,
 /// with a reason that says which of the two it was.
-fn detectPipeline(gemfile: ?[]const u8) PipelineDetection {
-    const g = gemfile orelse return .{
-        .pipeline = null,
-        .unknown_reason = "no Gemfile was available to read",
-    };
-    const has_propshaft = detect.gemfileDeclares(g, "propshaft");
-    const has_sprockets = detect.gemfileDeclares(g, "sprockets-rails");
-    if (has_propshaft and has_sprockets) return .{
-        .pipeline = null,
-        .unknown_reason = "Gemfile declares both propshaft and sprockets-rails; the active asset pipeline cannot be determined statically",
-    };
-    if (has_propshaft) return .{ .pipeline = .propshaft };
-    if (has_sprockets) return .{ .pipeline = .sprockets };
+fn detectPipeline(gemfile: ?[]const u8, gemfile_lock: ?[]const u8) PipelineDetection {
+    if (gemfile) |g| {
+        const has_propshaft = detect.gemfileDeclares(g, "propshaft");
+        const has_sprockets = detect.gemfileDeclares(g, "sprockets-rails");
+        if (has_propshaft and has_sprockets) return .{
+            .pipeline = null,
+            .unknown_reason = "Gemfile declares both propshaft and sprockets-rails; the active asset pipeline cannot be determined statically",
+        };
+        if (has_propshaft) return .{ .pipeline = .propshaft };
+        if (has_sprockets) return .{ .pipeline = .sprockets };
+
+        const declares_sass = detect.gemfileDeclares(g, "sass-rails") or
+            detect.gemfileDeclares(g, "sassc-rails");
+        if (declares_sass) {
+            if (gemfile_lock) |lock| {
+                if (detect.lockedVersion(lock, "sprockets-rails") != null) {
+                    return .{ .pipeline = .sprockets };
+                }
+                return .{
+                    .pipeline = null,
+                    .unknown_reason = "Gemfile declares sass-rails or sassc-rails, but Gemfile.lock does not resolve sprockets-rails",
+                };
+            }
+            return .{
+                .pipeline = null,
+                .unknown_reason = "Gemfile declares sass-rails or sassc-rails, but no Gemfile.lock was available to verify its Sprockets dependency",
+            };
+        }
+
+        return .{
+            .pipeline = null,
+            .unknown_reason = if (gemfile_lock == null)
+                "Gemfile declares neither propshaft nor sprockets-rails, and no Gemfile.lock was available"
+            else
+                "Gemfile declares no supported evidence for an active Propshaft or Sprockets pipeline",
+        };
+    }
+
     return .{
         .pipeline = null,
-        .unknown_reason = "Gemfile declares neither propshaft nor sprockets-rails",
+        .unknown_reason = if (gemfile_lock == null)
+            "neither Gemfile nor Gemfile.lock was available to determine the active asset pipeline"
+        else
+            "no Gemfile was available to identify which resolved Gemfile.lock dependencies are active",
     };
 }
 
 test "detectPipeline: propshaft alone" {
-    const d = detectPipeline("gem \"propshaft\"\n");
+    const d = detectPipeline("gem \"propshaft\"\n", null);
     try std.testing.expectEqual(Pipeline.propshaft, d.pipeline.?);
     try std.testing.expectEqual(@as(?[]const u8, null), d.unknown_reason);
 }
 
 test "detectPipeline: sprockets-rails alone" {
-    const d = detectPipeline("gem \"sprockets-rails\"\n");
+    const d = detectPipeline("gem \"sprockets-rails\"\n", null);
     try std.testing.expectEqual(Pipeline.sprockets, d.pipeline.?);
 }
 
 test "detectPipeline: a commented-out gem does not count" {
-    const d = detectPipeline("# gem \"propshaft\"\n");
+    const d = detectPipeline("# gem \"propshaft\"\n", null);
     try std.testing.expectEqual(@as(?Pipeline, null), d.pipeline);
     try std.testing.expect(std.mem.indexOf(u8, d.unknown_reason.?, "neither") != null);
 }
 
 test "detectPipeline: neither gem declared names 'neither' in the reason" {
-    const d = detectPipeline("gem \"rails\"\n");
+    const d = detectPipeline("gem \"rails\"\n", null);
     try std.testing.expectEqual(@as(?Pipeline, null), d.pipeline);
     try std.testing.expect(std.mem.indexOf(u8, d.unknown_reason.?, "neither") != null);
 }
 
 test "detectPipeline: both gems declared names 'both' in the reason, not 'neither'" {
-    const d = detectPipeline("gem \"propshaft\"\ngem \"sprockets-rails\"\n");
+    const d = detectPipeline("gem \"propshaft\"\ngem \"sprockets-rails\"\n", null);
     try std.testing.expectEqual(@as(?Pipeline, null), d.pipeline);
     try std.testing.expect(std.mem.indexOf(u8, d.unknown_reason.?, "both") != null);
 }
 
 test "detectPipeline: no Gemfile at all" {
-    const d = detectPipeline(null);
+    const d = detectPipeline(null, null);
     try std.testing.expectEqual(@as(?Pipeline, null), d.pipeline);
-    try std.testing.expect(d.unknown_reason != null);
+    try std.testing.expectEqualStrings("neither Gemfile nor Gemfile.lock was available to determine the active asset pipeline", d.unknown_reason.?);
+}
+
+test "detectPipeline: a lockfile entry alone does not prove the gem is active" {
+    const lock =
+        \\GEM
+        \\  specs:
+        \\    sprockets-rails (3.5.2)
+    ;
+    const d = detectPipeline(null, lock);
+    try std.testing.expectEqual(@as(?Pipeline, null), d.pipeline);
+    try std.testing.expectEqualStrings("no Gemfile was available to identify which resolved Gemfile.lock dependencies are active", d.unknown_reason.?);
+}
+
+test "detectPipeline: a transitively locked sprockets-rails selects Sprockets" {
+    const lock =
+        \\GEM
+        \\  specs:
+        \\    sass-rails (6.0.0)
+        \\      sassc-rails (~> 2.1)
+        \\    sassc-rails (2.1.2)
+        \\      sprockets (> 3.0)
+        \\      sprockets-rails
+        \\    sprockets (4.2.2)
+        \\    sprockets-rails (3.5.2)
+        \\      sprockets (>= 3.0.0)
+        \\DEPENDENCIES
+        \\  sass-rails (>= 6)
+    ;
+    const d = detectPipeline("gem \"rails\"\ngem \"sass-rails\", \">= 6\"\n", lock);
+    try std.testing.expectEqual(Pipeline.sprockets, d.pipeline.?);
+}
+
+test "detectPipeline: a direct sassc-rails declaration uses its locked Sprockets dependency" {
+    const lock =
+        \\GEM
+        \\  specs:
+        \\    sassc-rails (2.1.2)
+        \\      sprockets-rails
+        \\    sprockets-rails (3.5.2)
+    ;
+    const d = detectPipeline("gem \"rails\"\ngem \"sassc-rails\"\n", lock);
+    try std.testing.expectEqual(Pipeline.sprockets, d.pipeline.?);
+}
+
+test "detectPipeline: a direct declaration takes precedence over transitive lockfile evidence" {
+    const lock =
+        \\GEM
+        \\  specs:
+        \\    propshaft (1.2.1)
+        \\    sprockets-rails (3.5.2)
+    ;
+    const d = detectPipeline("gem \"propshaft\"\n", lock);
+    try std.testing.expectEqual(Pipeline.propshaft, d.pipeline.?);
+}
+
+test "detectPipeline: an unrelated transitive pipeline gem does not become active evidence" {
+    const lock =
+        \\GEM
+        \\  specs:
+        \\    development-tool (1.0.0)
+        \\      sprockets-rails
+        \\    sprockets-rails (3.5.2)
+        \\DEPENDENCIES
+        \\  development-tool
+    ;
+    const d = detectPipeline("gem \"rails\"\ngem \"development-tool\", group: :development\n", lock);
+    try std.testing.expectEqual(@as(?Pipeline, null), d.pipeline);
+    try std.testing.expectEqualStrings("Gemfile declares no supported evidence for an active Propshaft or Sprockets pipeline", d.unknown_reason.?);
+}
+
+test "detectPipeline: missing lockfile is reported as unavailable, not as resolving neither gem" {
+    const d = detectPipeline("gem \"rails\"\n", null);
+    try std.testing.expectEqual(@as(?Pipeline, null), d.pipeline);
+    try std.testing.expectEqualStrings("Gemfile declares neither propshaft nor sprockets-rails, and no Gemfile.lock was available", d.unknown_reason.?);
+}
+
+test "detectPipeline: sass-rails without a lockfile remains unknown" {
+    const d = detectPipeline("gem \"rails\"\ngem \"sass-rails\"\n", null);
+    try std.testing.expectEqual(@as(?Pipeline, null), d.pipeline);
+    try std.testing.expectEqualStrings("Gemfile declares sass-rails or sassc-rails, but no Gemfile.lock was available to verify its Sprockets dependency", d.unknown_reason.?);
 }
 
 /// True when `name` is a file this stage recognizes as a compiled Sprockets
@@ -481,6 +598,19 @@ fn loadManifest(
     }
 }
 
+/// Compatibility entry point for callers with no lockfile evidence. Contract
+/// 2 is identical to `scanWithLock` below.
+pub fn scan(
+    io: Io,
+    gpa: Allocator,
+    root: Io.Dir,
+    entries: []const inventory.Entry,
+    gemfile: ?[]const u8,
+    blocker_list: *std.ArrayListUnmanaged(blockers.Blocker),
+) Allocator.Error![]Asset {
+    return scanWithLock(io, gpa, root, entries, gemfile, null, blocker_list);
+}
+
 /// Contract 2 (owned-result): every `Asset` (and its owned strings) in the
 /// returned slice escapes; release with `freeAssets`. Every intermediate
 /// (the found manifest path, its parsed JSON tree, per-file read buffers) is
@@ -500,12 +630,13 @@ fn loadManifest(
 /// Propshaft's manifest lives at a FIXED name (`public/assets/.manifest.json`)
 /// so no search is needed; Sprockets embeds a hash in its manifest's own
 /// filename, so `findSprocketsManifestPath` locates it first.
-pub fn scan(
+pub fn scanWithLock(
     io: Io,
     gpa: Allocator,
     root: Io.Dir,
     entries: []const inventory.Entry,
     gemfile: ?[]const u8,
+    gemfile_lock: ?[]const u8,
     blocker_list: *std.ArrayListUnmanaged(blockers.Blocker),
 ) Allocator.Error![]Asset {
     var list: std.ArrayListUnmanaged(Asset) = .empty;
@@ -514,7 +645,7 @@ pub fn scan(
         list.deinit(gpa);
     }
 
-    const detection = detectPipeline(gemfile);
+    const detection = detectPipeline(gemfile, gemfile_lock);
 
     var manifest_parsed: ?std.json.Parsed(std.json.Value) = null;
     defer if (manifest_parsed) |m| m.deinit();
@@ -540,15 +671,26 @@ pub fn scan(
     return list.toOwnedSlice(gpa);
 }
 
+const TestScanResult = struct { assets: []Asset, blockers: []blockers.Blocker };
+
 fn testScan(
     tmp_dir: Io.Dir,
     entries: []const inventory.Entry,
     gemfile: ?[]const u8,
-) !struct { assets: []Asset, blockers: []blockers.Blocker } {
+) !TestScanResult {
+    return testScanWithLock(tmp_dir, entries, gemfile, null);
+}
+
+fn testScanWithLock(
+    tmp_dir: Io.Dir,
+    entries: []const inventory.Entry,
+    gemfile: ?[]const u8,
+    gemfile_lock: ?[]const u8,
+) !TestScanResult {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
     var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
-    const items = try scan(io, gpa, tmp_dir, entries, gemfile, &blocker_list);
+    const items = try scanWithLock(io, gpa, tmp_dir, entries, gemfile, gemfile_lock, &blocker_list);
     return .{ .assets = items, .blockers = try blocker_list.toOwnedSlice(gpa) };
 }
 
@@ -791,6 +933,44 @@ test "sprockets pipeline with no compiled manifest present: RAILS_ASSET_MANIFEST
     try std.testing.expectEqual(@as(usize, 1), r.assets.len);
     try std.testing.expect(!r.assets[0].deterministic);
     try std.testing.expectEqual(Pipeline.sprockets, r.assets[0].pipeline.?);
+    try std.testing.expectEqual(@as(usize, 1), r.blockers.len);
+    try std.testing.expectEqualStrings("RAILS_ASSET_MANIFEST_MISSING", r.blockers[0].code);
+}
+
+test "sass-rails with transitively locked sprockets reports a missing manifest, not an unknown pipeline" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var dir = try tmp.dir.createDirPathOpen(io, "app/assets/stylesheets", .{});
+    dir.close(io);
+    try tmp.dir.writeFile(io, .{ .sub_path = "app/assets/stylesheets/application.scss", .data = "body {}" });
+
+    const entries = [_]inventory.Entry{
+        .{ .path = "app/assets/stylesheets/application.scss", .kind = .asset, .engine = .none },
+    };
+    const lock =
+        \\GEM
+        \\  specs:
+        \\    sass-rails (6.0.0)
+        \\      sassc-rails (~> 2.1)
+        \\    sassc-rails (2.1.2)
+        \\      sassc (> 2.0)
+        \\      sprockets (> 3.0)
+        \\      sprockets-rails
+        \\    sprockets (4.2.2)
+        \\    sprockets-rails (3.5.2)
+        \\      sprockets (>= 3.0.0)
+        \\DEPENDENCIES
+        \\  sass-rails (>= 6)
+    ;
+    const r = try testScanWithLock(tmp.dir, &entries, "gem \"rails\"\ngem \"sass-rails\", \">= 6\"\ngem \"importmap-rails\"\n", lock);
+    defer freeAssets(gpa, r.assets);
+    defer blockers.free(gpa, r.blockers);
+
+    try std.testing.expectEqual(@as(usize, 1), r.assets.len);
+    try std.testing.expectEqual(Pipeline.sprockets, r.assets[0].pipeline.?);
+    try std.testing.expect(!r.assets[0].deterministic);
     try std.testing.expectEqual(@as(usize, 1), r.blockers.len);
     try std.testing.expectEqualStrings("RAILS_ASSET_MANIFEST_MISSING", r.blockers[0].code);
 }
