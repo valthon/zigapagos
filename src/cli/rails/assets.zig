@@ -6,7 +6,8 @@
 //! a blocker naming the real reason beats a guessed `public_url` that 404s
 //! in production. Every `app/assets/`-rooted asset's URL is read verbatim
 //! from the pipeline's OWN compiled manifest -- Propshaft's `.manifest.json`
-//! or Sprockets' `manifest-*.json`, both under `public/assets/` -- never
+//! or Sprockets' `manifest-*.json` / `.sprockets-manifest-*.json`, both under
+//! `public/assets/` -- never
 //! derived by re-implementing a digest scheme this stage cannot verify
 //! against the real gem (fix round 1: an earlier version computed a SHA-256
 //! digest and called that "Propshaft's URL"; nothing here had ever checked
@@ -149,14 +150,31 @@ test "detectPipeline: no Gemfile at all" {
 }
 
 /// True when `name` is a file this stage recognizes as a compiled Sprockets
-/// manifest: the modern default (`manifest-<hex>.json`, `Sprockets::Manifest`'s
-/// own naming since Sprockets 3), the simple `manifest.json` some apps pin
-/// via `config.assets.manifest`, or the legacy `.sprockets-manifest.json`
-/// name from Sprockets 2. Contract 3: allocates nothing.
+/// manifest: the modern defaults (`manifest-<hex>.json` and
+/// `.sprockets-manifest-<hex>.json`), the simple `manifest.json` some apps pin
+/// via `config.assets.manifest`, or the legacy `.sprockets-manifest.json` name
+/// from Sprockets 2. Contract 3: allocates nothing.
 fn isManifestCandidateName(name: []const u8) bool {
     if (std.mem.eql(u8, name, ".sprockets-manifest.json")) return true;
     if (std.mem.eql(u8, name, "manifest.json")) return true;
-    return std.mem.startsWith(u8, name, "manifest-") and std.mem.endsWith(u8, name, ".json");
+    const has_json_suffix = std.mem.endsWith(u8, name, ".json");
+    if (!has_json_suffix) return false;
+    if (std.mem.startsWith(u8, name, "manifest-")) return true;
+
+    const hidden_prefix = ".sprockets-manifest-";
+    if (!std.mem.startsWith(u8, name, hidden_prefix)) return false;
+    const digest = name[hidden_prefix.len .. name.len - ".json".len];
+    if (digest.len == 0) return false;
+    for (digest) |byte| if (!std.ascii.isHex(byte)) return false;
+    return true;
+}
+
+test "isManifestCandidateName only accepts digest-suffixed hidden manifests" {
+    try std.testing.expect(isManifestCandidateName(".sprockets-manifest-0123456789abcdef.json"));
+    try std.testing.expect(isManifestCandidateName(".sprockets-manifest-ABCDEF.json"));
+    try std.testing.expect(!isManifestCandidateName(".sprockets-manifest-.json"));
+    try std.testing.expect(!isManifestCandidateName(".sprockets-manifest-backup.json"));
+    try std.testing.expect(!isManifestCandidateName(".sprockets-manifest-0123.json.bak"));
 }
 
 /// Finds the compiled Sprockets manifest under `public/assets/`, if any.
@@ -805,6 +823,59 @@ test "sprockets pipeline with a compiled manifest present: the asset's real dige
     try std.testing.expect(r.assets[0].deterministic);
     try std.testing.expectEqualStrings("/assets/images/logo-deadbeef1234.png", r.assets[0].public_url.?);
     try std.testing.expectEqual(@as(usize, 0), r.blockers.len);
+}
+
+test "a digest-suffixed hidden sprockets manifest is discovered and classified deterministically" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var source_dir = try tmp.dir.createDirPathOpen(io, "app/assets/stylesheets", .{});
+    source_dir.close(io);
+    try tmp.dir.writeFile(io, .{ .sub_path = "app/assets/stylesheets/application.css", .data = "body {}\n" });
+    var public_dir = try tmp.dir.createDirPathOpen(io, "public/assets", .{});
+    public_dir.close(io);
+    // A stale, lexicographically later candidate must not make discovery
+    // depend on directory iteration order. Create it first so a regressed
+    // "first candidate wins" implementation cannot pass on creation-ordered
+    // filesystems by accident.
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "public/assets/.sprockets-manifest-fedcba9876543210.json",
+        .data =
+        \\{"files":{},"assets":{"application.css":"application-stale.css"}}
+        ,
+    });
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "public/assets/.sprockets-manifest-0123456789abcdef.json",
+        .data =
+        \\{"files":{},"assets":{"application.css":"application-0123456789abcdef.css"}}
+        ,
+    });
+    try tmp.dir.writeFile(io, .{ .sub_path = "public/assets/application-0123456789abcdef.css", .data = "body {}\n" });
+
+    const entries = [_]inventory.Entry{
+        .{ .path = "app/assets/stylesheets/application.css", .kind = .asset, .engine = .none },
+        .{ .path = "public/assets/.sprockets-manifest-0123456789abcdef.json", .kind = .asset, .engine = .none },
+        .{ .path = "public/assets/application-0123456789abcdef.css", .kind = .asset, .engine = .none },
+    };
+    const r = try testScan(tmp.dir, &entries, "gem \"sprockets-rails\"\n");
+    defer freeAssets(gpa, r.assets);
+    defer blockers.free(gpa, r.blockers);
+
+    try std.testing.expectEqual(@as(usize, 3), r.assets.len);
+    try std.testing.expectEqual(@as(usize, 0), r.blockers.len);
+
+    try std.testing.expect(r.assets[0].deterministic);
+    try std.testing.expectEqual(Pipeline.sprockets, r.assets[0].pipeline.?);
+    try std.testing.expectEqualStrings("/assets/application-0123456789abcdef.css", r.assets[0].public_url.?);
+
+    try std.testing.expect(r.assets[1].deterministic);
+    try std.testing.expectEqual(@as(?Pipeline, null), r.assets[1].pipeline);
+    try std.testing.expectEqualStrings("/assets/.sprockets-manifest-0123456789abcdef.json", r.assets[1].public_url.?);
+
+    try std.testing.expect(r.assets[2].deterministic);
+    try std.testing.expectEqual(@as(?Pipeline, null), r.assets[2].pipeline);
+    try std.testing.expectEqualStrings("/assets/application-0123456789abcdef.css", r.assets[2].public_url.?);
 }
 
 test "sprockets manifest present but this asset is not listed in it: RAILS_ASSET_DIGEST_UNAVAILABLE, not a false MANIFEST_MISSING" {
