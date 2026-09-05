@@ -1,4 +1,4 @@
-# Real-browser e2e: the two long examples/tsx-site suites, driving Chromium.
+# Real-browser e2e: all ten examples/tsx-site suites, driving Chromium.
 #
 # What runs here
 # --------------
@@ -10,9 +10,12 @@
 #                                         fallback, and one-Preact hydration of
 #                                         each sliced SPA
 #
-# Both build examples/tsx-site and hand the output to a python3 + Playwright
-# helper that loads it in a real browser. Everything else in this repository
-# asserts over emitted BYTES — greps of HTML, bundle contents, import maps. That
+#   examples/tsx-site/test/spa_browser.sh all  eight read-only SPA suites,
+#                                         one shared build, named log groups
+#
+# The drivers build examples/tsx-site and hand the output to a python3 + Playwright
+# helper that loads it in a real browser. The non-browser suites
+# assert over emitted BYTES — greps of HTML, bundle contents, import maps. That
 # catches an emitter regression but it cannot catch the class of bug these exist
 # for: markup that is correct on disk and still fails to hydrate, a second Preact
 # copy sneaking in through a bundle, or a sliced runtime that loads and then
@@ -30,7 +33,7 @@
 # --------------------------------
 # Three reasons, in order of weight:
 #
-#  1. COST. Each script is ~125s of assertions plus a ~150MB browser install,
+#  1. COST. Each of the original two scripts is ~125s of assertions plus a ~150MB browser install,
 #     on top of compiling zigapagos itself — this workflow is triggered by
 #     `schedule`/`workflow_dispatch`, so there is no upstream CI run to take a
 #     prebuilt binary from. Putting that on every pull request roughly doubles
@@ -87,9 +90,7 @@ jobs:
     # cache without letting a hung browser burn an hour.
     timeout-minutes: 25
     strategy:
-      # Report both scripts' results even when one is broken. Knowing that
-      # hydration is fine and only runtime slicing is red — or the reverse — is
-      # most of the diagnosis, and these two share no code path.
+      # Report each browser suite even when another suite fails.
       fail-fast: false
       matrix:
         include:
@@ -97,24 +98,15 @@ jobs:
             script: examples/tsx-site/test/hydrate.sh
           - label: runtime slicing
             script: examples/tsx-site/test/spa_slice.sh
+          - label: SPA browser suites
+            script: examples/tsx-site/test/spa_browser.sh
+            suite: all
 
-    # ONE SCRIPT PER RUNNER, and this is the load-bearing detail of the whole
-    # file rather than a stylistic choice.
-    #
-    # spa_slice.sh opens with `rm -rf zig-out` inside examples/tsx-site — on
-    # purpose, because it asserts on the SIZES and CONTENTS of freshly sliced
-    # runtime bundles and a stale content-hashed chunk left behind by an earlier
-    # build would let it bill the wrong file. Anything sequenced after it
-    # therefore starts from an empty output tree.
-    #
-    # A matrix makes the hazard structurally impossible instead of merely
-    # avoided: each leg is its own runner with its own workspace, so there is
-    # nothing for the `rm -rf` to destroy and no ordering to get wrong. It costs
-    # nothing to do it this way — a shared runner would buy no reuse and only
-    # serialize ~8 minutes into ~13.
-    #
-    # If a third browser script is ever added, give it its own matrix row. Do not
-    # sequence it in a step beside spa_slice.sh.
+    # Keep hydrate and spa_slice isolated: spa_slice removes its output tree to
+    # measure fresh runtime bundles, so it cannot safely share another build.
+    # The eight read-only SPA helpers instead share one runner/build through
+    # SUITE=all. Named log groups retain attribution without eight cold compiles
+    # and Chrome installs. Do not sequence other drivers beside spa_slice.sh.
     env:
       # --- Zig package cache ---
       # Restore-only, sharing ci.yml's key: build-test owns the write side there
@@ -125,6 +117,7 @@ jobs:
       # reproduce.
       ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
       SCRIPT: ${{ matrix.script }}
+      SUITE: ${{ matrix.suite }}
 
     steps:
       - uses: actions/checkout@v7
@@ -240,7 +233,7 @@ jobs:
             echo "::error::$SCRIPT is gone — this matrix and tests/meta/unrun-scripts.txt must move together, or the script stops running entirely"
             exit 1
           fi
-          bash "$SCRIPT"
+          bash "$SCRIPT" "$SUITE"
 
       - name: Record result in the run summary
         if: always()
@@ -248,4 +241,3 @@ jobs:
           printf -- '- `%s` (%s): **%s**\n' \
             "$SCRIPT" "${{ matrix.label }}" "${{ job.status }}" \
             >> "$GITHUB_STEP_SUMMARY"
-
