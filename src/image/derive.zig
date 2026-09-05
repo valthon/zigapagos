@@ -3,9 +3,9 @@
 //! Cache protocol: `.zigapagos-cache/images/<variant-basename>` — the name
 //! is param-addressed (plan.variantBasename), so existence IS validity and
 //! there is no invalidation logic to get wrong. Writes go through a
-//! `.tmp.<job-id>.<basename>` sibling + rename so a killed build can never
-//! leave a half-written file under a valid name. No eviction in v1
-//! (documented).
+//! `.tmp.v2.<nonce>.<job-id>.<width>.<codec>` sibling + rename so a killed build can never
+//! leave a half-written file under a valid name. The caller holds the
+//! exclusive cache lock through all jobs; `cache-prune` uses that lock too.
 //!
 //! Failure policy (spec §7): by now the render pass has already emitted
 //! URLs for these variants, so any failure is a broken <picture> in
@@ -39,6 +39,7 @@ pub const Job = struct {
     ref: plan.SourceRef,
     planned: *const plan.Planned,
     cache_dir: Io.Dir,
+    cache_nonce: u128,
     /// Where finished variants land: `site_assets_install_dir` for `.site`
     /// refs, `build.mode.disk.output_dir` for `.page` refs — decided by the
     /// scheduling loop in root.zig, which already has both computed.
@@ -231,7 +232,7 @@ pub fn run(io: Io, gpa: Allocator, d: Job) void {
                         webp.WebPEncodeRGBA(small.ptr, @intCast(variant.width), @intCast(variant.height), @intCast(variant.width * 4), quality(build), &out);
                     if (n == 0) fatal.msg("error: image_optimize: WebP encode failed for '{s}' at {d}px\n", .{ rel, variant.width });
 
-                    writeCacheAtomic(io, d.cache_dir, d.ref, variant.basename, out.?[0..n]) catch |err|
+                    writeCacheAtomic(io, d.cache_dir, d.cache_nonce, d.ref, variant, out.?[0..n]) catch |err|
                         fatal.msg("error: image_optimize: cannot write cache entry '{s}': {s}\n", .{ variant.basename, @errorName(err) });
                 },
                 .avif => {
@@ -250,7 +251,7 @@ pub fn run(io: Io, gpa: Allocator, d: Job) void {
                             fatal.msg("error: image_optimize: cannot resolve the image cache dir: {s}\n", .{@errorName(err)});
                         cache_dir_abs = cache_dir_abs_buf[0..n];
                     }
-                    encodeAvif(io, gpa, d.cache_dir, cache_dir_abs.?, d.ref, rel, variant, small, avif_encoder);
+                    encodeAvif(io, gpa, d.cache_dir, cache_dir_abs.?, d.cache_nonce, d.ref, rel, variant, small, avif_encoder);
                 },
             }
             // Same naming rationale as the cache-hit copy above (#147):
@@ -294,6 +295,7 @@ fn encodeAvif(
     // now resolves it at most once per job and passes it in). Borrowed, not
     // owned: this function's own allocator contract (below) is unaffected.
     cache_dir_abs: []const u8,
+    cache_nonce: u128,
     ref: plan.SourceRef,
     rel: []const u8,
     variant: plan.Variant,
@@ -309,9 +311,9 @@ fn encodeAvif(
     // inode even though they may both rename onto the same final cache
     // entry.
     var tmp_png_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const tmp_png = tmpName(&tmp_png_buf, ref, variant.basename, ".png");
+    const tmp_png = tmpName(&tmp_png_buf, cache_nonce, ref, variant, ".png");
     var tmp_avif_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const tmp_avif = tmpName(&tmp_avif_buf, ref, variant.basename, ".avif");
+    const tmp_avif = tmpName(&tmp_avif_buf, cache_nonce, ref, variant, ".avif");
 
     {
         const f = cache_dir.createFile(io, tmp_png, .{}) catch |err|
@@ -380,34 +382,26 @@ fn quality(build: *const Build) f32 {
     return @floatFromInt(build.cfg.getImageOptimize().?.quality);
 }
 
-/// Format the tmp-sibling name for one cache write: `.tmp.<kind>.<variant_id>
-/// .<path>.<name>.<basename><ext>`. Extracted from three inline
-/// `std.fmt.bufPrint` call sites that all built this exact shape by hand
-/// (#147) — `writeCacheAtomic`'s own tmp (no `ext`) and `encodeAvif`'s two
-/// interchange files (`.png`, `.avif`), which don't go through
-/// `writeCacheAtomic` because they rename via the external encoder's own
-/// output rather than a bytes-in-hand write. Unique PER JOB (`ref`'s
-/// kind+variant_id+path+name), not merely per basename — see
-/// `writeCacheAtomic`'s doc comment for why that matters.
-///
-/// Bound: `buf` is sized `std.fs.max_path_bytes` (4096 on every platform
-/// this repo builds for) at every call site. The formatted name is `.tmp.`
-/// (5 bytes) + four decimal `u32`s (<=10 digits each = 40) + 4 `.`
-/// separators + `basename` (itself bounded well under 4096 — it is one
-/// filesystem entry name, capped by the OS's `NAME_MAX`, typically 255) +
-/// `ext` (<=5 bytes, `".avif"` being the longest). The sum has no realistic
-/// path to `max_path_bytes`, which is why `catch unreachable` below is
-/// sound rather than merely convenient.
+/// Temporary names are unique per build, job, width and codec. Omitting
+/// the source basename keeps even a long source filename below NAME_MAX:
+/// prefix+nonce (41) + five u32 fields with separators (55) + codec (4)
+/// + interchange extension (5) is at most 105 bytes. Every caller provides
+/// a max_path_bytes buffer, so formatting cannot exhaust it.
 ///
 /// NO_SLOP §2.2a contract 3 (caller-buffer): allocates nothing, formats
 /// into the caller's `buf`.
-fn tmpName(buf: []u8, ref: plan.SourceRef, basename: []const u8, ext: []const u8) []const u8 {
-    return std.fmt.bufPrint(buf, ".tmp.{d}.{d}.{d}.{d}.{s}{s}", .{
+fn tmpName(buf: []u8, nonce: u128, ref: plan.SourceRef, variant: plan.Variant, ext: []const u8) []const u8 {
+    // An encoder can outlive a killed parent and its released cache lock.
+    // A fresh 128-bit build nonce keeps that orphan's output path separate
+    // from a new build's interchange files; only the parent installs output.
+    return std.fmt.bufPrint(buf, ".tmp.v2.{x:0>32}.{d}.{d}.{d}.{d}.{d}.{s}{s}", .{
+        nonce,
         @intFromEnum(ref.kind),
         ref.variant_id,
         ref.path,
         ref.name,
-        basename,
+        variant.width,
+        @tagName(variant.codec),
         ext,
     }) catch unreachable;
 }
@@ -468,17 +462,18 @@ fn destPath(
 fn writeCacheAtomic(
     io: Io,
     cache_dir: Io.Dir,
+    cache_nonce: u128,
     ref: plan.SourceRef,
-    basename: []const u8,
+    variant: plan.Variant,
     bytes: []const u8,
 ) !void {
     var tmp_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const tmp = tmpName(&tmp_buf, ref, basename, "");
+    const tmp = tmpName(&tmp_buf, cache_nonce, ref, variant, "");
     {
         const f = try cache_dir.createFile(io, tmp, .{});
         defer f.close(io);
         var w = f.writer(io, &.{});
         try w.interface.writeAll(bytes);
     }
-    try cache_dir.rename(tmp, cache_dir, basename, io);
+    try cache_dir.rename(tmp, cache_dir, variant.basename, io);
 }
