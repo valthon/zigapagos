@@ -81,11 +81,11 @@ const ChunkEntry = struct { url: []const u8, chunk: []const u8 };
 
 /// Shape of the driver's `spa-chunks.json` (see `bundle-island.ts` `bundleSpa`).
 /// `routeChunks` maps a route's in-app full path (`/heavy`, `/dash/overview`) to
-/// the content-hashed chunk file that backs its lazy component. The file's other
-/// keys (`entry`, `chunks`) are not read here — the parse sets
-/// `ignore_unknown_fields`, so they need no placeholder fields.
+/// the content-hashed chunk file that backs its lazy component. `immutableAssets`
+/// lists every hashed split chunk and its map, including shared chunks.
 const ChunksJson = struct {
     routeChunks: std.json.ArrayHashMap([]const u8) = .{},
+    immutableAssets: []const []const u8 = &.{},
 };
 
 /// Shape of the per-SPA runtime slice manifest (see `build-spa-runtime.ts`).
@@ -315,14 +315,19 @@ pub fn prerenderAll(
         // Lazy-route → chunk map from the driver's spa-chunks.json (if any). Used
         // to preload each lazy route's chunk in its shell + list it in the
         // manifest. Absent for hand-written CLI invocations (no chunk map).
-        const route_chunks: ?std.json.ArrayHashMap([]const u8) = if (spec.chunks_json) |cj_path| blk: {
+        const split_assets: ?ChunksJson = if (spec.chunks_json) |cj_path| blk: {
             const data = std.Io.Dir.cwd().readFileAlloc(io, cj_path, arena.a, .limited(4 * 1024 * 1024)) catch |err| fatal.file(cj_path, err);
             const parsed = std.json.parseFromSliceLeaky(ChunksJson, arena.a, data, .{ .ignore_unknown_fields = true }) catch |err| fatal.msg(
                 "error: malformed spa-chunks.json '{s}': {s}\n",
                 .{ cj_path, @errorName(err) },
             );
-            break :blk parsed.routeChunks;
+            break :blk parsed;
         } else null;
+        const route_chunks = if (split_assets) |s| s.routeChunks else null;
+        var immutable_assets: std.ArrayList([]const u8) = .empty;
+        if (split_assets) |s| for (s.immutableAssets) |asset| {
+            try immutable_assets.append(arena.a, try pass.prefixed(arena.a, url_path_prefix, try std.fmt.allocPrint(arena.a, "/spa/{s}", .{asset})));
+        };
 
         // The `spa.head` hook is shared across every route of
         // this SPA, so validate it once here rather than per-route in `renderShell`
@@ -553,7 +558,7 @@ pub fn prerenderAll(
             .{ src, base },
         );
 
-        const manifest = try renderManifest(arena.a, url_base, static_urls.items, dynamics.items, chunk_entries.items, fallback, bundle_url, deploy_target, norm_prefix);
+        const manifest = try renderManifest(arena.a, url_base, static_urls.items, dynamics.items, chunk_entries.items, fallback, bundle_url, deploy_target, norm_prefix, immutable_assets.items);
         const manifest_path = try diskJoin(arena.a, disk_prefix, "routing-manifest.json");
         try writeFile(io, out_dir, manifest_path, manifest);
         try recordSpaOutPath(build, gpa, manifest_path);
@@ -1039,6 +1044,7 @@ fn renderManifest(
     // manifest stays byte-identical. See the key-order comment below for why
     // the split exists.
     url_path_prefix: []const u8,
+    immutable_assets: []const []const u8,
 ) ![]u8 {
     var aw: std.Io.Writer.Allocating = .init(alloc);
     errdefer aw.deinit();
@@ -1104,7 +1110,12 @@ fn renderManifest(
         try w.writeAll(":");
         try std.json.Stringify.value(c.chunk, .{}, w); // value: /spa/<chunk>
     }
-    try w.writeAll("},\"fallback\":");
+    try w.writeAll("}");
+    if (immutable_assets.len != 0) {
+        try w.writeAll(",\"immutableAssets\":");
+        try std.json.Stringify.value(immutable_assets, .{}, w);
+    }
+    try w.writeAll(",\"fallback\":");
     try std.json.Stringify.value(fallback, .{}, w);
     try w.writeAll(",\"bundle\":");
     try std.json.Stringify.value(bundle, .{}, w);
@@ -1736,10 +1747,11 @@ test "renderManifest normalizes a root base to \"/\" and produces valid, escaped
 
     const statics = [_][]const u8{"/"};
     const dynamics = [_]DynamicEntry{.{ .pattern = "/club/:id", .shell = "/club/_shell.html" }};
-    const manifest = try renderManifest(gpa, "/", &statics, &dynamics, &.{}, "/index.html", "/spa/App.js", "zigbase", "");
+    const manifest = try renderManifest(gpa, "/", &statics, &dynamics, &.{}, "/index.html", "/spa/App.js", "zigbase", "", &.{"/spa/shared-hash.js.map"});
     defer gpa.free(manifest);
 
     try std.testing.expect(std.mem.indexOf(u8, manifest, "\"base\":\"/\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, manifest, "\"immutableAssets\":[\"/spa/shared-hash.js.map\"]") != null);
 
     const Parsed = struct {
         base: []const u8,
@@ -1768,7 +1780,7 @@ test "renderManifest carries url_path_prefix as its own field, and omits it enti
     const statics = [_][]const u8{"/app/"};
     const dynamics = [_]DynamicEntry{.{ .pattern = "/app/club/:id", .shell = "/app/club/_shell.html" }};
 
-    const prefixed_manifest = try renderManifest(gpa, "/app", &statics, &dynamics, &.{}, "/app/index.html", "/myrepo/spa/App.js", "nginx", "/myrepo");
+    const prefixed_manifest = try renderManifest(gpa, "/app", &statics, &dynamics, &.{}, "/app/index.html", "/myrepo/spa/App.js", "nginx", "/myrepo", &.{});
     defer gpa.free(prefixed_manifest);
     try std.testing.expect(std.mem.indexOf(u8, prefixed_manifest, "\"url_path_prefix\":\"/myrepo\"") != null);
     // The route values stay TREE-RELATIVE — they name positions inside the
@@ -1787,7 +1799,7 @@ test "renderManifest carries url_path_prefix as its own field, and omits it enti
     // Empty prefix: the key is absent ENTIRELY, not emitted as "". This is what
     // keeps an unprefixed site's manifest byte-identical to one built before
     // the field existed.
-    const bare = try renderManifest(gpa, "/app", &statics, &dynamics, &.{}, "/app/index.html", "/spa/App.js", "nginx", "");
+    const bare = try renderManifest(gpa, "/app", &statics, &dynamics, &.{}, "/app/index.html", "/spa/App.js", "nginx", "", &.{});
     defer gpa.free(bare);
     try std.testing.expect(std.mem.indexOf(u8, bare, "url_path_prefix") == null);
 }
@@ -1797,7 +1809,7 @@ test "renderManifest escapes a quote inside a string value" {
 
     // Not a realistic base, but proves a raw '"' can't break the JSON.
     const statics = [_][]const u8{"/weird\"quote/"};
-    const manifest = try renderManifest(gpa, "/app", &statics, &.{}, &.{}, "/app/index.html", "/spa/App.js", "zigbase", "");
+    const manifest = try renderManifest(gpa, "/app", &statics, &.{}, &.{}, "/app/index.html", "/spa/App.js", "zigbase", "", &.{});
     defer gpa.free(manifest);
 
     // The raw JSON must contain an escaped quote, not a bare one that would
@@ -2265,7 +2277,7 @@ test "renderManifest emits a per-route chunks map" {
 
     const statics = [_][]const u8{ "/app/", "/app/heavy/" };
     const chunks = [_]ChunkEntry{.{ .url = "/app/heavy/", .chunk = "/spa/Heavy-abc123.js" }};
-    const manifest = try renderManifest(gpa, "/app", &statics, &.{}, &chunks, "/app/index.html", "/spa/app.js", "zigbase", "");
+    const manifest = try renderManifest(gpa, "/app", &statics, &.{}, &chunks, "/app/index.html", "/spa/app.js", "zigbase", "", &.{});
     defer gpa.free(manifest);
 
     const Parsed = struct {

@@ -105,6 +105,10 @@ pub const Server = struct {
     /// Monotonic completed-build counter — the agent primitive: edit, poll
     /// until this bumps, then branch on `build_status`.
     build_generation: u64 = 0,
+    watch_generation: std.atomic.Value(u64) = .init(0),
+    build_watch_generation: u64 = 0,
+    /// Session-owned stream, opened before server threads start.
+    events_file: ?Io.File = null,
     build_status: BuildStatus = .building,
     build_duration_ms: u64 = 0,
     /// Bounded tail of the last FAILED rebuild's output, gpa-owned.
@@ -215,9 +219,17 @@ pub const Server = struct {
     }
 
     pub fn setBuilding(s: *Server) void {
+        s.setBuildingAt(s.watch_generation.load(.monotonic));
+    }
+
+    /// Consume only the revision carried by the debounced event, not a newer
+    /// edit whose quiet window has not elapsed yet.
+    pub fn setBuildingAt(s: *Server, watch_generation: u64) void {
         s.mutex.lock(s.io) catch return;
         defer s.mutex.unlock(s.io);
         s.build_status = .building;
+        s.build_watch_generation = watch_generation;
+        s.recordBuildEvent();
     }
 
     /// Records a completed rebuild and bumps the generation (ok AND failed
@@ -241,6 +253,30 @@ pub const Server = struct {
             const bounded = tail[tail.len -| max_error_tail..];
             s.build_error = s.gpa.dupe(u8, bounded) catch null;
         };
+        s.recordBuildEvent();
+    }
+
+    /// Called with the status mutex held, preserving event order. Contract 1:
+    /// serialization scratch is freed here; the file belongs to the session.
+    fn recordBuildEvent(s: *Server) void {
+        const file = s.events_file orelse return;
+        var aw: Io.Writer.Allocating = .init(s.gpa);
+        defer aw.deinit();
+        std.json.Stringify.value(.{
+            .version = 1,
+            .kind = "build",
+            .timestamp_ms = Io.Clock.real.now(s.io).toMilliseconds(),
+            .generation = s.build_generation,
+            .status = @tagName(s.build_status),
+            .duration_ms = s.build_duration_ms,
+            .@"error" = s.build_error,
+        }, .{}, &aw.writer) catch {
+            std.debug.print("dev: could not serialize build event\n", .{});
+            return;
+        };
+        aw.writer.writeByte('\n') catch return;
+        file.writeStreamingAll(s.io, aw.written()) catch |err|
+            std.debug.print("dev: could not write build event: {s}\n", .{@errorName(err)});
     }
 
     /// The status endpoint body. Contract 1 (self-freeing): caller frees the
@@ -258,6 +294,7 @@ pub const Server = struct {
                 .started_at = s.status_started_at,
                 .build = .{
                     .generation = s.build_generation,
+                    .pending = s.build_status == .building or s.watch_generation.load(.monotonic) != s.build_watch_generation,
                     .status = @tagName(s.build_status),
                     .duration_ms = s.build_duration_ms,
                     .@"error" = s.build_error,
@@ -399,6 +436,35 @@ pub const Server = struct {
 /// just the changed pages, so the unchanged 99% keep their existing snippet and
 /// are skipped after a single cheap `stat` instead of a full read. Pass null
 /// after a full rebuild (every page was re-emitted from clean HTML).
+/// Dev uses ZigBase even when the release target is nginx/apache. Each emitted
+/// routing manifest names a namespace that needs ZigBase's presence-only marker.
+/// No allocation; does not follow symlinks or modify production configuration.
+pub fn markSpaNamespaces(io: Io, dir: Io.Dir) !void {
+    var it = dir.iterate();
+    while (try it.next(io)) |entry| {
+        if (entry.kind == .directory) {
+            var child = try dir.openDir(io, entry.name, .{ .iterate = true });
+            defer child.close(io);
+            try markSpaNamespaces(io, child);
+        } else if (entry.kind == .file and std.mem.eql(u8, entry.name, "routing-manifest.json")) {
+            const marker_file = try dir.createFile(io, ".spa", .{ .truncate = false });
+            marker_file.close(io);
+        }
+    }
+}
+
+test "dev: SPA markers are emitted beside manifests, not at the site root" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    try tmp.dir.createDir(io, "app", .default_dir);
+    try tmp.dir.writeFile(io, .{ .sub_path = "app/routing-manifest.json", .data = "{}" });
+    try markSpaNamespaces(io, tmp.dir);
+    const stat = try tmp.dir.statFile(io, "app/.spa", .{});
+    try std.testing.expectEqual(@as(u64, 0), stat.size);
+    try std.testing.expectError(error.FileNotFound, tmp.dir.statFile(io, ".spa", .{}));
+}
+
 pub fn injectTree(io: Io, gpa: Allocator, site_abs: []const u8, port: u16, since_ns: ?i128) void {
     var dir = Io.Dir.cwd().openDir(io, site_abs, .{ .iterate = true }) catch |err| {
         std.debug.print(
@@ -666,7 +732,7 @@ test "dev live-reload: status json reflects identity and build state" {
         try std.testing.expectEqualStrings(
             "{\"ok\":true,\"pid\":4242,\"url\":\"http://127.0.0.1:1990/\"," ++
                 "\"started_at\":\"2026-08-07T12:34:56Z\",\"build\":{\"generation\":0," ++
-                "\"status\":\"building\",\"duration_ms\":0,\"error\":null}}",
+                "\"pending\":true,\"status\":\"building\",\"duration_ms\":0,\"error\":null}}",
             json,
         );
     }
@@ -704,6 +770,60 @@ test "dev live-reload: status error tail is bounded" {
     defer gpa.free(json);
     try std.testing.expect(json.len < Server.max_error_tail + 512);
     s.setBuildFinished(true, 1, null);
+}
+
+test "dev wait: debounce and changes during a build remain pending" {
+    const gpa = std.testing.allocator;
+    var s: Server = .init(std.testing.io, gpa, undefined);
+    s.setBuildFinished(true, 1, null);
+    _ = s.watch_generation.fetchAdd(1, .monotonic);
+    const debounce = try s.renderStatusJson(gpa);
+    defer gpa.free(debounce);
+    try std.testing.expect(std.mem.indexOf(u8, debounce, "\"pending\":true") != null);
+    s.setBuilding();
+    _ = s.watch_generation.fetchAdd(1, .monotonic);
+    s.setBuildFinished(true, 1, null);
+    const queued = try s.renderStatusJson(gpa);
+    defer gpa.free(queued);
+    try std.testing.expect(std.mem.indexOf(u8, queued, "\"pending\":true") != null);
+    s.setBuilding();
+    s.setBuildFinished(true, 1, null);
+    const settled = try s.renderStatusJson(gpa);
+    defer gpa.free(settled);
+    try std.testing.expect(std.mem.indexOf(u8, settled, "\"pending\":false") != null);
+    // Activity after a debounced event was published must not be consumed by
+    // starting the older event's build, even if it arrived before that start.
+    _ = s.watch_generation.fetchAdd(2, .monotonic);
+    s.setBuildingAt(3);
+    s.setBuildFinished(true, 1, null);
+    const newer_event = try s.renderStatusJson(gpa);
+    defer gpa.free(newer_event);
+    try std.testing.expect(std.mem.indexOf(u8, newer_event, "\"pending\":true") != null);
+}
+
+test "dev logs: structured build events are ordered and valid NDJSON" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const file = try tmp.dir.createFile(io, "events", .{});
+    defer file.close(io);
+    var s: Server = .init(io, gpa, undefined);
+    s.events_file = file;
+    s.setBuilding();
+    s.setBuildFinished(false, 12, "quoted \"error\"\nline two");
+    defer if (s.build_error) |tail| gpa.free(tail);
+    const bytes = try tmp.dir.readFileAlloc(io, "events", gpa, .limited(4096));
+    defer gpa.free(bytes);
+    var lines = std.mem.tokenizeScalar(u8, bytes, '\n');
+    var count: usize = 0;
+    while (lines.next()) |line| {
+        const parsed = try std.json.parseFromSlice(std.json.Value, gpa, line, .{});
+        defer parsed.deinit();
+        try std.testing.expectEqualStrings(if (count == 0) "building" else "failed", parsed.value.object.get("status").?.string);
+        count += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 2), count);
 }
 
 test "dev live-reload: closing tags are matched case-insensitively" {

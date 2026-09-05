@@ -30,7 +30,7 @@ pub const Watcher = switch (builtin.target.os.tag) {
 /// A single-variant union rather than `void` so the dev loop's `switch` stays
 /// exhaustive-by-construction if a second kind of watch event is ever added.
 pub const Event = union(enum) {
-    change,
+    change: u64,
 };
 
 /// Collapses a cascade of filesystem events into one `.change`.
@@ -48,12 +48,17 @@ pub const Debouncer = struct {
     cascade_condition: Io.Condition = .init,
     cascade_start_ms: i64 = 0,
     channel: *Channel(Event),
+    /// Optional dev-control revision, incremented before entering debounce.
+    /// Every increment must reach a published change and a consuming rebuild;
+    /// filtering events afterward would leave pending true and dev wait stuck.
+    activity_counter: ?*std.atomic.Value(u64) = null,
 
     /// Thread-safe. To be called when a new event comes in
     pub fn newEvent(d: *Debouncer) void {
         {
             d.cascade_mutex.lock(d.io) catch unreachable;
             defer d.cascade_mutex.unlock(d.io);
+            if (d.activity_counter) |counter| _ = counter.fetchAdd(1, .monotonic);
             d.cascade_start_ms = Io.Clock.awake.now(d.io).toMilliseconds();
         }
         d.cascade_condition.signal(d.io);
@@ -86,7 +91,7 @@ pub const Debouncer = struct {
             // We have slept enough, "commit" the cascade window and
             // trigger a new build.
             d.cascade_start_ms = 0;
-            try d.channel.put(d.io, .change);
+            try d.channel.put(d.io, .{ .change = if (d.activity_counter) |counter| counter.load(.monotonic) else 0 });
         }
     }
 };

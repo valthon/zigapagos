@@ -371,6 +371,10 @@ test("bundleSpa with sourcemap emits entry + chunk maps; entry comment points at
   expect(existsSync(join(outdir, "App.js.map"))).toBe(true);
   const meta = JSON.parse(readFileSync(join(dir, "chunks.json"), "utf8"));
   // Every chunk has a self-consistent sibling map whose comment matches its name.
+  expect(meta.chunks.length).toBeGreaterThan(0);
+  expect(meta.immutableAssets).toEqual(meta.chunks.flatMap((c: string) => [c, c + ".map"]).sort());
+  expect(meta.immutableAssets).not.toContain("App.js");
+  expect(meta.immutableAssets).not.toContain("App.js.map");
   for (const c of meta.chunks as string[]) {
     expect(existsSync(join(outdir, c + ".map"))).toBe(true);
     expect(readFileSync(join(outdir, c), "utf8")).toContain(`//# sourceMappingURL=${c}.map`);

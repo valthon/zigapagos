@@ -85,7 +85,8 @@ never deleted between sessions.
 ```sh
 zigapagos dev stop
 zigapagos dev status [--json]
-zigapagos dev logs [--follow|-f]
+zigapagos dev wait [--timeout-ms=N]
+zigapagos dev logs [--json] [--follow|-f]
 ```
 
 Every sub-verb accepts `--data-dir=DIR` (same meaning as `dev`'s own flag)
@@ -123,6 +124,10 @@ caller retry. When the control endpoint can't be reached for a session that
 *has* published `dev.json` (e.g. it's still warming up), status degrades
 gracefully instead: it still prints from the lockfile alone, with `build:
 unknown (control server unreachable)`.
+Control response reads have a one-second budget. Timeouts and read errors
+(including a connection reset after response bytes arrive) discard that response
+rather than accepting a partial body; status then uses the lockfile fallback above.
+This bounds response reads, not connection establishment or request writes.
 
 **`dev logs [--follow]`** — prints `.zigbase/dev.log`. A **foreground**
 session has no log file to read — its output is in the terminal that
@@ -130,6 +135,8 @@ started it — so `logs` points there and exits 1. `--follow`/`-f` stat-polls
 for new bytes every 200 ms and exits once the session's lock is no longer
 held. Reads are capped at 16 MiB; past that, `logs` fails with a message
 pointing at reading the file directly (`tail -f`).
+With `--json`, logs reads the structured build stream instead, which is available
+for tracked foreground sessions too; see [Waiting and structured build logs](#waiting-and-structured-build-logs).
 
 ## The status endpoint
 
@@ -307,14 +314,25 @@ rather than inventing a second pattern:
 - Same two-variable rule: internal recursion guard ≠ user-facing opt-out.
 - Same readiness handshake: lockfile appears only when the server is actually serving.
 
-## Out of scope / v1.1
+## Waiting and structured build logs
 
-- **`dev wait`** — block until the debounce window and any in-flight rebuild
-  settle, then exit with the build's result. Deferred to v1.1: the design
-  leaves room for it since it is just another control-verb client of
-  `/_zigapagos/status`.
-- **NDJSON structured log events + `logs --json`** — v1.1, aligned with
-  [`docs/diagnostics.md`](diagnostics.md)'s NDJSON convention.
+`zigapagos dev wait [--timeout-ms=30000] [--data-dir=DIR]` waits for watcher
+debounce, queued changes, and the current rebuild to settle. It prints the final
+status JSON and exits 0 for success or 1 for a failed build, stopped session, or
+timeout. It observes changes already delivered to the watcher, not future edits.
+The status endpoint's `build.pending` remains true when another edit arrives
+during a rebuild; staging the served output finishes before a build settles.
+
+`zigapagos dev logs --json [--follow]` reads `.zigbase/dev.ndjson`, available
+for tracked foreground and background sessions. Each line is a version-1 build
+event with `kind: "build"`, `timestamp_ms`, `generation`, `status`,
+`duration_ms`, and `error`. Starts and finishes are recorded in order;
+generation counts completed builds. Error strings are JSON escaped. The file
+resets on session startup. This is a build-event stream, not a JSON conversion
+of arbitrary subprocess output; plain `dev logs` still reads the background log.
+
+## Out of scope
+
 - **Log rotation, restart-on-crash, any supervisor process** — not planned;
   `dev --background` is one detached process, no daemon.
 - **Windows** rides the Zig 0.17 port (see [`docs/ROADMAP.md`](ROADMAP.md));
