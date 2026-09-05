@@ -18,11 +18,9 @@
 #
 #   11  the non-browser examples/tsx-site/test scripts -> ci.yml's e2e-dev-loop job,
 #       on a consumer build that job already pays for (~49s for all eleven).
-#    1  site/test/build.sh -> pages.yml, between `Build site` and `Upload artifact`,
-#       so a failed assertion fails the build job and nothing is deployed. Nearly free
-#       there (five greps over a tree that workflow already built; measured 1.7s warm)
-#       and ~120s anywhere else, because site/ is a third consumer project with its own
-#       .zig-cache that no ci.yml job warms.
+#    1  site/test/build.sh -> pages.yml AND ci.yml's site build job, checking
+#       output each already builds. The five greps measured 1.7s warm; paying a
+#       separate cold consumer build (~120s historically) is unnecessary now.
 #    2  examples/tsx-site/test/{hydrate,spa_slice}.sh -> browser-e2e.yml, a nightly
 #       `schedule:` + `workflow_dispatch:` workflow that installs Google Chrome and runs
 #       each script on its own matrix runner (own runner because spa_slice.sh opens by
@@ -32,22 +30,17 @@
 #       runtime-slicing regression — arrives with a runtime/src change or a preact bump,
 #       unattended.
 #
-# TWO RESIDUAL GAPS, recorded here because nothing else in the tree would say them:
+# PREVIOUS RESIDUAL GAPS, NOW CLOSED:
 #
-#  1. pages.yml triggers on push to main and manual dispatch only. site/test/build.sh
-#     therefore gates the DEPLOY, not the PR: a change that breaks one of its five
-#     assertions merges green and is caught when the site is next deployed. That is the
-#     accepted cost of the ~2s placement over a ~120s one on the PR path, and it is a
-#     real reduction either way — before this the assertions ran nowhere at all.
+#  1. site/test/build.sh now gates PRs in ci.yml as well as deployment in pages.yml.
+#     Its assertions reuse the PR job's site output, rather than another build.
 #
-#  2. Eight *_playwright.py helpers under examples/tsx-site/test/ are still invoked by
-#     nothing at all (spa, spa_csp, spa_guards, spa_nested, spa_nested_guarded,
-#     spa_reload, spa_scroll, spa_split). Wiring the two .sh scripts above changed
-#     nothing for them: hydrate.sh and spa_slice.sh each invoke their OWN helper and no
-#     others, so browser-e2e.yml covers exactly 2 of the 10. They are not rows in this
-#     file because it inventories .sh test scripts, and they are documented as manually
-#     run. They belong in browser-e2e.yml as further matrix rows, but each needs a .sh
-#     driver written first — that is its own pass, not a line here.
+#  2. All eight formerly uncalled *_playwright.py helpers (spa, spa_csp, spa_guards,
+#     spa_nested, spa_nested_guarded, spa_reload, spa_scroll, spa_split) now run via
+#     spa_browser.sh all in browser-e2e.yml. These read-only helpers share one build
+#     and browser installation, avoiding seven redundant setups; hydrate and the
+#     destructive spa_slice suite retain isolated runners. These remain nightly or
+#     manual checks, not PR gates. Dispatch on a branch when changing the runtime.
 #
 # ADDING A ROW IS A REGRESSION. If a new script cannot be run in CI, say here what it
 # would cost and what would have to change for that to stop being true.

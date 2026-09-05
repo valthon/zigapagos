@@ -6,9 +6,8 @@ This is the REQUIRED proof for the emitter: the unit test asserts the hashes are
 computed correctly, but only a real browser enforcing the emitted header proves
 the hash is byte-exact against the served inline script. So:
 
-  1. CLEAN rebuild (rm -rf .zig-cache zig-out) — the stale-bundle footgun means a
-     source-only rebuild can serve OLD html/bundle and hash the wrong bytes.
-  2. `zig build` runs emit-host-config.ts, writing csp.nginx.conf at the site root.
+  1. Run the canonical build.sh (or use --built after the CI driver builds).
+  2. The build emits csp.nginx.conf at the site root.
   3. Parse the emitted `Content-Security-Policy` value out of csp.nginx.conf.
   4. Serve zig-out/site with the SPA try_files fallback AND that exact CSP header
      on every response.
@@ -22,7 +21,6 @@ import os, re, subprocess, sys, threading, http.server, socketserver, functools
 from playwright.sync_api import sync_playwright
 
 EXAMPLE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-REPO = os.path.dirname(os.path.dirname(EXAMPLE))
 OUT = os.path.join(EXAMPLE, "zig-out", "site")
 
 
@@ -31,31 +29,11 @@ def sh(cmd, cwd=EXAMPLE):
     subprocess.run(cmd, cwd=cwd, shell=True, check=True)
 
 
-def restore_snapshots():
-    # Any root `zig build` can delete tests/**/snapshot — restore them.
-    subprocess.run(
-        "git ls-files --deleted -z -- tests/ | xargs -0 -I{} git restore -- {}",
-        cwd=REPO, shell=True, check=False,
-    )
-
-
-def clean_rebuild():
-    # STALE-BUNDLE footgun: wipe caches so the served html + runtime bundle are
-    # rebuilt from source and the hashed bytes match what's served.
-    sh("rm -rf .zig-cache zig-out")
-    sh("(cd ../../runtime && mise exec -- bun install)")
-    sh("mise exec -- bun install")
-    try:
-        sh("mise exec -- zig build")
-    finally:
-        restore_snapshots()
-
-
 def read_csp_header():
     # Prefer the header emitted by the build; fall back to running the emitter.
     path = os.path.join(OUT, "csp.nginx.conf")
     if not os.path.exists(path):
-        sh(f"mise exec -- bun ../../runtime/scripts/emit-host-config.ts --site {OUT}")
+        sh(f"bun ../../runtime/scripts/emit-host-config.ts --site {OUT}")
     with open(path, "r", encoding="utf-8") as f:
         text = f.read()
     m = re.search(r'Content-Security-Policy\s+"([^"]*)"', text)
@@ -94,7 +72,8 @@ document.addEventListener('securitypolicyviolation', e => {
 
 
 def main():
-    clean_rebuild()
+    if "--built" not in sys.argv:
+        sh("bash build.sh")
     csp = read_csp_header()
     print(f"\nEmitted Content-Security-Policy:\n  {csp}\n", flush=True)
 
