@@ -148,12 +148,11 @@ fn writeLink(
     // Belt-and-braces guard, not a live bug: `ref == ""` (the homepage) is
     // the one case that gate DOES allow through, and `printLinkPrefix` above
     // always ends in '/' -- writing an empty `ref` plus a second '/' would
-    // collapse into a bare "//". In practice this never fires: the root
-    // `index.smd` is mandatory (`root.zig` fatals with "No content found" if
-    // a variant has none), so `Site.page('')`'s lookup always resolves to a
-    // real `page_main` hint and never falls through to `tolerate` at all.
-    // The guard costs nothing and removes the need to keep re-proving that
-    // invariant every time this function is touched.
+    // collapse into a bare "//". In practice this never fires: a non-empty
+    // content root must have an `index.smd`, so `Site.page('')` resolves to a
+    // real `page_main`; a valid zero-page site renders no template that could
+    // call this function. The guard costs nothing and removes the need to keep
+    // re-proving that invariant every time this function is touched.
     if (ref.len > 0) {
         try w.writeAll(ref);
         try w.writeAll("/");

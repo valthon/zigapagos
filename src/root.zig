@@ -1357,14 +1357,11 @@ pub fn run(
             }
         }
 
-        // Stop if there is no content at all to analyze
-        if (!any_content) fatal.msg(
-            "No content found, start by adding a index.smd file to your content directory.\n",
-            .{},
-        );
-
-        // Never a deadlock because we check that at least one page exists.
-        worker.wait(); // sections have been activated (by parsing index.smd files)
+        // A zero-page site is a valid release result: for example, a completed
+        // migration whose every route was explicitly blocked. In that case no
+        // activation jobs exist, and worker.wait() is unnecessary. Non-empty
+        // roots still require an index.smd at scan time in Variant.zig.
+        if (any_content) worker.wait(); // sections have been activated (by parsing index.smd files)
 
     }
     // This second time, as we scan sections, we also propagate section

@@ -5881,6 +5881,24 @@ fn writeClientLib(ctx: *Ctx, auth_collection: ?[]const u8, with_realtime: bool) 
 fn writeProjectFiles(ctx: *Ctx, acc: *Acc) WriteError!void {
     const gpa = ctx.gpa;
 
+    // `release` opens the configured content root even when there are no
+    // pages to render. Every route may legitimately have been acknowledged
+    // as `blocked`/`retained` (and backend/redirect routes never write a
+    // page), so a complete handoff can otherwise emit a build.sh whose first
+    // release fails with FileNotFound. Keep the root in the generated project
+    // without inventing a page; root.zig treats this exact filename as a
+    // directory placeholder and excludes it from content/asset accounting.
+    var has_content_page = false;
+    outer: for (acc.routes.items) |route| {
+        for (route.artifacts) |artifact| {
+            if (std.mem.startsWith(u8, artifact, "content/")) {
+                has_content_page = true;
+                break :outer;
+            }
+        }
+    }
+    if (!has_content_page) try ctx.writeFile("content/.gitkeep", "");
+
     const config = try emitConfig(gpa, ctx.in.app_name, acc.assets.items.len > 0);
     defer gpa.free(config);
     try ctx.writeFile("zigapagos.ziggy", config);
@@ -6672,6 +6690,10 @@ test "write: a route whose view cannot be converted is acknowledged by a decisio
         defer freeResult(gpa, res);
         try testing.expectEqual(Status.blocked, res.routes[0].status);
         try testing.expectEqualStrings(finding_list[0].id, res.routes[0].decision_id.?);
+        try testing.expect(!targetHas(&tmp, "content/posts/legacy/index.smd"));
+        const placeholder = try readTarget(gpa, &tmp, "content/.gitkeep");
+        defer gpa.free(placeholder);
+        try testing.expectEqual(@as(usize, 0), placeholder.len);
     }
 }
 
