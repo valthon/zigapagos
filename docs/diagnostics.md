@@ -59,8 +59,7 @@ things legitimately write to the same stream outside this mechanism:
 
 - The Bun sidecar (SSR, CSS minification) inherits stderr directly and prints
   its own diagnostics on failure.
-- Page-render errors (SuperHTML template rendering, on worker threads) are
-  prose — see [Coverage](#coverage).
+- Island-render errors and sidecar output remain prose — see [Coverage](#coverage).
 - Two scan-time advisories in `src/root.zig` are prose: the site-wide-artifact
   alias warning (`aliases: ["404.html"]` on a non-root page) and the
   sectionless-directory warning (a content directory with pages but no
@@ -127,11 +126,21 @@ printed in that same region (`ZP_EMPTY_PAGE`, and the warning-severity
 `PageAnalysisError` kinds). On top of that, every `fatal.msg` /
 `fatal.usageError` call anywhere in the codebase emits as `ZP_FATAL`.
 
+SuperHTML page-render failures emit `ZP_PAGE_RENDER`, one record per failed
+render job. The full diagnostic and evaluation trace are escaped inside
+`message`; concurrent workers cannot interleave records. `file` identifies
+the content page, including its content-directory prefix. `line` and `col`
+are null: SuperHTML exposes a prose trace, not a structured source span,
+and its template coordinates must not be attributed to the content page.
+Read the template locations in `message` for human debugging. Alternative
+and paginated render jobs can report the same content file more than once.
+Text mode and the dev-server error overlay keep the original trace.
+
 What stays prose, and why:
 
 | Source | Why |
 | --- | --- |
-| Page-render errors (`src/worker.zig`, SuperHTML rendering) | Produced on worker threads through a shared writer; the batching is not per-diagnostic. |
+| Island-render errors (`src/worker.zig`, SSR/props evaluation) | These use the island pass's reporting path, separate from SuperHTML evaluation. |
 | The island props-check gate (`src/islands/props_check.zig`) | Its output is `tsc`'s own, passed through verbatim. |
 | `fatal.helpError()`'s usage menu | No one-line NDJSON shape for a command reference — see above. |
 | The two scan-time advisories | Advisory-only multi-line `note:` blocks; see the consumer rule above. |

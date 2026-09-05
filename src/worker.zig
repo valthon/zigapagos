@@ -13,6 +13,7 @@ const syntax = @import("syntax");
 const languages = @import("languages.zig");
 const root = @import("root.zig");
 const fatal = @import("fatal.zig");
+const diag = @import("diag.zig");
 const context = @import("context.zig");
 const Page = context.Page;
 const Build = @import("Build.zig");
@@ -1497,7 +1498,19 @@ fn renderPage(
     while (true) super_vm.run() catch |err| switch (err) {
         error.Done => break,
         error.Fatal => {
-            std.debug.print("{s}\n", .{err_aw.written()});
+            if (diag.format == .json) {
+                diag.emit(.{
+                    .code = .ZP_PAGE_RENDER,
+                    .severity = .@"error",
+                    .file = page_path,
+                    // SuperHTML exposes a rendered trace, not a structured
+                    // source span. Keep its locations in the message rather
+                    // than misattribute template coordinates to this page.
+                    .message = err_aw.written(),
+                });
+            } else {
+                std.debug.print("{s}\n", .{err_aw.written()});
+            }
             build.any_rendering_error.store(true, .release);
             if (build.mode == .memory) {
                 // Dupe into a standalone gpa allocation owned by the page: the

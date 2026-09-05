@@ -243,6 +243,8 @@ pub const Code = enum {
     ZP_TEMPLATE_MISSING_PARENT,
     // emitted by: root.zig printSuperMdErrors, any SuperMD-reported error
     ZP_SUPERMD,
+    // emitted by: worker.zig renderPage, SuperHTML evaluation failed
+    ZP_PAGE_RENDER,
     // emitted by: fatal.zig msg/usageError, the catch-all for everything not
     // yet promoted to a named code (see docs/diagnostics.md's scope section)
     ZP_FATAL,
@@ -603,6 +605,17 @@ pub fn info(c: Code) Info {
             \\where `<tag>` is SuperMD's own error-kind name -- read it for the
             \\specific problem; only `code` (this one) is a stability
             \\guarantee, the tag inside `message` is not.
+            ,
+        },
+        .ZP_PAGE_RENDER => .{
+            .summary = "SuperHTML could not render a page",
+            .explanation =
+            \\A layout or inherited template failed during page evaluation.
+            \\`file` identifies the content page being rendered; `line` and
+            \\`col` are null because the failing expression can be in another
+            \\file. The complete SuperHTML diagnostic and evaluation trace
+            \\are preserved in `message`, including template locations.
+            \\Only the outer code is stable, not SuperHTML's prose or tags.
             ,
         },
         .ZP_FATAL => .{
