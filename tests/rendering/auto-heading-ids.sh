@@ -106,6 +106,8 @@ Em dash heading.
 
 [in-page link](#foo)
 
+[directive link]($link.ref('foo-1'))
+
 [cross-page link](/other#bar)
 MD
 } > "$ON/content/index.smd"
@@ -136,6 +138,7 @@ grep -q 'id="explicit-id"' "$INDEX_HTML" || fail "explicit \$heading.id override
 grep -q 'id="should-not-auto-slug"' "$INDEX_HTML" &&
   fail "explicit id override was NOT respected — auto slug leaked through"
 grep -q 'href="#foo"' "$INDEX_HTML" || fail "in-page anchor link did not build with the expected href"
+grep -q 'href="#foo-1"' "$INDEX_HTML" || fail "\$link.ref to a generated id did not render its href"
 grep -Eq 'href="[^"]*other[^"]*#bar"' "$INDEX_HTML" ||
   fail "cross-page anchor link did not build with the expected href"
 grep -q 'id="bar"' "$OTHER_HTML" || fail "'Bar' heading in other.smd missing id=\"bar\""
