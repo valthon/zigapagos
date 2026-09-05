@@ -457,6 +457,30 @@ for id in \
   [[ "$with_backend" == "$without_backend" ]] || fail "$id must not depend on --backend: $with_backend != $without_backend"
 done
 
+# --- all page findings blocked: the generated project must still build -----
+# Issue #205: every GET/HEAD route in this fixture has a reachable finding.
+# A fully-blocked answer set is therefore a complete, legitimate zero-page
+# handoff. The scaffolder used to omit content/ entirely while build.sh always
+# configured release to open it, so migration exited 0 and handed off a script
+# guaranteed to fail with FileNotFound.
+jq '.decisions |= map(.choice = "blocked" | del(.artifact))' "$DECISIONS" > "$WORK/all-blocked.json"
+set +e
+all_blocked_out="$("$ZIGAPAGOS" migrate "$WORK/app" --from rails --target "$WORK/all-blocked" \
+  --decisions "$WORK/all-blocked.json" --backend "$BACKEND" 2>&1)"
+all_blocked_rc=$?
+set -e
+[[ $all_blocked_rc -eq 0 ]] || fail "all-blocked migration must complete, got $all_blocked_rc: $all_blocked_out"
+[[ "$(jq -r '.complete' "$WORK/all-blocked/MIGRATION.handoff.json")" == "true" ]] \
+  || fail "all-blocked handoff must be complete"
+grep -qF '0 page(s)' <<<"$all_blocked_out" \
+  || fail "all-blocked summary must report zero pages: $all_blocked_out"
+[[ -f "$WORK/all-blocked/content/.gitkeep" ]] \
+  || fail "zero-page target must preserve the content root"
+[[ "$(find "$WORK/all-blocked/content" -type f | wc -l)" -eq 1 ]] \
+  || fail "zero-page target must not invent a content page"
+( cd "$WORK/all-blocked" && ZIGAPAGOS_BIN="$ZIGAPAGOS" bash build.sh >"$WORK/all-blocked-release.log" 2>&1 ) \
+  || { cat "$WORK/all-blocked-release.log"; fail "all-blocked target build.sh failed"; }
+
 # --- run 2: the operator's answers -----------------------------------------
 # The checked-in decisions file answers every finding that keeps a route open.
 # `--runtime-path` points the generated package.json at this checkout's

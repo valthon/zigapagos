@@ -421,13 +421,22 @@ pub fn scanContentDir(
             break :blk page_id;
         } else dir_entry.page_assets_owner;
 
-        // The content root must provide an index.smd: it establishes the
-        // root section (section 0 is the invalid sentinel). Without it, any
-        // content in the root — pages, assets, or nothing at all — would index
-        // the undefined section 0 below, panicking in Debug and corrupting an
-        // undefined ArrayList in release. Emit a clean diagnostic instead of
-        // reaching that state. See AUD-009.
+        // A non-empty content root must provide an index.smd: it establishes
+        // the root section (section 0 is the invalid sentinel). Without it,
+        // pages, assets, or subdirectories would index the undefined section
+        // 0 below, panicking in Debug and corrupting an undefined ArrayList in
+        // release. A genuinely empty root is different: a migration may have
+        // completed with every route blocked, so there is intentionally no
+        // section and nothing below may index one. Skip the rest of this root
+        // iteration in that case. Hidden VCS placeholders were filtered above
+        // and therefore correctly count as empty. See AUD-009 and issue #205.
         if (dir_entry.path.len == 0 and !found_index_smd) {
+            if (page_names.items.len == 0 and asset_names.items.len == 0 and dir_names.items.len == 0) {
+                page_names.clearRetainingCapacity();
+                asset_names.clearRetainingCapacity();
+                dir_names.clearRetainingCapacity();
+                continue;
+            }
             fatal.msg(
                 "error: the content root requires a content/index.smd page\n",
                 .{},
