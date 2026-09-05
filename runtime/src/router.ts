@@ -167,8 +167,8 @@ export type RouteDef = {
    * second mechanism to keep in sync. Render exactly ONE of the two: using
    * both mounts the matched child twice (warned once per layout path in the
    * browser); using neither means the matched child never renders (warned the
-   * same way, since it silently produces an empty layout with dead route
-   * components behind it). Both checks run in mount effects, so they are
+   * when the layout leaves, after conditional outlets had time to mount).
+   * Both checks run in effects, so they are
    * client-only — SSR never executes them.
    * A child `path` is relative to the parent (`/dash` + `/settings` ->
    * `/dash/settings`); a child with `path: "/"` is the index route shown
@@ -763,11 +763,12 @@ type OutletCtx = {
    * by `Outlet`'s mount effect, unregistered on cleanup) — the misuse
    * detector for issue #22 (`children` IS an `<Outlet/>`, so rendering both
    * the `children` prop AND an explicit `<Outlet/>` mounts two, and rendering
-   * neither mounts zero). Owned by the `RouteRung` wrapper via `useRef` so it
+   * neither mounts zero). Owned by the `RouteRung` wrapper via `useMemo` so it
    * is stable across that rung's re-renders — a Set built fresh per
    * `renderChainNode` call would make detection order-dependent.
    */
   live: Set<object>;
+  usage: { seen: boolean };
 };
 const OutletContext = createContext<OutletCtx | null>(null);
 
@@ -820,23 +821,13 @@ const EMPTY_GUARD_DATA: ReadonlyMap<number, unknown> = new Map();
 /**
  * One rung's OutletContext.Provider + component, as a real component (not an
  * inline `h()` call) so its `live` Set — the Outlet-misuse detector — is
- * owned via `useRef` and stable across this rung's re-renders. Given directly
+ * memoized by route path and stable across this rung's re-renders. Given directly
  * to `h(comp, { children: h(Outlet, {}) })`: `children` IS an `<Outlet/>`,
  * for every rung (leaves included — a leaf component simply never reads
  * `children`, and `Outlet` itself renders `null` at a leaf depth, see below).
  *
- * For a non-leaf (layout) rung only, an effect with NO dependency array
- * fires after every render/re-render and checks `live.size`. It reads a
- * settled value because Preact flushes CHILD effects before the PARENT's —
- * `Outlet`'s own registration effect (a child of this component, however
- * deep inside `comp`'s tree it's mounted) has already run by the time this
- * one does. `live.size === 0` after that means neither `{children}` nor an
- * `<Outlet/>` rendered — the matched child route never renders (issue #22's
- * original trap: no error, just a silently empty layout). `live.size > 1`
- * means BOTH channels rendered, mounting the matched child twice; that
- * detection lives in `Outlet` itself (see below), since a layout with a
- * DEEPLY nested `<Outlet/>` needs the same check regardless of whether that
- * `<Outlet/>` runs before or after this component's own effect.
+ * A missing outlet is diagnosed on layout exit, never from a temporarily
+ * empty render. Duplicate outlets are still diagnosed immediately by Outlet.
  */
 function RouteRung(props: {
   chain: Match[]; depth: number; hydrated: boolean;
@@ -845,38 +836,25 @@ function RouteRung(props: {
   comp: ComponentType<any>; isLeaf: boolean;
 }): VNode<any> {
   const { chain, depth, hydrated, gateDepth, fallback, guardData, comp, isLeaf } = props;
-  const liveRef = useRef<Set<object> | null>(null);
-  if (!liveRef.current) liveRef.current = new Set();
-  const live = liveRef.current;
+  const path = chain[depth].route.path;
+  const usage = useMemo(() => ({ seen: false, live: new Set<object>() }), [path]);
+  const live = usage.live;
   useEffect(() => {
     if (isLeaf) return;
-    // Deferred to a MICROTASK, not checked synchronously in this effect body:
-    // Preact flushes one commit's effects in a single synchronous pass, but
-    // NOT reliably children-before-parent on a rung's very first mount — this
-    // rung's own effect can run before a freshly-mounted nested <Outlet/>'s
-    // own mount effect has registered, which would false-positive "neither
-    // channel used" on a perfectly correct layout. `queueMicrotask` defers
-    // the actual check past the CURRENT synchronous flush entirely, so every
-    // effect scheduled in this commit — this rung's and any nested Outlet's,
-    // regardless of which one Preact happened to run first — has already
-    // executed by the time it runs. `cancelled` guards against a rung that
-    // unmounts before its deferred check fires.
-    let cancelled = false;
-    queueMicrotask(() => {
-      if (cancelled || live.size > 0) return;
-      const path = chain[depth].route.path;
-      if (warnedNoOutlet.has(path)) return;
+    // A temporarily empty layout is not evidence of a missing outlet. Check
+    // its completed lifetime after conditional children had a chance to mount.
+    return () => {
+      if (usage.seen || warnedNoOutlet.has(path)) return;
       warnedNoOutlet.add(path);
       console.warn(
         `zigapagos: layout route ${JSON.stringify(path)} rendered neither {children} nor an ` +
-          "<Outlet/> — its matched child route never renders.",
+          "<Outlet/> during its mounted lifetime.",
       );
-    });
-    return () => { cancelled = true; };
-  });
+    };
+  }, [usage, isLeaf, path]);
   return h(
     OutletContext.Provider,
-    { value: { chain, depth, hydrated, gateDepth, fallback, guardData, live } },
+    { value: { chain, depth, hydrated, gateDepth, fallback, guardData, live, usage } },
     h(comp, { children: h(Outlet, {}) }),
   );
 }
@@ -957,6 +935,7 @@ export function Outlet(): VNode<any> | null {
     if (!oc) return;
     const id = idRef.current!;
     const live = oc.live;
+    oc.usage.seen = true;
     live.add(id);
     if (live.size > 1) {
       const path = oc.chain[oc.depth].route.path;
@@ -1162,6 +1141,7 @@ type ViewTransitionLike = { ready?: Promise<void>; updateCallbackDone?: Promise<
  */
 function viewTransitionApi(): ((cb: () => Promise<void>) => ViewTransitionLike | undefined) | null {
   if (!viewTransitionsOn || typeof document === "undefined") return null;
+  if (typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) return null;
   const f = (document as { startViewTransition?: (cb: () => Promise<void>) => ViewTransitionLike }).startViewTransition;
   return f ? f.bind(document) : null;
 }

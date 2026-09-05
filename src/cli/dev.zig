@@ -690,6 +690,7 @@ pub fn dev(
         .{ cmd.host, reload_port, @errorName(err) },
     );
     reload_server.setBuildFinished(true, 0, null); // the initial build (gen 1)
+    prepareSpaFallbacks(io, site_abs);
     if (cmd.live_reload) reload.injectTree(io, gpa, site_abs, reload_port, null);
 
     // Stage the served root (issue #152) AFTER injectTree, not before: on a
@@ -907,6 +908,7 @@ pub fn dev(
         };
 
         if (rebuild.ok) {
+            prepareSpaFallbacks(io, site_abs);
             if (cmd.live_reload) {
                 const srv = reload_server;
                 // Re-inject (the rebuild rewrote the tree from clean HTML), then
@@ -971,6 +973,19 @@ pub fn dev(
         reload_server.setBuildFinished(rebuild.ok, rebuild.duration_ms, rebuild.error_tail);
         if (rebuild.error_tail) |t| gpa.free(t);
     }
+}
+
+fn prepareSpaFallbacks(io: Io, site_abs: []const u8) void {
+    // These dev-only markers are best effort, like reload injection. A transient
+    // output-tree failure may break deep links until the next rebuild, but must
+    // not terminate the session (including when called during startup).
+    var dir = Io.Dir.cwd().openDir(io, site_abs, .{ .iterate = true }) catch |err| {
+        std.debug.print("dev: cannot open output for SPA fallbacks: {s}; deep links may 404 until the next rebuild\n", .{@errorName(err)});
+        return;
+    };
+    defer dir.close(io);
+    reload.markSpaNamespaces(io, dir) catch |err|
+        std.debug.print("dev: cannot prepare SPA fallbacks: {s}; deep links may 404 until the next rebuild\n", .{@errorName(err)});
 }
 
 /// Makes sure a terminated dev process takes zigbase down with it.
@@ -2259,6 +2274,31 @@ const SilencedStderr = struct {
         s.null_file.close(io);
     }
 };
+
+test "dev SPA fallback failures do not terminate the session and can recover" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest else {
+        const io = std.testing.io;
+        var tmp = std.testing.tmpDir(.{ .iterate = true });
+        defer tmp.cleanup();
+        var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+        const abs = path_buf[0..try tmp.dir.realPath(io, &path_buf)];
+        const quiet = try SilencedStderr.begin(io);
+        defer quiet.end(io);
+        // Opening a file as the output directory must report and return.
+        try tmp.dir.writeFile(io, .{ .sub_path = "not-a-dir", .data = "" });
+        const bad_path = try std.fs.path.join(std.testing.allocator, &.{ abs, "not-a-dir" });
+        defer std.testing.allocator.free(bad_path);
+        prepareSpaFallbacks(io, bad_path);
+        // A directory at .spa forces marker creation to fail, even as root.
+        try tmp.dir.writeFile(io, .{ .sub_path = "routing-manifest.json", .data = "{}" });
+        try tmp.dir.createDir(io, ".spa", .default_dir);
+        prepareSpaFallbacks(io, abs);
+        try tmp.dir.deleteDir(io, ".spa");
+        prepareSpaFallbacks(io, abs);
+        var marker = try tmp.dir.openFile(io, ".spa", .{});
+        marker.close(io);
+    }
+}
 
 test "dev dirHasChangeSince: a walk it cannot finish answers 'changed', not 'unchanged'" {
     // `Io.Dir.Walker.next` fails when it cannot descend into a subdirectory

@@ -61,6 +61,8 @@ Policy:
 Browser error relay ([observability](observability.md)), same-origin fetch defaults,
 live feature flags, and state-preserving reload are available in the runtime.
 Applications still need to wire their backend endpoints and flag streams.
+Router navigation honors reduced motion and conditional outlets are diagnosed on
+layout exit rather than before they have a chance to mount.
 
 Background dev-server management includes `stop|status|logs|wait`, build-aware
 `/_zigapagos/status`, AI-agent auto-detection, and NDJSON build logs; see

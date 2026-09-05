@@ -477,8 +477,9 @@ the spec's ~4s timeout) but is worth knowing before filing it as a bug.
 `::view-transition-old(*)`, `::view-transition-new(*)`, and a per-element
 `view-transition-name` for anything that should morph individually (a shared
 hero image, say) rather than cross-fade with the rest of the page. The
-browser does **not** disable view transitions for `prefers-reduced-motion` on
-its own; add the guard yourself:
+runtime bypasses SPA view transitions when `prefers-reduced-motion: reduce`
+matches, checking the preference on each navigation. For independently authored
+cross-document transitions, add a CSS guard too:
 
 ```css
 @media (prefers-reduced-motion: reduce) {
@@ -1045,17 +1046,17 @@ silently picking one would make the client diverge from what SSR (which has no s
 concept) produced. Rendering **neither** means the matched child route never renders at all —
 the silent trap this diagnostic exists for: the layout compiles, SSRs, and paints a
 plausible-looking but empty container, with its child route's component never invoked. Both
-cases are caught with a `console.warn` (once per layout route path) in the browser; both checks
-run in mount effects, so neither ever fires under SSR / at build time — a bad layout still
-builds cleanly and only warns once it's actually rendered in a browser.
+cases produce a `console.warn` once per layout route path in the browser.
+Duplicate outlets warn immediately. A missing outlet warns when the layout
+leaves, and only if no outlet mounted during its lifetime. A conditional
+`{ready && children}` has its mounted lifetime to open before this check.
+Neither diagnostic runs during SSR; a bad layout still builds cleanly.
 
-> **Known false positive.** The "rendered neither" check is deferred past its commit's whole
-> effect flush, so a correct layout never trips it on ordering. But a layout that deliberately
-> gates its outlet behind state flipped *after* mount (`{ready && children}` for a tab, an
-> auth-ready flag) genuinely renders neither channel on that first pass, so it warns — and
-> because the warning is once-per-path, it is never retracted when the outlet does appear. It is
-> console noise, not a behaviour change: the child renders normally once the gate opens. Render
-> the outlet unconditionally and gate *inside* the child if you would rather not see it.
+**Known diagnostic trade-off:** a conditional gate that never opens before
+navigation away or an HMR remount still produces a false warning on unmount.
+Warnings are once per path and cannot be retracted. Conversely, a layout that
+really omits both channels stays silent while mounted: a developer remaining
+on that route may see an empty container without a warning until they leave.
 
 `/dash/overview` and `/dash/settings` each render `DashLayout` wrapping their child at the
 `<Outlet/>`. Matching is first-match-wins at **every** level; `:param` captures accumulate down
@@ -1765,10 +1766,9 @@ Notes:
 
 - The route TABLE is part of the build, so added/removed SPA routes flow through on the
   next rebuild automatically.
-- Non-enumerated SPA deep links in dev use the `.spa` marker, which the host-config
-  emitter plants for `deploy_target: "zigbase"` namespaces. If your production target is
-  nginx/apache, enumerated shells still serve fine; wiring a dev-only
-  `emit-host-config --target zigbase` pass into the rebuild is a follow-up.
+- Non-enumerated SPA deep links in dev use `.spa` markers. The dev loop adds
+  them beside routing manifests after every successful build, including for
+  nginx/apache production targets. Production host configuration is unchanged.
 - Full option list: `zigapagos dev --help`.
 
 ## Calling the backend — `apiFetch`

@@ -213,7 +213,7 @@ import {
   type GuardResult,
 } from "./router.ts";
 import { h, type ComponentType } from "./core.ts";
-import { useEffect } from "./core.ts";
+import { useEffect, useState } from "./core.ts";
 import { ssrIsland, renderIsland, click, flush } from "@z/runtime/testing";
 import { setLocationPathname } from "@z/runtime/testing/parity";
 import { setSsrPathname, setUrlPathPrefix, getUrlPathPrefix } from "@z/runtime/ssr-env";
@@ -785,6 +785,37 @@ describe("Router layout children channel (issue #22)", () => {
     }
   });
 
+  test("a conditional outlet that mounts later does not warn", async () => {
+    let open = () => {};
+    const Conditional = (props: any) => {
+      const [ready, setReady] = useState(false);
+      open = () => setReady(true);
+      return h("div", {}, ready ? props.children : null);
+    };
+    const routes: RouteDef[] = [
+      { path: "/", component: C },
+      { path: "/conditional", component: Conditional, children: [{ path: "/overview", component: Overview }] },
+    ];
+    const App = () => h(Router, { base: "/app", routes });
+    const { warnings, restore } = spyConsoleWarn();
+    setLocationPathname("/app/conditional/overview");
+    const r = renderIsland(App, {}, { mode: "render", pathname: "/app/conditional/overview" });
+    try {
+      await flush();
+      expect(warnings.length).toBe(0);
+      open();
+      await flush();
+      expect(r.query('[data-view="overview"]')).not.toBeNull();
+      navigate("/");
+      await flush();
+      expect(warnings.length).toBe(0);
+    } finally {
+      r.unmount();
+      restore();
+      setLocationPathname("/app/");
+    }
+  });
+
   test("neither {children} nor <Outlet/> ⇒ the matched child never renders and the no-outlet warning fires", async () => {
     const NoOutletLayout = () =>
       h("div", { "data-view": "no-outlet-layout" },
@@ -800,6 +831,9 @@ describe("Router layout children channel (issue #22)", () => {
     await flush();
     try {
       expect(r.query('[data-view="overview"]')).toBeNull(); // the matched child never rendered
+      expect(warnings.length).toBe(0); // could still be a conditional outlet
+      navigate("/");
+      await flush();
       const noOutletWarnings = warnings.filter((w) => w.includes("rendered neither {children} nor an <Outlet/>"));
       expect(noOutletWarnings.length).toBe(1);
       expect(noOutletWarnings[0]).toContain('"/dash-neither"');
@@ -1355,6 +1389,40 @@ describe("query-only navigation preserves the scroll position", () => {
 // startViewTransition, so a test that needs one installs a stub on `document`;
 // the block's afterEach removes it and resets the other module-globals.
 describe("view transitions", () => {
+  test("nullish matchMedia results do not block navigation", async () => {
+    const original = window.matchMedia;
+    try {
+      setViewTransitions(true);
+      const calls = installVTStub();
+      __setRouterBaseForTest("");
+      setLocationPathname("/app/x");
+      for (const [index, result] of [null, undefined].entries()) {
+        window.matchMedia = (() => result) as unknown as typeof window.matchMedia;
+        navigate(`/app/nullish-${index}`);
+        await flush();
+        expect(window.location.pathname).toBe(`/app/nullish-${index}`);
+      }
+      expect(calls.length).toBe(2);
+    } finally {
+      window.matchMedia = original;
+    }
+  });
+  test("reduced motion disables opted-in transitions without blocking navigation", async () => {
+    const original = window.matchMedia;
+    try {
+      window.matchMedia = (() => ({ matches: true })) as unknown as typeof window.matchMedia;
+      setViewTransitions(true);
+      const calls = installVTStub();
+      __setRouterBaseForTest("");
+      setLocationPathname("/app/x");
+      navigate("/app/y");
+      await flush();
+      expect(calls.length).toBe(0);
+      expect(window.location.pathname).toBe("/app/y");
+    } finally {
+      window.matchMedia = original;
+    }
+  });
   function installVTStub(): Array<() => Promise<void> | void> {
     const calls: Array<() => Promise<void> | void> = [];
     (document as any).startViewTransition = (cb: () => Promise<void> | void) => {

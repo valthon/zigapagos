@@ -436,6 +436,35 @@ pub const Server = struct {
 /// just the changed pages, so the unchanged 99% keep their existing snippet and
 /// are skipped after a single cheap `stat` instead of a full read. Pass null
 /// after a full rebuild (every page was re-emitted from clean HTML).
+/// Dev uses ZigBase even when the release target is nginx/apache. Each emitted
+/// routing manifest names a namespace that needs ZigBase's presence-only marker.
+/// No allocation; does not follow symlinks or modify production configuration.
+pub fn markSpaNamespaces(io: Io, dir: Io.Dir) !void {
+    var it = dir.iterate();
+    while (try it.next(io)) |entry| {
+        if (entry.kind == .directory) {
+            var child = try dir.openDir(io, entry.name, .{ .iterate = true });
+            defer child.close(io);
+            try markSpaNamespaces(io, child);
+        } else if (entry.kind == .file and std.mem.eql(u8, entry.name, "routing-manifest.json")) {
+            const marker_file = try dir.createFile(io, ".spa", .{ .truncate = false });
+            marker_file.close(io);
+        }
+    }
+}
+
+test "dev: SPA markers are emitted beside manifests, not at the site root" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    try tmp.dir.createDir(io, "app", .default_dir);
+    try tmp.dir.writeFile(io, .{ .sub_path = "app/routing-manifest.json", .data = "{}" });
+    try markSpaNamespaces(io, tmp.dir);
+    const stat = try tmp.dir.statFile(io, "app/.spa", .{});
+    try std.testing.expectEqual(@as(u64, 0), stat.size);
+    try std.testing.expectError(error.FileNotFound, tmp.dir.statFile(io, ".spa", .{}));
+}
+
 pub fn injectTree(io: Io, gpa: Allocator, site_abs: []const u8, port: u16, since_ns: ?i128) void {
     var dir = Io.Dir.cwd().openDir(io, site_abs, .{ .iterate = true }) catch |err| {
         std.debug.print(
