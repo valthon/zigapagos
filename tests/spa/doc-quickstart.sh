@@ -104,7 +104,7 @@ BASE="$(awk 'match($0, /base:[[:space:]]*"[^"]*"/) {
 [[ -n "$BASE" ]] || fail "the quickstart's 'export const spa' declares no base -- the snippet must carry one, and the build checks --spa's base against it"
 
 # --- (3) build ---------------------------------------------------------------
-( cd "$SITE" && "$ZIGAPAGOS" release "--output=$OUT" --force \
+( cd "$SITE" && ZIGAPAGOS_RUNTIME_DIR="$REPO/runtime" "$ZIGAPAGOS" release "--output=$OUT" --force \
     "--bun=$BUN" \
     "--island-sidecar=$REPO/runtime/sidecar/render.ts" \
     --island-src-dir=. \
@@ -133,10 +133,12 @@ grep -q '<h1>Home</h1>' "$SHELL_HTML" \
 grep -q 'href="'"$BASE"'/about"' "$SHELL_HTML" \
   || fail "$SHELL_HTML does not resolve <Link href=\"/about\"> against the SPA base -- a visitor without JavaScript gets a dead link"
 
-# The client bundle is installed by build.zig's asset step, not by the CLI used
-# here, so assert what THIS build owns: the shell asking for it by URL.
+# The release must install the client bundle it names; checking both sides keeps
+# this doc example from becoming a deployable-looking shell that 404s on load.
 grep -qE '<link rel="modulepreload" href="/spa/app\.js">' "$SHELL_HTML" \
   || fail "$SHELL_HTML does not reference /spa/app.js -- the shell would never hydrate"
+[[ -f "$OUT/spa/app.js" ]] \
+  || fail "$SHELL_HTML references /spa/app.js but the release did not install it"
 grep -q 'mountSpa' "$SHELL_HTML" \
   || fail "$SHELL_HTML has no mountSpa bootstrap -- nothing would hydrate the prerendered markup"
 [[ -f "$OUT${BASE}/routing-manifest.json" ]] \

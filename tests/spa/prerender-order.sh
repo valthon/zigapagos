@@ -65,8 +65,15 @@ echo "baseline build emitted $NPAGES pages"
 sleep 1.1  # coarse-mtime filesystems: make any fresh mtime observable
 
 # --- (2) a build whose SPA prerender fails ------------------------------------
+# Register the browser half so release reaches the intended no-sidecar
+# prerender failure instead of correctly rejecting an incomplete SPA earlier.
+printf 'export default function App(){}\n' >"$WORK/app.js"
+printf 'export function mountSpa(){}\n' >"$WORK/runtime.js"
 set +e
-build "--spa=app/app.spa.tsx|/app" >"$WORK/2.log" 2>&1
+build "--spa=app/app.spa.tsx|/app" \
+  --build-asset=spa-app "$WORK/app.js" --install-always=spa/app.js \
+  --build-asset=spa-runtime "$WORK/runtime.js" --install-always=zigapagos-runtime.js \
+  >"$WORK/2.log" 2>&1
 RC=$?
 set -e
 [[ "$RC" -ne 0 ]] || { sed -n '1,20p' "$WORK/2.log"; fail "declaring an SPA with no sidecar built successfully -- the trigger no longer fails"; }

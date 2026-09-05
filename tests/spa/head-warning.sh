@@ -75,7 +75,7 @@ JSON
 
 build() {
   local dir="$1" out="$2"
-  ( cd "$dir" && "$ZIGAPAGOS" release "--output=$out" --force \
+  ( cd "$dir" && ZIGAPAGOS_RUNTIME_DIR="$REPO/runtime" "$ZIGAPAGOS" release "--output=$out" --force \
       "--bun=$BUN" \
       "--island-sidecar=$REPO/runtime/sidecar/render.ts" \
       --island-src-dir=. \
