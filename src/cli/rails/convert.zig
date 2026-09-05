@@ -2698,6 +2698,34 @@ test "convert: a multi-controller Stimulus island wraps markup without swallowin
     try std.testing.expectEqual(@as(usize, 0), out.enclosed.len);
 }
 
+test "convert: nested Stimulus bindings emit independent wrappers" {
+    const gpa = std.testing.allocator;
+    const path = "app/views/pages/nested.html.erb";
+    var outer = openNode(.stimulus, 1, 1, "outer", "<div data-controller=\"outer\">");
+    outer.value = "div";
+    var inner = openNode(.stimulus, 2, 1, "inner", "<div data-controller=\"inner\">");
+    inner.value = "div";
+    var close_inner = endNode(3, 1);
+    close_inner.code = "</div>";
+    var close_outer = endNode(4, 1);
+    close_outer.code = "</div>";
+    const nodes = [_]fragments.Node{ outer, inner, close_inner, close_outer };
+    const list = [_]findings.Finding{
+        mkFinding("RAILS_STIMULUS_CONTROLLER.app/views/pages/nested%2Ehtml%2Eerb.L1C1", findings.code_stimulus_controller, path, 1),
+        mkFinding("RAILS_STIMULUS_CONTROLLER.app/views/pages/nested%2Ehtml%2Eerb.L2C1", findings.code_stimulus_controller, path, 2),
+    };
+    var a = stage4Binding(list[0].id, .stimulus, "components/stimulus/outer.island.tsx");
+    a.wrap = true;
+    var b = stage4Binding(list[1].id, .stimulus, "components/stimulus/inner.island.tsx");
+    b.wrap = true;
+    const out = try convert(gpa, .{ .routes = &.{}, .assets = &.{}, .fragments = &.{}, .findings = &list, .layout_stem = null, .bindings = &.{ a, b } }, mkTemplate(path, &nodes), .view);
+    defer freeOutput(gpa, out);
+    try std.testing.expectEqual(@as(usize, 2), out.islands.len);
+    try std.testing.expectEqual(@as(usize, 2), out.bound_finding_ids.len);
+    try std.testing.expectEqual(@as(usize, 0), out.open_finding_ids.len);
+    try std.testing.expect(std.mem.indexOf(u8, out.bytes, "inner.island.tsx") != null);
+}
+
 test "convert: lazy and inline Turbo frames preserve only the promised markup" {
     const gpa = std.testing.allocator;
     const path = "app/views/pages/x.html.erb";

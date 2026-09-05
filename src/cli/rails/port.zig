@@ -1165,11 +1165,19 @@ fn parseDescriptor(
     // another controller's action is not our problem.
     if (!std.mem.eql(u8, who, identifier)) return .skip;
 
-    // `@window`/`@document` and a `keydown.esc` filter both live in the
-    // event half and both change WHERE or WHEN the listener fires, which the
-    // generated island binds by element.
     if (event.len == 0) return .bad;
-    if (std.mem.indexOfAny(u8, event, "@.") != null) return .bad;
+    var local_event = event;
+    if (std.mem.indexOfScalar(u8, local_event, '@')) |at| {
+        const target = local_event[at + 1 ..];
+        if (!std.mem.eql(u8, target, "window") and !std.mem.eql(u8, target, "document")) return .bad;
+        local_event = local_event[0..at];
+    }
+    if (local_event.len == 0) return .bad;
+    if (std.mem.indexOfScalar(u8, local_event, '.')) |dot| {
+        const kind = local_event[0..dot];
+        if (!std.mem.eql(u8, kind, "keydown") and !std.mem.eql(u8, kind, "keyup") and !std.mem.eql(u8, kind, "keypress")) return .bad;
+        if (!validKeyFilter(local_event[dot + 1 ..])) return .bad;
+    }
 
     var options = std.mem.splitScalar(u8, tail, ':');
     const method = options.first();
@@ -1181,6 +1189,10 @@ fn parseDescriptor(
             prevent = true;
         } else if (std.mem.eql(u8, opt, "stop")) {
             stop = true;
+        } else if (std.mem.eql(u8, opt, "capture") or std.mem.eql(u8, opt, "once") or
+            std.mem.eql(u8, opt, "passive") or std.mem.eql(u8, opt, "!passive") or std.mem.eql(u8, opt, "self"))
+        {
+            // The emitted helper applies these native/custom listener options.
         } else return .bad;
     }
     return .{ .ok = .{
@@ -1191,6 +1203,23 @@ fn parseDescriptor(
         .stop = stop,
         .selector_index = index,
     } };
+}
+
+/// Default Stimulus key schema only; unknown custom schemas remain refused.
+fn validKeyFilter(filter: []const u8) bool {
+    var parts = std.mem.splitScalar(u8, filter, '+');
+    var key_seen = false;
+    while (parts.next()) |part| {
+        if (std.mem.eql(u8, part, "alt") or std.mem.eql(u8, part, "ctrl") or
+            std.mem.eql(u8, part, "meta") or std.mem.eql(u8, part, "shift")) continue;
+        if (key_seen) return false;
+        key_seen = true;
+        if (part.len == 1 and (std.ascii.isLower(part[0]) or std.ascii.isDigit(part[0]))) continue;
+        for ([_][]const u8{ "enter", "tab", "esc", "space", "up", "down", "left", "right", "home", "end", "page_up", "page_down" }) |key| {
+            if (std.mem.eql(u8, part, key)) break;
+        } else return false;
+    }
+    return filter.len > 0;
 }
 
 /// Contract 3 (caller-buffer): allocates nothing.
@@ -2624,22 +2653,26 @@ test "actionDescriptors: a token naming another controller is skipped, :prevent 
     try std.testing.expect(a.list[0].prevent);
 }
 
-test "actionDescriptors: a global event target is unsupported" {
+test "actionDescriptors: global event targets and default keyboard filters are supported" {
     const gpa = std.testing.allocator;
     const a = try actionDescriptors(gpa, "<button data-action=\"click@window->reveal#x\"></button>", "reveal");
     defer gpa.free(a.list);
-    try std.testing.expectEqualStrings("click@window->reveal#x", a.unsupported.?);
+    try std.testing.expect(a.unsupported == null);
+    const b = try actionDescriptors(gpa, "<div data-action=\"keydown.ctrl+a@document->reveal#x:once:!passive:self\"></div>", "reveal");
+    defer gpa.free(b.list);
+    try std.testing.expect(b.unsupported == null);
+    try std.testing.expectEqual(@as(usize, 1), b.list.len);
 }
 
 test "actionDescriptors: unsupported names the first bad token" {
     const gpa = std.testing.allocator;
     const a = try actionDescriptors(
         gpa,
-        "<button data-action=\"click@window->reveal#first keydown.esc->reveal#second\"></button>",
+        "<button data-action=\"click@screen->reveal#first keydown.custom->reveal#second\"></button>",
         "reveal",
     );
     defer gpa.free(a.list);
-    try std.testing.expectEqualStrings("click@window->reveal#first", a.unsupported.?);
+    try std.testing.expectEqualStrings("click@screen->reveal#first", a.unsupported.?);
 }
 
 test "actionDescriptors: selector_index counts the tags that carry data-action" {

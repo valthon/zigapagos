@@ -1839,7 +1839,6 @@ fn stimulusMessage(
     }
     if (nestedStimulus(nodes, index)) |outer| {
         try appendFmt(gpa, &message, "; nested inside the stimulus element at L{d}C{d}", .{ outer.line, outer.col });
-        return .{ .message = try message.toOwnedSlice(gpa), .portable = false };
     }
     const end = elementEnd(nodes, index).?;
     const extent = try extentBytes(gpa, nodes, index, end);
@@ -5515,7 +5514,7 @@ test "derive: interactivity refusal paths never offer an emitter they cannot run
     defer free(gpa, out);
     for (out) |finding| {
         if (finding.line == 2) {
-            try std.testing.expectEqualStrings("drop", finding.choices[0]);
+            try std.testing.expectEqualStrings("island", finding.choices[0]);
             try std.testing.expect(std.mem.indexOf(u8, finding.message, "nested inside") != null);
         } else if (finding.line == 4) {
             try std.testing.expectEqualStrings("drop", finding.choices[0]);
