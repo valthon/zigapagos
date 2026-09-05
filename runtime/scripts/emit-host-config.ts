@@ -37,11 +37,8 @@ export type Manifest = {
    *  output tree or run through `withPrefix`. Written by `src/spa.zig`
    *  `renderManifest` from the driver's `spa-chunks.json` route-chunk map.
    *
-   *  Only LAZY-ROUTE chunks are listed here — shared (non-lazy-route) split
-   *  chunks and `.map` sourcemaps are not tracked per-route by the build and
-   *  so cannot appear; `collectChunkPaths` documents this as a deliberate
-   *  coverage gap, not a bug: those files fall back to the baseline
-   *  revalidating rule instead of being marked immutable.
+   *  Shared chunks and hashed chunk sourcemaps are tracked separately in
+   *  `immutableAssets`; stable entry bundles/maps still revalidate.
    *
    *  OPTIONAL for BACK-COMPAT ONLY: `src/spa.zig` `renderManifest` always
    *  writes the key (`"chunks":{}` for an SPA with no lazy route), so every
@@ -49,6 +46,9 @@ export type Manifest = {
    *  written before the field existed, which the emitter must still
    *  translate. */
   chunks?: Record<string, string>;
+  /** All hashed split assets, including shared chunks and their maps.
+   *  Already-prefixed request URLs; stable entry bundles/maps are excluded. */
+  immutableAssets?: string[];
 };
 
 /** A file to write into the SPA namespace directory (sibling of routing-manifest.json). */
@@ -138,7 +138,7 @@ export function assertSafeManifest(m: Manifest): void {
 }
 
 /**
- * The union of every LAZY-ROUTE chunk request URL across `manifests`
+ * The union of every hashed split-asset request URL across `manifests`
  * (already-prefixed, see `Manifest.chunks`) — deduped and sorted, same
  * determinism discipline as `scanInlineScriptHashes` below. Throws loudly,
  * naming the offending value, for anything outside the chunk charset or
@@ -153,7 +153,7 @@ export function assertSafeManifest(m: Manifest): void {
 export function collectChunkPaths(manifests: Manifest[]): string[] {
   const paths = new Set<string>();
   for (const m of manifests) {
-    for (const value of Object.values(m.chunks ?? {})) {
+    for (const value of [...Object.values(m.chunks ?? {}), ...(m.immutableAssets ?? [])]) {
       assertSafeRouteValue(value, SAFE_CHUNK_RE, "chunk path");
       paths.add(value);
     }
@@ -755,7 +755,7 @@ export function emitAllCsp(hashes: string[], linkOrigins: string[] = [], styleHa
 // Astro's route-caching / CDN cache-header providers are an SSR feature that
 // doesn't fit zigapagos, but their static-site shadow is worth taking:
 // fingerprinted site assets (`asset_fingerprint`, src/fingerprint.zig) and
-// content-hashed SPA lazy-route chunks (a manifest's `chunks` map) are already
+// content-hashed SPA split assets (`chunks` and `immutableAssets`) are already
 // safe for immutable caching. Follows the exact CSP precedent above — three
 // new site-wide, operator-merged artifacts (`cache.{nginx,apache,zigbase}`),
 // pure addition, no build-pass changes.
@@ -819,7 +819,7 @@ function emitCacheNginx(chunkPaths: string[]): EmittedFile {
     `    ~${FINGERPRINT_SUFFIX_PATTERN} "${IMMUTABLE_CACHE_CONTROL}";`,
   ];
   if (chunkPaths.length > 0) {
-    lines.push(`    # This build's content-hashed SPA lazy-route chunks (routing-manifest.json .chunks).`);
+    lines.push(`    # This build's hashed SPA split assets (routing-manifest.json .chunks + .immutableAssets).`);
     for (const c of chunkPaths) lines.push(`    ${nginxQuote(c)} "${IMMUTABLE_CACHE_CONTROL}";`);
   }
   lines.push(`}`, ``);
@@ -863,7 +863,7 @@ function emitCacheApache(chunkPaths: string[]): EmittedFile {
     // the same way route dir segments are (escapePcre's doc comment applies verbatim).
     const alt = chunkPaths.map((c) => escapePcre(basename(c))).join("|");
     lines.push(
-      `    # This build's content-hashed SPA lazy-route chunks (routing-manifest.json .chunks).`,
+      `    # This build's hashed SPA split assets (routing-manifest.json .chunks + .immutableAssets).`,
       `    <FilesMatch "^(${alt})$">`,
       `        Header set Cache-Control "${IMMUTABLE_CACHE_CONTROL}"`,
       `    </FilesMatch>`,
@@ -906,7 +906,7 @@ function emitCacheZigbase(chunkPaths: string[]): EmittedFile {
     `#   *.<8 lowercase hex>[.ext]  (asset_fingerprint output)  -> ${IMMUTABLE_CACHE_CONTROL}`,
   ];
   if (chunkPaths.length > 0) {
-    lines.push(`#   this build's content-hashed SPA lazy-route chunks:`);
+    lines.push(`#   this build's hashed SPA split assets:`);
     for (const c of chunkPaths) lines.push(`#     ${c}  -> ${IMMUTABLE_CACHE_CONTROL}`);
   }
   lines.push(
@@ -1006,6 +1006,6 @@ if (import.meta.main) {
   for (const f of emitAllCache(chunkPaths)) {
     const outPath = `${site}/${f.name}`;
     writeFileSync(outPath, f.content, "utf8");
-    console.log(`emit-host-config: wrote ${outPath} (cache-control, ${chunkPaths.length} SPA lazy-route chunks)`);
+    console.log(`emit-host-config: wrote ${outPath} (cache-control, ${chunkPaths.length} SPA split assets)`);
   }
 }

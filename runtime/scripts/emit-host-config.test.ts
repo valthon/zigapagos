@@ -723,6 +723,16 @@ test("collectChunkPaths rejects an unsafe chunk value, naming it, and accepts '+
     .toEqual(["/spa/foo+bar-abc123.js"]);
 });
 
+test("immutable split assets include shared chunks and maps without prefixing twice", () => {
+  const manifest: Manifest = { ...m, url_path_prefix: "/repo", chunks: { "/heavy/": "/repo/spa/heavy-hash.js" },
+    immutableAssets: ["/repo/spa/shared-hash.js", "/repo/spa/heavy-hash.js", "/repo/spa/shared-hash.js.map"] };
+  const paths = collectChunkPaths([manifest]);
+  expect(paths).toEqual(["/repo/spa/heavy-hash.js", "/repo/spa/shared-hash.js", "/repo/spa/shared-hash.js.map"]);
+  expect(emitCache("nginx", paths).content).toContain('"/repo/spa/shared-hash.js.map"');
+  expect(emitCache("apache", paths).content).toContain("shared-hash\\.js\\.map");
+  expect(() => collectChunkPaths([{ ...m, immutableAssets: ["/spa/../bad.js"] }])).toThrow(/segment/);
+});
+
 test("zigbase cache artifact is advisory: both header values, the concrete chunk path, and warns against the global knob", () => {
   const chunkPaths = collectChunkPaths([mWithChunks]);
   const file = emitCache("zigbase", chunkPaths);
@@ -946,4 +956,3 @@ test("emitAllCsp threads speculationRules into every host flavor's script-src", 
     expect(f.content).not.toContain("inline-speculation-rules");
   }
 });
-

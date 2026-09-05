@@ -369,6 +369,7 @@ export async function bundleSpa(args: SpaBundleArgs): Promise<void> {
 
   mkdirSync(args.outdir, { recursive: true });
   const chunks: string[] = [];
+  const immutableAssets: string[] = [];
   let entryWritten = false;
   // Match each `.map` to its JS by name (`X.js.map` ↔ `X.js`). Bun's `.sourcemap`
   // back-reference is unreliable here (it points at the next output), so the
@@ -391,10 +392,14 @@ export async function bundleSpa(args: SpaBundleArgs): Promise<void> {
       const mapName = name + ".map";
       text = retargetSourceMappingUrl(text, mapName);
       await Bun.write(join(args.outdir, mapName), await map.text());
+      if (o.kind !== "entry-point") immutableAssets.push(mapName);
     }
     await Bun.write(join(args.outdir, name), text);
     if (o.kind === "entry-point") entryWritten = true;
-    else chunks.push(name);
+    else {
+      chunks.push(name);
+      immutableAssets.push(name);
+    }
   }
   if (!entryWritten) {
     console.error("bundle-spa: no entry-point output produced");
@@ -402,7 +407,7 @@ export async function bundleSpa(args: SpaBundleArgs): Promise<void> {
   }
 
   const routeChunks = await mapRouteChunks(args.entry, chunks);
-  await Bun.write(args.chunksJson, JSON.stringify({ entry: args.entryName, chunks, routeChunks }));
+  await Bun.write(args.chunksJson, JSON.stringify({ entry: args.entryName, chunks, routeChunks, immutableAssets: immutableAssets.sort() }));
 
   // Depfile: same union as the single-outfile path so Zig tracks the full
   // transitive TS closure (onLoad capture + metafile inputs + entry/tsconfig/stamp).

@@ -1396,15 +1396,15 @@ Stable-path rules always win over immutable ones, so a hypothetical fingerprint-
 Apache is last-`Header set`-wins and lists them last (with the catch-all baseline first, so
 the immutable stanzas override it).
 
-Two documented gaps, both safe — they fall back to the revalidating baseline, never to an
-*incorrect* header:
+Shared split chunks and their sibling sourcemaps are listed separately in the manifest's
+`immutableAssets` inventory, so cache rules cover them even without a route-to-chunk mapping.
+Stable entry bundles and their maps remain on the revalidating baseline. Older manifests
+without the inventory still work; unlisted assets revalidate.
 
-- **Shared (non-lazy-route) split chunks and `.map` sourcemaps** are not tracked per-route by
-  the manifests, so they are not exact-listed as immutable.
-- **The fingerprint pattern is a name-shape heuristic**, not proof `asset_fingerprint` is
-  actually on — the emitter runs over a finished output tree with no access to the site
-  config. A non-fingerprinting site with a coincidentally `.<8-hex>[.ext]`-shaped filename
-  would be marked immutable too; both generated artifacts say so and how to drop the line.
+**The fingerprint pattern is a name-shape heuristic**, not proof `asset_fingerprint` is
+actually on — the emitter runs over a finished output tree with no access to the site
+config. A non-fingerprinting site with a coincidentally `.<8-hex>[.ext]`-shaped filename
+would be marked immutable too; both generated artifacts say so and how to drop the line.
 
 ## Code Splitting (lazy routes)
 
