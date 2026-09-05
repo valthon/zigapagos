@@ -147,8 +147,8 @@ not of the binary's actual behavior. Two consequences:
 
 This is the same class of caveat `docs/assets.md`'s [minified-CSS
 section](assets.md#cost) already documents (name-based rather than
-content-based, one level removed), and the remedy is the same: delete
-`.zigapagos-cache/images/` after an in-place AVIF encoder upgrade to force
+content-based, one level removed). Run `cache-prune --max-bytes=0 --apply`
+after an in-place AVIF encoder upgrade to force
 every AVIF variant to re-derive. `quality` changing an AVIF variant's name
 without changing its bytes (see the config table above) is the same
 category of non-guarantee in the other direction — a name move that isn't
@@ -159,22 +159,53 @@ resamples, encodes and writes into the cache before installing. This is what
 makes a full rebuild cheap after the first — the first build pays the
 encode cost once, every later one copies bytes.
 
-**No eviction in v1.** The cache only grows; nothing prunes an entry whose
-source image was since deleted or renamed. A cheap, size-capped sweep is a
-natural follow-up, not yet built. It is always safe to delete the whole
-`.zigapagos-cache/images/` directory — the next build regenerates whatever
-is still referenced (and this is the same remedy the in-place AVIF-upgrade
-caveat above points at).
+**Explicit, bounded cleanup.** From the site directory, preview a 256 MiB
+encoded-file budget, then apply it:
 
-Writes go through a `.tmp.<job-id>.<basename>` sibling plus rename, so a
+```sh
+zigapagos cache-prune --max-bytes=268435456
+zigapagos cache-prune --max-bytes=268435456 --apply
+```
+
+The command removes orphan encoder temporaries and then the oldest encoded
+variants (modification time, filename as tie-breaker) until their logical
+byte total fits the budget. This is not LRU or source-reachability tracking:
+even a still-referenced image can be evicted and regenerated next build.
+Use `--max-bytes=0 --apply` to invalidate all recognized variants after an
+AVIF encoder upgrade. Dry-run deletes nothing but may create `.lock`;
+apply recomputes the selection under the lock rather than replaying a
+previous preview. Missing caches are a successful no-op.
+
+Only regular files matching generated variant/temp names are candidates.
+Unknown entries, symlinks and subdirectories are preserved, not recursed
+into, and excluded from the byte budget. Cache-directory and lock symlinks
+are rejected. Source images and published output are never deleted.
+
+Image builds hold an exclusive `.zigapagos-cache/images/.lock` through the
+cache/install worker barrier, then release it before summary collection.
+A second build prints a waiting notice on stdout before blocking; a prune fails promptly
+if busy. This also prevents separate builds from sharing temporary names.
+The kernel releases the lock on process death; **never unlink `.lock` or
+delete the cache directory while builds run**, since that would permit two
+independent locks. Stop builds using older Zigapagos versions before pruning:
+those versions do not participate in this advisory locking protocol. Pruning
+is explicit, not automatic, and an I/O failure can leave cleanup partial.
+
+Writes go through a `.tmp.v2.<build-nonce>.<job-id>.<width>.<codec>` sibling
+plus rename, so a
 build killed mid-encode can never leave a torn file under a valid cache
 name — but a `.tmp.*` file *can* be left behind by a build that was
 **killed or failed mid-encode**: a `fatal.msg` exit is `noreturn` and skips
 `defer`s, so an AVIF encode that fails partway can leave its temporary PNG
 input (and, less often, a temporary AVIF output that never got renamed)
 behind alongside the WebP path's own tmp file. All of these are inert
-(nothing ever reads a `.tmp.*` file) and safe to delete individually or via
-the whole-directory remedy above.
+(nothing reads a `.tmp.*` file as a cache hit). `cache-prune` removes them
+only while holding the exclusive lock, so an active encoder's interchange
+files cannot be mistaken for abandoned work.
+Each cache acquisition mints a random 128-bit nonce: if an external encoder
+outlives a killed parent, its orphan output cannot share a later build's
+temporary filename. It can only leave another inert temporary, not install
+a valid cache entry. Cleanup also recognizes the older four-ID temp names.
 
 **Add it to `.gitignore`.** `zigapagos init` scaffolds
 `.zigapagos-cache/` into a fresh project's `.gitignore` already; an existing

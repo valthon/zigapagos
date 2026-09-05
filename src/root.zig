@@ -3246,12 +3246,15 @@ pub fn run(
     // the output-DIR level — `derive.run` applies the variant's own
     // `output_path_prefix` to the individual dest path instead, mirroring
     // `Variant.installAssets`.
+    const image_cache = @import("image/cache.zig");
+    var cache: ?image_cache.Cache = null;
+    // Hold through the worker.wait barrier below, not merely scheduling.
+    // Builds serialize their cache phase so later builds reuse completed
+    // entries. Prune uses this same exclusive lock to exclude active jobs.
+    defer if (cache) |c| c.close(io);
     if (build.image_variants.count() > 0) {
-        const cache_dir = build.base_dir.createDirPathOpen(
-            io,
-            ".zigapagos-cache/images",
-            .{},
-        ) catch |err| fatal.dir(".zigapagos-cache/images", err);
+        cache = image_cache.open(io, build.base_dir, true) catch |err|
+            fatal.dir(".zigapagos-cache/images", err);
         var img_it = build.image_variants.iterator();
         while (img_it.next()) |entry| {
             worker.addJob(io, .{ .image_derive = .{
@@ -3259,7 +3262,8 @@ pub fn run(
                 .build = &build,
                 .ref = entry.key_ptr.*,
                 .planned = entry.value_ptr,
-                .cache_dir = cache_dir,
+                .cache_dir = cache.?.dir,
+                .cache_nonce = cache.?.nonce,
                 .output_dir = switch (entry.key_ptr.kind) {
                     .site => site_assets_install_dir,
                     .page => build.mode.disk.output_dir,
@@ -3346,6 +3350,10 @@ pub fn run(
     try installBuildAssets(io, gpa, &build, collect);
 
     worker.wait(); // done installing assets
+    if (cache) |c| {
+        c.close(io);
+        cache = null;
+    }
     progress_install_assets.end();
 
     // Page assets are the ONE category not recorded at its write: they are
@@ -3483,8 +3491,9 @@ fn planImageVariants(io: Io, gpa: Allocator, build: *Build, opts: ImageOptimize)
     // documents ("the hash is taken over the source bytes, not the
     // installed bytes... a change to the minifier itself changes the
     // installed file without changing its name") — the remedy there and
-    // here is the same: deleting `.zigapagos-cache/images/` after an
-    // in-place AVIF encoder upgrade forces every variant to re-derive.
+    // here is cache invalidation: `cache-prune --max-bytes=0 --apply`
+    // after an in-place AVIF encoder upgrade forces every variant to
+    // re-derive while preserving the persistent cache lock inode.
     const avif_encoder_id: u32 = if (opts.avif_encoder) |bin|
         @truncate(std.hash.Wyhash.hash(0, bin))
     else

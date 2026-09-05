@@ -14,6 +14,7 @@ test {
     _ = @import("plan.zig");
     _ = @import("png.zig");
     _ = @import("requests.zig");
+    _ = @import("cache.zig");
 }
 
 test "images: libwebp links and reports a version" {
