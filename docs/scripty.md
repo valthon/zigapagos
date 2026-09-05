@@ -1736,6 +1736,9 @@ an id that doesn't exist will result in a build error.
 Zigapagos does not track ids defined inside of templates so 
 use `unsafeRef` to deep-link to those. 
 
+With `auto_heading_ids` enabled, this includes generated heading slugs:
+`$link.ref('hello-world')` can target `# Hello World`. Missing slugs still fail.
+
 #### `$link.unsafeRef(str) -> anydirective`
 
 Like `ref` but Zigapagos will not perform any id checking.

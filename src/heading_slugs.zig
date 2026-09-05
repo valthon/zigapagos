@@ -14,13 +14,9 @@
 //! (`src/worker.zig`) need zero changes: they already trust `ast.ids` and
 //! `directive.id` regardless of who populated them.
 //!
-//! Known limitation (not fixed here, see `docs/`): `$link.ref('slug')`
-//! still errors, because SuperMD's own `invalid_ref` check runs INSIDE
-//! `Ast.init`, before this pass gets a chance to inject anything. Plain
-//! `[t](#slug)` and cross-page `/page#slug` links take SuperMD's `#`-
-//! shorthand path instead, which is validated later (in `worker.zig`, not
-//! `Ast.init`), so those work. `$link.unsafeRef` is the workaround for the
-//! former.
+//! SuperMD validates `$link.ref` before this pass. After injection we
+//! recheck only those diagnostics against the completed id table; unrelated
+//! syntax errors and genuinely missing references remain errors.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -286,11 +282,76 @@ pub fn apply(gpa: Allocator, ast: *supermd.Ast) Allocator.Error!void {
         }
         try ast.ids.put(arena_alloc, id_owned, ev.node);
     }
+
+    if (ast.errors.len == 0) return;
+    var resolved: std.AutoHashMapUnmanaged(supermd.Range, void) = .empty;
+    var links = supermd.Ast.Iter.init(ast.md.root);
+    defer links.deinit();
+    while (links.next()) |ev| {
+        if (ev.dir != .enter) continue;
+        const d = ev.node.getDirective() orelse continue;
+        if (d.kind != .link) continue;
+        const link = d.kind.link;
+        const source = link.src orelse continue;
+        if (source != .self_page or link.ref_unsafe) continue;
+        const ref = link.ref orelse continue;
+        if (ast.ids.contains(ref)) try resolved.put(scratch, ev.node.range(), {});
+    }
+    // Ast.init owns mutable arena storage behind this read-only public slice.
+    // Compact it in place; the arena, not the shortened slice, owns the bytes.
+    const errors = @constCast(ast.errors);
+    var count: usize = 0;
+    for (ast.errors) |err| {
+        if (err.kind == .invalid_ref and resolved.contains(err.main)) continue;
+        errors[count] = err;
+        count += 1;
+    }
+    ast.errors = errors[0..count];
 }
 
 // ---------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------
+
+test "apply: link.ref accepts generated ids but retains missing refs" {
+    const gpa = std.testing.allocator;
+    var ast = try parseTestAst(gpa,
+        \\# Hello World
+        \\
+        \\[valid]($link.ref('hello-world'))
+        \\
+        \\[missing]($link.ref('absent'))
+        \\
+    );
+    defer ast.deinit(gpa);
+    try std.testing.expectEqual(@as(usize, 2), ast.errors.len);
+    const missing = for (ast.errors) |err| {
+        if (err.main.start.row == 5) break err;
+    } else return error.TestUnexpectedResult;
+    const errors_ptr = ast.errors.ptr;
+    try apply(gpa, &ast);
+    try std.testing.expectEqual(@as(usize, 1), ast.errors.len);
+    try std.testing.expectEqualDeep(missing, ast.errors[0]);
+    try std.testing.expectEqual(errors_ptr, ast.errors.ptr);
+}
+
+test "apply: same-line resolved and missing refs retain distinct ranges" {
+    const gpa = std.testing.allocator;
+    var ast = try parseTestAst(gpa,
+        \\# Hello World
+        \\
+        \\[a]($link.ref('hello-world')) [b]($link.ref('absent'))
+    );
+    defer ast.deinit(gpa);
+    try std.testing.expectEqual(@as(usize, 2), ast.errors.len);
+    // The second link starts later on the same row; row alone cannot identify it.
+    const missing = for (ast.errors) |err| {
+        if (err.main.start.col > 1) break err;
+    } else return error.TestUnexpectedResult;
+    try apply(gpa, &ast);
+    try std.testing.expectEqual(@as(usize, 1), ast.errors.len);
+    try std.testing.expectEqualDeep(missing, ast.errors[0]);
+}
 
 fn parseTestAst(gpa: Allocator, src: []const u8) !supermd.Ast {
     supermd.c.cmark_gfm_core_extensions_ensure_registered();

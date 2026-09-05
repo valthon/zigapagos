@@ -262,6 +262,16 @@ fn writeBuiltin(
     try writeDescription(w, b.description);
     try w.writeAll("\n\n");
 
+    // The fork assigns heading IDs after SuperMD's reference validation.
+    if (comptime flavor == .smd and std.mem.eql(u8, owner, "link") and std.mem.eql(u8, b.name, "ref")) {
+        try w.writeAll(
+            \\With `auto_heading_ids` enabled, this includes generated heading slugs:
+            \\`$link.ref('hello-world')` can target `# Hello World`. Missing slugs still fail.
+            \\
+            \\
+        );
+    }
+
     if (b.examples) |ex| {
         // Examples are Scripty source, so they belong in a fence — which also
         // keeps their `$` tokens out of the rendered page's prose.
