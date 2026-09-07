@@ -86,17 +86,29 @@ pub fn runtimePreloadFor(alloc: std.mem.Allocator, runtime_url: []const u8) ![]u
 /// One failed island SSR render, recorded into the caller-owned
 /// `ProcessOptions.render_errors` sink so the caller can surface it — at .err,
 /// attributed to the page — with the failing component, its route, and the JS
-/// message + source-mapped stack. All string fields are owned by the `arena`
-/// passed to `process` (the caller reads them before that arena is freed).
+/// message + source-mapped stack. Lifetimes differ per field and the caller
+/// must read the whole report before the shortest of them ends: the `arena`
+/// passed to `process` owns `src`, `message` and `stack`; `route` is the
+/// caller's own `page_url` argument, borrowed and never duplicated; `name` is a
+/// comptime `@errorName` slice and outlives everything.
 pub const RenderErrorReport = struct {
     /// The failing island's `src` attribute (e.g. "components/Widget.island.tsx").
     src: []const u8,
     /// The page/route being rendered when it failed (the `page_url`).
     route: []const u8,
-    /// The sidecar's `err.message`.
+    /// The sidecar's `err.message`. EMPTY when the render failed for a reason
+    /// the sidecar never got to describe — a desync, a malformed response, a
+    /// dead subprocess — because those leave `err_out` at its zero value (see
+    /// `sidecar.RenderError`). `name` is the only detail such a failure has, so
+    /// a consumer that formats `message` alone emits an empty record.
     message: []const u8,
     /// The sidecar's `err.stack`, source-mapped when a map is available.
     stack: ?[]const u8,
+    /// `@errorName` of the error `renderer.render` returned. Always populated,
+    /// including for the transport failures that leave `message` empty, so the
+    /// distinction between "the component threw" and "the sidecar died" is not
+    /// lost by the time the caller formats a diagnostic. Static lifetime.
+    name: []const u8,
 };
 
 /// Result of evaluating one content-island `prop-NAME="$expr"` value. The
@@ -984,6 +996,10 @@ fn rewrite(
                     .route = page_url,
                     .message = rerr.message,
                     .stack = rerr.stack,
+                    // Every error, not just SidecarRenderFailed, reaches this
+                    // sink; the non-render ones leave `rerr` zeroed, so the name
+                    // is the only thing that identifies them downstream.
+                    .name = @errorName(err),
                 });
                 switch (on_render_error) {
                     // release/deploy: fail the build (caller sets any_rendering_error).
@@ -3353,6 +3369,47 @@ test "on_render_error=.fail propagates a render error and records the structured
     try std.testing.expectEqualStrings("/booking/", reports.items[0].route);
     try std.testing.expectEqualStrings("boom: undefined is not a function", reports.items[0].message);
     try std.testing.expectEqualStrings("at Widget (Widget.island.tsx:12:7)", reports.items[0].stack.?);
+    try std.testing.expectEqualStrings("SidecarRenderFailed", reports.items[0].name);
+}
+
+/// A renderer that fails the way the Zig↔Bun boundary fails when the sidecar
+/// never gets to describe the error: a desync, a malformed response line, a
+/// component that wrote to stdout, a subprocess that exited mid-render. All of
+/// those return an error with `err_out` untouched, so the report's `message` is
+/// empty and `stack` is null.
+const DesyncingRenderer = struct {
+    pub fn render(_: *@This(), _: RenderArena, _: []const u8, _: []const u8, _: []const u8, _: []const u8, _: ?*sidecar.RenderError) ![]const u8 {
+        return error.SidecarDesync;
+    }
+};
+
+test "a render error the sidecar never described still records the error name" {
+    // Regression: the sink takes a report for EVERY error from `renderer.render`,
+    // not just SidecarRenderFailed. Without `name`, a desync/dead-subprocess
+    // failure reached worker.zig with an empty message and no stack, and the
+    // diagnostic it formatted had no payload at all — the caller had no way to
+    // tell "the component threw" from "the sidecar died".
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = RenderArena.from(&arena_state);
+
+    const input = "<main><island src=\"components/Widget.island.tsx\" client:load :props='{}'></island></main>";
+    var dr: DesyncingRenderer = .{};
+    var reports: std.ArrayListUnmanaged(RenderErrorReport) = .empty;
+    defer reports.deinit(gpa);
+    try std.testing.expectError(error.SidecarDesync, process(gpa, arena, input, "/booking/", &dr, .{
+        .on_render_error = .fail,
+        .render_errors = &reports,
+    }));
+    try std.testing.expectEqual(@as(usize, 1), reports.items.len);
+    try std.testing.expectEqualStrings("components/Widget.island.tsx", reports.items[0].src);
+    try std.testing.expectEqualStrings("/booking/", reports.items[0].route);
+    // The two fields a non-render failure cannot fill...
+    try std.testing.expectEqualStrings("", reports.items[0].message);
+    try std.testing.expect(reports.items[0].stack == null);
+    // ...and the one that identifies it.
+    try std.testing.expectEqualStrings("SidecarDesync", reports.items[0].name);
 }
 
 test "on_render_error=.placeholder emits a visible placeholder, records the error, and keeps rendering (dev)" {

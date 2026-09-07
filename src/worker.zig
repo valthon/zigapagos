@@ -1378,6 +1378,40 @@ fn evalContentIslandProp(
     };
 }
 
+/// Contract 1: format without truncating JS traces, emit synchronously, then
+/// free the message. Keep the historical scoped log verbatim in text mode.
+fn reportIslandError(alloc: Allocator, code: diag.Code, page: []const u8, comptime fmt: []const u8, args: anytype) void {
+    if (diag.format == .text) {
+        log.err(fmt, args);
+        return;
+    }
+    const message = std.fmt.allocPrint(alloc, fmt, args) catch fatal.oom();
+    defer alloc.free(message);
+    diag.emit(.{ .code = code, .severity = .@"error", .file = page, .message = message });
+}
+
+/// The detail text for one failed island SSR.
+///
+/// `RenderErrorReport.message` carries the sidecar's JavaScript `err.message`
+/// only when the sidecar got far enough to report one. Every other failure of
+/// `renderer.render` lands in the same sink with `message` empty and `stack`
+/// null — a protocol desync, a malformed response line, a component that wrote
+/// to stdout, a subprocess that exited mid-render — because those leave
+/// `sidecar.RenderError` at its zero value. Formatting that verbatim emitted a
+/// structured record whose entire payload was ": \n(no stack)", which told an
+/// unattended consumer nothing and dropped the one datum that separates "the
+/// component threw" from "the sidecar died".
+///
+/// Fall back to the Zig error name, which is all such a failure carries. The
+/// reported path is unchanged whenever the sidecar did supply a message, so the
+/// common case stays byte-identical in both text and JSON mode.
+///
+/// Contract 3 (caller-buffer): allocates nothing. The result borrows either the
+/// report's arena-owned message or a static `@errorName` slice.
+fn islandRenderDetail(re: islands.RenderErrorReport) []const u8 {
+    return if (re.message.len > 0) re.message else re.name;
+}
+
 fn renderPage(
     io: Io,
     /// NO_SLOP.md §2.2a contract 4: the per-job arena, reset after every job.
@@ -1617,8 +1651,17 @@ fn renderPage(
             // Suppress the log line for them; everything else (release, dev)
             // keeps the diagnostic verbatim.
             if (!build.island_sidecar_optional) {
-                log.err(
-                    "island rendering error on {s}: the page uses <island> but no island sidecar is configured" ++
+                reportIslandError(
+                    gpa,
+                    .ZP_ISLAND_SIDECAR_MISSING,
+                    page_path,
+                    // Both spellings reach here (the fast-path scan above accepts
+                    // `<island` and `<z-island`), so the message must name both:
+                    // in JSON mode it is a structured, user-facing diagnostic, and
+                    // a content author who wrote `<z-island>` would otherwise be
+                    // told about an element they never used.
+                    "island rendering error on {s}: the page uses <island> (or the content-page" ++
+                        " alias <z-island>) but no island sidecar is configured" ++
                         " — declare the island with `--island=<src>` (needs bun, the sidecar script," ++
                         " and the island source dir)",
                     .{page_path},
@@ -1693,6 +1736,9 @@ fn renderPage(
             .sliced_runtime_url = build.islands_slice.url,
             .sliced_islands = build.islands_slice.islands,
         }) catch |err| {
+            // Never allocate another diagnostic after the island pass ran out
+            // of memory; use the allocation-free global fatal path instead.
+            if (err == error.OutOfMemory) fatal.oom();
             // Release/deploy: surface the real cause, attributed to the page, and
             // fail the build. `render_errors` holds the failing island's detail
             // (the render that aborted the pass); fall back to the bare name only
@@ -1700,17 +1746,23 @@ fn renderPage(
             // markup) that left no report.
             if (content_prop_eval_errors.items.len > 0) {
                 for (content_prop_eval_errors.items) |report| {
-                    log.err(
+                    reportIslandError(
+                        gpa,
+                        .ZP_ISLAND_PROPS,
+                        page_path,
                         "content-island prop evaluation failed on {s}: {s} in '{s}': {s}",
                         .{ page_path, report.src, report.expression, report.message },
                     );
                 }
             } else if (render_errors.items.len == 0) {
-                log.err("island rendering error on {s}: {s}", .{ page_path, @errorName(err) });
+                reportIslandError(gpa, .ZP_ISLAND_RENDER, page_path, "island rendering error on {s}: {s}", .{ page_path, @errorName(err) });
             } else for (render_errors.items) |re| {
-                log.err(
+                reportIslandError(
+                    gpa,
+                    .ZP_ISLAND_SSR,
+                    page_path,
                     "island SSR failed on {s}: {s} (route {s}): {s}\n{s}",
-                    .{ page_path, re.src, re.route, re.message, re.stack orelse "(no stack)" },
+                    .{ page_path, re.src, re.route, islandRenderDetail(re), re.stack orelse "(no stack)" },
                 );
             }
             build.any_rendering_error.store(true, .release);
@@ -1721,9 +1773,12 @@ fn renderPage(
         // CLI runs at .err level) so the author sees the message + stack too,
         // without failing the build.
         for (render_errors.items) |re| {
-            log.err(
+            reportIslandError(
+                gpa,
+                .ZP_ISLAND_SSR,
+                page_path,
                 "island SSR failed on {s}: {s} (route {s}) — rendered a dev placeholder: {s}\n{s}",
-                .{ page_path, re.src, re.route, re.message, re.stack orelse "(no stack)" },
+                .{ page_path, re.src, re.route, islandRenderDetail(re), re.stack orelse "(no stack)" },
             );
         }
         if (build.island_props_check_mode != .off) {

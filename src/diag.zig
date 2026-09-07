@@ -245,6 +245,14 @@ pub const Code = enum {
     ZP_SUPERMD,
     // emitted by: worker.zig renderPage, SuperHTML evaluation failed
     ZP_PAGE_RENDER,
+    // emitted by: worker.zig renderPage, no configured island sidecar
+    ZP_ISLAND_SIDECAR_MISSING,
+    // emitted by: worker.zig renderPage, content-island Scripty props failed
+    ZP_ISLAND_PROPS,
+    // emitted by: worker.zig renderPage, sidecar render failed
+    ZP_ISLAND_SSR,
+    // emitted by: worker.zig renderPage, island pass failed without a report
+    ZP_ISLAND_RENDER,
     // emitted by: fatal.zig msg/usageError, the catch-all for everything not
     // yet promoted to a named code (see docs/diagnostics.md's scope section)
     ZP_FATAL,
@@ -616,6 +624,46 @@ pub fn info(c: Code) Info {
             \\file. The complete SuperHTML diagnostic and evaluation trace
             \\are preserved in `message`, including template locations.
             \\Only the outer code is stable, not SuperHTML's prose or tags.
+            ,
+        },
+        .ZP_ISLAND_SIDECAR_MISSING => .{
+            .summary = "a page uses islands without a configured sidecar",
+            .explanation =
+            \\The content page uses an island but no SSR sidecar is configured.
+            \\Declare the island with --island=<src> and configure Bun, the
+            \\sidecar script and the island source directory. Validate/explain
+            \\deliberately omit the sidecar and suppress this diagnostic.
+            ,
+        },
+        .ZP_ISLAND_PROPS => .{
+            .summary = "a content-island Scripty prop could not be evaluated",
+            .explanation =
+            \\A scripty:props expression failed in the content page context.
+            \\The message identifies the component, expression and cause.
+            \\This is expression evaluation, not the separate tsc props-check
+            \\gate. File identifies the content page; line and col are null.
+            ,
+        },
+        .ZP_ISLAND_SSR => .{
+            .summary = "an island server render failed",
+            .explanation =
+            \\The island sidecar could not render a component. The message
+            \\identifies the component and route and preserves the JavaScript
+            \\message and stack when supplied by the sidecar. When it was not —
+            \\a desync, a malformed response, a subprocess that died — the
+            \\message carries the Zig error name instead and there is no stack.
+            \\File identifies the content page; component stack locations stay
+            \\in the message.
+            \\Disk builds fail; memory builds may retain a dev placeholder.
+            ,
+        },
+        .ZP_ISLAND_RENDER => .{
+            .summary = "the island pass failed before producing a detailed report",
+            .explanation =
+            \\The island pass rejected the rendered page, for example because
+            \\of malformed island markup or props. File identifies the content
+            \\page and message carries the error name; no component or source
+            \\span is invented when the pass did not provide one.
             ,
         },
         .ZP_FATAL => .{
