@@ -90,7 +90,18 @@ grep -q 'no island sidecar is configured' "$WORK/bad.log" \
        fail "the build failed but not with the island-sidecar diagnostic (some other error?)"; }
 grep -q -- '--island=' "$WORK/bad.log" \
   || fail "the diagnostic does not tell the author to declare the island with --island="
-echo "diagnostic names the cause and the fix"
+# Both spellings reach this diagnostic: worker.zig's fast-path scan accepts
+# `<island` and `<z-island` (the content-page alias documented in
+# docs/islands.md), and neither is distinguished by the time the null-sidecar
+# branch runs. So the message must name both -- an author who wrote
+# `<z-island>` inside an `=html` fence must not be told about an element they
+# never used. Under `--format=json` this string ships as a structured,
+# user-facing diagnostic record, which is what makes the wording contractual
+# rather than cosmetic.
+grep -q -- '<z-island' "$WORK/bad.log" \
+  || { echo "--- build output ---"; sed -n '1,20p' "$WORK/bad.log"
+       fail "the diagnostic names only <island>; an author who wrote <z-island> is pointed at an element they never used"; }
+echo "diagnostic names the cause, the fix, and both island spellings"
 
 # --- (3) the failure is attributed to a specific page -------------------------
 # Not "no page containing <island> exists on disk": the render pass reports the

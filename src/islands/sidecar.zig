@@ -134,8 +134,69 @@ pub const Sidecar = struct {
         var wbuf: [4096]u8 = undefined;
         var fw = self.child.stdin.?.writer(self.io, &wbuf);
         const w = &fw.interface;
-        try w.writeAll(bytes);
-        try w.flush();
+        // The WRITE side is how a dead sidecar is observed by everyone except
+        // the one worker that happened to be reading when it died: that worker
+        // gets EOF (`readLine` → SidecarExited) and every other worker then
+        // writes its request into a pipe with no reader. `std.Io.Writer`
+        // collapses that to `error.WriteFailed` and keeps the real cause in
+        // `fw.err`, so on a site with N island pages the diagnostics read
+        // "SidecarExited" once and "WriteFailed" N-1 times — a name that says
+        // nothing, for the same failure. Recover the cause and give them all
+        // the same accurate one. Any other write failure keeps its own error.
+        w.writeAll(bytes) catch |err| return self.writeFailureCause(&fw, err);
+        w.flush() catch |err| return self.writeFailureCause(&fw, err);
+    }
+
+    /// Translate a buffered-writer failure back into the underlying cause when
+    /// that cause is a closed pipe, i.e. a sidecar that is gone. Contract 3
+    /// (caller-buffer): allocates nothing.
+    fn writeFailureCause(_: *Sidecar, fw: *const std.Io.File.Writer, err: anytype) anyerror {
+        if (err == error.WriteFailed) if (fw.err) |cause| {
+            if (cause == error.BrokenPipe) return error.SidecarExited;
+        };
+        return err;
+    }
+
+    /// Why a response line failed to parse, as an error a build consumer can act
+    /// on. Called only after `parseFromSliceLeaky` has already failed, so the
+    /// second parse costs nothing on the success path.
+    ///
+    /// The two causes need different names because they point at different
+    /// files. A line that is not a protocol frame means the NDJSON channel is
+    /// corrupt — an island wrote to stdout, or the process is emitting
+    /// something other than frames — which is `SidecarBadResponse`. A line that
+    /// IS a frame but does not fit the response struct means a value the
+    /// author's own module put on the wire is the wrong type, which is
+    /// `SidecarBadResponseShape`. Collapsing both into the first name tells an
+    /// author with a bad `spa` export to go debug the sidecar.
+    ///
+    /// "Is it a frame" is NOT the same question as "is it JSON", and answering
+    /// the easier one gets the common case backwards: `console.log(JSON.
+    /// stringify(x))` is the standard JS debugging move, it emits perfectly
+    /// valid JSON, and it is channel corruption. Every frame
+    /// runtime/sidecar/render.ts writes is an object carrying the request `id`
+    /// (it is the protocol's only integrity check — see the id comparison in
+    /// `renderPrefixed`), so require that: a scalar, an array, or an object
+    /// with no `id` came from somewhere other than the protocol.
+    ///
+    /// Contract 4 (arena-scoped, NO_SLOP.md §2.2a): the throwaway `Value` tree
+    /// is parsed into the caller's `RenderArena` and never freed here. It is an
+    /// interlinked graph with no owner, it is dead the moment this function
+    /// returns an error name, and it dies with the page render that made the
+    /// request — the same reason `props.resolveToJson` is arena-scoped. Taking
+    /// `RenderArena` rather than an `Allocator` is what stops a GPA reaching it.
+    fn classifyResponseFailure(arena: RenderArena, line: []const u8) anyerror {
+        const value = std.json.parseFromSliceLeaky(std.json.Value, arena.a, line, .{
+            // A repeated key still leaves a frame; `id` below is what decides.
+            // The default rejects it, which would call a frame "not JSON".
+            .duplicate_field_behavior = .use_last,
+        }) catch return error.SidecarBadResponse;
+        const obj = switch (value) {
+            .object => |o| o,
+            else => return error.SidecarBadResponse,
+        };
+        if (!obj.contains("id")) return error.SidecarBadResponse;
+        return error.SidecarBadResponseShape;
     }
 
     /// Read one newline-delimited line from the child's stdout (unbounded:
@@ -145,7 +206,16 @@ pub const Sidecar = struct {
         var fr = self.child.stdout.?.reader(self.io, &rbuf);
         const r = &fr.interface;
         var line_aw: std.Io.Writer.Allocating = .init(arena.a);
-        _ = try r.streamDelimiter(&line_aw.writer, '\n');
+        // A closed pipe means the Bun subprocess is gone — it crashed, was
+        // killed, or an island called `process.exit`. `EndOfStream` names the
+        // reader's state, not that; and now that the caller's error name is what
+        // a `--format=json` consumer reads when the sidecar supplied no message
+        // (see islands/pass.zig's RenderErrorReport.name), the wrong noun is a
+        // wrong diagnostic rather than an internal detail. Say the sidecar exited.
+        _ = r.streamDelimiter(&line_aw.writer, '\n') catch |err| switch (err) {
+            error.EndOfStream => return error.SidecarExited,
+            else => |e| return e,
+        };
         return line_aw.written();
     }
 
@@ -295,7 +365,14 @@ pub const Sidecar = struct {
             // available) — carried so the build can point at source lines.
             stack: ?[]const u8 = null,
         };
-        const resp = try std.json.parseFromSliceLeaky(Resp, arena.a, line, .{ .ignore_unknown_fields = true });
+        // std.json's own error name is not a safe thing to hand a user: it says
+        // `SyntaxError`, which reads as a syntax error in the AUTHOR'S component,
+        // and it is now user-facing because this error's name is what a
+        // `--format=json` island diagnostic carries when the sidecar supplied no
+        // message (islands/pass.zig's RenderErrorReport.name). Diagnose the two
+        // causes apart instead — see `classifyResponseFailure`.
+        const resp = std.json.parseFromSliceLeaky(Resp, arena.a, line, .{ .ignore_unknown_fields = true }) catch
+            return classifyResponseFailure(arena, line);
         // The correlation id is the protocol's only integrity check: a stray
         // non-JSON line (e.g. a console.log from island code in dev) desyncs the
         // pipe and every later read is off by one. A mismatch means this line
@@ -344,7 +421,13 @@ pub const Sidecar = struct {
             routes: ?[]const RouteMeta = null,
             @"error": ?[]const u8 = null,
         };
-        const resp = try std.json.parseFromSliceLeaky(Resp, arena.a, line, .{ .ignore_unknown_fields = true });
+        // Same reason as `renderPrefixed`. This site needs the distinction more,
+        // not less: `describe` puts the module's own `spa` export straight on the
+        // wire (runtime/sidecar/render.ts's `JSON.stringify({ id, spa, routes })`),
+        // so `export const spa = { base: 42 }` is well-formed JSON that simply
+        // does not match `Resp` — the author's mistake, not a broken sidecar.
+        const resp = std.json.parseFromSliceLeaky(Resp, arena.a, line, .{ .ignore_unknown_fields = true }) catch
+            return classifyResponseFailure(arena, line);
         // A desynced pipe would parse a stale render response (no `spa`/`routes`)
         // as an all-null describe success → silently empty SPA metadata. Reject a
         // mismatched id instead of trusting the wrong line (AUD-020).

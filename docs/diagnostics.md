@@ -59,7 +59,6 @@ things legitimately write to the same stream outside this mechanism:
 
 - The Bun sidecar (SSR, CSS minification) inherits stderr directly and prints
   its own diagnostics on failure.
-- Island-render errors and sidecar output remain prose — see [Coverage](#coverage).
 - Two scan-time advisories in `src/root.zig` are prose: the site-wide-artifact
   alias warning (`aliases: ["404.html"]` on a non-root page) and the
   sectionless-directory warning (a content directory with pages but no
@@ -136,11 +135,34 @@ Read the template locations in `message` for human debugging. Alternative
 and paginated render jobs can report the same content file more than once.
 Text mode and the dev-server error overlay keep the original trace.
 
+Island-pass failures also emit structured records:
+
+| Code | Cause and attribution |
+| --- | --- |
+| `ZP_ISLAND_SSR` | A sidecar render failed. The message preserves the component `src`, route, JavaScript message and full stack when supplied by the sidecar. A failure the sidecar never described — a desync, a malformed response, a subprocess that died mid-render — carries the Zig error name in place of the JavaScript message, and no stack. |
+| `ZP_ISLAND_PROPS` | A content-island `scripty:props` expression failed. The message identifies the component, expression and evaluation error. |
+| `ZP_ISLAND_SIDECAR_MISSING` | A page uses islands without a configured sidecar. The message describes the required configuration. `validate`/`explain` deliberately suppress this check. |
+| `ZP_ISLAND_RENDER` | Another island-pass failure, such as malformed markup or props, without a detailed report. The message carries the error name. |
+
+For these records, `file` is the content page and `line`/`col` are null:
+component stack coordinates must not be attributed to the page. Component,
+route and expression details stay in `message`; the diagnostic wire schema
+is unchanged. No component is invented for errors that supply none. The
+whole record, including long multiline traces, is emitted under the stderr
+lock. Disk builds still fail; memory builds retain the existing placeholder
+policy. Text-mode messages are unchanged except for the two the promotion to
+a user-facing record made inaccurate: the missing-sidecar message now names
+both the `<island>` and `<z-island>` spellings that reach it, and a render
+failure the sidecar never described now carries the Zig error name rather
+than an empty message. Both changes apply to text mode too, so the two modes
+stay in parity. A disk island pass stops at its first error, so these records
+are not an exhaustive inventory of every broken island on a page.
+
 What stays prose, and why:
 
 | Source | Why |
 | --- | --- |
-| Island-render errors (`src/worker.zig`, SSR/props evaluation) | These use the island pass's reporting path, separate from SuperHTML evaluation. |
+| Direct Bun sidecar output | Subprocess stderr is inherited; a component's own console output is not converted to diagnostic records. |
 | The island props-check gate (`src/islands/props_check.zig`) | Its output is `tsc`'s own, passed through verbatim. |
 | `fatal.helpError()`'s usage menu | No one-line NDJSON shape for a command reference — see above. |
 | The two scan-time advisories | Advisory-only multi-line `note:` blocks; see the consumer rule above. |
