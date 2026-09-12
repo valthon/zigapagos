@@ -127,7 +127,7 @@ jobs:
           # ci.yml uses.
           fetch-depth: 0
 
-      - name: Setup toolchain (mise — zig 0.16.0 + bun 1.3.14)
+      - name: Setup toolchain (mise — zig 0.16.0 + bun 1.4.2)
         uses: jdx/mise-action@v4
         with:
           cache: true
@@ -141,7 +141,7 @@ jobs:
       # Keep these in lockstep with mise.toml.
       - name: Pin tool versions globally (shims must resolve outside the repo)
         run: |
-          mise use -g zig@0.16.0 bun@1.3.14
+          mise use -g zig@0.16.0 bun@1.4.2
           ( cd "$(mktemp -d)" && bun --version && zig version )
 
       - name: Get Zig version
