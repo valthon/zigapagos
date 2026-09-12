@@ -5,8 +5,8 @@
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .scripty = .{
-            .url = "git+https://github.com/kristoff-it/scripty#9c1e5903acd2a591f87f577b2ea08895e7168b9d",
-            .hash = "scripty-0.1.0-LKK5OzcUAQDVndpJNPAm4eC_-G0HaXUdQejzb9X6C2vq",
+            .url = "git+https://github.com/kristoff-it/scripty#77f2eac9d31ea9b8eb9eec494b2c0a318bfe4ec6",
+            .hash = "scripty-0.1.0-LKK5O6wTAQC9Z751KlmpGsHLadbbNYXA7vrdGesxSZl-",
         },
         .tracy = .{
             .url = "git+https://github.com/kristoff-it/tracy#67d2d89e351048c76fc6d161e0ac09d8a831dc60",
@@ -21,25 +21,25 @@
             .hash = "wuffs-0.4.0-alpha.9+3837.20240914-3CHJgRMKAAAuMytwtlaBGjTMPVuDQSnCE3qMGg2NDTfr",
         },
         .frameworks = .{
-            .url = "git+https://code.hexops.org/hexops/xcode-frameworks.git#8a1cfb373587ea4c9bb1468b7c986462d8d4e10e",
-            .hash = "N-V-__8AALShqgXkvqYU6f__FrA22SMWmi2TXCJjNTO1m8XJ",
+            .url = "git+https://code.hexops.org/hexops/xcode-frameworks.git#62f660e82e4eddb5007cb4cf06a6d3d31237f05e",
+            .hash = "N-V-__8AAMikhQnOIqoH0uy5aepJKs8Zy0VqznnW3n94VSZN",
             .lazy = true,
         },
         .superhtml = .{
-            .url = "git+https://github.com/kristoff-it/superhtml#5ca7066c50b10c459aa6d1ad011bc37124c2d354",
-            .hash = "superhtml-0.6.2-Y7MdPCZxJADwkXTXHmwQ0AKWKgbmQjJBnT7QTVqaX9Vp",
+            .url = "git+https://github.com/kristoff-it/superhtml#39dc8b3681f14f28fe29ceeadae1fbea54715689",
+            .hash = "superhtml-0.6.2-Y7MdPPxxJADIaKZNpvhc_ks3HIaienrTtii-AYCibeAb",
         },
         .zeit = .{
-            .url = "git+https://github.com/rockorager/zeit?ref=0.16#fdaad9c5884f41a3640c768f4f9fc116e763c321",
-            .hash = "zeit-0.6.0-5I6bk3K6AgCFnc_9CN7KJjaeNJz1VuwP4DA7Gs9vgxuz",
+            .url = "git+https://github.com/rockorager/zeit?ref=0.16#1b1c95b2282c3003bb79ff6f44d3021ddcb279c1",
+            .hash = "zeit-0.6.0-5I6bk7q6AgBdMJxze3D4l9ylQhkviQ_BX9FigDt13MFn",
         },
         .flow_syntax = .{
-            .url = "git+https://github.com/neurocyte/flow-syntax?ref=zig-0.16#6d1772a8d51729ad0488fc4d556ec7f87168bfdb",
-            .hash = "flow_syntax-0.7.2-X8jOoYiMAQAaepRcrHQMb57tdPzzGt14ydaJbSNuWYTn",
+            .url = "git+https://github.com/neurocyte/flow-syntax?ref=zig-0.16#42d51f7f5aebcc4686ef10a7b92aaa4a2788d766",
+            .hash = "flow_syntax-0.7.2-X8jOoR2XAQB8znsXciEch_MMZgMsQTNvxOPLcQwiy5vU",
         },
         .ziggy = .{
-            .url = "git+https://github.com/kristoff-it/ziggy?ref=old#0fdd57cbb052e7aa5930b3ed960ea3450f9dc2b0",
-            .hash = "ziggy-0.1.0-kTg8v15ABgBGDedRmKfxGUWBxSxMBnEfYjazvZKVVrzP",
+            .url = "git+https://github.com/kristoff-it/ziggy?ref=old#fa265838bb38954e9e6500da2a72bb808bf274ce",
+            .hash = "ziggy-0.1.0-kTg8v15ABgBo1tIbjfvRDHTPJyFg_qho1LwEZ4m_pR8i",
         },
         .supermd = .{
             .url = "git+https://github.com/kristoff-it/supermd#4132146450f1ecbaa3fbd75cfeabccd754d6e716",
