@@ -1,0 +1,7 @@
+{
+  "name": "styling-site",
+  "private": true,
+  "type": "module",
+  "dependencies": { "@z/runtime": "file:../../runtime" },
+  "devDependencies": { "@tailwindcss/cli": "4.3.3", "tailwindcss": "4.3.3" }
+}

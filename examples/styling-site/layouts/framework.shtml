@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title :text="$page.title"></title>
+    <link rel="stylesheet" href="$site.asset('generated/tailwind.css').link()">
+</head>
+<body>
+    <nav aria-label="Examples"><a href="/">Plain CSS</a> · <a href="/framework/">Compiled Tailwind</a> · <a href="/components/">Design system</a></nav>
+    <main>
+        <h1 :text="$page.title"></h1>
+        <section class="rounded-xl bg-teal-100 p-6" data-framework><h2 class="text-2xl font-bold">CSS built before release</h2><p>Utility classes become a static stylesheet. No browser compiler.</p></section>
+        <div :html="$page.content()"></div>
+    </main>
+</body>
+</html>

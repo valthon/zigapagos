@@ -77,6 +77,13 @@
     "description": "How a file under assets_dir_path reaches the output tree: refcounted installs, the two switches that change that, and why an unreferenced asset is dropped."
   },
   {
+    "canonical": "docs/styling.md",
+    "mirror": "styling.smd",
+    "slug": "styling",
+    "title": "Styling and components",
+    "description": "Plain CSS, compiled frameworks, asset dependencies, and reusable Preact components."
+  },
+  {
     "canonical": "docs/images.md",
     "mirror": "images.smd",
     "slug": "images",

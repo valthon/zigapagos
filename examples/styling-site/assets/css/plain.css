@@ -1,0 +1,5 @@
+@import "./tokens.css";
+body { max-width: 65ch; margin: 2rem auto; padding: 0 1rem; font: 18px/1.6 system-ui, sans-serif; }
+nav { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+a { color: var(--brand); }
+.plain-proof { border-left: 4px solid var(--brand); padding-left: 1rem; }

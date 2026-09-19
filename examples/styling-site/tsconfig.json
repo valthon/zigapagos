@@ -1,0 +1,8 @@
+{
+  "compilerOptions": {
+    "jsx": "react-jsx", "jsxImportSource": "@z/runtime",
+    "module": "ESNext", "moduleResolution": "bundler", "target": "ESNext",
+    "strict": true, "skipLibCheck": true, "noEmit": true, "allowImportingTsExtensions": true
+  },
+  "include": ["components", "design-system"]
+}

@@ -246,3 +246,9 @@ this exists to catch, and that always moves the hash.
 
 Proofs: `tests/assets/fingerprint.sh`, `tests/assets/pruned-report.sh`,
 `tests/spa/head-fingerprint.sh`.
+
+## Styling choices
+
+See [Styling and reusable components](styling.md) for plain CSS, externally
+compiled Tailwind, and a reusable Preact component example, including explicit
+CSS import, image, and font dependencies.

@@ -64,10 +64,11 @@ The [application guide](building-apps.md) covers styling, deployment, and pairin
   alongside the sample site: one semantic page and ordinary stylesheet, with no
   demo blog, imposed visual system, or application JavaScript. Verify the built
   output and retain useful project instructions without requiring an agent.
-- [ ] **Styling and component compatibility.** Exercise plain CSS, an externally
-  compiled CSS framework, and a reusable design-system component through release
-  and browser checks. Document asset/font/import handling and Preact boundaries.
-  Avoid introducing another styling language or runtime solely for integration.
+- [x] **Styling and component compatibility example.** `examples/styling-site`
+  verifies plain CSS, externally compiled Tailwind 4.3.3, and a local reusable
+  Preact component through release and browser checks. Imports, font/image
+  loading, and static routes without scripts are tested. This establishes these
+  integration patterns, not arbitrary React libraries or CSS-in-JS extraction.
 
 ### P2 — Build complete applications on that foundation
 
