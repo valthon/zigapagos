@@ -9,10 +9,17 @@ const log = std.log.scoped(.init);
 
 pub fn init(io: Io, gpa: Allocator, args: []const []const u8) bool {
     for (args) |a| if (std.mem.eql(u8, a, "--from-astro")) {
+        for (args) |option| if (std.mem.eql(u8, option, "--minimal")) {
+            fatal.usageError("error: `init --minimal` cannot be combined with `--from-astro`\n", .{});
+        };
         return @import("init_from_astro.zig").run(io, gpa, args);
     };
 
     const cmd: Command = .parse(args);
+    if (cmd.minimal and cmd.multilingual) fatal.usageError(
+        "error: `init --minimal` cannot be combined with `--multilingual`\n",
+        .{},
+    );
     if (cmd.multilingual) fatal.usageError(
         "error: `init --multilingual` is not implemented yet\n",
         .{},
@@ -30,16 +37,24 @@ pub fn init(io: Io, gpa: Allocator, args: []const []const u8) bool {
         },
         .{
             .path = "zigapagos.ziggy",
-            .src = @embedFile("init/zigapagos.ziggy"),
+            .src = if (cmd.minimal) @embedFile("init/minimal/zigapagos.ziggy") else @embedFile("init/zigapagos.ziggy"),
         },
         .{
             // Plain `init` previously wrote no `.gitignore` at all, so
             // `.zigapagos-cache/` (the image-optimization derive cache, #132)
             // was untracked-but-unignored on a fresh scaffold. Reuse
-            // `init_from_astro`'s template rather than duplicating it.
+            // `init_from_astro`'s template and add this command's default
+            // output directory, `public/`.
             .path = ".gitignore",
-            .src = @import("init_from_astro.zig").emitGitignore(),
+            .src = "public/\n" ++ comptime @import("init_from_astro.zig").emitGitignore(),
         },
+    };
+    const minimal_files = [_]File{
+        .{ .path = "content/index.smd", .src = @embedFile("init/minimal/index.smd") },
+        .{ .path = "layouts/page.shtml", .src = @embedFile("init/minimal/page.shtml") },
+        .{ .path = "assets/style.css", .src = @embedFile("init/minimal/style.css") },
+    };
+    const sample_files = [_]File{
         .{
             .path = "content/index.smd",
             .src = @embedFile("init/content/index.smd"),
@@ -147,30 +162,35 @@ pub fn init(io: Io, gpa: Allocator, args: []const []const u8) bool {
         },
     };
 
-    for (files) |file| {
-        const dirname = std.fs.path.dirnamePosix(file.path);
-        const basename = std.fs.path.basenamePosix(file.path);
+    for ([_][]const File{ &files, if (cmd.minimal) &minimal_files else &sample_files }) |group| {
+        for (group) |file| {
+            const dirname = std.fs.path.dirnamePosix(file.path);
+            const basename = std.fs.path.basenamePosix(file.path);
 
-        const base_dir = if (dirname) |dn|
-            Io.Dir.cwd().createDirPathOpen(io, dn, .{}) catch |err| fatal.dir(dn, err)
-        else
-            Io.Dir.cwd();
+            const base_dir = if (dirname) |dn|
+                Io.Dir.cwd().createDirPathOpen(io, dn, .{}) catch |err| fatal.dir(dn, err)
+            else
+                Io.Dir.cwd();
 
-        const f = base_dir.createFile(io, basename, .{
-            .exclusive = true,
-        }) catch |err| switch (err) {
-            else => fatal.file(basename, err),
-            error.PathAlreadyExists => {
-                std.debug.print(
-                    "WARNING: '{s}' already exists, skipping.\n",
-                    .{file.path},
-                );
-                continue;
-            },
-        };
-        std.debug.print("Created: {s}\n", .{file.path});
-        var file_writer = f.writer(io, &.{});
-        file_writer.interface.writeAll(file.src) catch |err| fatal.file(file.path, err);
+            defer if (dirname != null) base_dir.close(io);
+
+            const f = base_dir.createFile(io, basename, .{
+                .exclusive = true,
+            }) catch |err| switch (err) {
+                else => fatal.file(basename, err),
+                error.PathAlreadyExists => {
+                    std.debug.print(
+                        "WARNING: '{s}' already exists, skipping.\n",
+                        .{file.path},
+                    );
+                    continue;
+                },
+            };
+            defer f.close(io);
+            std.debug.print("Created: {s}\n", .{file.path});
+            var file_writer = f.writer(io, &.{});
+            file_writer.interface.writeAll(file.src) catch |err| fatal.file(file.path, err);
+        }
     }
 
     std.debug.print(
@@ -189,18 +209,21 @@ pub fn init(io: Io, gpa: Allocator, args: []const []const u8) bool {
 
 const Command = struct {
     multilingual: bool,
+    minimal: bool,
     fn parse(args: []const []const u8) Command {
-        var multilingual: ?bool = null;
+        var multilingual = false;
+        var minimal = false;
         for (args) |a| {
             if (std.mem.eql(u8, a, "--multilingual")) {
                 multilingual = true;
-            }
-
-            if (std.mem.eql(u8, a, "-h") or std.mem.eql(u8, a, "--help")) {
+            } else if (std.mem.eql(u8, a, "--minimal")) {
+                minimal = true;
+            } else if (std.mem.eql(u8, a, "-h") or std.mem.eql(u8, a, "--help")) {
                 fatal.usage(
                     \\Usage: zigapagos init [OPTIONS]
                     \\
                     \\Command specific options:
+                    \\  --minimal        Start with one page, an HTML layout, and plain CSS
                     \\  --multilingual   Setup a sample multilingual website
                     \\                   (not implemented yet)
                     \\
@@ -209,9 +232,11 @@ const Command = struct {
                     \\
                     \\
                 , .{});
+            } else {
+                fatal.usageError("error: unknown init option: {s}\n", .{a});
             }
         }
 
-        return .{ .multilingual = multilingual orelse false };
+        return .{ .multilingual = multilingual, .minimal = minimal };
     }
 };

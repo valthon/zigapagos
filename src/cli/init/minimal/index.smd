@@ -1,0 +1,11 @@
+---
+.title = "Make something yours",
+.layout = "page.shtml",
+---
+
+Start with this page. Edit `content/index.smd` for the words,
+`layouts/page.shtml` for the HTML, and `assets/style.css` for the styles.
+
+Build with `zigapagos release`. Deploy the files in `public/` to a static host.
+
+Add components, a CSS framework, or a design system when your project needs them.

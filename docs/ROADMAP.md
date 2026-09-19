@@ -54,7 +54,7 @@ The [application guide](building-apps.md) covers styling, deployment, and pairin
 
 ### P1 — Keep authoring close to the web
 
-- [ ] **Minimal HTML/CSS starting point.** Offer an explicit minimal scaffold
+- [x] **Minimal HTML/CSS starting point.** `init --minimal` offers a minimal scaffold
   alongside the sample site: one semantic page and ordinary stylesheet, with no
   demo blog, imposed visual system, or application JavaScript. Verify the built
   output and retain useful project instructions without requiring an agent.

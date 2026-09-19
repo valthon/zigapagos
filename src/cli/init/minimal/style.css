@@ -1,0 +1,25 @@
+/* Plain CSS: replace or extend it with your own styles or design system. */
+:root {
+    color-scheme: light dark;
+    font-family: system-ui, sans-serif;
+    line-height: 1.6;
+}
+
+body {
+    max-width: 65ch;
+    margin: 0 auto;
+    padding: 2rem 1rem;
+    overflow-wrap: break-word;
+}
+
+main {
+    margin-top: 3rem;
+}
+
+h1 {
+    line-height: 1.2;
+}
+
+code {
+    font-size: 0.9em;
+}

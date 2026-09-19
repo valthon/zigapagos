@@ -7,7 +7,8 @@
 
 ## Choose your starting point
 
-This walkthrough starts with the content-site scaffold that `init` ships today.
+This walkthrough starts with `init --minimal`: one content page, one HTML
+layout, and plain CSS. It ships no JavaScript, fonts, or demo dependencies.
 For an application, add [native SPA routes]($link.page("docs/spa")); for an
 integrated backend, follow [Building applications]($link.page("docs/building-apps")).
 The same commands work for direct development and coding agents. No AI account
@@ -22,8 +23,13 @@ The shortest path is npm, which brings everything a site can need in one
 install:
 
 ```sh
-npx zigapagos init
+npx zigapagos init --minimal
 ```
+
+`npx` runs the scaffold in your current directory; start in an empty project
+directory. It does not install a global command. If you use this option,
+prefix the subsequent `zigapagos` commands below with `npx` too (for example,
+`npx zigapagos release`), and skip the Generate a site step.
 
 That pulls `@zigapagos/cli`, which ships the binary, the `@z/runtime` sources,
 the Bun sidecar, and Bun and ZigBase as optional dependencies. It needs Node 18
@@ -42,10 +48,18 @@ the npm install is the way to get both. The full rule, per command, is in
 
 ```sh
 mkdir my-site && cd my-site
-zigapagos init
+zigapagos init --minimal
 ```
 
-`init` writes a complete sample site: a homepage, an about page, a blog section,
+Edit `content/index.smd`, `layouts/page.shtml`, and `assets/style.css`. The
+layout uses ordinary HTML with a few SuperHTML attributes to insert the page
+title, content, and asset URL. Start with the included CSS or replace it with
+your own styles, CSS framework, or design system. No framework is required.
+Generated `AGENTS.md` instructions are available if you use a coding agent;
+the same commands work directly in your terminal.
+
+For a complete content-site example, use `zigapagos init` without `--minimal`.
+That writes a sample site: a homepage, an about page, a blog section,
 a devlog, the layouts that render them, and the assets they reference. It is
 worth reading before deleting — the sample copy demonstrates SuperMD syntax you
 will otherwise have to look up.
@@ -82,6 +96,17 @@ The page in your browser refreshes itself.
 
 Run `zigapagos` with no command and you get the help menu, not a server; every
 command is explicit.
+
+## Build and deploy
+
+```sh
+zigapagos release
+zigapagos doctor public --strict
+```
+
+Set `.host_url` in `zigapagos.ziggy` to your production origin before
+deploying. Upload the contents of `public/` to a static host. The minimal
+starter needs no application server or client runtime.
 
 ## Add an island
 
