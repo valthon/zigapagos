@@ -98,6 +98,13 @@
     "description": "The --format=json NDJSON diagnostic stream: the wire schema, which fields are a stability guarantee, and how to consume it safely."
   },
   {
+    "canonical": "docs/output-inspection.md",
+    "mirror": "output-inspection.smd",
+    "slug": "output-inspection",
+    "title": "Output inspection",
+    "description": "Inspect emitted HTML, CSS, and JavaScript raw bytes, page references, and exact aggregate byte budgets."
+  },
+  {
     "canonical": "docs/observability.md",
     "mirror": "observability.smd",
     "slug": "observability",

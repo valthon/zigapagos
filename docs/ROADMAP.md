@@ -36,10 +36,14 @@ The [application guide](building-apps.md) covers styling, deployment, and pairin
   including root and subpath hosting, SPA deep links, CSP, and cache behavior
   across a release. Test with and without ZigBase; documented host configuration
   must be sufficient without a production frontend toolchain.
-- [ ] **Inspect and budget browser output.** Report emitted HTML/CSS/JS and the
-  scripts a route references. Make byte metrics and their limits explicit (raw
-  bytes versus compressed transfer; initial versus lazy loading). Add opt-in
-  budgets and prove a regression fails them. Preserve pages with no runtime JS.
+- [x] **Inspect and budget emitted output.** `inspect-output` inventories raw
+  HTML/CSS/JS file bytes, lists HTML script/island/modulepreload references, and
+  enforces opt-in aggregate byte budgets. Regression fixtures cover one-byte
+  overruns and zero-JS pages. [Measurement boundaries](output-inspection.md)
+  distinguish all emitted files from actual browser transfers.
+- [ ] **Measure route loading cost.** Resolve local references, import maps, and
+  module dependencies; distinguish initial and lazy graphs, compressed transfer,
+  and external resources without treating unknown sizes as zero.
 
 ### P1 — Shorten production builds without weakening checks
 

@@ -190,6 +190,10 @@
             </ctx>
           </li>
           <li>
+            <ctx :if="$page.custom.get('slug').eql('output-inspection')"><a aria-current="page" href="$site.page('docs/output-inspection').link()">Output inspection</a></ctx>
+            <ctx :if="$page.custom.get('slug').eql('output-inspection').not()"><a href="$site.page('docs/output-inspection').link()">Output inspection</a></ctx>
+          </li>
+          <li>
             <ctx :if="$page.custom.get('slug').eql('diagnostics')">
               <a aria-current="page" href="$site.page('docs/diagnostics').link()">Machine-readable diagnostics</a>
             </ctx>

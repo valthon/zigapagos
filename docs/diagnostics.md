@@ -25,7 +25,8 @@ zigapagos release --format=xml
 ```
 
 `--format` is accepted by `release` and `validate` (build diagnostics), plus
-`doctor` (its own finding stream on stdout — see below). `release` and
+`doctor` (its own finding stream on stdout — see below) and
+[`inspect-output`](output-inspection.md) (its own inventory stream on stdout). `release` and
 `validate` share one stream and schema — `validate` covers the release
 build's pre-SSR subset, see `zigapagos validate --help` for exactly what that
 excludes. It is not a flag `dev` recognises: `dev` re-runs a rebuild command
