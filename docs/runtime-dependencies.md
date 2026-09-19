@@ -84,6 +84,8 @@ want a content-only build on a machine with no Bun.
 
 Three further pieces of `release` are Bun-driven and each is opt-in:
 
+- `--css-minify` — minifies site CSS in one process using the bundled runtime.
+  Requires runtime discovery and Bun; see [assets](assets.md#production-css-minification).
 - `--css-minify-driver=PATH` — minifies `.css` site assets. Omit it and CSS is
   copied verbatim, which is what `dev`'s default rebuild does.
 - `--island-props-check=warn|error` — runs `bun x tsc` over generated

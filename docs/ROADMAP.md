@@ -43,10 +43,11 @@ The [application guide](building-apps.md) covers styling, deployment, and pairin
 
 ### P1 — Shorten production builds without weakening checks
 
-- [ ] **Batch stylesheet minification.** Amortize Bun startup across staged CSS
-  assets while preserving each stylesheet's URLs, imports, output path, and
-  error behavior. Keep custom driver compatibility. Prove output equivalence
-  and process-count reduction; record reproducible multi-stylesheet timings.
+- [x] **Batch stylesheet minification.** `release --css-minify` uses the bundled
+  driver in one Bun process, preserving independent stylesheet URLs/imports,
+  installed paths, and failure behavior. Legacy custom drivers remain supported.
+  Byte parity and process-count reduction have release regression coverage;
+  [assets](assets.md) records the reproducible, isolated CSS-phase benchmark.
 - [ ] **Measure and remove repeated build work.** Publish repeatable content,
   islands, and SPA build fixtures with cold/warm conditions and tool versions.
   Optimize measured bottlenecks; any cache must demonstrate correct invalidation

@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
-import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 
 const SCRIPT = join(import.meta.dir, "minify-css.ts");
 
@@ -83,4 +83,37 @@ test("fails (non-zero) on broken CSS instead of writing output", () => {
 test("usage error (exit 2) when args are missing", () => {
   const { code } = run([]);
   expect(code).toBe(2);
+});
+
+test("batch matches independent builds, including duplicate basenames and escaped paths", () => {
+  const dir = tmp();
+  const pairs = ["one/theme.css", "two/theme.css", 'quote" and space.css', "empty.css"].map((name, i) => {
+    const input = join(dir, name);
+    const output = join(dir, "batch", name);
+    const legacy = join(dir, "legacy", name);
+    mkdirSync(dirname(input), { recursive: true });
+    writeFileSync(input, i === 3 ? "" : `@import "../reset.css";\n@layer theme { .item-${i} { --color: red; color: var(--color); background: url('/image ${i}.png'); margin: 1px 1px; } }`);
+    expect(run([input, legacy]).code).toBe(0);
+    return { input, output, legacy };
+  });
+  const p = Bun.spawnSync([process.execPath, SCRIPT, "--batch"], {
+    stdin: Buffer.from(pairs.map(({ input, output }) => JSON.stringify({ input, output })).join("\n") + "\n"),
+  });
+  expect(p.stderr.toString()).toBe("");
+  expect(p.exitCode).toBe(0);
+  for (const { output, legacy } of pairs) expect(readFileSync(output)).toEqual(readFileSync(legacy));
+});
+
+test("batch surfaces offending CSS and rejects malformed requests", () => {
+  const dir = tmp();
+  const input = join(dir, "broken.css");
+  const output = join(dir, "out.css");
+  writeFileSync(input, "@import ;");
+  for (const request of [JSON.stringify({ input, output }), '{"input":42}', "invalid json"]) {
+    const p = Bun.spawnSync([process.execPath, SCRIPT, "--batch"], { stdin: Buffer.from(request + "\n") });
+    expect(p.exitCode).toBe(1);
+    expect(p.stderr.length).toBeGreaterThan(0);
+    if (request.includes("broken.css")) expect(p.stderr.toString()).toContain("broken.css");
+  }
+  expect(existsSync(output)).toBe(false);
 });

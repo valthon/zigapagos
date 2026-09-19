@@ -61,5 +61,5 @@ exec "$ZIGAPAGOS" release \
   --spa-not-found=app \
   --island-props-check=error \
   --bun=bun \
-  --css-minify-driver="$REPO/runtime/sidecar/minify-css.ts" \
+  --css-minify \
   "$@"
