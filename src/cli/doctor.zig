@@ -674,7 +674,7 @@ fn checkOneLink(
 /// A scheme starts with an ASCII letter, followed by ASCII letters, digits,
 /// '+', '-', or '.', and a colon. Other colon spellings are local filenames.
 /// Empty, fragment-only and query-only references need no filesystem check.
-fn isLocalLink(value: []const u8) bool {
+pub fn isLocalLink(value: []const u8) bool {
     if (value.len == 0 or value[0] == '#' or value[0] == '?') return false;
     if (std.mem.startsWith(u8, value, "//")) return false;
     if (!std.ascii.isAlphabetic(value[0])) return true;
@@ -687,7 +687,7 @@ fn isLocalLink(value: []const u8) bool {
 
 /// Resolve against the emitted document's URL directory, including its
 /// deployment prefix. Caller-buffer contract; no allocation or filesystem IO.
-fn localUrlPath(buf: []u8, document: []const u8, prefix: []const u8, path: []const u8) NormalizeError![]const u8 {
+pub fn localUrlPath(buf: []u8, document: []const u8, prefix: []const u8, path: []const u8) NormalizeError![]const u8 {
     if (isRootRelative(path)) return normalizeLexical(buf, path[1..]);
     const directory = if (std.mem.lastIndexOfAny(u8, document, "/\\")) |i| document[0 .. i + 1] else "";
     var joined_buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -809,7 +809,7 @@ const PercentDecodeError = error{
 /// (caller-buffer): allocates nothing. The two failures are DISTINCT errors
 /// rather than one `null`, because the caller reports them to an author who
 /// can act on one (fix the escape) and not the other (doctor's own cap).
-fn percentDecode(buf: []u8, s: []const u8) PercentDecodeError![]const u8 {
+pub fn percentDecode(buf: []u8, s: []const u8) PercentDecodeError![]const u8 {
     var out: usize = 0;
     var i: usize = 0;
     while (i < s.len) {

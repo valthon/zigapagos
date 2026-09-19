@@ -354,4 +354,5 @@ test "sitemap: unit-test anchor" {
 
 test "assets: inspect-output anchor" {
     _ = @import("cli/inspect_output.zig");
+    _ = @import("cli/output_page.zig");
 }

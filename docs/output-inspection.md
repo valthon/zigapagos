@@ -54,7 +54,8 @@ browser dependency graph.
 The counts describe markup, not whether the browser will execute a script
 under its CSP, `nomodule`, or other conditions.
 
-References are **not resolved or fetched**. Duplicate references remain visible;
+The default reference records are **not resolved or fetched**. Use `--page`
+for the additional bounded local resolution report described below. Duplicate references remain visible;
 no per-route byte total or load timing is inferred. Import maps, dynamic imports,
 CSS imports, and module dependency graphs are not traversed. A script with a
 non-JavaScript `type` can still have a `src` attribute in the report; its presence
@@ -97,3 +98,87 @@ use `ZP_FATAL` NDJSON on stderr. Text mode uses the same measurements and limits
 The repository's site gate uses aggregate budgets alongside its separate
 landing-page reference budget. These answer different questions: how much the
 release emits, and which bundles that particular page directly names.
+
+## Direct resources of one emitted page
+
+Use `--page` to measure one emitted HTML file's directly named resources and
+inline bodies, with independent opt-in page limits:
+
+```sh
+zigapagos inspect-output public --page=index.html --url-prefix=project \
+  --max-page-js-bytes=61440 --max-page-css-bytes=20000 --format=json
+```
+
+`--page` is a path **inside the output directory**, such as `docs/index.html`;
+it is not a browser route or URL. `--url-prefix` describes where that directory
+is deployed. Page limits and nonempty URL prefixes require `--page`. The full
+output inventory and aggregate limits continue to include every emitted file.
+
+The metric is `direct_reference_raw_bytes`. JavaScript includes regular local
+files named by executable `script src`, `data-z-module`, and `modulepreload`,
+plus the UTF-8 bytes between the opening and closing tags of executable inline
+`script` elements. CSS includes local `link rel=stylesheet` files plus inline
+`style` bodies. Tag bytes, data scripts, and import-map JSON remain in aggregate
+HTML bytes. Inline event-handler attributes and `style` attributes are **not**
+part of these page metrics. Non-JavaScript scripts and non-CSS style elements
+are excluded.
+
+A local resource's kind comes from its referencing element, not its filename
+extension: a script at `/bundle` contributes to page JS even though an
+extensionless file is outside the aggregate `.js` inventory. Repeated references
+are deduplicated **by normalized output path within each kind**. Dot-segment,
+percent-encoded filename, query-string, and fragment aliases of the same file
+count once. This is neither a network request count nor a browser cache-key
+model; different query strings can cause separate browser fetches.
+
+URLs resolve relative to the emitted HTML directory. Root-relative references
+must remain within `--url-prefix`; ordinary parent traversal is normalized
+before the prefix is removed. Encoded slashes, backslashes, control bytes,
+entity-encoded path characters, and paths climbing above the URL root are
+rejected rather than guessed. Query strings and fragments do not affect file
+sizes. Files are required to exist exactly at the resolved path; host rewrites
+and directory-index fallback for script/style requests are not assumed.
+
+**Incomplete direct coverage fails every requested page budget**, even if
+known bytes fit. This includes external URLs, missing targets, unsupported
+encodings, `<base href>`, and partial HTML/classification coverage. An external
+stylesheet also prevents a JavaScript page budget from passing: coverage is a
+conservative property of the selected page, not a per-kind waiver. The report
+names each unresolved reference or unsupported classification. Known bytes
+remain visible as a lower bound, with `coverage_complete: false`; unknown
+resource byte counts are `null`, never zero. With no page limit requested,
+incomplete direct coverage is report-only and does not invalidate the complete
+aggregate file inventory.
+
+Even complete **direct** coverage does not measure a module or CSS import graph.
+JavaScript imports, dynamic imports, CSS `@import`, font/image URLs inside CSS,
+import-map targets, and runtime-inserted resources remain untraversed. An island
+or preload may be named in HTML but fetched later or not executed. The report
+never labels this metric total page cost, initial loading cost, or compressed
+transfer size. Browser journey tests and network measurements answer those
+questions.
+
+### Additional JSON records
+
+With `--page`, existing `reference` and aggregate records keep their original
+meaning. New records report resolution separately:
+
+- `page_resource`: selected `page`, reference `kind`, literal `url`, nullable
+  resolved `path` and `raw_bytes`, and `status`. `measured` counts toward the
+  page total; `duplicate` describes a previously counted path. Failure statuses
+  include `NonlocalUrl`, `FileNotFound`, `OutsideDeployment`, and
+  `UnsupportedUrlEncoding`.
+- `page_coverage`: selected `page` and an unsupported-coverage `reason`.
+- `page_resources`: `metric: "direct_reference_raw_bytes"`, `raw_bytes`,
+  `local_file_bytes`, and `inline_body_bytes` (each with `js`/`css` fields),
+  `unique_local_files`, `unresolved_references`, `coverage_complete`, and
+  `has_base_href`. `import_graph_measured` and `transfer_bytes_measured` remain
+  false.
+- `page_budget`: `page`, `kind`, metric, `raw_bytes`, `max_bytes`,
+  `coverage_complete`, and `passed`. Equality passes only with complete coverage.
+
+The final summary adds `page_budgets_failed`; aggregate `budgets_exceeded`
+continues to count only aggregate limits. Either nonzero count makes the command
+exit 1. The existing summary's `references_resolved: false` describes its
+original literal-reference records, not the selected page's additional
+resolution records.

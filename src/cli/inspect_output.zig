@@ -6,6 +6,11 @@ const Allocator = std.mem.Allocator;
 const fatal = @import("../fatal.zig");
 const diag = @import("../diag.zig");
 const superhtml = @import("superhtml");
+const html = @import("output_html.zig");
+const page_output = @import("output_page.zig");
+const attribute = html.attribute;
+const urlScope = html.urlScope;
+const scriptIsJavaScript = html.scriptIsJavaScript;
 
 const Kind = enum { html, css, js };
 const Totals = struct { html: u64 = 0, css: u64 = 0, js: u64 = 0 };
@@ -14,6 +19,8 @@ const Command = struct {
     dir: []const u8 = "public",
     format: diag.Format = .text,
     budgets: Budgets = .{},
+    page: ?[]const u8 = null,
+    page_options: page_output.Options = .{},
 
     // Borrowed argv fields; no allocation.
     fn parse(args: []const []const u8) Command {
@@ -23,6 +30,18 @@ const Command = struct {
             if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) fatal.usage(help, .{});
             if (std.mem.startsWith(u8, arg, "--format=")) {
                 cmd.format = diag.parseFormat(arg[9..]) orelse fatal.usageError("error: expected --format=text|json\n", .{});
+            } else if (std.mem.startsWith(u8, arg, "--page=")) {
+                const path = arg["--page=".len..];
+                if (!page_output.validPagePath(path)) fatal.usageError("error: --page needs an emitted HTML path relative to DIR, e.g. docs/index.html\n", .{});
+                cmd.page = path;
+            } else if (std.mem.startsWith(u8, arg, "--url-prefix=")) {
+                const prefix = std.mem.trim(u8, arg["--url-prefix=".len..], "/");
+                if (!page_output.validPrefix(prefix)) fatal.usageError("error: --url-prefix needs a plain URL path, e.g. project/docs\n", .{});
+                cmd.page_options.url_prefix = prefix;
+            } else if (std.mem.startsWith(u8, arg, "--max-page-js-bytes=")) {
+                cmd.page_options.max_js_bytes = parseBudget(arg["--max-page-js-bytes=".len..]);
+            } else if (std.mem.startsWith(u8, arg, "--max-page-css-bytes=")) {
+                cmd.page_options.max_css_bytes = parseBudget(arg["--max-page-css-bytes=".len..]);
             } else if (std.mem.startsWith(u8, arg, "--max-html-bytes=")) {
                 cmd.budgets.html = parseBudget(arg[17..]);
             } else if (std.mem.startsWith(u8, arg, "--max-css-bytes=")) {
@@ -37,6 +56,8 @@ const Command = struct {
                 cmd.dir = arg;
             }
         }
+        if (cmd.page == null and (cmd.page_options.max_js_bytes != null or cmd.page_options.max_css_bytes != null or cmd.page_options.url_prefix.len > 0))
+            fatal.usageError("error: page budgets and --url-prefix require --page=EMITTED_PATH\n", .{});
         return cmd;
     }
 };
@@ -52,16 +73,23 @@ const help =
     \\
     \\Inventory a built output tree (default public), read-only.
     \\Report raw file bytes, not compressed transfer or per-route loading cost.
-    \\HTML script/island/modulepreload URLs are reported without fetching or resolving.
+    \\Default references are literal; --page also resolves direct local JS/CSS files.
     \\
     \\  --format=text|json   Human report (default) or NDJSON on stdout
     \\  --max-html-bytes=N   Fail if aggregate emitted HTML bytes exceed N
     \\  --max-css-bytes=N    Fail if aggregate emitted CSS bytes exceed N
     \\  --max-js-bytes=N     Fail if aggregate emitted JS bytes exceed N
+    \\  --page=PATH         Also measure direct resources of one emitted HTML file
+    \\  --url-prefix=P      Deployment prefix for that page (e.g. project)
+    \\  --max-page-js-bytes=N   Bound direct local JS + inline script-body bytes
+    \\  --max-page-css-bytes=N  Bound direct local CSS + inline style-body bytes
+    \\                     Page budgets require --page and complete direct coverage
     \\  --help, -h          Show this help
     \\
-    \\Budgets include all inventoried files, even lazy/unreferenced files. External
-    \\resources and import graphs are not measured. Inline scripts count as HTML.
+    \\Aggregate budgets include all inventoried files, even lazy/unreferenced files.
+    \\Page budgets include direct local resources and executable inline bodies.
+    \\External resources and import graphs are not measured; aggregate inline bytes
+    \\remain part of HTML.
     \\Use doctor separately to check local links; no host or browser is exercised.
     \\
 ;
@@ -112,6 +140,14 @@ fn run(io: Io, gpa: Allocator, cmd: Command) !bool {
     };
     if (html_files == 0) return error.NoHtmlFiles;
 
+    if (cmd.page) |selected| {
+        var found = false;
+        for (files.items) |file| if (file.kind == .html and std.mem.eql(u8, selected, file.path)) {
+            found = true;
+        };
+        if (!found) fatal.usageError("error: --page '{s}' is not an emitted HTML file under '{s}'\n", .{ selected, cmd.dir });
+    }
+    var page_budgets_failed: usize = 0;
     var buffer: [8192]u8 = undefined;
     var output = Io.File.stdout().writerStreaming(io, &buffer);
     const w = &output.interface;
@@ -136,6 +172,9 @@ fn run(io: Io, gpa: Allocator, cmd: Command) !bool {
         const page = try reportPage(w, cmd.format, file.path, source, ast);
         if (page.partial) partial_reference_pages += 1;
         reference_count += page.references;
+        if (cmd.page) |selected| {
+            if (std.mem.eql(u8, selected, file.path)) page_budgets_failed += try page_output.report(io, gpa, root, w, cmd.format, file.path, source, ast, !page.partial, cmd.page_options);
+        }
     }
     var exceeded: usize = 0;
     inline for (std.meta.fields(Budgets)) |field| {
@@ -157,6 +196,7 @@ fn run(io: Io, gpa: Allocator, cmd: Command) !bool {
             .references = reference_count,
             .pages_with_partial_references = partial_reference_pages,
             .budgets_exceeded = exceeded,
+            .page_budgets_failed = page_budgets_failed,
             .measurement = "raw_file_bytes",
             .scope = "all_emitted_html_css_js",
             .external_resources_measured = false,
@@ -167,7 +207,7 @@ fn run(io: Io, gpa: Allocator, cmd: Command) !bool {
     } else try w.print("inspect-output: {d} files, {d} pages; HTML {d}, CSS {d}, JS {d} raw bytes; {d} budgets exceeded\n", .{ files.items.len, html_files, totals.html, totals.css, totals.js, exceeded });
     if (cmd.format == .text and partial_reference_pages > 0) try w.print("Reference coverage is partial for {d} pages with HTML parser errors or unsupported attribute encodings; raw file inventory remains complete.\n", .{partial_reference_pages});
     try w.flush();
-    return exceeded != 0;
+    return exceeded != 0 or page_budgets_failed != 0;
 }
 
 fn fileKind(path: []const u8) ?Kind {
@@ -181,15 +221,6 @@ fn fileKind(path: []const u8) ?Kind {
 fn emit(w: *Io.Writer, value: anytype) Io.Writer.Error!void {
     try std.json.Stringify.value(value, .{}, w);
     try w.writeByte('\n');
-}
-
-fn attribute(node: superhtml.html.Ast.Node, source: []const u8, ast: superhtml.html.Ast, name: []const u8) ?[]const u8 {
-    var it = node.startTagIterator(source, ast.language);
-    while (it.next(source)) |attr| {
-        if (!std.ascii.eqlIgnoreCase(attr.name.slice(source), name)) continue;
-        return if (attr.value) |value| value.span.slice(source) else "";
-    }
-    return null;
 }
 
 const PageCoverage = struct { references: usize, partial: bool };
@@ -270,37 +301,6 @@ fn reportReference(w: *Io.Writer, format: diag.Format, page: []const u8, kind: [
     if (format == .json) {
         try emit(w, .{ .type = "reference", .page = page, .kind = kind, .url = url, .script_type = script_type, .resolution = "not_resolved", .url_scope = urlScope(url) });
     } else try w.print("  {s}: {s} ({s}, not resolved)\n", .{ kind, url, urlScope(url) });
-}
-
-// Classification only: URL attributes remain raw, entity-encoded strings.
-// In particular, a <base href> may change the origin of a local-looking URL.
-fn urlScope(raw: []const u8) []const u8 {
-    const url = std.mem.trim(u8, raw, " \t\r\n\x0c");
-    if (std.mem.indexOfAny(u8, url, "\\&\t\r\n") != null) return "unclassified";
-    if (std.mem.startsWith(u8, url, "//")) return "nonlocal_url";
-    if (url.len == 0) return "local_url";
-    if (std.ascii.isAlphabetic(url[0])) {
-        for (url[1..]) |c| {
-            if (c == ':') return "nonlocal_url";
-            if (!std.ascii.isAlphanumeric(c) and c != '+' and c != '-' and c != '.') break;
-        }
-    }
-    return "local_url";
-}
-
-fn scriptIsJavaScript(script_type: []const u8, language: []const u8) bool {
-    var language_buf: [128]u8 = undefined;
-    const effective = if (script_type.len == 0 and language.len != 0)
-        std.fmt.bufPrint(&language_buf, "text/{s}", .{language}) catch return false
-    else
-        script_type;
-    const trimmed = std.mem.trim(u8, effective, " \t\r\n\x0c");
-    if (trimmed.len == 0) return true;
-    if (std.ascii.eqlIgnoreCase(trimmed, "module")) return true;
-    for ([_][]const u8{ "application/javascript", "application/ecmascript", "application/x-javascript", "application/x-ecmascript", "text/javascript", "text/ecmascript", "text/javascript1.0", "text/javascript1.1", "text/javascript1.2", "text/javascript1.3", "text/javascript1.4", "text/javascript1.5", "text/jscript", "text/livescript", "text/x-javascript", "text/x-ecmascript" }) |mime| {
-        if (std.ascii.eqlIgnoreCase(trimmed, mime)) return true;
-    }
-    return false;
 }
 
 test "assets: inspect-output inventory file kinds and script classification" {

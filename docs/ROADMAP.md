@@ -47,9 +47,14 @@ The [application guide](building-apps.md) covers styling, deployment, and pairin
   enforces opt-in aggregate byte budgets. Regression fixtures cover one-byte
   overruns and zero-JS pages. [Measurement boundaries](output-inspection.md)
   distinguish all emitted files from actual browser transfers.
-- [ ] **Measure route loading cost.** Resolve local references, import maps, and
-  module dependencies; distinguish initial and lazy graphs, compressed transfer,
-  and external resources without treating unknown sizes as zero.
+- [x] **Budget directly referenced page resources.** `inspect-output --page`
+  resolves local scripts, islands, modulepreloads, and stylesheets; deduplicates
+  normalized file paths, includes executable inline script and style bodies,
+  and enforces exact JS/CSS byte limits only with complete direct coverage.
+  External, missing, and unsupported references remain explicit unknowns.
+- [ ] **Measure route loading cost.** Traverse import maps and module/CSS
+  dependency graphs; distinguish initial and lazy loading, compressed transfer,
+  and external resources. Direct-reference raw-byte budgets are not this metric.
 
 ### P1 — Shorten production builds without weakening checks
 
