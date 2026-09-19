@@ -3,6 +3,8 @@ import { existsSync, readFileSync, mkdirSync, realpathSync } from "node:fs";
 import { reactAliasBuildPlugin, resolveOverridePlugin } from "../scripts/react-alias.ts";
 import { loadConfig, effectiveResolveMap, type ZRuntimeConfig } from "../scripts/z-runtime-config.ts";
 import { siteDataPlugin } from "../scripts/site-data.ts";
+import { captureConfigFiles } from "../scripts/spa-capture-config.ts";
+import { makeSourceCapture } from "../scripts/spa-source-capture.ts";
 import { registerSsrModuleOverrides } from "./ssr-resolve.ts";
 
 export interface BundleArgs {
@@ -241,6 +243,8 @@ export interface SpaBundleArgs {
   runtimeStamp?: string;
   /** Explicit z-runtime.config.json path (else discovered upward from the entry's dir). */
   configPath?: string;
+  /** Current-release graph handoff for the isolated runtime slicer. */
+  sourceCapture?: string;
   /** Emit linked source maps for the entry + every code-split chunk into `outdir`
    *  (release-only opt-in). The whole `outdir` is installed, so the
    *  `.map` files land next to their bundles automatically. Off by default so the
@@ -423,6 +427,10 @@ export async function bundleSpa(args: SpaBundleArgs): Promise<void> {
   ];
   const deps = [...new Set([...fromPlugin, ...fromMeta, ...extra])];
   await Bun.write(args.depfile, makeDepfile(resolve(args.chunksJson), deps));
+  if (args.sourceCapture) {
+    const configs = captureConfigFiles(args.entry, site.path);
+    await Bun.write(args.sourceCapture, JSON.stringify(configs === null ? null : makeSourceCapture(args.entry, fromPlugin, site.path, configs, args.minify)));
+  }
 }
 
 /**
@@ -453,6 +461,7 @@ export async function runBundleCli(): Promise<void> {
     }
     await bundleSpa({
       entry, entryName, outdir, chunksJson, depfile,
+      sourceCapture: get("source-capture"),
       external: all("external"),
       minify: process.argv.includes("--minify"),
       sourcemap: process.argv.includes("--sourcemap"),
