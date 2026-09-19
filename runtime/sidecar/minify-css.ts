@@ -1,53 +1,61 @@
 #!/usr/bin/env bun
-//! Minify a single CSS asset with Bun.
-//!
-//! This is the CSS analogue of the island/SPA JS minify pass (`bundle-island.ts`
-//! with `--minify`): the release-time site-asset install phase (`src/root.zig`)
-//! shells out to `bun minify-css.ts <input.css> <output.css>` for every `.css`
-//! asset it stages, so a zigapagos site ships CSS at the same gzip size an
-//! esbuild/Vite build would.
-//!
-//! It is a PURE minification pass, NOT a bundle:
-//!   - `external: ["*"]` keeps every `url(...)` and `@import` target verbatim —
-//!     Bun neither resolves nor rewrites them, so `url_prefix` / any path the
-//!     stylesheet already encodes is preserved byte-for-byte (only redundant
-//!     quotes are normalised). Without this, Bun.build tries to resolve+hash
-//!     referenced assets and fails on any absolute `url("/img/…")`.
-//!   - Nothing is inlined across `@import`, so the output stays a drop-in
-//!     replacement for the source file at the same install path.
-//!
-//! Exit codes: 0 = wrote minified output; 1 = Bun reported a CSS error (surfaced
-//! on stderr, which the caller inherits); 2 = bad CLI usage.
+// Pure CSS minification: each input uses its own Bun.build with external ["*"].
+// No import bundling, URL rewriting, or cross-file output-name collisions.
+// Legacy: minify-css.ts <input.css> <output.css>
+// Batch: minify-css.ts --batch, stdin NDJSON {input, output} absolute path pairs.
+// The caller sends all paths then closes stdin. CSS is processed sequentially,
+// keeping only one stylesheet's build artifacts live at a time.
+import { createInterface } from "node:readline";
 
-export {}; // make this a module so top-level await typechecks
+async function minify(input: string, output: string): Promise<void> {
+  const res = await Bun.build({
+    entrypoints: [input],
+    minify: true,
+    // Pure minify: keep url()/@import targets external (path-preserving).
+    external: ["*"],
+  }).catch((error: unknown) => {
+    // Bun may reject instead of returning success:false. Retain its detailed
+    // diagnostics and name this input even when the exception is aggregate.
+    console.error(error);
+    throw new Error(`minify-css: failed to minify '${input}'`);
+  });
 
-const [input, output] = process.argv.slice(2);
+  if (!res.success) {
+    for (const message of res.logs) console.error(String(message));
+    throw new Error(`minify-css: failed to minify '${input}'`);
+  }
 
-if (!input || !output) {
-  console.error("usage: minify-css.ts <input.css> <output.css>");
-  process.exit(2);
+  const cssOut =
+    res.outputs.find((o) => o.path.endsWith(".css")) ?? res.outputs[0];
+
+  if (!cssOut) {
+    console.error(`minify-css: no CSS output produced for '${input}'`);
+    throw new Error(`minify-css: failed to minify '${input}'`);
+  }
+
+  // The BuildArtifact is Blob-compatible; Bun.write accepts it directly, avoiding
+  // a full in-memory arrayBuffer() copy.
+  await Bun.write(output, cssOut);
 }
 
-const res = await Bun.build({
-  entrypoints: [input],
-  minify: true,
-  // Pure minify: keep url()/@import targets external (path-preserving).
-  external: ["*"],
-});
-
-if (!res.success) {
-  for (const message of res.logs) console.error(String(message));
+const args = process.argv.slice(2);
+try {
+  if (args.length === 1 && args[0] === "--batch") {
+    for await (const line of createInterface({ input: process.stdin, crlfDelay: Infinity })) {
+      const entry = JSON.parse(line);
+      if (!entry || typeof entry.input !== "string" || !entry.input ||
+          typeof entry.output !== "string" || !entry.output) {
+        throw new Error("minify-css: expected {input, output} path pair");
+      }
+      await minify(entry.input, entry.output);
+    }
+  } else if (args.length === 2) {
+    await minify(args[0]!, args[1]!);
+  } else {
+    console.error("usage: minify-css.ts <input.css> <output.css> | --batch");
+    process.exit(2);
+  }
+} catch (error) {
+  console.error(String(error));
   process.exit(1);
 }
-
-const cssOut =
-  res.outputs.find((o) => o.path.endsWith(".css")) ?? res.outputs[0];
-
-if (!cssOut) {
-  console.error(`minify-css: no CSS output produced for '${input}'`);
-  process.exit(1);
-}
-
-// The BuildArtifact is Blob-compatible; Bun.write accepts it directly, avoiding
-// a full in-memory arrayBuffer() copy.
-await Bun.write(output, cssOut);

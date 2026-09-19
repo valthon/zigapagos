@@ -3,14 +3,52 @@
 # Assets
 
 How a file under `assets_dir_path` becomes a file in the output tree, and the
-two switches that change that: which assets are installed at all, and under
-what name.
+controls that change that: which assets are installed, their names, and
+production CSS minification.
 
 This document covers **site assets** — files under `assets_dir_path`, reached
 from a template as `$site.asset('...')` and from content as
 `[]($image.siteAsset('...'))`. Page assets (files next to a content page,
 `$page.asset('...')`) and build assets (`zigapagos release --build-asset=NAME
 PATH`) are mentioned only where they differ.
+
+For a running host, [deployment checks](deployment-checks.md) compare served
+frontend bytes and generated headers with the release tree.
+
+## Production CSS minification
+
+Run `zigapagos release --css-minify` to minify referenced and explicitly static
+site CSS in one Bun process. Installed CLI launchers locate their matching
+runtime; when using a checkout, set `ZIGAPAGOS_RUNTIME_DIR` to its `runtime/`
+directory. Bun is required (use `--bun=PATH` to choose it). Plain `release`
+continues copying CSS verbatim unless a minifier is selected.
+
+Each stylesheet is minified independently, retaining the existing Bun minifier's
+`@import` and `url()` behavior: imports stay external, assets are not resolved or
+hashed by Bun, and no stylesheets are bundled together. Installed paths,
+Zigapagos asset fingerprints, pruning, and non-CSS files are unchanged. A CSS
+error fails the release with the stylesheet diagnostic. There is no minification
+cache and no minifier process when the release stages no CSS.
+
+Existing `--css-minify-driver=PATH` integrations keep their two-argument,
+one-process-per-file protocol. Do not combine that option with `--css-minify`;
+the latter deliberately selects the matching bundled driver.
+
+### Measuring the batching benefit
+
+`bun runtime/scripts/bench-css-minify.ts 40 5` compares separate processes with
+one batch process on 40 stylesheets containing 100 rules each. It warms both
+paths, alternates measurement order across five rounds, reports every timing
+and the Bun version, OS, architecture, CPU model and logical core count, and
+checks byte-identical results. On Linux x64 with an Intel Core i9-13900K
+(32 logical cores) and Bun 1.4.2, median CSS-phase time was 274 ms versus
+44 ms (40 processes versus one).
+This measures only this generated fixture's minification and file I/O, not a
+whole-site build; results depend on machine load and stylesheet size.
+
+Release-level regression coverage is in `tests/assets/css-minify.sh`, including
+fingerprinted links, nested paths, pruning, byte parity, process counts, and
+failure propagation.
 
 ## The lifecycle
 
@@ -211,3 +249,9 @@ this exists to catch, and that always moves the hash.
 
 Proofs: `tests/assets/fingerprint.sh`, `tests/assets/pruned-report.sh`,
 `tests/spa/head-fingerprint.sh`.
+
+## Styling choices
+
+See [Styling and reusable components](styling.md) for plain CSS, externally
+compiled Tailwind, and a reusable Preact component example, including explicit
+CSS import, image, and font dependencies.

@@ -25,7 +25,8 @@ zigapagos release --format=xml
 ```
 
 `--format` is accepted by `release` and `validate` (build diagnostics), plus
-`doctor` (its own finding stream on stdout — see below). `release` and
+`doctor` (its own finding stream on stdout — see below) and
+[`inspect-output`](output-inspection.md) (its own inventory stream on stdout). `release` and
 `validate` share one stream and schema — `validate` covers the release
 build's pre-SSR subset, see `zigapagos validate --help` for exactly what that
 excludes. It is not a flag `dev` recognises: `dev` re-runs a rebuild command
@@ -179,6 +180,39 @@ stream), shaped `{"check","severity","file","message"}` with `severity` one of
 same stability rule as `code` here: stable once shipped; `message` is prose and
 is not. Doctor fatals (a bad `DIR`) do emit on this page's stderr stream, as
 `ZP_FATAL`.
+
+### Checking the deployed files
+
+Run `zigapagos doctor public --strict` after a production build to catch missing
+local `href` and `src` targets in emitted HTML. Both `/assets/app.js` and
+`../assets/app.js` are checked. Document-relative URLs resolve from the directory
+of the emitted HTML file: `guides/index.html` resolves `./image.png` to
+`guides/image.png`, and `../style.css` to `style.css`. Query strings and fragments
+are removed before checking; percent-encoded filenames such as `my%20image.png`
+are decoded.
+
+For a site deployed under `/project/`, pass `--url-prefix=project`. Relative links
+start within that prefix. Normalization happens before the prefix is removed,
+so `../../style.css` from `/project/guides/` correctly warns that it points
+outside the deployment, even if `style.css` exists in the output directory.
+Paths climbing above the URL root are conservatively reported instead of
+clamped to the root as browsers do. Symlinks, including symlinked ancestor directories, do not count as
+files in the deployed tree.
+
+Doctor checks files, directory `index.html` pages, and extensionless `.html`
+pages. This assumes the host serves those conventions; it does not verify host
+rewrites, redirects, or client-side routes. Missing targets remain warnings
+because an application route may legitimately be served by a fallback shell.
+`--strict` turns those warnings into a failing exit status.
+
+External and scheme-relative URLs, `data:`, `mailto:`, `tel:`, and empty,
+fragment-only, or query-only references are not fetched. This check does not
+inspect CSS URLs, `srcset`, JavaScript imports, or fragment IDs. HTML character
+references in paths, backslashes, and percent-encoded slashes are reported as unsupported rather than
+resolved under a potentially different spelling. A document containing
+`<base href>` cannot currently be audited for local links: doctor reports the
+limitation, counts that document in `skipped`, and exits nonzero even without
+`--strict`. A target-only `<base target>` does not affect the audit.
 
 SuperMD errors carry **one** code, `ZP_SUPERMD`, not one per error kind.
 SuperMD's error *tags* (`scripty`, `html`, `duplicate_id`, …) come from the

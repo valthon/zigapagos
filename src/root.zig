@@ -765,6 +765,9 @@ pub const Options = struct {
     /// rebuild command uses — keeps the byte-for-byte copy, so the dev loop
     /// serves readable, un-mangled CSS (mirroring Vite: minify on build, not dev).
     css_minify_driver: ?[]const u8 = null,
+    /// Bundled driver accepts NDJSON path pairs on stdin; custom drivers keep
+    /// the original two-argument protocol unless this is explicitly enabled.
+    css_minify_batch: bool = false,
     island_props_check: @import("islands/props_check.zig").Mode = .off,
     /// Path to the per-SITE islands runtime slice manifest, threaded through by
     /// `zigapagos release --islands-slice=<path>` (see
@@ -3274,6 +3277,8 @@ pub fn run(
 
     // install site assets
     {
+        var css_batch: std.Io.Writer.Allocating = .init(gpa);
+        defer css_batch.deinit();
         var buf: [std.fs.max_path_bytes]u8 = undefined;
         // Wider than `buf` by exactly what a fingerprint adds — `.` plus
         // `hash_len` hex digits — so that a source path which fits in `buf`
@@ -3323,7 +3328,16 @@ pub fn run(
                 // disk-mode (release) build sets it, so the in-memory live
                 // server (dev loop) always takes the verbatim copy below.
                 if (collect) |sm| try sm.add(gpa, .site_asset, dest);
-                if (shouldMinifyCss(path, options)) {
+                if (shouldMinifyCss(path, options) and options.css_minify_batch) {
+                    var src_buf: [std.fs.max_path_bytes]u8 = undefined;
+                    const src_n = build.site_assets_dir.realPathFile(io, path, &src_buf) catch |err| fatal.file(path, err);
+                    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+                    const dir_n = site_assets_install_dir.realPathFile(io, ".", &dir_buf) catch |err| fatal.file(dest, err);
+                    const dest_abs = try std.fs.path.join(gpa, &.{ dir_buf[0..dir_n], dest });
+                    defer gpa.free(dest_abs);
+                    try std.json.Stringify.value(.{ .input = src_buf[0..src_n], .output = dest_abs }, .{}, &css_batch.writer);
+                    try css_batch.writer.writeByte('\n');
+                } else if (shouldMinifyCss(path, options)) {
                     installMinifiedCss(
                         io,
                         gpa,
@@ -3344,6 +3358,10 @@ pub fn run(
                     ) catch |err| fatal.file(path, err);
                 }
             }
+        }
+        if (css_batch.written().len > 0) {
+            installCssBatch(io, options.bun_path.?, options.css_minify_driver.?, css_batch.written()) catch |err|
+                fatal.msg("error: CSS minifier process failed: {s}\n", .{@errorName(err)});
         }
     }
 
@@ -4067,6 +4085,28 @@ fn writeIslandManifestFile(io: Io, path: []const u8, contents: []const u8) !void
 fn shouldMinifyCss(path: []const u8, options: Options) bool {
     if (options.bun_path == null or options.css_minify_driver == null) return false;
     return std.ascii.endsWithIgnoreCase(path, ".css");
+}
+
+/// One process per release, with paths on stdin rather than an unbounded argv.
+/// Each input is still minified independently by the driver (no CSS bundling).
+fn installCssBatch(io: Io, bun_path: []const u8, driver: []const u8, requests: []const u8) !void {
+    var child = try std.process.spawn(io, .{
+        .argv = &.{ bun_path, driver, "--batch" },
+        .stdin = .pipe,
+        .stderr = .inherit,
+    });
+    errdefer child.kill(io);
+    var buffer: [4096]u8 = undefined;
+    var writer = child.stdin.?.writer(io, &buffer);
+    try writer.interface.writeAll(requests);
+    try writer.interface.flush();
+    child.stdin.?.close(io);
+    child.stdin = null;
+    const term = try child.wait(io);
+    switch (term) {
+        .exited => |code| if (code != 0) fatal.msg("error: CSS minification failed (bun exit {d}); see stylesheet diagnostics above\n", .{code}),
+        else => fatal.msg("error: CSS minifier terminated abnormally\n", .{}),
+    }
 }
 
 /// Minify one `.css` site asset by shelling out to the Bun CSS driver

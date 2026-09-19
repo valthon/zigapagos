@@ -1,5 +1,12 @@
 [
   {
+    "canonical": "docs/building-apps.md",
+    "mirror": "building-apps.smd",
+    "slug": "building-apps",
+    "title": "Building applications",
+    "description": "Direct and agent workflows, frontend-only hosting, and the ZigBase full-stack boundary."
+  },
+  {
     "canonical": "docs/islands.md",
     "mirror": "islands.smd",
     "slug": "islands",
@@ -25,7 +32,7 @@
     "mirror": "generated-content.smd",
     "slug": "generated-content",
     "title": "Generated content",
-    "description": "Why Zigapagos ships no content-generator hook, and the four-piece recipe — registry, generator, gitignore, freshness gate — this site's own docs pages use instead."
+    "description": "Why Zigapagos ships no content-generator hook, and the four-piece recipe \u2014 registry, generator, gitignore, freshness gate \u2014 this site's own docs pages use instead."
   },
   {
     "canonical": "docs/testing.md",
@@ -70,6 +77,20 @@
     "description": "How a file under assets_dir_path reaches the output tree: refcounted installs, the two switches that change that, and why an unreferenced asset is dropped."
   },
   {
+    "canonical": "docs/styling.md",
+    "mirror": "styling.smd",
+    "slug": "styling",
+    "title": "Styling and components",
+    "description": "Plain CSS, compiled frameworks, asset dependencies, and reusable Preact components."
+  },
+  {
+    "canonical": "docs/deployment-checks.md",
+    "mirror": "deployment-checks.smd",
+    "slug": "deployment-checks",
+    "title": "Deployment checks",
+    "description": "Compare static-host HTTP responses with a release tree: frontend bytes, sampled SPA deep links, generated CSP and cache headers, and explicit coverage limits."
+  },
+  {
     "canonical": "docs/images.md",
     "mirror": "images.smd",
     "slug": "images",
@@ -89,6 +110,13 @@
     "slug": "diagnostics",
     "title": "Machine-readable diagnostics",
     "description": "The --format=json NDJSON diagnostic stream: the wire schema, which fields are a stability guarantee, and how to consume it safely."
+  },
+  {
+    "canonical": "docs/output-inspection.md",
+    "mirror": "output-inspection.smd",
+    "slug": "output-inspection",
+    "title": "Output inspection",
+    "description": "Inspect emitted HTML, CSS, and JavaScript raw bytes, page references, and exact aggregate byte budgets."
   },
   {
     "canonical": "docs/observability.md",

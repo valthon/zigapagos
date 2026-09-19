@@ -19,6 +19,7 @@ const Command = enum {
     init,
     migrate,
     doctor,
+    @"inspect-output",
     validate,
     explain,
     release,
@@ -67,7 +68,7 @@ pub fn main(init: std.process.Init) u8 {
     // optimisation).
     //
     // Gated to the commands that ACCEPT `--format` (see docs/diagnostics.md's
-    // scope section) -- today `release`, `validate`, `doctor`, and
+    // scope section) -- today `release`, `validate`, `doctor`, `inspect-output`, and
     // `explain-code`. An ungated pre-scan reads argv that belongs to some
     // OTHER command's parser: `zigapagos dev --format=json` would flip the
     // global format and then answer with an NDJSON `ZP_FATAL` complaining
@@ -79,6 +80,7 @@ pub fn main(init: std.process.Init) u8 {
         (std.mem.eql(u8, args[1], "release") or
             std.mem.eql(u8, args[1], "validate") or
             std.mem.eql(u8, args[1], "doctor") or
+            std.mem.eql(u8, args[1], "inspect-output") or
             std.mem.eql(u8, args[1], "explain-code")))
     {
         if (diag.scanArgv(args[2..])) |f| diag.format = f;
@@ -182,6 +184,7 @@ pub fn main(init: std.process.Init) u8 {
     return switch (cmd) {
         .init => @intFromBool(@import("cli/init.zig").init(io, gpa, args[2..])),
         .migrate => @import("cli/migrate.zig").migrate(io, gpa, args[2..], init.environ_map),
+        .@"inspect-output" => @intFromBool(@import("cli/inspect_output.zig").inspectOutput(io, gpa, args[2..])),
         .doctor => @intFromBool(@import("cli/doctor.zig").doctor(io, gpa, args[2..])),
         .validate => @intFromBool(@import("cli/validate.zig").validate(io, gpa, args[2..])),
         .explain => @intFromBool(@import("cli/explain.zig").explain(io, gpa, args[2..])),
@@ -347,4 +350,8 @@ test "assets: unit-test anchor" {
 // up both this line and every `test "sitemap: …"` block in the file.
 test "sitemap: unit-test anchor" {
     _ = @import("sitemap.zig");
+}
+
+test "assets: inspect-output anchor" {
+    _ = @import("cli/inspect_output.zig");
 }

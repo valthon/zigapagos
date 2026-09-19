@@ -1056,6 +1056,9 @@ pub fn htmlToc(ast: Ast, w: *Writer) !void {
         try w.print("</li></ul>", .{});
     }
 
+    // Close the outer item explicitly even though HTML allows its end tag
+    // to be omitted. This keeps generated outlines balanced for static tools.
+    if (!first_item) try w.print("</li>", .{});
     try w.print("</ul>", .{});
 }
 

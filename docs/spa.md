@@ -1150,7 +1150,8 @@ for used class names and is unsafe with dynamically-composed classes.
 
 **Opt-in, and disk-mode only.** Minification runs only in the **release**
 (disk-mode) build, and only when asked: pass `--bun=bun
---css-minify-driver=<runtime>/sidecar/minify-css.ts`. Without the driver, CSS is
+--css-minify` (with the matching `ZIGAPAGOS_RUNTIME_DIR`). The legacy
+`--css-minify-driver=<runtime>/sidecar/minify-css.ts` remains supported. Without either option, CSS is
 copied verbatim — which is what `zigapagos dev`'s own default rebuild does, so
 dev output stays readable and un-mangled.
 

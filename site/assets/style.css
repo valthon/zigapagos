@@ -136,8 +136,8 @@ body {
 .btn-ghost { border-color: var(--color-border); color: var(--color-text); }
 .btn-ghost:hover { border-color: var(--color-accent); color: var(--color-accent); }
 
-.grid-2 { display: grid; gap: var(--space-6); grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); }
-.grid-3 { display: grid; gap: var(--space-4); grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); }
+.grid-2 { display: grid; gap: var(--space-6); grid-template-columns: repeat(auto-fit, minmax(min(19rem, 100%), 1fr)); }
+.grid-3 { display: grid; gap: var(--space-4); grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr)); }
 .card {
   background: var(--color-surface); border: 1px solid var(--color-border);
   border-radius: var(--radius-md); padding: var(--space-5);
@@ -240,3 +240,6 @@ table.cmp th, table.cmp td {
 }
 table.cmp th { background: var(--color-surface); font-weight: 600; }
 table.cmp tbody td:nth-child(2) { color: var(--color-accent); font-weight: 550; }
+
+/* Long source paths must not widen prose on narrow screens. */
+.prose :not(pre) > code { overflow-wrap: anywhere; }

@@ -11,7 +11,7 @@
 //!
 //! Two checks ship (see `checks` below): `abs-url-meta` (a root-relative
 //! Open Graph / Twitter / canonical URL — `err`, because crawlers can't
-//! resolve it) and `dangling-internal-link` (a root-relative href/src with
+//! resolve it) and `dangling-internal-link` (a local href/src with
 //! no file behind it in the tree — `warn`, because a client-routed SPA route
 //! legitimately has no file and would otherwise force a false positive).
 
@@ -453,10 +453,8 @@ fn isRootRelative(v: []const u8) bool {
 
 /// Attribute values are NOT entity-decoded here: superhtml's
 /// `Attr.Value.unescape` is an upstream TODO stub that just returns the raw
-/// slice. That's acceptable for doctor's purposes — entities inside the URLs
-/// this tool inspects are vanishingly rare, and `dangling-internal-link`
-/// strips query/fragment before ever resolving one — but say so, so a future
-/// reader doesn't assume decoding happened.
+/// slice. The link check strips query/fragment and reports ampersands in
+/// paths as unsupported rather than assuming character references decoded.
 fn attrValue(attr: superhtml.html.Tokenizer.Attr, src: []const u8) ?[]const u8 {
     const v = attr.value orelse return null;
     return v.span.slice(src);
@@ -546,7 +544,7 @@ fn hasRelToken(rel: []const u8, token: []const u8) bool {
     return false;
 }
 
-/// Root-relative `href`/`src` that resolves to no file in the tree. No tag
+/// Local `href`/`src` that resolves to no file in the tree. No tag
 /// allowlist — every element node's `href`/`src` is inspected, catching
 /// `<a>`, `<link>`, `<script>`, `<img>`, `<iframe>`, `<source>`, `<use>`
 /// alike; a tag allowlist would just be more surface for false negatives.
@@ -556,6 +554,19 @@ fn hasRelToken(rel: []const u8, token: []const u8) bool {
 /// legitimately warns here. That's an accepted, known false-positive class,
 /// not a defect in this check.
 fn checkDanglingInternalLink(ctx: *Ctx, doc: Doc) CheckError!void {
+    // A base changes even root-relative URLs when it names another origin.
+    // Without a configured origin we cannot map it back to this output tree.
+    // Report incomplete coverage instead of silently assuming the document URL.
+    for (doc.ast.nodes) |node| {
+        if (node.kind != .base) continue;
+        var it = node.startTagIterator(doc.src, doc.ast.language);
+        while (it.next(doc.src)) |attr| {
+            if (!std.ascii.eqlIgnoreCase(attr.name.slice(doc.src), "href")) continue;
+            try report(ctx, check_dangling_internal_link, doc.path, "<base href> changes URL resolution; doctor cannot audit this document's local links", .{});
+            ctx.skipped += 1;
+            return;
+        }
+    }
     for (doc.ast.nodes) |node| {
         if (!node.kind.isElement()) continue;
         var it = node.startTagIterator(doc.src, doc.ast.language);
@@ -576,50 +587,49 @@ fn checkOneLink(
     attr_name: []const u8,
     original: []const u8,
 ) CheckError!void {
-    // Excludes #frag, ?q, mailto:, tel:, data:, absolute (https://…) and
-    // relative (relative.html) targets in one rule, plus scheme-relative
-    // (//cdn/x.js) alongside them.
-    if (!isRootRelative(original)) return;
+    const value = std.mem.trim(u8, original, " \t\r\n\x0c");
+    if (!isLocalLink(value)) return;
 
-    var stripped = original;
+    var stripped = value;
     if (std.mem.indexOfAny(u8, stripped, "#?")) |i| stripped = stripped[0..i];
 
     var decode_buf: [std.fs.max_path_bytes]u8 = undefined;
-    // A link doctor cannot decode is REPORTED, not skipped. Dropping it in
-    // silence would be the one hole in this command's otherwise fail-closed
-    // posture (an unreadable file and an un-walkable tree both force a
-    // non-zero exit), and it would do so for the links most likely to be
-    // broken. The causes get different messages because they are different
-    // author-facing facts: a malformed escape is a broken URL, an over-long
-    // one is doctor's own limit.
     const decoded = percentDecode(&decode_buf, stripped) catch |err| {
         try reportUnresolvable(ctx, doc, attr_name, original, err);
         return;
     };
+    // Browser backslash handling and HTML character references are not a
+    // filesystem spelling. Do not certify a path under a different spelling.
+    if (std.mem.indexOfAny(u8, stripped, "\\&") != null or
+        std.mem.indexOfAny(u8, decoded, "\\\x00") != null or
+        std.mem.count(u8, stripped, "/") != std.mem.count(u8, decoded, "/"))
+    {
+        try report(ctx, check_dangling_internal_link, doc.path, "{s} '{s}' uses unsupported path characters; doctor cannot resolve it", .{ attr_name, original });
+        return;
+    }
 
-    // `decoded` still starts with '/' (isRootRelative guarantees the first
-    // byte; stripping #/? and percent-decoding never touch it).
-    const bare = decoded[1..];
-
+    var norm_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const url_path = localUrlPath(&norm_buf, doc.path, ctx.url_prefix, decoded) catch |err| {
+        try reportUnresolvable(ctx, doc, attr_name, original, err);
+        return;
+    };
+    // Normalize in URL space BEFORE stripping the deployment prefix: for
+    // /project/guides/index.html, ../../asset leaves /project/, not the host.
     var matched = true;
-    var remainder: []const u8 = bare;
+    var norm = url_path;
     if (ctx.url_prefix.len > 0) {
-        if (stripUrlPrefix(decoded, ctx.url_prefix)) |r| {
-            remainder = r;
+        var rooted_buf: [std.fs.max_path_bytes]u8 = undefined;
+        const rooted = std.fmt.bufPrint(&rooted_buf, "/{s}", .{url_path}) catch {
+            try reportUnresolvable(ctx, doc, attr_name, original, error.TooLong);
+            return;
+        };
+        if (stripUrlPrefix(rooted, ctx.url_prefix)) |remainder| {
+            // Slice the original buffer; rooted_buf is block-scoped scratch.
+            norm = url_path[url_path.len - remainder.len ..];
         } else {
             matched = false;
         }
     }
-
-    // Normalisation failure is reported HERE, above the prefix split, so the
-    // same link gets the same cause on both paths: reported only inside the
-    // `matched` branch, a `/../x` under a NON-matching --url-prefix fell
-    // through to the generic "resolves to no file" and lost the escape.
-    var norm_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const norm = normalizeLexical(&norm_buf, remainder) catch |err| {
-        try reportUnresolvable(ctx, doc, attr_name, original, err);
-        return;
-    };
 
     if (resolves(ctx, norm)) {
         // Resolving is "clean" only when the link is also reachable at that
@@ -659,6 +669,38 @@ fn checkOneLink(
         "{s} '{s}' resolves to no file in the tree",
         .{ attr_name, original },
     );
+}
+
+/// A scheme starts with an ASCII letter, followed by ASCII letters, digits,
+/// '+', '-', or '.', and a colon. Other colon spellings are local filenames.
+/// Empty, fragment-only and query-only references need no filesystem check.
+fn isLocalLink(value: []const u8) bool {
+    if (value.len == 0 or value[0] == '#' or value[0] == '?') return false;
+    if (std.mem.startsWith(u8, value, "//")) return false;
+    if (!std.ascii.isAlphabetic(value[0])) return true;
+    for (value[1..]) |c| {
+        if (c == ':') return false;
+        if (!std.ascii.isAlphanumeric(c) and c != '+' and c != '-' and c != '.') return true;
+    }
+    return true;
+}
+
+/// Resolve against the emitted document's URL directory, including its
+/// deployment prefix. Caller-buffer contract; no allocation or filesystem IO.
+fn localUrlPath(buf: []u8, document: []const u8, prefix: []const u8, path: []const u8) NormalizeError![]const u8 {
+    if (isRootRelative(path)) return normalizeLexical(buf, path[1..]);
+    const directory = if (std.mem.lastIndexOfAny(u8, document, "/\\")) |i| document[0 .. i + 1] else "";
+    var joined_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const joined = if (prefix.len == 0)
+        std.fmt.bufPrint(&joined_buf, "{s}{s}", .{ directory, path })
+    else
+        std.fmt.bufPrint(&joined_buf, "{s}/{s}{s}", .{ prefix, directory, path });
+    const combined = joined catch return error.TooLong;
+    // The walker uses native separators on Windows; URLs always use '/'.
+    for (combined) |*c| if (c.* == '\\') {
+        c.* = '/';
+    };
+    return normalizeLexical(buf, combined);
 }
 
 /// One message per reason a link's path could not be turned into something
@@ -739,7 +781,14 @@ fn resolves(ctx: *Ctx, norm: []const u8) bool {
 }
 
 fn isRegularFile(ctx: *Ctx, path: []const u8) bool {
-    const st = ctx.root_dir.statFile(ctx.io, path, .{}) catch return false;
+    // Refuse symlinks at every component, including parent directories. An
+    // emitted link must not be certified by a file outside the output tree.
+    for (path, 0..) |c, i| {
+        if (c != '/' or i == 0) continue;
+        const parent = ctx.root_dir.statFile(ctx.io, path[0..i], .{ .follow_symlinks = false }) catch return false;
+        if (parent.kind != .directory) return false;
+    }
+    const st = ctx.root_dir.statFile(ctx.io, path, .{ .follow_symlinks = false }) catch return false;
     return st.kind == .file;
 }
 
@@ -952,4 +1001,27 @@ test "doctor: normalizeLexical distinguishes 'too long' from 'escapes root'" {
     }
     var big: [1024]u8 = undefined;
     try std.testing.expectError(error.TooLong, normalizeLexical(&big, deep[0..w]));
+}
+
+test "doctor: document-relative URLs resolve in deployment URL space" {
+    var buf: [1024]u8 = undefined;
+    const cases = [_]struct { doc: []const u8, prefix: []const u8, url: []const u8, expected: []const u8 }{
+        .{ .doc = "guides/index.html", .prefix = "", .url = "./image.png", .expected = "guides/image.png" },
+        .{ .doc = "guides/page.html", .prefix = "", .url = "../style.css", .expected = "style.css" },
+        .{ .doc = "guides\\index.html", .prefix = "project", .url = "./image.png", .expected = "project/guides/image.png" },
+        .{ .doc = "index.html", .prefix = "project", .url = "./style.css", .expected = "project/style.css" },
+        .{ .doc = "guides/index.html", .prefix = "project", .url = "../../style.css", .expected = "style.css" },
+        .{ .doc = "guides/index.html", .prefix = "project", .url = "/project/../style.css", .expected = "style.css" },
+    };
+    for (cases) |case| try std.testing.expectEqualStrings(case.expected, try localUrlPath(&buf, case.doc, case.prefix, case.url));
+    try std.testing.expectError(error.EscapesRoot, localUrlPath(&buf, "guides/index.html", "", "../../secret"));
+    var tiny: [2]u8 = undefined;
+    try std.testing.expectError(error.TooLong, localUrlPath(&tiny, "index.html", "", "image.png"));
+}
+
+test "doctor: local URL classification includes document-relative assets" {
+    for ([_][]const u8{ "image.png", "./app.js?v=1", "../style.css", "/about", "guides/page.html", "2026:missing.html", ":missing.html", "report name:missing.png", "réport:missing.png" }) |url|
+        try std.testing.expect(isLocalLink(url));
+    for ([_][]const u8{ "", "#section", "?search=x", "//cdn/x.js", "https://example.com", "mailto:a@b", "data:image/png,x", "tel:123", "web+demo.v2-test:asset", "HTTPS://example.com" }) |url|
+        try std.testing.expect(!isLocalLink(url));
 }

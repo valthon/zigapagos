@@ -834,6 +834,12 @@ jobs:
           mise exec -- python3 test/hydrate_playwright.py "$BASE"
           mise exec -- python3 test/spa_playwright.py "$BASE"
 
+      - name: Build and verify styling compatibility example
+        run: bash tests/styling/compatibility.sh
+
+      - name: Verify plain CSS, compiled Tailwind and Preact components in Chrome
+        run: mise exec -- python3 examples/styling-site/test/browser.py examples/styling-site/zig-out/site
+
   # --- Shell e2e, sharded ------------------------------------------------------
   # The three jobs below partition `tests/*/*.sh` — the same glob the monolith
   # used, so a new tests/<area>/ directory is still covered the day it is added.

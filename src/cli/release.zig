@@ -165,6 +165,7 @@ pub fn release(
         .island_sidecar = cmd.island_sidecar,
         .island_src_dir = cmd.island_src_dir,
         .css_minify_driver = cmd.css_minify_driver,
+        .css_minify_batch = cmd.css_minify,
         .island_props_check = cmd.island_props_check,
         .islands_slice_json = cmd.islands_slice,
         .spas = cmd.spas,
@@ -397,6 +398,7 @@ pub const Command = struct {
     /// default, e.g. a hand-written `release` invocation) keeps the historical
     /// verbatim byte-copy. Requires `--bun` to be set as well.
     css_minify_driver: ?[]const u8 = null,
+    css_minify: bool = false,
     island_props_check: @import("../islands/props_check.zig").Mode = .off,
     /// `--islands-slice=PATH`: the per-SITE islands runtime slice manifest
     /// (`runtime/scripts/build-islands-runtime.ts`). Normally written by
@@ -460,6 +462,7 @@ pub const Command = struct {
         var island_runtime_entry: ?[]const u8 = null;
         var island_bundle_driver: ?[]const u8 = null;
         var css_minify_driver: ?[]const u8 = null;
+        var css_minify = false;
         var island_props_check: @import("../islands/props_check.zig").Mode = .off;
         var islands_slice: ?[]const u8 = null;
         var spas: std.ArrayListUnmanaged(root.SpaSpec) = .empty;
@@ -504,6 +507,8 @@ pub const Command = struct {
                 // `--island-props-check=` or `--islands-slice=` — each differs
                 // from it at the byte where this one requires '='.
                 try islands.append(gpa, arg["--island=".len..]);
+            } else if (std.mem.eql(u8, arg, "--css-minify")) {
+                css_minify = true;
             } else if (startsWith(u8, arg, "--css-minify-driver=")) {
                 css_minify_driver = arg["--css-minify-driver=".len..];
             } else if (startsWith(u8, arg, "--islands-slice=")) {
@@ -607,6 +612,7 @@ pub const Command = struct {
             .island_runtime_entry = island_runtime_entry,
             .island_bundle_driver = island_bundle_driver,
             .css_minify_driver = css_minify_driver,
+            .css_minify = css_minify,
             .island_props_check = island_props_check,
             .islands_slice = islands_slice,
             .spas = owned_spas,
@@ -631,6 +637,7 @@ const help_message =
     \\  --island=SRC          Bundle this island for the browser (repeatable)
     \\  --island-runtime-entry=PATH  Entry for the shared /zigapagos-runtime.js
     \\  --island-bundle-driver=PATH  Bun script that bundles one island/entry
+    \\  --css-minify          Minify site CSS using the bundled runtime in one process
     \\  --css-minify-driver=PATH  Bun script that minifies .css site assets on
     \\                        install (needs --bun; omit to copy CSS verbatim)
     \\  --island-props-check=MODE  off | warn | error — typecheck island props (default off)
@@ -693,6 +700,8 @@ pub const runtime_dir_env = "ZIGAPAGOS_RUNTIME_DIR";
 /// letting them disagree, and a flag per file would be nine more ways to
 /// half-configure a build that has exactly one right answer.
 pub const RuntimeDefaults = struct {
+    /// Bundled pure CSS minifier, selected only by `--css-minify`.
+    css_minify_driver: []const u8,
     /// The SELF-CONTAINED sidecar entry, not `render.ts`: a consumer island
     /// imports `@z/runtime` by its bare name, which resolves to nothing in a
     /// tree where the runtime lives inside `@zigapagos/cli` rather than in the
@@ -729,6 +738,7 @@ pub const RuntimeDefaults = struct {
     host_config_emitter: []const u8,
 
     pub fn deinit(rd: *const RuntimeDefaults, gpa: Allocator) void {
+        gpa.free(rd.css_minify_driver);
         gpa.free(rd.sidecar);
         gpa.free(rd.runtime_entry);
         gpa.free(rd.bundle_driver);
@@ -753,6 +763,8 @@ pub const RuntimeDefaults = struct {
 pub fn runtimeDefaults(gpa: Allocator, dir: []const u8) Allocator.Error!RuntimeDefaults {
     // Every join is `errdefer`-guarded in declaration order so a failure part-way
     // through frees exactly what was built, rather than leaking the prefix.
+    const css_minify_driver = try std.fs.path.join(gpa, &.{ dir, "sidecar", "minify-css.ts" });
+    errdefer gpa.free(css_minify_driver);
     const sidecar = try std.fs.path.join(gpa, &.{ dir, "sidecar", "standalone.ts" });
     errdefer gpa.free(sidecar);
     const runtime_entry = try std.fs.path.join(gpa, &.{ dir, "src", "browser-entry.ts" });
@@ -779,6 +791,7 @@ pub fn runtimeDefaults(gpa: Allocator, dir: []const u8) Allocator.Error!RuntimeD
     errdefer gpa.free(jsx_module);
     const host_config_emitter = try std.fs.path.join(gpa, &.{ dir, "scripts", "emit-host-config.ts" });
     return .{
+        .css_minify_driver = css_minify_driver,
         .sidecar = sidecar,
         .runtime_entry = runtime_entry,
         .bundle_driver = bundle_driver,
@@ -807,6 +820,11 @@ pub fn runtimeDefaults(gpa: Allocator, dir: []const u8) Allocator.Error!RuntimeD
 /// because `root.run` spawns the sidecar only when all three are non-null and a
 /// site with no islands must not acquire a bun dependency by accident.
 fn applyDefaults(cmd: *Command, defaults: ?RuntimeDefaults) void {
+    if (cmd.css_minify) {
+        if (cmd.css_minify_driver != null) fatal.msg("error: --css-minify and --css-minify-driver cannot be combined\n", .{});
+        const d = defaults orelse fatal.msg("error: --css-minify needs the bundled runtime; set ZIGAPAGOS_RUNTIME_DIR to its directory\n", .{});
+        cmd.css_minify_driver = d.css_minify_driver;
+    }
     if (defaults) |d| {
         if (cmd.island_sidecar == null) cmd.island_sidecar = d.sidecar;
         if (cmd.island_runtime_entry == null) cmd.island_runtime_entry = d.runtime_entry;
@@ -1691,4 +1709,24 @@ test "containsComponent matches whole path components only" {
     try std.testing.expect(containsComponent("node_modules/X.island.tsx", "node_modules"));
     try std.testing.expect(!containsComponent("my-node_modules-notes/X.island.tsx", "node_modules"));
     try std.testing.expect(!containsComponent("src/node_modulesish/X.island.tsx", "node_modules"));
+}
+
+test "parse CSS minification opt-in resolves bundled driver and Bun without app entries" {
+    const gpa = std.testing.allocator;
+    const defaults = try runtimeDefaults(gpa, "/runtime");
+    defer defaults.deinit(gpa);
+    var cmd = try Command.parse(gpa, &.{"--css-minify"});
+    defer cmd.deinit(gpa);
+    applyDefaults(&cmd, defaults);
+    try std.testing.expect(cmd.css_minify);
+    try std.testing.expectEqualStrings("/runtime/sidecar/minify-css.ts", cmd.css_minify_driver.?);
+    try std.testing.expectEqualStrings("bun", cmd.bun_path.?);
+    try std.testing.expectEqual(@as(usize, 0), cmd.islands.len);
+    try std.testing.expectEqual(@as(usize, 0), cmd.spas.len);
+
+    var custom = try Command.parse(gpa, &.{"--css-minify-driver=custom.ts"});
+    defer custom.deinit(gpa);
+    applyDefaults(&custom, defaults);
+    try std.testing.expect(!custom.css_minify);
+    try std.testing.expectEqualStrings("custom.ts", custom.css_minify_driver.?);
 }

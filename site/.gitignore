@@ -10,6 +10,7 @@ assets/install.sh
 
 # Generated from canonical docs by scripts/gen-docs-mirror.ts — never commit.
 # Edit the canonical file (docs/*.md, docs/migration/*.md, CHANGELOG.md).
+content/docs/building-apps.smd
 content/docs/islands.smd
 content/docs/spa.smd
 content/docs/cross-tier-codegen.smd
@@ -20,6 +21,8 @@ content/docs/build-errors.smd
 content/docs/superhtml.smd
 content/docs/runtime-dependencies.smd
 content/docs/assets.smd
+content/docs/styling.smd
+content/docs/deployment-checks.smd
 content/docs/images.smd
 content/docs/dev-server.smd
 content/docs/diagnostics.smd
@@ -31,3 +34,4 @@ content/docs/react-spa-bridge.smd
 content/docs/migrate-from-rails.smd
 content/docs/roadmap.smd
 content/docs/changelog.smd
+content/docs/output-inspection.smd

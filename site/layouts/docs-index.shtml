@@ -7,6 +7,8 @@
     <h1 :text="$page.title"></h1>
     <div :html="$page.content()"></div>
     <div class="grid-3 docs-cards">
+      <a class="card" href="$site.page('docs/building-apps').link()"><h3>Building applications</h3><p>Build directly or with an agent. Choose your backend or pair with ZigBase.</p></a>
+      <a class="card" href="$site.page('docs/roadmap').link()"><h3>Feature backlog</h3><p>Application workflows, frontend foundations, and evidence for growth.</p></a>
       <a class="card" href="$site.page('docs/overview').link()">
         <h3>Overview</h3><p>What Zigapagos is and how a build runs.</p>
       </a>

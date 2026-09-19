@@ -79,10 +79,10 @@
         <p>
           Next exports static HTML, but the model underneath is a React
           application: the framework runtime ships whether or not a given page
-          needs interactivity. Zigapagos inverts that default — a page with no
-          islands ships no JavaScript. If your site is mostly application and
-          incidentally content, Next is the better fit; if it is mostly content
-          with pockets of interactivity, this is.
+          needs interactivity. Zigapagos offers static pages, selective islands,
+          and native SPAs on a shared Preact runtime. Choose based on the
+          rendering model and library compatibility your application needs;
+          application frontends are a supported Zigapagos use case.
         </p>
       </div>
       <div class="card">
@@ -127,8 +127,10 @@
       <div class="card">
         <h3>You need server-side rendering at request time</h3>
         <p>
-          There is no server. Anything personalised per request has to happen in
-          the browser or in a backend you run separately.
+          Zigapagos renders at build time. Personalised data comes from a
+          backend API and is rendered in the browser. ZigBase can serve both
+          the API and frontend on one origin, but does not add request-time
+          component rendering to Zigapagos.
         </p>
       </div>
       <div class="card">

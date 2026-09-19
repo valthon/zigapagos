@@ -9,6 +9,10 @@
         <p class="docs-group">Getting started</p>
         <ul>
           <li>
+            <ctx :if="$page.custom.get('slug').eql('building-apps')"><a aria-current="page" href="$site.page('docs/building-apps').link()">Building applications</a></ctx>
+            <ctx :if="$page.custom.get('slug').eql('building-apps').not()"><a href="$site.page('docs/building-apps').link()">Building applications</a></ctx>
+          </li>
+          <li>
             <ctx :if="$page.custom.get('slug').eql('overview')">
               <a aria-current="page" href="$site.page('docs/overview').link()">Overview</a>
             </ctx>
@@ -170,6 +174,22 @@
             </ctx>
           </li>
           <li>
+            <ctx :if="$page.custom.get('slug').eql('styling')">
+              <a aria-current="page" href="$site.page('docs/styling').link()">Styling and components</a>
+            </ctx>
+            <ctx :if="$page.custom.get('slug').eql('styling').not()">
+              <a href="$site.page('docs/styling').link()">Styling and components</a>
+            </ctx>
+          </li>
+          <li>
+            <ctx :if="$page.custom.get('slug').eql('deployment-checks')">
+              <a aria-current="page" href="$site.page('docs/deployment-checks').link()">Deployment checks</a>
+            </ctx>
+            <ctx :if="$page.custom.get('slug').eql('deployment-checks').not()">
+              <a href="$site.page('docs/deployment-checks').link()">Deployment checks</a>
+            </ctx>
+          </li>
+          <li>
             <ctx :if="$page.custom.get('slug').eql('images')">
               <a aria-current="page" href="$site.page('docs/images').link()">Images</a>
             </ctx>
@@ -184,6 +204,10 @@
             <ctx :if="$page.custom.get('slug').eql('dev-server').not()">
               <a href="$site.page('docs/dev-server').link()">Background dev server</a>
             </ctx>
+          </li>
+          <li>
+            <ctx :if="$page.custom.get('slug').eql('output-inspection')"><a aria-current="page" href="$site.page('docs/output-inspection').link()">Output inspection</a></ctx>
+            <ctx :if="$page.custom.get('slug').eql('output-inspection').not()"><a href="$site.page('docs/output-inspection').link()">Output inspection</a></ctx>
           </li>
           <li>
             <ctx :if="$page.custom.get('slug').eql('diagnostics')">

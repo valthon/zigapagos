@@ -1,0 +1,11 @@
+@import "./plain.css";
+@font-face {
+    font-family: DemoSymbols;
+    src: url("../fonts/Temml.woff2") format("woff2");
+    font-display: swap;
+}
+.card { background: var(--surface) url("../images/grid.svg"); padding: 1.5rem; border-radius: 1rem; }
+.symbol { font-family: DemoSymbols; font-size: 2rem; }
+.ds-button { color: white; background: var(--brand); padding: 0.7rem 1rem; border: 0; border-radius: 0.5rem; font: inherit; cursor: pointer; }
+.ds-button:focus-visible { outline: 3px solid #d97706; outline-offset: 3px; }
+.ds-button[aria-pressed="true"] { background: #134e4a; }
