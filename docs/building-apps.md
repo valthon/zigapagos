@@ -114,3 +114,25 @@ platform aims to make a small team productive as its application grows; capacity
 must be established with representative workloads. Follow ZigBase's deployment
 and growth guidance for database changes, replicas, shared files, and job ownership.
 Frontend bundle size or a fast native build is not proof of backend scalability.
+
+## Browser-local application starter
+
+`zigapagos init --app` creates a task application at `/app/`, with an ordinary-CSS
+static landing page, navigation, a labelled form, loading/empty/error states,
+and typed asynchronous storage. Its generated README contains install, check,
+build, dev, and deployment commands. The npm launcher supplies runtime sources;
+a standalone binary needs `--runtime-path=DIR`. Generated `@z/runtime` is a local
+file dependency, not a portable package version: preserve the documented
+workspace layout or update the link on another machine.
+
+This is an immediately runnable frontend example. It persists only in browser
+localStorage, provides no authentication, and makes no shared-data guarantees.
+The storage module documents the `read`/`write` adapter contract for connecting
+your own backend. A production adapter also needs validated responses,
+authoritative authorization, and per-record/concurrent mutation semantics;
+replacing localStorage with a whole-list HTTP write is not sufficient.
+
+The fresh-scaffold checks build outside the repository, typecheck the app, and
+exercise keyboard validation, failed reads/writes, retry, reload, deep links,
+corrupt-data preservation, and the static landing page in Chrome. Broader
+API-backed and ZigBase-paired starter work remains on the roadmap.

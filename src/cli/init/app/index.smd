@@ -1,0 +1,9 @@
+---
+.title = "My application",
+.layout = "page.shtml",
+---
+
+A static homepage with no application JavaScript.
+
+The example stores tasks in this browser only. See the generated README before
+connecting a backend or deploying.

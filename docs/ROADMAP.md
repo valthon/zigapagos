@@ -83,6 +83,10 @@ The [application guide](building-apps.md) covers styling, deployment, and pairin
 
 ### P2 — Build complete applications on that foundation
 
+- [x] **Browser-local application starter.** `init --app` adds a plain-CSS task
+  application with static landing page, SPA navigation, accessible form, async
+  storage states, type checks, and fresh-scaffold browser journeys. Local runtime
+  linkage is explicit; browser storage is a demo, not a shared backend.
 - [ ] **Supported application starter.** Add an explicit application path alongside
   the current content scaffold. Include SPA navigation, accessible form patterns,
   loading/empty/error states, and browser journeys. Keep a frontend-only variant

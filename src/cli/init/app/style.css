@@ -1,0 +1,18 @@
+:root { font-family: system-ui, sans-serif; color: #17212b; background: #fafafa; line-height: 1.6; }
+* { box-sizing: border-box; }
+body { max-width: 65ch; margin: 2rem auto; padding: 0 1rem; overflow-wrap: break-word; }
+nav { display: flex; flex-wrap: wrap; gap: 1rem; }
+a { color: #075985; }
+main { margin-top: 2rem; }
+form { display: grid; gap: 0.75rem; }
+input, button { font: inherit; }
+input:not([type="checkbox"]) { width: 100%; padding: 0.6rem; }
+button { padding: 0.6rem 1rem; color: white; background: #075985; border: 0; border-radius: 0.3rem; cursor: pointer; }
+button:disabled { opacity: 0.6; cursor: wait; }
+:focus-visible { outline: 3px solid #a16207; outline-offset: 3px; }
+[role="alert"] { color: #9f1239; }
+.tasks { padding: 0; list-style: none; }
+.tasks li { padding: 0.5rem 0; }
+input[type="checkbox"] { width: 1.2rem; height: 1.2rem; vertical-align: middle; }
+.skip-link { position: absolute; left: -9999px; }
+.skip-link:focus { position: static; }

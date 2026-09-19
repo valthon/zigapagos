@@ -840,6 +840,14 @@ jobs:
       - name: Verify plain CSS, compiled Tailwind and Preact components in Chrome
         run: mise exec -- python3 examples/styling-site/test/browser.py examples/styling-site/zig-out/site
 
+      - name: Scaffold and build a fresh browser-local application
+        env:
+          APP_STARTER_TEST_PROJECT: ${{ runner.temp }}/app-starter
+        run: bash tests/init/app.sh
+
+      - name: Verify fresh application browser journeys
+        run: mise exec -- python3 tests/init/app_browser.py "${RUNNER_TEMP}/app-starter/public"
+
   # --- Shell e2e, sharded ------------------------------------------------------
   # The three jobs below partition `tests/*/*.sh` — the same glob the monolith
   # used, so a new tests/<area>/ directory is still covered the day it is added.
