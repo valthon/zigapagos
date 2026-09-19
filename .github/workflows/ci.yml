@@ -419,6 +419,13 @@ jobs:
       - name: Check single-threaded build (exe + all test binaries)
         run: zig build check -Dsingle-threaded
 
+      # Execute DebugAllocator cleanup too: compile-only checks cannot catch an
+      # arena suballocation accidentally freed through the backing allocator.
+      - name: Site-data ownership with single-threaded Debug allocator
+        run: |
+          zig build -Dsingle-threaded --prefix zig-out/single-threaded
+          ZIGAPAGOS_BIN="$PWD/zig-out/single-threaded/bin/zigapagos" bash tests/rendering/site-data-ownership.sh
+
       # --- Full test surface (issue AUD-019) ---
       # The fork's differentiating surface — the island pass, SPA prerender, the
       # dev/serve loop, the migration importer, and the TypeScript runtime — is
