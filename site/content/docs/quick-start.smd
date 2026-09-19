@@ -5,6 +5,14 @@
 .custom = { .slug = "quick-start" },
 ---
 
+## Choose your starting point
+
+This walkthrough starts with the content-site scaffold that `init` ships today.
+For an application, add [native SPA routes]($link.page("docs/spa")); for an
+integrated backend, follow [Building applications]($link.page("docs/building-apps")).
+The same commands work for direct development and coding agents. No AI account
+is needed. A complete paired application starter remains planned work.
+
 ## Install
 
 `zigapagos` is a standalone executable. **You do not need a Zig toolchain to

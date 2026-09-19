@@ -1,6 +1,6 @@
 ---
-.title = "Zigapagos — Astro's islands, a native core, no Node",
-.description = "A static site generator with a fast native core and Astro-style TSX islands. Zero JS by default, native SPAs, and a migration path off Astro. No Node, no Vite, no bundler config.",
+.title = "Zigapagos — Rich interfaces. Simple output.",
+.description = "Build with HTML, CSS, and TSX. Generate production code fast and deploy static files. Bring your styles, your backend, and optionally your coding agent.",
 .date = @date("2026-07-27T00:00:00"),
 .author = "Zigapagos",
 .layout = "index.shtml",

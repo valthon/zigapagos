@@ -9,6 +9,10 @@
         <p class="docs-group">Getting started</p>
         <ul>
           <li>
+            <ctx :if="$page.custom.get('slug').eql('building-apps')"><a aria-current="page" href="$site.page('docs/building-apps').link()">Building applications</a></ctx>
+            <ctx :if="$page.custom.get('slug').eql('building-apps').not()"><a href="$site.page('docs/building-apps').link()">Building applications</a></ctx>
+          </li>
+          <li>
             <ctx :if="$page.custom.get('slug').eql('overview')">
               <a aria-current="page" href="$site.page('docs/overview').link()">Overview</a>
             </ctx>

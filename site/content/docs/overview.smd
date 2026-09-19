@@ -5,10 +5,16 @@
 .custom = { .slug = "overview" },
 ---
 
-Zigapagos is a static site generator. It renders content and templates with a
-single native binary, and adds interactivity one component at a time using TSX
-islands that are server-rendered at build time and hydrated in the browser only
-where you ask for it.
+Zigapagos builds rich interfaces with simple output: HTML, CSS, JavaScript where
+needed, and static assets. The native core generates pages; Bun renders and
+bundles Preact-compatible TSX at build time. Deploy the release directory to a
+compatible static host, with no production Bun or Node process for the frontend.
+
+Use familiar web languages with explicit template and configuration conventions.
+Write plain CSS, bring a framework's generated stylesheet, or use your design
+system. Work directly or with an agent; the same APIs and local tools support both.
+The [application guide]($link.page("docs/building-apps")) covers styling,
+frontend-only deployment, and optional ZigBase pairing.
 
 ## The three inputs
 
@@ -47,8 +53,9 @@ costs you:
 
 ## What it is not
 
-Zigapagos does not run your components on a server at request time. There is no
-server. It does not ship a virtual DOM to pages that have no islands. And it
+Zigapagos does not run your components on a server at request time. Its frontend
+output is static files; the dev server and production host are separate concerns.
+It does not ship a virtual DOM to pages that have no islands. And it
 does not have a plugin ecosystem — the toolchain is the binary plus Bun, which is
 the point, but it does mean a capability that does not exist is not one npm
 install away.

@@ -1,9 +1,9 @@
 <h1 align="center">🏝️ Zigapagos</h1>
 
 <p align="center">
-  <b>The islands-architecture static site generator with a native core.</b><br/>
-  Author interactive components in TSX. Ship zero-JS-by-default pages.<br/>
-  One fast Zig binary + Bun — no Node, no Vite, no framework lock-in.
+  <b>Rich interfaces. Simple output.</b><br/>
+  HTML, CSS, and TSX. Fast production builds. Static files to deploy.<br/>
+  Build directly or with your coding agent. Bring your styles and your backend.
 </p>
 
 <p align="center">
@@ -18,9 +18,26 @@
 
 ## What is Zigapagos?
 
-Zigapagos brings [Astro](https://astro.build)-style **islands architecture** to a
-native static site generator. Pages are plain HTML rendered at build time by a
-fast Zig core; interactivity is added per-component:
+Zigapagos turns pages, interactive components, and client-routed applications
+into **static files**. A native core generates HTML; Bun renders and bundles
+TSX at build time. Pages without islands need no framework runtime. Add the
+interaction your product needs and control when it loads.
+
+Work in familiar web languages: HTML templates, CSS, and Preact-compatible TSX.
+Use plain CSS, bring a CSS framework's generated stylesheet, or build on your
+own design system. Zigapagos supplies the rendering and build pipeline, without
+requiring a visual style or an AI service. Its SuperHTML templates, SuperMD
+content, and Ziggy configuration add specific conventions, documented explicitly.
+
+**Build quickly, then deploy the files.** The frontend needs no production Bun
+or Node process. Use a compatible static host and your existing API; configure
+SPA routing and headers for that host. Pair with **ZigBase** when you want data,
+authentication, server-enforced access rules, files, realtime, jobs, and custom
+backend logic on the same origin. See [Building applications](docs/building-apps.md).
+
+Direct development and coding agents use the same source, local tools, and
+verification commands. Structured diagnostics make the feedback easier to act on.
+Here is an interactive component:
 
 ```tsx
 // components/Counter.island.tsx

@@ -28,6 +28,6 @@
   <circle cx="1050" cy="420" r="44" fill="#3fd0bd"/>
   <circle cx="1050" cy="420" r="70" fill="none" stroke="#3fd0bd" stroke-opacity="0.25" stroke-width="3"/>
   <text x="90" y="250" font-family="system-ui, sans-serif" font-size="86" font-weight="700" fill="#e6e9ea" letter-spacing="-3">Zigapagos</text>
-  <text x="90" y="330" font-family="system-ui, sans-serif" font-size="38" fill="#9aa3ab">Astro's islands. A native core. No Node.</text>
-  <text x="90" y="420" font-family="ui-monospace, monospace" font-size="26" fill="#3fd0bd">zero JS by default · TSX islands · native SPAs</text>
+  <text x="90" y="330" font-family="system-ui, sans-serif" font-size="38" fill="#9aa3ab">Rich interfaces. Simple output.</text>
+  <text x="90" y="420" font-family="ui-monospace, monospace" font-size="26" fill="#3fd0bd">HTML · CSS · TSX → static files</text>
 </svg>

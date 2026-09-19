@@ -10,6 +10,7 @@ assets/install.sh
 
 # Generated from canonical docs by scripts/gen-docs-mirror.ts — never commit.
 # Edit the canonical file (docs/*.md, docs/migration/*.md, CHANGELOG.md).
+content/docs/building-apps.smd
 content/docs/islands.smd
 content/docs/spa.smd
 content/docs/cross-tier-codegen.smd

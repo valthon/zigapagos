@@ -73,7 +73,7 @@
     <footer class="site-footer">
       <div class="footer-inner">
         <p>
-          Zigapagos is a static site generator with a native core and TSX islands.
+          Rich interfaces. Simple output. HTML, CSS, TSX, and static files to deploy.
           MIT licensed.
         </p>
         <p>

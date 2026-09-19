@@ -1,5 +1,12 @@
 [
   {
+    "canonical": "docs/building-apps.md",
+    "mirror": "building-apps.smd",
+    "slug": "building-apps",
+    "title": "Building applications",
+    "description": "Direct and agent workflows, frontend-only hosting, and the ZigBase full-stack boundary."
+  },
+  {
     "canonical": "docs/islands.md",
     "mirror": "islands.smd",
     "slug": "islands",
@@ -25,7 +32,7 @@
     "mirror": "generated-content.smd",
     "slug": "generated-content",
     "title": "Generated content",
-    "description": "Why Zigapagos ships no content-generator hook, and the four-piece recipe — registry, generator, gitignore, freshness gate — this site's own docs pages use instead."
+    "description": "Why Zigapagos ships no content-generator hook, and the four-piece recipe \u2014 registry, generator, gitignore, freshness gate \u2014 this site's own docs pages use instead."
   },
   {
     "canonical": "docs/testing.md",
