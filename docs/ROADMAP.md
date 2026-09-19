@@ -26,11 +26,12 @@ The [application guide](building-apps.md) covers styling, deployment, and pairin
 
 ### P1 — Make static output dependable and easy to ship
 
-- [ ] **Document-relative output audit.** Extend `doctor` beyond root-relative
-  links to ordinary relative page and asset references. Test nested pages, query
-  strings, URL prefixes, and missing files. Make unsupported URL-base semantics
-  visible rather than reporting an unverified tree clean. Preserve read-only
-  auditing and deterministic human/JSON diagnostics.
+- [x] **Document-relative output audit.** `doctor` checks local `href`/`src`
+  page and asset references, with fixtures for nested pages, query strings,
+  URL prefixes, colon filenames, and missing files. Unsupported `<base href>`
+  semantics report skipped coverage and fail the audit. Read-only auditing and
+  deterministic human/JSON diagnostics are preserved; CSS URLs, `srcset`, and
+  browser route execution remain outside this check. See [diagnostics](diagnostics.md).
 - [ ] **Deployment verification.** Provide reproducible checks for static hosts,
   including root and subpath hosting, SPA deep links, CSP, and cache behavior
   across a release. Test with and without ZigBase; documented host configuration
