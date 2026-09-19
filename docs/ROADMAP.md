@@ -32,6 +32,12 @@ The [application guide](building-apps.md) covers styling, deployment, and pairin
   semantics report skipped coverage and fail the audit. Read-only auditing and
   deterministic human/JSON diagnostics are preserved; CSS URLs, `srcset`, and
   browser route execution remain outside this check. See [diagnostics](diagnostics.md).
+- [x] **HTTP deployment comparison.** A developer-side checker compares served
+  HTML/CSS/JS, sampled SPA deep links, generated CSP, and cache headers with a
+  release tree. Root/subpath loopback fixtures prove success and intentional
+  failures; production needs no frontend toolchain. See [deployment checks](deployment-checks.md).
+  Browser execution, CDN cache transitions, and real nginx/Apache/ZigBase
+  rehearsals remain outside this check.
 - [ ] **Deployment verification.** Provide reproducible checks for static hosts,
   including root and subpath hosting, SPA deep links, CSP, and cache behavior
   across a release. Test with and without ZigBase; documented host configuration

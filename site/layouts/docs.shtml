@@ -182,6 +182,14 @@
             </ctx>
           </li>
           <li>
+            <ctx :if="$page.custom.get('slug').eql('deployment-checks')">
+              <a aria-current="page" href="$site.page('docs/deployment-checks').link()">Deployment checks</a>
+            </ctx>
+            <ctx :if="$page.custom.get('slug').eql('deployment-checks').not()">
+              <a href="$site.page('docs/deployment-checks').link()">Deployment checks</a>
+            </ctx>
+          </li>
+          <li>
             <ctx :if="$page.custom.get('slug').eql('images')">
               <a aria-current="page" href="$site.page('docs/images').link()">Images</a>
             </ctx>

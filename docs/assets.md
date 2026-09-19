@@ -12,6 +12,9 @@ from a template as `$site.asset('...')` and from content as
 `$page.asset('...')`) and build assets (`zigapagos release --build-asset=NAME
 PATH`) are mentioned only where they differ.
 
+For a running host, [deployment checks](deployment-checks.md) compare served
+frontend bytes and generated headers with the release tree.
+
 ## Production CSS minification
 
 Run `zigapagos release --css-minify` to minify referenced and explicitly static

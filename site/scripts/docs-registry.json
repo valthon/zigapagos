@@ -84,6 +84,13 @@
     "description": "Plain CSS, compiled frameworks, asset dependencies, and reusable Preact components."
   },
   {
+    "canonical": "docs/deployment-checks.md",
+    "mirror": "deployment-checks.smd",
+    "slug": "deployment-checks",
+    "title": "Deployment checks",
+    "description": "Compare static-host HTTP responses with a release tree: frontend bytes, sampled SPA deep links, generated CSP and cache headers, and explicit coverage limits."
+  },
+  {
     "canonical": "docs/images.md",
     "mirror": "images.smd",
     "slug": "images",
