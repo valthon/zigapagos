@@ -16,7 +16,8 @@
 //! so release output is never touched (proven by tests/dev/dev.sh). SSE (not
 //! WebSocket) keeps the server tiny and the client a one-liner, and
 //! `EventSource` auto-reconnects — so the reconnect after the reload it just
-//! triggered is automatic, with no bookkeeping here.
+//! triggered is automatic. Session/reload cursors make reconnects after missed
+//! updates refresh the page instead of silently retaining stale output.
 
 const std = @import("std");
 const Io = std.Io;
@@ -89,6 +90,8 @@ pub const Server = struct {
     mutex: Io.Mutex = .init,
     cond: Io.Condition = .init,
     generation: u64 = 0,
+    /// Per-instance identity, independent of PID reuse and wall-clock precision.
+    session_id: u128,
     /// The SSE `data:` value broadcast for the CURRENT generation, gpa-owned and
     /// guarded by `mutex`. `null` means the default full-reload signal
     /// (`data: reload`); `notifyIslands` sets a JSON payload for a hot-swap.
@@ -125,7 +128,9 @@ pub const Server = struct {
     pub const max_connections: u32 = 32;
 
     pub fn init(io: Io, gpa: Allocator, address: Io.net.IpAddress) Server {
-        return .{ .io = io, .gpa = gpa, .address = address };
+        var nonce: [16]u8 = undefined;
+        io.random(&nonce);
+        return .{ .io = io, .gpa = gpa, .address = address, .session_id = std.mem.readInt(u128, &nonce, .little) };
     }
 
     /// Claims one of the `max_connections` slots. False means the cap is
@@ -373,6 +378,23 @@ pub const Server = struct {
             return;
         }
 
+        // EventSource sends this automatically when the same stream reconnects.
+        // A new document has no cursor, so it must not reload merely on connect.
+        var previous_cursor: ?[]const u8 = null;
+        var headers = req.iterateHeaders();
+        while (headers.next()) |header| {
+            if (std.ascii.eqlIgnoreCase(header.name, "last-event-id")) previous_cursor = header.value;
+        }
+        var cursor_buffer: [128]u8 = undefined;
+        var seen: u64 = undefined;
+        const cursor = blk: {
+            s.mutex.lock(s.io) catch return;
+            defer s.mutex.unlock(s.io);
+            seen = s.generation;
+            break :blk std.fmt.bufPrint(&cursor_buffer, "{x}/{d}", .{ s.session_id, seen }) catch return;
+        };
+        const missed_update = if (previous_cursor) |previous| !std.mem.eql(u8, previous, cursor) else false;
+
         var resp_buf: [1024]u8 = undefined;
         var body = req.respondStreaming(&resp_buf, .{
             .respond_options = .{
@@ -388,16 +410,20 @@ pub const Server = struct {
             },
         }) catch return;
 
-        // Greeting: set the client's reconnect delay and confirm the stream is
-        // open (tests poll for `: connected`).
-        body.writer.writeAll("retry: 1000\n: connected\n\n") catch return;
+        // A named event establishes the cursor even before the first edit,
+        // without invoking the page's ordinary reload onmessage handler.
+        body.writer.writeAll("retry: 1000\n: connected\nid: ") catch return;
+        body.writer.writeAll(cursor) catch return;
+        if (missed_update) {
+            // The latest island delta cannot represent multiple missed builds.
+            // Commit the new cursor WITH the reload, never in an earlier ready
+            // event: a disconnect between those events would lose the update.
+            body.writer.writeAll("\ndata: reload\n\n") catch return;
+        } else {
+            body.writer.writeAll("\nevent: zigapagos-ready\ndata: connected\n\n") catch return;
+        }
         flush(&body) catch return;
 
-        var seen: u64 = blk: {
-            s.mutex.lock(s.io) catch return;
-            defer s.mutex.unlock(s.io);
-            break :blk s.generation;
-        };
         while (true) {
             // Copy the current generation's payload WHILE holding the lock — a
             // later notify* may free/replace it the moment we release.
@@ -406,15 +432,14 @@ pub const Server = struct {
                 defer s.mutex.unlock(s.io);
                 while (s.generation == seen) s.cond.waitUncancelable(s.io, &s.mutex);
                 seen = s.generation;
-                break :blk s.gpa.dupe(u8, s.payload orelse "reload") catch return;
+                break :blk std.fmt.allocPrint(s.gpa, "id: {x}/{d}\ndata: {s}\n\n", .{
+                    s.session_id, seen, s.payload orelse "reload",
+                }) catch return;
             };
             defer s.gpa.free(line);
 
-            // SSE frame: `data: <payload>\n\n`. Payloads are single-line (plain
-            // "reload" or one-line JSON), so no `data:` re-framing is needed.
-            body.writer.writeAll("data: ") catch return;
+            // Cursor and payload describe the same snapshot under the lock.
             body.writer.writeAll(line) catch return;
-            body.writer.writeAll("\n\n") catch return;
             flush(&body) catch return;
         }
     }
@@ -695,10 +720,9 @@ test "dev live-reload: injectFile swaps the page in atomically, never rewriting 
 }
 
 test "dev live-reload: the SSE server refuses connections past the cap" {
-    // Slot accounting touches only the atomic counter, so the io/gpa/address
-    // fields are never read here — the cap is exactly what `accept` consults
-    // before spawning a per-connection thread.
-    var s: Server = .init(undefined, undefined, undefined);
+    // Slot accounting touches only the atomic counter; initialization still
+    // uses io to generate the session identity.
+    var s: Server = .init(std.testing.io, undefined, undefined);
 
     for (0..Server.max_connections) |i| {
         try std.testing.expect(s.reserveSlot());
@@ -834,4 +858,12 @@ test "dev live-reload: closing tags are matched case-insensitively" {
         @as(?usize, 10),
         lastIndexOfCI("</body> x </body>", "</body>"),
     );
+}
+
+test "dev live-reload: session identity is independent of repeated process metadata" {
+    var first = Server.init(std.testing.io, std.testing.allocator, undefined);
+    var second = Server.init(std.testing.io, std.testing.allocator, undefined);
+    first.setIdentity(42, "http://localhost/", "2026-09-20T00:00:00Z");
+    second.setIdentity(42, "http://localhost/", "2026-09-20T00:00:00Z");
+    try std.testing.expect(first.session_id != second.session_id);
 }

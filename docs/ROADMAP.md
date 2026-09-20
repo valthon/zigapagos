@@ -114,6 +114,11 @@ The [application guide](building-apps.md) covers styling, deployment, and pairin
 
 ### P2 — Make iteration dependable for developers and agents
 
+- [x] **Recover live previews after reconnects.** Session/reload cursors detect
+  missed successful rebuild notifications and server restarts. A focused Chrome
+  journey covers successive edits, failed-build repair, unchanged reconnects,
+  multiple missed edits, and process teardown. Root configuration still requires
+  restarting the dev session; output writes are not transactional.
 - [ ] **Reliable edit/build/browser loop.** Extend existing structured diagnostics,
   background status, and reload tooling. Reproduce and resolve intermittent dev
   rebuild failures; verify successive edits, failed builds followed by recovery,

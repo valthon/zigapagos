@@ -855,6 +855,9 @@ jobs:
       - name: Verify fresh application browser journeys
         run: mise exec -- python3 tests/init/app_browser.py "${RUNNER_TEMP}/app-starter/public"
 
+      - name: Verify dev rebuild and reconnect recovery in Chrome
+        run: mise exec -- python3 tests/dev/recovery_browser.py
+
   # --- Shell e2e, sharded ------------------------------------------------------
   # The three jobs below partition `tests/*/*.sh` — the same glob the monolith
   # used, so a new tests/<area>/ directory is still covered the day it is added.
