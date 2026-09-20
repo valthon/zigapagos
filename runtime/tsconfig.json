@@ -11,5 +11,5 @@
     "types": ["bun"],
     "noEmit": true
   },
-  "include": ["src", "sidecar", "scripts", "test"]
+  "include": ["src", "sidecar", "scripts", "test", "tooling"]
 }

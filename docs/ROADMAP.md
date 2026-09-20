@@ -57,6 +57,11 @@ The [application guide](building-apps.md) covers styling, deployment, and pairin
   normalized file paths, includes executable inline script and style bodies,
   and enforces exact JS/CSS byte limits only with complete direct coverage.
   External, missing, and unsupported references remain explicit unknowns.
+- [x] **Static dependency closure estimates.** A checkout-only report traverses
+  emitted JS/CSS and import maps, separates static initial dependencies from
+  potential dynamic/deferred candidates, and reports raw/gzip/Brotli estimates
+  with explicit unknowns. Browser timing, named SPA route attribution, actual
+  transfers/cache behavior, and installed-CLI integration remain open.
 - [ ] **Measure route loading cost.** Traverse import maps and module/CSS
   dependency graphs; distinguish initial and lazy loading, compressed transfer,
   and external resources. Direct-reference raw-byte budgets are not this metric.
