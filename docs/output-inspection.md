@@ -182,3 +182,81 @@ continues to count only aggregate limits. Either nonzero count makes the command
 exit 1. The existing summary's `references_resolved: false` describes its
 original literal-reference records, not the selected page's additional
 resolution records.
+
+## Static initial and lazy dependency estimates
+
+For a deeper graph report, use the **checkout-only developer tool** with Bun and
+this repository's runtime development dependencies installed. It is intentionally
+not shipped with the installed CLI: its inert HTML parser comes from the existing
+Happy DOM development dependency, and its JavaScript parser uses TypeScript.
+
+```sh
+cd runtime && bun install --frozen-lockfile && cd ..
+bun runtime/tooling/route-loading.ts public --page=app/index.html \
+  --url-prefix=/project > route-loading.json
+# Repeatable fixture; no release build required:
+bun runtime/tooling/route-loading.ts runtime/tooling/fixtures/route-loading \
+  --page=index.html --strict
+```
+
+The JSON report's `initial` group is the static closure of scripts, script/style preload and modulepreload
+hints, stylesheets and executable inline imports. `lazy_only` contains reachable
+files outside that initial closure. Literal `import()` targets and island
+`data-z-module` attributes contribute lazy candidates; each `lazy_entries` record
+lists its static closure after removing initial files. Nested dynamic imports
+have their own entries. Shared files count once in the union, but can appear in
+several candidate entries. These candidates do not claim an import happens only
+after interaction: top-level dynamic imports, prefetching and hydration policies
+can load them immediately. Modulepreload, conditional stylesheets and `nomodule`
+scripts are conservatively included; the report does not simulate browser
+conditions or execution. SPA routing-manifest chunk tables are not sufficient to
+prove execution order, so this first slice uses emitted HTML and module edges,
+without attributing chunks to named application routes.
+
+The tool traverses static imports, reexports, literal dynamic imports, and CSS
+`@import`. It resolves exact, prefix and scoped import-map entries. Scope keys
+match the exact importer URL, or a URL prefix only when the key ends in `/`, as
+specified by the [HTML module-resolution algorithm](https://html.spec.whatwg.org/multipage/webappapis.html#resolve-a-module-specifier). HTML entities
+and CSS escapes use the existing parsers; CSS parsing externalizes every
+reference, and HTML parsing disables script execution and external loading.
+No application module is executed and no resource is fetched. Inline script and
+style body sizes are reported separately but remain part of the measured HTML
+file, preventing double counting them as standalone files.
+
+Every measured physical file has `raw`, `gzip`, and `brotli` byte counts. The
+compression figures use gzip level 9 and Brotli quality 11 **independently per
+file**; they are estimates, not observed HTTP transfer sizes. They exclude HTTP
+headers, negotiation, cache hits and server compression settings. No compressed
+output is written. Query strings and fragments are ignored for physical-file
+deduplication, which differs from browser module identity and request caching.
+Module identity involving queries/fragments and import-map scopes is flagged
+unsupported. The report contains its measurement/compression conventions and
+lists each graph edge and resource.
+
+`coverage_complete` describes only this bounded static JS/CSS graph.
+`browser_loading_complete` is always false. Fonts, images, CSS `url()` assets,
+workers, service workers, fetch/XHR, DOM-inserted resources, inline event handlers,
+and runtime-dependent loading are outside the metric. HTML parsing is tolerant,
+not a markup-validity check. The graph assumes scripting is enabled; `noscript`
+and uninstantiated `template` contents are not roots. Missing/external files,
+computed imports, CommonJS `require`, unsupported static module attributes or dynamic import options,
+multiple/late/invalid import maps, `base href`, foreign SVG/MathML content, unsupported legacy script languages,
+syntax diagnostics, symlinks and unsafe paths are reported in
+`unknowns`; these prevent complete graph coverage. Map validation includes unused
+malformed entries and invalid scope URLs, a conservative check even where browsers can
+ignore an entry or normalize it to a blocker. Explicit null blockers are supported:
+an unused blocker or valid external address does not imply a resource load.
+A failed resource visit retains an unresolved (`null`) edge target.
+Known-resource estimates for an incomplete graph are not a certified lower bound on actual loading.
+Each file is limited to 16 MiB, and graphs to 10,000 files.
+
+By default incomplete coverage is report-only. Add `--strict` to exit 1 while
+still emitting the complete JSON report if any unknown remains. Invalid command
+arguments or an unreadable selected page exit 1 with a diagnostic on stderr;
+there is no successful JSON report in that case. Existing `inspect-output`
+aggregate and direct-page budgets are unchanged and remain separate metrics.
+
+Repeated-slash aliases share a canonical physical file key and count once. They
+also produce an explicit unknown: collapsing a browser URL can change relative
+import resolution and scoped mappings. The report does not claim complete graph
+coverage for those aliases, even when the underlying file exists.

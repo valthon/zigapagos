@@ -1,0 +1,1 @@
+Added a checkout-only route-loading report for emitted HTML: static JS/CSS dependency closures, initial versus lazy-only candidate files, scoped import maps, and per-file gzip/Brotli estimates. Unknown edges remain visible and can fail an opt-in strict check. Existing `inspect-output` measurements and installed CLI behavior are unchanged.

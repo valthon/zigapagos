@@ -45,6 +45,33 @@ dev: manage:   zigapagos dev stop | status | logs [--follow]
   or `--force` (an untracked instance has no lockfile for `--background`'s
   own readiness handshake to poll).
 
+## Editing and browser recovery
+
+Content, layout, asset and discovered component source edits trigger rebuilds.
+A successful build updates connected browsers. If the reload connection drops,
+the browser reconnects automatically. It performs one full page refresh when
+successful rebuild notifications were missed, including when several HTML/CSS
+edits occurred while disconnected. Reconnecting without missed updates leaves the page alone.
+A restarted server at the same reload address also refreshes an existing tab.
+If the restart picks a different reload port, manually refresh the tab once.
+
+A failed rebuild sets `build.status` to `"failed"` and retains an error tail;
+it does not broadcast a browser reload. Fix the source and save again. The next
+successful rebuild clears the error and updates the browser. Build commands
+write output in place: this is **not a transactional last-good-output snapshot**,
+so manually refreshing during a failed or running build can expose partial output.
+
+Restart `dev` after editing root configuration such as `zigapagos.ziggy`,
+`z-runtime.config.json`, or `tsconfig.json`, or changing which source directories
+exist. The session discovers its watch directories and URL prefix at startup;
+root config edits alone do not currently trigger a rebuild. Status and
+`dev wait` describe observed source edits, not unwatched configuration changes.
+
+The reload stream is a dev-only transport. New streams announce a session/reload
+cursor in a named `zigapagos-ready` event and include it on later events. Native
+`EventSource` reconnections send `Last-Event-ID`; a stale cursor requests a full
+refresh rather than attempting to replay a possibly incomplete island delta.
+
 ## Sites with a `url_path_prefix`
 
 A site with `url_path_prefix` set in `zigapagos.ziggy` (the documented setup

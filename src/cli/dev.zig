@@ -967,8 +967,9 @@ pub fn dev(
                 std.debug.print("dev: rebuild OK — refresh the browser\n", .{});
             }
         } else {
-            // Keep serving the last good tree; the next change retries.
-            std.debug.print("dev: rebuild FAILED (see output above); still serving the previous build\n", .{});
+            // Build commands write in place; failure does not guarantee an
+            // untouched output tree. Do not reload browsers until a repair wins.
+            std.debug.print("dev: rebuild FAILED (see output above); fix the source and save again to retry\n", .{});
         }
         reload_server.setBuildFinished(rebuild.ok, rebuild.duration_ms, rebuild.error_tail);
         if (rebuild.error_tail) |t| gpa.free(t);

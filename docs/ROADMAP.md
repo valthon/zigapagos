@@ -38,6 +38,11 @@ The [application guide](building-apps.md) covers styling, deployment, and pairin
   failures; production needs no frontend toolchain. See [deployment checks](deployment-checks.md).
   Browser execution, CDN cache transitions, and real nginx/Apache/ZigBase
   rehearsals remain outside this check.
+- [x] **Real nginx release rehearsal.** Generated routes, CSP, and cache policy
+  run on nginx and Chrome at root and subpath URLs. Tests cover dynamic deep
+  links, hydration, conditional requests, and retaining old lazy chunks through
+  a release switch. Apache, CDN behavior, in-flight deployment races, and paired
+  ZigBase hosting remain outside this evidence.
 - [ ] **Deployment verification.** Provide reproducible checks for static hosts,
   including root and subpath hosting, SPA deep links, CSP, and cache behavior
   across a release. Test with and without ZigBase; documented host configuration
@@ -52,6 +57,11 @@ The [application guide](building-apps.md) covers styling, deployment, and pairin
   normalized file paths, includes executable inline script and style bodies,
   and enforces exact JS/CSS byte limits only with complete direct coverage.
   External, missing, and unsupported references remain explicit unknowns.
+- [x] **Static dependency closure estimates.** A checkout-only report traverses
+  emitted JS/CSS and import maps, separates static initial dependencies from
+  potential dynamic/deferred candidates, and reports raw/gzip/Brotli estimates
+  with explicit unknowns. Browser timing, named SPA route attribution, actual
+  transfers/cache behavior, and installed-CLI integration remain open.
 - [ ] **Measure route loading cost.** Traverse import maps and module/CSS
   dependency graphs; distinguish initial and lazy loading, compressed transfer,
   and external resources. Direct-reference raw-byte budgets are not this metric.
@@ -114,6 +124,11 @@ The [application guide](building-apps.md) covers styling, deployment, and pairin
 
 ### P2 — Make iteration dependable for developers and agents
 
+- [x] **Recover live previews after reconnects.** Session/reload cursors detect
+  missed successful rebuild notifications and server restarts. A focused Chrome
+  journey covers successive edits, failed-build repair, unchanged reconnects,
+  multiple missed edits, and process teardown. Root configuration still requires
+  restarting the dev session; output writes are not transactional.
 - [ ] **Reliable edit/build/browser loop.** Extend existing structured diagnostics,
   background status, and reload tooling. Reproduce and resolve intermittent dev
   rebuild failures; verify successive edits, failed builds followed by recovery,
