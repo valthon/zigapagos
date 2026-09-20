@@ -1291,9 +1291,11 @@ fn bundleSpas(
         // on the page's ONE Preact, exactly as an island bundle does.
         const outdir = try std.fmt.allocPrint(gpa, "{s}/spa-{s}", .{ cache_abs, name });
         const chunks_json = try std.fmt.allocPrint(gpa, "{s}/{s}-chunks.json", .{ cache_abs, name });
+        const capture_json = try std.fmt.allocPrint(gpa, "{s}/{s}-sources.json", .{ cache_abs, name });
         var argv: std.ArrayListUnmanaged([]const u8) = .empty;
         try argv.appendSlice(gpa, &.{
             rt.spa_bundle_driver,
+            try std.fmt.allocPrint(gpa, "--source-capture={s}", .{capture_json}),
             try std.fmt.allocPrint(gpa, "--entry={s}", .{sp.src}),
             try std.fmt.allocPrint(gpa, "--outdir={s}", .{outdir}),
             try std.fmt.allocPrint(gpa, "--entry-name={s}.js", .{name}),
@@ -1322,6 +1324,7 @@ fn bundleSpas(
         var rt_argv: std.ArrayListUnmanaged([]const u8) = .empty;
         try rt_argv.appendSlice(gpa, &.{
             rt.spa_runtime_driver,
+            try std.fmt.allocPrint(gpa, "--source-capture={s}", .{capture_json}),
             try std.fmt.allocPrint(gpa, "--entry={s}", .{sp.src}),
             try std.fmt.allocPrint(gpa, "--spa-entry={s}", .{rt.spa_entry}),
             try std.fmt.allocPrint(gpa, "--host-module={s}", .{rt.host_module}),

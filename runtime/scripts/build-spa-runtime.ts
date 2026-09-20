@@ -21,6 +21,8 @@ import { mkdirSync, readFileSync } from "node:fs";
 import type { BunPlugin } from "bun";
 import { reactAliasBuildPlugin, resolveOverridePlugin } from "./react-alias.ts";
 import { makeDepfile, findTsconfig, siteConfigFor, retargetSourceMappingUrl } from "../sidecar/bundle-island.ts";
+import { captureConfigFiles } from "./spa-capture-config.ts";
+import { readSourceCapture } from "./spa-source-capture.ts";
 import { effectiveResolveMap } from "./z-runtime-config.ts";
 import { siteDataPlugin } from "./site-data.ts";
 // TYPE-ONLY, so this module can be loaded without `typescript` on the resolution
@@ -68,6 +70,7 @@ export interface SpaRuntimeArgs {
    *  Installed with the rest of `outdir`, so it lands at /spa/<name>-runtime.js.map. */
   sourcemap?: boolean;
   runtimeStamp?: string;
+  sourceCapture?: string;
 }
 
 /** Run Bun.build over the SPA entry (@z/runtime external) purely to enumerate the
@@ -162,7 +165,10 @@ export async function buildSpaRuntime(args: SpaRuntimeArgs): Promise<{ fallback:
   // SAFE-FALLBACK (readSourcesOrFail returns null) — never a silent drop. So does
   // an unloadable slicer (see `loadSlicer`).
   const slicer = await loadSlicer();
-  const captured = await captureSpaSources(args.entry);
+  const site = siteConfigFor(args.entry);
+  const configs = captureConfigFiles(args.entry, site.path);
+  const reuse = args.sourceCapture && configs !== null ? readSourceCapture(args.sourceCapture, args.entry, site.path, configs, args.minify) : null;
+  const captured = reuse ?? await captureSpaSources(args.entry);
   const sources = slicer === null ? null : readSourcesOrFail(captured);
   const used = sources === null ? null : slicer!.analyzeHostUsage(sources);
 
@@ -251,6 +257,7 @@ if (import.meta.main) {
   };
   await buildSpaRuntime({
     entry: req("entry"),
+    sourceCapture: get("source-capture"),
     spaEntry: req("spa-entry"),
     hostModule: req("host-module"),
     ssrEnvModule: req("ssr-env-module"),

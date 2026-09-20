@@ -47,20 +47,32 @@ The [application guide](building-apps.md) covers styling, deployment, and pairin
   enforces opt-in aggregate byte budgets. Regression fixtures cover one-byte
   overruns and zero-JS pages. [Measurement boundaries](output-inspection.md)
   distinguish all emitted files from actual browser transfers.
-- [ ] **Measure route loading cost.** Resolve local references, import maps, and
-  module dependencies; distinguish initial and lazy graphs, compressed transfer,
-  and external resources without treating unknown sizes as zero.
+- [x] **Budget directly referenced page resources.** `inspect-output --page`
+  resolves local scripts, islands, modulepreloads, and stylesheets; deduplicates
+  normalized file paths, includes executable inline script and style bodies,
+  and enforces exact JS/CSS byte limits only with complete direct coverage.
+  External, missing, and unsupported references remain explicit unknowns.
+- [ ] **Measure route loading cost.** Traverse import maps and module/CSS
+  dependency graphs; distinguish initial and lazy loading, compressed transfer,
+  and external resources. Direct-reference raw-byte budgets are not this metric.
 
 ### P1 — Shorten production builds without weakening checks
+
+- [x] **Measure release work and remove duplicate SPA discovery.** Content,
+  islands, and lazy-SPA fixtures report cold-output/warm-output samples, tool and
+  machine identities, process counts, and complete byte parity. The bundled SPA
+  pipeline hands its current validated source graph to an isolated slicer, removing
+  one duplicate build per SPA with provable config identity, without a cache. See [build benchmarks](build-benchmarks.md).
+  Timing gains are fixture-specific; broader repeated-build profiling remains open.
 
 - [x] **Batch stylesheet minification.** `release --css-minify` uses the bundled
   driver in one Bun process, preserving independent stylesheet URLs/imports,
   installed paths, and failure behavior. Legacy custom drivers remain supported.
   Byte parity and process-count reduction have release regression coverage;
   [assets](assets.md) records the reproducible, isolated CSS-phase benchmark.
-- [ ] **Measure and remove repeated build work.** Publish repeatable content,
-  islands, and SPA build fixtures with cold/warm conditions and tool versions.
-  Optimize measured bottlenecks; any cache must demonstrate correct invalidation
+- [ ] **Profile remaining build work.** Extend the baseline to larger applications
+  and builds following source, configuration, and dependency changes. Optimize
+  measured bottlenecks; any cache must demonstrate correct invalidation
   for source, config, dependencies, toolchain, and missing outputs. Keep
   correctness and type checks enabled. No timing thresholds that turn CI flaky.
 
@@ -78,6 +90,10 @@ The [application guide](building-apps.md) covers styling, deployment, and pairin
 
 ### P2 — Build complete applications on that foundation
 
+- [x] **Browser-local application starter.** `init --app` adds a plain-CSS task
+  application with static landing page, SPA navigation, accessible form, async
+  storage states, type checks, and fresh-scaffold browser journeys. Local runtime
+  linkage is explicit; browser storage is a demo, not a shared backend.
 - [ ] **Supported application starter.** Add an explicit application path alongside
   the current content scaffold. Include SPA navigation, accessible form patterns,
   loading/empty/error states, and browser journeys. Keep a frontend-only variant

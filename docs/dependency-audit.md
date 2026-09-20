@@ -1,4 +1,46 @@
-# Dependency audit — 2026-09-12
+# Dependency audits
+
+## npm follow-up — 2026-09-19
+
+Queried the public npm registry for all nine direct registry dependencies and
+all 86 distinct registry packages in the four Bun lockfiles. This follow-up
+covers npm packages only. The September 12 audit below is a historical snapshot;
+its version tables and three-lockfile inventory do not describe the current tree.
+
+- `@happy-dom/global-registrator` and `happy-dom` are already at the latest
+  stable release, **20.14.5**. The older update proposed by PR #217 is already
+  superseded. No Happy DOM version change is needed.
+- Raised the runtime development requirement for `@types/node` from
+  `^26.5.1` to **`^26.6.2`**. Runtime, site, and TSX-example locks now resolve
+  26.6.2; the styling example already resolved it. Refreshed the linked runtime
+  manifest records in all consumer locks. `undici-types` remains **8.9.0**,
+  satisfying Node types' `~8.9.0` range; 8.10.2 is outside that range.
+- Preact 10.29.8, its string renderer 6.7.0, Bun types 1.4.2, and Tailwind/CLI
+  4.3.3 are current stable releases. The vendor demo package is local source.
+- Retained TypeScript **6.0.3**, including the generated application starter
+  pin. Rechecked the published 7.0.2 tarball: its package-root export provides
+  only `version` and `versionMajorMinor`, with neither `createSourceFile` nor
+  `ScriptTarget`. Its separate unstable APIs are not drop-in replacements for
+  the compiler API used by the runtime slicer and hot transform.
+- Retained Tailwind's exact transitive pins for `@parcel/watcher` 2.5.1 and
+  `lightningcss` 1.32.0, including their platform packages. Newer versions exist,
+  but changing them requires an upstream release or a separately justified
+  override. Newer majors of `magic-string`, `node-addon-api`, `picomatch`,
+  `@emnapi/wasi-threads`, `entities`, and `whatwg-mimetype` (and its types) also
+  fall outside their owning packages' declared ranges. No overrides were added.
+
+Regenerated all four locks with Bun 1.4.2 and fresh registry metadata. Compared
+every resolved package version with the corresponding base lock at `60f7273`:
+**no downgrades**, removals, or unrelated resolved-version changes.
+
+Validation: all four frozen installs, native Zig build, runtime typecheck and
+dependency gate, 771 runtime tests, 28 npm packaging tests, and npm toolchain
+consistency passed. Fresh application starter install/typecheck/release/dev and
+Chrome storage/error/navigation journeys passed. Styling compile/typecheck,
+strict output doctor, and Chrome checks at 320px/1280px passed, as did marketing
+and TSX example builds. Branding, confidentiality, and whitespace checks passed.
+
+## Historical full dependency audit — 2026-09-12
 
 Checked registry versions, upstream Git revisions, toolchain releases, and
 GitHub Actions release tags. PR #217 was used only to identify the minimum

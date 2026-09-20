@@ -64,6 +64,23 @@ a devlog, the layouts that render them, and the assets they reference. It is
 worth reading before deleting — the sample copy demonstrates SuperMD syntax you
 will otherwise have to look up.
 
+## Start a browser-local application
+
+Use `zigapagos init --app` for a small task application with navigation, a
+labelled form, loading/empty/error states, and ordinary CSS. Its landing page
+remains static. This demo saves tasks in one browser; it provides no sign-in,
+server database, or synchronization.
+
+The npm launcher supplies the runtime location. For a standalone binary, use
+`zigapagos init --app --runtime-path=../zigapagos/runtime` and first install that
+runtime's dependencies with `bun install --frozen-lockfile` in its directory.
+Then run `bun install`, `bun run check`, and `bun run build` in the new project.
+The generated README explains `bun run dev`, npx usage, and moving the explicit
+local runtime dependency to another machine. Keep the workspace layout available.
+
+The [application guide]($link.page("docs/building-apps")) explains the backend
+boundary. An API-backed or ZigBase-paired starter remains separate planned work.
+
 ## Write a page
 
 A content file opens with a Ziggy frontmatter block. Two fields are required:

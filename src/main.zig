@@ -182,7 +182,7 @@ pub fn main(init: std.process.Init) u8 {
     // widening every command's signature keeps that special case visible and
     // confined to one line.
     return switch (cmd) {
-        .init => @intFromBool(@import("cli/init.zig").init(io, gpa, args[2..])),
+        .init => @intFromBool(@import("cli/init.zig").init(io, gpa, args[2..], init.environ_map)),
         .migrate => @import("cli/migrate.zig").migrate(io, gpa, args[2..], init.environ_map),
         .@"inspect-output" => @intFromBool(@import("cli/inspect_output.zig").inspectOutput(io, gpa, args[2..])),
         .doctor => @intFromBool(@import("cli/doctor.zig").doctor(io, gpa, args[2..])),
@@ -354,4 +354,5 @@ test "sitemap: unit-test anchor" {
 
 test "assets: inspect-output anchor" {
     _ = @import("cli/inspect_output.zig");
+    _ = @import("cli/output_page.zig");
 }

@@ -266,8 +266,8 @@ pub fn deinit(b: *const Build, io: Io, gpa: Allocator) void {
     }
 
     {
-        var sd = b.site_data;
-        sd.deinit(gpa);
+        // loadSiteData allocates both the outer map and its values in this
+        // arena. Freeing the map through gpa would free an arena suballocation.
         b.data_arena.promote(gpa).deinit();
     }
 
