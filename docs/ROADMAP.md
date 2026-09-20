@@ -38,6 +38,11 @@ The [application guide](building-apps.md) covers styling, deployment, and pairin
   failures; production needs no frontend toolchain. See [deployment checks](deployment-checks.md).
   Browser execution, CDN cache transitions, and real nginx/Apache/ZigBase
   rehearsals remain outside this check.
+- [x] **Real nginx release rehearsal.** Generated routes, CSP, and cache policy
+  run on nginx and Chrome at root and subpath URLs. Tests cover dynamic deep
+  links, hydration, conditional requests, and retaining old lazy chunks through
+  a release switch. Apache, CDN behavior, in-flight deployment races, and paired
+  ZigBase hosting remain outside this evidence.
 - [ ] **Deployment verification.** Provide reproducible checks for static hosts,
   including root and subpath hosting, SPA deep links, CSP, and cache behavior
   across a release. Test with and without ZigBase; documented host configuration

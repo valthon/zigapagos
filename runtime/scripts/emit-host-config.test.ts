@@ -672,8 +672,8 @@ test("zigbase advisory names the stable-path baseline too, not just the two matc
 
 test("nginx cache ORDER: \\.html$ no-cache appears before the fingerprint regex (stable beats immutable, first-match-wins)", () => {
   const file = emitCache("nginx", []);
-  const htmlIdx = file.content.indexOf(String.raw`~\.html$`);
-  const fingerprintIdx = file.content.indexOf(FINGERPRINT_SUFFIX_PATTERN);
+  const htmlIdx = file.content.indexOf(JSON.stringify(String.raw`~\.html$`));
+  const fingerprintIdx = file.content.indexOf(JSON.stringify("~" + FINGERPRINT_SUFFIX_PATTERN));
   expect(htmlIdx).toBeGreaterThan(-1);
   expect(fingerprintIdx).toBeGreaterThan(-1);
   expect(htmlIdx).toBeLessThan(fingerprintIdx);

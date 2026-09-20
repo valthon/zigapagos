@@ -811,12 +811,13 @@ function emitCacheNginx(chunkPaths: string[]): EmittedFile {
     `    # still allows a 304, so the cost is one conditional request; turn on`,
     `    # asset_fingerprint to move your assets to the immutable rule below.`,
     `    default "${REVALIDATE_CACHE_CONTROL}";`,
-    `    ~\\.html$ "${REVALIDATE_CACHE_CONTROL}";`,
-    `    ~/routing-manifest\\.json$ "${REVALIDATE_CACHE_CONTROL}";`,
+    `    ${nginxQuote("~\\.html$")} "${REVALIDATE_CACHE_CONTROL}";`,
+    `    ${nginxQuote("~/routing-manifest\\.json$")} "${REVALIDATE_CACHE_CONTROL}";`,
     `    # asset_fingerprint's <stem>.<8 hex>[.<ext>] name shape (docs/assets.md).`,
     `    # NAME-SHAPE heuristic, not proof fingerprinting is actually on — if you`,
     `    # have un-fingerprinted files that happen to match it, drop this line.`,
-    `    ~${FINGERPRINT_SUFFIX_PATTERN} "${IMMUTABLE_CACHE_CONTROL}";`,
+    // Regex braces are nginx syntax too; quote the entire regex token.
+    `    ${nginxQuote("~" + FINGERPRINT_SUFFIX_PATTERN)} "${IMMUTABLE_CACHE_CONTROL}";`,
   ];
   if (chunkPaths.length > 0) {
     lines.push(`    # This build's hashed SPA split assets (routing-manifest.json .chunks + .immutableAssets).`);

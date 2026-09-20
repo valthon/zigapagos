@@ -1297,3 +1297,47 @@ jobs:
             echo "::error::${#failed[@]} script(s) failed: ${failed[*]}"
             exit 1
           fi
+
+  static-host-rehearsal:
+    needs: build-binary
+    name: Static release rehearsal (nginx + Chrome)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v4
+        with:
+          cache: true
+      - name: Make Bun available to temporary project builds
+        run: mise use -g bun@1.4.2
+      - uses: actions/download-artifact@v8
+        with:
+          name: zigapagos-Linux
+          path: zig-out/bin
+      - name: Use the prebuilt generator
+        run: |
+          chmod +x zig-out/bin/zigapagos
+          echo "ZIGAPAGOS_BIN=$GITHUB_WORKSPACE/zig-out/bin/zigapagos" >> "$GITHUB_ENV"
+      - name: Install locked build dependencies
+        working-directory: runtime
+        run: bun install --frozen-lockfile
+      - name: Obtain real nginx without installing a system service
+        run: |
+          sudo apt-get update
+          mkdir -p "$RUNNER_TEMP/nginx"
+          cd "$RUNNER_TEMP/nginx"
+          apt-get download nginx
+          dpkg-deb -x nginx_*.deb root
+          echo "NGINX_BIN=$RUNNER_TEMP/nginx/root/usr/sbin/nginx" >> "$GITHUB_ENV"
+      - name: Install browser test tools
+        run: |
+          python3 -m venv "$RUNNER_TEMP/host-browser"
+          "$RUNNER_TEMP/host-browser/bin/pip" install playwright
+          "$RUNNER_TEMP/host-browser/bin/python" -m playwright install --with-deps chrome
+          echo "$RUNNER_TEMP/host-browser/bin" >> "$GITHUB_PATH"
+      # Deliberately outside tests/*/*.sh: the generic shell shard has neither
+      # nginx nor Playwright, and this dedicated job owns the heavier rehearsal.
+      - name: Rehearse root, subpath and release transition
+        run: |
+          python3 tests/deploy/nginx_reload_test.py
+          python3 tests/deploy/nginx_rehearsal.py

@@ -96,6 +96,70 @@ run `zigapagos doctor` for the separate local-reference audit.
 A passing result proves the sampled HTTP paths match this local release and
 header policy at that moment. It does not prove cache revalidation/304 behavior,
 CDN eviction, a multi-release upgrade, arbitrary application route parameters,
-or browser enforcement of CSP. Root/subpath and intentional failure fixtures
-are covered here; real-host and paired ZigBase deployment rehearsals remain
-separate backlog work. Check only hosts you are authorized to probe.
+or browser enforcement of CSP. The HTTP fixture covers root/subpath and intentional failures. The separate
+nginx/Chrome rehearsal below adds bounded browser and release-transition
+evidence; paired ZigBase deployment remains separate work. Check only hosts you are authorized to probe.
+
+## Rehearse a release on real nginx and Chrome
+
+The repository's real-host rehearsal builds two small production releases and
+runs nginx as an unprivileged foreground process on loopback. It uses the
+emitted route, CSP, and cache snippets directly, with an explicit server wrapper.
+The deployed tree contains static files; Bun and Python are build/test tools,
+not production request handlers.
+
+Install nginx and Python's Playwright package with Google Chrome available,
+install the locked runtime dependencies, then run:
+
+```sh
+(cd runtime && bun install --frozen-lockfile)
+ZIGAPAGOS_BIN=/absolute/path/to/zigapagos \
+  python3 tests/deploy/nginx_rehearsal.py --nginx=/absolute/path/to/nginx
+```
+
+The default browser is Playwright's `chrome` channel. Use `--browser-channel=''`
+to select its bundled Chromium instead. The script prints the actual nginx and
+browser versions and one JSON result per mount. It exits nonzero on failures,
+cleans its temporary releases, and terminates only the nginx process it started.
+It does not use your system nginx configuration, change a running service, or
+need privileged ports. CI runs it in the dedicated **Static release rehearsal
+(nginx + Chrome)** job on Ubuntu 24.04.
+
+For both `/` and `/preview`, the rehearsal verifies:
+
+- nginx accepts the generated configuration, and the existing HTTP checker
+  passes for each release's files, deep links, MIME types, CSP, and cache headers;
+- direct navigation to a dynamic SPA route hydrates and its button works;
+- Chrome reports no unexpected CSP violations or JavaScript errors during the
+  tested interactions, and a deliberately disallowed inline script is blocked;
+- unchanged HTML supports an ETag conditional GET with HTTP 304, while a
+  changed release returns HTTP 200 and new bytes for the old validator;
+- an already-open document can load its old lazy chunk after the release
+  switch, and a newly opened document receives the new application and chunk;
+- a missing JavaScript path returns 404 instead of an HTML fallback.
+
+### The release transition strategy being tested
+
+The rehearsal keeps pristine build trees separate from deployment copies. It
+copies the prior release's immutable split assets into the new deployment and
+regenerates nginx's cache map with both releases' immutable paths, using the
+existing `emitCache` helper. It then atomically switches a document-root symlink
+and reloads nginx's generated header configuration. The fixture changes its CSP
+hashes between releases and waits for both new HTML and the new policy before
+checking the completed transition. For subpath hosting, the
+release tree is mounted at `<docroot>/preview/`, as required by the generated
+request paths. Root releases are mounted directly at `<docroot>`.
+
+Retaining old chunks is an operator policy, not something `zigapagos release`
+automatically does. Keep them for the lifetime you support already-open
+application documents; this test does not choose that retention period for you.
+Stable entry/runtime URLs still revalidate. The rehearsal specifically covers
+an open document that loaded its runtime before the switch; it does not prove
+that every in-flight request across a deployment is race-free. nginx's symlink
+switch and configuration reload are separate operations, not a transaction.
+
+This adds real nginx and Chrome evidence to the HTTP checker's fixture coverage.
+It does not certify Apache, CDN eviction, other browsers, arbitrary CSP policies,
+or paired ZigBase hosting. ZigBase deployment and backend integration remain
+separate work. The generated policy is verified, not merely replaced with
+permissive headers to get a green browser test.
