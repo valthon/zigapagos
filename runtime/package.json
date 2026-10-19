@@ -31,8 +31,8 @@
   },
   "devDependencies": {
     "@happy-dom/global-registrator": "^20.14.5",
-    "@types/bun": "^1.4.2",
-    "@types/node": "^26.6.2",
+    "@types/bun": "^1.4.3",
+    "@types/node": "^26.6.5",
     "happy-dom": "^20.14.5",
     "typescript": "^6.0.3"
   }
