@@ -26,14 +26,14 @@
     "deps:check": "bun run scripts/check-deps.ts"
   },
   "dependencies": {
-    "preact": "^10.29.8",
+    "preact": "^11.0.1",
     "preact-render-to-string": "^6.7.0"
   },
   "devDependencies": {
-    "@happy-dom/global-registrator": "^20.14.5",
+    "@happy-dom/global-registrator": "^21.0.1",
     "@types/bun": "^1.4.2",
     "@types/node": "^26.6.2",
-    "happy-dom": "^20.14.5",
+    "happy-dom": "^21.0.1",
     "typescript": "^6.0.3"
   }
 }
