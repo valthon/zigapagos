@@ -137,15 +137,11 @@ export type RouteDef = {
   /**
    * Loading state for two-phase hydration: SSR and the first client render
    * show `skeleton` (when present), the real `component` renders post-mount.
-   * A DYNAMIC leaf (any `:param`/`*` segment in its full path) MUST declare
-   * one — its SSR pathname substitutes params with `_`, so rendering
-   * `component` on both passes mismatches and breaks hydration; the build's
-   * describe pass enforces this. The explicit opt-out
-   * `skeleton: false` means "I promise this component is hydration-stable
-   * (renders identically on SSR and the first client render, params or
-   * not)" and suppresses the build error; the router then treats it exactly
-   * like an absent skeleton. Layouts never render a skeleton (they render
-   * their real `component` on both passes), so declare it on the LEAF.
+   * Generic dynamic shells default to a neutral placeholder. Concrete
+   * staticPaths pages render the actual component and params instead.
+   * `skeleton: false` renders the component even in generic shells; its
+   * initial output must be hydration-stable. Lazy routes require a real
+   * skeleton until the chunk loads. Layouts render their real component.
    * A `redirect` entry never renders (and never hydrates), so the rule does
    * not apply to it.
    */
@@ -670,28 +666,8 @@ export async function describeRoutes(routes: RouteDef[]): Promise<LeafRouteMeta[
           `hold for a component that hasn't loaded). Give the route a \`skeleton\` component.`,
       );
     }
-    // The docs' skeleton rule, enforced: a dynamic leaf's SSR
-    // pathname substitutes every `:param`/`*` with "_", so its SSR output
-    // differs from the first client render unless the route has a
-    // param-independent `skeleton` — a hydration breaker that surfaces as
-    // subtly-wrong DOM at runtime, not as an error at the failure site.
-    // Only the LEAF's own skeleton counts: layouts render their real
-    // `component` on both passes and never a skeleton (see renderChainNode),
-    // so there is no inheritance to honor. `skeleton: false` is the explicit
-    // opt-out: the author asserts the component is hydration-stable.
-    // A `redirect` entry is exempt: it has no component and never
-    // renders/hydrates anything of its own — the Router resolves it BEFORE
-    // rendering, so both SSR and the first client render show the TARGET's
-    // chain (whose own leaf is held to this rule instead).
-    if (dynamic && route.skeleton == null && route.redirect === undefined) {
-      throw new Error(
-        `dynamic route ${JSON.stringify(full)} declares no skeleton — the build SSRs its shell at ` +
-          `the base-relative path ${JSON.stringify(ssrPathnameFor(full))} (every :param and * ` +
-          `segment substituted with "_"), so its SSR output differs from the first client render, ` +
-          `which breaks hydration. Give the route a param-independent \`skeleton\` component, or ` +
-          `set \`skeleton: false\` to assert the component is hydration-stable without one.`,
-      );
-    }
+    // Generic dynamic shells use a neutral fallback when no skeleton is
+    // supplied. Enumerated concrete pages render their actual component.
     const meta: LeafRouteMeta = { path: full, dynamic, hasSkeleton: !!route.skeleton };
     if (route.redirect !== undefined) meta.redirect = route.redirect;
     if (route.staticPaths !== undefined) {
@@ -708,7 +684,7 @@ import {
   h, createContext, useContext, useState, useEffect, useRef, hydrate,
   useSyncExternalStore, useMemo, useCallback,
 } from "./core.ts";
-import { isServer, currentPathname, currentSearch, getUrlPathPrefix, setUrlPathPrefix } from "./ssr-env.ts";
+import { isServer, currentPathname, currentSearch, getUrlPathPrefix, setUrlPathPrefix, isConcretePrerender, setConcretePrerender, getPrerenderPathname, setPrerenderPathname } from "./ssr-env.ts";
 import { host } from "./host.ts";
 import { onUnauthorizedResponse } from "./session.ts";
 import { seedFlagsFromShell } from "./flags.ts";
@@ -891,8 +867,10 @@ function renderChainNode(
   let comp: ComponentType<any>;
   if (!isLeaf) {
     comp = node.route.component ?? EmptyView; // layout: static chrome, same on both passes
-  } else if (isServer() || !hydrated) {
-    comp = skeletonOf(node.route) ?? node.route.component ?? EmptyView; // two-phase: skeleton first
+  } else if (!hydrated) {
+    const dynamic = chain.some((rung) => /[:*]/.test(rung.route.path));
+    comp = skeletonOf(node.route) ??
+      (dynamic && node.route.skeleton !== false ? EmptyView : node.route.component) ?? EmptyView;
   } else {
     // Post-hydration leaf. A lazy route renders its resolved chunk once loaded,
     // else keeps its skeleton (the loader is kicked by the Router effect); the
@@ -1396,7 +1374,11 @@ export function Router(
   // base-relative targets through it. One Router per document.
   routerBase = base;
   bindPopstate();
-  const [pathname, setPathname] = useState(currentPathname());
+  const [pathname, setPathname] = useState(() => getPrerenderPathname() ?? currentPathname());
+  // Readiness must be a dependency of route effects: two different aliases
+  // can resolve to the same effective path while the shell URL is synchronized.
+  const [locationReady, setLocationReady] = useState(() =>
+    getPrerenderPathname() == null || getPrerenderPathname() === currentPathname());
   // The currently-authorized guard SCOPE keys (see `scopeKey`), each mapped to
   // the data its guard returned (`{ ok: true, data }`; undefined for plain
   // `true`). Key presence = authorized; the value feeds useGuardData().
@@ -1435,7 +1417,7 @@ export function Router(
   // flips it to true post-mount, and THAT state update is a normal
   // (non-hydrating) re-render, so Preact correctly diffs the swap to the
   // real component.
-  const [hydrated, setHydrated] = useState(false);
+  const [hydrated, setHydrated] = useState(isConcretePrerender);
   // Session-expiry policy plumbing (see the module comment above): bumping
   // `guardTick` re-runs the guard effect for the CURRENT pathname; the refs
   // implement in-flight suppression + the cooldown.
@@ -1463,6 +1445,8 @@ export function Router(
     };
     listeners.add(on);
     on(); // sync in case navigation happened between render and effect
+    setPrerenderPathname(undefined); // the shell snapshot belongs only to this initial mount
+    setLocationReady(true);
     return () => {
       listeners.delete(on);
       // Un-register the base on unmount: a later navigate()/resolveHref call
@@ -1483,12 +1467,16 @@ export function Router(
     resolveRedirects(props.routes, pathname, base);
   const leaf = chain ? chain[chain.length - 1] : null;
   useEffect(() => {
-    if (isServer() || !redirected) return;
+    if (isServer() || !locationReady || !redirected) return;
+    // A fallback shell's pathname exists only to reproduce its initial HTML.
+    // Wait for the mount effect to synchronize the real requested URL before
+    // performing navigation, guard probes or route-specific chunk requests.
+    if (pathname !== window.location.pathname) return;
     if (window.location.pathname === effectivePathname) return;
     // Runs BEFORE the guard effect (declaration order), so guards observe the
     // final URL. Already fully resolved — navigateResolved, never navigate.
     navigateResolved(effectivePathname + window.location.search + window.location.hash, { replace: true });
-  }, [pathname]);
+  }, [pathname, locationReady]);
 
   // Guard phase (CLIENT-ONLY). Collect the guards along the matched chain
   // (outermost layout → leaf) plus the Router-level guard; run the Router-level
@@ -1508,7 +1496,8 @@ export function Router(
     : [];
   const isGuarded = !!props.guard || guardedRungs.length > 0;
   useEffect(() => {
-    if (isServer()) return;
+    if (isServer() || !locationReady) return;
+    if (effectivePathname !== window.location.pathname) return;
     // Evict-on-leave (runs on EVERY navigation, guarded route or not): drop any
     // authorized scope key that is NOT a guarded scope of the newly-matched
     // chain. So navigating OUT of a guarded scope forgets its authorization —
@@ -1577,8 +1566,8 @@ export function Router(
     // Keyed on the EFFECTIVE pathname (a redirect's URL sync re-renders at the
     // same effective path, so guards run once per rendered route, not once per
     // pre-redirect URL spelling) + `guardTick` (the session-expiry policy's
-    // 401-triggered re-run at the current location).
-  }, [effectivePathname, guardTick]);
+    // 401-triggered re-run at the current location) and shell URL readiness.
+  }, [effectivePathname, guardTick, locationReady]);
 
   // Lazy-route loading (CLIENT-ONLY). When the matched leaf is a lazy route
   // whose chunk hasn't resolved, load it post-hydration; the resolved module is
@@ -1604,7 +1593,8 @@ export function Router(
   // "resolved behind our back" — see the `leafLazy.comp` branch below.
   const renderedLazyComp = leafLazy?.comp;
   useEffect(() => {
-    if (isServer() || !leafLazy || leafLazy.failed) return;
+    if (isServer() || !locationReady || !leafLazy || leafLazy.failed) return;
+    if (effectivePathname !== window.location.pathname) return;
     if (leafLazy.comp) {
       // Resolved between the render and this effect (a prefetch's `.then`).
       // The render still painted the skeleton and nothing else will ever flip
@@ -1627,7 +1617,7 @@ export function Router(
       host.reportError(err);
     });
     return () => { cancelled = true; };
-  }, [effectivePathname]);
+  }, [effectivePathname, locationReady]);
 
   // Issue #128: hover/viewport chunk prefetch. Closes over `props.routes` and
   // `base` (the SAME effective base every other resolution in this component
@@ -1998,6 +1988,8 @@ export function mountSpa(
   // so a strict-CSP `script-src` hash does not churn. Absent (unprefixed site)
   // → "", which makes the composition a no-op.
   setUrlPathPrefix(root?.getAttribute("data-z-prefix") ?? "");
+  setConcretePrerender(root?.getAttribute("data-z-prerender") === "concrete");
+  setPrerenderPathname(root?.getAttribute("data-z-prerender-path") ?? undefined);
   seedFlagsFromShell();
   // Applied unconditionally (explicit `false` on absence) BEFORE clientInit,
   // which may itself call `navigate()` — so a `spa.viewTransitions: true`

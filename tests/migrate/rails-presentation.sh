@@ -644,7 +644,7 @@ grep -q 'rails:finding' "$WORK/out2/layouts/posts/index.shtml" && fail "a bound 
 grep -qF 'getList(1, 50)' "$WORK/out2/components/data/posts_index.island.tsx" || fail "the posts data island must fetch its first 50 records"
 grep -qF '"/posts/" + encodeURIComponent(String(rec.id ?? ""))' "$WORK/out2/components/data/posts_index.island.tsx" || fail "the posts data island must preserve record links"
 cmp "$WORK/app/app/javascript/components/Chart.jsx" "$WORK/out2/components/react/Chart.jsx" || fail "the React source closure must be copied byte-for-byte"
-[[ "$(cat "$WORK/out2/z-runtime.config.json")" == '{"islandImports":{"firstParty":[],"npmCompat":[]},"resolve":{"react":"@z/runtime/compat","react-dom":"@z/runtime/compat","react-dom/client":"@z/runtime/compat/client","react/jsx-runtime":"@z/runtime/jsx-runtime","react/jsx-dev-runtime":"@z/runtime/jsx-dev-runtime"}}' ]] || fail "z-runtime.config.json bytes changed"
+[[ "$(cat "$WORK/out2/z-runtime.config.json")" == '{"islandImports":{"firstParty":["@zigbase/client"],"npmCompat":[]},"resolve":{"react":"@z/runtime/compat","react-dom":"@z/runtime/compat","react-dom/client":"@z/runtime/compat/client","react/jsx-runtime":"@z/runtime/jsx-runtime","react/jsx-dev-runtime":"@z/runtime/jsx-dev-runtime"}}' ]] || fail "z-runtime.config.json bytes changed"
 grep -q '"allowJs": true' "$WORK/out2/tsconfig.json" || fail "copied JSX requires allowJs"
 
 # --- run 2: every route's note, exactly (rulings S3-R6 and S3-R7) ----------

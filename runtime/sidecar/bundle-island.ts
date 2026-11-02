@@ -6,6 +6,7 @@ import { siteDataPlugin } from "../scripts/site-data.ts";
 import { captureConfigFiles } from "../scripts/spa-capture-config.ts";
 import { makeSourceCapture } from "../scripts/spa-source-capture.ts";
 import { registerSsrModuleOverrides } from "./ssr-resolve.ts";
+import { clientSourcePlugin } from "./client-source.ts";
 
 export interface BundleArgs {
   entry: string;
@@ -159,32 +160,7 @@ export async function bundleIsland(args: BundleArgs): Promise<string[]> {
           });
         },
       },
-      // Dev-only fast refresh: rewrite ONLY the entry module. Registered
-      // AFTER dep-capture — Bun runs onLoad callbacks in order and a callback
-      // returning undefined passes through, so dep capture stays intact.
-      ...(hotTransform
-        ? [
-            {
-              name: "hot-transform",
-              setup(build) {
-                const fn = hotTransform!;
-                build.onLoad({ filter: /\.[tj]sx?$/ }, async (a) => {
-                  // Compare realpaths, not `resolve()`d paths — see entryReal.
-                  if (realpathOr(resolve(a.path)) !== entryReal) return undefined;
-                  const src = await Bun.file(a.path).text();
-                  // moduleKey = the entry's absolute path: stable across
-                  // rebuilds within a dev session, unique per island entry.
-                  const out = fn(src, a.path, entryAbs);
-                  if (out === src) return undefined; // nothing wrappable
-                  const loader = a.path.endsWith(".tsx") ? "tsx"
-                    : a.path.endsWith(".ts") ? "ts"
-                    : a.path.endsWith(".jsx") ? "jsx" : "js";
-                  return { contents: out, loader };
-                });
-              },
-            } as import("bun").BunPlugin,
-          ]
-        : []),
+      clientSourcePlugin(site.config, false, captured, hotTransform ?? undefined, entryReal),
     ],
   });
   if (!res.success) {
@@ -240,6 +216,8 @@ export interface SpaBundleArgs {
   depfile: string;
   external: string[];
   minify: boolean;
+  /** Persistent build-only transform cache, separate from disposable bundles. */
+  sourceCacheDir?: string;
   runtimeStamp?: string;
   /** Explicit z-runtime.config.json path (else discovered upward from the entry's dir). */
   configPath?: string;
@@ -364,6 +342,7 @@ export async function bundleSpa(args: SpaBundleArgs): Promise<void> {
           build.onLoad({ filter: /.*/ }, (a) => { captured.add(a.path); return undefined; });
         },
       },
+      clientSourcePlugin(site.config, true, captured, undefined, undefined, args.sourceCacheDir),
     ],
   });
   if (!res.success) {
@@ -462,6 +441,7 @@ export async function runBundleCli(): Promise<void> {
     await bundleSpa({
       entry, entryName, outdir, chunksJson, depfile,
       sourceCapture: get("source-capture"),
+      sourceCacheDir: get("source-cache-dir"),
       external: all("external"),
       minify: process.argv.includes("--minify"),
       sourcemap: process.argv.includes("--sourcemap"),

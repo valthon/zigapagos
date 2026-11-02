@@ -211,26 +211,19 @@ almost always means the **interpreter** — `bun` — is not at the path the bui
 was told to use, not that `render.ts` is missing.
 
 **Fix.** Check that `bun` resolves (`command -v bun`) and matches the version
-`mise.toml` pins. A site with no islands and no SPA never spawns the sidecar at
-all.
+`mise.toml` pins. A configured/discovered runtime starts the sidecar even when
+a page contains no islands. Bun is unnecessary only when the build has no runtime
+or SPA configured.
 
 ## SPAs
 
-### `dynamic route "…" declares no skeleton`
+### Lazy route requires a skeleton
 
-```
-error: spa describe failed for app/app.spa.tsx: dynamic route "/club/:id" declares no skeleton — the build SSRs its shell at the base-relative path "/club/_" (every :param and * segment substituted with "_"), so its SSR output differs from the first client render, which breaks hydration. Give the route a param-independent `skeleton` component, or set `skeleton: false` to assert the component is hydration-stable without one.
-```
-
-**Cause.** A dynamic route is prerendered **once**, with every `:param` replaced
-by `_`. A component that renders the real parameter would therefore produce
-different markup on the server than on the first client render, and Preact's
-`hydrate()` does not repair that.
-
-**Fix.** Give the route a `skeleton` component that does not depend on the
-parameter, or `skeleton: false` to assert the component is hydration-stable.
-`staticPaths` is the third option: enumerate the concrete parameter values and
-each gets its own real shell.
+A `lazy()` route must declare a real `skeleton` component: its view is not
+available until the browser loads the chunk. `skeleton: false` is rejected for
+lazy routes. Ordinary dynamic routes can omit a skeleton and use the neutral
+framework shell. Concrete `staticPaths` pages render their real component and
+params, with lazy and guarded routes retaining their loading/fallback behavior.
 
 ### `spa declares neither a "/" route nor any dynamic route`
 
@@ -279,5 +272,5 @@ which is markdown's own escape and also what makes the row render as one cell.
 | `(expected load\|idle\|visible\|media\|only)` | `-` | `src/islands/pass.zig` |
 | `props mismatch on` | `-` | `src/islands/props_check.zig` |
 | `failed to spawn island sidecar` | `-` | `src/root.zig` |
-| `declares no skeleton` | `-` | `runtime/src/router.ts` |
+| Lazy route requires a skeleton | `-` | `runtime/src/router.ts` |
 | `route nor any dynamic route, so nothing` | `-` | `src/spa.zig` |

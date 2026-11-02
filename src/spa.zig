@@ -49,9 +49,10 @@ fn renderSkeleton(
     src: []const u8,
     pathname: []const u8,
     url_prefix: []const u8,
+    concrete: bool,
 ) ![]const u8 {
     var rerr: sidecar.RenderError = .{};
-    return sc.renderPrefixed(arena, src, "{}", "", pathname, url_prefix, &rerr) catch |err| {
+    return sc.renderPrerender(arena, src, "{}", "", pathname, url_prefix, concrete, &rerr) catch |err| {
         log.err(
             "SPA skeleton SSR failed: {s} (route {s}): {s}\n{s}",
             .{ src, pathname, rerr.message, rerr.stack orelse "(no stack)" },
@@ -471,7 +472,8 @@ pub fn prerenderAll(
 
         for (desc.routes) |rt| {
             const planned = try planRoute(arena, base, rt);
-            if (std.mem.eql(u8, planned.out_path, root_index_path)) has_root_index = true;
+            const is_root_shell = std.mem.eql(u8, planned.out_path, root_index_path);
+            if (is_root_shell) has_root_index = true;
             // A lazy route's chunk URL (`/spa/<chunk>`), matched by the route's
             // in-app full path — preloaded in the shell so it fetches alongside.
             const chunk_url: ?[]const u8 = if (route_chunks) |rc|
@@ -485,8 +487,8 @@ pub fn prerenderAll(
             // real browser's location.pathname); norm_prefix is the separate
             // value the client Router composes its base from (issue #26).
             const prefixed_pathname = try pass.prefixed(arena.a, url_path_prefix, planned.ssr_pathname);
-            const skeleton = try renderSkeleton(sc, arena, src, prefixed_pathname, norm_prefix);
-            const html = try renderShell(arena.a, title, noindex, bundle_url, runtime_url, chunk_url, norm_prefix, head_for_shell, desc.spa.flags, .{ .viewport = desc.spa.viewport, .lang = desc.spa.lang }, skeleton);
+            const skeleton = try renderSkeleton(sc, arena, src, prefixed_pathname, norm_prefix, false);
+            const html = try renderShell(arena.a, title, noindex, bundle_url, runtime_url, chunk_url, norm_prefix, head_for_shell, desc.spa.flags, .{ .viewport = desc.spa.viewport, .lang = desc.spa.lang, .pathname = prefixed_pathname, .reusable_fallback = is_root_shell }, skeleton);
             try writeFile(io, out_dir, planned.out_path, html);
             try recordSpaOutPath(build, gpa, planned.out_path);
             if (collect) |sm| try sm.add(gpa, .spa_shell, planned.out_path);
@@ -506,7 +508,7 @@ pub fn prerenderAll(
             }
             if (planned.dynamic) |d| try dynamics.append(arena.a, d);
 
-            if (spec_idx == owner_idx and owner_root_shell == null and std.mem.eql(u8, rt.path, "/")) {
+            if (spec_idx == owner_idx and owner_root_shell == null and is_root_shell) {
                 owner_root_shell = try gpa.dupe(u8, html);
             }
 
@@ -529,8 +531,8 @@ pub fn prerenderAll(
                     try claimOutPathOrFatal(arena.a, &out_path_seen, src, planned_c.out_path, rt.path);
                     if (std.mem.eql(u8, planned_c.out_path, root_index_path)) has_root_index = true;
                     const prefixed_pathname_c = try pass.prefixed(arena.a, url_path_prefix, planned_c.ssr_pathname);
-                    const skeleton_c = try renderSkeleton(sc, arena, src, prefixed_pathname_c, norm_prefix);
-                    const html_c = try renderShell(arena.a, title, noindex, bundle_url, runtime_url, chunk_url, norm_prefix, head_for_shell, desc.spa.flags, .{ .viewport = desc.spa.viewport, .lang = desc.spa.lang }, skeleton_c);
+                    const skeleton_c = try renderSkeleton(sc, arena, src, prefixed_pathname_c, norm_prefix, true);
+                    const html_c = try renderShell(arena.a, title, noindex, bundle_url, runtime_url, chunk_url, norm_prefix, head_for_shell, desc.spa.flags, .{ .viewport = desc.spa.viewport, .lang = desc.spa.lang, .concrete = true, .pathname = prefixed_pathname_c }, skeleton_c);
                     try writeFile(io, out_dir, planned_c.out_path, html_c);
                     try recordSpaOutPath(build, gpa, planned_c.out_path);
                     if (collect) |sm| try sm.add(gpa, .spa_shell, planned_c.out_path);
@@ -764,6 +766,9 @@ fn renderFlagsSnapshot(alloc: std.mem.Allocator, flags: ?std.json.ArrayHashMap(b
 }
 
 const ShellOptions = struct {
+    reusable_fallback: bool = false,
+    concrete: bool = false,
+    pathname: ?[]const u8 = null,
     viewport: ?[]const u8 = null,
     lang: ?[]const u8 = null,
 };
@@ -788,9 +793,10 @@ fn renderShell(alloc: std.mem.Allocator, title: []const u8, noindex: bool, bundl
     defer alloc.free(escaped_title);
     // A lazy route's chunk preloads right after the entry bundle so it fetches
     // in parallel with the shell (the router loads it post-hydration). Empty for
-    // routes with no lazy chunk.
-    const chunk_preload = if (chunk_url) |cu|
-        try std.fmt.allocPrint(alloc, "<link rel=\"modulepreload\" href=\"{s}\">", .{cu})
+    // routes with no lazy chunk and for reusable namespace/404 fallbacks,
+    // whose requested URL may point at an entirely different view.
+    const chunk_preload = if (chunk_url != null and !shell.reusable_fallback)
+        try std.fmt.allocPrint(alloc, "<link rel=\"modulepreload\" href=\"{s}\">", .{chunk_url.?})
     else
         "";
     defer alloc.free(chunk_preload);
@@ -810,6 +816,12 @@ fn renderShell(alloc: std.mem.Allocator, title: []const u8, noindex: bool, bundl
         break :blk try std.fmt.allocPrint(alloc, " data-z-prefix=\"{s}\"", .{escaped_prefix});
     } else "";
     defer alloc.free(prefix_attr);
+    const pathname_attr = if (shell.pathname) |path| blk: {
+        const escaped = try escapeHtml(alloc, path);
+        defer alloc.free(escaped);
+        break :blk try std.fmt.allocPrint(alloc, " data-z-prerender-path=\"{s}\"", .{escaped});
+    } else "";
+    defer alloc.free(pathname_attr);
     // The runtime tags (preload/import-map/script) point at `runtime_url` — the
     // shared /zigapagos-runtime.js by default, or this SPA's per-deployable sliced
     // runtime. For the shared URL these reproduce pass's constants exactly.
@@ -844,7 +856,7 @@ fn renderShell(alloc: std.mem.Allocator, title: []const u8, noindex: bool, bundl
         "{[chunk_preload]s}" ++ // per-route lazy chunk preload (may be empty)
         "{[rt_script]s}" ++
         "<script type=\"module\">import*as m from\"{[bundle]s}\";import{{mountSpa}}from\"@z/runtime\";mountSpa(m.default,\"#z-spa-root\",m);</script>" ++
-        "</head><body><div id=\"z-spa-root\" data-z-spa{[prefix_attr]s}>{[skeleton]s}</div></body></html>", .{
+        "</head><body><div id=\"z-spa-root\" data-z-spa{[prefix_attr]s}{[prerender_attr]s}{[pathname_attr]s}>{[skeleton]s}</div></body></html>", .{
         .title = escaped_title,
         .lang_attr = lang_attr,
         .viewport = viewport,
@@ -857,6 +869,8 @@ fn renderShell(alloc: std.mem.Allocator, title: []const u8, noindex: bool, bundl
         .flags_snapshot = flags_snapshot,
         .rt_script = rt_script,
         .prefix_attr = prefix_attr,
+        .pathname_attr = pathname_attr,
+        .prerender_attr = if (shell.concrete) " data-z-prerender=\"concrete\"" else "",
         .skeleton = skeleton,
     });
 }
@@ -1868,6 +1882,9 @@ test "renderShell emits a modulepreload for a lazy route's chunk (and none witho
     const without = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, "", null, null, .{}, "<div>sk</div>");
     defer gpa.free(without);
     try std.testing.expect(std.mem.indexOf(u8, without, "Heavy-") == null);
+    const fallback = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, "/spa/Heavy-abc123.js", "", null, null, .{ .reusable_fallback = true }, "<div>sk</div>");
+    defer gpa.free(fallback);
+    try std.testing.expect(std.mem.indexOf(u8, fallback, "Heavy-") == null);
     // the chunk preload adds exactly one modulepreload over the no-chunk shell
     // (which already has the runtime + entry preloads).
     try std.testing.expect(std.mem.count(u8, with, "rel=\"modulepreload\"") ==

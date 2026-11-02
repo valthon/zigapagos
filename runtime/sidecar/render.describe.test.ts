@@ -58,16 +58,11 @@ export default function App() { return h("div", null); }
 `);
 afterAll(() => rmSync(noSkeletonDir, { recursive: true, force: true }));
 
-test("describe fails loudly when a dynamic route lacks a skeleton, naming the route", async () => {
+test("describe accepts a dynamic route without a custom skeleton", async () => {
   const res = await describe(noSkeletonFixture);
   expect(res.id).toBe(1);
-  expect(res.routes).toBeUndefined();
-  expect(res.error).toContain('"/club/:id"');
-  expect(res.error).toContain("skeleton");
-  // The message must name the CONCRETE pathname the build will actually SSR
-  // for this route (params substituted with "_"), not just the pattern —
-  // that's the datum an author needs to reproduce the mismatch (issue #33).
-  expect(res.error).toContain('"/club/_"');
+  expect(res.error).toBeUndefined();
+  expect(res.routes[1]).toEqual({ path: "/club/:id", dynamic: true, hasSkeleton: false });
 });
 
 // --- staticPaths (getStaticPaths parity) ----------------------------------

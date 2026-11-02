@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { EMPTY_CONFIG, loadConfig, type ZRuntimeConfig } from "./z-runtime-config.ts";
+import { REACT_ALIAS } from "./react-alias.ts";
 
 // Base allowlist: islands may always import the runtime and relative paths.
 // (Web-platform features like fetch/document are runtime GLOBALS, not import
@@ -30,6 +31,7 @@ export function buildAllow(config: ZRuntimeConfig): RegExp[] {
   const exactRe = (s: string) => new RegExp("^" + RegExp.escape(s) + "$");
   return [
     ...BASE_ALLOW,
+    ...Object.keys(REACT_ALIAS).map(exactRe),
     ...config.islandImports.firstParty.map(specToRe),
     ...config.islandImports.npmCompat.map(specToRe),
     ...Object.keys(config.resolve ?? {}).map(exactRe),

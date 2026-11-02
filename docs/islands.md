@@ -605,14 +605,21 @@ Two consequences worth knowing:
 
 ## Import guardrail
 
-Islands may only import from:
+By default, island client modules may import from:
 
 - `@z/runtime` (and its subpaths, e.g. `@z/runtime/compat`)
-- `@your-org/shared-lite`
+- The built-in `react` / `react-dom` compatibility bridge specifiers
 - Relative paths (other local modules)
-- Web globals (no `node:*` / bare npm packages)
 
-Violations are caught by `runtime/scripts/lint-island-imports.ts`.
+Web globals such as `fetch` need no import. Extra workspace scopes (for example
+`@your-org/shared-lite`) require `islandImports.firstParty` in
+`z-runtime.config.json`; compatible npm packages require `islandImports.npmCompat`.
+Explicit `resolve` keys also allow those exact specifiers. `@z/site-data` is
+available when the config declares a `data` map.
+
+The client bundler enforces this policy for the entry and its local transitive
+imports. The standalone `runtime/scripts/lint-island-imports.ts` command remains
+available for a separate check. See the [configuration recipes](migration/recipes.md#no-npm-guardrail).
 
 ## Dev hot-swap (HMR) and fast refresh
 

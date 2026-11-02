@@ -3,6 +3,15 @@
 // agrees with the client's window.location.pathname.
 let ssrPathname = "/";
 let serverOverride: boolean | undefined;
+let concretePrerender = false;
+let prerenderPathname: string | undefined;
+
+export function setPrerenderPathname(path?: string): void { prerenderPathname = path; }
+export function getPrerenderPathname(): string | undefined { return prerenderPathname; }
+
+/** Per-shell initial rendering mode, reset for every sidecar request/mount. */
+export function setConcretePrerender(concrete: boolean): void { concretePrerender = concrete; }
+export function isConcretePrerender(): boolean { return concretePrerender; }
 
 export function isServer(): boolean {
   return serverOverride ?? (typeof window === "undefined");

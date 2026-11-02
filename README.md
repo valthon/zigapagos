@@ -61,7 +61,7 @@ map. Omit the directive for server-only HTML with no island JavaScript.
   context, portals, …) via the first-party `@z/runtime`, SSR'd at build time
   and partially hydrated.
 - **Native SPAs** — a single `.spa.tsx` (exported `spa` + `routes`) becomes a
-  client-routed app: prerendered route skeletons, two-phase hydration,
+  client-routed app: prerendered pages, loading shells, matching hydration,
   soft navigation, route guards, nested layouts. Host-agnostic routing
   manifests (ZigBase / Nginx / Apache) generated for you.
 - **Prefetching** — a SPA `<Link>` starts a lazy route's chunk load on hover by

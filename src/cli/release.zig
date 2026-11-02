@@ -104,6 +104,7 @@ pub fn release(
         io,
         RenderArena.from(&bundle_arena_state),
         &cmd,
+        base_dir_path,
         cli_spas,
         rt_defaults,
         environ_map,
@@ -1022,6 +1023,7 @@ fn bundleClient(
     io: Io,
     arena: RenderArena,
     cmd: *Command,
+    base_dir_path: []const u8,
     spas: []root.SpaSpec,
     rt: ?RuntimeDefaults,
     environ_map: *const std.process.Environ.Map,
@@ -1030,18 +1032,12 @@ fn bundleClient(
     const bun_path = cmd.bun_path orelse "bun";
     const src_dir = cmd.island_src_dir orelse ".";
 
-    Io.Dir.cwd().deleteTree(io, bundle_cache_path) catch {};
-    Io.Dir.cwd().createDirPath(io, bundle_cache_path) catch |err| fatal.msg(
+    const cache_abs = try std.fs.path.resolve(gpa, &.{ base_dir_path, bundle_cache_path });
+    Io.Dir.cwd().deleteTree(io, cache_abs) catch {};
+    Io.Dir.cwd().createDirPath(io, cache_abs) catch |err| fatal.msg(
         "error: client bundle cache '{s}': {s}\n",
-        .{ bundle_cache_path, @errorName(err) },
+        .{ cache_abs, @errorName(err) },
     );
-    // Absolute, because `--outfile`/`--outdir` are interpreted by bun, whose cwd
-    // is `src_dir` rather than this process's.
-    const cwd_path = std.process.currentPathAlloc(io, gpa) catch |err| fatal.msg(
-        "error: unable to get current working directory: {s}\n",
-        .{@errorName(err)},
-    );
-    const cache_abs = try std.fs.path.join(gpa, &.{ cwd_path, bundle_cache_path });
 
     var env = try prodEnv(gpa, environ_map);
     defer env.deinit();
@@ -1295,6 +1291,7 @@ fn bundleSpas(
         var argv: std.ArrayListUnmanaged([]const u8) = .empty;
         try argv.appendSlice(gpa, &.{
             rt.spa_bundle_driver,
+            try std.fmt.allocPrint(gpa, "--source-cache-dir={s}/client-source", .{std.fs.path.dirname(cache_abs).?}),
             try std.fmt.allocPrint(gpa, "--source-capture={s}", .{capture_json}),
             try std.fmt.allocPrint(gpa, "--entry={s}", .{sp.src}),
             try std.fmt.allocPrint(gpa, "--outdir={s}", .{outdir}),

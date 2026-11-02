@@ -355,14 +355,17 @@ one's \`spa.base\` decides where it mounts. \`--spa=SRC|BASE\` (repeatable) over
 the scan, and \`|BASE\` there is a base restated for the build to check against the
 module — omit it and the module is simply believed.
 
-Each SPA gets prerendered route skeletons and
+Each SPA gets prerendered route content or loading shells and
 a \`_shell.html\` per dynamic pattern, a per-namespace \`routing-manifest.json\`, a
 code-split client bundle under \`/spa/\` (one entry chunk plus one content-hashed
-chunk per \`lazy(() => import(…))\`), a \`modulepreload\` for the chunk each route
-needs, and the per-deployable runtime slice — \`/spa/<name>-runtime.js\` when the
+chunk per \`lazy(() => import(…))\`), route chunk preloads in dedicated shells,
+and the per-deployable runtime slice — \`/spa/<name>-runtime.js\` when the
 slicer can prove which \`host.*\` members the SPA uses, the shared
 \`/zigapagos-runtime.js\` when it cannot. \`@z/runtime\` stays external in every
-bundle, so a page carrying both a SPA and islands still has one Preact.
+bundle, so a page carrying both a SPA and islands still has one Preact. Reusable
+fallback shells defer unrelated route chunks. Concrete \`staticPaths\` pages
+render real params and content; generic dynamic URLs use a custom or neutral
+loading view.
 
 See [docs/spa.md](${HOMEPAGE}/blob/main/docs/spa.md). The routing manifest is also
 what the host-config emitters read, and \`release\` runs them, so the \`.spa\` marker

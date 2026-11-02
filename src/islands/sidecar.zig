@@ -252,6 +252,7 @@ pub const Sidecar = struct {
         slots_json: []const u8,
         pathname: []const u8,
         url_prefix: []const u8,
+        concrete: bool,
     ) ![]const u8 {
         var req_aw: std.Io.Writer.Allocating = .init(alloc);
         errdefer req_aw.deinit();
@@ -270,6 +271,7 @@ pub const Sidecar = struct {
             try rw.writeAll(",\"prefix\":");
             try std.json.Stringify.value(url_prefix, .{}, rw);
         }
+        if (concrete) try rw.writeAll(",\"prerender\":\"concrete\"");
         try rw.writeAll("}\n");
         return req_aw.toOwnedSlice();
     }
@@ -341,6 +343,22 @@ pub const Sidecar = struct {
         url_prefix: []const u8,
         err_out: ?*RenderError,
     ) ![]const u8 {
+        return self.renderPrerender(arena, src, props_json, slots_json, pathname, url_prefix, false, err_out);
+    }
+
+    /// Contract 4: same arena-owned response as renderPrefixed; the mode is
+    /// explicit so concrete pages and generic shells hydrate identically.
+    pub fn renderPrerender(
+        self: *Sidecar,
+        arena: RenderArena,
+        src: []const u8,
+        props_json: []const u8,
+        slots_json: []const u8,
+        pathname: []const u8,
+        url_prefix: []const u8,
+        concrete: bool,
+        err_out: ?*RenderError,
+    ) ![]const u8 {
         // Resolve outside the lock: the CWD is fixed and `absSrc` touches no
         // shared state, so this stays out of the serialized critical section.
         const abs_src = try self.absSrc(arena, src);
@@ -351,7 +369,7 @@ pub const Sidecar = struct {
         const id = self.next_id;
         self.next_id += 1;
 
-        const req_line = try buildRenderRequest(arena.a, id, abs_src, props_json, slots_json, pathname, url_prefix);
+        const req_line = try buildRenderRequest(arena.a, id, abs_src, props_json, slots_json, pathname, url_prefix, concrete);
         try self.writeAll(req_line);
 
         // --- read one response line and parse
@@ -577,6 +595,7 @@ test "buildRenderRequest leaks nothing when an allocation fails part-way through
         "{\"default\":\"<p>x</p>\"}",
         "/myrepo/faq",
         "/myrepo",
+        false,
     ));
     // Without this the test would pass vacuously if the growth pattern ever
     // changed such that the injected failure was never reached.
@@ -592,8 +611,11 @@ test "buildRenderRequest emits \"prefix\" only when url_prefix is non-empty" {
     // `buildRenderRequest` is the pure seam factored out of `renderPrefixed`
     // precisely so this is testable at all.
     const gpa = std.testing.allocator;
+    const concrete = try Sidecar.buildRenderRequest(gpa, 1, "/abs/App.spa.tsx", "{}", "", "/club/42", "", true);
+    defer gpa.free(concrete);
+    try std.testing.expect(std.mem.indexOf(u8, concrete, "\"prerender\":\"concrete\"") != null);
 
-    const with_prefix = try Sidecar.buildRenderRequest(gpa, 1, "/abs/App.island.tsx", "{}", "", "/myrepo/about", "/myrepo");
+    const with_prefix = try Sidecar.buildRenderRequest(gpa, 1, "/abs/App.island.tsx", "{}", "", "/myrepo/about", "/myrepo", false);
     defer gpa.free(with_prefix);
     try std.testing.expectEqualStrings(
         "{\"id\":1,\"src\":\"/abs/App.island.tsx\",\"props\":{},\"pathname\":\"/myrepo/about\",\"prefix\":\"/myrepo\"}\n",
@@ -602,7 +624,7 @@ test "buildRenderRequest emits \"prefix\" only when url_prefix is non-empty" {
 
     // Empty prefix: the field is absent entirely, not emitted as `"prefix":""`
     // — the no-op an unprefixed site's request line depends on.
-    const without_prefix = try Sidecar.buildRenderRequest(gpa, 1, "/abs/App.island.tsx", "{}", "", "/about", "");
+    const without_prefix = try Sidecar.buildRenderRequest(gpa, 1, "/abs/App.island.tsx", "{}", "", "/about", "", false);
     defer gpa.free(without_prefix);
     try std.testing.expectEqualStrings(
         "{\"id\":1,\"src\":\"/abs/App.island.tsx\",\"props\":{},\"pathname\":\"/about\"}\n",
@@ -611,7 +633,7 @@ test "buildRenderRequest emits \"prefix\" only when url_prefix is non-empty" {
 
     // A non-empty slots payload still sits ahead of pathname/prefix, exactly
     // as it did before this field existed.
-    const with_slots_and_prefix = try Sidecar.buildRenderRequest(gpa, 7, "/abs/Panel.island.tsx", "{}", "{\"default\":\"<p>x</p>\"}", "/myrepo/faq", "/myrepo");
+    const with_slots_and_prefix = try Sidecar.buildRenderRequest(gpa, 7, "/abs/Panel.island.tsx", "{}", "{\"default\":\"<p>x</p>\"}", "/myrepo/faq", "/myrepo", false);
     defer gpa.free(with_slots_and_prefix);
     try std.testing.expectEqualStrings(
         "{\"id\":7,\"src\":\"/abs/Panel.island.tsx\",\"props\":{},\"slots\":{\"default\":\"<p>x</p>\"},\"pathname\":\"/myrepo/faq\",\"prefix\":\"/myrepo\"}\n",

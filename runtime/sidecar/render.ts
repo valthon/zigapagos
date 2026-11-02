@@ -1,5 +1,5 @@
 import { h, renderToString } from "../src/core.ts";
-import { setSsrPathname, setUrlPathPrefix } from "../src/ssr-env.ts";
+import { setSsrPathname, setUrlPathPrefix, setConcretePrerender, setPrerenderPathname } from "../src/ssr-env.ts";
 import { buildSlots } from "../src/slots.ts";
 import { store } from "../src/host.ts";
 import { registerSsrModuleOverrides } from "./ssr-resolve.ts";
@@ -72,7 +72,7 @@ function seedSsrFlags(spaExport: unknown): void {
 }
 
 async function handle(line: string): Promise<string> {
-  let req: { id: number; src: string; props: unknown; pathname?: string; prefix?: string; slots?: Record<string, string>; describe?: boolean };
+  let req: { id: number; src: string; props: unknown; pathname?: string; prefix?: string; prerender?: "concrete"; slots?: Record<string, string>; describe?: boolean };
   try {
     req = JSON.parse(line);
   } catch {
@@ -94,6 +94,8 @@ async function handle(line: string): Promise<string> {
     // same hazard `seedSsrFlags` clears for `spa.flags` above.
     setUrlPathPrefix(req.prefix ?? "");
     setSsrPathname(req.pathname ?? "/");
+    setConcretePrerender(req.prerender === "concrete");
+    setPrerenderPathname(undefined);
     const mod = await load(req.src);
     seedSsrFlags(mod.spa); // SSR sees the module's baked flag defaults
     const { children, slots } = buildSlots(req.slots);

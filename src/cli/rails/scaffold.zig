@@ -5919,8 +5919,8 @@ fn writeProjectFiles(ctx: *Ctx, acc: *Acc) WriteError!void {
         }
     }
     std.mem.sort([]const u8, npm_compat.items, {}, lessThanStr);
-    if (component_sources.len > 0) {
-        const bridge = try emitReactBridgeConfig(gpa, npm_compat.items);
+    if (component_sources.len > 0 or with_client) {
+        const bridge = try emitReactBridgeConfig(gpa, npm_compat.items, with_client);
         defer gpa.free(bridge);
         try ctx.writeFile("z-runtime.config.json", bridge);
     }
@@ -6015,10 +6015,12 @@ fn collectComponentSources(gpa: Allocator, ctx: *Ctx, written: []const []const u
     return queue.toOwnedSlice(gpa);
 }
 
-fn emitReactBridgeConfig(gpa: Allocator, compat: []const []const u8) Allocator.Error![]u8 {
+fn emitReactBridgeConfig(gpa: Allocator, compat: []const []const u8, with_client: bool) Allocator.Error![]u8 {
     var out: std.ArrayListUnmanaged(u8) = .empty;
     errdefer out.deinit(gpa);
-    try out.appendSlice(gpa, "{\"islandImports\":{\"firstParty\":[],\"npmCompat\":[");
+    try out.appendSlice(gpa, "{\"islandImports\":{\"firstParty\":[");
+    if (with_client) try out.appendSlice(gpa, "\"@zigbase/client\"");
+    try out.appendSlice(gpa, "],\"npmCompat\":[");
     for (compat, 0..) |name, i| {
         if (i > 0) try out.append(gpa, ',');
         try out.append(gpa, '"');
@@ -14989,8 +14991,11 @@ test "Stage 4 interactivity paths and React project metadata are deterministic" 
     try testing.expectEqualStrings(chart, try acc.componentPath(gpa, "Chart"));
     try testing.expectEqualStrings("components/AuthForm_2.island.tsx", try acc.componentPath(gpa, "AuthForm"));
 
-    const config = try emitReactBridgeConfig(gpa, &.{ "d3", "zod" });
+    const config = try emitReactBridgeConfig(gpa, &.{ "d3", "zod" }, false);
     defer gpa.free(config);
+    const client_config = try emitReactBridgeConfig(gpa, &.{}, true);
+    defer gpa.free(client_config);
+    try testing.expect(std.mem.indexOf(u8, client_config, "\"firstParty\":[\"@zigbase/client\"]") != null);
     try testing.expectEqualStrings("{\"islandImports\":{\"firstParty\":[],\"npmCompat\":[\"d3\",\"zod\"]},\"resolve\":{\"react\":\"@z/runtime/compat\",\"react-dom\":\"@z/runtime/compat\",\"react-dom/client\":\"@z/runtime/compat/client\",\"react/jsx-runtime\":\"@z/runtime/jsx-runtime\",\"react/jsx-dev-runtime\":\"@z/runtime/jsx-dev-runtime\"}}\n", config);
     const deps = [_]@import("integrations.zig").NpmDep{.{ .name = "d3", .version = "7.9.0" }};
     const package = try emitPackageCompat(gpa, "Charts", "../runtime", false, &.{"d3"}, &deps);

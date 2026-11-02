@@ -79,7 +79,7 @@ router composes the base — and the site's `url_path_prefix`, if it has one —
 the same source works at the root of a domain and under a project-pages subpath.
 
 Both routes here are static. A route with a parameter (`/club/:id`) is a
-*dynamic* route, needs a `skeleton`, and prerenders differently — that is the
+*dynamic* route and prerenders differently — that is the
 first thing to read about next ([2. Classifies routes](#2-classifies-routes)),
 along with [guards](#route-guards--gated-spas) and
 [nested layouts](#nested--layout-routes).
@@ -105,7 +105,7 @@ export const routes = [
   {
     path: string;
     component?: ComponentType;              // required — unless the entry is a `redirect`
-    skeleton?: ComponentType | false;       // loading state — REQUIRED on dynamic routes (false = explicit opt-out; redirect entries exempt); see below
+    skeleton?: ComponentType | false;       // optional loading state; required for lazy() views; see below
     guard?: (loc) => Promise<GuardResult>;  // see Route Guards
       // GuardResult = true | { redirect: string } | { ok: true, data? }
     children?: RouteDef[];                  // nested/layout routes — see Nested & Layout Routes
@@ -181,8 +181,8 @@ site) a prefixed href like `/myproject/site.css` resolves to `site.css` in
 the assets dir. External (`https://…`) and protocol-relative (`//…`) hrefs
 are not checked — see the [CSP section](#content-security-policy-strict-csp)
 for how their origins are folded into the emitted policy. The check runs in
-release builds (`zigapagos release`); the dev server serves assets straight
-from the assets dir.
+release builds (`zigapagos release`) and the release build invoked by
+`zigapagos dev`, which serves that built tree.
 
 **No `spa.head` at all, on a site with stylesheets, is a build-time warning.**
 SPA shells have a fixed `<head>` and do not inherit site styles, so a SPA
@@ -343,15 +343,16 @@ export default function App() {
 
 Each route has a `component` (the real view) and an optional `skeleton` (the loading state).
 
-**A dynamic route (or any route whose SSR output differs from its first client render) MUST declare an explicit `skeleton`.** The router's two-phase hydration renders `route.skeleton ?? route.component` on BOTH the server pass and the first client render (before flipping to `route.component` post-mount) — see [Hydration and Soft Navigation](#hydration-and-soft-navigation). If you omit `skeleton` and instead branch on `isServer()` *inside* `component`, the SSR pass renders the `isServer() === true` branch, but the first CLIENT render also renders `component` — and by then `isServer()` is `false`, so it renders the client/data branch instead. That mismatches the SSR markup and breaks Preact's hydration (see the `Router` component's hydration comment in `runtime/src/router.ts` for the failure mode). `isServer()` is for data-gating *within* an already-hydration-safe component (loading vs. data, both reachable from the same route entry); it is not a substitute for a route's `skeleton`.
+Dynamic routes may omit `skeleton`: generic URLs receive a neutral framework
+shell until the client renders the view. Supply one for a useful loading state.
+`skeleton: false` explicitly renders the component in a generic shell; keep that
+component's initial output stable across server and browser.
 
-**This rule is ENFORCED at build time** for the mechanically-detectable case: the describe pass **fails the build** when a route whose full path contains a `:param` or `*` segment has no `skeleton`, with an error naming the SPA and the route. Three details of the check:
-
-- **Only the leaf's own `skeleton` counts.** A layout route (one with `children`) renders its real `component` on both hydration passes and never a skeleton, so a parent's `skeleton` cannot cover a dynamic child — declare the skeleton on the **leaf** (this includes a static child under a dynamic layout, e.g. `/club/:id` → `/details`: the full path `/club/:id/details` is dynamic, so the `/details` leaf needs the skeleton).
-- **`skeleton: false` is the explicit opt-out.** It means *"I promise this component is hydration-stable — it renders identically on SSR (where every `:param`/`*` is `_`) and on the first client render"* and suppresses the build error. The router treats it exactly like an absent skeleton (the component renders on both passes); the promise is yours to keep. Reach for it only when the component genuinely ignores its params until after hydration.
-- **`lazy()` routes are stricter: a real `skeleton` is required, even on a static path, and `skeleton: false` is rejected.** A lazy route's `component` is a code-split marker that cannot render until its chunk loads, so there is nothing hydration-stable to promise — SSR and the first client render must show a skeleton. The describe pass fails the build for a lazy route whose skeleton is absent *or* `false`, on any path shape.
-
-The broader prose rule still applies beyond what the build can prove: a *static* route whose component branches on `isServer()` (client-only content) needs a `skeleton` too, and no build error will catch it.
+Concrete `staticPaths` pages render the real component with actual params,
+even when a skeleton is declared. Lazy views still require a real skeleton;
+guarded views still show their fallback until authorization succeeds. Components
+must produce the same initial markup in both environments: read browser-only
+state in an effect rather than branching initial markup on `isServer()`.
 
 ## The Rendering Model
 
@@ -379,7 +380,21 @@ build never renders concrete IDs like `app/club/1.html` on its own. A route's
 
 - `staticPaths` is an **array** of param records, or a **sync/async function**
   returning one. It is resolved **once at build time**, in the sidecar's
-  `describe` step — it never ships to the browser.
+  `describe` step. The client bundler removes the property and module bindings
+  used exclusively by it, including server-only imports and initializers. Keep
+  route definitions explicit: spreading an object into a route containing
+  `staticPaths` fails clearly because build-only dependencies cannot be separated
+  safely. Shared client dependencies remain in the client bundle.
+  Public exports and bindings referenced by retained client initializers are preserved.
+  Source transforms are cached under the site's `.zigapagos-cache/client-source`
+  across rebuilds, keyed by source, compiler and transformer versions.
+  Writes evict the oldest entries to keep at most 128 entries and 32 MiB;
+  cache hits do not scan or modify the cache. Missing cache metadata falls
+  back to compiling directly. If TypeScript is missing, run `bun install`
+  in the Zigapagos runtime directory as the build diagnostic instructs.
+  Cache reads, writes and cleanup are best-effort: inaccessible storage or
+  deleting the cache during a rebuild does not fail a successful transform.
+  Route enumeration itself still runs at build time; its returned data is not cached here.
 - Each resolved entry emits `<base>/<concrete>/index.html` (e.g.
   `app/club/1/index.html`) alongside the pattern's `_shell.html`, which keeps
   serving every param the entries didn't enumerate. Each concrete URL is
@@ -407,25 +422,24 @@ build never renders concrete IDs like `app/club/1.html` on its own. A route's
   just the dynamic pattern's `_shell.html`) — there is no dev-only routing
   behavior to remember.
 
-### 3. Renders skeletons
-For each route, the build SSRs the skeleton (loading state):
-- If a route has an explicit `skeleton` component, that is rendered.
-- Otherwise, the route's `component` is rendered with `isServer()` returning `true`, so the component can branch on that flag to render its skeleton. For a **dynamic** route this branch is only reachable via the explicit `skeleton: false` opt-out — a dynamic route with no `skeleton` at all **fails the build** (see the skeleton rule under [Example](#example) above).
+### 3. Renders initial content
 
-The skeleton is embedded in the HTML shell so the client sees it immediately (before the real data loads and the real component hydrates).
+- Static routes render their skeleton when supplied, otherwise their component.
+- Generic dynamic shells render the declared skeleton or a neutral placeholder.
+- Concrete `staticPaths` pages render the real component using actual params.
+- Lazy routes render their loading skeleton; guards render their fallback.
 
-**Hydration safety:** the "otherwise" branch above only produces build-time
-(SSR) output — it does NOT make the route hydration-safe. The client
-router's first render also uses `route.skeleton ?? route.component`, but by
-then `isServer()` is `false`, so an `isServer()`-only `component` renders its
-*other* branch on that first client render, mismatching the SSR markup. Give
-any route whose SSR output and first-client-render output would otherwise
-diverge (in practice: any dynamic route — enforced at build time — and any
-static route with client-only content) an explicit `skeleton`.
+`staticPaths` selects URLs to pre-render; it does not restrict valid client
+routes. Unenumerated params still use the generic shell and client routing.
+The shell records its initial pathname and rendering mode so the first client
+render matches its HTML, including nested layouts. After mount, the router
+uses the requested URL and replaces generic loading content with the real view.
+Redirects, guards, and route chunk loads wait for that requested URL; they do
+not act on a generic shell's placeholder params or namespace root.
 
 ### 4. Generates shells
 Each shell is a complete HTML document that:
-- Contains the skeleton HTML
+- Contains the initial content HTML
 - Includes the import map (mapping `@z/runtime` to the shared runtime bundle)
 - Includes the `data-z-flags` JSON data block when the SPA declares [`spa.flags`](#feature-flag-defaults-spaflags)
 - Includes `<link rel="modulepreload">` hints for the runtime and SPA bundle
@@ -456,12 +470,17 @@ The client-side flow:
    and calls the module's optional [`clientInit()`](#client-only-init-clientinit)
    — both before the first render.
 2. **Hydration (two-phase):**
-   - The `Router` renders to match the prerendered skeleton (to match the initial HTML).
-   - After mount, it re-renders with the real component (which may fetch data).
+   - The `Router` first reproduces the shell content and pathname. Concrete
+     pages keep their real content; generic shells keep their loading view.
+   - After mount, it renders the requested route (which may fetch data).
 3. **Soft navigation:** the router intercepts clicks on router-internal `<Link>` elements (base-relative hrefs — see [Navigation is base-relative](#navigation-is-base-relative)), updates the URL, re-renders, and fetches real data from the API. The shell stays in place; only the content inside the `Router` changes.
-4. **Hard refresh on dynamic routes:** the browser reloads the page and fetches the pattern shell (`_shell.html`).
+4. **Hard refresh on dynamic routes:** concrete pre-rendered URLs get their own
+   page; other URLs use a pattern shell or the host's namespace fallback.
 
-Data loading happens entirely in the client: components use `useLocation()` or `useParams()` to determine the current route and fetch data accordingly (not shown in the skeleton).
+Runtime data loading happens in the client: components can use `useLocation()` or
+`useParams()` to fetch data for the requested route after mount. Build-time data
+can also supply prerendered content. Avoid starting client fetches while rendering
+the initial shell.
 
 ## View transitions
 
@@ -748,8 +767,9 @@ reached after the route has already flipped to its real `component` post-hydrati
 It is **not** sufficient, by itself, as a route's `skeleton`: see
 [The `.spa.tsx` module](#what-an-spa-is) above for why an `isServer()`-only
 branch inside a route's `component` breaks hydration on that route's first
-client render. Always give a dynamic (or otherwise SSR/first-client-render-divergent)
-route an explicit `skeleton` instead.
+client render. Dynamic routes can use a custom skeleton or the framework's
+neutral generic shell. Concrete pages must keep their real component's initial
+markup stable; use effects for browser-only enrichment.
 
 ```tsx
 function ClubDetail() {
@@ -898,8 +918,9 @@ post-mount and only *then* flips to the real component or issues the redirect. C
 - The real component never mounts (and its data-fetching effects never fire) until the guard
   resolves `true` for the current pathname, so an anonymous hard-refresh shows the fallback
   then redirects with **no gated-content flash**.
-- Navigation resets the authorized state, so returning to a gated route always re-validates
-  from the fallback — no stale-authorized paint. A guard that throws/rejects or never resolves
+- Leaving a guarded scope evicts its authorization; returning re-validates from
+  the fallback. Sibling views within an authorized layout retain that layout's
+  authorization while guards re-validate. A guard that throws/rejects or never resolves
   **fails closed** (stays on the fallback, never paints the component).
 - **Misconfiguration fails closed too:** a guarded route with no `fallback` renders a neutral
   empty placeholder (`<div data-z-guard-pending>`), never `skeleton`/`component` — so the API
@@ -908,9 +929,9 @@ post-mount and only *then* flips to the real component or issues the redirect. C
 The server still enforces the actual authorization on its data endpoints — guards remove the
 client-side flash and the public gated HTML; they are not the security boundary themselves.
 
-v1 notes: a namespace-wide `guard` gates every matched route and shows the `fallback` in place
-of a dynamic route's `skeleton`; the not-found route is not gated. Per-route error→redirect and
-the parent-guard cascade for nested routes are v2.
+A namespace-wide `guard` gates every matched route and shows its `fallback`;
+the not-found route is not gated. Nested route guards cascade from parent to
+child. See [Guard data](#guard-data-useguarddata) for passing authorized data to views.
 
 ### Guard data (`useGuardData`)
 
@@ -1114,11 +1135,11 @@ background — no fallback re-flash), while navigating *out* of a gated scope ev
 re-entry (e.g. after logout) re-gates from the fallback. Guards run outermost→innermost, first
 non-`true` wins.
 
-> **Caveat (dynamic layouts):** a layout component renders on the hydration pass, and Preact
-> does not diff element *attributes* on that pass. So a layout must not bind a dynamic path
-> param to an **attribute** (`<div data-org={org}>`) on a dynamic route — the attribute would
-> stick at the prerendered placeholder value. Rendering the param as **text** (`<span>{org}</span>`)
-> is safe (text children self-heal on hydrate). This mirrors the dynamic-leaf skeleton rule above.
+**Dynamic layout params.** Layouts may use route params in attributes and text.
+Concrete pages hydrate with their emitted params. Generic shells first hydrate
+with their recorded placeholder pathname, then update to the requested URL in a
+normal render, which updates layout attributes too. Keep the initial markup
+stable between server and browser; read browser-only state after mount.
 
 ## Declaring an SPA
 
@@ -1196,8 +1217,13 @@ shipping it.
 The build supports multiple deployment targets via `deploy_target` in the site's `zigapagos.ziggy`:
 
 ```ziggy
-{
-  deploy_target = "zigbase",  // default: "zigbase" | "nginx" | "apache"
+Site {
+  .title = "My site",
+  .host_url = "https://example.com",
+  .content_dir_path = "content",
+  .layouts_dir_path = "layouts",
+  .assets_dir_path = "assets",
+  .deploy_target = "zigbase", // default: "zigbase" | "nginx" | "apache"
 }
 ```
 
@@ -1233,7 +1259,7 @@ Paste it into your `zigbase.App(.{ ... })` config. First match wins in declarati
 ### Nginx
 **File:** `<base>/nginx.nginx.conf`
 
-A location block for nginx. Include this in your nginx config inside the `http` or `server` block:
+A location block for nginx. Include this in your nginx config inside the `server` block:
 
 ```nginx
 include /path/to/app/nginx.nginx.conf;
@@ -1247,11 +1273,11 @@ The emitted config:
 Example emitted snippet:
 
 ```nginx
-location /app/ {
-  try_files $uri $uri/ /app/index.html;
+location "/app/" {
+  try_files $uri $uri/ "/app/index.html";
 }
-location /app/club/ {
-  try_files $uri /app/club/_shell.html /app/index.html;
+location "/app/club/" {
+  try_files $uri "/app/club/_shell.html" "/app/index.html";
 }
 ```
 
@@ -1459,8 +1485,10 @@ export const routes = [
 
 At build time the SPA is bundled with code-splitting: the heavy view becomes a separate
 content-hashed chunk (`/spa/Heavy-<hash>.js`), the routing manifest maps the route to its
-chunk, and the route's shell emits a `<link rel="modulepreload">` for that chunk so it fetches
-in parallel with the shell. `@z/runtime` stays external (one Preact) in every chunk. A SPA with
+chunk, and dedicated route shells emit a `<link rel="modulepreload">` for that chunk so it fetches
+in parallel with the shell. Namespace-root and universal fallback shells omit route-specific
+chunk hints because they may serve unrelated URLs; the router loads the requested view.
+`@z/runtime` stays external (one Preact) in every chunk. A SPA with
 no `lazy()` routes builds to a byte-identical single bundle — splitting is zero-cost until used.
 
 Rendering: SSR and the first client render show the route's `skeleton`; the loader resolves
@@ -1558,7 +1586,10 @@ sliced runtime** (`/spa/<name>-runtime.js`) containing only the `host.*` members
 actually uses — a smaller bundle, and (the real win) **admin-only bindings never ship to a
 non-admin SPA**. The build statically analyzes each SPA's transitive sources for `host.<member>`
 access; the SPA's shell points its import-map + preload + module-script at its sliced runtime.
-Islands keep the shared runtime (v1).
+Island-only pages can use their own `/islands/_runtime.js` slice when every
+hydrated island is covered; otherwise they use the full shared runtime. See
+[islands runtime slicing](islands.md#runtime-slicing). Pages with only server-rendered
+components need no hydration runtime.
 
 **Fail-safe by design — a slice never omits a binding the SPA uses.** The analyzer falls back to
 the full shared runtime (worst case = today's behavior) on *any* uncertainty, including:
@@ -1576,15 +1607,20 @@ runtime → one Preact.
 ## Invariants
 
 ### One Preact Instance
-The SPA bundle declares `@z/runtime` as **external** (`--external=@z/runtime`). The router is shipped in the shared `/zigapagos-runtime.js` bundle (not in the SPA bundle). A single Preact instance is shared across all soft-nav transitions and across any islands on the same page.
+The SPA bundle declares `@z/runtime` as **external** (`--external=@z/runtime`).
+Its import map selects the SPA's sliced runtime or the full
+`/zigapagos-runtime.js`; that runtime contains the router and Preact. Each page
+uses one runtime instance across soft navigation and any islands on that page.
 
 ### No-npm Guardrail
 By default a `.spa.tsx` and its views may import only:
 - `@z/runtime` (and subpaths like `@z/runtime/router`)
 - Relative paths (`./`, `../`)
-- Web globals
+- The built-in `react` / `react-dom` compatibility bridge specifiers
+- Web globals (these need no imports)
 
-The build enforces this via `runtime/scripts/lint-island-imports.ts`. A project
+The client bundler enforces this for islands, SPAs, and their local transitive
+imports, using the same policy as `runtime/scripts/lint-island-imports.ts`. A project
 opts extra imports in via `z-runtime.config.json`'s `islandImports.firstParty`
 (first-party workspace scopes) and `islandImports.npmCompat` (third-party
 React-compatible npm packages, bundled per-SPA with `react`/`react-dom` kept
@@ -1596,13 +1632,14 @@ still fails the lint.
 ### Build-Time Only
 Bun runs only at build time (to bundle and prerender). The deployed artifact is static HTML + JS + a server config file. No runtime Bun process; the server is your hosting layer (Nginx, Apache, or ZigBase).
 
-## v1 Limits
+## Deployment limits
 
-### One Bundle per SPA
-Each `.spa.tsx` produces one JS bundle (`spa/<name>.js`). Internal `import()` or Preact.lazy components can split views manually; automatic per-route code-splitting is v2.
+### Route chunks and guarded content
 
-### Auth First-Paint Flash
-If the client must redirect for auth (e.g., a protected `/admin` page), the browser renders and displays the skeleton first, then fetches auth state, then redirects. This causes a brief flash of the skeleton. v2 will allow skipping the prerender for certain routes.
+Use `lazy(() => import("./views/Heavy"))` with a skeleton for a separate route
+chunk. Eager views stay in the SPA entry bundle. Guards render their fallback
+until they authorize the route; nested guards run from parent to child, and
+guard failure remains fail-closed.
 
 ### Multi-SPA `404.html`
 If the site has multiple SPAs (e.g., `/app` and `/admin`), the universal `404.html` falls back to **one** SPA's shell — the one named by `--spa-not-found`, or the first declared SPA by default. Per-namespace catch-all is a true mechanism (each SPA has its own pattern-matching in the routing manifest); `404.html` is only the last-resort global fallback. Plan accordingly if your hosting layer doesn't support per-directory `404.html` routing.
@@ -1748,7 +1785,7 @@ examples/tsx-site/
    - Copy HTML shells, static assets, JS bundle to your hosting layer.
    - If using **ZigBase** (≥ 0.10.0), the emitted `<base>/.spa` marker ships in the tree; the stock `zigbase serve` binary needs no further config. For dedicated per-route shells, compile the emitted `zigbase.static_routes.zig` snippet into a custom build.
    - If using **Nginx**, include the emitted `nginx.nginx.conf`.
-   - If using **Apache**, place the emitted `.htaccess` in the SPA's base directory.
+   - If using **Apache**, install the emitted `apache.htaccess` as `.htaccess` in the document root.
    - Ensure the universal `404.html` is configured as a fallback.
 
 ## Local Development (`zigapagos dev`)
@@ -2024,9 +2061,14 @@ This hook covers the reloads that remain.
 
 ## Performance Notes
 
-- **Prerendering skeletons at build time** avoids a render pass on the client. Skeletons are static HTML, so the page is interactive (buttons clickable, inputs focusable) immediately.
+- **Prerendering** supplies content or loading HTML before JavaScript arrives.
+  Native links and form controls retain their browser behavior; component event
+  handlers become active after hydration. The client still renders to hydrate
+  the shell and, when needed, replace its loading view.
 - **Soft navigation** (within `base`) avoids a full page reload; only the content changes, preserving browser state and scroll position.
-- **External `@z/runtime`** means the shared runtime (router, Preact, host bindings) is bundled once, not once per SPA.
+- **External `@z/runtime`** keeps Preact and router code out of each SPA's
+  application bundle. Each SPA can load a smaller runtime slice; uncertain
+  analysis falls back to the full shared runtime.
 - **One-shot prerender + manifest** means the entire routing table is known at build time; no runtime path inference.
 
 ## Troubleshooting
@@ -2034,6 +2076,9 @@ This hook covers the reloads that remain.
 - **No shells generated:** ensure the `.spa.tsx` exports are correctly named (`spa`, `routes`) and match the module's contract.
 - **Mismatch between declared and exported `base`:** the build validates and fails if `--spa=<src>|<base>`'s base differs from `export const spa.base`.
 - **Import lint failures:** SPA views can only import from `@z/runtime`, relative paths, web globals, and whatever the site's `z-runtime.config.json` opts into via `islandImports.firstParty`/`islandImports.npmCompat` — see [No-npm Guardrail](#no-npm-guardrail) above.
-- **Skeleton doesn't match shell:** the `isServer()` branch or `skeleton` component is rendered at build time; ensure it doesn't reference client-only data (e.g., `useLocation()`, fetch calls). Skeletons should be pure loading UI.
+- **Hydration doesn't match the shell:** keep initial output stable across
+  server and browser. Concrete pages render real params; generic pages render
+  their loading view. `useLocation()` and `useParams()` reproduce the emitted
+  pathname for hydration; start browser-dependent work after mount.
 - **Dynamic route gives 404:** ensure the route pattern in `routes` includes `:param` (e.g., `/club/:id`). If the pattern shell is not found, the server falls back to `/404.html`.
 - **Build fails with a `staticPaths` error:** `staticPaths` on a route with no `:param`/`*` segment, or an enumerated entry missing a param the pattern requires, are both build errors by design — see [Per-entry prerendering](#per-entry-prerendering-staticpaths) above.
