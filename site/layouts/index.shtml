@@ -234,7 +234,7 @@ export const routes = [
       </div>
       <div class="card">
         <h3><code>client:idle</code></h3>
-        <p>Waits for <code>requestIdleCallback</code>, so it never competes with the page's first paint.</p>
+        <p>Waits for an idle callback, with a short timer fallback where idle callbacks are unavailable.</p>
       </div>
       <div class="card">
         <h3><code>client:visible</code></h3>
@@ -242,7 +242,7 @@ export const routes = [
       </div>
       <div class="card">
         <h3><code>client:media</code></h3>
-        <p>Hydrates only while a <code>matchMedia</code> query matches &mdash; a sidebar that is never interactive on mobile ships no JS there.</p>
+        <p>Fetches and hydrates when a <code>matchMedia</code> query first matches. It stays interactive if the query later stops matching.</p>
       </div>
       <div class="card">
         <h3><code>client:only</code></h3>

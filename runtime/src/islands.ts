@@ -176,7 +176,9 @@ function schedule(el: HTMLElement): void {
       break;
     }
     default:
-      run();
+      // Static components and malformed/stale directives must not acquire
+      // browser code by falling through to immediate hydration.
+      break;
   }
 }
 

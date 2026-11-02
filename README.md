@@ -53,7 +53,7 @@ At build time each `.island.tsx` is **server-rendered** through a Bun sidecar an
 embedded into the page as real HTML. In the browser it **hydrates** on your
 terms — `client:load`, `client:idle`, `client:visible`, `client:media`, or
 `client:only` — sharing ONE Preact instance across every island via an import
-map. No island on the page? Zero JavaScript shipped.
+map. Omit the directive for server-only HTML with no island JavaScript.
 
 ## Features
 

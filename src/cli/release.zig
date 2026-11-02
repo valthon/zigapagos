@@ -399,7 +399,7 @@ pub const Command = struct {
     /// verbatim byte-copy. Requires `--bun` to be set as well.
     css_minify_driver: ?[]const u8 = null,
     css_minify: bool = false,
-    island_props_check: @import("../islands/props_check.zig").Mode = .off,
+    island_props_check: @import("../islands/props_check.zig").Mode = .err,
     /// `--islands-slice=PATH`: the per-SITE islands runtime slice manifest
     /// (`runtime/scripts/build-islands-runtime.ts`). Normally written by
     /// `sliceIslandsRuntime` and attached here; the flag exists so a manifest
@@ -463,7 +463,7 @@ pub const Command = struct {
         var island_bundle_driver: ?[]const u8 = null;
         var css_minify_driver: ?[]const u8 = null;
         var css_minify = false;
-        var island_props_check: @import("../islands/props_check.zig").Mode = .off;
+        var island_props_check: @import("../islands/props_check.zig").Mode = .err;
         var islands_slice: ?[]const u8 = null;
         var spas: std.ArrayListUnmanaged(root.SpaSpec) = .empty;
         errdefer spas.deinit(gpa);
@@ -640,7 +640,7 @@ const help_message =
     \\  --css-minify          Minify site CSS using the bundled runtime in one process
     \\  --css-minify-driver=PATH  Bun script that minifies .css site assets on
     \\                        install (needs --bun; omit to copy CSS verbatim)
-    \\  --island-props-check=MODE  off | warn | error — typecheck island props (default off)
+    \\  --island-props-check=MODE  off | warn | error — typecheck island props (default error)
     \\  --islands-slice=PATH  The per-site islands runtime slice manifest; a page
     \\                        whose every island the slice covers loads it instead
     \\                        of the full shared runtime (omit: shared runtime)
@@ -1517,6 +1517,9 @@ test "parse leaves islands_slice null when --islands-slice is absent" {
 
 test "parse recognizes --island-props-check" {
     const gpa = std.testing.allocator;
+    var defaults = try Command.parse(gpa, &.{});
+    defer defaults.deinit(gpa);
+    try std.testing.expectEqual(@import("../islands/props_check.zig").Mode.err, defaults.island_props_check);
     var cmd = try Command.parse(gpa, &.{"--island-props-check=error"});
     defer cmd.deinit(gpa);
     try std.testing.expectEqual(@import("../islands/props_check.zig").Mode.err, cmd.island_props_check);

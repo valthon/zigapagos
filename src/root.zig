@@ -768,7 +768,7 @@ pub const Options = struct {
     /// Bundled driver accepts NDJSON path pairs on stdin; custom drivers keep
     /// the original two-argument protocol unless this is explicitly enabled.
     css_minify_batch: bool = false,
-    island_props_check: @import("islands/props_check.zig").Mode = .off,
+    island_props_check: @import("islands/props_check.zig").Mode = .err,
     /// Path to the per-SITE islands runtime slice manifest, threaded through by
     /// `zigapagos release --islands-slice=<path>` (see
     /// `runtime/scripts/build-islands-runtime.ts`). Two shapes:
@@ -3160,10 +3160,16 @@ pub fn run(
     if (build.island_props_check_mode != .off and build.island_props_checks.items.len > 0) {
         if (options.bun_path) |bun| if (options.island_src_dir) |root_dir| {
             const props_check = @import("islands/props_check.zig");
+            const compiler_driver = if (options.island_sidecar) |sidecar_path|
+                try std.fs.path.resolve(gpa, &.{ std.fs.path.dirname(sidecar_path) orelse ".", "props-check.ts" })
+            else
+                null;
+            defer if (compiler_driver) |path| gpa.free(path);
             const res = props_check.run(io, gpa, build.island_props_checks.items, .{
                 .mode = build.island_props_check_mode,
                 .bun_path = bun,
                 .website_root = root_dir,
+                .compiler_driver = compiler_driver,
             }) catch |err| blk: {
                 log.err("island props check failed to run: {s}", .{@errorName(err)});
                 break :blk props_check.RunResult{ .checked = 0, .skipped_no_props = 0, .mismatches = 1 };

@@ -125,8 +125,7 @@ pub fn generateTsconfig(
         \\  "compilerOptions": {{
         \\    "noEmit": true,
         \\    "skipLibCheck": true,
-        \\    "allowImportingTsExtensions": true,
-        \\    "module": "esnext"
+        \\    "allowImportingTsExtensions": true
         \\  }},
         \\  "include": ["{s}"]
         \\}}
@@ -187,6 +186,7 @@ pub const RunOptions = struct {
     mode: Mode,
     bun_path: []const u8,
     website_root: []const u8,
+    compiler_driver: ?[]const u8 = null,
 };
 
 pub fn run(io: Io, gpa: std.mem.Allocator, checks: []const PropsCheck, opts: RunOptions) !RunResult {
@@ -243,14 +243,29 @@ pub fn run(io: Io, gpa: std.mem.Allocator, checks: []const PropsCheck, opts: Run
     const program_rel = try std.fs.path.join(arena.a, &.{ tmp_rel, program_basename });
     const program_abs = try std.fs.path.join(arena.a, &.{ tmp_dir_abs, program_basename });
     const tsconfig_abs = try std.fs.path.join(arena.a, &.{ tmp_dir_abs, "tsconfig.props-check.json" });
-    const base_tsconfig_abs = try std.fs.path.join(arena.a, &.{ root_abs, "tsconfig.json" });
+    var base_tsconfig_abs = try std.fs.path.join(arena.a, &.{ root_abs, "tsconfig.json" });
+    std.Io.Dir.cwd().access(io, base_tsconfig_abs, .{}) catch |err| switch (err) {
+        error.FileNotFound => {
+            // Sites without a tsconfig still get props validation; never add
+            // a project configuration file as a side effect of building.
+            base_tsconfig_abs = try std.fs.path.join(arena.a, &.{ tmp_dir_abs, "base.json" });
+            try writeFileAbs(io, base_tsconfig_abs,
+                \\{"compilerOptions":{"jsx":"preserve","moduleResolution":"bundler","target":"esnext","module":"esnext"}}
+            );
+        },
+        else => return err,
+    };
 
     try writeFileAbs(io, program_abs, program.source);
     try writeFileAbs(io, tsconfig_abs, try generateTsconfig(arena.a, base_tsconfig_abs, program_abs));
 
-    // Spawn `<bun> x tsc -p <tsconfig> --pretty false` with cwd = website_root.
+    // Bun runs the installed compiler directly, without a separate Node binary.
+    const argv: []const []const u8 = if (opts.compiler_driver) |driver|
+        &.{ opts.bun_path, driver, "-p", tsconfig_abs, "--pretty", "false" }
+    else
+        &.{ opts.bun_path, "x", "--bun", "tsc", "-p", tsconfig_abs, "--pretty", "false" };
     var child = try std.process.spawn(io, .{
-        .argv = &.{ opts.bun_path, "x", "tsc", "-p", tsconfig_abs, "--pretty", "false" },
+        .argv = argv,
         .stdin = .ignore,
         .stdout = .pipe,
         .cwd = .{ .path = root_abs },

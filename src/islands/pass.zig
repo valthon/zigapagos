@@ -345,6 +345,9 @@ fn preloadLinks(alloc: std.mem.Allocator, instances: []const IslandInstance, run
         try out.appendSlice(alloc, link);
     }
     for (instances) |inst| {
+        // Deferred directives own the first module request. Preloading them
+        // here would spend their download budget before the trigger fires.
+        if (!std.mem.eql(u8, inst.client, "load") and !std.mem.eql(u8, inst.client, "only")) continue;
         const gop = try seen.getOrPut(alloc, inst.module_url);
         if (gop.found_existing) continue;
         try out.print(alloc, "<link rel=\"modulepreload\" href=\"{s}\">", .{inst.module_url});
@@ -646,7 +649,10 @@ pub fn process(
 
     // If the page has islands, inject the hydration runtime <script> before
     // </head> (build-output injection: the static output is self-contained).
-    if (instances.items.len > 0) {
+    const has_client = for (instances.items) |inst| {
+        if (inst.client.len > 0) break true;
+    } else false;
+    if (has_client) {
         if (std.mem.indexOf(u8, body, "</head>")) |head_end| {
             // Which runtime this PAGE loads. The per-site slice serves only the
             // island bundles the build proved it covers, so a page carrying ANY
@@ -659,6 +665,7 @@ pub fn process(
             // convention.
             const use_sliced = if (opts.sliced_runtime_url) |_| blk: {
                 for (instances.items) |inst| {
+                    if (inst.client.len == 0) continue;
                     if (!containsName(opts.sliced_islands, islandModuleName(inst.src))) break :blk false;
                 }
                 break :blk true;
@@ -1024,18 +1031,24 @@ fn rewrite(
         // Instead, emit a data-z-slots JSON script when slots are present so the
         // client runtime can adopt slot content on hydration. client:only also gets
         // the script — the client needs slot HTML for the fresh mount.
-        try out.print(
-            gpa,
-            "<div data-z-island id=\"{s}\" data-z-src=\"{s}\" data-z-client=\"{s}\"{s} data-z-module=\"{s}\">{s}</div>" ++
-                "<script type=\"application/json\" data-z-props=\"{s}\">{s}</script>",
-            .{ id, src, client, media_attr, module_url, rendered, id, props_json },
-        );
-        if (component_slots.len > 0) {
+        if (client.len == 0) {
+            // Keep source identity for dev reloads, but no browser module or
+            // serialized props/slots: this component is build-time only.
+            try out.print(gpa, "<div data-z-island id=\"{s}\" data-z-src=\"{s}\" data-z-static-module=\"{s}\">{s}</div>", .{ id, src, module_url, rendered });
+        } else {
             try out.print(
                 gpa,
-                "<script type=\"application/json\" data-z-slots=\"{s}\">{s}</script>",
-                .{ id, slots_json },
+                "<div data-z-island id=\"{s}\" data-z-src=\"{s}\" data-z-client=\"{s}\"{s} data-z-module=\"{s}\">{s}</div>" ++
+                    "<script type=\"application/json\" data-z-props=\"{s}\">{s}</script>",
+                .{ id, src, client, media_attr, module_url, rendered, id, props_json },
             );
+            if (component_slots.len > 0) {
+                try out.print(
+                    gpa,
+                    "<script type=\"application/json\" data-z-slots=\"{s}\">{s}</script>",
+                    .{ id, slots_json },
+                );
+            }
         }
 
         try instances.append(arena.a, .{
@@ -1795,11 +1808,7 @@ fn clientDirective(tag_text: []const u8) ?Client {
 /// whole test step on any `.err`-level log, even when every test's assertions
 /// pass — the error-path tests below would turn a green suite red.
 fn validateClientDirective(cd: Client) error{ UnknownClientDirective, UnexpectedClientDirectiveValue, MissingMediaQuery }!void {
-    // No client:* attribute at all. Nothing to validate — but note this is NOT
-    // an SSR-only island: pass.zig still emits `data-z-client=""`, the runtime's
-    // `[data-z-client]` selector matches on attribute presence, and `schedule()`
-    // mounts it from `default:`. See docs/islands.md, "Omitting `client:`
-    // entirely".
+    // No client:* attribute means server-only output.
     if (cd.name.len == 0) return;
     const known = [_][]const u8{ "load", "idle", "visible", "media", "only" };
     for (known) |k| {
@@ -2644,6 +2653,9 @@ test "preloadLinks: runtime link first, island modules deduped, client:only incl
         .{ .id = "z-island-0", .src = "components/Hero.island.tsx", .client = "load", .props_json = "{}", .module_url = "/islands/Hero.island.js" },
         .{ .id = "z-island-1", .src = "components/Counter.island.tsx", .client = "only", .props_json = "{}", .module_url = "/islands/Counter.island.js" },
         .{ .id = "z-island-2", .src = "components/Hero.island.tsx", .client = "load", .props_json = "{}", .module_url = "/islands/Hero.island.js" }, // dup module
+        .{ .id = "z-island-3", .src = "components/Deferred.island.tsx", .client = "visible", .props_json = "{}", .module_url = "/islands/Deferred.island.js" },
+        .{ .id = "z-island-4", .src = "components/Idle.island.tsx", .client = "idle", .props_json = "{}", .module_url = "/islands/Idle.island.js" },
+        .{ .id = "z-island-5", .src = "components/Media.island.tsx", .client = "media", .props_json = "{}", .module_url = "/islands/Media.island.js" },
     };
     const links = try preloadLinks(gpa, &insts, shared_runtime_url);
     defer gpa.free(links);
@@ -2653,6 +2665,9 @@ test "preloadLinks: runtime link first, island modules deduped, client:only incl
     try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, links, "href=\"/islands/Hero.island.js\""));
     // client:only Counter module IS included.
     try std.testing.expect(std.mem.indexOf(u8, links, "href=\"/islands/Counter.island.js\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, links, "Deferred.island.js") == null);
+    try std.testing.expect(std.mem.indexOf(u8, links, "Idle.island.js") == null);
+    try std.testing.expect(std.mem.indexOf(u8, links, "Media.island.js") == null);
 }
 
 test "preloadLinks: empty instances -> empty string" {
@@ -2686,6 +2701,11 @@ test "process injects the import map before any modulepreload links, only when i
     // all before </head>.
     const head_end = std.mem.indexOf(u8, result.html, "</head>").?;
     try std.testing.expect(im < head_end);
+    const static_result = try process(gpa, arena, "<html><head></head><body><island src=\"components/Static.island.tsx\"></island></body></html>", "/", &stub, .{});
+    defer gpa.free(static_result.html);
+    try std.testing.expectEqual(@as(usize, 1), static_result.instances.len);
+    try std.testing.expect(std.mem.indexOf(u8, static_result.html, "<script") == null);
+    try std.testing.expect(std.mem.indexOf(u8, static_result.html, "data-z-client=") == null);
 }
 
 test "islandModuleName is the slice manifest's join key for every spelling of src (#52)" {

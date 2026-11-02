@@ -79,9 +79,8 @@ afterEach(() => {
 /** An SSR'd island root exactly as `src/islands/pass.zig` emits one: the
  *  wrapper div carries `data-z-island`, `data-z-client` and `data-z-module`,
  *  and the props ride in a sibling `<script data-z-props>`. `client` is written
- *  verbatim, so passing "" reproduces an `<island>` with no `client:` attribute
- *  at all — pass.zig defaults `Client.name` to the empty string and formats it
- *  into the same attribute. */
+ *  verbatim. Passing "" exercises an old/stale empty directive defensively;
+ *  new server-only roots omit data-z-client and data-z-module altogether. */
 function island(client: string, media?: string): HTMLElement {
   const root = document.createElement("div");
   root.setAttribute("data-z-island", "");
@@ -112,15 +111,10 @@ test("client:only mounts immediately, like load", () => {
   expect(imported).toEqual([MODULE_URL]);
 });
 
-test("an island with NO client: directive still hydrates immediately", () => {
-  // pass.zig emits `data-z-client=""` for an island with no directive, and
-  // `[data-z-client]` matches on attribute PRESENCE, so the root is selected
-  // and falls into `schedule()`'s `default:` branch. Omitting the directive is
-  // therefore not a way to opt out of hydration — stated on the islands page so
-  // nobody infers "no directive = server-only" from its absence.
+test("an island with no hydration directive never imports its module", () => {
   island("");
   initIslands();
-  expect(imported).toEqual([MODULE_URL]);
+  expect(imported).toEqual([]);
 });
 
 test("client:idle defers to requestIdleCallback when the browser has one", () => {

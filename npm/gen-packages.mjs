@@ -336,15 +336,16 @@ perfectly and then 404s on hydration, with nothing wrong-looking in the output
 tree, so the entries are discovered rather than left to be forgotten.
 
 Your components import \`@z/runtime\` by its bare name: the sidecar serves that
-specifier from the copy inside this package, and on the client an import map
-points it at the one shared \`/zigapagos-runtime.js\`, so the page ends up with a
-single Preact instance.
+specifier from the copy inside this package. On the client, an import map selects
+the page's islands runtime slice or the full shared runtime, keeping one Preact
+instance. An island without a \`client:*\` directive renders only on the server;
+deferred directives request their component code when their trigger fires.
 See [docs/islands.md](${HOMEPAGE}/blob/main/docs/islands.md).
 
-**Worth turning on:** \`--island-props-check=error\` (the \`tsc\` gate that typechecks
-island props against their \`Props\` interface) is \`off\` by default. Pass it to opt
-in; the \`typescript\` this package already installs is the one \`bun x tsc\` will
-find.
+**Props checks are enabled by default.** Builds reject props that do not match
+the component's exported \`Props\` type. The runtime runs the installed TypeScript
+compiler through Bun; a project tsconfig is optional. Use
+\`--island-props-check=warn\` or \`--island-props-check=off\` explicitly to relax it.
 
 ### Building a native SPA
 
