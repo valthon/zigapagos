@@ -195,9 +195,9 @@ done
 grep -q "sha256-" "$OUT/csp.nginx.conf" \
   || fail "csp.nginx.conf carries no inline-script hash — it was emitted over a tree with no pages"
 
-# ZigBase has no static response-header config until zigbase#470. The release
-# must tell operators to configure a proxy, with these exact release hashes.
-grep -q 'ZigBase cannot configure static response headers yet' "$OUT/csp.zigbase.txt" || fail "ZigBase header limitation missing"
+# Custom ZigBase builds send the header via .static_headers (zigbase#470); the
+# stock binary needs a proxy. Both recipes must carry these exact release hashes.
+grep -q '\.static_headers = &\.{' "$OUT/csp.zigbase.txt" || fail "ZigBase static_headers recipe missing"
 grep -q 'proxy_pass http://127.0.0.1:PORT;' "$OUT/csp.zigbase.txt" || fail "ZigBase proxy recipe missing"
 if grep -q '\.headers' "$OUT/csp.zigbase.txt"; then fail "unsupported ZigBase headers key recommended"; fi
 NGINX_CSP="$(grep '^add_header Content-Security-Policy ' "$OUT/csp.nginx.conf")"

@@ -742,6 +742,7 @@ test("zigbase cache artifact is advisory: both header values, the concrete chunk
   expect(file.content).toContain("/spa/Heavy-abc123.js");
   expect(file.content).toContain("ZIGBASE_STATIC_CACHE_CONTROL");
   expect(file.content.toLowerCase()).toContain("do not set it");
+  expect(file.content).toContain(".static_headers");
 });
 
 test("emitAllCache writes all three targets, and works with an empty chunk set (island-only sites)", () => {
@@ -957,15 +958,15 @@ test("emitAllCsp threads speculationRules into every host flavor's script-src", 
   }
 });
 
-// Keep generated advice on the supported side of ZigBase's config surface
-// until valthon/zigbase#470 provides static response headers.
-test("ZigBase CSP guidance gives a proxy recipe instead of an unsupported App key", () => {
+// Keep generated advice on ZigBase's real config surface: .static_headers
+// (valthon/zigbase#470) for custom builds, a proxy for the stock binary.
+test("ZigBase CSP guidance gives the static_headers entry and a proxy recipe for the stock binary", () => {
   const hashes = scanInlineScriptHashes([PAGE]);
   const file = emitAllCsp(hashes).find((f) => f.name === "csp.zigbase.txt")!;
-  expect(file.content).toContain("ZigBase cannot configure static response headers yet");
-  expect(file.content).toContain("https://github.com/valthon/zigbase/issues/470");
+  expect(file.content).toContain(`.{ .match = "/**", .set = &.{.{ "Content-Security-Policy", "${cspHeaderValue(hashes)}" }} },`);
+  expect(file.content).toContain("valthon/zigbase#470");
   expect(file.content).toContain(`add_header Content-Security-Policy "${cspHeaderValue(hashes)}" always;`);
   expect(file.content).toContain("proxy_pass http://127.0.0.1:PORT;");
-  expect(file.content).not.toContain(".headers");
-  expect(file.content).not.toContain("App config");
+  expect(file.content).toContain(`Content-Security-Policy: ${cspHeaderValue(hashes)}\n`);
+  expect(file.content).not.toContain("cannot configure static response headers yet");
 });

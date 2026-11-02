@@ -1330,9 +1330,10 @@ writes a ready-to-merge CSP at the site root:
 
 - `csp.nginx.conf` — an `add_header Content-Security-Policy "…" always;` line.
 - `csp.apache.conf` — a `Header set Content-Security-Policy "…"` line.
-- `csp.zigbase.txt` — the header value and an Nginx reverse-proxy example.
-  ZigBase cannot configure static response headers yet; track
-  [ZigBase #470](https://github.com/valthon/zigbase/issues/470).
+- `csp.zigbase.txt` — the header value, a ready-to-paste `.static_headers` entry for a
+  custom ZigBase build ([ZigBase #470](https://github.com/valthon/zigbase/issues/470)), and
+  an Nginx reverse-proxy example for the stock `zigbase serve` binary, which cannot add
+  response headers.
 
 All three carry the same host-agnostic value:
 
@@ -1403,8 +1404,9 @@ following the exact same pattern as the CSP artifacts above:
   blocks `nginx.nginx.conf` emits and can swallow an SPA deep-link miss).
 - `cache.apache.conf` — `<FilesMatch>` + `Header set Cache-Control` stanzas for
   `<docroot>/.htaccess` or a `<Directory>` block.
-- `cache.zigbase.txt` — advisory notes only: ZigBase has no per-path header config, so this
-  lists the ideal policy for an operator fronting it with a CDN/reverse proxy, and warns
+- `cache.zigbase.txt` — advisory notes: the stock `zigbase serve` binary has no per-path
+  header config, so this lists the ideal policy for a custom build's `.static_headers` or an
+  operator fronting it with a CDN/reverse proxy, and warns
   against pointing the one *global* knob (`ZIGBASE_STATIC_CACHE_CONTROL`) at the immutable
   value below (it would cache a stale SPA shell across deploys).
 
