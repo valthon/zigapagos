@@ -362,7 +362,7 @@ pub fn prerenderAll(
             // Allocated (and `head_for_shell` repointed at it) only on the
             // first entry that actually needs a rewritten href, so the common
             // case costs nothing.
-            var rewritten: ?[]std.json.ArrayHashMap([]const u8) = null;
+            var rewritten: ?[]sidecar.HeadEntry = null;
 
             for (head, 0..) |entry, entry_idx| {
                 var it = entry.map.iterator();
@@ -374,6 +374,7 @@ pub fn prerenderAll(
                     );
                 }
 
+                if (entry.tag == .meta) continue;
                 const href = entry.map.get("href") orelse continue;
                 const rel_path = headHrefAssetPath(href, url_path_prefix) orelse continue;
                 if (PathName.get(&build.st, &build.pt, rel_path)) |pn| {
@@ -381,7 +382,7 @@ pub fn prerenderAll(
                         _ = rc.fetchAdd(1, .acq_rel);
                         if (build.asset_fingerprints.get(pn)) |hashed| {
                             const slice = rewritten orelse blk: {
-                                const s = try arena.a.dupe(std.json.ArrayHashMap([]const u8), head);
+                                const s = try arena.a.dupe(sidecar.HeadEntry, head);
                                 rewritten = s;
                                 head_for_shell = s;
                                 break :blk s;
@@ -396,7 +397,7 @@ pub fn prerenderAll(
                                 "href",
                                 try fingerprintedHref(arena.a, href, hashed),
                             );
-                            slice[entry_idx] = .{ .map = map };
+                            slice[entry_idx] = .{ .tag = entry.tag, .map = map };
                         }
                         continue;
                     }
@@ -485,7 +486,7 @@ pub fn prerenderAll(
             // value the client Router composes its base from (issue #26).
             const prefixed_pathname = try pass.prefixed(arena.a, url_path_prefix, planned.ssr_pathname);
             const skeleton = try renderSkeleton(sc, arena, src, prefixed_pathname, norm_prefix);
-            const html = try renderShell(arena.a, title, noindex, bundle_url, runtime_url, chunk_url, norm_prefix, head_for_shell, desc.spa.flags, skeleton);
+            const html = try renderShell(arena.a, title, noindex, bundle_url, runtime_url, chunk_url, norm_prefix, head_for_shell, desc.spa.flags, .{ .viewport = desc.spa.viewport, .lang = desc.spa.lang }, skeleton);
             try writeFile(io, out_dir, planned.out_path, html);
             try recordSpaOutPath(build, gpa, planned.out_path);
             if (collect) |sm| try sm.add(gpa, .spa_shell, planned.out_path);
@@ -529,7 +530,7 @@ pub fn prerenderAll(
                     if (std.mem.eql(u8, planned_c.out_path, root_index_path)) has_root_index = true;
                     const prefixed_pathname_c = try pass.prefixed(arena.a, url_path_prefix, planned_c.ssr_pathname);
                     const skeleton_c = try renderSkeleton(sc, arena, src, prefixed_pathname_c, norm_prefix);
-                    const html_c = try renderShell(arena.a, title, noindex, bundle_url, runtime_url, chunk_url, norm_prefix, head_for_shell, desc.spa.flags, skeleton_c);
+                    const html_c = try renderShell(arena.a, title, noindex, bundle_url, runtime_url, chunk_url, norm_prefix, head_for_shell, desc.spa.flags, .{ .viewport = desc.spa.viewport, .lang = desc.spa.lang }, skeleton_c);
                     try writeFile(io, out_dir, planned_c.out_path, html_c);
                     try recordSpaOutPath(build, gpa, planned_c.out_path);
                     if (collect) |sm| try sm.add(gpa, .spa_shell, planned_c.out_path);
@@ -762,13 +763,26 @@ fn renderFlagsSnapshot(alloc: std.mem.Allocator, flags: ?std.json.ArrayHashMap(b
     return std.fmt.allocPrint(alloc, "<script type=\"application/json\" data-z-flags>{s}</script>", .{json});
 }
 
+const ShellOptions = struct {
+    viewport: ?[]const u8 = null,
+    lang: ?[]const u8 = null,
+};
+
 /// NO_SLOP.md §2.2a contract 1: every fragment below is scratch that is copied
 /// into the final `allocPrint` and then freed here, so exactly one allocation
 /// escapes and this is correct under any allocator — the prerender arena its
 /// callers pass is a convenience, not a requirement. (`""` fragments are
 /// zero-length, which `Allocator.free` short-circuits, so the optional ones need
 /// no branch.) `robots` is a static literal and is never freed.
-fn renderShell(alloc: std.mem.Allocator, title: []const u8, noindex: bool, bundle_url: []const u8, runtime_url: []const u8, chunk_url: ?[]const u8, url_prefix: []const u8, head: ?[]const std.json.ArrayHashMap([]const u8), flags: ?std.json.ArrayHashMap(bool), skeleton: []const u8) ![]u8 {
+fn renderShell(alloc: std.mem.Allocator, title: []const u8, noindex: bool, bundle_url: []const u8, runtime_url: []const u8, chunk_url: ?[]const u8, url_prefix: []const u8, head: ?[]const sidecar.HeadEntry, flags: ?std.json.ArrayHashMap(bool), shell: ShellOptions, skeleton: []const u8) ![]u8 {
+    const viewport = try escapeHtml(alloc, shell.viewport orelse "width=device-width,initial-scale=1");
+    defer alloc.free(viewport);
+    const lang_attr = if (shell.lang) |lang| blk: {
+        const escaped = try escapeHtml(alloc, lang);
+        defer alloc.free(escaped);
+        break :blk try std.fmt.allocPrint(alloc, " lang=\"{s}\"", .{escaped});
+    } else "";
+    defer alloc.free(lang_attr);
     const robots = if (noindex) "<meta name=\"robots\" content=\"noindex\">" else "";
     const escaped_title = try escapeHtml(alloc, title);
     defer alloc.free(escaped_title);
@@ -819,8 +833,8 @@ fn renderShell(alloc: std.mem.Allocator, title: []const u8, noindex: bool, bundl
     // flaky: a cold cache usually loses the race, a warm one wins it and breaks).
     // `head_links` rides right after the map for the same reason: it may itself
     // contain a stylesheet/preconnect `<link>`, which the spec treats the same way.
-    return std.fmt.allocPrint(alloc, "<!DOCTYPE html><html><head><meta charset=\"utf-8\">" ++
-        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" ++
+    return std.fmt.allocPrint(alloc, "<!DOCTYPE html><html{[lang_attr]s}><head><meta charset=\"utf-8\">" ++
+        "<meta name=\"viewport\" content=\"{[viewport]s}\">" ++
         "<title>{[title]s}</title>{[robots]s}" ++
         "{[import_map]s}" ++
         "{[head_links]s}" ++ // spa.head hook (empty when absent)
@@ -832,6 +846,8 @@ fn renderShell(alloc: std.mem.Allocator, title: []const u8, noindex: bool, bundl
         "<script type=\"module\">import*as m from\"{[bundle]s}\";import{{mountSpa}}from\"@z/runtime\";mountSpa(m.default,\"#z-spa-root\",m);</script>" ++
         "</head><body><div id=\"z-spa-root\" data-z-spa{[prefix_attr]s}>{[skeleton]s}</div></body></html>", .{
         .title = escaped_title,
+        .lang_attr = lang_attr,
+        .viewport = viewport,
         .robots = robots,
         .rt_preload = rt_preload,
         .bundle = bundle_url,
@@ -857,7 +873,7 @@ fn isValidHeadAttrName(name: []const u8) bool {
     return true;
 }
 
-/// Render a SPA's `spa.head` entries as `<link>` tags, one per
+/// Render a SPA's `spa.head` entries as `<link>` or `<meta>` tags, one per
 /// entry, in declaration order — `std.json.ArrayHashMap` preserves the
 /// attribute order within each entry too. Attribute values are HTML-escaped
 /// with `escapeHtml`. Absent or empty `head` renders as "" (byte-identical
@@ -870,13 +886,13 @@ fn isValidHeadAttrName(name: []const u8) bool {
 /// SPA's `src`, turns this into a site-author-actionable fatal error.
 /// Contract 1: each escaped attribute value is copied in and freed, and the one
 /// escaping allocation is the returned tag block (`""` when there is no `head`).
-fn renderHeadLinks(alloc: std.mem.Allocator, head: ?[]const std.json.ArrayHashMap([]const u8)) ![]const u8 {
+fn renderHeadLinks(alloc: std.mem.Allocator, head: ?[]const sidecar.HeadEntry) ![]const u8 {
     const entries = head orelse return "";
     if (entries.len == 0) return "";
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(alloc);
     for (entries) |entry| {
-        try out.appendSlice(alloc, "<link");
+        try out.appendSlice(alloc, if (entry.tag == .meta) "<meta" else "<link");
         var it = entry.map.iterator();
         while (it.next()) |kv| {
             if (!isValidHeadAttrName(kv.key_ptr.*)) return error.InvalidHeadAttrName;
@@ -994,7 +1010,7 @@ fn findBuildAssetByInstallPath(
 ///
 /// NO_SLOP.md §2.2a contract 3 (caller-buffer): reads `asset_paths`,
 /// allocates nothing; the returned slice aliases one of its entries.
-fn spaHeadWarningAsset(head: ?[]const std.json.ArrayHashMap([]const u8), asset_paths: []const []const u8) ?[]const u8 {
+fn spaHeadWarningAsset(head: ?[]const sidecar.HeadEntry, asset_paths: []const []const u8) ?[]const u8 {
     if (head != null) return null; // explicit `head: []` opt-out, or a real head
     var best: ?[]const u8 = null;
     for (asset_paths) |p| {
@@ -1828,7 +1844,7 @@ test "renderShell HTML-escapes the title and reuses the shared runtime constants
     // with leak detection ON (NO_SLOP.md §2.2a).
     const gpa = std.testing.allocator;
 
-    const html = try renderShell(gpa, "A & B <script> \"x\"", true, "/spa/App.js", pass.shared_runtime_url, null, "", null, null, "<div>skeleton</div>");
+    const html = try renderShell(gpa, "A & B <script> \"x\"", true, "/spa/App.js", pass.shared_runtime_url, null, "", null, null, .{}, "<div>skeleton</div>");
     defer gpa.free(html);
     try std.testing.expect(std.mem.indexOf(u8, html, "<title>A &amp; B &lt;script&gt; &quot;x&quot;</title>") != null);
     // The raw, unescaped title text must not appear anywhere in the shell.
@@ -1843,13 +1859,13 @@ test "renderShell HTML-escapes the title and reuses the shared runtime constants
 test "renderShell emits a modulepreload for a lazy route's chunk (and none without one)" {
     const gpa = std.testing.allocator;
 
-    const with = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, "/spa/Heavy-abc123.js", "", null, null, "<div>sk</div>");
+    const with = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, "/spa/Heavy-abc123.js", "", null, null, .{}, "<div>sk</div>");
     defer gpa.free(with);
     try std.testing.expect(std.mem.indexOf(u8, with, "<link rel=\"modulepreload\" href=\"/spa/Heavy-abc123.js\">") != null);
     // the entry bundle is still preloaded too
     try std.testing.expect(std.mem.indexOf(u8, with, "<link rel=\"modulepreload\" href=\"/spa/app.js\">") != null);
 
-    const without = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, "", null, null, "<div>sk</div>");
+    const without = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, "", null, null, .{}, "<div>sk</div>");
     defer gpa.free(without);
     try std.testing.expect(std.mem.indexOf(u8, without, "Heavy-") == null);
     // the chunk preload adds exactly one modulepreload over the no-chunk shell
@@ -1879,7 +1895,7 @@ test "renderShell under a url_path_prefix bakes prefixed runtime/bundle/chunk UR
     try std.testing.expectEqualStrings("/myrepo/zigapagos-runtime.js", runtime_url);
     try std.testing.expectEqualStrings("/myrepo/spa/Heavy-abc123.js", chunk_url);
 
-    const html = try renderShell(gpa, "App", true, bundle_url, runtime_url, chunk_url, "", null, null, "<div>sk</div>");
+    const html = try renderShell(gpa, "App", true, bundle_url, runtime_url, chunk_url, "", null, null, .{}, "<div>sk</div>");
     defer gpa.free(html);
     // Entry bundle, lazy chunk, and the module bootstrap all reference the
     // prefixed URLs.
@@ -1897,9 +1913,9 @@ test "renderShell under a url_path_prefix bakes prefixed runtime/bundle/chunk UR
     defer gpa.free(bare_bundle);
     const bare_runtime = try pass.prefixed(gpa, "", pass.shared_runtime_url);
     defer gpa.free(bare_runtime);
-    const bare = try renderShell(gpa, "App", true, bare_bundle, bare_runtime, null, "", null, null, "<div>sk</div>");
+    const bare = try renderShell(gpa, "App", true, bare_bundle, bare_runtime, null, "", null, null, .{}, "<div>sk</div>");
     defer gpa.free(bare);
-    const golden = try renderShell(gpa, "App", true, "/spa/App.js", pass.shared_runtime_url, null, "", null, null, "<div>sk</div>");
+    const golden = try renderShell(gpa, "App", true, "/spa/App.js", pass.shared_runtime_url, null, "", null, null, .{}, "<div>sk</div>");
     defer gpa.free(golden);
     try std.testing.expectEqualStrings(golden, bare);
 }
@@ -1919,7 +1935,7 @@ test "renderShell under a url_path_prefix emits data-z-prefix on #z-spa-root, an
     const runtime_url = try pass.prefixed(gpa, prefix, pass.shared_runtime_url);
     defer gpa.free(runtime_url);
 
-    const html = try renderShell(gpa, "App", true, bundle_url, runtime_url, null, "/myrepo", null, null, "<div>sk</div>");
+    const html = try renderShell(gpa, "App", true, bundle_url, runtime_url, null, "/myrepo", null, null, .{}, "<div>sk</div>");
     defer gpa.free(html);
     try std.testing.expect(std.mem.indexOf(u8, html, "<div id=\"z-spa-root\" data-z-spa data-z-prefix=\"/myrepo\">") != null);
     // Still carries the prefixed asset URLs (AUDF-005) alongside the new
@@ -1929,7 +1945,7 @@ test "renderShell under a url_path_prefix emits data-z-prefix on #z-spa-root, an
     // Empty prefix (the common case): no attribute at all, not
     // `data-z-prefix=""` — an unprefixed shell must stay byte-identical to
     // one built before this field existed.
-    const bare = try renderShell(gpa, "App", true, "/spa/App.js", pass.shared_runtime_url, null, "", null, null, "<div>sk</div>");
+    const bare = try renderShell(gpa, "App", true, "/spa/App.js", pass.shared_runtime_url, null, "", null, null, .{}, "<div>sk</div>");
     defer gpa.free(bare);
     try std.testing.expect(std.mem.indexOf(u8, bare, "data-z-prefix") == null);
     try std.testing.expect(std.mem.indexOf(u8, bare, "<div id=\"z-spa-root\" data-z-spa>") != null);
@@ -1941,7 +1957,7 @@ test "renderShell HTML-escapes the url_prefix attribute value" {
     // Not a realistic `url_path_prefix` (that's validated elsewhere), but
     // `renderShell` must not trust it blind — an unescaped `"` would break
     // out of the attribute.
-    const html = try renderShell(gpa, "App", true, "/spa/App.js", pass.shared_runtime_url, null, "/a\"b", null, null, "<div>sk</div>");
+    const html = try renderShell(gpa, "App", true, "/spa/App.js", pass.shared_runtime_url, null, "/a\"b", null, null, .{}, "<div>sk</div>");
     defer gpa.free(html);
     try std.testing.expect(std.mem.indexOf(u8, html, "data-z-prefix=\"/a&quot;b\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, html, "data-z-prefix=\"/a\"b\"") == null);
@@ -1950,7 +1966,7 @@ test "renderShell HTML-escapes the url_prefix attribute value" {
 test "renderShell emits the import map before any modulepreload or module script" {
     const gpa = std.testing.allocator;
 
-    const html = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, "/spa/Heavy-abc123.js", "", null, null, "<div>sk</div>");
+    const html = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, "/spa/Heavy-abc123.js", "", null, null, .{}, "<div>sk</div>");
     defer gpa.free(html);
     // Per the import-maps spec, a map is only processed if it appears before
     // any module loading starts, and a <link rel="modulepreload"> (or a
@@ -1968,7 +1984,7 @@ test "renderShell emits the import map before any modulepreload or module script
 test "renderShell with no head matches the golden minimal shell byte-for-byte" {
     const gpa = std.testing.allocator;
 
-    const html = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, "", null, null, "<div>sk</div>");
+    const html = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, "", null, null, .{}, "<div>sk</div>");
     defer gpa.free(html);
     // The golden minimal shell — proves absent `head`/`flags` add not one
     // byte, and pins the bootstrap: a namespace import of the SPA bundle
@@ -1986,7 +2002,7 @@ test "renderShell with no head matches the golden minimal shell byte-for-byte" {
     try std.testing.expectEqualStrings(expected, html);
 
     // An empty head slice must be indistinguishable from an absent one.
-    const html_empty_slice = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, "", &.{}, null, "<div>sk</div>");
+    const html_empty_slice = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, "", &.{}, null, .{}, "<div>sk</div>");
     defer gpa.free(html_empty_slice);
     try std.testing.expectEqualStrings(html, html_empty_slice);
 }
@@ -2038,7 +2054,7 @@ test "renderShell embeds the flags snapshot and stays byte-identical without one
     defer flags.map.deinit(gpa);
     try flags.map.put(gpa, "bookAsGuest", true);
 
-    const with = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, "", null, flags, "<div>sk</div>");
+    const with = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, "", null, flags, .{}, "<div>sk</div>");
     defer gpa.free(with);
     const block = "<script type=\"application/json\" data-z-flags>{\"flags\":{\"bookAsGuest\":true},\"experiments\":{}}</script>";
     const at = std.mem.indexOf(u8, with, block).?;
@@ -2048,10 +2064,10 @@ test "renderShell embeds the flags snapshot and stays byte-identical without one
     try std.testing.expect(std.mem.indexOf(u8, with, "importmap").? < at);
 
     // No flags and empty flags are both byte-identical to each other.
-    const without = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, "", null, null, "<div>sk</div>");
+    const without = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, "", null, null, .{}, "<div>sk</div>");
     defer gpa.free(without);
     const empty: std.json.ArrayHashMap(bool) = .{};
-    const with_empty = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, "", null, empty, "<div>sk</div>");
+    const with_empty = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, "", null, empty, .{}, "<div>sk</div>");
     defer gpa.free(with_empty);
     try std.testing.expectEqualStrings(without, with_empty);
     try std.testing.expect(std.mem.indexOf(u8, without, "data-z-flags") == null);
@@ -2060,17 +2076,17 @@ test "renderShell embeds the flags snapshot and stays byte-identical without one
 test "renderShell renders head entries as ordered <link> tags between the import map and the first modulepreload" {
     const gpa = std.testing.allocator;
 
-    var e1: std.json.ArrayHashMap([]const u8) = .{};
+    var e1: sidecar.HeadEntry = .{};
     defer e1.map.deinit(gpa);
     try e1.map.put(gpa, "rel", "stylesheet");
     try e1.map.put(gpa, "href", "/styles.css");
-    var e2: std.json.ArrayHashMap([]const u8) = .{};
+    var e2: sidecar.HeadEntry = .{};
     defer e2.map.deinit(gpa);
     try e2.map.put(gpa, "rel", "preconnect");
     try e2.map.put(gpa, "href", "https://fonts.example.com");
-    const head = [_]std.json.ArrayHashMap([]const u8){ e1, e2 };
+    const head = [_]sidecar.HeadEntry{ e1, e2 };
 
-    const html = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, "", &head, null, "<div>sk</div>");
+    const html = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, "", &head, null, .{}, "<div>sk</div>");
     defer gpa.free(html);
 
     const link1 = std.mem.indexOf(u8, html, "<link rel=\"stylesheet\" href=\"/styles.css\">").?;
@@ -2086,13 +2102,13 @@ test "renderShell renders head entries as ordered <link> tags between the import
 test "renderShell HTML-escapes head attribute values" {
     const gpa = std.testing.allocator;
 
-    var e: std.json.ArrayHashMap([]const u8) = .{};
+    var e: sidecar.HeadEntry = .{};
     defer e.map.deinit(gpa);
     try e.map.put(gpa, "rel", "stylesheet");
     try e.map.put(gpa, "href", "/a&b\".css");
-    const head = [_]std.json.ArrayHashMap([]const u8){e};
+    const head = [_]sidecar.HeadEntry{e};
 
-    const html = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, "", &head, null, "<div>sk</div>");
+    const html = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, "", &head, null, .{}, "<div>sk</div>");
     defer gpa.free(html);
     try std.testing.expect(std.mem.indexOf(u8, html, "href=\"/a&amp;b&quot;.css\"") != null);
     // the raw, unescaped value must not appear anywhere in the shell.
@@ -2102,10 +2118,10 @@ test "renderShell HTML-escapes head attribute values" {
 test "renderHeadLinks rejects an invalid attribute name" {
     const gpa = std.testing.allocator;
 
-    var bad: std.json.ArrayHashMap([]const u8) = .{};
+    var bad: sidecar.HeadEntry = .{};
     defer bad.map.deinit(gpa);
     try bad.map.put(gpa, "data attr", "x"); // a space is not a valid attribute name char
-    const head = [_]std.json.ArrayHashMap([]const u8){bad};
+    const head = [_]sidecar.HeadEntry{bad};
 
     // The error path must not leak the partially built tag block either — this
     // test now proves that, because `renderHeadLinks` runs on the raw testing
@@ -2113,17 +2129,17 @@ test "renderHeadLinks rejects an invalid attribute name" {
     try std.testing.expectError(error.InvalidHeadAttrName, renderHeadLinks(gpa, &head));
 
     // A leading-digit name is also invalid (must start [a-zA-Z]).
-    var bad2: std.json.ArrayHashMap([]const u8) = .{};
+    var bad2: sidecar.HeadEntry = .{};
     defer bad2.map.deinit(gpa);
     try bad2.map.put(gpa, "1rel", "x");
-    const head2 = [_]std.json.ArrayHashMap([]const u8){bad2};
+    const head2 = [_]sidecar.HeadEntry{bad2};
     try std.testing.expectError(error.InvalidHeadAttrName, renderHeadLinks(gpa, &head2));
 
     // A hyphenated data-* attribute name is valid.
-    var ok: std.json.ArrayHashMap([]const u8) = .{};
+    var ok: sidecar.HeadEntry = .{};
     defer ok.map.deinit(gpa);
     try ok.map.put(gpa, "data-x", "x");
-    const head3 = [_]std.json.ArrayHashMap([]const u8){ok};
+    const head3 = [_]sidecar.HeadEntry{ok};
     const links = try renderHeadLinks(gpa, &head3);
     defer gpa.free(links);
     try std.testing.expectEqualStrings("<link data-x=\"x\">", links);
@@ -2210,15 +2226,15 @@ test "spaHeadWarningAsset stays silent when head is present (empty or not), rega
     const css = [_][]const u8{"site.css"};
 
     // head: [] — the documented opt-out — is silent even with css assets.
-    const empty_head = [_]std.json.ArrayHashMap([]const u8){};
+    const empty_head = [_]sidecar.HeadEntry{};
     try std.testing.expect(spaHeadWarningAsset(&empty_head, &css) == null);
 
     // A real (non-empty) head is silent too, even preconnect-only (no
     // stylesheet entry) — the author has clearly used the hook.
-    var e: std.json.ArrayHashMap([]const u8) = .{};
+    var e: sidecar.HeadEntry = .{};
     defer e.map.deinit(std.testing.allocator);
     try e.map.put(std.testing.allocator, "rel", "preconnect");
-    const head = [_]std.json.ArrayHashMap([]const u8){e};
+    const head = [_]sidecar.HeadEntry{e};
     try std.testing.expect(spaHeadWarningAsset(&head, &css) == null);
 }
 
@@ -2807,4 +2823,39 @@ test "spa chunk/slice manifests parse with unread driver keys present" {
     const slice = try std.json.parseFromSlice(SliceJson, gpa, slice_json, .{ .ignore_unknown_fields = true });
     defer slice.deinit();
     try std.testing.expectEqualStrings("/spa/App-runtime.js", slice.value.runtime.?);
+}
+
+test "renderShell installable app metadata preserves order and escapes shell attributes" {
+    const gpa = std.testing.allocator;
+    const parsed = try std.json.parseFromSlice(sidecar.SpaMeta, gpa,
+        \\{"lang":"en\"<&","viewport":"width=device-width,initial-scale=1,viewport-fit=cover\"","head":[{"meta":{"name":"theme-color","content":"#111","media":"(prefers-color-scheme: dark)"}},{"meta":{"name":"description","content":"A & B"}},{"rel":"manifest","href":"/app.webmanifest"}]}
+    , .{});
+    defer parsed.deinit();
+    const spa = parsed.value;
+    const html = try renderShell(gpa, "App", false, "/spa/app.js", pass.shared_runtime_url, null, "", spa.head, null, .{ .lang = spa.lang, .viewport = spa.viewport }, "");
+    defer gpa.free(html);
+    try std.testing.expect(std.mem.indexOf(u8, html, "<html lang=\"en&quot;&lt;&amp;\">") != null);
+    try std.testing.expect(std.mem.indexOf(u8, html, "content=\"width=device-width,initial-scale=1,viewport-fit=cover&quot;\">") != null);
+    try std.testing.expect(std.mem.indexOf(u8, html, "<meta name=\"theme-color\" content=\"#111\" media=\"(prefers-color-scheme: dark)\"><meta name=\"description\" content=\"A &amp; B\"><link rel=\"manifest\" href=\"/app.webmanifest\">") != null);
+}
+
+test "spa meta entries reject invalid attributes and malformed entry shapes" {
+    const gpa = std.testing.allocator;
+    const parsed = try std.json.parseFromSlice(sidecar.SpaMeta, gpa,
+        \\{"head":[{"meta":{"bad name":"value"}}]}
+    , .{});
+    defer parsed.deinit();
+    try std.testing.expectError(error.InvalidHeadAttrName, renderHeadLinks(gpa, parsed.value.head));
+    for ([_][]const u8{
+        \\{"head":[{"meta":"description"}]}
+        ,
+        \\{"head":[{"meta":{"name":"description"},"href":"/bad"}]}
+        ,
+        \\{"head":[{"meta":{"content":42}}]}
+        ,
+        \\{"head":[{"script":{"src":"/bad.js"}}]}
+        ,
+    }) |json| {
+        try std.testing.expectError(error.UnexpectedToken, std.json.parseFromSlice(sidecar.SpaMeta, gpa, json, .{}));
+    }
 }

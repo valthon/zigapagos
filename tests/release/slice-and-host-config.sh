@@ -130,7 +130,11 @@ EOF
 
 cat > "$SITE/app/app.spa.tsx" <<'TSX'
 import { Router } from "@z/runtime";
-export const spa = { base: "/app", title: "cli emit spa", head: [] };
+export const spa = {
+  base: "/app", title: "cli emit spa", lang: "en",
+  viewport: "width=device-width,initial-scale=1,viewport-fit=cover",
+  head: [{ meta: { name: "theme-color", content: "#111", media: "(prefers-color-scheme: dark)" } }],
+};
 function Home() { return <div data-view="home">home</div>; }
 export const routes = [{ path: "/", component: Home }];
 export default function App() { return <Router base={spa.base} routes={routes} />; }
@@ -151,6 +155,12 @@ fi
 
 PAGE="$OUT/index.html"
 [[ -f "$PAGE" ]] || fail "no index.html was written"
+
+# Installable-app metadata crosses describe -> prerender -> release output.
+SPA_PAGE="$OUT/app/index.html"
+grep -q '<html lang="en">' "$SPA_PAGE" || fail "SPA lang missing"
+grep -q 'content="width=device-width,initial-scale=1,viewport-fit=cover"' "$SPA_PAGE" || fail "SPA viewport override missing"
+grep -q '<meta name="theme-color" content="#111" media="(prefers-color-scheme: dark)">' "$SPA_PAGE" || fail "SPA meta entry missing"
 
 # --- 1. The per-SITE islands runtime slice ----------------------------------
 [[ -f "$OUT/islands/_runtime.js" ]] \

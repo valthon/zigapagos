@@ -460,20 +460,41 @@ pub const RenderError = struct {
     stack: ?[]const u8 = null,
 };
 
+/// Parsed head entry: legacy flat link attributes or `{ meta: { ... } }`.
+/// JSON parsing owns the map and strings through the parser's arena.
+pub const HeadEntry = struct {
+    tag: enum { link, meta } = .link,
+    map: std.StringArrayHashMapUnmanaged([]const u8) = .empty,
+
+    pub fn jsonParse(alloc: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !HeadEntry {
+        const value = try std.json.innerParse(std.json.Value, alloc, source, options);
+        if (value != .object) return error.UnexpectedToken;
+        var attrs = value.object;
+        var result: HeadEntry = .{};
+        if (attrs.get("meta")) |meta| {
+            if (attrs.count() != 1 or meta != .object) return error.UnexpectedToken;
+            result.tag = .meta;
+            attrs = meta.object;
+        }
+        var it = attrs.iterator();
+        while (it.next()) |kv| {
+            if (kv.value_ptr.* != .string) return error.UnexpectedToken;
+            try result.map.put(alloc, kv.key_ptr.*, kv.value_ptr.string);
+        }
+        return result;
+    }
+};
+
 /// `spa` config exported by a `.spa.tsx` module (see Task 3).
 pub const SpaMeta = struct {
     base: ?[]const u8 = null,
     title: ?[]const u8 = null,
     noindex: ?bool = null,
-    /// Structured `<link>` head-assets hook: each entry is one
-    /// `<link>` tag's attribute map, lowered into every shell's `<head>` by
-    /// `src/spa.zig`'s `renderHeadLinks`. `std.json.ArrayHashMap` (a thin
-    /// wrapper over `StringArrayHashMapUnmanaged`) preserves the JSON key
-    /// order within each entry, so a `{"rel":..,"href":..}` object renders
-    /// its attributes in the order the site author wrote them. `describe`
-    /// (`runtime/sidecar/render.ts`) passes `mod.spa` through verbatim, so
-    /// no protocol change was needed beyond this field.
-    head: ?[]const std.json.ArrayHashMap([]const u8) = null,
+    /// Static shell attributes; absent values retain the original shell.
+    viewport: ?[]const u8 = null,
+    lang: ?[]const u8 = null,
+    /// Ordered link attribute maps and `{ meta: { ... } }` entries.
+    head: ?[]const HeadEntry = null,
     /// Build-time feature-flag defaults: `export const spa =
     /// { flags: { bookAsGuest: true } }`. `src/spa.zig` snapshots these into
     /// every shell as a `data-z-flags` JSON data block so `useFlag`'s first
