@@ -135,13 +135,13 @@ jobs:
 
       - uses: actions/checkout@v7
 
-      - name: Setup toolchain (mise — zig 0.16.0 + bun 1.4.2)
-        uses: jdx/mise-action@v4
+      - name: Setup toolchain (mise — zig 0.16.0 + bun 1.4.4)
+        uses: jdx/mise-action@v5
         with:
           cache: true
 
       - name: Pin tool versions globally (shims must resolve outside the repo)
-        run: mise use -g zig@0.16.0 bun@1.4.2
+        run: mise use -g zig@0.16.0 bun@1.4.4
 
       - name: Get Zig version
         id: zig-version
@@ -297,12 +297,12 @@ jobs:
       # v3; upstream has moved to Codeberg), so it was one of the four actions
       # GitHub was force-running on Node 24 with a deprecation annotation.
       # mise.toml is already the repo's single source of truth for these tools
-      # (zig 0.16.0 + bun 1.4.2 + ruby 4.0.6) and the e2e scripts already
+      # (zig 0.16.0 + bun 1.4.4 + ruby 4.0.9) and the e2e scripts already
       # shell out through `mise exec`, so dropping setup-zig removes a
       # duplicate install AND the deprecation, and guarantees the compiler CI
       # gates with is the exact one the scripts build with.
-      - name: Setup toolchain (mise — zig 0.16.0 + bun 1.4.2 + ruby 4.0.6)
-        uses: jdx/mise-action@v4
+      - name: Setup toolchain (mise — zig 0.16.0 + bun 1.4.4 + ruby 4.0.9)
+        uses: jdx/mise-action@v5
         with:
           cache: true
 
@@ -327,7 +327,7 @@ jobs:
       # Keep these in lockstep with mise.toml.
       - name: Pin tool versions globally (shims must resolve outside the repo)
         run: |
-          mise use -g zig@0.16.0 bun@1.4.2 ruby@4.0.6
+          mise use -g zig@0.16.0 bun@1.4.4 ruby@4.0.9
           echo "resolving from a directory with no mise config:"
           ( cd "$(mktemp -d)" && bun --version && zig version && ruby --version )
 
@@ -553,13 +553,13 @@ jobs:
       # history, hence the default shallow checkout.
       - uses: actions/checkout@v7
 
-      - name: Setup toolchain (mise — zig 0.16.0 + bun 1.4.2)
-        uses: jdx/mise-action@v4
+      - name: Setup toolchain (mise — zig 0.16.0 + bun 1.4.4)
+        uses: jdx/mise-action@v5
         with:
           cache: true
 
       - name: Pin tool versions globally (shims must resolve outside the repo)
-        run: mise use -g zig@0.16.0 bun@1.4.2
+        run: mise use -g zig@0.16.0 bun@1.4.4
 
       # `ZIGAPAGOS_BIN` is what `site/build.sh` reads instead of compiling
       # zigapagos, so this job runs no compiler at all. No Zig cache restore
@@ -716,13 +716,13 @@ jobs:
       # version stamp — the reason the e2e jobs use fetch-depth 0 — never runs.
       - uses: actions/checkout@v7
 
-      - name: Setup toolchain (mise — zig 0.16.0 + bun 1.4.2)
-        uses: jdx/mise-action@v4
+      - name: Setup toolchain (mise — zig 0.16.0 + bun 1.4.4)
+        uses: jdx/mise-action@v5
         with:
           cache: true
 
       - name: Pin tool versions globally (shims must resolve outside the repo)
-        run: mise use -g zig@0.16.0 bun@1.4.2
+        run: mise use -g zig@0.16.0 bun@1.4.4
 
       - name: Download zigapagos binary
         uses: actions/download-artifact@v8
@@ -892,8 +892,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup toolchain (mise — zig 0.16.0 + bun 1.4.2)
-        uses: jdx/mise-action@v4
+      - name: Setup toolchain (mise — zig 0.16.0 + bun 1.4.4)
+        uses: jdx/mise-action@v5
         with:
           cache: true
 
@@ -902,7 +902,7 @@ jobs:
       # not apply and a bare shim would abort with "No version is set".
       - name: Pin tool versions globally (shims must resolve outside the repo)
         run: |
-          mise use -g zig@0.16.0 bun@1.4.2
+          mise use -g zig@0.16.0 bun@1.4.4
           ( cd "$(mktemp -d)" && bun --version && zig version )
 
       - name: Get Zig version
@@ -985,14 +985,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup toolchain (mise — zig 0.16.0 + bun 1.4.2)
-        uses: jdx/mise-action@v4
+      - name: Setup toolchain (mise — zig 0.16.0 + bun 1.4.4)
+        uses: jdx/mise-action@v5
         with:
           cache: true
 
       - name: Pin tool versions globally (shims must resolve outside the repo)
         run: |
-          mise use -g zig@0.16.0 bun@1.4.2
+          mise use -g zig@0.16.0 bun@1.4.4
           ( cd "$(mktemp -d)" && bun --version && zig version )
 
       - name: Get Zig version
@@ -1184,8 +1184,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup toolchain (mise — zig 0.16.0 + bun 1.4.2 + ruby 4.0.6)
-        uses: jdx/mise-action@v4
+      - name: Setup toolchain (mise — zig 0.16.0 + bun 1.4.4 + ruby 4.0.9)
+        uses: jdx/mise-action@v5
         with:
           cache: true
 
@@ -1196,7 +1196,7 @@ jobs:
       # default the same way bun already does. See build-test's longer note.
       - name: Pin tool versions globally (shims must resolve outside the repo)
         run: |
-          mise use -g zig@0.16.0 bun@1.4.2 ruby@4.0.6
+          mise use -g zig@0.16.0 bun@1.4.4 ruby@4.0.9
           ( cd "$(mktemp -d)" && bun --version && zig version && ruby --version )
 
       - name: Get Zig version
@@ -1305,11 +1305,11 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-      - uses: jdx/mise-action@v4
+      - uses: jdx/mise-action@v5
         with:
           cache: true
       - name: Make Bun available to temporary project builds
-        run: mise use -g bun@1.4.2
+        run: mise use -g bun@1.4.4
       - uses: actions/download-artifact@v8
         with:
           name: zigapagos-Linux

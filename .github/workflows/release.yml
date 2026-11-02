@@ -115,7 +115,7 @@ jobs:
           git describe --match '*.*.*' --tags
 
       - name: Setup toolchain (zig + bun via mise)
-        uses: jdx/mise-action@v4
+        uses: jdx/mise-action@v5
 
       # The one translate-c pin left — SuperMD's transitive one (the root
       # manifest's unconsumed direct entry was deleted) — normally resolves from
@@ -232,7 +232,7 @@ jobs:
           node-version: 24
 
       - name: Setup toolchain (zig + bun via mise)
-        uses: jdx/mise-action@v4
+        uses: jdx/mise-action@v5
 
       - name: Pack the runtime asset
         run: bash scripts/pack-runtime.sh dist
