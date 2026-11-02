@@ -29,9 +29,15 @@ SITE="$REPO/examples/tsx-site"
 OUT="$SITE/zig-out/site"
 
 WORK="$(mktemp -d)"
+STUB="$WORK/stub-zigbase.ts"
+UNRELATED_PID=""
 
 cleanup() {
-  pkill -f "stub-zigbase.ts" 2>/dev/null || true
+  pkill -f "$STUB" 2>/dev/null || true
+  if [[ -n "$UNRELATED_PID" ]]; then
+    kill "$UNRELATED_PID" 2>/dev/null || true
+    wait "$UNRELATED_PID" 2>/dev/null || true
+  fi
   rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -82,13 +88,18 @@ fi
 # --- put the stub "zigbase" on PATH ---------------------------------------------
 BIN="$WORK/bin"
 mkdir -p "$BIN"
+cp "$HERE/stub-zigbase.ts" "$STUB"
 cat > "$BIN/zigbase" <<EOF
 #!/usr/bin/env bash
 # STUB zigbase for tests/dev/e2e.sh — see tests/dev/stub-zigbase.ts
-exec bun "$HERE/stub-zigbase.ts" "\$@"
+exec bun "$STUB" "\$@"
 EOF
 chmod +x "$BIN/zigbase"
 export PATH="$BIN:$PATH"
+# A different fixture's process must neither trip teardown assertions nor be
+# killed by this fixture. Its argv deliberately has the common stub basename.
+bun -e 'setInterval(() => {}, 1000)' "$WORK/unrelated/stub-zigbase.ts" >/dev/null 2>&1 &
+UNRELATED_PID=$!
 
 # --- (a) success path -------------------------------------------------------------
 # The child asserts from INSIDE the harness. No readiness polling in here — the
@@ -124,7 +135,8 @@ ORIGIN="$(cat "$ORIGIN_FILE")"
 if curl -sf --max-time 2 -o /dev/null "$ORIGIN/"; then
   fail "server still answering at $ORIGIN after the harness exited (teardown)"
 fi
-pgrep -f "stub-zigbase.ts" >/dev/null && fail "stub zigbase process left behind (teardown)"
+pgrep -f "$STUB" >/dev/null && fail "stub zigbase process left behind (teardown)"
+kill -0 "$UNRELATED_PID" 2>/dev/null || fail "e2e teardown killed another fixture's process"
 echo "PASS: teardown on success ($ORIGIN is dead, no stub process)"
 
 # --- (a2) .spa-marker fallback + data-dir threading ------------------------------
@@ -168,7 +180,8 @@ ORIGIN2="$(cat "$ORIGIN_FILE2" 2>/dev/null || true)"
 if curl -sf --max-time 2 -o /dev/null "$ORIGIN2/"; then
   fail "server still answering at $ORIGIN2 after a FAILING child (teardown)"
 fi
-pgrep -f "stub-zigbase.ts" >/dev/null && fail "stub zigbase left behind after a failing child (teardown)"
+pgrep -f "$STUB" >/dev/null && fail "stub zigbase left behind after a failing child (teardown)"
+kill -0 "$UNRELATED_PID" 2>/dev/null || fail "failing e2e teardown killed another fixture's process"
 echo "PASS: failing child fails the command, teardown still happens"
 
 # --- (d) no command: fail fast with usage guidance -------------------------------

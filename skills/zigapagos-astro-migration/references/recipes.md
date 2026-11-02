@@ -353,8 +353,11 @@ The JSON shape: `{ component, hasDefaultExport, hooks[], hostNeeds[], imports[],
 
 ## No-npm guardrail
 
-By default an island may import only `@z/runtime` (and subpaths), relative paths,
-and use web globals. Two opt-in extensions live in `z-runtime.config.json` at the
+By default an island may import `@z/runtime` (and subpaths), relative paths,
+and the built-in client `react`/`react-dom` bridge specifiers, and use web globals.
+Use the runtime imports directly in native islands; React package SSR resolution
+is configured through the bridge settings below. The client bundler checks all
+local transitive application imports too. Two opt-in extensions live in `z-runtime.config.json` at the
 website root:
 
 ```json
@@ -493,4 +496,4 @@ in dev and prod.
 Only the changed island's DOM subtree is swapped; unrelated component state is not
 reset, and the changed component's own `useState`/`useReducer` state survives when
 its hook signature is unchanged. See
-[Dev hot-swap (HMR) and fast refresh](../islands.md#dev-hot-swap-hmr-and-fast-refresh).
+[Dev hot-swap (HMR) and fast refresh](https://github.com/valthon/zigapagos/blob/main/docs/islands.md#dev-hot-swap-hmr-and-fast-refresh).

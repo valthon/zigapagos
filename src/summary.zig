@@ -18,14 +18,10 @@
 //!    emits: the collector is an inert list and the only failure it can produce
 //!    is `OutOfMemory`.
 //!
-//! Deliberately NOT a category: host configs. `zigapagos` itself never writes
-//! an nginx/apache/zigbase config — `build/site.zig` runs
-//! `runtime/scripts/emit-host-config.ts` as a separate build step, outside this
-//! process. What the binary does emit for a host is each SPA's
-//! `routing-manifest.json`, which those emitters read, and that is what the
-//! `SPA routing manifest` category reports. Claiming a host-config category
-//! here would be exactly the "describe the options, not the output" defect
-//! above.
+//! The release CLI appends sitemap and host-configuration artifacts after the
+//! core rendering pass, then prints the complete inventory. Host paths come
+//! from the emitter's write report, so preserved files from earlier builds are
+//! never mistaken for artifacts emitted by this run.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -54,6 +50,7 @@ pub const Summary = struct {
         spa_shell,
         spa_manifest,
         spa_fallback,
+        host_config,
 
         /// Plural heading, since every group prints its count.
         pub fn heading(c: Category) []const u8 {
@@ -68,6 +65,7 @@ pub const Summary = struct {
                 .spa_shell => "SPA shells",
                 .spa_manifest => "SPA routing manifests",
                 .spa_fallback => "SPA 404 fallback",
+                .host_config => "host configuration",
             };
         }
     };

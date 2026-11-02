@@ -53,7 +53,7 @@ At build time each `.island.tsx` is **server-rendered** through a Bun sidecar an
 embedded into the page as real HTML. In the browser it **hydrates** on your
 terms — `client:load`, `client:idle`, `client:visible`, `client:media`, or
 `client:only` — sharing ONE Preact instance across every island via an import
-map. No island on the page? Zero JavaScript shipped.
+map. Omit the directive for server-only HTML with no island JavaScript.
 
 ## Features
 
@@ -61,7 +61,7 @@ map. No island on the page? Zero JavaScript shipped.
   context, portals, …) via the first-party `@z/runtime`, SSR'd at build time
   and partially hydrated.
 - **Native SPAs** — a single `.spa.tsx` (exported `spa` + `routes`) becomes a
-  client-routed app: prerendered route skeletons, two-phase hydration,
+  client-routed app: prerendered pages, loading shells, matching hydration,
   soft navigation, route guards, nested layouts. Host-agnostic routing
   manifests (ZigBase / Nginx / Apache) generated for you.
 - **Prefetching** — a SPA `<Link>` starts a lazy route's chunk load on hover by

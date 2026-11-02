@@ -7,6 +7,7 @@ const root = @import("../root.zig");
 const worker = @import("../worker.zig");
 const spa_mod = @import("../spa.zig");
 const sitemap = @import("../sitemap.zig");
+const Summary = @import("../summary.zig").Summary;
 const diag = @import("../diag.zig");
 const Allocator = std.mem.Allocator;
 const BuildAsset = root.BuildAsset;
@@ -104,6 +105,7 @@ pub fn release(
         io,
         RenderArena.from(&bundle_arena_state),
         &cmd,
+        base_dir_path,
         cli_spas,
         rt_defaults,
         environ_map,
@@ -151,6 +153,8 @@ pub fn release(
     worker.start(io);
     defer if (builtin.mode == .Debug) worker.stopWaitAndDeinit(io);
 
+    var summary: Summary = .{};
+    defer summary.deinit(gpa);
     const build = root.run(io, gpa, &cfg, .{
         .base_dir_path = base_dir_path,
         .build_assets = &cmd.build_assets,
@@ -174,6 +178,7 @@ pub fn release(
         .island_manifest_path = island_manifest_path,
         .allow_missing_pages = cmd.allow_missing_pages,
         .summary = cmd.summary,
+        .summary_sink = if (cmd.summary) &summary else null,
     }) catch fatal.oom();
 
     defer if (builtin.mode == .Debug) build.deinit(io, gpa);
@@ -214,6 +219,7 @@ pub fn release(
             "error: emitting sitemap.xml failed: {s}\n",
             .{@errorName(err)},
         );
+        if (cmd.summary) try summary.add(gpa, .site_asset, "sitemap.xml");
     }
 
     // Host config + strict-CSP + Cache-Control artifacts, over the tree that
@@ -227,15 +233,33 @@ pub fn release(
     // `**/*.html` under the output directory, which only exist once the render
     // and install phases have written them.
     if (rt_defaults) |rt| if (cmd.islands.len > 0 or cmd.spas.len > 0) {
+        const report_path = try std.fs.path.join(gpa, &.{ base_dir_path, bundle_cache_path, "host-config-report.json" });
+        defer gpa.free(report_path);
         runDriver(io, gpa, cmd.bun_path orelse "bun", ".", &.{
             rt.host_config_emitter,
             "--site",
             cmd.output_dir_path orelse "public",
+            "--report",
+            if (cmd.summary) report_path else "",
         }, environ_map) catch |err| fatal.msg(
             "error: emitting host config failed: {s}\n",
             .{@errorName(err)},
         );
+        if (cmd.summary) {
+            const report = std.Io.Dir.cwd().readFileAlloc(io, report_path, gpa, .limited(16 * 1024 * 1024)) catch |err| fatal.msg("error reading host-config inventory: {t}\n", .{err});
+            defer gpa.free(report);
+            const paths = std.json.parseFromSlice([]const []const u8, gpa, report, .{}) catch |err| fatal.msg("invalid host-config inventory: {t}\n", .{err});
+            defer paths.deinit();
+            for (paths.value) |path| try summary.add(gpa, .host_config, path);
+        }
     };
+
+    if (cmd.summary and changed_files.len == 0) {
+        var buffer: [8 * 1024]u8 = undefined;
+        var stdout = std.Io.File.stdout().writerStreaming(io, &buffer);
+        summary.render(&stdout.interface, cmd.output_dir_path orelse "public") catch |err| fatal.msg("error writing build summary: {t}\n", .{err});
+        stdout.interface.flush() catch |err| fatal.msg("error flushing build summary: {t}\n", .{err});
+    }
 
     return false;
 }
@@ -399,7 +423,7 @@ pub const Command = struct {
     /// verbatim byte-copy. Requires `--bun` to be set as well.
     css_minify_driver: ?[]const u8 = null,
     css_minify: bool = false,
-    island_props_check: @import("../islands/props_check.zig").Mode = .off,
+    island_props_check: @import("../islands/props_check.zig").Mode = .err,
     /// `--islands-slice=PATH`: the per-SITE islands runtime slice manifest
     /// (`runtime/scripts/build-islands-runtime.ts`). Normally written by
     /// `sliceIslandsRuntime` and attached here; the flag exists so a manifest
@@ -463,7 +487,7 @@ pub const Command = struct {
         var island_bundle_driver: ?[]const u8 = null;
         var css_minify_driver: ?[]const u8 = null;
         var css_minify = false;
-        var island_props_check: @import("../islands/props_check.zig").Mode = .off;
+        var island_props_check: @import("../islands/props_check.zig").Mode = .err;
         var islands_slice: ?[]const u8 = null;
         var spas: std.ArrayListUnmanaged(root.SpaSpec) = .empty;
         errdefer spas.deinit(gpa);
@@ -640,7 +664,7 @@ const help_message =
     \\  --css-minify          Minify site CSS using the bundled runtime in one process
     \\  --css-minify-driver=PATH  Bun script that minifies .css site assets on
     \\                        install (needs --bun; omit to copy CSS verbatim)
-    \\  --island-props-check=MODE  off | warn | error — typecheck island props (default off)
+    \\  --island-props-check=MODE  off | warn | error — typecheck island props (default error)
     \\  --islands-slice=PATH  The per-site islands runtime slice manifest; a page
     \\                        whose every island the slice covers loads it instead
     \\                        of the full shared runtime (omit: shared runtime)
@@ -1022,6 +1046,7 @@ fn bundleClient(
     io: Io,
     arena: RenderArena,
     cmd: *Command,
+    base_dir_path: []const u8,
     spas: []root.SpaSpec,
     rt: ?RuntimeDefaults,
     environ_map: *const std.process.Environ.Map,
@@ -1030,18 +1055,12 @@ fn bundleClient(
     const bun_path = cmd.bun_path orelse "bun";
     const src_dir = cmd.island_src_dir orelse ".";
 
-    Io.Dir.cwd().deleteTree(io, bundle_cache_path) catch {};
-    Io.Dir.cwd().createDirPath(io, bundle_cache_path) catch |err| fatal.msg(
+    const cache_abs = try std.fs.path.resolve(gpa, &.{ base_dir_path, bundle_cache_path });
+    Io.Dir.cwd().deleteTree(io, cache_abs) catch {};
+    Io.Dir.cwd().createDirPath(io, cache_abs) catch |err| fatal.msg(
         "error: client bundle cache '{s}': {s}\n",
-        .{ bundle_cache_path, @errorName(err) },
+        .{ cache_abs, @errorName(err) },
     );
-    // Absolute, because `--outfile`/`--outdir` are interpreted by bun, whose cwd
-    // is `src_dir` rather than this process's.
-    const cwd_path = std.process.currentPathAlloc(io, gpa) catch |err| fatal.msg(
-        "error: unable to get current working directory: {s}\n",
-        .{@errorName(err)},
-    );
-    const cache_abs = try std.fs.path.join(gpa, &.{ cwd_path, bundle_cache_path });
 
     var env = try prodEnv(gpa, environ_map);
     defer env.deinit();
@@ -1295,6 +1314,7 @@ fn bundleSpas(
         var argv: std.ArrayListUnmanaged([]const u8) = .empty;
         try argv.appendSlice(gpa, &.{
             rt.spa_bundle_driver,
+            try std.fmt.allocPrint(gpa, "--source-cache-dir={s}/client-source", .{std.fs.path.dirname(cache_abs).?}),
             try std.fmt.allocPrint(gpa, "--source-capture={s}", .{capture_json}),
             try std.fmt.allocPrint(gpa, "--entry={s}", .{sp.src}),
             try std.fmt.allocPrint(gpa, "--outdir={s}", .{outdir}),
@@ -1517,6 +1537,9 @@ test "parse leaves islands_slice null when --islands-slice is absent" {
 
 test "parse recognizes --island-props-check" {
     const gpa = std.testing.allocator;
+    var defaults = try Command.parse(gpa, &.{});
+    defer defaults.deinit(gpa);
+    try std.testing.expectEqual(@import("../islands/props_check.zig").Mode.err, defaults.island_props_check);
     var cmd = try Command.parse(gpa, &.{"--island-props-check=error"});
     defer cmd.deinit(gpa);
     try std.testing.expectEqual(@import("../islands/props_check.zig").Mode.err, cmd.island_props_check);

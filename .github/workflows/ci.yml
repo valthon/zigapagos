@@ -844,6 +844,9 @@ jobs:
       - name: Build and verify styling compatibility example
         run: bash tests/styling/compatibility.sh
 
+      - name: Verify authoring defaults and hydration requests
+        run: mise exec -- python3 tests/release/authoring_browser.py
+
       - name: Verify plain CSS, compiled Tailwind and Preact components in Chrome
         run: mise exec -- python3 examples/styling-site/test/browser.py examples/styling-site/zig-out/site
 

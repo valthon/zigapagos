@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { basename } from "node:path";
+import { basename, relative } from "node:path";
 
 export type Manifest = {
   base: string;
@@ -956,9 +956,12 @@ if (import.meta.main) {
   const args = process.argv.slice(2);
   let site = "";
   let override = "";
+  let report = "";
+  const emitted: string[] = [];
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--site") site = args[++i] ?? "";
     else if (args[i] === "--target") override = args[++i] ?? "";
+    else if (args[i] === "--report") report = args[++i] ?? "";
   }
   if (!site) { console.error("Usage: emit-host-config.ts --site <outputDir> [--target zigbase|nginx|apache]"); process.exit(1); }
 
@@ -977,6 +980,7 @@ if (import.meta.main) {
     for (const f of emit(m)) {
       const outPath = dir + f.name;
       writeFileSync(outPath, f.content, "utf8");
+      emitted.push(relative(site, outPath));
       console.log(`emit-host-config: wrote ${outPath} (${target})`);
     }
     count++;
@@ -1007,6 +1011,7 @@ if (import.meta.main) {
   for (const f of emitAllCsp(hashes, linkOrigins, styleHashes, speculationRules)) {
     const outPath = `${site}/${f.name}`;
     writeFileSync(outPath, f.content, "utf8");
+    emitted.push(relative(site, outPath));
     console.log(`emit-host-config: wrote ${outPath} (csp, ${hashes.length} inline-script hashes, ${styleHashes.length} inline-style hashes, ${linkOrigins.length} external link origins${speculationRules ? ", speculation rules" : ""})`);
   }
 
@@ -1018,6 +1023,8 @@ if (import.meta.main) {
   for (const f of emitAllCache(chunkPaths)) {
     const outPath = `${site}/${f.name}`;
     writeFileSync(outPath, f.content, "utf8");
+    emitted.push(relative(site, outPath));
     console.log(`emit-host-config: wrote ${outPath} (cache-control, ${chunkPaths.length} SPA split assets)`);
   }
+  if (report) writeFileSync(report, JSON.stringify(emitted.sort()));
 }

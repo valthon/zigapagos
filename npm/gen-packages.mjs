@@ -327,7 +327,8 @@ npx zigapagos release --output=public --force
 The build finds your \`*.island.tsx\` entries by scanning the site root, so there is
 no list to keep up to date. \`--island=SRC\` (repeatable) overrides the scan when
 you want an exact set — worth doing once a project is more than a few files: the
-scan's order follows the filesystem, and it does not skip a vendored tree.
+scan skips \`node_modules\`, Git metadata and build/cache directories. Other
+vendored sources should be excluded by passing an explicit entry set.
 
 That scan is not a convenience. The two halves of an island come from different
 places — the SSR'd markup from the Bun sidecar, the client bundle from Bun — and
@@ -336,15 +337,16 @@ perfectly and then 404s on hydration, with nothing wrong-looking in the output
 tree, so the entries are discovered rather than left to be forgotten.
 
 Your components import \`@z/runtime\` by its bare name: the sidecar serves that
-specifier from the copy inside this package, and on the client an import map
-points it at the one shared \`/zigapagos-runtime.js\`, so the page ends up with a
-single Preact instance.
+specifier from the copy inside this package. On the client, an import map selects
+the page's islands runtime slice or the full shared runtime, keeping one Preact
+instance. An island without a \`client:*\` directive renders only on the server;
+deferred directives request their component code when their trigger fires.
 See [docs/islands.md](${HOMEPAGE}/blob/main/docs/islands.md).
 
-**Worth turning on:** \`--island-props-check=error\` (the \`tsc\` gate that typechecks
-island props against their \`Props\` interface) is \`off\` by default. Pass it to opt
-in; the \`typescript\` this package already installs is the one \`bun x tsc\` will
-find.
+**Props checks are enabled by default.** Builds reject props that do not match
+the component's exported \`Props\` type. The runtime runs the installed TypeScript
+compiler through Bun; a project tsconfig is optional. Use
+\`--island-props-check=warn\` or \`--island-props-check=off\` explicitly to relax it.
 
 ### Building a native SPA
 
@@ -354,14 +356,17 @@ one's \`spa.base\` decides where it mounts. \`--spa=SRC|BASE\` (repeatable) over
 the scan, and \`|BASE\` there is a base restated for the build to check against the
 module — omit it and the module is simply believed.
 
-Each SPA gets prerendered route skeletons and
+Each SPA gets prerendered route content or loading shells and
 a \`_shell.html\` per dynamic pattern, a per-namespace \`routing-manifest.json\`, a
 code-split client bundle under \`/spa/\` (one entry chunk plus one content-hashed
-chunk per \`lazy(() => import(…))\`), a \`modulepreload\` for the chunk each route
-needs, and the per-deployable runtime slice — \`/spa/<name>-runtime.js\` when the
+chunk per \`lazy(() => import(…))\`), route chunk preloads in dedicated shells,
+and the per-deployable runtime slice — \`/spa/<name>-runtime.js\` when the
 slicer can prove which \`host.*\` members the SPA uses, the shared
 \`/zigapagos-runtime.js\` when it cannot. \`@z/runtime\` stays external in every
-bundle, so a page carrying both a SPA and islands still has one Preact.
+bundle, so a page carrying both a SPA and islands still has one Preact. Reusable
+fallback shells defer unrelated route chunks. Concrete \`staticPaths\` pages
+render real params and content; generic dynamic URLs use a custom or neutral
+loading view.
 
 See [docs/spa.md](${HOMEPAGE}/blob/main/docs/spa.md). The routing manifest is also
 what the host-config emitters read, and \`release\` runs them, so the \`.spa\` marker
@@ -371,7 +376,7 @@ output tree.
 ### \`zigapagos dev\`
 
 \`\`\`bash
-npm pkg set scripts.dev="zigapagos dev --site=public"
+npm pkg set scripts.dev="zigapagos dev"
 npm run dev     # dev: zigbase = …/node_modules/.bin/zigbase (path_env)
 \`\`\`
 

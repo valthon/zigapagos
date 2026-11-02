@@ -60,6 +60,11 @@ export async function applyIslandUpdate(modules: string[]): Promise<boolean> {
 
   forgetDetachedIslands(); // never resurrect a root that left the DOM
   const wanted = new Set(modules.map(moduleKey));
+  // A source can be mounted both statically and interactively on one page.
+  // Swapping only the hydrated roots would leave its static HTML stale.
+  for (const root of document.querySelectorAll<HTMLElement>("[data-z-static-module]")) {
+    if (wanted.has(moduleKey(root.dataset.zStaticModule ?? ""))) return false;
+  }
   const targets: HTMLElement[] = [];
   for (const [rootEl, rec] of mountedIslands()) {
     if (wanted.has(moduleKey(rec.moduleUrl))) targets.push(rootEl);

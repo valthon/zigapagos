@@ -297,6 +297,15 @@ describe("applyIslandUpdate — fast refresh (hot registry)", () => {
 });
 
 describe("applyIslandUpdate — full-reload fallbacks (returns false)", () => {
+  test("a source also rendered server-only forces reload instead of leaving stale HTML", async () => {
+    const root = mountIsland();
+    await bootIsland(root);
+    const staticRoot = document.createElement("div");
+    staticRoot.setAttribute("data-z-static-module", MODULE_URL);
+    document.body.appendChild(staticRoot);
+    try { expect(await applyIslandUpdate([MODULE_URL])).toBe(false); }
+    finally { staticRoot.remove(); }
+  });
   test("no mounted root uses the changed module → false", async () => {
     const root = mountIsland();
     await bootIsland(root);

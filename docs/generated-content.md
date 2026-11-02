@@ -110,7 +110,8 @@ merely produces a wrong-looking page.
    documentation generator uses, for the same reason.
 
 4. **Fence-language remap, mirror-only.** A code-fence language this site's SuperMD
-   highlighter doesn't recognize is also a hard build error (`unknown language code`), so a
+   highlighter doesn't recognize produces an `unknown language code` warning and renders
+   without highlighting. A
    handful of real, valid languages that just don't have a grammar registered here — `jsonc`,
    `nginx` — get remapped to a close-enough recognized one (`json`, `conf` respectively) in
    the mirror only. The canonical file keeps its accurate language tag; degrading it to

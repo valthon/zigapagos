@@ -13,8 +13,8 @@
 // an island, so it is always kept external — this closes a footgun where a
 // consumer's tsconfig `paths` (needed for SSR, below) would otherwise cause
 // Bun.build to resolve `react` -> preact/compat and INLINE a silent 2nd Preact.
-// The lint (z-runtime.config.json `npmCompat`) remains the POLICY gate: an
-// un-allowlisted react import still fails the lint.
+// The client policy always allows these exact bridge keys; third-party
+// packages still need explicit islandImports/resolve configuration.
 //
 // SSR is handled separately by runtime module overrides (sidecar/ssr-resolve.ts —
 // Bun runtime plugins cannot intercept bare specifiers via onResolve). REACT_ALIAS

@@ -40,7 +40,7 @@ Incremental React compatibility is in
 3. **Port routing and content** per §3–5 (file-based routes → `content/`
    `.smd` pages; frontmatter mapping is field-by-field in §4).
 4. **Port layouts** per §5 (Astro layouts → SuperHTML `.shtml` templates with
-   `:extends` chains).
+   `<extend template="…">` chains).
 5. **Port islands** per §6–9 and
    [references/recipes.md](references/recipes.md): each `client:*` component
    becomes a `.island.tsx` authored against `@z/runtime` (Preact-compatible

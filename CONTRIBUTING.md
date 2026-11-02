@@ -77,13 +77,14 @@ source fails closed. Once it succeeds, retry the build command that originally
 failed; normal development does not require the script.
 
 **Trap 1: `zig build test` does not run the unit tests.** It builds the
-three-root snapshot fixtures and diffs them. The Zig unit tests live in **sixteen
+three-root snapshot fixtures and diffs them. The Zig unit tests live in **twenty
 separate steps**, and this is the command you actually want:
 
 ```sh
 zig build test-islands test-props test-migrate test-sidecar test-init \
-  test-release test-spa test-assets test-e2e test-dev \
-  test-doctor test-slugs test-validate test-explain test-diag
+  test-release test-debug test-spa test-assets test-e2e test-dev \
+  test-doctor test-slugs test-validate test-explain test-diag \
+  test-summary test-images test-sitemap test-rails
 ```
 
 **Trap 2: a fresh clone or git worktree needs `bun install` in `runtime/` before
@@ -93,7 +94,7 @@ anything Bun-dependent.** Without it `bun test` reports every file as failing
 breakage and are neither.
 
 ```sh
-cd runtime && bun test              # TypeScript suite (750 tests / 58 files)
+cd runtime && bun test              # complete TypeScript suite
 cd runtime && bun test src/router   # one file — the filter is a PATH substring
 ```
 
@@ -141,13 +142,16 @@ git ls-files -z '*.zig' | xargs -0 -r zig fmt --check
 zig build test                                    # snapshot diff
 zig build check -Dsingle-threaded
 zig build test-islands test-props test-migrate test-sidecar test-init \
-  test-release test-spa test-assets test-e2e test-dev \
-  test-doctor test-slugs test-validate test-explain test-diag
+  test-release test-debug test-spa test-assets test-e2e test-dev \
+  test-doctor test-slugs test-validate test-explain test-diag \
+  test-summary test-images test-sitemap test-rails
 zig build api-check                               # if contract/ or apigen.ts changed
 
 # 4. TypeScript + shell e2e
 (cd runtime && bun install --frozen-lockfile && bun test)
-for s in tests/*/*.sh; do bash "$s" || echo "FAIL $s"; done   # hermetic; the glob is the list
+failed=0
+for s in tests/*/*.sh; do bash "$s" || { echo "FAIL $s"; failed=1; }; done
+[ "$failed" -eq 0 ] # hermetic; preserve failures from every script
 ```
 
 Notes on the ones with sharp edges:

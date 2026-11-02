@@ -216,7 +216,7 @@ import { h, type ComponentType } from "./core.ts";
 import { useEffect, useState } from "./core.ts";
 import { ssrIsland, renderIsland, click, flush } from "@z/runtime/testing";
 import { setLocationPathname } from "@z/runtime/testing/parity";
-import { setSsrPathname, setUrlPathPrefix, getUrlPathPrefix } from "@z/runtime/ssr-env";
+import { setSsrPathname, setUrlPathPrefix, getUrlPathPrefix, setConcretePrerender, setPrerenderPathname } from "@z/runtime/ssr-env";
 
 const Home = () =>
   h("div", { "data-view": "home" },
@@ -251,6 +251,17 @@ const HandlerApp = () =>
   h(Router, { base: "/app", routes: [{ path: "/", component: HandlerHome }, { path: "/booking", component: Booking }] });
 
 describe("Router SSR", () => {
+  afterEach(() => setConcretePrerender(false));
+  test("concrete paths render actual params, while unknown paths use a neutral shell", () => {
+    const Plain = () => h(Router, { base: "/app", routes: [{ path: "/club/:id", component: ClubDetail }] });
+    expect(ssrIsland(Plain, {}, { pathname: "/app/club/_" })).not.toContain('data-view="club"');
+    setConcretePrerender(true);
+    const html = ssrIsland(Plain, {}, { pathname: "/app/club/42" });
+    expect(html).toContain('data-id="42"');
+    expect(html).toContain("club 42");
+    // An explicitly supplied loading view must not replace known content.
+    expect(ssrIsland(App, {}, { pathname: "/app/club/42" })).not.toContain("club-skeleton");
+  });
   test("SSRs the skeleton for a dynamic route pattern", () => {
     const html = ssrIsland(App, {}, { pathname: "/app/club/_" });
     expect(html).toContain('data-view="club-skeleton"');
@@ -389,6 +400,107 @@ describe("Router client", () => {
 });
 
 describe("Router hydration (real Preact hydrate())", () => {
+  afterEach(() => setPrerenderPathname(undefined));
+  test("a remounted Router paints the live URL without replaying its initial fallback", async () => {
+    setLocationPathname("/app/item/42");
+    setPrerenderPathname("/app/");
+    const paints: string[] = [];
+    const Root = () => { paints.push("root"); return h("div", null, "root"); };
+    const Item = () => { const {id} = useParams(); paints.push(id); return h("div", null, id); };
+    const routes = [{path: "/", component: Root}, {path: "/item/:id", component: Item, skeleton: false as const}];
+    const App = ({generation}: {generation: number}) => h(Router, {key: generation, base: "/app", routes});
+    const r = renderIsland(App, {generation: 0}, {mode: "hydrate", pathname: "/app/item/42"});
+    try {
+      await flush(); await flush();
+      paints.length = 0;
+      await r.rerender({generation: 1});
+      expect(paints[0]).toBe("42");
+      expect(paints).not.toContain("root");
+    } finally { r.unmount(); }
+  });
+
+  test("aliases sharing a guarded target run exactly one guard after fallback synchronization", async () => {
+    setLocationPathname("/app/alias/42");
+    setPrerenderPathname("/app/");
+    let calls = 0;
+    const SharedTarget = () => h(Router, { base: "/app", routes: [
+      {path: "/", redirect: "/private"},
+      {path: "/alias/:id", redirect: "/private"},
+      {path: "/private", component: Booking, guard: async () => { calls++; return true as const; }},
+    ] });
+    const r = renderIsland(SharedTarget, {}, {mode: "hydrate", pathname: "/app/alias/42"});
+    try {
+      await flush(); await flush(); await flush();
+      expect(calls).toBe(1);
+      expect(r.html()).toContain('data-view="booking"');
+      expect(window.location.pathname).toBe("/app/private");
+    } finally { r.unmount(); }
+  });
+  test("aliases sharing a lazy target load it once after fallback synchronization", async () => {
+    setLocationPathname("/app/alias/42");
+    setPrerenderPathname("/app/");
+    let loads = 0;
+    const View = lazy(async () => { loads++; return {default: Booking}; });
+    const SharedTarget = () => h(Router, { base: "/app", routes: [
+      {path: "/", redirect: "/private"},
+      {path: "/alias/:id", redirect: "/private"},
+      {path: "/private", component: View, skeleton: ClubSkeleton},
+    ] });
+    const r = renderIsland(SharedTarget, {}, {mode: "hydrate", pathname: "/app/alias/42"});
+    try {
+      await flush(); await flush(); await flush();
+      expect(loads).toBe(1);
+      expect(r.html()).toContain('data-view="booking"');
+      expect(window.location.pathname).toBe("/app/private");
+    } finally { r.unmount(); }
+  });
+  test("a namespace fallback's root redirect cannot replace the requested dynamic URL", async () => {
+    setLocationPathname("/app/club/42");
+    setPrerenderPathname("/app/");
+    const AliasApp = () => h(Router, { base: "/app", routes: [
+      { path: "/", redirect: "/booking" },
+      { path: "/booking", component: Booking },
+      { path: "/club/:id", component: ClubDetail },
+    ] });
+    const r = renderIsland(AliasApp, {}, { mode: "hydrate", pathname: "/app/club/42" });
+    try {
+      await flush();
+      expect(window.location.pathname).toBe("/app/club/42");
+      expect(r.html()).toContain('data-id="42"');
+    } finally { r.unmount(); }
+  });
+  test("guards run for the requested params, never the generic shell's placeholder params", async () => {
+    setLocationPathname("/app/club/42");
+    setPrerenderPathname("/app/club/_");
+    const calls: string[] = [];
+    const Guarded = () => h(Router, { base: "/app", routes: [{
+      path: "/club/:id", component: ClubDetail,
+      guard: async (loc) => { calls.push(loc.params.id); return true; },
+    }] });
+    const r = renderIsland(Guarded, {}, { mode: "hydrate", pathname: "/app/club/42" });
+    try {
+      await flush();
+      expect(calls).toEqual(["42"]);
+      await flush(); // authorization settles after the pathname synchronization
+      expect(r.html()).toContain('data-id="42"');
+    } finally { r.unmount(); }
+  });
+  test("a namespace fallback does not load an unrelated lazy root view", async () => {
+    setLocationPathname("/app/club/42");
+    setPrerenderPathname("/app/");
+    let loads = 0;
+    const Root = lazy(async () => { loads++; return { default: Home }; });
+    const FallbackApp = () => h(Router, { base: "/app", routes: [
+      { path: "/", component: Root, skeleton: ClubSkeleton },
+      { path: "/club/:id", component: ClubDetail },
+    ] });
+    const r = renderIsland(FallbackApp, {}, { mode: "hydrate", pathname: "/app/club/42" });
+    try {
+      await flush();
+      expect(loads).toBe(0);
+      expect(r.html()).toContain('data-id="42"');
+    } finally { r.unmount(); }
+  });
   test("two-phase hydrate on a dynamic route: matches the SSR skeleton on the initial hydrate() pass, then flips to the real component with no stale skeleton attribute", async () => {
     setLocationPathname("/app/club/42");
     const r = renderIsland(App, {}, { mode: "hydrate", pathname: "/app/club/42" });
@@ -2283,23 +2395,24 @@ describe("describeRoutes", () => {
   // params with "_" renders differently on the first client render — a
   // hydration breaker unless the route has a param-independent `skeleton`
   // (or explicitly promises stability with `skeleton: false`). ---
-  test("throws when a dynamic route (:param) lacks a skeleton, naming the route", async () => {
-    await expect(describeRoutes([
+  test("a dynamic route can use the framework neutral shell", async () => {
+    const metas = await describeRoutes([
       { path: "/", component: C },
       { path: "/club/:id", component: C },
-    ])).rejects.toThrow(/"\/club\/:id".*skeleton/);
+    ]);
+    expect(metas[1]).toEqual({ path: "/club/:id", dynamic: true, hasSkeleton: false });
   });
-  test("throws for a `*` catch-all route without a skeleton (same SSR-differs logic as :param)", async () => {
-    await expect(describeRoutes([
+  test("a catch-all route can use the framework neutral shell", async () => {
+    expect(await describeRoutes([
       { path: "/docs/*", component: C },
-    ])).rejects.toThrow(/"\/docs\/\*".*skeleton/);
+    ])).toEqual([{ path: "/docs/*", dynamic: true, hasSkeleton: false }]);
   });
-  test("a static child under a dynamic layout is a dynamic FULL path — the LEAF needs its own skeleton (layouts never render one)", async () => {
-    await expect(describeRoutes([
+  test("a static child under a dynamic layout can use a neutral shell", async () => {
+    expect(await describeRoutes([
       { path: "/club/:id", component: C, skeleton: Sk, children: [
         { path: "/details", component: C },
       ]},
-    ])).rejects.toThrow(/"\/club\/:id\/details".*skeleton/);
+    ])).toEqual([{ path: "/club/:id/details", dynamic: true, hasSkeleton: false }]);
   });
   test("skeleton: false is the explicit opt-out — the author asserts the component is hydration-stable", async () => {
     const metas = await describeRoutes([

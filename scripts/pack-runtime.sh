@@ -58,8 +58,8 @@ cp "$REPO/runtime/bun.lock" "$STAGE/bun.lock"
 #    silent re-resolution, which is the whole point of packing from a lockfile.
 #
 # 2. typescript is in `devDependencies`, so step 1 correctly drops it — but it is
-#    not dev-only at run time. `--island-props-check` shells out to `bun x tsc`,
-#    and the per-SPA runtime slicer uses the compiler API; without it every SPA
+#    needed by the default props-check driver and per-SPA runtime slicer, both
+#    of which load the installed compiler through Bun. Without it every SPA
 #    page silently falls back to loading the whole shared runtime. `@zigapagos/cli`
 #    ships it for the same reason, as an optionalDependency. Resolving it in a
 #    SEPARATE directory and copying the result in is safe *because typescript has
@@ -141,12 +141,10 @@ if [[ "$PACKED_TS" != "$TS_VERSION" ]]; then
   exit 1
 fi
 
-# `bun x tsc` is how the props-check gate runs the compiler, and it finds it
-# through node_modules/.bin. Present as a relative symlink into the package, so
-# it survives the tar.
+# Keep TypeScript's command-line entry alongside its compiler API for explicit
+# compiler invocations. The symlink must remain valid when the tree is unpacked.
 [[ -e "$STAGE/node_modules/.bin/tsc" ]] || {
-  echo "FAIL: node_modules/.bin/tsc is missing; --island-props-check would fetch" >&2
-  echo "      typescript from the registry instead of using the packed one." >&2
+  echo "FAIL: node_modules/.bin/tsc is missing from the staged TypeScript package" >&2
   exit 1
 }
 

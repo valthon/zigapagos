@@ -768,7 +768,7 @@ pub const Options = struct {
     /// Bundled driver accepts NDJSON path pairs on stdin; custom drivers keep
     /// the original two-argument protocol unless this is explicitly enabled.
     css_minify_batch: bool = false,
-    island_props_check: @import("islands/props_check.zig").Mode = .off,
+    island_props_check: @import("islands/props_check.zig").Mode = .err,
     /// Path to the per-SITE islands runtime slice manifest, threaded through by
     /// `zigapagos release --islands-slice=<path>` (see
     /// `runtime/scripts/build-islands-runtime.ts`). Two shapes:
@@ -848,6 +848,9 @@ pub const Options = struct {
     /// inventory of *this* run would read as if the rest of the site had
     /// vanished.
     summary: bool = false,
+    /// Caller-owned collector for passes that finish after `run` returns.
+    /// When present the caller prints the successful summary after those passes.
+    summary_sink: ?*BuildSummary = null,
     /// The introspection commands (`zigapagos validate`, `zigapagos explain`)
     /// deliberately run a full in-memory build with NO island sidecar: their
     /// whole point is to check/report on content, layouts and links without
@@ -976,7 +979,7 @@ pub fn run(
     // takes it as an explicit parameter for the same reason.
     var summary: BuildSummary = .{};
     defer summary.deinit(gpa);
-    const collect: ?*BuildSummary = if (options.summary and options.mode == .disk) &summary else null;
+    const collect: ?*BuildSummary = if (options.summary and options.mode == .disk) options.summary_sink orelse &summary else null;
 
     // Spawn the island sidecar once for the entire build, stored on *Build so
     // Build.deinit kills it. If spawn fails, fatal.msg exits loudly.
@@ -3160,10 +3163,16 @@ pub fn run(
     if (build.island_props_check_mode != .off and build.island_props_checks.items.len > 0) {
         if (options.bun_path) |bun| if (options.island_src_dir) |root_dir| {
             const props_check = @import("islands/props_check.zig");
+            const compiler_driver = if (options.island_sidecar) |sidecar_path|
+                try std.fs.path.resolve(gpa, &.{ std.fs.path.dirname(sidecar_path) orelse ".", "props-check.ts" })
+            else
+                null;
+            defer if (compiler_driver) |path| gpa.free(path);
             const res = props_check.run(io, gpa, build.island_props_checks.items, .{
                 .mode = build.island_props_check_mode,
                 .bun_path = bun,
                 .website_root = root_dir,
+                .compiler_driver = compiler_driver,
             }) catch |err| blk: {
                 log.err("island props check failed to run: {s}", .{@errorName(err)});
                 break :blk props_check.RunResult{ .checked = 0, .skipped_no_props = 0, .mismatches = 1 };
@@ -3436,7 +3445,7 @@ pub fn run(
     // The refusal deliberately does NOT start with `build summary: `, so a
     // script grepping for the report's header still tells a refusal apart from
     // an inventory that happens to be empty.
-    if (collect) |sm| {
+    if (collect) |sm| if (options.summary_sink == null or build.any_rendering_error.load(.acquire)) {
         var out_buf: [8 * 1024]u8 = undefined;
         // `writerStreaming`, not `writer`: the positional writer tracks its
         // own file offset, which corrupts the output of `cmd >f 2>&1` where
@@ -3457,7 +3466,7 @@ pub fn run(
             "error writing the build summary to stdout: {t}\n",
             .{err},
         );
-    }
+    };
 
     return build;
 }

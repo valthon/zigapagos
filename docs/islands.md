@@ -189,14 +189,13 @@ fallback each on two nested `client:only` islands:
 
 ### Omitting `client:` entirely
 
-An `<island>` with no `client:` attribute is **not** a server-only island. The
-pass still emits the wrapper with an empty `data-z-client=""` and a
-`data-z-module` URL, and `[data-z-client]` matches on attribute *presence*, so
-`initIslands()` still selects the root and `schedule()`'s `default:` branch
-mounts it immediately — the same timing as `client:load`.
+An `<island>` with no `client:` attribute renders on the server only. It emits
+HTML without a hydration payload or component preload. A page containing only
+these components loads no island runtime. Use this for reusable TSX markup
+that needs no browser interaction.
 
-If what you want is markup with no client-side JavaScript at all, write it in
-the layout or in content rather than as an island.
+Explicitly hydrated islands nested in its slots still follow their own
+`client:*` directives. Props are checked for server-only components too.
 
 ### What the build rejects
 
@@ -423,18 +422,21 @@ and the check is skipped for that island (it is not a build error).
 
 | Value   | Behaviour |
 |---------|-----------|
-| `error` | Mismatches fail the build. |
+| `error` | Mismatches fail the build (the default). |
 | `warn`  | Mismatches are logged but the build succeeds. |
-| `off`   | Check disabled entirely (the default). |
+| `off`   | Check disabled entirely. |
 
-`zigapagos release` defaults to `off`, so every invocation that wants the gate —
-including the one `zigapagos dev` runs — opts in explicitly. Both projects in
-this repository pass `--island-props-check=error` from their `build.sh`.
+`zigapagos release` and `zigapagos dev` default to `error`. Use `warn` or
+`off` explicitly while investigating a mismatch; normal builds enforce it.
+The runtime installation supplies TypeScript, executed through Bun. A project
+tsconfig is optional; when present its JSX, target and module options retain
+precedence. Sites without one use the checker's fallback configuration.
 
 ## Module preloading
 
 Pages with islands emit `<link rel="modulepreload">` tags for the runtime that
-page loads (see [Runtime slicing](#runtime-slicing)) and each island module,
+page loads (see [Runtime slicing](#runtime-slicing)) and immediate (`client:load`
+or `client:only`) island modules,
 deduped and placed **after the import map**:
 
 ```html
@@ -451,10 +453,10 @@ disregarded by the browser — a bug that was cache-state flaky (a cold cache
 usually loses the race and the page still works; a warm cache wins it and
 `import … from "@z/runtime"` fails).
 
-The preload links still let the browser fetch island JS **in parallel with HTML
-parse** rather than discovering each module URL serially at hydration time.
-Islands using `client:only` are included. Hero appearing twice on the same page
-produces a single preload link — dedup is by module URL.
+Immediate islands fetch in parallel with HTML parsing. Modules used only by
+`client:idle`, `client:visible`, or `client:media` are fetched when their trigger
+fires. A module also used by an immediate island on the page may already be in
+the browser cache. The shared runtime itself can load before a deferred island.
 
 **v2 follow-up (deferred):** batched-NDJSON SSR (one sidecar round-trip per page
 instead of N sequential calls) is on hold pending co-design with `sidecar-slots`'
@@ -584,7 +586,7 @@ Selection is per page, and conservative:
   runtime. (Reading island *sources* instead would miss a `react` import that
   arrives transitively through a dependency — and that page would then load a
   runtime with no React surface.)
-- A page loads the slice **only if every island on it is one the slice covers**.
+- A page loads the slice **only if every hydrated island on it is one the slice covers**.
   A single uncovered island puts the whole page back on the shared runtime: one
   URL feeds the import map, the `modulepreload` and the module `<script>`, so a
   page can never end up with two runtimes and two Preact instances.
@@ -603,14 +605,21 @@ Two consequences worth knowing:
 
 ## Import guardrail
 
-Islands may only import from:
+By default, island client modules may import from:
 
 - `@z/runtime` (and its subpaths, e.g. `@z/runtime/compat`)
-- `@your-org/shared-lite`
+- The built-in `react` / `react-dom` compatibility bridge specifiers
 - Relative paths (other local modules)
-- Web globals (no `node:*` / bare npm packages)
 
-Violations are caught by `runtime/scripts/lint-island-imports.ts`.
+Web globals such as `fetch` need no import. Extra workspace scopes (for example
+`@your-org/shared-lite`) require `islandImports.firstParty` in
+`z-runtime.config.json`; compatible npm packages require `islandImports.npmCompat`.
+Explicit `resolve` keys also allow those exact specifiers. `@z/site-data` is
+available when the config declares a `data` map.
+
+The client bundler enforces this policy for the entry and its local transitive
+imports. The standalone `runtime/scripts/lint-island-imports.ts` command remains
+available for a separate check. See the [configuration recipes](migration/recipes.md#no-npm-guardrail).
 
 ## Dev hot-swap (HMR) and fast refresh
 
@@ -636,6 +645,9 @@ sequence of provable hook calls) is unchanged, the re-imported module resolves
 to the **same** proxy function — Preact keeps the mounted component instance,
 so plain `useState`/`useReducer` state survives and the new implementation
 (markup, handlers, reducer logic) takes over on the very next render.
+
+Pages containing an affected server-only island reload to receive its fresh
+server-rendered HTML; there is no browser component instance to hot-swap.
 
 **Deliberate fallbacks — correctness over cleverness.** Anything that can't be
 proven safe falls back to the in-place remount (where only restorable state
@@ -698,7 +710,7 @@ above it), which an external orchestrator can read; nothing in zigapagos does.
 
 ## Dev-loop incremental re-SSR (`zigapagos dev`)
 
-Bundling being incremental (above) is only half of a fast island edit: the SSR'd
+Selective page re-rendering is the other half of a fast island edit: the SSR'd
 HTML of every page that *mounts* the island is stale too. The dev loop
 re-renders just those pages instead of the whole site.
 

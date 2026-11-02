@@ -248,32 +248,18 @@ expression language). See the upstream SuperHTML docs linked from the
 >    it is now a build error. Write the negated condition on a second `<ctx>`,
 >    as in the pair above.
 
-**No `:with`/scoping directive — repeat the full path (or flatten the
-frontmatter).** There is **no** way to bind a sub-object to a short alias for a
-block: `:with` and `$ctx`/`$with` do not exist (you'll get `builtin function not
-found`). Reference nested `.custom` frontmatter with the full Scripty path each
-time:
+**Scope repeated values with `<ctx>` and `$ctx`.** `:with` and `$with` are
+not supported. Bind a named value as an attribute on `<ctx>` instead:
 
 ```html
-<!-- nested: .custom = { .hero = { .eyebrow = "Hi", .title = "We build things" } } -->
-<p :text="$page.custom.get('hero').get('eyebrow')"></p>
-<h1 :text="$page.custom.get('hero').get('title')"></h1>
+<ctx hero="$page.custom.get('hero')">
+  <p :text="$ctx.hero.get('eyebrow')"></p>
+  <h1 :text="$ctx.hero.get('title')"></h1>
+</ctx>
 ```
 
-Two ways to keep this manageable:
-
-- **Iterating a list of objects already scopes** — `:loop` binds each element to
-  `$loop.it`, so `$loop.it.get('title')` is the per-item short form. The full-path
-  repetition only hurts for a *single* deeply-nested object referenced many times.
-- **Flatten in frontmatter** for that single-object case: lift the values you use
-  repeatedly to top-level `.custom` keys (`.custom = { .hero_eyebrow = "Hi",
-  .hero_title = "…" }`) so the layout reads `$page.custom.get('hero_eyebrow')` — one
-  `.get` instead of a chain. This keeps the typed nested shape out of the hot path.
-
-(A real `:with`/scoping directive would be a SuperHTML/Scripty change — the static
-layer is inherited from the upstream SSG (see the [repository README's
-Acknowledgements](../../README.md#acknowledgements)) — so it is out of
-scope here; this is the current, documented behaviour.)
+Within a loop, `$loop.it` remains the current item. Flattening frontmatter is
+also an option when the nested shape adds no value.
 
 ## 6. Interactive components → TSX islands (the core of the work)
 
@@ -731,5 +717,5 @@ field to switch on, plus `file`/`line`/`col` when known. Run `zigapagos
 explain-code <CODE>` for the long-form fix for any code that shows up
 (`zigapagos explain-code` with no argument lists them all). See
 [`docs/diagnostics.md`](../diagnostics.md)
-for the full schema and stability contract, including what stays
-prose (page-render errors, most `Config.load` fatals) as of this writing.
+for the full schema and stability contract. Page-render and configuration
+failures also use structured diagnostics; low-level process output may remain prose.

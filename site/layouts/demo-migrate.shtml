@@ -27,7 +27,7 @@
           .before = "---\nimport Counter from \"../components/Counter.jsx\";\n---\n<Counter client:visible start={0} />\n",
           .after = "<island src=\"components/Counter.island.tsx\"\n        client:visible\n        prop-start=\"0\"></island>\n" },
         { .title = "Frontmatter",
-          .note = "Astro frontmatter is YAML; Zigapagos frontmatter is Ziggy. Known fields map by name and everything else moves under .custom, read as $page.custom.get(...) in the layout. Only .title and .layout are required — a field the source did not have (a date, an author) stays absent.",
+          .note = "Astro Markdown frontmatter is YAML; .astro frontmatter is JavaScript. Zigapagos content frontmatter is Ziggy. Known fields map by name and everything else moves under .custom, read as $page.custom.get(...) in the layout. Only .title and .layout are required — a field the source did not have (a date, an author) stays absent.",
           .before = "---\ntitle: Hello\ndescription: A page\nhero:\n  eyebrow: Hi\n  title: We build things\n---\n",
           .after = "---\n.title = \"Hello\",\n.description = \"A page\",\n.layout = \"page.shtml\",\n.custom = { .hero = { .eyebrow = \"Hi\", .title = \"We build things\" } },\n---\n" },
         { .title = "A layout",

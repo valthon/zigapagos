@@ -83,16 +83,18 @@ runtime tree* — a from-source checkout that does not export the variable, or a
 release-archive binary — and not of an npm install. Unset the variable if you
 want a content-only build on a machine with no Bun.
 
-Three further pieces of `release` are Bun-driven and each is opt-in:
+Other Bun-driven release work includes optional CSS minification and the
+default-on props check:
 
 - `--css-minify` — minifies site CSS in one process using the bundled runtime.
   Requires runtime discovery and Bun; see [assets](assets.md#production-css-minification).
 - `--css-minify-driver=PATH` — minifies `.css` site assets. Omit it and CSS is
   copied verbatim, which is what `dev`'s default rebuild does.
-- `--island-props-check=warn|error` — runs `bun x tsc` over generated
-  assignability checks. `bun x` resolves `typescript` at run time, from
-  `node_modules` if it is there and from the npm registry (network) if it is
-  not.
+- Island props checking defaults to `--island-props-check=error`. The runtime's
+  `sidecar/props-check.ts` loads its installed TypeScript compiler and runs it
+  through Bun over generated assignability checks. Normal release builds do
+  not download a compiler or need a separate Node.js process. A project
+  tsconfig is optional. Use `warn` or `off` explicitly to relax the check.
 - SPAs additionally use `typescript` for the per-SPA runtime slice. That one
   degrades rather than failing: if `typescript` cannot be resolved, the slicer
   writes a fallback manifest and every SPA page loads the full shared runtime.

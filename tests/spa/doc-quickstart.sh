@@ -64,7 +64,15 @@ grep -q 'export const routes' "$WORK/app.spa.tsx" \
 SITE="$WORK/site"; OUT="$WORK/out"
 mkdir -p "$SITE/app" "$SITE/node_modules/@z"
 cp -r tests/rendering/simple/content tests/rendering/simple/layouts "$SITE/"
-cp tests/rendering/simple/zigapagos.ziggy "$SITE/"
+awk '
+  /^## Deploy Targets/ { seen = 1; next }
+  seen && /^```ziggy$/ { infence = 1; next }
+  infence && /^```$/ { exit }
+  infence { print }
+' "$DOC" > "$SITE/zigapagos.ziggy"
+grep -q '^Site {' "$SITE/zigapagos.ziggy" \
+  || fail "Deploy Targets must include a complete typed Site config"
+mkdir -p "$SITE/assets"
 ln -s "$REPO/runtime" "$SITE/node_modules/@z/runtime"
 cp "$WORK/app.spa.tsx" "$SITE/app/app.spa.tsx"
 cat > "$SITE/tsconfig.json" <<'JSON'
