@@ -496,4 +496,4 @@ in dev and prod.
 Only the changed island's DOM subtree is swapped; unrelated component state is not
 reset, and the changed component's own `useState`/`useReducer` state survives when
 its hook signature is unchanged. See
-[Dev hot-swap (HMR) and fast refresh](../islands.md#dev-hot-swap-hmr-and-fast-refresh).
+[Dev hot-swap (HMR) and fast refresh](https://github.com/valthon/zigapagos/blob/main/docs/islands.md#dev-hot-swap-hmr-and-fast-refresh).

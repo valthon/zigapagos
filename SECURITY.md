@@ -12,14 +12,13 @@ Pre-1.0, one branch, no backports.
 
 | What | Supported |
 | ---- | --------- |
-| `main` | Yes. Fixes land here and nowhere else. |
-| Any `v0.x` git tag in this repository | No. Those tags are inherited from the upstream project this is forked from and predate the fork; they are not Zigapagos releases. |
+| `main` | Yes. Fixes land here. |
+| Latest Zigapagos release | Yes. Upgrade to the next release for fixes; no backports. |
+| Older releases and inherited upstream tags | No. |
 
-There are no published binary releases yet, so you build from source at a commit
-you picked and "upgrade" means moving that commit. `zigapagos version` prints a
-`git describe` string (e.g. `v0.11.2-dev.19+22ea4a0`); the trailing hash is the
-part that actually identifies what you are running, and it is what a report
-should cite.
+Published binaries are available from GitHub Releases. Source builds may include
+changes intended for the next release. Include `zigapagos version` and, for a
+source build, the commit hash in a report so we can identify the exact code.
 
 ## Reporting a vulnerability
 

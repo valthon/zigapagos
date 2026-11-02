@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Gate for issue #131 item 3 (and Stage 5 Task 4's second skill): each
-# skill's references/ are byte-copies of their canonical docs/migration/*
+# skill's references/ are generated from canonical docs/migration/*
 # files (the canonical spec, published to the site). A skill must be
 # self-contained when installed into a consumer project, so the files are
 # duplicated on purpose -- and this gate is what turns drift between the two
-# from a silent lie into a red test. Fix drift by copying the canonical file
-# over the reference copy, never the other way.
+# from a silent lie into a red test. Regenerate Astro references with
+# scripts/sync-astro-skill.ts, which makes out-of-package links absolute.
+# Rails references remain exact copies. Never edit a reference as its source.
 #
 # One skill name and one file list used to be hardcoded here (astro only).
 # Adding zigapagos-rails-migration restructured the single check into a loop
@@ -32,7 +33,7 @@ for name in "${!SKILL_FILES[@]}"; do
     if [[ ! -f "$SKILL/references/$f" ]]; then
       echo "FAIL: $SKILL/references/$f is missing"
       fail=1
-    elif ! diff -u "docs/migration/$f" "$SKILL/references/$f"; then
+    elif [[ "$name" != zigapagos-astro-migration ]] && ! diff -u "docs/migration/$f" "$SKILL/references/$f"; then
       echo "FAIL: $SKILL/references/$f drifted from docs/migration/$f -- run: cp docs/migration/$f $SKILL/references/$f"
       fail=1
     fi
@@ -49,6 +50,8 @@ for name in "${!SKILL_FILES[@]}"; do
   lines="$(wc -l < "$SKILL/SKILL.md")"
   [[ "$lines" -le 500 ]] || { echo "FAIL: $SKILL/SKILL.md is $lines lines (spec recommends <=500)"; fail=1; }
 done
+
+bun scripts/sync-astro-skill.ts --check || fail=1
 
 [[ "$fail" -eq 0 ]] || exit 1
 echo "PASS: tests/skills/sync.sh"

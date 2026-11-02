@@ -371,6 +371,16 @@ test("both published READMEs describe default-on checks with the installed compi
   });
 });
 
+test("both published READMEs run dev from the source root", () => {
+  withGenerated((dir) => {
+    for (const p of [["cli", "README.md"], ["zigapagos", "README.md"]]) {
+      const readme = readText(dir, ...p);
+      assert.match(readme, /npm pkg set scripts.dev="zigapagos dev"/);
+      assert.doesNotMatch(readme, /zigapagos dev --site=public/);
+    }
+  });
+});
+
 // zigbase is now INSTALLED rather than asked for, so the old `npm i -D zigbase`
 // instruction must not survive as advice — a reader who follows it installs a
 // second copy at a version the CLI does not pin. The size it costs is stated

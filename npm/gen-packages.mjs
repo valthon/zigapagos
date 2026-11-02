@@ -327,7 +327,8 @@ npx zigapagos release --output=public --force
 The build finds your \`*.island.tsx\` entries by scanning the site root, so there is
 no list to keep up to date. \`--island=SRC\` (repeatable) overrides the scan when
 you want an exact set — worth doing once a project is more than a few files: the
-scan's order follows the filesystem, and it does not skip a vendored tree.
+scan skips \`node_modules\`, Git metadata and build/cache directories. Other
+vendored sources should be excluded by passing an explicit entry set.
 
 That scan is not a convenience. The two halves of an island come from different
 places — the SSR'd markup from the Bun sidecar, the client bundle from Bun — and
@@ -375,7 +376,7 @@ output tree.
 ### \`zigapagos dev\`
 
 \`\`\`bash
-npm pkg set scripts.dev="zigapagos dev --site=public"
+npm pkg set scripts.dev="zigapagos dev"
 npm run dev     # dev: zigbase = …/node_modules/.bin/zigbase (path_env)
 \`\`\`
 

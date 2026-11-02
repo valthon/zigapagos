@@ -9,7 +9,7 @@ target syntax. Where a construct has no equivalent yet, it is listed under
 [Gaps](#gaps-not-yet-supported) with the recommended workaround.
 
 Zigapagos is a permanent fork of the upstream SSG (see the repository
-[README's Acknowledgements](../../README.md#acknowledgements) for attribution):
+[README's Acknowledgements](https://github.com/valthon/zigapagos/blob/main/README.md#acknowledgements) for attribution):
 the **static layer** is inherited near-verbatim (content in SuperMD `.smd`,
 layouts in SuperHTML `.shtml`, config in Ziggy `zigapagos.ziggy`), and the
 **interactive layer** is islands — components authored in
@@ -192,7 +192,7 @@ link instead of a build error.
 
 SuperHTML is **valid HTML5 + special attributes**; logic is Scripty (a sandboxed
 expression language). See the upstream SuperHTML docs linked from the
-[repository README's Acknowledgements](../../README.md#acknowledgements).
+[repository README's Acknowledgements](https://github.com/valthon/zigapagos/blob/main/README.md#acknowledgements).
 
 > **A dynamic attribute uses the BARE name — not a `:` prefix.** The only `:`
 > directives are `:if`, `:loop`, `:text`, `:html` (plus `:props` on
@@ -248,32 +248,18 @@ expression language). See the upstream SuperHTML docs linked from the
 >    it is now a build error. Write the negated condition on a second `<ctx>`,
 >    as in the pair above.
 
-**No `:with`/scoping directive — repeat the full path (or flatten the
-frontmatter).** There is **no** way to bind a sub-object to a short alias for a
-block: `:with` and `$ctx`/`$with` do not exist (you'll get `builtin function not
-found`). Reference nested `.custom` frontmatter with the full Scripty path each
-time:
+**Scope repeated values with `<ctx>` and `$ctx`.** `:with` and `$with` are
+not supported. Bind a named value as an attribute on `<ctx>` instead:
 
 ```html
-<!-- nested: .custom = { .hero = { .eyebrow = "Hi", .title = "We build things" } } -->
-<p :text="$page.custom.get('hero').get('eyebrow')"></p>
-<h1 :text="$page.custom.get('hero').get('title')"></h1>
+<ctx hero="$page.custom.get('hero')">
+  <p :text="$ctx.hero.get('eyebrow')"></p>
+  <h1 :text="$ctx.hero.get('title')"></h1>
+</ctx>
 ```
 
-Two ways to keep this manageable:
-
-- **Iterating a list of objects already scopes** — `:loop` binds each element to
-  `$loop.it`, so `$loop.it.get('title')` is the per-item short form. The full-path
-  repetition only hurts for a *single* deeply-nested object referenced many times.
-- **Flatten in frontmatter** for that single-object case: lift the values you use
-  repeatedly to top-level `.custom` keys (`.custom = { .hero_eyebrow = "Hi",
-  .hero_title = "…" }`) so the layout reads `$page.custom.get('hero_eyebrow')` — one
-  `.get` instead of a chain. This keeps the typed nested shape out of the hot path.
-
-(A real `:with`/scoping directive would be a SuperHTML/Scripty change — the static
-layer is inherited from the upstream SSG (see the [repository README's
-Acknowledgements](../../README.md#acknowledgements)) — so it is out of
-scope here; this is the current, documented behaviour.)
+Within a loop, `$loop.it` remains the current item. Flattening frontmatter is
+also an option when the nested shape adds no value.
 
 ## 6. Interactive components → TSX islands (the core of the work)
 
@@ -637,7 +623,7 @@ emit real per-entry pages:
   staticPaths: async () => (await loadClubs()).map((c) => ({ id: c.id })) }
 ```
 
-Full reference: [docs/spa.md](../spa.md).
+Full reference: [docs/spa.md](https://github.com/valthon/zigapagos/blob/main/docs/spa.md).
 
 ## 14. Images: `<Image>` / `astro:assets` → `image_optimize`
 
@@ -650,7 +636,7 @@ Full reference: [docs/spa.md](../spa.md).
 | `format="avif"` / per-`<Image>` format choice | not supported | No per-image format override — `image_optimize`'s codec set (WebP always, AVIF iff `avif_encoder` is set) applies uniformly. See [Gaps](#gaps-not-yet-supported). |
 | `<Image>`'s automatic `<picture>`/`srcset`/`sizes` output | `<picture>` with one `<source>` per active codec (best-format-first: AVIF before WebP), `w`-descriptor `srcset`, and `.image_optimize.sizes` (default `"100vw"`) on each `<source>` | Same shape, generated the same way — no `<Picture>`-equivalent component to import; it happens automatically for every `$image` directive once the config block is on. |
 
-Full reference: [docs/images.md](../images.md).
+Full reference: [docs/images.md](https://github.com/valthon/zigapagos/blob/main/docs/images.md).
 
 ## Gaps (not yet supported)
 
@@ -730,6 +716,6 @@ NDJSON object per build error on stderr instead of prose — a stable `code`
 field to switch on, plus `file`/`line`/`col` when known. Run `zigapagos
 explain-code <CODE>` for the long-form fix for any code that shows up
 (`zigapagos explain-code` with no argument lists them all). See
-[`docs/diagnostics.md`](../diagnostics.md)
-for the full schema and stability contract, including what stays
-prose (page-render errors, most `Config.load` fatals) as of this writing.
+[`docs/diagnostics.md`](https://github.com/valthon/zigapagos/blob/main/docs/diagnostics.md)
+for the full schema and stability contract. Page-render and configuration
+failures also use structured diagnostics; low-level process output may remain prose.

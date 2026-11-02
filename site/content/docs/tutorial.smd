@@ -82,8 +82,8 @@ Then `layouts/guides.shtml`, which loops over the section's pages:
 <body id="body">
   <h1 :text="$page.title"></h1>
   <div :html="$page.content()"></div>
-  <ul>
-    <li :loop="$page.subpages()">
+  <ul :loop="$page.subpages()">
+    <li>
       <a href="$loop.it.link()" :text="$loop.it.title"></a>
     </li>
   </ul>
