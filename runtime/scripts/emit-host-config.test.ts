@@ -956,3 +956,16 @@ test("emitAllCsp threads speculationRules into every host flavor's script-src", 
     expect(f.content).not.toContain("inline-speculation-rules");
   }
 });
+
+// Keep generated advice on the supported side of ZigBase's config surface
+// until valthon/zigbase#470 provides static response headers.
+test("ZigBase CSP guidance gives a proxy recipe instead of an unsupported App key", () => {
+  const hashes = scanInlineScriptHashes([PAGE]);
+  const file = emitAllCsp(hashes).find((f) => f.name === "csp.zigbase.txt")!;
+  expect(file.content).toContain("ZigBase cannot configure static response headers yet");
+  expect(file.content).toContain("https://github.com/valthon/zigbase/issues/470");
+  expect(file.content).toContain(`add_header Content-Security-Policy "${cspHeaderValue(hashes)}" always;`);
+  expect(file.content).toContain("proxy_pass http://127.0.0.1:PORT;");
+  expect(file.content).not.toContain(".headers");
+  expect(file.content).not.toContain("App config");
+});

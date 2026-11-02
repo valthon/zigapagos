@@ -1330,7 +1330,9 @@ writes a ready-to-merge CSP at the site root:
 
 - `csp.nginx.conf` — an `add_header Content-Security-Policy "…" always;` line.
 - `csp.apache.conf` — a `Header set Content-Security-Policy "…"` line.
-- `csp.zigbase.txt` — the header value to set in ZigBase's response-header config.
+- `csp.zigbase.txt` — the header value and an Nginx reverse-proxy example.
+  ZigBase cannot configure static response headers yet; track
+  [ZigBase #470](https://github.com/valthon/zigbase/issues/470).
 
 All three carry the same host-agnostic value:
 
