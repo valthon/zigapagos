@@ -190,8 +190,8 @@ try_core_backtrace() { # $1 = cwd the process ran in
 #
 # `wait` reports the status of a child of THIS shell, so it works on the pid
 # launch_group returned even though that pid leads a process group.
-wait_ready() { # $1 = log, $2 = pid (optional)
-  local log=$1 pid=${2:-}
+wait_ready() { # $1 = log, $2 = pid (optional), $3 = timeout seconds
+  local log=$1 pid=${2:-} timeout=${3:-60}
   local start=$SECONDS
   until grep -q 'dev: ready' "$log" 2>/dev/null; do
     if [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then
@@ -227,7 +227,7 @@ wait_ready() { # $1 = log, $2 = pid (optional)
       has_zig_trace "$log" || try_core_backtrace "$SRC"
       fail "a process dev spawned CRASHED before dev became ready -- see the signature above"
     fi
-    (( SECONDS - start < 60 )) || { dump_log "$log"; fail "dev never became ready (60s timeout; process still alive)"; }
+    (( SECONDS - start < timeout )) || { dump_log "$log"; fail "dev never became ready (${timeout}s timeout; process still alive)"; }
     sleep 0.5
   done
 }
@@ -306,7 +306,9 @@ TOUCH1="$(cat "$DATA/stub-zigbase.touch")"
 
 sed -i.bak 's/DEVLOOP-MARKER-V1/DEVLOOP-MARKER-V2/' "$SRC/content/index.smd" && rm -f "$SRC/content/index.smd.bak"
 poll 60 serves "$ORIGIN" "DEVLOOP-MARKER-V2" || { cat "$WORK/dev1.log"; fail "edited content never reached the served output"; }
-grep -q "dev: rebuild OK" "$WORK/dev1.log" || { cat "$WORK/dev1.log"; fail "no rebuild-OK line after the edit"; }
+# The child can write output before it exits and dev finishes reload injection
+# and notification. Wait for that completion before checking its artifacts.
+poll 30 grep -q "dev: rebuild OK" "$WORK/dev1.log" || { cat "$WORK/dev1.log"; fail "no rebuild-OK line after the edit"; }
 echo "PASS: a source edit triggered a rebuild that changed the served output"
 
 # --- (c2) live-reload: injected snippet + SSE reload on rebuild ----------------------
@@ -382,8 +384,7 @@ TSX_PID="$(launch_group "$SITE" "$WORK/tsx-dev.log" \
 # The first rebuild bundles five .spa.tsx entries and four islands through bun
 # from a cold `.zigapagos-cache`. Overridable so a constrained runner can raise
 # it without editing this file.
-poll "${ZIGAPAGOS_E2E_TSX_DEV_TIMEOUT:-900}" grep -q 'dev: ready' "$WORK/tsx-dev.log" \
-  || { tail -50 "$WORK/tsx-dev.log"; fail "tsx-site zigapagos dev never became ready"; }
+wait_ready "$WORK/tsx-dev.log" "$TSX_PID" "${ZIGAPAGOS_E2E_TSX_DEV_TIMEOUT:-900}"
 TSX_ORIGIN="$(origin_from_log "$WORK/tsx-dev.log")"
 curl -sf "$TSX_ORIGIN/" | grep -q 'data-z-island' || fail "tsx-site / missing islands SSR"
 curl -sf "$TSX_ORIGIN/app/" | grep -q 'id="z-spa-root"' || fail "tsx-site /app/ not a SPA shell"
