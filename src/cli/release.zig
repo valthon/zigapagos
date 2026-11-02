@@ -7,6 +7,7 @@ const root = @import("../root.zig");
 const worker = @import("../worker.zig");
 const spa_mod = @import("../spa.zig");
 const sitemap = @import("../sitemap.zig");
+const Summary = @import("../summary.zig").Summary;
 const diag = @import("../diag.zig");
 const Allocator = std.mem.Allocator;
 const BuildAsset = root.BuildAsset;
@@ -152,6 +153,8 @@ pub fn release(
     worker.start(io);
     defer if (builtin.mode == .Debug) worker.stopWaitAndDeinit(io);
 
+    var summary: Summary = .{};
+    defer summary.deinit(gpa);
     const build = root.run(io, gpa, &cfg, .{
         .base_dir_path = base_dir_path,
         .build_assets = &cmd.build_assets,
@@ -175,6 +178,7 @@ pub fn release(
         .island_manifest_path = island_manifest_path,
         .allow_missing_pages = cmd.allow_missing_pages,
         .summary = cmd.summary,
+        .summary_sink = if (cmd.summary) &summary else null,
     }) catch fatal.oom();
 
     defer if (builtin.mode == .Debug) build.deinit(io, gpa);
@@ -215,6 +219,7 @@ pub fn release(
             "error: emitting sitemap.xml failed: {s}\n",
             .{@errorName(err)},
         );
+        if (cmd.summary) try summary.add(gpa, .site_asset, "sitemap.xml");
     }
 
     // Host config + strict-CSP + Cache-Control artifacts, over the tree that
@@ -228,15 +233,33 @@ pub fn release(
     // `**/*.html` under the output directory, which only exist once the render
     // and install phases have written them.
     if (rt_defaults) |rt| if (cmd.islands.len > 0 or cmd.spas.len > 0) {
+        const report_path = try std.fs.path.join(gpa, &.{ base_dir_path, bundle_cache_path, "host-config-report.json" });
+        defer gpa.free(report_path);
         runDriver(io, gpa, cmd.bun_path orelse "bun", ".", &.{
             rt.host_config_emitter,
             "--site",
             cmd.output_dir_path orelse "public",
+            "--report",
+            if (cmd.summary) report_path else "",
         }, environ_map) catch |err| fatal.msg(
             "error: emitting host config failed: {s}\n",
             .{@errorName(err)},
         );
+        if (cmd.summary) {
+            const report = std.Io.Dir.cwd().readFileAlloc(io, report_path, gpa, .limited(16 * 1024 * 1024)) catch |err| fatal.msg("error reading host-config inventory: {t}\n", .{err});
+            defer gpa.free(report);
+            const paths = std.json.parseFromSlice([]const []const u8, gpa, report, .{}) catch |err| fatal.msg("invalid host-config inventory: {t}\n", .{err});
+            defer paths.deinit();
+            for (paths.value) |path| try summary.add(gpa, .host_config, path);
+        }
     };
+
+    if (cmd.summary and changed_files.len == 0) {
+        var buffer: [8 * 1024]u8 = undefined;
+        var stdout = std.Io.File.stdout().writerStreaming(io, &buffer);
+        summary.render(&stdout.interface, cmd.output_dir_path orelse "public") catch |err| fatal.msg("error writing build summary: {t}\n", .{err});
+        stdout.interface.flush() catch |err| fatal.msg("error flushing build summary: {t}\n", .{err});
+    }
 
     return false;
 }

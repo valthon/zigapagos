@@ -383,4 +383,36 @@ grep -q '^build summary: ' "$WORK/err.out" && {
 }
 echo "PASS (9): a build with rendering errors refuses on stdout, the same stream the report uses"
 
+# The public runtime-enabled CLI also emits host files and the sitemap AFTER
+# root.run. They must appear in the final inventory, without including stale
+# files that --force preserved from another release.
+sed '/^Site {/a\    .sitemap = true,' "$SITE/zigapagos.ziggy" > "$WORK/config"
+mv "$WORK/config" "$SITE/zigapagos.ziggy"
+mkdir -p "$WORK/complete-out"
+printf 'preserved' > "$WORK/complete-out/preserved.txt"
+(cd "$SITE" && ZIGAPAGOS_RUNTIME_DIR="$REPO/runtime" "$ZIGAPAGOS" release \
+  --force --summary --output="$WORK/complete-out" "--spa=app/app.spa.tsx|/app") > "$WORK/complete.log" 2>&1
+python3 - "$WORK/complete-out" "$WORK/complete.log" <<'PY'
+from pathlib import Path
+import sys
+out, log = map(Path, sys.argv[1:])
+printed = {line[4:] for line in log.read_text().splitlines() if line.startswith('    ')}
+actual = {str(path.relative_to(out)) for path in out.rglob('*') if path.is_file()} - {'preserved.txt'}
+assert printed == actual, (sorted(actual - printed), sorted(printed - actual))
+assert {'sitemap.xml', 'app/.spa', 'app/zigbase.static_routes.zig', 'csp.nginx.conf', 'cache.apache.conf'} <= printed
+PY
+echo "PASS (10): complete CLI inventory includes host files and sitemap, excluding preserved files"
+# Config discovery can find a parent site while bundling caches in the child
+# invocation directory. The inventory report must not depend on a prior build.
+rm -rf "$SITE/.zigapagos-cache"
+mkdir -p "$SITE/invoke"
+(cd "$SITE/invoke" && ZIGAPAGOS_RUNTIME_DIR="$REPO/runtime" "$ZIGAPAGOS" release \
+  --force --summary --output="$WORK/child-out" --island-src-dir="$SITE" \
+  "--spa=$SITE/app/app.spa.tsx|/app") > "$WORK/child.log" 2>&1 || {
+  cat "$WORK/child.log"; fail "summary failed from a clean child invocation directory";
+}
+grep -q '^build summary:' "$WORK/child.log" || fail "child invocation omitted the summary"
+test -d "$SITE/.zigapagos-cache/bundles" || fail "child invocation did not use the site's bundle cache"
+test ! -e "$SITE/invoke/.zigapagos-cache" || fail "child invocation created a second cache under the working directory"
+echo "PASS (11): child invocation creates the inventory report directory"
 echo "PASS: --summary reports exactly the artifacts the build emitted"
