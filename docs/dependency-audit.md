@@ -1,5 +1,48 @@
 # Dependency audits
 
+## Runtime and toolchain follow-up — 2026-11-01
+
+Updated the dependency versions in PR #245 after checking the npm registry,
+upstream releases, and existing Dependabot PRs. Earlier audits below are
+historical snapshots.
+
+| Dependency | Selected version |
+| --- | --- |
+| `preact-render-to-string` | 6.8.2 |
+| `happy-dom` / `@happy-dom/global-registrator` | 21.0.4 |
+| `@types/bun` / `bun-types` | 1.4.4 |
+| `@types/node` | 26.6.6 |
+| Bun | 1.4.4 |
+| Ruby | 4.0.9 |
+| `jdx/mise-action` | v5 (current release 5.2.5) |
+
+Happy DOM 21.0.4 fixes the ESM compiler injection identified by
+[GHSA-834v-8h66-3h79](https://github.com/advisories/GHSA-834v-8h66-3h79).
+Its v21 defaults disable external CSS and iframe loading; no loading opt-ins
+were added to the runtime's test harness. mise-action v5's default 24-hour
+minimum release age applies to mise itself; the repository's tool versions
+remain explicitly pinned.
+
+The consumer build exposed separate Preact instances when a local `file:`
+runtime package was materialized under the site's `node_modules`. SSR now
+binds runtime targets to the sidecar's own tree while preserving custom
+non-runtime aliases. Regression tests copy the runtime and Preact packages
+into a separate site and render a hooked Router with and without a React
+bridge; both fail before the resolver change and pass after it.
+
+Regenerated all four Bun lockfiles using Bun 1.4.4 so the site, TSX example,
+and styling example resolve the same runtime dependencies. Compatible
+transitive updates include `@types/ws` 8.18.2 and `ws` 8.22.1. No resolved
+package versions were downgraded and no package overrides were added.
+
+Retained Preact 10.29.8: the Preact 11 update in PR #241 fails when the compat
+bridge re-exports the removed `SuspenseList`. TypeScript stays at 6.0.3
+because the slicer and hot transform require its compiler API. Zig remains
+0.16.0; moving it and the compiler-dependent Zig package pins to 0.17 requires
+a migration. Tailwind/CLI 4.3.3 are current. The Rails migration fixtures
+continue to model historical input projects; their Gemfile lock versions
+were not upgraded.
+
 ## npm follow-up — 2026-09-19
 
 Queried the public npm registry for all nine direct registry dependencies and

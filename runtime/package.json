@@ -27,13 +27,13 @@
   },
   "dependencies": {
     "preact": "^10.29.8",
-    "preact-render-to-string": "^6.7.0"
+    "preact-render-to-string": "^6.8.2"
   },
   "devDependencies": {
-    "@happy-dom/global-registrator": "^20.14.5",
-    "@types/bun": "^1.4.2",
-    "@types/node": "^26.6.2",
-    "happy-dom": "^20.14.5",
+    "@happy-dom/global-registrator": "^21.0.4",
+    "@types/bun": "^1.4.4",
+    "@types/node": "^26.6.6",
+    "happy-dom": "^21.0.4",
     "typescript": "^6.0.3"
   }
 }

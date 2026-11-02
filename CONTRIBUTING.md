@@ -36,11 +36,11 @@ The practical consequence for a contributor:
 
 ```
 zig = "0.16.0"
-bun = "1.4.2"
+bun = "1.4.4"
 ```
 
 ```sh
-mise install          # or install zig 0.16.0 + bun 1.4.2 yourself
+mise install          # or install zig 0.16.0 + bun 1.4.4 yourself
 ```
 
 This repo tracks **released** Zig, not nightlies — `build.zig.zon` sets

@@ -151,12 +151,13 @@ export const spa = {
 };
 ```
 
-Each entry is an attribute map for one `<link>` tag, rendered in declaration
-order immediately after the import map and before any `modulepreload` —
+A flat entry is an attribute map for one `<link>` tag; `{ meta: { ... } }`
+adds a `<meta>` tag. Entries render in declaration order immediately after
+the import map and before any `modulepreload` —
 `<link rel="stylesheet" href="/styles.css"><link rel="preconnect" href="https://fonts.example.com">`.
 The structured form (rather than a raw HTML string) keeps the [strict-CSP
 hash story](#content-security-policy-strict-csp) intact: `spa.head` can only
-ever add `<link>` tags, never a new inline `<script>`. Attribute names must be
+add `<link>` and `<meta>` tags. Attribute names must be
 a literal HTML attribute name (`[a-zA-Z][a-zA-Z0-9-]*`) — anything else fails
 the build with an error naming the SPA and the offending attribute; attribute
 values are HTML-escaped.
@@ -203,6 +204,35 @@ hook at all means you've made a deliberate choice. It is a warning, not a
 build error, and — like the head-asset staging check above — runs in
 **release builds only** (`zigapagos release`); the dev server does not
 evaluate it.
+
+### Installable apps
+
+Use `spa.lang` for the document language and `spa.viewport` to override the
+viewport content (the default remains `width=device-width,initial-scale=1`).
+For an installable app, a typical static shell configuration is:
+
+```tsx
+export const spa = {
+  base: "/app/",
+  lang: "en",
+  viewport: "width=device-width,initial-scale=1,viewport-fit=cover",
+  head: [
+    { rel: "manifest", href: "/app.webmanifest" },
+    { rel: "apple-touch-icon", href: "/apple-touch-icon.png" },
+    { meta: { name: "theme-color", content: "#fff", media: "(prefers-color-scheme: light)" } },
+    { meta: { name: "theme-color", content: "#111", media: "(prefers-color-scheme: dark)" } },
+    { meta: { name: "apple-mobile-web-app-title", content: "My App" } },
+    { meta: { name: "apple-mobile-web-app-status-bar-style", content: "black-translucent" } },
+    { meta: { name: "description", content: "My installable app" } },
+  ],
+};
+```
+
+Supply the manifest and icons in the assets directory. `viewport-fit=cover`
+lets your CSS use `env(safe-area-inset-*)` around device cutouts. Metadata stays
+static across routes and adds no inline scripts or CSP hashes. Meta attribute
+names follow the same build-time validation and values the same HTML escaping
+as link attributes. Use `spa.viewport` to replace the generated viewport tag.
 
 ### Feature-flag defaults (`spa.flags`)
 
@@ -1300,7 +1330,9 @@ writes a ready-to-merge CSP at the site root:
 
 - `csp.nginx.conf` — an `add_header Content-Security-Policy "…" always;` line.
 - `csp.apache.conf` — a `Header set Content-Security-Policy "…"` line.
-- `csp.zigbase.txt` — the header value to set in ZigBase's response-header config.
+- `csp.zigbase.txt` — the header value and an Nginx reverse-proxy example.
+  ZigBase cannot configure static response headers yet; track
+  [ZigBase #470](https://github.com/valthon/zigbase/issues/470).
 
 All three carry the same host-agnostic value:
 

@@ -130,7 +130,11 @@ EOF
 
 cat > "$SITE/app/app.spa.tsx" <<'TSX'
 import { Router } from "@z/runtime";
-export const spa = { base: "/app", title: "cli emit spa", head: [] };
+export const spa = {
+  base: "/app", title: "cli emit spa", lang: "en",
+  viewport: "width=device-width,initial-scale=1,viewport-fit=cover",
+  head: [{ meta: { name: "theme-color", content: "#111", media: "(prefers-color-scheme: dark)" } }],
+};
 function Home() { return <div data-view="home">home</div>; }
 export const routes = [{ path: "/", component: Home }];
 export default function App() { return <Router base={spa.base} routes={routes} />; }
@@ -151,6 +155,12 @@ fi
 
 PAGE="$OUT/index.html"
 [[ -f "$PAGE" ]] || fail "no index.html was written"
+
+# Installable-app metadata crosses describe -> prerender -> release output.
+SPA_PAGE="$OUT/app/index.html"
+grep -q '<html lang="en">' "$SPA_PAGE" || fail "SPA lang missing"
+grep -q 'content="width=device-width,initial-scale=1,viewport-fit=cover"' "$SPA_PAGE" || fail "SPA viewport override missing"
+grep -q '<meta name="theme-color" content="#111" media="(prefers-color-scheme: dark)">' "$SPA_PAGE" || fail "SPA meta entry missing"
 
 # --- 1. The per-SITE islands runtime slice ----------------------------------
 [[ -f "$OUT/islands/_runtime.js" ]] \
@@ -184,6 +194,14 @@ done
 # three files.
 grep -q "sha256-" "$OUT/csp.nginx.conf" \
   || fail "csp.nginx.conf carries no inline-script hash — it was emitted over a tree with no pages"
+
+# ZigBase has no static response-header config until zigbase#470. The release
+# must tell operators to configure a proxy, with these exact release hashes.
+grep -q 'ZigBase cannot configure static response headers yet' "$OUT/csp.zigbase.txt" || fail "ZigBase header limitation missing"
+grep -q 'proxy_pass http://127.0.0.1:PORT;' "$OUT/csp.zigbase.txt" || fail "ZigBase proxy recipe missing"
+if grep -q '\.headers' "$OUT/csp.zigbase.txt"; then fail "unsupported ZigBase headers key recommended"; fi
+NGINX_CSP="$(grep '^add_header Content-Security-Policy ' "$OUT/csp.nginx.conf")"
+grep -Fq "#   $NGINX_CSP" "$OUT/csp.zigbase.txt" || fail "proxy recipe disagrees with release CSP"
 
 # Same presence-and-agreement stance for Cache-Control: assert the two header
 # VALUES actually appear, not just the file.

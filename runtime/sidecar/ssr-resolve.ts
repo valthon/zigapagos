@@ -15,24 +15,26 @@
 // bun-test preload (src/testing/preload.ts), which applies the same
 // resolve-map overrides so out-of-tree workspace views resolve identically
 // under `bun test` — with its own mockable @z/site-data.
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import { createRequire } from "node:module";
 import {
   loadConfig,
   effectiveResolveMap,
   resolveConfigTarget,
+  RUNTIME_SELF_ENTRIES,
   type ZRuntimeConfig,
 } from "../scripts/z-runtime-config.ts";
 import { buildSiteData } from "../scripts/site-data.ts";
 
 /**
- * Resolve an override TARGET to an importable path — the shared
- * `resolveConfigTarget` (z-runtime-config.ts): the config's dir first, the
- * framework runtime/ tree as fallback, an actionable error otherwise. The
- * client bundler plugin (react-alias.ts) uses the same resolver, so a bad
- * target fails identically on both sides.
+ * Runtime targets must come from the sidecar's own tree: a site's materialized
+ * file: package can have a separate Preact, whose hooks cannot run under this
+ * sidecar's renderer. Other targets retain config-directory-first resolution.
  */
-export const resolveSsrTarget = resolveConfigTarget;
+export function resolveSsrTarget(target: string, baseDir: string): string {
+  const runtimeTarget = target === "@z/runtime" || target.startsWith("@z/runtime/");
+  return resolveConfigTarget(target, runtimeTarget ? resolve(import.meta.dir, "..") : baseDir);
+}
 
 // Specs already overridden in this process — Bun module overrides are
 // process-global, so re-registration (e.g. two bundleSpa calls in one test
@@ -118,15 +120,18 @@ export interface SsrOverridesResult {
 }
 
 /**
- * Register ONLY the effective `resolve`-map overrides (no @z/site-data) —
- * shared by registerSsrModuleOverrides and the bun-test preload
+ * Register the runtime self-entries and effective `resolve`-map overrides
+ * (no @z/site-data) — shared by registerSsrModuleOverrides and the bun-test preload
  * (src/testing/preload.ts), which supplies its own mockable @z/site-data.
  * Discovers z-runtime.config.json upward from `startDir`.
  */
 export function registerResolveOverrides(startDir: string): SsrOverridesResult {
   const { config, path } = loadConfig({ startDir });
   const baseDir = path ? dirname(path) : startDir;
-  for (const [spec, target] of Object.entries(effectiveResolveMap(config))) {
+  // Always share the renderer's runtime, even without a bridge/config file.
+  // Explicit resolve entries still win, including custom runtime replacements.
+  const overrides = { ...RUNTIME_SELF_ENTRIES, ...effectiveResolveMap(config) };
+  for (const [spec, target] of Object.entries(overrides)) {
     registerOverride(spec, target, baseDir);
   }
   return { config, configPath: path, baseDir };
