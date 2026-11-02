@@ -187,9 +187,11 @@ CHANGED="$(join -t $'\t' "$WORK/before.txt" "$WORK/after.txt" | awk -F'\t' '$2 !
 grep -q "BUNDLE-V2" "$OUT/islands/Counter.island.js" \
   || fail "the incremental rebuild did not reinstall the island bundle"
 # Hot-swap wiring: an island-ONLY change broadcasts an island hot-swap over
-# the SSE channel (srv.notifyIslands) instead of a full reload.
-grep -q "hot-swapping 1 island module(s)" "$LOG" \
-  || { cat "$LOG"; fail "island-only change should broadcast an island hot-swap, not a full reload"; }
+# the SSE channel (srv.notifyIslands) instead of a full reload. The rebuilt
+# HTML is readable before the parent finishes injection and notification, so
+# observing V2 above does not yet mean the hot-swap has been broadcast.
+poll 30 grep -q "hot-swapping 1 island module(s)" "$LOG" \
+  || { cat "$LOG"; fail "island-only rebuild never reported its hot-swap"; }
 echo "PASS: island edit re-SSR'd ONLY the mounting page (1 of $NPAGES), reinstalled the bundle, and hot-swapped"
 
 # --- (c) a non-island file under the watch dir -> FULL rebuild ----------------
