@@ -56,7 +56,7 @@ export { ReCAPTCHA, useRecaptcha, type RecaptchaHandle } from "./recaptcha.ts";
 // (browser-entry.ts) resolves `lazy` to the router's (one shared bundle, one name);
 // React.lazy is therefore not supported through the client bridge (see docs).
 export {
-  Children, Component, PureComponent, StrictMode, Suspense, SuspenseList,
+  Children, Component, PureComponent, StrictMode, Suspense,
   cloneElement, createContext, createElement, createFactory, createPortal, createRef,
   findDOMNode, flushSync, forwardRef, hydrate, isFragment, isMemo,
   isValidElement, lazy, memo, render, startTransition, unmountComponentAtNode,

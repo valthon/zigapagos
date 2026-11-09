@@ -27,7 +27,7 @@ export type { RecaptchaHandle, SharedResource } from "./compat/index.ts";
 // already in the barrel; `lazy` is deliberately omitted (the barrel's router
 // `lazy` owns that name in the shared bundle — React.lazy is unavailable here).
 export {
-  Children, Component, PureComponent, StrictMode, Suspense, SuspenseList,
+  Children, Component, PureComponent, StrictMode, Suspense,
   cloneElement, createElement, createFactory, createRef, findDOMNode, flushSync,
   hydrate, isFragment, isMemo, isValidElement, memo, render,
   startTransition, unmountComponentAtNode, unstable_batchedUpdates, useDebugValue,
