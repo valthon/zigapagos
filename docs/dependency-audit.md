@@ -1,5 +1,38 @@
 # Dependency audits
 
+## Preact 11 migration — 2026-11-07
+
+Upgraded Preact from 10.29.8 to 11.2.0, the npm `latest` release checked on
+November 7. Dependabot PR #246 proposed 11.0.2 and failed because both the
+compatibility bridge and browser entry re-exported the removed `SuspenseList`.
+Those exports are removed; `Suspense` remains supported. The bridge also exposes
+Preact 11's `use` and `useEffectEvent` APIs.
+
+Removing the exports alone exposed three lifecycle regressions: a pending guard
+could redirect after unmount, a viewport prefetch observer stayed registered,
+and a removed view could still save reload state. Preact 11 defers passive-effect
+cleanup until after paint. Mount-owned subscriptions now use layout cleanup,
+and pending guards and lazy route loads check a synchronously cleared mounted
+ref. Router setup and guard execution stay in passive effects, so redirect
+aliases do not run guards twice and a first guard still runs after descendants'
+effects.
+
+All four Bun lockfiles resolve Preact 11.2.0. The string renderer remains at
+6.8.2, satisfying Preact 11.2's `>=6.7.0` peer requirement. No other resolved
+package versions changed. Historical audits below describe their original pins.
+
+Validation: every Linux verification step of the CI workflows passed locally in a
+clean checkout of an earlier revision of this migration, and so did its nine GitHub
+CI checks. Those steps cover the text gates, all Zig and Rails suites, the Bun
+runtime suite, the site build and budgets, all shell e2e shards, the Chrome browser
+lane, and the nginx + Chrome release rehearsal. Runtime typecheck and dependency
+gate, all four frozen installs, and structural and bundle parity also passed there.
+The final revision differs from that one only in router code, tests, and
+documentation; the branding and confidentiality gates, the Bun runtime suite, and
+the typecheck passed on it. The router unmount regressions and compatibility-export
+assertions were verified to fail without their fixes. The macOS nightly lane was
+not run.
+
 ## Runtime and toolchain follow-up — 2026-11-01
 
 Updated the dependency versions in PR #245 after checking the npm registry,

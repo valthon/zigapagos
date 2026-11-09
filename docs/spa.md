@@ -800,7 +800,9 @@ chunk is often already in cache:
   hover, keyboard tabbing, and a touch-device's tap-down before the tap completes.
 - **`"viewport"`.** An `IntersectionObserver` on the rendered `<a>` fires once, the first
   time it scrolls into view, then disconnects — a link that's already been seen doesn't
-  re-fire on every re-intersection.
+  re-fire on every re-intersection. A new `routes` array on the `Router` starts a fresh
+  observation against that table, so keep its identity stable (a module-level constant or
+  `useMemo`) rather than passing an inline literal from a parent that re-renders.
 - **`false`.** No prefetching for this `Link`.
 
 What actually happens: prefetching a route just means starting its `lazy()` loader (the
@@ -1511,6 +1513,10 @@ Rules & caveats:
   `React.lazy()` is NOT supported through the compat bridge: the shared runtime has a single `lazy`
   (this router one), so a React.lazy component would render the marker and throw. Wrap the *route*
   with zigapagos `lazy()` instead of using `React.lazy()` inside a component.
+- **`use()` from the compat bridge reads context, not promises, on anything prerendered.** The
+  sidecar renders with synchronous `renderToString`, so a component that calls `use(promise)` during
+  SSR fails the build with `Use "renderToStringAsync" for suspenseful rendering.` `use(context)` is
+  fine. Load data in an effect or a route `guard`, or render the suspending part only on the client.
 - **Keep lazy modules side-effect-free at module scope.** The chunk is `import()`-evaluated when
   the route is entered (before a guard authorizes it), so a top-level credentialed fetch or
   global registration would run pre-auth. Put side effects in effects/handlers.

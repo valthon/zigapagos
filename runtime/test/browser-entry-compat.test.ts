@@ -25,7 +25,7 @@ test("the BUILT shared runtime bundle exports the compat-only React surface", as
     // dropped export in the shipped bundle.
     for (const name of [
       "memo", "createElement", "Component", "PureComponent", "cloneElement",
-      "createRoot", "hydrateRoot",
+      "createRoot", "hydrateRoot", "use", "useEffectEvent",
     ]) {
       expect(typeof mod[name], `bundle export ${name}`).toBe("function");
     }
