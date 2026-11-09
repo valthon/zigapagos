@@ -63,7 +63,7 @@ export {
   unstable_batchedUpdates, useCallback, useContext, useDebugValue, useDeferredValue,
   useEffect, useId, useImperativeHandle, useInsertionEffect,
   useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore,
-  useTransition, version, Fragment,
+  useTransition, use, useEffectEvent, version, Fragment,
 } from "preact/compat";
 // The React default object (React.createElement, React.useState, …), for npm
 // components that `import React from "react"`.

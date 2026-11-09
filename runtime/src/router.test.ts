@@ -389,7 +389,6 @@ describe("Router client", () => {
     await flush();
     expect(window.location.pathname).toBe("/app/booking"); // resolved while mounted
     r.unmount();
-    await flush();
     // With no mounted Router the base is un-registered: navigate() must
     // resolve verbatim, NOT against the unmounted Router's stale "/app".
     navigate("/other-spa/x");
@@ -582,6 +581,27 @@ describe("Router guards", () => {
     await flush();
     expect(r.html()).toContain('data-gated="secret"');
     expect(r.html()).not.toContain('data-view="guard-fallback"');
+    r.unmount();
+    setLocationPathname("/app/");
+  });
+
+  // A layout-phase mount effect makes Preact flush the Router's passive effects
+  // at the start of the re-render it schedules, ahead of every descendant's.
+  test("the first guard runs after descendants' passive mount effects", async () => {
+    const order: string[] = [];
+    const Fallback = () => {
+      useEffect(() => { order.push("child-effect"); }, []);
+      return h("div", { "data-view": "guard-fallback" });
+    };
+    const routes: RouteDef[] = [{
+      path: "/secret", component: Secret,
+      guard: async () => { order.push("guard"); return true; },
+    }];
+    const App = () => h(Router, { base: "/app", routes, fallback: Fallback });
+    setLocationPathname("/app/secret");
+    const r = renderIsland(App, {}, { mode: "render", pathname: "/app/secret" });
+    await flush();
+    expect(order).toEqual(["child-effect", "guard"]);
     r.unmount();
     setLocationPathname("/app/");
   });
@@ -1737,6 +1757,35 @@ describe("Router lazy routes", () => {
     setLocationPathname("/app/");
   });
 
+  // A load abandoned before it rejects has nobody left to show the failure, so
+  // it must neither latch `failed` nor stay cached for the next mount to inherit.
+  // Rejecting right after unmount also covers Preact 11's after-paint cleanup gap.
+  test("a chunk rejection landing just after unmount does not strand a later mount on the skeleton", async () => {
+    let calls = 0;
+    let rejectFirst!: (err: Error) => void;
+    const loader = () => {
+      calls++;
+      if (calls === 1) return new Promise<{ default: ComponentType<any> }>((_, reject) => { rejectFirst = reject; });
+      return Promise.resolve({ default: Heavy });
+    };
+    const routes: RouteDef[] = [{ path: "/heavy", component: lazy(loader), skeleton: HeavySkeleton }];
+    const App = () => h(Router, { base: "/app", routes });
+    setLocationPathname("/app/heavy");
+    const first = renderIsland(App, {}, { mode: "render", pathname: "/app/heavy" });
+    await flush();
+    expect(calls).toBe(1);
+    first.unmount();
+    rejectFirst(new Error("chunk 404"));
+    await flush();
+
+    const second = renderIsland(App, {}, { mode: "render", pathname: "/app/heavy" });
+    await flush();
+    expect(calls).toBe(2);
+    expect(second.html()).toContain('data-heavy="yes"');
+    second.unmount();
+    setLocationPathname("/app/");
+  });
+
   test("two-phase hydrate: the skeleton hydrates cleanly, then flips to the chunk", async () => {
     const d = deferred<{ default: ComponentType<any> }>();
     const routes: RouteDef[] = [{ path: "/heavy", component: lazy(() => d.promise), skeleton: HeavySkeleton }];
@@ -1981,6 +2030,60 @@ describe("Router prefetch", () => {
       (globalThis as any).IntersectionObserver = realIO;
       setLocationPathname("/app/");
     }
+  });
+
+  test("a caller's object ref receives the anchor and viewport prefetch still observes it", async () => {
+    const callerRef: { current: HTMLAnchorElement | null } = { current: null };
+    const routes: RouteDef[] = [
+      { path: "/", component: () => h(Link, { href: "/heavy", prefetch: "viewport", ref: callerRef, "data-testid": "go" }, "heavy") },
+      { path: "/heavy", component: lazy(async () => ({ default: Heavy })), skeleton: HeavySkeleton },
+    ];
+    const PfApp = () => h(Router, { base: "/app", routes });
+    setLocationPathname("/app/");
+    const realIO = (globalThis as any).IntersectionObserver;
+    FakeIntersectionObserver.instances = [];
+    (globalThis as any).IntersectionObserver = FakeIntersectionObserver;
+    try {
+      const r = renderIsland(PfApp, {}, { mode: "render", pathname: "/app/" });
+      await flush();
+      const anchor = r.get('[data-testid="go"]');
+      // Identity booleans: a failed matcher on a DOM node prints the whole tree.
+      expect((callerRef.current as unknown) === anchor).toBe(true);
+      const observed = FakeIntersectionObserver.instances[0].observed as unknown[];
+      expect(observed.length === 1 && observed[0] === anchor).toBe(true);
+      r.unmount();
+      expect(callerRef.current === null).toBe(true);
+    } finally {
+      (globalThis as any).IntersectionObserver = realIO;
+      setLocationPathname("/app/");
+    }
+  });
+
+  test("a caller's callback ref keeps its null call or returned cleanup contract", async () => {
+    const plain: Array<HTMLAnchorElement | null> = [];
+    const withCleanup: string[] = [];
+    const plainRef = (el: HTMLAnchorElement | null) => { plain.push(el); };
+    const cleanupRef = (el: HTMLAnchorElement | null) => {
+      withCleanup.push(el ? "attach" : "null");
+      return () => { withCleanup.push("cleanup"); };
+    };
+    const routes: RouteDef[] = [{
+      path: "/",
+      component: () => h("div", {},
+        h(Link, { href: "/a", ref: plainRef, "data-testid": "plain" }, "a"),
+        h(Link, { href: "/b", ref: cleanupRef }, "b")),
+    }];
+    const PfApp = () => h(Router, { base: "/app", routes });
+    setLocationPathname("/app/");
+    const r = renderIsland(PfApp, {}, { mode: "render", pathname: "/app/" });
+    await flush();
+    const anchor = r.get('[data-testid="plain"]');
+    expect(plain.length === 1 && (plain[0] as unknown) === anchor).toBe(true);
+    expect(withCleanup).toEqual(["attach"]);
+    r.unmount();
+    expect(plain.length === 2 && plain[1] === null).toBe(true);
+    expect(withCleanup).toEqual(["attach", "cleanup"]);
+    setLocationPathname("/app/");
   });
 
   test("the Astro-standard save-data guard suppresses prefetching (navigator.connection.saveData)", async () => {

@@ -681,7 +681,7 @@ export async function describeRoutes(routes: RouteDef[]): Promise<LeafRouteMeta[
 }
 
 import {
-  h, createContext, useContext, useState, useEffect, useRef, hydrate,
+  h, createContext, useContext, useState, useEffect, useLayoutEffect, useRef, hydrate,
   useSyncExternalStore, useMemo, useCallback,
 } from "./core.ts";
 import { isServer, currentPathname, currentSearch, getUrlPathPrefix, setUrlPathPrefix, isConcretePrerender, setConcretePrerender, getPrerenderPathname, setPrerenderPathname } from "./ssr-env.ts";
@@ -1424,7 +1424,8 @@ export function Router(
   const [guardTick, setGuardTick] = useState(0);
   const guardRunsInFlight = useRef(0);
   const lastUnauthorizedReRunAt = useRef(0);
-  useEffect(() => {
+  const mounted = useRef(false);
+  useLayoutEffect(() => {
     if (isServer()) return;
     return onUnauthorizedResponse(() => {
       if (guardRunsInFlight.current > 0) return; // a run will settle this; don't recurse
@@ -1433,6 +1434,24 @@ export function Router(
       lastUnauthorizedReRunAt.current = now;
       setGuardTick((t) => t + 1); // re-run the guard pipeline at the current pathname
     });
+  }, []);
+  const stopListening = useRef<(() => void) | undefined>(undefined);
+  // Preact 11 defers passive cleanup until after paint, but the location
+  // listener and the global base must not outlive the commit that removes this
+  // Router, so only teardown is layout-phase. Setup stays passive below: a
+  // setState from a layout effect makes Preact flush this Router's passive
+  // effects ahead of every descendant's, so the first guard would run before a
+  // child's useEffect had set up whatever that guard reads.
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      stopListening.current?.();
+      // Un-register the base on unmount: a later navigate()/resolveHref call
+      // with NO mounted Router must resolve verbatim, not against this (now
+      // stale) Router's base. Render re-registers it, so a remount is fine.
+      routerBase = "";
+    };
   }, []);
   useEffect(() => {
     setHydrated(true);
@@ -1444,16 +1463,10 @@ export function Router(
       setPathname(window.location.pathname);
     };
     listeners.add(on);
+    stopListening.current = () => { listeners.delete(on); };
     on(); // sync in case navigation happened between render and effect
     setPrerenderPathname(undefined); // the shell snapshot belongs only to this initial mount
     setLocationReady(true);
-    return () => {
-      listeners.delete(on);
-      // Un-register the base on unmount: a later navigate()/resolveHref call
-      // with NO mounted Router must resolve verbatim, not against this (now
-      // stale) Router's base. Render re-registers it, so a remount is fine.
-      routerBase = "";
-    };
   }, []);
 
   // Declarative `redirect` entries resolve BEFORE rendering: `chain` is
@@ -1528,7 +1541,10 @@ export function Router(
     // guard = NOT authorized: its scope stays gated (fail-closed). Run the
     // Router-level guard first, then the chain's guards outermost→innermost,
     // authorizing each scope as it passes; the first non-`true` redirects.
-    const current = () => !cancelled && window.location.pathname === effectivePathname;
+    // Passive cleanup runs after paint in Preact 11. The layout-owned mounted
+    // ref closes the gap where a guard settles immediately after unmount.
+    const live = () => mounted.current && !cancelled;
+    const current = () => live() && window.location.pathname === effectivePathname;
     // The in-flight counter (session-expiry policy): while ANY guard run is
     // pending, a 401-triggered re-run request is ignored — so a guard whose own
     // probe 401s (through apiFetch) can't recurse into a second run. A counter
@@ -1556,7 +1572,7 @@ export function Router(
           authorize(rung.key, res.data);
         }
       } catch (err) {
-        if (cancelled) return;
+        if (!live()) return;
         host.reportError(err);
       } finally {
         guardRunsInFlight.current--;
@@ -1603,16 +1619,25 @@ export function Router(
       return;
     }
     let cancelled = false;
+    // Same layout-owned gap as the guard effect: `cancelled` is set after paint.
+    const live = () => mounted.current && !cancelled;
     // `startLazyLoad`, not `leafLazy.loader()` directly: reuses an in-flight
     // (or already-settled) promise a hover/viewport `prefetch()` may have
     // already started for this same route, so the two never double-fetch
     // the chunk (issue #128).
-    startLazyLoad(leafLazy).then((mod) => {
-      if (cancelled) return;
+    const load = startLazyLoad(leafLazy);
+    load.then((mod) => {
+      if (!live()) return;
       leafLazy.comp = mod.default;
       setLazyTick((t) => t + 1);
     }).catch((err) => {
-      if (cancelled) return;
+      if (!live()) {
+        // Nobody is left to show this failure. Drop the rejected promise so the
+        // next visit gets a fresh attempt rather than inheriting it and latching
+        // `failed`. Identity-checked for the same reason as the prefetch path.
+        if (leafLazy.promise === load) leafLazy.promise = undefined;
+        return;
+      }
       leafLazy.failed = true; // stay on the skeleton; don't retry-loop
       host.reportError(err);
     });
@@ -1807,7 +1832,7 @@ export function Link(
   },
 ): VNode<any> {
   const {
-    href, children, onClick: callerOnClick,
+    href, children, onClick: callerOnClick, ref: callerRef,
     prefetch: prefetchMode = "hover",
     onMouseEnter: callerOnMouseEnter, onFocus: callerOnFocus, onTouchStart: callerOnTouchStart,
     ...rest
@@ -1849,11 +1874,26 @@ export function Link(
   // Viewport-mode prefetch: observe the rendered <a>, prefetch once on first
   // intersection, then stop observing (a link that's been visible has had
   // its one shot; re-scrolling it into view should not re-fire). Guarded on
-  // `IntersectionObserver` existing (SSR has no DOM at all — `useEffect`
+  // `IntersectionObserver` existing (SSR has no DOM at all — `useLayoutEffect`
   // itself never runs there — and this also degrades harmlessly on an
   // ancient/non-browser client).
   const anchorRef = useRef<HTMLAnchorElement | null>(null);
-  useEffect(() => {
+  // Preact 11 delivers a caller's ref in props, so it shares the anchor with the
+  // observer above. Memoized because a new ref identity detaches and re-attaches.
+  // A cleanup the caller returns is passed on, since Preact then skips ref(null).
+  const setAnchor = useCallback((el: HTMLAnchorElement | null) => {
+    anchorRef.current = el;
+    if (typeof callerRef !== "function") {
+      if (callerRef) callerRef.current = el;
+      return;
+    }
+    const cleanup = callerRef(el);
+    if (typeof cleanup !== "function") return;
+    return () => { anchorRef.current = null; cleanup(); };
+  }, [callerRef]);
+  // Disconnect synchronously so a removed Link's anchor stops being observed;
+  // passive cleanup is deferred in Preact 11.
+  useLayoutEffect(() => {
     if (prefetchMode !== "viewport") return;
     if (typeof IntersectionObserver === "undefined") return;
     const el = anchorRef.current;
@@ -1870,13 +1910,10 @@ export function Link(
     obs.observe(el);
     return () => obs.disconnect();
   }, [prefetchMode, resolved]);
-  // `onClick`/`ref` LAST so `rest` can never clobber the router's handlers.
-  // (`ref` can't be in `rest` anyway — `h()` strips it into the vnode before a
-  // component ever sees its props — which is also why there is nothing to
-  // chain here: a caller's `ref` on a `<Link>` never reaches this function.)
+  // `onClick` LAST so `rest` can never clobber the router's handlers.
   return h(
     "a",
-    { href: resolved, ...rest, onClick, onMouseEnter, onFocus, onTouchStart, ref: anchorRef },
+    { href: resolved, ...rest, onClick, onMouseEnter, onFocus, onTouchStart, ref: setAnchor },
     children,
   );
 }

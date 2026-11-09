@@ -1511,6 +1511,10 @@ Rules & caveats:
   `React.lazy()` is NOT supported through the compat bridge: the shared runtime has a single `lazy`
   (this router one), so a React.lazy component would render the marker and throw. Wrap the *route*
   with zigapagos `lazy()` instead of using `React.lazy()` inside a component.
+- **`use()` from the compat bridge reads context, not promises, on anything prerendered.** The
+  sidecar renders with synchronous `renderToString`, so a component that calls `use(promise)` during
+  SSR fails the build with `Use "renderToStringAsync" for suspenseful rendering.` `use(context)` is
+  fine. Load data in an effect or a route `guard`, or render the suspending part only on the client.
 - **Keep lazy modules side-effect-free at module scope.** The chunk is `import()`-evaluated when
   the route is entered (before a guard authorizes it), so a top-level credentialed fetch or
   global registration would run pre-auth. Put side effects in effects/handlers.

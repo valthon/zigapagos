@@ -31,7 +31,7 @@ export {
   cloneElement, createElement, createFactory, createRef, findDOMNode, flushSync,
   hydrate, isFragment, isMemo, isValidElement, memo, render,
   startTransition, unmountComponentAtNode, unstable_batchedUpdates, useDebugValue,
-  useDeferredValue, useId, useInsertionEffect, useTransition,
+  useDeferredValue, useId, useInsertionEffect, useTransition, use, useEffectEvent,
   version,
 } from "./compat/index.ts";
 export { default } from "./compat/index.ts"; // the React default object (React.createElement, …)

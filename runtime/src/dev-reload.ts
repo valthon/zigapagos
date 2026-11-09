@@ -18,7 +18,7 @@
 // throws — a bad blob or unavailable storage falls back to the initial value.
 // ---------------------------------------------------------------------------
 
-import { useState, useEffect, useRef } from "./core.ts";
+import { useState, useLayoutEffect, useRef } from "./core.ts";
 import { isServer } from "./ssr-env.ts";
 
 // Namespaced so a restorable key can't collide with unrelated sessionStorage.
@@ -99,7 +99,9 @@ export function useRestorableState<T>(key: string, initial: T): RestorableState<
   const latest = useRef<T>(value);
   latest.current = value;
 
-  useEffect(() => {
+  // A reload immediately after unmount must not persist a removed view's
+  // state. Preact 11 defers passive cleanup, so this listener needs layout cleanup.
+  useLayoutEffect(() => {
     return onBeforeReload(() => writeSafely(storageKey, latest.current));
   }, [storageKey]);
 

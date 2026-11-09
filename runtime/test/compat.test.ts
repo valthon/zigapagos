@@ -9,7 +9,7 @@ test("@z/runtime/compat re-exports the React hook + element surface", () => {
   for (const name of [
     "useState", "useEffect", "useLayoutEffect", "useRef", "useMemo",
     "useCallback", "useReducer", "useContext", "useImperativeHandle",
-    "useSyncExternalStore", "useId",
+    "useSyncExternalStore", "useId", "use", "useEffectEvent",
     "createElement", "cloneElement", "createContext", "createRef",
     "forwardRef", "memo", "Component", "PureComponent", "Fragment",
     "Suspense", "isValidElement", "startTransition", "version",
