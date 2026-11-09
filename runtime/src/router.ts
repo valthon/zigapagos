@@ -1893,14 +1893,18 @@ export function Link(
   }, [callerRef]);
   // Disconnect synchronously so a removed Link's anchor stops being observed;
   // passive cleanup is deferred in Preact 11.
+  // The active guard also rejects notifications already queued at disconnect.
   useLayoutEffect(() => {
     if (prefetchMode !== "viewport") return;
     if (typeof IntersectionObserver === "undefined") return;
     const el = anchorRef.current;
     if (!el) return;
+    let active = true;
     const obs = new IntersectionObserver((entries) => {
+      if (!active) return;
       for (const entry of entries) {
         if (entry.isIntersecting) {
+          active = false;
           doPrefetch();
           obs.disconnect();
           break;
@@ -1908,8 +1912,9 @@ export function Link(
       }
     });
     obs.observe(el);
-    return () => obs.disconnect();
-  }, [prefetchMode, resolved]);
+    return () => { active = false; obs.disconnect(); };
+    // `ctx.prefetch` changes with the route table; `doPrefetch` must not keep an old one.
+  }, [prefetchMode, resolved, ctx?.prefetch]);
   // `onClick` LAST so `rest` can never clobber the router's handlers.
   return h(
     "a",

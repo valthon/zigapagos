@@ -19,6 +19,9 @@
 
 ### Fixed
 
+- Viewport prefetch ignores intersection notifications delivered after a Link
+  unmounts or its observation has already triggered a prefetch, and prefetches
+  against the current route table after the Router's `routes` change.
 - A lazy route chunk that fails after its Router has unmounted or navigated away
   no longer leaves the route stuck on its skeleton on the next visit.
 

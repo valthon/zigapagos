@@ -800,7 +800,9 @@ chunk is often already in cache:
   hover, keyboard tabbing, and a touch-device's tap-down before the tap completes.
 - **`"viewport"`.** An `IntersectionObserver` on the rendered `<a>` fires once, the first
   time it scrolls into view, then disconnects — a link that's already been seen doesn't
-  re-fire on every re-intersection.
+  re-fire on every re-intersection. A new `routes` array on the `Router` starts a fresh
+  observation against that table, so keep its identity stable (a module-level constant or
+  `useMemo`) rather than passing an inline literal from a parent that re-renders.
 - **`false`.** No prefetching for this `Link`.
 
 What actually happens: prefetching a route just means starting its `lazy()` loader (the

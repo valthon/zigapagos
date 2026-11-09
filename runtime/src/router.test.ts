@@ -2009,10 +2009,11 @@ describe("Router prefetch", () => {
     }
   });
 
-  test('prefetch="viewport" disconnects its observer on unmount even if never intersected', async () => {
+  test('prefetch="viewport" disconnects on unmount and ignores queued notifications', async () => {
+    let calls = 0;
     const routes: RouteDef[] = [
       { path: "/", component: () => h(Link, { href: "/heavy", prefetch: "viewport", "data-testid": "go" }, "heavy") },
-      { path: "/heavy", component: lazy(() => Promise.resolve({ default: Heavy })), skeleton: HeavySkeleton },
+      { path: "/heavy", component: lazy(() => { calls++; return Promise.resolve({ default: Heavy }); }), skeleton: HeavySkeleton },
     ];
     const PfApp = () => h(Router, { base: "/app", routes });
     setLocationPathname("/app/");
@@ -2026,6 +2027,48 @@ describe("Router prefetch", () => {
       expect(FakeIntersectionObserver.instances[0].disconnected).toBe(false);
       r.unmount();
       expect(FakeIntersectionObserver.instances[0].disconnected).toBe(true);
+      // disconnect() does not retract an already queued notification.
+      FakeIntersectionObserver.instances[0].fire(true);
+      await flush();
+      expect(calls).toBe(0);
+    } finally {
+      (globalThis as any).IntersectionObserver = realIO;
+      setLocationPathname("/app/");
+    }
+  });
+
+  test('prefetch="viewport" observes against the current route table when routes change', async () => {
+    let oldCalls = 0;
+    let newCalls = 0;
+    const Home = () => h(Link, { href: "/heavy", prefetch: "viewport", "data-testid": "go" }, "heavy");
+    const oldRoutes: RouteDef[] = [
+      { path: "/", component: Home },
+      { path: "/heavy", component: lazy(() => { oldCalls++; return Promise.resolve({ default: Heavy }); }), skeleton: HeavySkeleton },
+    ];
+    const newRoutes: RouteDef[] = [
+      { path: "/", component: Home },
+      { path: "/heavy", component: lazy(() => { newCalls++; return Promise.resolve({ default: Heavy }); }), skeleton: HeavySkeleton },
+    ];
+    let setRoutes!: (routes: RouteDef[]) => void;
+    const PfApp = () => {
+      const [routes, set] = useState(oldRoutes);
+      setRoutes = set;
+      return h(Router, { base: "/app", routes });
+    };
+    setLocationPathname("/app/");
+    const realIO = (globalThis as any).IntersectionObserver;
+    FakeIntersectionObserver.instances = [];
+    (globalThis as any).IntersectionObserver = FakeIntersectionObserver;
+    try {
+      const r = renderIsland(PfApp, {}, { mode: "render", pathname: "/app/" });
+      await flush();
+      setRoutes(newRoutes);
+      await flush();
+      FakeIntersectionObserver.instances.at(-1)!.fire(true);
+      await flush();
+      expect(oldCalls).toBe(0);
+      expect(newCalls).toBe(1);
+      r.unmount();
     } finally {
       (globalThis as any).IntersectionObserver = realIO;
       setLocationPathname("/app/");
