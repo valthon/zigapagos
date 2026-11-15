@@ -15,6 +15,176 @@ fi
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
+# Package metadata is not dependency evidence, even when it names frameworks.
+for metadata in '"keywords":["hexo","next"]' '"scripts":{"next":"hexo server"}' '"description":"next"'; do
+  mkdir -p "$WORK/package-metadata"
+  printf '{%s,"dependencies":{"hexo":"7"}}\n' "$metadata" > "$WORK/package-metadata/package.json"
+  "$ZIGAPAGOS" migrate "$WORK/package-metadata" -o "$WORK/METADATA.md"
+  grep -q 'Hexo' "$WORK/METADATA.md" || fail "package metadata changed framework detection"
+done
+mkdir -p "$WORK/dev-dependency"
+printf '%s\n' '{"devDependencies":{"next":"16"}}' > "$WORK/dev-dependency/package.json"
+"$ZIGAPAGOS" migrate "$WORK/dev-dependency" -o "$WORK/DEV.md"
+grep -q 'Next.js' "$WORK/DEV.md" || fail "devDependency-only Next.js was not detected"
+mkdir -p "$WORK/malformed"
+printf '%s\n' '{"dependencies":{"next":' > "$WORK/malformed/package.json"
+if "$ZIGAPAGOS" migrate "$WORK/malformed" -o "$WORK/MALFORMED.md" >"$WORK/malformed.log" 2>&1; then
+  fail "malformed package.json declared a framework"
+fi
+grep -q 'malformed package.json declares no dependencies' "$WORK/malformed.log" || fail "malformed JSON behavior was not explained"
+! grep -q 'Zigapagos debug stack trace' "$WORK/malformed.log" || fail "malformed package.json panicked"
+for name in hugo config; do
+  for extension in toml yaml yml json; do
+    HUGO_CONFIG="$WORK/hugo-$name-$extension"
+    mkdir -p "$HUGO_CONFIG/config/_default"
+    : > "$HUGO_CONFIG/config/_default/$name.$extension"
+    "$ZIGAPAGOS" migrate "$HUGO_CONFIG" -o "$WORK/HUGO-CONFIG.md"
+    grep -q 'Hugo' "$WORK/HUGO-CONFIG.md" || fail "Hugo config directory was not detected"
+  done
+done
+
+# Worklist coverage regressions (#254, #260, #261). Keep checking after a
+# missing entry so a baseline run demonstrates every reproduction independently.
+coverage_failures=0
+coverage_has() {
+  if ! grep -Fq -- "$2" "$1"; then
+    echo "FAIL coverage: $2"
+    coverage_failures=$((coverage_failures + 1))
+  fi
+}
+for fw in hugo jekyll 11ty next gatsby nuxt; do
+  site="$WORK/coverage-$fw"
+  mkdir -p "$site"
+  case "$fw" in
+    hugo)
+      printf "contentDir = 'content.en'\n" > "$site/hugo.toml"
+      paths='content.en/a.md content/a.md content.en/extra.html assets/source.md'
+      ;;
+    jekyll)
+      printf 'title: x\ncollections: {docs: {output: true}}\n' > "$site/_config.yml"
+      printf "gem 'jekyll'\n" > "$site/Gemfile"
+      paths='docs/a.md _docs/a.md docs/extra.html a.md'
+      ;;
+    11ty)
+      printf 'export default function () {}\nexport const config = { dir: { input: "." } };\n' > "$site/eleventy.config.js"
+      paths='posts/a.md posts/extra.html a.md'
+      ;;
+    next|gatsby|nuxt)
+      printf '{"dependencies":{"%s":"4.0.0"}}\n' "$fw" > "$site/package.json"
+      paths='_posts/a.md content/blog/b.md data/blog/c.mdx'
+      ;;
+  esac
+  for path in $paths; do
+    mkdir -p "$(dirname "$site/$path")"
+    printf '%s\n' '---' 'title: A' '---' 'A' > "$site/$path"
+  done
+  mkdir -p "$site/node_modules/ignored" "$site/.hidden"
+  printf 'ignored\n' > "$site/node_modules/ignored/no.md"
+  printf 'ignored\n' > "$site/.hidden/no.md"
+  ln -s node_modules/ignored "$site/linked"
+  if [[ "$fw" == nuxt ]]; then
+    for path in app.vue src/app.vue app/app.vue pages/about.vue layouts/default.vue components/Old.vue src/pages/old.vue src/layouts/old.vue src/components/Old.vue app/pages/about.vue app/layouts/default.vue app/components/New.vue; do
+      mkdir -p "$(dirname "$site/$path")"
+      printf '<template><p>About</p></template>\n' > "$site/$path"
+    done
+  fi
+  "$ZIGAPAGOS" migrate "$site" --from "$fw" --target "$WORK/coverage-out-$fw" > "$WORK/coverage-$fw.log" 2>&1
+  report="$WORK/coverage-out-$fw/MIGRATION.md"
+  coverage_has "$report" '### Content files not converted'
+  for path in $paths; do coverage_has "$report" "\`$path\`"; done
+  case "$fw" in
+    hugo|jekyll|11ty) coverage_has "$report" 'outside the adapter' ;;
+    *) coverage_has "$report" 'content-layer Markdown/MDX requires an explicit port' ;;
+  esac
+  awk '/^### Content files not converted/{inside=1;next} /^### /{inside=0} inside && /^- \[ \]/{print}' "$report" > "$WORK/content-lines"
+  LC_ALL=C sort -c "$WORK/content-lines" || fail 'unconverted content is not sorted'
+  if [[ "$fw" == nuxt ]]; then
+    for path in app.vue src/app.vue app/app.vue pages/about.vue layouts/default.vue components/Old.vue src/pages/old.vue src/layouts/old.vue src/components/Old.vue app/pages/about.vue app/layouts/default.vue app/components/New.vue; do
+      coverage_has "$report" "\`$path\`"
+    done
+  fi
+  ! grep -Fq 'no.md' "$report" || fail "coverage included dependencies/hidden files"
+  case "$fw" in
+    hugo)
+      [[ -f "$WORK/coverage-out-$fw/content/a.smd" ]] || fail 'Hugo control did not convert'
+      [[ ! -e "$WORK/coverage-out-$fw/content/content.en/a.smd" ]] || fail 'custom Hugo content unexpectedly converted'
+      ;;
+    jekyll|11ty) [[ -f "$WORK/coverage-out-$fw/content/a.smd" ]] || fail "$fw root control did not convert" ;;
+    next|gatsby|nuxt) [[ ! -f "$WORK/coverage-out-$fw/content/posts/a.smd" ]] || fail 'content layer was converted' ;;
+  esac
+  "$ZIGAPAGOS" migrate "$site" --from "$fw" -o "$WORK/coverage-repeat-$fw.md" > /dev/null 2>&1
+  "$ZIGAPAGOS" migrate "$site" --from "$fw" -o "$WORK/coverage-repeat2-$fw.md" > /dev/null 2>&1
+  cmp "$WORK/coverage-repeat-$fw.md" "$WORK/coverage-repeat2-$fw.md" || fail 'worklist is unstable'
+done
+[[ "$coverage_failures" == 0 ]] || fail "$coverage_failures missing worklist entries/sections"
+
+# Reports inside the source must not become input on the next run. Only the
+# resolved output path is excluded; a source page with the same basename stays.
+for fw in next gatsby nuxt hugo jekyll 11ty; do
+  for mode in default custom conventional; do
+    site="$WORK/report-$fw-$mode"
+    mkdir -p "$site/content"
+    printf 'Source page\n' > "$site/content/MIGRATION.md"
+    report_name=MIGRATION.md
+    output_args=()
+    if [[ "$mode" != default ]]; then
+      report_dir=reports
+      if [[ "$mode" == conventional ]]; then report_dir=content; fi
+      mkdir -p "$site/$report_dir"
+      report_name="$report_dir/worklist.markdown"
+      output_args=(--output "$site/$report_dir/../$report_name")
+      printf 'Another source page\n' > "$site/MIGRATION.md"
+    fi
+    for run in first second; do
+      (cd "$site" && "$ZIGAPAGOS" migrate . --from "$fw" "${output_args[@]}") > /dev/null 2>&1
+      cp "$site/$report_name" "$WORK/report-$fw-$mode-$run.md"
+    done
+    cmp "$WORK/report-$fw-$mode-first.md" "$WORK/report-$fw-$mode-second.md" || fail "$fw $mode report inventoried itself on repeat run"
+    grep -Fq '`content/MIGRATION.md`' "$site/$report_name" || fail "$fw excluded a source page by basename"
+    if [[ "$mode" != default ]]; then
+      grep -Fq '`MIGRATION.md`' "$site/$report_name" || fail "$fw excluded an unrelated root MIGRATION.md"
+    fi
+  done
+done
+
+# Resolve symlinks before interpreting '..', just as opening the report does.
+site="$WORK/report-symlink-parent"
+mkdir -p "$site/real/nested"
+ln -s real/nested "$site/link"
+printf 'Unrelated source page\n' > "$site/report.md"
+for run in first second; do
+  (cd "$site" && "$ZIGAPAGOS" migrate . --from next --output link/../report.md) > /dev/null 2>&1
+  cp "$site/real/report.md" "$WORK/report-symlink-$run.md"
+done
+cmp "$WORK/report-symlink-first.md" "$WORK/report-symlink-second.md" || fail 'symlink/.. report inventoried itself on repeat run'
+grep -Fq '`report.md`' "$site/real/report.md" || fail 'symlink/.. output excluded the unrelated root report.md'
+! grep -Fq '`real/report.md`' "$site/real/report.md" || fail 'symlink/.. output inventoried the real report'
+
+# These Markdown sources assume automatic heading anchors. Exercise a real
+# release before checking the config so an unresolved fragment is visible.
+for source in hugo jekyll 11ty hexo; do
+  SOURCE="$WORK/heading-$source"
+  TARGET="$WORK/heading-$source-target"
+  case "$source" in
+    hugo) PAGE="content/_index.md" ;;
+    hexo) PAGE="source/index.md" ;;
+    *) PAGE="index.md" ;;
+  esac
+  mkdir -p "$(dirname "$SOURCE/$PAGE")"
+  printf '%s\n' '---' 'title: Heading links' '---' '## Nope' '' '[x](#nope)' > "$SOURCE/$PAGE"
+  "$ZIGAPAGOS" migrate "$SOURCE" --from "$source" --target "$TARGET"
+  if [[ "$source" == hugo ]]; then
+    ( cd "$TARGET" && "$ZIGAPAGOS" release --force --output=out ) || fail "migrated Hugo heading link failed release"
+    grep -q 'id="nope"' "$TARGET/out/index.html" || fail "Hugo heading id was not rendered"
+  fi
+  grep -qF '.auto_heading_ids = true,' "$TARGET/zigapagos.ziggy" || fail "$source target omitted automatic heading ids"
+done
+
+ASTRO="$WORK/heading-astro"
+mkdir -p "$ASTRO"
+"$ZIGAPAGOS" migrate "$ASTRO" --from astro --target "$WORK/heading-astro-target"
+! grep -qF '.auto_heading_ids' "$WORK/heading-astro-target/zigapagos.ziggy" || fail "Astro target changed the heading-id default"
+
 # Next.js: no next.config file on purpose. Detection must use package.json,
 # and a colocated App Router client module must become a scaffold candidate.
 NEXT="$WORK/next"
@@ -76,6 +246,7 @@ grep -q "error accessing dir 'public'" "$WORK/bad-assets.log" || fail "invalid a
 NEXT_TARGET="$WORK/next-target"
 "$ZIGAPAGOS" migrate "$NEXT" --target "$NEXT_TARGET" >"$WORK/next-target.log" 2>&1
 [[ -f "$NEXT_TARGET/zigapagos.ziggy" ]] || fail "target assembly omitted zigapagos.ziggy"
+! grep -qF '.auto_heading_ids' "$NEXT_TARGET/zigapagos.ziggy" || fail "Next.js target changed the heading-id default"
 [[ -f "$NEXT_TARGET/layouts/index.shtml" ]] || fail "target assembly omitted its minimal layout"
 [[ -f "$NEXT_TARGET/content/index.smd" ]] || fail "Next.js target omitted the semantic-port placeholder"
 [[ -f "$NEXT_TARGET/components/Chart.island.tsx" ]] || fail "Next.js target omitted deterministic island scaffolding"
@@ -327,6 +498,12 @@ permalink: /hello/
 ---
 # Eleventy body
 MD
+cat > "$ELEVENTY/src/private.md" <<'MD'
+---js
+const draft = true;
+---
+Eleventy secret draft body 251
+MD
 : > "$ELEVENTY/src/_includes/card.njk"
 : > "$ELEVENTY/src/_layouts/base.njk"
 echo '{"siteName":"Example"}' > "$ELEVENTY/src/_data/site.json"
@@ -343,6 +520,17 @@ grep -q 'permalink: /hello/' "$ELEVENTY_OUT" || fail "Eleventy permalink was not
 grep -xF '# Eleventy body' "$ELEVENTY_OUT" || fail "Eleventy Markdown body was not preserved"
 grep -xF 'eleventy-icon' "$WORK/eleventy-assets/favicon.ico" || fail "Eleventy public asset was not copied at its URL path"
 grep -xF 'eleventy-logo' "$WORK/eleventy-assets/img/logo.txt" || fail "Eleventy root img asset was not copied at its URL path"
+
+# A language engine is never executed during import. Its unresolved draft
+# must remain excluded by the generated project's own production build.
+ELEVENTY_TARGET="$WORK/eleventy-target"
+"$ZIGAPAGOS" migrate "$ELEVENTY" --target "$ELEVENTY_TARGET"
+grep -xF '.draft = true,' "$ELEVENTY_TARGET/content/private.smd" || fail "Eleventy JS draft became public"
+grep -q 'migration_review = true' "$ELEVENTY_TARGET/content/private.smd" || fail "Eleventy JS review flag missing"
+grep -q 'migration_frontmatter = "const draft = true;' "$ELEVENTY_TARGET/content/private.smd" || fail "Eleventy JS block lost"
+( cd "$ELEVENTY_TARGET" && ZIGAPAGOS_BIN="$ZIGAPAGOS" bash "$ELEVENTY_TARGET/build.sh" ) || fail "Eleventy target build failed"
+[[ -f "$ELEVENTY_TARGET/zig-out/site/index.html" ]] || fail "Eleventy target emitted no homepage"
+! grep -rFq 'Eleventy secret draft body 251' "$ELEVENTY_TARGET/zig-out/site" || fail "Eleventy draft body was published"
 
 # Hexo: package/structure disambiguates its shared _config.yml name from
 # Jekyll, source/_posts paths normalize, drafts stay drafts, and theme EJS is
@@ -378,6 +566,29 @@ title: An idea
 ---
 Draft body
 MD
+cat > "$HEXO/source/_posts/private.md" <<'MD'
+title: Private Hexo title
+published: False
+date: 2013-12-24 23:29:08
+---
+Hexo secret draft body 258
+MD
+cat > "$HEXO/source/_posts/private-fenced.md" <<'MD'
+---
+title: Private fenced Hexo title
+published: FALSE
+---
+Hexo fenced secret draft body 270
+MD
+cat > "$HEXO/source/note.md" <<'MD'
+Note: this is ordinary Markdown.
+
+This paragraph must remain visible.
+
+---
+
+Remaining body
+MD
 printf 'hexo-image\n' > "$HEXO/source/images/photo.txt"
 mkdir -p "$HEXO/source/_posts/hello"
 printf 'relocated-post-image\n' > "$HEXO/source/_posts/hello/photo.txt"
@@ -404,6 +615,18 @@ HEXO_TARGET="$WORK/hexo-target"
 grep -xF '    .title = "Next Level Developer",' "$HEXO_TARGET/zigapagos.ziggy" || fail "Hexo title was not carried into the target config"
 grep -xF '    .host_url = "https://nextleveldeveloper.com",' "$HEXO_TARGET/zigapagos.ziggy" || fail "Hexo URL was not carried into the target config"
 ( cd "$HEXO_TARGET" && "$ZIGAPAGOS" validate ) || fail "assembled Hexo target is not valid Zigapagos input"
+grep -xF '.title = "Private Hexo title",' "$HEXO_TARGET/content/posts/private.smd" || fail "Hexo fence-less title was lost"
+grep -xF '.date = @date("2013-12-24T23:29:08"),' "$HEXO_TARGET/content/posts/private.smd" || fail "Hexo fence-less date was lost"
+grep -xF 'Note: this is ordinary Markdown.' "$HEXO_TARGET/content/note.smd" || fail "Hexo colon-bearing prose was stripped"
+grep -xF 'This paragraph must remain visible.' "$HEXO_TARGET/content/note.smd" || fail "Hexo paragraph was stripped"
+( cd "$HEXO_TARGET" && ZIGAPAGOS_BIN="$ZIGAPAGOS" bash "$HEXO_TARGET/build.sh" ) || fail "Hexo target build failed"
+[[ -f "$HEXO_TARGET/zig-out/site/index.html" ]] || fail "Hexo target emitted no homepage"
+! grep -rFq 'Hexo secret draft body 258' "$HEXO_TARGET/zig-out/site" || fail "Hexo draft body was published"
+! grep -rFq 'Hexo fenced secret draft body 270' "$HEXO_TARGET/zig-out/site" || fail "Hexo fenced draft body was published"
+[[ ! -e "$HEXO_TARGET/zig-out/site/posts/private/index.html" ]] || fail "Hexo fence-less draft route was published"
+[[ ! -e "$HEXO_TARGET/zig-out/site/posts/private-fenced/index.html" ]] || fail "Hexo fenced draft route was published"
+grep -xF '.draft = true,' "$HEXO_TARGET/content/posts/private.smd" || fail "Hexo fence-less draft became public"
+grep -xF '.draft = true,' "$HEXO_TARGET/content/posts/private-fenced.smd" || fail "Hexo fenced draft became public"
 mkdir -p "$VALIDATE/content/writing" "$VALIDATE/content/drafts"
 cp tests/rendering/simple/content/index.smd "$VALIDATE/content/writing/index.smd"
 cp tests/rendering/simple/content/index.smd "$VALIDATE/content/drafts/index.smd"

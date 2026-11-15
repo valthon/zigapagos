@@ -684,7 +684,9 @@ Flag these during migration; use the workaround:
    `components/`, `build.sh`, `package.json`, `tsconfig.json`.
 
    Run `zigapagos migrate <astro-dir>` to generate `MIGRATION.md`: a ready-to-follow
-   worklist with all islands detected.
+   worklist with all islands detected. For other adapters, the
+   [inventory scope](https://github.com/valthon/zigapagos/blob/main/docs/migration/other-frameworks.md#worklist-inventory-scope) specifies the
+   separate `Content files not converted` list and its scan exclusions.
 
    Example:
    ```

@@ -223,6 +223,8 @@ pub const Entry = struct {
     /// scanned file content, which `scanFile` frees before returning) — so it
     /// needs no separate free in `freeScanResult`; freeing `path` covers it.
     paginate: ?detect.PaginateSpec = null,
+    /// Static reason for inventory-only content; never a conversion candidate.
+    not_converted: ?[]const u8 = null,
 };
 
 pub const ScanResult = struct {
@@ -299,9 +301,7 @@ pub fn freeScanResult(gpa: Allocator, res: *ScanResult) void {
 fn packageDeclares(io: Io, gpa: Allocator, root: Io.Dir, dependency: []const u8) bool {
     const package = readFileContent(io, gpa, root, "package.json") catch return false;
     defer gpa.free(package);
-    const quoted = std.fmt.allocPrint(gpa, "\"{s}\"", .{dependency}) catch fatal.oom();
-    defer gpa.free(quoted);
-    return std.mem.indexOf(u8, package, quoted) != null;
+    return detect.packageDeclares(gpa, package, dependency) catch fatal.oom();
 }
 
 fn configMarker(io: Io, gpa: Allocator, root: Io.Dir, source: Source) bool {
@@ -326,7 +326,7 @@ fn configMarker(io: Io, gpa: Allocator, root: Io.Dir, source: Source) bool {
         .nextjs => &.{ "next.config.js", "next.config.mjs", "next.config.ts" },
         .gatsby => &.{ "gatsby-config.js", "gatsby-config.ts", "gatsby-config.mjs" },
         .nuxt => &.{ "nuxt.config.js", "nuxt.config.ts", "nuxt.config.mjs" },
-        .hugo => &.{ "hugo.toml", "hugo.yaml", "hugo.yml", "hugo.json" },
+        .hugo => &detect.hugo_config_markers,
         .jekyll => if ((fileExists(io, root, "Gemfile") or dirExists(io, root, "_posts") or
             dirExists(io, root, "_layouts") or dirExists(io, root, "_includes")) and
             !(dirExists(io, root, "source") and dirExists(io, root, "themes")))
@@ -381,7 +381,7 @@ fn detectSource(io: Io, gpa: Allocator, root: Io.Dir) Source {
         found = candidate;
     }
     return found orelse fatal.usageError(
-        "error: could not confidently detect a supported source framework; ask the project owner or pass --from astro|next|gatsby|nuxt|vue|hugo|jekyll|11ty|hexo|rails\n\n" ++ usage,
+        "error: could not confidently detect a supported source framework (malformed package.json declares no dependencies); ask the project owner or pass --from astro|next|gatsby|nuxt|vue|hugo|jekyll|11ty|hexo|rails\n\n" ++ usage,
         .{},
     );
 }
@@ -396,7 +396,7 @@ fn sourceFile(source: Source, path: []const u8) bool {
         .astro => true,
         .nextjs, .gatsby => hasAnyExtension(path, &.{ ".js", ".jsx", ".ts", ".tsx", ".md", ".mdx" }),
         .nuxt => hasAnyExtension(path, &.{".vue"}),
-        .hugo => hasAnyExtension(path, &.{ ".md", ".html", ".gohtml" }),
+        .hugo => hasAnyExtension(path, &.{ ".md", ".markdown", ".html", ".gohtml" }),
         .jekyll => hasAnyExtension(path, &.{ ".md", ".markdown", ".html", ".liquid" }),
         .eleventy => hasAnyExtension(path, &.{ ".md", ".markdown", ".html", ".liquid", ".njk", ".11ty.js" }),
         .hexo => hasAnyExtension(path, &.{ ".md", ".markdown", ".html", ".ejs", ".swig", ".njk" }),
@@ -470,7 +470,7 @@ fn nextAppRouteModule(path: []const u8) bool {
     return false;
 }
 
-fn scanOther(io: Io, gpa: Allocator, root: Io.Dir, source: Source) ScanResult {
+fn scanOther(io: Io, gpa: Allocator, root: Io.Dir, source: Source, report_path: ?[]const u8) ScanResult {
     var entries: std.ArrayListUnmanaged(Entry) = .empty;
     var names: std.StringHashMapUnmanaged(void) = .empty;
 
@@ -499,6 +499,14 @@ fn scanOther(io: Io, gpa: Allocator, root: Io.Dir, source: Source) ScanResult {
                 scanDir(io, gpa, root, "src/views", .page, &entries, &names);
                 scanDir(io, gpa, root, "src/layouts", .layout, &entries, &names);
                 scanDir(io, gpa, root, "src/components", .component, &entries, &names);
+                scanDir(io, gpa, root, "app/pages", .page, &entries, &names);
+                scanDir(io, gpa, root, "app/layouts", .layout, &entries, &names);
+                scanDir(io, gpa, root, "app/components", .component, &entries, &names);
+                for ([_][]const u8{ "app.vue", "src/app.vue", "app/app.vue" }) |path| {
+                    if (fileExists(io, root, path)) {
+                        scanFile(io, gpa, root, gpa.dupe(u8, path) catch fatal.oom(), .layout, &entries, &names);
+                    }
+                }
             } else {
                 // Plain Vue applications do not have Nuxt's directory roles.
                 // Inventory the complete SFC tree once so root-level App.vue
@@ -551,7 +559,8 @@ fn scanOther(io: Io, gpa: Allocator, root: Io.Dir, source: Source) ScanResult {
 
     var kept: usize = 0;
     for (entries.items) |entry| {
-        if (sourceEntry(source, entry) and
+        const is_report = if (report_path) |path| std.mem.eql(u8, entry.path, path) else false;
+        if (!is_report and sourceEntry(source, entry) and
             !(source == .eleventy and entry.kind == .page and !eleventyPagePath(entry.path)))
         {
             entries.items[kept] = entry;
@@ -604,12 +613,78 @@ fn scanOther(io: Io, gpa: Allocator, root: Io.Dir, source: Source) ScanResult {
         }
     }
 
+    // Scratch set borrows ScanResult's path bytes; only its table is owned here.
+    var inventoried: std.StringHashMapUnmanaged(void) = .empty;
+    defer inventoried.deinit(gpa);
+    for (entries.items) |entry| inventoried.put(gpa, entry.path, {}) catch fatal.oom();
+    // Seed the excluded output too so the supplemental walk cannot append it.
+    if (report_path) |path| inventoried.put(gpa, path, {}) catch fatal.oom();
+    switch (source) {
+        .hugo, .jekyll, .eleventy, .nextjs, .gatsby, .nuxt => scanUnhandledContent(io, gpa, root, ".", source, &entries, &inventoried),
+        else => {},
+    }
+    std.mem.sort(Entry, entries.items, {}, struct {
+        fn lessThan(_: void, a: Entry, b: Entry) bool {
+            return std.mem.lessThan(u8, a.path, b.path);
+        }
+    }.lessThan);
+
     return .{
         .entries = entries.toOwnedSlice(gpa) catch fatal.oom(),
         .island_names = names,
         .has_config = sourceMarker(io, gpa, root, source),
         .has_astro_sitemap = false,
     };
+}
+
+/// Contract 2 (owned-result appended to `out`): paths belong to ScanResult;
+/// all traversal scratch is freed here. This is a conservative inventory, not
+/// a framework config evaluator: retain possible custom-root/collection pages
+/// without turning them into conversion candidates. Never follow symlinks.
+fn scanUnhandledContent(io: Io, gpa: Allocator, root: Io.Dir, rel: []const u8, source: Source, out: *std.ArrayListUnmanaged(Entry), inventoried: *std.StringHashMapUnmanaged(void)) void {
+    var dir = root.openDir(io, rel, .{ .iterate = true }) catch |err| fatal.dir(rel, err);
+    defer dir.close(io);
+    var it = dir.iterateAssumeFirstIteration();
+    while (it.next(io) catch |err| fatal.dir(rel, err)) |entry| {
+        if (entry.name.len == 0 or entry.name[0] == '.') continue;
+        if (entry.kind != .directory and entry.kind != .file) continue;
+        if (entry.kind == .directory) {
+            const excluded = for ([_][]const u8{
+                "node_modules", "vendor",    "dist",     "build",     "out",   "_site",
+                "zig-out",      "zig-cache", "_layouts", "_includes", "_data",
+            }) |name| {
+                if (std.mem.eql(u8, entry.name, name)) break true;
+            } else false;
+            if (excluded) continue;
+        }
+        const path = if (std.mem.eql(u8, rel, "."))
+            gpa.dupe(u8, entry.name) catch fatal.oom()
+        else
+            std.fs.path.join(gpa, &.{ rel, entry.name }) catch fatal.oom();
+        defer gpa.free(path);
+        if (entry.kind == .directory) {
+            scanUnhandledContent(io, gpa, root, path, source, out, inventoried);
+            continue;
+        }
+        const js_content = source == .nextjs or source == .gatsby or source == .nuxt;
+        if (!hasAnyExtension(path, if (js_content)
+            &.{ ".md", ".markdown", ".mdx" }
+        else
+            &.{ ".md", ".markdown", ".html" })) continue;
+        // Match the existing root-page scan's README convention.
+        if (std.mem.eql(u8, rel, ".") and std.ascii.eqlIgnoreCase(entry.name, "README.md")) continue;
+        if (inventoried.contains(path)) continue;
+        const owned_path = gpa.dupe(u8, path) catch fatal.oom();
+        out.append(gpa, .{
+            .path = owned_path,
+            .kind = .other,
+            .not_converted = if (js_content)
+                "content-layer Markdown/MDX requires an explicit port; this adapter does not convert it"
+            else
+                "outside the adapter's conventional conversion roots; review source config, routing and collections and port manually",
+        }) catch fatal.oom();
+        inventoried.put(gpa, owned_path, {}) catch fatal.oom();
+    }
 }
 
 /// Rails' exit-code contract for `migrate()`'s bool return (`main.zig`:
@@ -1650,7 +1725,27 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
         return code;
     }
 
-    var res = if (source == .astro) scan(io, gpa, root) else scanOther(io, gpa, root, source);
+    var res = if (source == .astro) scan(io, gpa, root) else blk: {
+        if (target_dir != null) break :blk scanOther(io, gpa, root, source, null);
+        // Resolve the parent through the filesystem before joining the basename:
+        // lexically collapsing '..' first changes paths such as link/../report.md.
+        const report_parent = std.fs.path.dirname(out_path) orelse ".";
+        const report_parent_abs = Io.Dir.cwd().realPathFileAlloc(io, report_parent, gpa) catch |err| switch (err) {
+            error.FileNotFound => break :blk scanOther(io, gpa, root, source, null),
+            error.OutOfMemory => fatal.oom(),
+            else => fatal.dir(report_parent, err),
+        };
+        defer gpa.free(report_parent_abs);
+        const report_abs = std.fs.path.join(gpa, &.{ report_parent_abs, std.fs.path.basename(out_path) }) catch fatal.oom();
+        defer gpa.free(report_abs);
+        const cwd_abs = Io.Dir.cwd().realPathFileAlloc(io, ".", gpa) catch |err| fatal.dir(".", err);
+        defer gpa.free(cwd_abs);
+        const source_abs = Io.Dir.cwd().realPathFileAlloc(io, dir_path, gpa) catch |err| fatal.dir(dir_path, err);
+        defer gpa.free(source_abs);
+        const report_rel = std.fs.path.relative(gpa, cwd_abs, environ_map, source_abs, report_abs) catch fatal.oom();
+        defer gpa.free(report_rel);
+        break :blk scanOther(io, gpa, root, source, report_rel);
+    };
     defer freeScanResult(gpa, &res);
 
     if (target_dir) |target| return @intFromBool(assembleTarget(io, gpa, root, dir_path, target, runtime_path, source, res));
@@ -2635,6 +2730,7 @@ const TargetMetadata = struct {
     title: []const u8 = "Migrated site",
     host_url: []const u8 = "https://example.com",
     url_path_prefix: ?[]const u8 = null,
+    auto_heading_ids: bool = false,
 };
 
 /// NO_SLOP.md section 2.2a contract 2 (owned-result): caller frees the escaped
@@ -2699,9 +2795,9 @@ fn emitTargetConfig(gpa: Allocator, metadata: TargetMetadata, with_assets: bool)
         \\    .content_dir_path = "content",
         \\    .layouts_dir_path = "layouts",
         \\    .assets_dir_path = "assets",
-        \\{s}{s}}}
+        \\{s}{s}{s}}}
         \\
-    , .{ title, host, prefix_line, if (with_assets) "    .static_assets = [\"**\"],\n" else "" }) catch fatal.oom();
+    , .{ title, host, prefix_line, if (with_assets) "    .static_assets = [\"**\"],\n" else "", if (metadata.auto_heading_ids) "    .auto_heading_ids = true,\n" else "" }) catch fatal.oom();
 }
 
 fn emitTargetBuildSh(gpa: Allocator, has_islands: bool) []const u8 {
@@ -2788,10 +2884,15 @@ fn assembleTarget(
     writeTargetFile(io, gpa, target, ".gitignore", target_gitignore);
     writeTargetFile(io, gpa, target, "AGENTS.md", @embedFile("init/AGENTS.md"));
     writeTargetFile(io, gpa, target, "CLAUDE.md", @embedFile("init/CLAUDE.md"));
-    const metadata: TargetMetadata = if (source == .hexo) blk: {
+    var metadata: TargetMetadata = if (source == .hexo) blk: {
         const config = source_root.readFileAlloc(io, "_config.yml", a, .limited(1024 * 1024)) catch break :blk .{};
         break :blk metadataFromHexoSettings(parseHexoSettings(config));
     } else .{};
+    // These sources give every heading an id; migrated fragment links rely on it.
+    metadata.auto_heading_ids = switch (source) {
+        .hugo, .jekyll, .eleventy, .hexo => true,
+        else => false,
+    };
     writeTargetFile(io, gpa, target, "zigapagos.ziggy", emitTargetConfig(a, metadata, asset_summary.copied > 0));
     writeTargetFile(io, gpa, target, "build.sh", emitTargetBuildSh(a, island_count > 0));
     if (island_count > 0) {
@@ -2883,6 +2984,7 @@ fn buildOtherReport(gpa: Allocator, source: Source, dir_path: []const u8, entrie
         ) catch fatal.oom();
     }
     section(w, entries, .page, "Source pages/routes → `content/**/*.smd` or one `.spa.tsx`");
+    unconvertedContentSection(w, entries, source);
     section(w, entries, .other, "Data files and custom generator scripts → Ziggy inputs or explicit generation steps");
     w.writeAll(
         \\
@@ -3101,7 +3203,7 @@ fn section(w: anytype, entries: []const Entry, kind: Kind, title: []const u8) vo
     w.print("\n### {s}\n\n", .{title}) catch fatal.oom();
     var any = false;
     for (entries) |e| {
-        if (e.kind == kind) {
+        if (e.kind == kind and e.not_converted == null) {
             if (e.paginate) |spec| {
                 w.print("- [ ] `{s}` — ", .{e.path}) catch fatal.oom();
                 detect.paginateNote(w, spec) catch fatal.oom();
@@ -3115,6 +3217,22 @@ fn section(w: anytype, entries: []const Entry, kind: Kind, title: []const u8) vo
         }
     }
     if (!any) w.writeAll("- (none found)\n") catch fatal.oom();
+}
+
+fn unconvertedContentSection(w: anytype, entries: []const Entry, source: Source) void {
+    if (source == .hexo or source == .rails or source == .astro) return;
+    w.writeAll("\n### Content files not converted\n\n") catch fatal.oom();
+    var any = false;
+    for (entries) |entry| {
+        const reason = entry.not_converted orelse if (source.contentSource() != null and
+            entry.kind == .page and !hasAnyExtension(entry.path, &.{ ".md", ".markdown" }))
+            "only Markdown is converted; port this page/template manually"
+        else
+            continue;
+        w.print("- [ ] `{s}` — {s}\n", .{ entry.path, reason }) catch fatal.oom();
+        any = true;
+    }
+    if (!any) w.writeAll("- (none found in the documented inventory scope)\n") catch fatal.oom();
 }
 
 /// Static `.astro` components (no `client:*` usage) → SuperHTML partials.
@@ -3335,7 +3453,7 @@ test "Next scanner inventories routes and conservative React island candidates" 
     try route.writeStreamingAll(testing_io, "\"use client\"; export function GET(){}");
     route.close(testing_io);
 
-    var result = scanOther(testing_io, gpa, tmp.dir, .nextjs);
+    var result = scanOther(testing_io, gpa, tmp.dir, .nextjs, null);
     defer freeScanResult(gpa, &result);
     try std.testing.expectEqual(@as(usize, 5), result.entries.len);
     var found_page = false;

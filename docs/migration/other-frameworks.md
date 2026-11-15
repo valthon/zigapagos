@@ -18,7 +18,13 @@ zigapagos migrate path/to/site --copy-assets converted/assets
 zigapagos migrate path/to/site --target path/to/new-site
 ```
 
-The command auto-detects a source from its conventional config file. Use
+The command auto-detects a source from its conventional config file, then falls
+back to dependency names in a parsed `package.json`: keys of `dependencies`,
+`devDependencies`, `peerDependencies`, and `optionalDependencies`. Keywords,
+scripts, and string values do not declare frameworks. Malformed JSON declares
+nothing; config markers still work, and failed detection explains this rule.
+Non-object package roots and non-object dependency sections declare nothing.
+Use
 `--from astro|next|gatsby|nuxt|vue|hugo|jekyll|11ty|hexo` when a monorepo contains
 multiple framework configs or its config has a nonstandard name. A bare
 `_config.yml` is not enough to distinguish Jekyll from Hexo; without supporting
@@ -36,6 +42,44 @@ automatic conversions.
 
 Generated files never overwrite earlier work: a collision is written beside it
 as `.new`, `.new.2`, and so on.
+
+## Worklist inventory scope
+
+Non-Astro entries are sorted lexicographically by source-relative path before
+writing any section. `Content files not converted` names each extra content file
+with its reason; these entries never participate in automatic conversion or
+React scaffolding. An empty section means no candidates in this documented
+scope, rather than proof that arbitrary framework configuration has been evaluated.
+
+For Hugo, Jekyll, and Eleventy, a recursive inventory supplements the conversion
+roots with `.md`, `.markdown`, and `.html` files elsewhere in the project. This
+includes Hugo custom/per-language `contentDir` trees, Jekyll subdirectories and
+`_collection` directories, and nested Eleventy inputs (including input `"."`).
+These files are listed as outside conventional conversion roots and require a
+manual port. In-scope HTML/template pages also appear here with the reason that
+only Markdown is converted. Configured roots, collection output flags, ignore
+rules, and executable Eleventy configuration are not interpreted; the inventory
+is conservative and can include files the source does not render.
+
+For Next.js, Gatsby, and Nuxt/Vue, the same recursive inventory lists unhandled
+`.md`, `.markdown`, and `.mdx` content, including `_posts/`, `content/`,
+`content/blog/`, and `data/blog/`. Files already in the route/template inventory
+are not duplicated. Content-layer conversion remains manual.
+
+The inventory excludes the resolved report output path (default `MIGRATION.md`
+or custom `--output`), including when it is inside the source tree. Other source
+files named `MIGRATION.md` remain eligible for inventory.
+The output's existing parent directory is resolved through the filesystem before
+joining its filename, so symlinked parents and `..` match the report's write path.
+If that parent does not exist, no source path is excluded as the report.
+
+The supplemental walk does not follow symlinks, skips dot-prefixed entries and
+root `README.md`, and excludes directory basenames `node_modules`, `vendor`,
+`dist`, `build`, `out`, `_site`, `zig-out`, `zig-cache`, `_layouts`, `_includes`,
+and `_data`. Dependencies, outputs, and conventional template/data roots are
+outside this supplemental content scan. Review source configuration for content outside the
+project or inside excluded trees. A traversal failure stops the run with the
+directory and error instead of reporting an empty inventory.
 
 ## Deterministic asset copy
 
@@ -89,6 +133,12 @@ source into a minimal Zigapagos project:
 - a valid root placeholder is added only when conversion did not produce
   `content/index.smd`.
 
+For Hugo, Jekyll, Eleventy, and Hexo sources, the generated `zigapagos.ziggy`
+sets `.auto_heading_ids = true` because their content assumes every heading has
+an id. SuperMD's slug may differ from the source framework's slug, so some
+`#heading` links may still need edits. Other sources and `zigapagos init` keep
+automatic heading ids off by default.
+
 ```sh
 zigapagos migrate path/to/old-site --target path/to/new-site
 cd path/to/new-site
@@ -113,8 +163,11 @@ asset tree from recursively seeing its own output.
 Assembly does not change the semantic boundary described by the worklist.
 Next/Nuxt/Gatsby routes, Vue components, templates, loaders, plugins, image
 pipelines, redirects, and runtime behavior still need an explicit port. The
-root placeholder makes the target immediately valid; it is not a claim that a
-source route was converted. Astro also retains the deeper
+root placeholder supplies a valid homepage; it is not a claim that a source
+route was converted. Converted content containing HTML blocks (including
+standalone comments) still fails validation: SuperMD forbids those blocks by
+design. They remain validation-visible review items; inline HTML passes
+through. Astro also retains the deeper
 `zigapagos init --from-astro` scaffold, including Astro-specific wiring and
 tests; `migrate --target` is the smaller uniform workflow shared by every
 adapter.
@@ -172,8 +225,9 @@ The scanner inventories `src/pages`, `src/templates`, and `src/components`.
 ## Nuxt and Vue
 
 The scanner inventories Nuxt's `pages/`, `layouts/`, and `components/` forms,
-including their `src/` variants. For a plain Vue application it inventories the
-complete `src/**/*.vue` tree, since Vue itself imposes no route/component
+including their `src/` and Nuxt 4 `app/` variants. Root `app.vue`,
+`src/app.vue`, and `app/app.vue` are inventoried as application layouts. For a
+plain Vue application it inventories the complete `src/**/*.vue` tree, since Vue itself imposes no route/component
 directory convention. A Nuxt config or `nuxt`/`vue` package dependency enables
 auto-detection; `--from vue` remains useful in a monorepo.
 
@@ -192,7 +246,13 @@ visible instead.
 
 ## Hugo
 
-The scanner inventories `content/` and `layouts/`.
+The scanner inventories `content/` and `layouts/`. Hugo detection recognizes
+root `hugo.{toml,yaml,yml,json}` and
+`config/_default/{hugo,config}.{toml,yaml,yml,json}`. Legacy root
+`config.{toml,yaml,yml}` requires both `content/` and `layouts/`.
+
+The supplemental content inventory above names possible pages in custom
+content roots.
 
 - Markdown content usually maps directly after translating frontmatter types,
   dates, aliases, draft behavior, and taxonomy fields.
@@ -205,7 +265,8 @@ The scanner inventories `content/` and `layouts/`.
 
 `--convert-content DIR` converts `.md`/`.markdown` pages below `content/`, maps
 `_index.md` to `index.smd`, recognizes scalar `title`, `date`, `description`, and
-`draft` frontmatter from YAML or TOML, and preserves the Markdown body. It adds
+`draft` frontmatter from YAML or TOML, and preserves the Markdown body. Opening
+`---` and `+++` fences may have trailing spaces or tabs (including with CRLF). It adds
 `custom.migration_source`, `migration_framework`, and `migration_review = true`
 so review status travels with every generated page. HTML layouts and shortcodes
 remain worklist items. If the source contains fields outside the recognized
@@ -216,7 +277,9 @@ target date uses a conspicuous epoch placeholder until it is reviewed.
 
 ## Jekyll
 
-The scanner inventories `_posts`, `_pages`, `_layouts`, and `_includes`.
+The conversion scanner inventories root pages, `_posts`, `_pages`, `_layouts`,
+and `_includes`. Subdirectory and collection candidates outside these roots are
+named in `Content files not converted`, as described above.
 
 - Markdown posts/pages map to content after translating YAML frontmatter,
   permalinks, collections, defaults, drafts, and date behavior.
@@ -240,6 +303,8 @@ work.
 The scanner recognizes `.eleventy.*`, `eleventy.config.*`, or the
 `@11ty/eleventy` package. It inventories root content plus conventional `src/`
 and `content/` trees, and keeps `_layouts` and `_includes` out of the page list.
+Other nested Markdown/HTML inputs are named in `Content files not converted`;
+`dir.input` is not evaluated or used to expand conversion scope.
 
 - Markdown and HTML inputs map to content; Nunjucks/Liquid/JavaScript templates
   map to SuperHTML layouts or generated content according to their output role.
@@ -253,7 +318,11 @@ and `content/` trees, and keeps `_layouts` and `_includes` out of the page list.
 roots, strips `src/` or `content/` from output paths, preserves Markdown bodies,
 and carries layouts, permalinks, tags, and other unconverted data in
 `custom.migration_frontmatter` for review. HTML and template-language inputs
-remain worklist items.
+remain worklist items. Language-tagged `---<lang>` blocks (including `---js`)
+are recognized but never executed or interpreted as scalar YAML/TOML. Their
+raw contents are retained in `custom.migration_frontmatter`, with
+`migration_review = true` and `.draft = true` until manually ported. Even an
+unterminated language block is retained privately rather than copied into the body.
 
 ## Hexo
 
@@ -273,6 +342,32 @@ theme EJS, Swig, or Nunjucks templates.
 `--convert-content DIR` converts Markdown content, preserves bodies and
 unconverted metadata, and normalizes `_posts`/`_drafts` paths. ISO dates written
 with either dashes or Hexo's common `YYYY/MM/DD` form become Ziggy timestamps.
+Both ordinary fenced YAML and Hexo's fence-less scalar YAML mappings are read;
+`published: false` becomes `.draft = true`. For every content adapter, YAML
+`draft` and `published` accept the YAML 1.2 core spellings `true`, `True`, `TRUE`,
+`false`, `False`, and `FALSE`; `published: False` and `published: FALSE` also
+become drafts. YAML 1.1 `yes`/`no`/`on`/`off` remain unconverted review fields.
+TOML booleans accept only lowercase `true` and `false`.
+The fence-less form is Hexo-only:
+a nonempty metadata prefix precedes a column-zero run of at least three
+hyphens, and the file must not itself begin with `---` or `;;;`. Following
+hexo-front-matter's `rFrontMatterNew`, text immediately after the separator
+run can begin the body without a newline. The entire prefix must fit the
+converter's flat, single-line scalar mapping subset: every nonblank,
+noncomment line is an unindented `key: value` entry, with a colon followed by
+whitespace or end of line. Keys start with an ASCII letter or underscore and
+contain only ASCII letters, digits, underscores, dots, and hyphens. Values
+are empty, plain single-line scalars, or simple matching quoted strings;
+unquoted mapping colons, escaped quotes, inline comments, collections, and
+indented continuations are unsupported. If any line fails validation, the
+entire original document remains body text. Complex YAML and JSON front matter
+require a manual port.
+
+This syntax cannot distinguish metadata from Markdown that is itself a valid
+mapping: a single `Note: prose` line, several such lines separated by blanks,
+or Markdown `#` headings followed only by mapping entries before `---` are
+accepted as metadata, just as Hexo accepts them. Ordinary paragraphs, URLs,
+lists, or code fences anywhere in the prefix keep it in the body instead.
 Theme templates, Hexo tag syntax, plugin output, and generated indexes remain
 review work. The converter removes the `<!-- more -->` excerpt marker and
 translates simple `<blockquote>`/`<footer>` blocks to Markdown outside fenced

@@ -4,108 +4,16 @@
 
 const std = @import("std");
 const fatal = @import("../fatal.zig");
+const detect = @import("migrate_detect.zig");
 const Allocator = std.mem.Allocator;
 
-pub const Source = enum { hugo, jekyll, eleventy, hexo };
-
-const Fields = struct {
-    title: ?[]const u8 = null,
-    date: ?[]const u8 = null,
-    description: ?[]const u8 = null,
-    draft: bool = false,
-    raw_frontmatter: ?[]const u8 = null,
-    has_unconverted: bool = false,
-    body: []const u8,
-};
+pub const Source = detect.ContentSource;
 
 pub const Rendered = struct {
     bytes: []const u8,
     has_unconverted_frontmatter: bool,
     invalid_date: bool,
 };
-
-fn scalar(value: []const u8) []const u8 {
-    const trimmed = std.mem.trim(u8, value, " \t\r");
-    if (trimmed.len >= 2 and
-        ((trimmed[0] == '"' and trimmed[trimmed.len - 1] == '"') or
-            (trimmed[0] == '\'' and trimmed[trimmed.len - 1] == '\'')))
-    {
-        return trimmed[1 .. trimmed.len - 1];
-    }
-    return trimmed;
-}
-
-fn simpleScalar(value: []const u8) bool {
-    const trimmed = std.mem.trim(u8, value, " \t\r");
-    if (trimmed.len == 0) return true;
-    if ((trimmed[0] == '"' and trimmed[trimmed.len - 1] == '"') or
-        (trimmed[0] == '\'' and trimmed[trimmed.len - 1] == '\'')) return true;
-    return trimmed[0] != '[' and trimmed[0] != '{' and
-        !std.mem.eql(u8, trimmed, "|") and !std.mem.eql(u8, trimmed, ">");
-}
-
-fn parseFields(src: []const u8) Fields {
-    var result: Fields = .{ .body = src };
-    const fence: []const u8 = if (std.mem.startsWith(u8, src, "---\n") or std.mem.startsWith(u8, src, "---\r\n"))
-        "---"
-    else if (std.mem.startsWith(u8, src, "+++\n") or std.mem.startsWith(u8, src, "+++\r\n"))
-        "+++"
-    else
-        return result;
-
-    const opening_end = fence.len + if (src[fence.len] == '\r') @as(usize, 2) else 1;
-    var cursor = opening_end;
-    var closing_start: ?usize = null;
-    while (cursor <= src.len) {
-        const line_end = std.mem.indexOfScalarPos(u8, src, cursor, '\n') orelse src.len;
-        const line = std.mem.trimEnd(u8, src[cursor..line_end], "\r");
-        if (std.mem.eql(u8, line, fence)) {
-            closing_start = cursor;
-            result.body = if (line_end < src.len) src[line_end + 1 ..] else "";
-            break;
-        }
-        cursor = if (line_end < src.len) line_end + 1 else src.len + 1;
-    }
-    const frontmatter_end = closing_start orelse return .{ .body = src };
-    result.raw_frontmatter = src[opening_end..frontmatter_end];
-
-    var lines = std.mem.splitScalar(u8, src[opening_end..frontmatter_end], '\n');
-    while (lines.next()) |raw_line| {
-        const line = std.mem.trim(u8, raw_line, " \t\r");
-        if (line.len == 0 or line[0] == '#') continue;
-        const colon = std.mem.indexOfScalar(u8, line, ':');
-        const equals = std.mem.indexOfScalar(u8, line, '=');
-        const sep = if (colon) |c| if (equals) |e| @min(c, e) else c else equals orelse {
-            result.has_unconverted = true;
-            continue;
-        };
-        const key = std.mem.trim(u8, line[0..sep], " \t");
-        const raw_value = line[sep + 1 ..];
-        const value = scalar(raw_value);
-        if (std.mem.eql(u8, key, "title")) {
-            if (simpleScalar(raw_value)) result.title = value else result.has_unconverted = true;
-        } else if (std.mem.eql(u8, key, "date")) {
-            if (simpleScalar(raw_value)) result.date = value else result.has_unconverted = true;
-        } else if (std.mem.eql(u8, key, "description")) {
-            if (simpleScalar(raw_value)) result.description = value else result.has_unconverted = true;
-        } else if (std.mem.eql(u8, key, "draft")) {
-            if (std.mem.eql(u8, value, "true") or std.mem.eql(u8, value, "false")) {
-                result.draft = std.mem.eql(u8, value, "true");
-            } else {
-                result.has_unconverted = true;
-            }
-        } else if (std.mem.eql(u8, key, "published")) {
-            if (std.mem.eql(u8, value, "false")) {
-                result.draft = true;
-            } else if (!std.mem.eql(u8, value, "true")) {
-                result.has_unconverted = true;
-            }
-        } else {
-            result.has_unconverted = true;
-        }
-    }
-    return result;
-}
 
 fn fallbackTitle(source_path: []const u8) []const u8 {
     var name = std.fs.path.basename(source_path);
@@ -282,7 +190,7 @@ fn normalizeJekyllBody(gpa: Allocator, body: []const u8) []const u8 {
 /// NO_SLOP.md section 2.2a contract 1 (self-freeing): all scratch is borrowed;
 /// the returned rendered document is the one allocation that escapes.
 pub fn render(gpa: Allocator, source: Source, source_path: []const u8, src: []const u8) Rendered {
-    const fields = parseFields(src);
+    const fields = detect.parseContentFields(src, source);
     const invalid_date = if (fields.date) |date| !validDate(date) else false;
     const draft = fields.draft or (source == .hexo and std.mem.startsWith(u8, source_path, "source/_drafts/"));
     const normalized_body: ?[]const u8 = switch (source) {
