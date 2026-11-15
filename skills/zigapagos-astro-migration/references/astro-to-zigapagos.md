@@ -719,3 +719,47 @@ explain-code <CODE>` for the long-form fix for any code that shows up
 [`docs/diagnostics.md`](https://github.com/valthon/zigapagos/blob/main/docs/diagnostics.md)
 for the full schema and stability contract. Page-render and configuration
 failures also use structured diagnostics; low-level process output may remain prose.
+
+## Content Security Policy
+
+Carry over the original site's third-party script, frame, image, font and network
+sources when migrating. Runtime injection is invisible to the built-HTML scan:
+copying the application code alone can leave monitoring or a CAPTCHA blocked.
+Declare these sources through [`csp_extra_sources`](https://github.com/valthon/zigapagos/blob/main/docs/configuration.md#csp_extra_sources)
+inside `Site` in `zigapagos.ziggy`, then deploy the regenerated CSP artifact and
+retain `csp-sources.json` for the deploy checker.
+
+For a Sentry loader plus reCAPTCHA integration:
+
+```ziggy
+.csp_extra_sources = [
+    { .directive = "script-src", .sources = [
+        "https://js.sentry-cdn.com",
+        "https://browser.sentry-cdn.com",
+        "https://www.google.com/recaptcha/",
+        "https://www.gstatic.com/recaptcha/",
+    ] },
+    { .directive = "frame-src", .sources = [
+        "https://www.google.com/recaptcha/",
+        "https://recaptcha.google.com/recaptcha/",
+    ] },
+    { .directive = "connect-src", .sources = [
+        "https://o123.ingest.us.sentry.io",
+        "https://www.google.com/recaptcha/",
+    ] },
+],
+```
+
+The two Sentry CDNs cover its loader and SDK; replace the example ingest origin
+with the one in your project's DSN (including its region). Consult
+[Sentry's loader CSP guidance](https://docs.sentry.io/platforms/javascript/install/loader/#content-security-policy)
+for the endpoints needed by enabled features. Sentry does not require the Google
+frame sources; those belong to reCAPTCHA. The reCAPTCHA script, frame and connect
+sources follow [Google's CSP FAQ](https://developers.google.com/recaptcha/docs/faq#im-using-content-security-policy-csp-on-my-website-how-can-i-configure-it-to-work-with-recaptcha).
+If you use `recaptcha.net`, carry over that variant's sources instead.
+
+The declaration adds permissions to every emitted host policy, retaining inline
+hashes and first-party access. Do not manually append origins only to a deployed
+header: the checker compares the full generated policy, including declarations,
+and rejects a different policy. Verify the migrated monitoring and form flows in
+a browser as well as running the static deployment checks.

@@ -35,6 +35,8 @@ const PathName = PathTable.PathName;
 pub var progress_buf: [4096]u8 = undefined;
 pub var progress: std.Progress.Node = undefined;
 
+pub const CspExtraSources = @import("csp.zig").ExtraSources;
+
 pub const Site = struct {
     /// Title of the website
     title: []const u8,
@@ -135,6 +137,8 @@ pub const Site = struct {
     /// Off by default: it changes every page's bytes and adds hover-time
     /// network traffic no site should get without asking.
     speculation_rules: bool = false,
+    /// Additional CSP sources, unioned into the generated policy at release time.
+    csp_extra_sources: []const CspExtraSources = &.{},
     /// Build-time image optimization (issue #132). When set, every content
     /// `$image` whose source is a decodable still raster (JPEG, PNG, WebP)
     /// is resampled to WebP variants and emitted inside a `<picture>` with
@@ -256,6 +260,8 @@ pub const MultilingualSite = struct {
     /// single-locale `Site` for the full rationale. The emitted rule is
     /// same-origin and path-wide, so one block covers every locale prefix.
     speculation_rules: bool = false,
+    /// Additional CSP sources, unioned into the generated policy at release time.
+    csp_extra_sources: []const CspExtraSources = &.{},
     /// Build-time image optimization (issue #132). When set, every content
     /// `$image` whose source is a decodable still raster (JPEG, PNG, WebP)
     /// is resampled to WebP variants and emitted inside a `<picture>` with
@@ -405,7 +411,24 @@ pub const Config = union(enum) {
         }
     }
 
+    pub fn getCspExtraSources(cfg: *const Config) []const CspExtraSources {
+        return switch (cfg.*) {
+            .Site => |s| s.csp_extra_sources,
+            .Multilingual => |m| m.csp_extra_sources,
+        };
+    }
+
     pub fn validate(cfg: *const Config) void {
+        for (cfg.getCspExtraSources()) |entry| {
+            if (!@import("csp.zig").validDirective(entry.directive)) fatal.msg(
+                "error: csp_extra_sources: unknown directive '{s}' in zigapagos.ziggy\n",
+                .{entry.directive},
+            );
+            for (entry.sources) |source| if (!@import("csp.zig").validSource(source)) fatal.msg(
+                "error: csp_extra_sources.{s}: invalid CSP source expression '{s}' in zigapagos.ziggy\n",
+                .{ entry.directive, source },
+            );
+        }
         switch (cfg.*) {
             .Site => |s| {
                 const u = std.Uri.parse(s.host_url) catch |err| {

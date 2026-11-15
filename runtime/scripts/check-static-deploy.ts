@@ -8,7 +8,7 @@ import {
   scanInlineScriptHashes, scanInlineStyleHashes, scanExternalLinkOrigins,
   hasInlineSpeculationRules, FINGERPRINT_SUFFIX_PATTERN,
   IMMUTABLE_CACHE_CONTROL, REVALIDATE_CACHE_CONTROL,
-  type Manifest,
+  readCspSources, type Manifest,
 } from "./emit-host-config.ts";
 
 export type Finding = { code: string; path: string; message: string };
@@ -63,7 +63,7 @@ export function planChecks(site: string, url: string): Plan {
     return m;
   });
   const immutable = new Set(collectChunkPaths(manifests));
-  const csp = cspHeaderValue(scanInlineScriptHashes(htmls), scanExternalLinkOrigins(htmls), scanInlineStyleHashes(htmls), hasInlineSpeculationRules(htmls));
+  const csp = cspHeaderValue(scanInlineScriptHashes(htmls), scanExternalLinkOrigins(htmls), scanInlineStyleHashes(htmls), hasInlineSpeculationRules(htmls), readCspSources(site));
   const probes = new Map<string, Probe>();
   function add(path: string, file: string): void {
     if (!fileSet.has(file)) throw new Error(`manifest references missing release file: ${file}`);

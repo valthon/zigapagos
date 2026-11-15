@@ -1,9 +1,7 @@
----
-.title = "Configuration",
-.description = "zigapagos.ziggy, the build invocation, and what each option changes.",
-.layout = "docs.shtml",
-.custom = { .slug = "configuration" },
----
+# Site configuration
+
+`zigapagos.ziggy` is parsed from the `Site` or `Multilingual` configuration types in
+`src/root.zig`. Config validation runs before content scanning and output writes.
 
 A Zigapagos project is configured in two places: `zigapagos.ziggy` describes the
 site, and the `zigapagos release` invocation that builds it declares the islands
@@ -39,21 +37,21 @@ not, so a hardcoded link works locally and 404s in production.
 the project root.
 
 `.deploy_target` selects which host configuration the build emits — `zigbase`,
-`nginx`, or `apache`. See [native SPAs]($link.page("docs/spa")) for what each
+`nginx`, or `apache`. See [native SPAs](spa.md) for what each
 one generates.
 
 `.image_optimize = {}` turns on build-time image optimization: WebP variants of
 every content image at configured widths, emitted as a `<picture>` with a full
 `srcset`/`sizes` and the untouched original as the fallback, with opt-in AVIF
 via an external encoder you supply. Off by default (`null`).
-[Images]($link.page("docs/images")) is the full reference, including the
+[Images](images.md) is the full reference, including the
 variant cache and the failure rules.
 
 `.speculation_rules = true` injects a browser-native
 `<script type="speculationrules">` prefetch hint into every rendered page:
 supporting browsers prefetch same-origin links on hover, with zero runtime JS,
 and browsers without support ignore the block. Off by default; the
-[islands reference]($link.page("docs/islands")) covers it under link
+[islands reference](islands.md) covers it under link
 prefetching.
 
 `.sitemap = true` emits `sitemap.xml` at the output root: one entry per
@@ -82,6 +80,46 @@ changed content pages) never touch `sitemap.xml`: only a full, non-incremental
 build (the dev loop's first build, or a plain `zigapagos release`) writes it,
 so a previously-written sitemap is left as-is — stale, not wrong-shaped —
 until the next full rebuild.
+
+## `csp_extra_sources`
+
+Optional array, default `[]`, on both `Site` and `Multilingual` (site-wide across locales).
+Each entry has a string `directive` and an array of string `sources`:
+
+```ziggy
+.csp_extra_sources = [
+    { .directive = "frame-src", .sources = ["https://www.google.com/recaptcha/"] },
+    { .directive = "connect-src", .sources = ["https://api.example.com"] },
+],
+```
+
+Supported directives: `default-src`, `script-src`, `frame-src`, `connect-src`,
+`img-src`, `style-src`, `style-src-elem`, `style-src-attr`, `font-src`, `object-src`,
+and `base-uri`. Unknown directives fail config validation with the field name.
+Sources must be individual CSP source expressions: host sources (optionally a
+scheme, wildcard subdomain, port and path), scheme sources such as `data:` or
+`https:`, `*`, quoted CSP keywords, or quoted nonce/hash sources. Keywords such
+as `'self'` need their single quotes inside the Ziggy string. Queries, fragments,
+whitespace, raw semicolons, malformed hashes and header fragments are rejected.
+Use percent-encoding for reserved path characters. Paths with a trailing `/`
+match a prefix, following CSP rules. Literal `$` and `,` in paths are emitted as
+`%24` and `%2C` across all host formats to avoid nginx variable expansion and
+CSP policy separators.
+
+Sources are deduplicated and added in sorted order; repeated directive entries
+are unioned. Existing sources and generated hashes stay. A directive previously
+falling back to `default-src` is emitted explicitly with `'self'`. `style-src`
+extras also extend `style-src-elem`, which otherwise takes precedence. `'none'`
+is omitted from any nonempty union containing other sources, following CSP
+semantics. These are additional permissions, not a replacement policy; security
+keywords such as `'unsafe-eval'` or `'strict-dynamic'` change browser enforcement
+and should only be declared deliberately.
+
+Release emits all host formats via the runtime emitter (`ZIGAPAGOS_RUNTIME_DIR`).
+The generated `csp-sources.json` records these inputs for subsequent emitter and
+deploy-checker runs; retain it with the output. Removing the config field removes
+stale metadata on the next full runtime-enabled release. The default CSP artifact
+contents are byte-for-byte unchanged when the field is absent or empty.
 
 ## The build invocation
 

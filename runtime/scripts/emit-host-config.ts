@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, unlinkSync, readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { basename, relative } from "node:path";
 
@@ -625,8 +625,8 @@ export function hasInlineSpeculationRules(htmlStrings: string[]): boolean {
 // BOTH `style-src-elem` and `font-src`. This covers the pragmatic font pattern in
 // one stroke — the stylesheet origin (fonts.googleapis.com) and the font-file
 // origin its `preconnect` names (fonts.gstatic.com) both end up allowed in
-// both directives. `script-src` is never widened. Root-relative hrefs are
-// `'self'` and contribute nothing.
+// both directives. `script-src` is only widened by explicit site declarations.
+// Root-relative hrefs are `'self'` and contribute nothing.
 
 /** The lowercased `scheme://host[:port]` origin of an absolute http(s) URL —
  * or of a protocol-relative one (`//host/…`), whose scheme defaults to
@@ -658,7 +658,32 @@ export function scanExternalLinkOrigins(htmlStrings: string[]): string[] {
   return [...origins].sort();
 }
 
-/** The site-wide CSP header VALUE. `script-src` is strict — `'self'` plus the
+/** Release metadata, shared with the deploy checker; absent means no author opt-in. */
+export type CspExtraSources = { directive: string; sources: string[] }[];
+export const CSP_SOURCES_FILE = "csp-sources.json";
+const CSP_DIRECTIVES = ["default-src", "script-src", "frame-src", "connect-src", "img-src", "style-src", "style-src-elem", "style-src-attr", "font-src", "object-src", "base-uri"];
+
+export function parseCspSources(value: unknown): CspExtraSources {
+  if (!Array.isArray(value)) throw new Error("csp_extra_sources must be an array");
+  const keyword = /^'(?:self|none|unsafe-inline|unsafe-eval|wasm-unsafe-eval|strict-dynamic|unsafe-hashes|report-sample|inline-speculation-rules|trusted-types-eval)'$/;
+  const hash = /^'(?:nonce|sha256|sha384|sha512)-[A-Za-z0-9+/_-]+={0,2}'$/;
+  const scheme = /^[A-Za-z][A-Za-z0-9+.-]*:$/;
+  const host = /^(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/)?(?:\*|(?:\*\.)?[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*)(?::(?:[0-9]+|\*))?(?:\/(?:[A-Za-z0-9/\-._~!$&()*+,=:@]|%[0-9A-Fa-f]{2})*)?$/;
+  for (const entry of value) {
+    if (!entry || !CSP_DIRECTIVES.includes(entry.directive)) throw new Error("csp_extra_sources: unknown directive");
+    if (!Array.isArray(entry.sources) || entry.sources.some((source: unknown) => typeof source !== "string" || /[\s;]/.test(source) || ![keyword, hash, scheme, host].some(re => re.test(source))))
+      throw new Error(`csp_extra_sources.${entry.directive}: invalid CSP source expression`);
+  }
+  return value;
+}
+
+export function readCspSources(site: string): CspExtraSources {
+  const path = `${site}/${CSP_SOURCES_FILE}`;
+  return existsSync(path) ? parseCspSources(JSON.parse(readFileSync(path, "utf8"))) : [];
+}
+
+/** The default site-wide CSP header VALUE (before explicit author opt-ins).
+ * `script-src` is strict — `'self'` plus the
  * inline-script hashes, NO `unsafe-inline` (that's the XSS-critical directive
  * and the whole point of hashing).
  *
@@ -698,18 +723,41 @@ export function scanExternalLinkOrigins(htmlStrings: string[]): string[] {
  * a strict CSP — no build failure, just a console violation and dead
  * prefetch. Browsers that don't support Speculation Rules ignore the unknown
  * source expression, so adding it is safe everywhere. */
-export function cspHeaderValue(hashes: string[], linkOrigins: string[] = [], styleHashes: string[] = [], speculationRules = false): string {
-  const scriptSrc = ["'self'", ...(speculationRules ? ["'inline-speculation-rules'"] : []), ...hashes].join(" ");
-  const styleSrcElem = ["'self'", ...styleHashes, ...linkOrigins].join(" ");
-  const fontSrc = linkOrigins.length === 0
-    ? ""
-    : `; font-src ${["'self'", ...linkOrigins].join(" ")}`;
-  return `default-src 'self'; script-src ${scriptSrc}; style-src-elem ${styleSrcElem}; style-src-attr 'unsafe-inline'${fontSrc}; object-src 'none'; base-uri 'self'`;
+export function cspHeaderValue(hashes: string[], linkOrigins: string[] = [], styleHashes: string[] = [], speculationRules = false, extras: CspExtraSources = []): string {
+  parseCspSources(extras);
+  const policy = new Map<string, string[]>([
+    ["default-src", ["'self'"]],
+    ["script-src", ["'self'", ...(speculationRules ? ["'inline-speculation-rules'"] : []), ...hashes]],
+    ["style-src-elem", ["'self'", ...styleHashes, ...linkOrigins]],
+    ["style-src-attr", ["'unsafe-inline'"]],
+    ...(linkOrigins.length ? [["font-src", ["'self'", ...linkOrigins]] as [string, string[]]] : []),
+    ["object-src", ["'none'"]], ["base-uri", ["'self'"]],
+  ]);
+  const declared = new Map<string, Set<string>>();
+  for (const { directive, sources } of extras) {
+    // style-src-elem already overrides style-src in CSP3 browsers. Extend it
+    // too so declaring a stylesheet source actually permits that stylesheet.
+    for (const name of directive === "style-src" ? [directive, "style-src-elem"] : [directive]) {
+      const set = declared.get(name) ?? new Set<string>();
+      // Nginx interprets $, while CSP headers treat commas as policy separators.
+      // Path matching percent-decodes segments; encode both uniformly so every
+      // host serves the same policy without variable expansion or extra policies.
+      for (const source of sources) set.add(source.replace(/\$/g, "%24").replace(/,/g, "%2C"));
+      declared.set(name, set);
+    }
+  }
+  for (const name of [...declared.keys()].sort()) {
+    const additions = [...declared.get(name)!].sort();
+    if (!additions.length) continue;
+    const tokens = [...new Set([...(policy.get(name) ?? ["'self'"]), ...additions])];
+    policy.set(name, tokens.length > 1 ? tokens.filter(t => t !== "'none'") : tokens);
+  }
+  return [...policy].map(([name, tokens]) => `${name} ${tokens.join(" ")}`).join("; ");
 }
 
 /** One host-specific CSP artifact (site-wide, host-agnostic value). */
-export function emitCsp(hashes: string[], target: CspTarget, linkOrigins: string[] = [], styleHashes: string[] = [], speculationRules = false): EmittedFile {
-  const value = cspHeaderValue(hashes, linkOrigins, styleHashes, speculationRules);
+export function emitCsp(hashes: string[], target: CspTarget, linkOrigins: string[] = [], styleHashes: string[] = [], speculationRules = false, extras: CspExtraSources = []): EmittedFile {
+  const value = cspHeaderValue(hashes, linkOrigins, styleHashes, speculationRules, extras);
   switch (target) {
     case "nginx":
       return {
@@ -729,7 +777,9 @@ export function emitCsp(hashes: string[], target: CspTarget, linkOrigins: string
           `# site's deterministic inline scripts and styles (importmap + SPA bootstrap,\n` +
           `# plus any inline <style> elements), allow-listed by sha256 hash. Install in\n` +
           `# <docroot>/.htaccess or a <Directory> block (requires mod_headers).\n` +
-          `Header set Content-Security-Policy "${value}"\n`,
+          // mod_headers interprets percent escapes in Header values. Double
+          // them in the config so the served header retains literal percents.
+          `Header set Content-Security-Policy "${value.replace(/%/g, "%%")}"\n`,
       };
     case "zigbase":
       return {
@@ -756,8 +806,8 @@ export function emitCsp(hashes: string[], target: CspTarget, linkOrigins: string
 
 /** All three site-wide CSP artifacts for a scanned HTML set (operators pick the
  * file for their host; the header value is identical across targets). */
-export function emitAllCsp(hashes: string[], linkOrigins: string[] = [], styleHashes: string[] = [], speculationRules = false): EmittedFile[] {
-  return (["nginx", "apache", "zigbase"] as CspTarget[]).map((t) => emitCsp(hashes, t, linkOrigins, styleHashes, speculationRules));
+export function emitAllCsp(hashes: string[], linkOrigins: string[] = [], styleHashes: string[] = [], speculationRules = false, extras: CspExtraSources = []): EmittedFile[] {
+  return (["nginx", "apache", "zigbase"] as CspTarget[]).map((t) => emitCsp(hashes, t, linkOrigins, styleHashes, speculationRules, extras));
 }
 
 // ── Cache-Control support (issue #133) ───────────────────────────────────────
@@ -957,14 +1007,22 @@ if (import.meta.main) {
   let site = "";
   let override = "";
   let report = "";
+  let cspSources: CspExtraSources | undefined;
   const emitted: string[] = [];
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--site") site = args[++i] ?? "";
     else if (args[i] === "--target") override = args[++i] ?? "";
+    else if (args[i] === "--csp-extra-sources") cspSources = parseCspSources(JSON.parse(args[++i] ?? ""));
     else if (args[i] === "--report") report = args[++i] ?? "";
   }
   if (!site) { console.error("Usage: emit-host-config.ts --site <outputDir> [--target zigbase|nginx|apache]"); process.exit(1); }
 
+  const extras = cspSources ?? readCspSources(site);
+  const sourcesPath = `${site}/${CSP_SOURCES_FILE}`;
+  if (extras.length) {
+    writeFileSync(sourcesPath, JSON.stringify(extras) + "\n");
+    emitted.push(CSP_SOURCES_FILE);
+  } else if (existsSync(sourcesPath)) unlinkSync(sourcesPath);
   const glob = new Bun.Glob("**/routing-manifest.json");
   let count = 0;
   const manifests: Manifest[] = [];
@@ -1008,7 +1066,7 @@ if (import.meta.main) {
   // type="speculationrules">` on every page; thread that into the CSP so
   // strict deployments don't silently drop it (see `cspHeaderValue`).
   const speculationRules = hasInlineSpeculationRules(htmls);
-  for (const f of emitAllCsp(hashes, linkOrigins, styleHashes, speculationRules)) {
+  for (const f of emitAllCsp(hashes, linkOrigins, styleHashes, speculationRules, extras)) {
     const outPath = `${site}/${f.name}`;
     writeFileSync(outPath, f.content, "utf8");
     emitted.push(relative(site, outPath));

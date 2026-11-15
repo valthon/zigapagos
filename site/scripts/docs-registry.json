@@ -1,5 +1,12 @@
 [
   {
+    "canonical": "docs/configuration.md",
+    "mirror": "configuration.smd",
+    "slug": "configuration",
+    "title": "Configuration",
+    "description": "zigapagos.ziggy, the build invocation, and what each option changes."
+  },
+  {
     "canonical": "docs/building-apps.md",
     "mirror": "building-apps.smd",
     "slug": "building-apps",

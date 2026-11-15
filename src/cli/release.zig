@@ -232,11 +232,31 @@ pub fn release(
     // over the FINISHED output tree: it globs `**/routing-manifest.json` and
     // `**/*.html` under the output directory, which only exist once the render
     // and install phases have written them.
-    if (rt_defaults) |rt| if (cmd.islands.len > 0 or cmd.spas.len > 0) {
-        const report_path = try std.fs.path.join(gpa, &.{ base_dir_path, bundle_cache_path, "host-config-report.json" });
+    // An extras-only static site must also regenerate after removing its
+    // declarations; --force preserves unrelated files in the output tree.
+    const csp_metadata_path = try std.fs.path.join(gpa, &.{ cmd.output_dir_path orelse "public", "csp-sources.json" });
+    defer gpa.free(csp_metadata_path);
+    const had_csp_metadata = if (Io.Dir.cwd().access(io, csp_metadata_path, .{})) true else |err| switch (err) {
+        error.FileNotFound => false,
+        else => fatal.msg("error checking CSP metadata: {t}\n", .{err}),
+    };
+    if (rt_defaults) |rt| if (cmd.islands.len > 0 or cmd.spas.len > 0 or cfg.getCspExtraSources().len > 0 or had_csp_metadata) {
+        const report_dir = try std.fs.path.join(gpa, &.{ base_dir_path, bundle_cache_path });
+        defer gpa.free(report_dir);
+        // Static sites with CSP declarations never run bundleClient, which
+        // normally creates this directory. The report must work independently.
+        if (cmd.summary) Io.Dir.cwd().createDirPath(io, report_dir) catch |err| fatal.msg(
+            "error: host-config report directory '{s}': {t}\n",
+            .{ report_dir, err },
+        );
+        const report_path = try std.fs.path.join(gpa, &.{ report_dir, "host-config-report.json" });
         defer gpa.free(report_path);
+        const csp_sources = try std.json.Stringify.valueAlloc(gpa, cfg.getCspExtraSources(), .{});
+        defer gpa.free(csp_sources);
         runDriver(io, gpa, cmd.bun_path orelse "bun", ".", &.{
             rt.host_config_emitter,
+            "--csp-extra-sources",
+            csp_sources,
             "--site",
             cmd.output_dir_path orelse "public",
             "--report",

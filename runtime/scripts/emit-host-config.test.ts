@@ -5,7 +5,7 @@ import {
   scanInlineScriptHashes, scanInlineStyleHashes, scanExternalLinkOrigins, cspHeaderValue, emitCsp, emitAllCsp,
   IMMUTABLE_CACHE_CONTROL, REVALIDATE_CACHE_CONTROL, FINGERPRINT_SUFFIX_PATTERN,
   collectChunkPaths, emitCache, emitAllCache,
-  hasInlineSpeculationRules,
+  hasInlineSpeculationRules, parseCspSources,
   type Manifest,
 } from "./emit-host-config.ts";
 
@@ -969,4 +969,65 @@ test("ZigBase CSP guidance gives the static_headers entry and a proxy recipe for
   expect(file.content).toContain("proxy_pass http://127.0.0.1:PORT;");
   expect(file.content).toContain(`Content-Security-Policy: ${cspHeaderValue(hashes)}\n`);
   expect(file.content).not.toContain("cannot configure static response headers yet");
+});
+
+test("declared CSP sources are unioned in every host format without losing hashes", () => {
+  const extras = [
+    { directive: "script-src", sources: ["https://z.example", "https://a.example", "https://a.example"] },
+    { directive: "frame-src", sources: ["https://frames.example"] },
+    { directive: "connect-src", sources: ["https://api.example"] },
+    { directive: "img-src", sources: ["data:"] },
+    { directive: "style-src", sources: ["https://styles.example"] },
+    { directive: "font-src", sources: ["https://fonts.example"] },
+  ];
+  const value = cspHeaderValue(["'sha256-YWJj'"], [], [], false, extras);
+  expect(value).toContain("script-src 'self' 'sha256-YWJj' https://a.example https://z.example;");
+  for (const { directive, sources } of extras.slice(1))
+    expect(value).toContain(`${directive} 'self' ${sources[0]}`);
+  expect(cspHeaderValue(["'sha256-YWJj'"], [], [], false, [...extras].reverse())).toBe(value);
+  expect(value).toContain("style-src-elem 'self' https://styles.example");
+  for (const file of emitAllCsp(["'sha256-YWJj'"], [], [], false, extras)) expect(file.content).toContain(value);
+  expect(emitAllCsp([])).toEqual(emitAllCsp([], [], [], false, []));
+  expect(cspHeaderValue([])).toBe("default-src 'self'; script-src 'self'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; object-src 'none'; base-uri 'self'");
+});
+
+test("CSP artifacts without extras stay byte-identical to the pre-hook emitter", () => {
+  // Digests captured from the base emitter at 9472fe5605a4, for each complete artifact.
+  const digest = (files: { content: string }[]) => files.map(f => createHash("sha256").update(f.content).digest("hex"));
+  expect(digest(emitAllCsp([]))).toEqual([
+    "f30c1a1d249c246114ce1ac8f4976deafe4a509717c4d5f51559325bb6c10a82",
+    "3eddf319a1240598bc4fe1c131c806f3b2433474eafe00fd55e651262ef7cef1",
+    "a6160657f84434b16c39c2dfc691bb7796f6f97ebc16ec19df9cd9dcc77ba7d6",
+  ]);
+  expect(digest(emitAllCsp(["'sha256-YWJj'"], ["https://fonts.example"], ["'sha256-ZGVm'"], true))).toEqual([
+    "6c2debd99ac3ea73503803b37f865d0b27ab4d500b4fd22f44bad336101c9dad",
+    "294c4757790777c03fe05ab8338642fa7f001ea21ebc9f41d2855aa4430c8c33",
+    "22118e2974562fa03ffaa7708b82cdb5b0b98144d550841256c0751615ff3890",
+  ]);
+});
+
+test("CSP metadata rejects malformed sources and encodes path dollars and policy separators for every host", () => {
+  for (const value of [null, {}, [{ directive: "typo", sources: [] }],
+    ...["https://good.example; script-src *", "https://example.com/\n", "'made-up'", "'sha256-!!!'", "https://"].map(source => [{ directive: "script-src", sources: [source] }])]) {
+    expect(() => parseCspSources(value)).toThrow("csp_extra_sources");
+  }
+  const extras = [{ directive: "connect-src", sources: ["https://api.example/$token,part"] }];
+  for (const file of emitAllCsp([], [], [], false, extras)) {
+    expect(file.content).toContain(file.name === "csp.apache.conf" ? "https://api.example/%%24token%%2Cpart" : "https://api.example/%24token%2Cpart");
+    expect(file.content).not.toContain("$token");
+  }
+});
+
+test("Apache CSP headers escape percent format specifiers without changing the policy", () => {
+  const extras = [{ directive: "connect-src", sources: ["https://api.example/a%20b", "https://api.example/$token,part"] }];
+  const value = cspHeaderValue([], [], [], false, extras);
+  expect(value).toContain("https://api.example/a%20b");
+  expect(value).toContain("https://api.example/%24token%2Cpart");
+  const apache = emitCsp([], "apache", [], [], false, extras);
+  expect(apache.content).toContain("https://api.example/a%%20b");
+  expect(apache.content).toContain("https://api.example/%%24token%%2Cpart");
+  const header = apache.content.split("\n").find(line => line.startsWith("Header set "))!;
+  expect(header.replace(/%%/g, "%")).toBe(`Header set Content-Security-Policy "${value}"`);
+  expect(emitCsp([], "nginx", [], [], false, extras).content).toContain(`Content-Security-Policy "${value}"`);
+  expect(emitCsp([], "zigbase", [], [], false, extras).content).toContain(`Content-Security-Policy: ${value}`);
 });

@@ -83,3 +83,16 @@ test("missing manifest bundle cannot produce a passing plan", () => {
     expect(() => planChecks(f.site, f.url)).toThrow("missing release file: app.js");
   } finally { f.close(); }
 });
+
+test("checker requires declared extras and rejects a different policy", async () => {
+  const f = fixture();
+  try {
+    writeFileSync(join(f.site, "csp-sources.json"), JSON.stringify([{ directive: "connect-src", sources: ["https://api.example"] }]));
+    const plan = planChecks(f.site, f.url);
+    expect(plan.csp).toContain("connect-src 'self' https://api.example");
+    expect((await checkDeployment(plan)).findings.some((v) => v.code === "csp")).toBe(true);
+    const withExtras = fixture("", "", [{ directive: "connect-src", sources: ["https://api.example"] }]);
+    try { expect((await checkDeployment(planChecks(withExtras.site, withExtras.url))).ok).toBe(true); }
+    finally { withExtras.close(); }
+  } finally { f.close(); }
+});
