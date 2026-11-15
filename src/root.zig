@@ -1763,7 +1763,9 @@ pub fn run(
                         p._scan.file,
                         &p._parse.ast,
                         p._parse.full_src[p._parse.fm.offset..],
-                        p._parse.fm.lines - 1,
+                        // The tokenizer line count includes lookahead past the fence.
+                        // Derive the offset from the exact slice fed to SuperMD.
+                        std.mem.count(u8, p._parse.full_src[0..p._parse.fm.offset], "\n"),
                     );
 
                     // Do not schedule the page for analysis if contains parsing
@@ -1928,31 +1930,18 @@ pub fn run(
                         break :blk it.next().?;
                     };
 
-                    const line_trim_left = std.mem.trimStart(
-                        u8,
-                        line,
-                        &std.ascii.whitespace,
-                    );
-
-                    const line_trim = std.mem.trimEnd(u8, line_trim_left, &std.ascii.whitespace);
-
-                    const start_trim_left = line.len - line_trim_left.len;
-                    const caret_len = if (range.start.row == range.end.row)
-                        range.end.col - range.start.col
-                    else
-                        line_trim.len - start_trim_left;
-                    const caret_spaces_len = range.start.col - 1 - start_trim_left;
-
                     var hl_buf: [1024]u8 = undefined;
+                    const excerpt = diag.markdownExcerpt(
+                        &hl_buf,
+                        line,
+                        range.start.col,
+                        if (range.start.row == range.end.row) range.end.col else null,
+                        true,
+                    );
+                    const line_trim = excerpt.line;
+                    const highlight = excerpt.highlight;
 
-                    const highlight = if (caret_len + caret_spaces_len + 1 < 1024) blk: {
-                        const h = hl_buf[0 .. caret_len + caret_spaces_len + 1];
-                        @memset(h[0..caret_spaces_len], ' ');
-                        @memset(h[caret_spaces_len..][0 .. caret_len + 1], '^');
-                        break :blk h;
-                    } else "";
-
-                    const fm_lines = p._parse.fm.lines;
+                    const fm_lines = std.mem.count(u8, p._parse.full_src[0..p._parse.fm.offset], "\n");
                     const severity_word = @tagName(err.severity());
                     const note_line: NoteLine = .{ .note = err.note() };
                     if (diag.format == .json) {
@@ -1968,7 +1957,7 @@ pub fn run(
                                 "",
                             )}),
                             .line = fm_lines + n.startLine(),
-                            .col = n.startColumn(),
+                            .col = excerpt.col,
                             .message = diag.render(&msg_buf, "{f}", .{err.fmt()}),
                             .help = err.note(),
                         });
@@ -1987,7 +1976,7 @@ pub fn run(
                                 "",
                             ),
                             fm_lines + n.startLine(),
-                            n.startColumn(),
+                            excerpt.col,
                             severity_word,
                             err.fmt(),
                             line_trim,
@@ -2021,7 +2010,7 @@ pub fn run(
                                 "",
                             ),
                             fm_lines + n.startLine(),
-                            n.startColumn(),
+                            excerpt.col,
                             severity_word,
                             err.fmt(),
                             line_trim,
@@ -4264,31 +4253,16 @@ fn printSuperMdErrors(
             break :blk it.next().?;
         };
 
-        const line_trim_left = std.mem.trimStart(
-            u8,
-            line,
-            &std.ascii.whitespace,
-        );
-
-        const line_trim = std.mem.trimEnd(u8, line_trim_left, &std.ascii.whitespace);
-
-        const start_trim_left = line.len - line_trim_left.len;
-        const caret_len = if (range.start.row == range.end.row)
-            range.end.col - range.start.col
-        else
-            line_trim.len - start_trim_left;
-        const caret_spaces_len = range.start.col - 1 - start_trim_left;
-
         var buf: [1024]u8 = undefined;
-
-        const extra: u32 = if (err.kind == .scripty) 1 else 0;
-
-        const highlight = if (caret_len + caret_spaces_len + extra < 1024) blk: {
-            const h = buf[0 .. caret_len + caret_spaces_len + extra];
-            @memset(h[0..caret_spaces_len], ' ');
-            @memset(h[caret_spaces_len..][0 .. caret_len + extra], '^');
-            break :blk h;
-        } else "";
+        const excerpt = diag.markdownExcerpt(
+            &buf,
+            line,
+            range.start.col,
+            if (range.start.row == range.end.row) range.end.col else null,
+            err.kind == .scripty,
+        );
+        const line_trim = excerpt.line;
+        const highlight = excerpt.highlight;
 
         const msg = switch (err.kind) {
             .scripty => |s| s.err,
@@ -4359,7 +4333,7 @@ fn printSuperMdErrors(
                 .severity = .@"error",
                 .file = diag.render(&path_buf, "{f}", .{file.fmt(&v.string_table, &v.path_table, v.content_dir_path, "")}),
                 .line = fm_lines + range.start.row,
-                .col = range.start.col,
+                .col = excerpt.col,
                 .message = diag.render(&msg_buf, "[{s}] {s}", .{ tag_name, msg }),
                 .help = help_text,
             });
@@ -4372,7 +4346,7 @@ fn printSuperMdErrors(
             , .{
                 file.fmt(&v.string_table, &v.path_table, v.content_dir_path, ""),
                 fm_lines + range.start.row,
-                range.start.col,
+                excerpt.col,
                 tag_name,
                 msg,
                 line_trim,
@@ -4427,7 +4401,7 @@ fn printSuperMdErrors(
             , .{
                 file.fmt(&v.string_table, &v.path_table, v.content_dir_path, ""),
                 fm_lines + range.start.row,
-                range.start.col,
+                excerpt.col,
                 tag_name,
                 msg,
                 line_trim,
