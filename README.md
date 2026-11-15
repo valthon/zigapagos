@@ -86,9 +86,12 @@ map. Omit the directive for server-only HTML with no island JavaScript.
 - **First-class framework migration** — `zigapagos migrate <source>` detects
   Astro, Next.js, Gatsby, Nuxt/Vue, Hugo, Jekyll, Eleventy, Hexo, or Rails and
   writes a source-specific `MIGRATION.md`. `--target <new-site>` assembles a
-  minimal valid project from every safe deterministic transform: React →
+  minimal project from every safe deterministic transform: React →
   `@z/runtime` islands, Markdown/Ziggy frontmatter, fixed-URL assets, and the
   supported Rails ERB presentation subset.
+  The scaffold is valid when converted content has no HTML blocks; preserved
+  HTML blocks are a validation-visible review item, forbidden by SuperMD by
+  design. Inline HTML passes through.
   Rails migrations add versioned discovery and handoff manifests, durable
   operator decisions, ZigBase backend bindings, and generated parity runners;
   unsupported or uncertain behavior remains explicit instead of being guessed.

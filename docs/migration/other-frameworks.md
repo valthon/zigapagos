@@ -133,6 +133,12 @@ source into a minimal Zigapagos project:
 - a valid root placeholder is added only when conversion did not produce
   `content/index.smd`.
 
+For Hugo, Jekyll, Eleventy, and Hexo sources, the generated `zigapagos.ziggy`
+sets `.auto_heading_ids = true` because their content assumes every heading has
+an id. SuperMD's slug may differ from the source framework's slug, so some
+`#heading` links may still need edits. Other sources and `zigapagos init` keep
+automatic heading ids off by default.
+
 ```sh
 zigapagos migrate path/to/old-site --target path/to/new-site
 cd path/to/new-site
@@ -157,8 +163,11 @@ asset tree from recursively seeing its own output.
 Assembly does not change the semantic boundary described by the worklist.
 Next/Nuxt/Gatsby routes, Vue components, templates, loaders, plugins, image
 pipelines, redirects, and runtime behavior still need an explicit port. The
-root placeholder makes the target immediately valid; it is not a claim that a
-source route was converted. Astro also retains the deeper
+root placeholder supplies a valid homepage; it is not a claim that a source
+route was converted. Converted content containing HTML blocks (including
+standalone comments) still fails validation: SuperMD forbids those blocks by
+design. They remain validation-visible review items; inline HTML passes
+through. Astro also retains the deeper
 `zigapagos init --from-astro` scaffold, including Astro-specific wiring and
 tests; `migrate --target` is the smaller uniform workflow shared by every
 adapter.

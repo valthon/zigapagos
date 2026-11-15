@@ -160,6 +160,31 @@ cmp "$WORK/report-symlink-first.md" "$WORK/report-symlink-second.md" || fail 'sy
 grep -Fq '`report.md`' "$site/real/report.md" || fail 'symlink/.. output excluded the unrelated root report.md'
 ! grep -Fq '`real/report.md`' "$site/real/report.md" || fail 'symlink/.. output inventoried the real report'
 
+# These Markdown sources assume automatic heading anchors. Exercise a real
+# release before checking the config so an unresolved fragment is visible.
+for source in hugo jekyll 11ty hexo; do
+  SOURCE="$WORK/heading-$source"
+  TARGET="$WORK/heading-$source-target"
+  case "$source" in
+    hugo) PAGE="content/_index.md" ;;
+    hexo) PAGE="source/index.md" ;;
+    *) PAGE="index.md" ;;
+  esac
+  mkdir -p "$(dirname "$SOURCE/$PAGE")"
+  printf '%s\n' '---' 'title: Heading links' '---' '## Nope' '' '[x](#nope)' > "$SOURCE/$PAGE"
+  "$ZIGAPAGOS" migrate "$SOURCE" --from "$source" --target "$TARGET"
+  if [[ "$source" == hugo ]]; then
+    ( cd "$TARGET" && "$ZIGAPAGOS" release --force --output=out ) || fail "migrated Hugo heading link failed release"
+    grep -q 'id="nope"' "$TARGET/out/index.html" || fail "Hugo heading id was not rendered"
+  fi
+  grep -qF '.auto_heading_ids = true,' "$TARGET/zigapagos.ziggy" || fail "$source target omitted automatic heading ids"
+done
+
+ASTRO="$WORK/heading-astro"
+mkdir -p "$ASTRO"
+"$ZIGAPAGOS" migrate "$ASTRO" --from astro --target "$WORK/heading-astro-target"
+! grep -qF '.auto_heading_ids' "$WORK/heading-astro-target/zigapagos.ziggy" || fail "Astro target changed the heading-id default"
+
 # Next.js: no next.config file on purpose. Detection must use package.json,
 # and a colocated App Router client module must become a scaffold candidate.
 NEXT="$WORK/next"
@@ -221,6 +246,7 @@ grep -q "error accessing dir 'public'" "$WORK/bad-assets.log" || fail "invalid a
 NEXT_TARGET="$WORK/next-target"
 "$ZIGAPAGOS" migrate "$NEXT" --target "$NEXT_TARGET" >"$WORK/next-target.log" 2>&1
 [[ -f "$NEXT_TARGET/zigapagos.ziggy" ]] || fail "target assembly omitted zigapagos.ziggy"
+! grep -qF '.auto_heading_ids' "$NEXT_TARGET/zigapagos.ziggy" || fail "Next.js target changed the heading-id default"
 [[ -f "$NEXT_TARGET/layouts/index.shtml" ]] || fail "target assembly omitted its minimal layout"
 [[ -f "$NEXT_TARGET/content/index.smd" ]] || fail "Next.js target omitted the semantic-port placeholder"
 [[ -f "$NEXT_TARGET/components/Chart.island.tsx" ]] || fail "Next.js target omitted deterministic island scaffolding"

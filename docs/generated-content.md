@@ -139,9 +139,11 @@ string is `=html`. And a closing fence must use the opener's character, be at le
 and carry no info string of its own. Only the first token of an opening fence's info string is
 treated as the language for the remap in (4); anything after it is preserved as authored.
 
-What this pattern deliberately does **not** do is sanitize raw HTML. SuperMD rejects raw
-HTML in the page body outright (`html_is_forbidden`), so a canonical file that grows an
-HTML block fails the site build loudly, at the point the mistake was made. Silently
+What this pattern deliberately does **not** do is sanitize raw HTML. SuperMD rejects
+HTML **blocks** in the page body (`html_is_forbidden`), including standalone HTML
+comments. Inline HTML, such as a `<span>` within a paragraph, passes through. A
+canonical file that grows an HTML block fails the site build loudly, at the point
+the mistake was made. Silently
 stripping such a block instead would turn a loud authoring mistake into a quietly
 incomplete published page.
 

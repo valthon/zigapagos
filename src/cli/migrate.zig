@@ -2730,6 +2730,7 @@ const TargetMetadata = struct {
     title: []const u8 = "Migrated site",
     host_url: []const u8 = "https://example.com",
     url_path_prefix: ?[]const u8 = null,
+    auto_heading_ids: bool = false,
 };
 
 /// NO_SLOP.md section 2.2a contract 2 (owned-result): caller frees the escaped
@@ -2794,9 +2795,9 @@ fn emitTargetConfig(gpa: Allocator, metadata: TargetMetadata, with_assets: bool)
         \\    .content_dir_path = "content",
         \\    .layouts_dir_path = "layouts",
         \\    .assets_dir_path = "assets",
-        \\{s}{s}}}
+        \\{s}{s}{s}}}
         \\
-    , .{ title, host, prefix_line, if (with_assets) "    .static_assets = [\"**\"],\n" else "" }) catch fatal.oom();
+    , .{ title, host, prefix_line, if (with_assets) "    .static_assets = [\"**\"],\n" else "", if (metadata.auto_heading_ids) "    .auto_heading_ids = true,\n" else "" }) catch fatal.oom();
 }
 
 fn emitTargetBuildSh(gpa: Allocator, has_islands: bool) []const u8 {
@@ -2883,10 +2884,15 @@ fn assembleTarget(
     writeTargetFile(io, gpa, target, ".gitignore", target_gitignore);
     writeTargetFile(io, gpa, target, "AGENTS.md", @embedFile("init/AGENTS.md"));
     writeTargetFile(io, gpa, target, "CLAUDE.md", @embedFile("init/CLAUDE.md"));
-    const metadata: TargetMetadata = if (source == .hexo) blk: {
+    var metadata: TargetMetadata = if (source == .hexo) blk: {
         const config = source_root.readFileAlloc(io, "_config.yml", a, .limited(1024 * 1024)) catch break :blk .{};
         break :blk metadataFromHexoSettings(parseHexoSettings(config));
     } else .{};
+    // These sources give every heading an id; migrated fragment links rely on it.
+    metadata.auto_heading_ids = switch (source) {
+        .hugo, .jekyll, .eleventy, .hexo => true,
+        else => false,
+    };
     writeTargetFile(io, gpa, target, "zigapagos.ziggy", emitTargetConfig(a, metadata, asset_summary.copied > 0));
     writeTargetFile(io, gpa, target, "build.sh", emitTargetBuildSh(a, island_count > 0));
     if (island_count > 0) {
