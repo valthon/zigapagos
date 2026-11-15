@@ -1354,7 +1354,7 @@ A hardened deployment runs CSP without `unsafe-inline`, which would block the ge
 inline `<style>` element the site's own layouts ship — the `zigapagos init` scaffold layouts do).
 Their content is deterministic at build time, so `emit-host-config.ts` scans the built HTML,
 computes a **sha256** for each unique inline script and each unique inline `<style>` element, and
-writes a ready-to-merge CSP at the site root:
+writes a CSP at the site root that includes the site’s declared extra sources:
 
 - `csp.nginx.conf` — an `add_header Content-Security-Policy "…" always;` line.
 - `csp.apache.conf` — a `Header set Content-Security-Policy "…"` line.
@@ -1363,7 +1363,14 @@ writes a ready-to-merge CSP at the site root:
   an Nginx reverse-proxy example for the stock `zigbase serve` binary, which cannot add
   response headers.
 
-All three carry the same host-agnostic value:
+Runtime-loaded scripts, frames, and network endpoints must be declared in
+`zigapagos.ziggy` via [`csp_extra_sources`](configuration.md#csp_extra_sources).
+This is explicit author permission to widen a directive, including `script-src`;
+generated hashes remain. The emitter and deploy checker both use the declarations.
+A `style-src` declaration also extends `style-src-elem` so CSP3 browsers permit the
+stylesheet. See [deployment checks](deployment-checks.md#third-party-csp-sources).
+
+Without extra declarations, all three carry the same host-agnostic value:
 
 ```
 default-src 'self'; script-src 'self' 'sha256-…' 'sha256-…'; style-src-elem 'self' 'sha256-…'; style-src-attr 'unsafe-inline'; object-src 'none'; base-uri 'self'

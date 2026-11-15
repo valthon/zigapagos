@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { cspHeaderValue, scanInlineScriptHashes } from "../../runtime/scripts/emit-host-config.ts";
 
-export function fixture(prefix = "", broken = "") {
+export function fixture(prefix = "", broken = "", extras: import("../../runtime/scripts/emit-host-config.ts").CspExtraSources = []) {
   const site = mkdtempSync(join(tmpdir(), "zigapagos-deploy-"));
   const files: Record<string, string> = {
     "index.html": '<!doctype html><title>Home</title><script>console.log("home")</script>',
@@ -27,7 +27,8 @@ export function fixture(prefix = "", broken = "") {
     fallback: "/app/index.html", bundle: prefix + "/app.js",
     immutableAssets: [prefix + "/spa/lazy-XYZ123.js"],
   }));
-  const csp = cspHeaderValue(scanInlineScriptHashes(Object.entries(files).filter(([f]) => f.endsWith(".html")).map(([, b]) => b)));
+  if (extras.length) writeFileSync(join(site, "csp-sources.json"), JSON.stringify(extras));
+  const csp = cspHeaderValue(scanInlineScriptHashes(Object.entries(files).filter(([f]) => f.endsWith(".html")).map(([, b]) => b)), [], [], false, extras);
   const received: string[] = [];
   const server = Bun.serve({
     hostname: "127.0.0.1", port: 0,

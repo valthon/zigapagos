@@ -35,7 +35,6 @@ const PUBLISHED = new Map<string, string>([
   ["docs/overview.md", "docs/overview"],
   ["docs/quick-start.md", "docs/quick-start"],
   ["docs/tutorial.md", "docs/tutorial"],
-  ["docs/configuration.md", "docs/configuration"],
 ]);
 
 // Mirror-only fence-language remap (transformation 4, see

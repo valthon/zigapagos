@@ -163,3 +163,24 @@ It does not certify Apache, CDN eviction, other browsers, arbitrary CSP policies
 or paired ZigBase hosting. ZigBase deployment and backend integration remain
 separate work. The generated policy is verified, not merely replaced with
 permissive headers to get a green browser test.
+
+## Third-party CSP sources
+
+Declare runtime-loaded third parties in `zigapagos.ziggy` with
+[`csp_extra_sources`](configuration.md#csp_extra_sources). The emitter cannot discover
+scripts injected by JavaScript, their frames, or their API calls from built HTML.
+For example, add this field inside `Site`:
+
+```ziggy
+.csp_extra_sources = [
+    { .directive = "script-src", .sources = ["https://js.sentry-cdn.com", "https://browser.sentry-cdn.com"] },
+    { .directive = "connect-src", .sources = ["https://o123.ingest.us.sentry.io"] },
+],
+```
+
+Use your DSN's actual ingest origin. Release with `ZIGAPAGOS_RUNTIME_DIR` pointing at
+the runtime directory (as the npm launcher and project build scripts do). All three
+host artifacts include the declarations and retain generated hashes. Keep the generated
+`csp-sources.json` with the release tree: the deploy checker reads it and expects the
+same extended policy. A different served policy still fails. With no declarations,
+the default policy is unchanged. See the [migration examples](migration/astro-to-zigapagos.md#content-security-policy).
