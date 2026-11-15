@@ -299,9 +299,7 @@ pub fn freeScanResult(gpa: Allocator, res: *ScanResult) void {
 fn packageDeclares(io: Io, gpa: Allocator, root: Io.Dir, dependency: []const u8) bool {
     const package = readFileContent(io, gpa, root, "package.json") catch return false;
     defer gpa.free(package);
-    const quoted = std.fmt.allocPrint(gpa, "\"{s}\"", .{dependency}) catch fatal.oom();
-    defer gpa.free(quoted);
-    return std.mem.indexOf(u8, package, quoted) != null;
+    return detect.packageDeclares(gpa, package, dependency) catch fatal.oom();
 }
 
 fn configMarker(io: Io, gpa: Allocator, root: Io.Dir, source: Source) bool {
@@ -326,7 +324,7 @@ fn configMarker(io: Io, gpa: Allocator, root: Io.Dir, source: Source) bool {
         .nextjs => &.{ "next.config.js", "next.config.mjs", "next.config.ts" },
         .gatsby => &.{ "gatsby-config.js", "gatsby-config.ts", "gatsby-config.mjs" },
         .nuxt => &.{ "nuxt.config.js", "nuxt.config.ts", "nuxt.config.mjs" },
-        .hugo => &.{ "hugo.toml", "hugo.yaml", "hugo.yml", "hugo.json" },
+        .hugo => &detect.hugo_config_markers,
         .jekyll => if ((fileExists(io, root, "Gemfile") or dirExists(io, root, "_posts") or
             dirExists(io, root, "_layouts") or dirExists(io, root, "_includes")) and
             !(dirExists(io, root, "source") and dirExists(io, root, "themes")))
@@ -381,7 +379,7 @@ fn detectSource(io: Io, gpa: Allocator, root: Io.Dir) Source {
         found = candidate;
     }
     return found orelse fatal.usageError(
-        "error: could not confidently detect a supported source framework; ask the project owner or pass --from astro|next|gatsby|nuxt|vue|hugo|jekyll|11ty|hexo|rails\n\n" ++ usage,
+        "error: could not confidently detect a supported source framework (malformed package.json declares no dependencies); ask the project owner or pass --from astro|next|gatsby|nuxt|vue|hugo|jekyll|11ty|hexo|rails\n\n" ++ usage,
         .{},
     );
 }

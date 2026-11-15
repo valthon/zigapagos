@@ -18,7 +18,13 @@ zigapagos migrate path/to/site --copy-assets converted/assets
 zigapagos migrate path/to/site --target path/to/new-site
 ```
 
-The command auto-detects a source from its conventional config file. Use
+The command auto-detects a source from its conventional config file, then falls
+back to dependency names in a parsed `package.json`: keys of `dependencies`,
+`devDependencies`, `peerDependencies`, and `optionalDependencies`. Keywords,
+scripts, and string values do not declare frameworks. Malformed JSON declares
+nothing; config markers still work, and failed detection explains this rule.
+Non-object package roots and non-object dependency sections declare nothing.
+Use
 `--from astro|next|gatsby|nuxt|vue|hugo|jekyll|11ty|hexo` when a monorepo contains
 multiple framework configs or its config has a nonstandard name. A bare
 `_config.yml` is not enough to distinguish Jekyll from Hexo; without supporting
@@ -192,7 +198,10 @@ visible instead.
 
 ## Hugo
 
-The scanner inventories `content/` and `layouts/`.
+The scanner inventories `content/` and `layouts/`. Hugo detection recognizes
+root `hugo.{toml,yaml,yml,json}` and
+`config/_default/{hugo,config}.{toml,yaml,yml,json}`. Legacy root
+`config.{toml,yaml,yml}` requires both `content/` and `layouts/`.
 
 - Markdown content usually maps directly after translating frontmatter types,
   dates, aliases, draft behavior, and taxonomy fields.

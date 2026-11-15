@@ -1599,3 +1599,62 @@ test "paginate: non-matches return null" {
     // Not under src/pages/.
     try testing.expectEqual(null, detectPaginate("src/components/[page].astro", paginate_src));
 }
+
+// Self-freeing: no allocations escape. Invalid JSON declares no dependencies.
+pub fn packageDeclares(gpa: Allocator, package: []const u8, dependency: []const u8) error{OutOfMemory}!bool {
+    const parsed = std.json.parseFromSlice(std.json.Value, gpa, package, .{}) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return false,
+    };
+    defer parsed.deinit();
+    if (parsed.value != .object) return false;
+    for ([_][]const u8{ "dependencies", "devDependencies", "peerDependencies", "optionalDependencies" }) |section| {
+        const dependencies = parsed.value.object.get(section) orelse continue;
+        if (dependencies == .object and dependencies.object.contains(dependency)) return true;
+    }
+    return false;
+}
+
+pub const hugo_config_markers = [_][]const u8{
+    "hugo.toml",                   "hugo.yaml",                   "hugo.yml",                   "hugo.json",
+    "config/_default/hugo.toml",   "config/_default/hugo.yaml",   "config/_default/hugo.yml",   "config/_default/hugo.json",
+    "config/_default/config.toml", "config/_default/config.yaml", "config/_default/config.yml", "config/_default/config.json",
+};
+
+test "framework detection: Hexo keywords, scripts and values do not declare Next.js" {
+    for ([_][]const u8{
+        "{\"keywords\":[\"hexo\",\"next\"],\"dependencies\":{\"hexo\":\"7\"}}",
+        "{\"scripts\":{\"next\":\"hexo server\"},\"dependencies\":{\"hexo\":\"7\"}}",
+        "{\"description\":\"next\",\"dependencies\":{\"other\":\"next\",\"hexo\":\"7\"}}",
+    }) |package| {
+        try testing.expect(!try packageDeclares(testing.allocator, package, "next"));
+        try testing.expect(try packageDeclares(testing.allocator, package, "hexo"));
+    }
+}
+
+test "framework detection: real dependencies in all four maps declare Next.js" {
+    for ([_][]const u8{ "dependencies", "devDependencies", "peerDependencies", "optionalDependencies" }) |section| {
+        const package = try std.fmt.allocPrint(testing.allocator, "{{\"{s}\":{{\"next\":\"16\"}}}}", .{section});
+        defer testing.allocator.free(package);
+        try testing.expect(try packageDeclares(testing.allocator, package, "next"));
+    }
+}
+
+test "framework detection: malformed JSON and non-object dependency maps declare nothing" {
+    for ([_][]const u8{ "{\"dependencies\":{\"next\":", "null", "[]", "{\"dependencies\":[\"next\"]}" }) |package| {
+        try testing.expect(!try packageDeclares(testing.allocator, package, "next"));
+    }
+}
+
+test "framework detection: Hugo default config directory markers" {
+    for ([_][]const u8{
+        "config/_default/hugo.toml",   "config/_default/hugo.yaml",   "config/_default/hugo.yml",   "config/_default/hugo.json",
+        "config/_default/config.toml", "config/_default/config.yaml", "config/_default/config.yml", "config/_default/config.json",
+    }) |path| {
+        var found = false;
+        for (hugo_config_markers) |marker| {
+            if (std.mem.eql(u8, marker, path)) found = true;
+        }
+        try testing.expect(found);
+    }
+}

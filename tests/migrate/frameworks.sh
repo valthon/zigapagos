@@ -15,6 +15,34 @@ fi
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
+# Package metadata is not dependency evidence, even when it names frameworks.
+for metadata in '"keywords":["hexo","next"]' '"scripts":{"next":"hexo server"}' '"description":"next"'; do
+  mkdir -p "$WORK/package-metadata"
+  printf '{%s,"dependencies":{"hexo":"7"}}\n' "$metadata" > "$WORK/package-metadata/package.json"
+  "$ZIGAPAGOS" migrate "$WORK/package-metadata" -o "$WORK/METADATA.md"
+  grep -q 'Hexo' "$WORK/METADATA.md" || fail "package metadata changed framework detection"
+done
+mkdir -p "$WORK/dev-dependency"
+printf '%s\n' '{"devDependencies":{"next":"16"}}' > "$WORK/dev-dependency/package.json"
+"$ZIGAPAGOS" migrate "$WORK/dev-dependency" -o "$WORK/DEV.md"
+grep -q 'Next.js' "$WORK/DEV.md" || fail "devDependency-only Next.js was not detected"
+mkdir -p "$WORK/malformed"
+printf '%s\n' '{"dependencies":{"next":' > "$WORK/malformed/package.json"
+if "$ZIGAPAGOS" migrate "$WORK/malformed" -o "$WORK/MALFORMED.md" >"$WORK/malformed.log" 2>&1; then
+  fail "malformed package.json declared a framework"
+fi
+grep -q 'malformed package.json declares no dependencies' "$WORK/malformed.log" || fail "malformed JSON behavior was not explained"
+! grep -q 'Zigapagos debug stack trace' "$WORK/malformed.log" || fail "malformed package.json panicked"
+for name in hugo config; do
+  for extension in toml yaml yml json; do
+    HUGO_CONFIG="$WORK/hugo-$name-$extension"
+    mkdir -p "$HUGO_CONFIG/config/_default"
+    : > "$HUGO_CONFIG/config/_default/$name.$extension"
+    "$ZIGAPAGOS" migrate "$HUGO_CONFIG" -o "$WORK/HUGO-CONFIG.md"
+    grep -q 'Hugo' "$WORK/HUGO-CONFIG.md" || fail "Hugo config directory was not detected"
+  done
+done
+
 # Next.js: no next.config file on purpose. Detection must use package.json,
 # and a colocated App Router client module must become a scaffold candidate.
 NEXT="$WORK/next"
