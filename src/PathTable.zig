@@ -141,11 +141,13 @@ pub fn get(pt: *const PathTable, components: []const String) ?Path {
 
 /// Interns a path that ends with a file name component, which will not be
 /// interned as part of the path (just as a separate String).
+/// Owned-result: storage belongs to pt and string_table; deinit both with gpa.
+/// A null prefix starts at the root. A Path handle survives component growth.
 pub fn internPathWithName(
     pt: *PathTable,
     gpa: Allocator,
     string_table: *StringTable,
-    path_prefix: []const String,
+    prefix_path: ?Path,
     path: []const u8,
 ) !PathName {
     assert(string_table.string_bytes.items.len > 0); // string_table must contain a zero elem
@@ -163,7 +165,10 @@ pub fn internPathWithName(
     // path_table: if the path already exists, we don't do anything
     // and this memory will be overwritten eventually.
     // If the path is new, we then adjust len to "append" the new data.
-    try pt.path_components.ensureUnusedCapacity(gpa, component_count + path_prefix.len); // we do not store an extra index for the null terminator because the name component will be used to store it instead.
+    const prefix_len = if (prefix_path) |p| p.slice(pt).len else 0;
+    try pt.path_components.ensureUnusedCapacity(gpa, component_count + prefix_len); // we do not store an extra index for the null terminator because the name component will be used to store it instead.
+    // Only borrow the prefix after reserving: growth can relocate its storage.
+    const path_prefix = if (prefix_path) |p| p.slice(pt) else &.{};
     const old_len = pt.path_components.items.len;
     const new_off: Path = @enumFromInt(
         std.math.cast(u32, old_len) orelse return error.OutOfMemory,
@@ -462,6 +467,40 @@ test PathTable {
     const p3 = try path_table.internPath(gpa, &string_table, s3);
     try std.testing.expectEqual(p3, path_table.getPathNoName(&string_table, &.{}, s3));
     try std.testing.expectEqual(p2, p3);
+}
+
+test "PathTable named relative path survives component storage growth" {
+    const gpa = std.testing.allocator;
+    var string_table: StringTable = .empty;
+    defer string_table.deinit(gpa);
+    _ = try string_table.intern(gpa, "");
+
+    var path_table: PathTable = .empty;
+    defer path_table.deinit(gpa);
+    const base = try path_table.internPath(gpa, &string_table, "docs/guide");
+    const expected = [_]String{
+        string_table.get("docs").?,
+        string_table.get("guide").?,
+        try string_table.intern(gpa, "archive"),
+    };
+
+    // Force the next intern to grow the allocation holding the base path.
+    try path_table.path_components.appendNTimes(
+        gpa,
+        @enumFromInt(0),
+        path_table.path_components.capacity - path_table.path_components.items.len,
+    );
+    try std.testing.expectEqual(path_table.path_components.capacity, path_table.path_components.items.len);
+
+    const relative = try path_table.internPathWithName(gpa, &string_table, base, "archive/old.html");
+    try std.testing.expectEqualSlices(String, &expected, relative.path.slice(&path_table));
+    try std.testing.expectEqualStrings("old.html", relative.name.slice(&string_table));
+
+    const root = try path_table.internPathWithName(gpa, &string_table, null, "/archive/index.html");
+    try std.testing.expectEqualSlices(String, expected[2..], root.path.slice(&path_table));
+    try std.testing.expectEqualStrings("index.html", root.name.slice(&string_table));
+    const repeated = try path_table.internPathWithName(gpa, &string_table, base, "archive/old.html");
+    try std.testing.expectEqual(relative, repeated);
 }
 
 test "PathTable OOM cannot leave an uninitialized map entry" {

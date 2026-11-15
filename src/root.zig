@@ -2219,21 +2219,10 @@ pub fn run(
                         '.',
                     ) == null);
 
-                    const prefix = if (a[0] == '/')
-                        &.{}
-                    else blk: {
-                        const prefix = p._scan.url.slice(&v.path_table);
-                        try v.path_table.path_components.ensureUnusedCapacity(
-                            gpa,
-                            prefix.len + std.mem.count(u8, a, "/"),
-                        );
-                        break :blk prefix;
-                    };
-
                     const url = try v.path_table.internPathWithName(
                         gpa,
                         &v.string_table,
-                        prefix,
+                        if (a[0] == '/') null else p._scan.url,
                         a,
                     );
 
@@ -2262,7 +2251,7 @@ pub fn run(
                     // shape without touching resolution.
                     //
                     // Two exclusions, both anti-false-positive:
-                    //  - `prefix.len == 0` (page at the site root): a
+                    //  - An empty page URL (page at the site root): a
                     //    relative and a root-absolute alias resolve
                     //    identically there, so warning would be a pure
                     //    false positive.
@@ -2272,7 +2261,7 @@ pub fn run(
                     //    relative `index.html` resolves onto the page's own
                     //    main output and already dies in the collision
                     //    machinery above. Warning on it buys nothing.
-                    if (prefix.len > 0) {
+                    if (a[0] != '/' and p._scan.url.slice(&v.path_table).len > 0) {
                         const basename = std.fs.path.basenamePosix(a);
                         const is_site_wide_artifact =
                             std.mem.eql(u8, basename, "404.html") or
@@ -2323,20 +2312,10 @@ pub fn run(
                         '.',
                     ) == null);
 
-                    const prefix = if (alt.output[0] == '/')
-                        &.{}
-                    else blk: {
-                        const prefix = p._scan.url.slice(&v.path_table);
-                        try v.path_table.path_components.ensureUnusedCapacity(
-                            gpa,
-                            prefix.len + std.mem.count(u8, alt.output, "/") + 1,
-                        );
-                        break :blk p._scan.url.slice(&v.path_table);
-                    };
                     const url = try v.path_table.internPathWithName(
                         gpa,
                         &v.string_table,
-                        prefix,
+                        if (alt.output[0] == '/') null else p._scan.url,
                         alt.output,
                     );
 
