@@ -442,8 +442,11 @@ pub fn isDynamicRoutePath(route_path: []const u8) bool {
 /// - A node finding's `loc` is `L<line>C<col>`, where `col` is the fragment's
 ///   TRUE 1-based source column -- `templates.rb`'s `col_map` maps Prism's
 ///   generated-program column back through the compiled program (ruling
-///   R17). Two distinct fragments cannot begin at the same byte of the same
-///   line, so two node findings on one line always differ in `col`.
+///   R17). Several AST nodes may describe the same source span, so nodes
+///   sharing valid coordinates append `N<ordinal>` to that location.
+/// - A decoded node lacking valid coordinates uses `N<ordinal>`, where the
+///   ordinal is its 1-based index in the template stream, independent of
+///   source positions. Distinct positionless nodes therefore remain answerable.
 /// - A parse-error, layout or unscanned-template finding's `loc` is
 ///   `L<line>` or `"unscanned"`, and each of those sources yields at most
 ///   one finding per (code, path, line) by construction: one parse error per
@@ -1501,12 +1504,14 @@ fn deriveAuthJourney(
     );
 }
 
-/// Formats `"L<line>C<col>"` for a node loc, or `"L<line>"` for a parse
-/// error/layout loc.
+/// Formats the shared node identity: coordinates with an ordinal when
+/// ambiguous, or an ordinal alone when positionless.
+/// `lineLoc` below formats parse-error/layout locations.
 ///
 /// Contract 1 (self-freeing): the only allocation is the returned buffer.
-fn nodeLoc(gpa: Allocator, line: u64, col: u64) Allocator.Error![]u8 {
-    return std.fmt.allocPrint(gpa, "L{d}C{d}", .{ line, col });
+fn nodeLoc(gpa: Allocator, node: fragments.Node) Allocator.Error![]u8 {
+    var buffer: [fragments.Node.identity_capacity]u8 = undefined;
+    return gpa.dupe(u8, node.identity(&buffer) catch unreachable);
 }
 
 fn lineLoc(gpa: Allocator, line: u64) Allocator.Error![]u8 {
@@ -1728,7 +1733,7 @@ fn deriveMutationLink(
     const choices = try backend.choicesFor(gpa, in.backend, verb, resource);
     defer gpa.free(choices);
 
-    const loc = try nodeLoc(gpa, node.line, node.col);
+    const loc = try nodeLoc(gpa, node);
     defer gpa.free(loc);
 
     var summary: std.ArrayListUnmanaged(u8) = .empty;
@@ -2051,7 +2056,7 @@ fn deriveIvar(
     index: usize,
 ) Allocator.Error!void {
     const node = nodes[index];
-    const loc = try nodeLoc(gpa, node.line, node.col);
+    const loc = try nodeLoc(gpa, node);
     defer gpa.free(loc);
     const name = node.name orelse "";
     var message: std.ArrayListUnmanaged(u8) = .empty;
@@ -2173,7 +2178,7 @@ fn deriveNode(
             if (node.value != null or !convert.opensBlock(node)) return;
             const end = convert.matchingEnd(nodes, node_index) orelse return;
             if (convert.singleLiteralChild(nodes[node_index + 1 .. end]) != null) return;
-            const loc = try nodeLoc(gpa, node.line, node.col);
+            const loc = try nodeLoc(gpa, node);
             defer gpa.free(loc);
             try appendFinding(
                 gpa,
@@ -2188,7 +2193,7 @@ fn deriveNode(
             );
         },
         .unknown => {
-            const loc = try nodeLoc(gpa, node.line, node.col);
+            const loc = try nodeLoc(gpa, node);
             defer gpa.free(loc);
             const name = node.name orelse "";
             const message = try std.fmt.allocPrint(gpa, "unknown helper `{s}`", .{name});
@@ -2196,7 +2201,7 @@ fn deriveNode(
             try appendFinding(gpa, list, "RAILS_HELPER_UNKNOWN", .warn, path, node.line, loc, message, &choices_island_retain_blocked);
         },
         .request_state => {
-            const loc = try nodeLoc(gpa, node.line, node.col);
+            const loc = try nodeLoc(gpa, node);
             defer gpa.free(loc);
             const name = node.name orelse "";
             const message = try std.fmt.allocPrint(gpa, "request-time state `{s}`", .{name});
@@ -2205,14 +2210,14 @@ fn deriveNode(
         },
         .ivar => try deriveIvar(gpa, list, in, path, nodes, node_index),
         .stimulus => {
-            const loc = try nodeLoc(gpa, node.line, node.col);
+            const loc = try nodeLoc(gpa, node);
             defer gpa.free(loc);
             const result = try stimulusMessage(gpa, in, nodes, node_index);
             defer gpa.free(result.message);
             try appendFinding(gpa, list, code_stimulus_controller, .warn, path, node.line, loc, result.message, if (result.portable) &choices_stimulus else &choices_drop_retain_blocked);
         },
         .vue_root => {
-            const loc = try nodeLoc(gpa, node.line, node.col);
+            const loc = try nodeLoc(gpa, node);
             defer gpa.free(loc);
             const message = try std.fmt.allocPrint(gpa, "Vue root `{s}`: the runtime bridge is React-only", .{node.name orelse ""});
             defer gpa.free(message);
@@ -2220,7 +2225,7 @@ fn deriveNode(
         },
         .i18n => {
             if (!node.missing) return;
-            const loc = try nodeLoc(gpa, node.line, node.col);
+            const loc = try nodeLoc(gpa, node);
             defer gpa.free(loc);
             const key = node.name orelse "";
             const base = if (locale) |l|
@@ -2244,20 +2249,20 @@ fn deriveNode(
             try appendFinding(gpa, list, "RAILS_I18N_UNRESOLVED", .warn, path, node.line, loc, message, &choices_retain_blocked);
         },
         .raw => {
-            const loc = try nodeLoc(gpa, node.line, node.col);
+            const loc = try nodeLoc(gpa, node);
             defer gpa.free(loc);
             try appendFinding(gpa, list, "RAILS_RAW_OUTPUT", .warn, path, node.line, loc, "unescaped output", &choices_island_retain_blocked);
         },
         .yield_named => {
             if (!node.dynamic) return;
-            const loc = try nodeLoc(gpa, node.line, node.col);
+            const loc = try nodeLoc(gpa, node);
             defer gpa.free(loc);
             const message = try std.fmt.allocPrint(gpa, "named yield `{s}` has a default branch `{s}` that cannot be represented statically", .{ node.name orelse "", node.value orelse "" });
             defer gpa.free(message);
             try appendFinding(gpa, list, "RAILS_NAMED_YIELD_DEFAULT", .warn, path, node.line, loc, message, &choices_retain_blocked);
         },
         .render_dynamic => {
-            const loc = try nodeLoc(gpa, node.line, node.col);
+            const loc = try nodeLoc(gpa, node);
             defer gpa.free(loc);
             const name = node.name orelse "";
             const message = try std.fmt.allocPrint(gpa, "dynamic render target `{s}`", .{name});
@@ -2265,7 +2270,7 @@ fn deriveNode(
             try appendFinding(gpa, list, "RAILS_PARTIAL_DYNAMIC", .warn, path, node.line, loc, message, &choices_island_spa_retain_blocked);
         },
         .route_helper_dynamic => {
-            const loc = try nodeLoc(gpa, node.line, node.col);
+            const loc = try nodeLoc(gpa, node);
             defer gpa.free(loc);
             const name = node.name orelse "";
             const message = try std.fmt.allocPrint(gpa, "route helper `{s}` has non-literal arguments", .{name});
@@ -2294,7 +2299,7 @@ fn deriveNode(
                 if (try deriveMutationLink(gpa, list, in, path, node)) return;
             }
             const name = node.name orelse return;
-            const loc = try nodeLoc(gpa, node.line, node.col);
+            const loc = try nodeLoc(gpa, node);
             defer gpa.free(loc);
             if (routeNameUnknown(route_names, name)) {
                 const message = try std.fmt.allocPrint(gpa, "route helper `{s}` matches no certain named route", .{name});
@@ -2330,7 +2335,7 @@ fn deriveNode(
             try appendFinding(gpa, list, code_route_helper_unresolved, .warn, path, node.line, loc, message, &choices_retain_blocked);
         },
         .control => {
-            const loc = try nodeLoc(gpa, node.line, node.col);
+            const loc = try nodeLoc(gpa, node);
             defer gpa.free(loc);
             const name = node.name orelse "";
             const message = try std.fmt.allocPrint(gpa, "control flow `{s}`", .{name});
@@ -2388,7 +2393,7 @@ fn deriveNode(
                 return;
             };
             defer gpa.free(message);
-            const loc = try nodeLoc(gpa, node.line, node.col);
+            const loc = try nodeLoc(gpa, node);
             defer gpa.free(loc);
             try appendFinding(gpa, list, "RAILS_ASSET_TRANSFORM", .warn, path, node.line, loc, message, &choices_retain_blocked);
         },
@@ -2413,7 +2418,7 @@ fn deriveNode(
             // suppressed with it, for the same reason it is suppressed
             // inside a form: the journey's finding is its question.
             if (journey_view) return;
-            const loc = try nodeLoc(gpa, node.line, node.col);
+            const loc = try nodeLoc(gpa, node);
             defer gpa.free(loc);
             var summary: std.ArrayListUnmanaged(u8) = .empty;
             defer summary.deinit(gpa);
@@ -2466,7 +2471,7 @@ fn deriveNode(
             // state that comes back is presented. `RAILS_REQUEST_TIME_STATE`
             // rather than a new code because that is exactly what it is --
             // the same code an `@post.errors` read through `.ivar` gets.
-            const loc = try nodeLoc(gpa, node.line, node.col);
+            const loc = try nodeLoc(gpa, node);
             defer gpa.free(loc);
             const message = try std.fmt.allocPrint(gpa, "validation errors of `{s}`", .{node.name orelse ""});
             defer gpa.free(message);
@@ -2480,7 +2485,7 @@ fn deriveNode(
             try appendFinding(gpa, list, code_request_time_state, .warn, path, node.line, loc, message, &choices_island_retain_blocked);
         },
         .turbo_frame => {
-            const loc = try nodeLoc(gpa, node.line, node.col);
+            const loc = try nodeLoc(gpa, node);
             defer gpa.free(loc);
             const name = node.name orelse "";
             const url = try frameUrl(gpa, in, node);
@@ -2505,7 +2510,7 @@ fn deriveNode(
             try appendFinding(gpa, list, code_turbo_frame, .warn, path, node.line, loc, message, choices);
         },
         .turbo_stream => {
-            const loc = try nodeLoc(gpa, node.line, node.col);
+            const loc = try nodeLoc(gpa, node);
             defer gpa.free(loc);
             const portable = portableTurboStream(nodes, node);
             const message = if (portable and std.mem.eql(u8, node.value.?, "subscribe"))
@@ -2522,7 +2527,7 @@ fn deriveNode(
             try appendFinding(gpa, list, code_turbo_stream, .warn, path, node.line, loc, message, if (portable) &choices_realtime_retain_blocked else &choices_retain_blocked);
         },
         .component_root => {
-            const loc = try nodeLoc(gpa, node.line, node.col);
+            const loc = try nodeLoc(gpa, node);
             defer gpa.free(loc);
             const name = node.name orelse "";
             if (node.dynamic) {
@@ -2593,12 +2598,12 @@ const ContextFailureWalker = struct {
     }
 
     fn hasFindingAt(w: *ContextFailureWalker, path: []const u8, node: fragments.Node) bool {
-        return convert.findingIdFor(w.list.items, path, node.line, node.col) != null;
+        return convert.findingIdFor(w.list.items, path, node) != null;
     }
 
     fn appendOnce(w: *ContextFailureWalker, code: []const u8, path: []const u8, node: fragments.Node, message: []const u8) Allocator.Error!void {
         if (w.hasFindingAt(path, node)) return;
-        const loc = try nodeLoc(w.gpa, node.line, node.col);
+        const loc = try nodeLoc(w.gpa, node);
         defer w.gpa.free(loc);
         try appendFinding(w.gpa, w.list, code, .warn, path, node.line, loc, message, &choices_retain_blocked);
     }

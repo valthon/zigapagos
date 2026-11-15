@@ -468,6 +468,44 @@ before/after). The four cases, in priority order:
 
 ## 11. Findings
 
+If a decoded code fragment has invalid coordinates, its position is absent and
+its finding id uses `H<fingerprint>N<occurrence>` instead of `L<line>C<col>`.
+The fingerprint is the first 128 bits of SHA-256, in 32 lowercase hex digits,
+over length-framed source and decoded payload (kind, flags, text, name, value,
+arguments and attributes), excluding coordinates. Ruby nodes also include their
+complete compiled AST source span, whose generated wrappers are deterministic
+and contain no coordinates. This covers closing postfix predicates (`if`,
+`unless`, `while`, `until`), later branches of `if`/`case`, and the bodies of
+statement and output blocks; the opening fragment alone is insufficient.
+HTML element markers cover their complete opening tag; structural markers
+cover their closing/branch tag, and text nodes carry their own literal text.
+The occurrence is the 1-based
+index among nodes with the same fingerprint in that template, not among all
+nodes. Inserting an unrelated helper therefore preserves an existing answer;
+editing its source makes the old answer stale (`RAILS_DECISION_STALE`, §15),
+leaving the new finding unanswered. Identical repeated fragments are distinguished
+by occurrence, so their answers must be rechecked when identical copies change.
+Findings, conversion and component bindings use this same identity.
+Distinct decoded nodes can also share valid coordinates (a postfix condition
+and its enclosed output call). Those ids keep the coordinates and append
+`H<fingerprint>N<occurrence>`; the source positions stay intact. Unique valid
+positions retain their existing `L<line>C<col>` ids.
+
+This replaces ordinal-only `N<ordinal>` suffixes; previously saved answers to
+those ids become stale rather than attaching to a different fragment. The
+manifest and decisions JSON shapes and schema versions are unchanged, and
+`rails-check` requires no schema regeneration: only finding-id string values
+change for positionless or shared-position nodes.
+
+If the templates sidecar is unavailable, each requested template is represented
+as unreadable and receives `RAILS_TEMPLATE_UNSCANNED`. Every affected route
+carries those ids, including dynamic routes answered `spa`: `retain` or
+`blocked` can settle them, and no SPA is emitted while its template graph is
+unavailable. The inventory remains trustworthy, so this non-integrity blocker
+alone does not force exit 1;
+`--target` exits 3 while decisions remain open, then 0 once settled (`--strict`
+still exits 1 for any blocker).
+
 `findings[]` is the manifest's new top-level array (the last key, after
 `blockers[]` — see [§1](#1-what-gets-written)): a per-fragment or
 per-declaration **question for the operator**, not a fact discovery already
@@ -1087,6 +1125,25 @@ Partials are expanded **inline** at every render site: SuperHTML's
 to emit. That is why only partials with literal `locals:` convert.
 
 ### The three markers
+
+Generated targets always include `content/index.smd`: if no converted route
+writes it, a draft migration placeholder with its own layout supplies the root
+section. Release still builds the site but does not emit that placeholder at
+`/`, including when the root route is `retained` or `blocked`. It does not mark
+any route migrated or change handoff completeness. When copying
+markup, self-closing HTML void tags such as `<br/>`, `<hr />` and `<img … />`
+lose the closing slash for SuperHTML. Comments and the contents of `script`,
+`style`, `textarea`, `title`, `iframe`, `xmp`, `noembed` and `noframes` remain
+verbatim until their matching end tag; normalization resumes afterward. These
+follow the HTML spec's [text parsing states](https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody),
+including legacy raw-text elements. `noscript` contents are conservatively
+preserved (raw text when scripting is enabled); `plaintext` preserves the
+remainder of the document because it has no closing tag. Tag names run through
+every character until whitespace, `/` or `>`: names such as `br_custom` and
+`script.widget` do not match `br` or `script`. Foreign SVG/MathML CDATA runs
+from `<![CDATA[` through `]]>` (or EOF if unfinished), preserving apparent
+end tags, void tags and comment openers within it. A `<!--` inside raw text
+also remains text and cannot suppress normalization after the raw element ends.
 
 Conversion **never fails on content**. A fragment it cannot express as static
 HTML becomes a comment with the surrounding markup intact, so a

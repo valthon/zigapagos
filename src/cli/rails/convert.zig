@@ -225,8 +225,8 @@ pub const Binding = struct {
 
     pub const Kind = enum { operation, custom, auth_signin, auth_signup, auth_logout, stimulus, turbo_frame, turbo_stream, component, data_list, @"inline", drop };
 
-    /// A source position in one template, as `fragments.Node` reports it.
-    pub const At = struct { path: []const u8, line: u64, col: u64 };
+    /// A node identity in one template, as `fragments.Node` reports it.
+    pub const At = struct { path: []const u8, line: u64, col: u64, stream_ordinal: usize = 0, fingerprint: [16]u8 = @splat(0) };
 };
 
 /// One control inside a bound form, in source order: what
@@ -543,6 +543,126 @@ fn stripLexicalAttrs(gpa: Allocator, text: []const u8, mode: StripMode, identifi
     }
     if (at < text.len) try out.appendSlice(gpa, text[at..]);
     return .{ .bytes = try out.toOwnedSlice(gpa), .dropped = dropped };
+}
+
+/// Contract 3 (caller-buffer): a slash inside an unquoted attribute value
+/// belongs to the value, not to HTML's self-closing syntax.
+fn hasClosingSlash(tag: []const u8, name_end: usize) bool {
+    var i = name_end;
+    while (i < tag.len - 1) {
+        while (i < tag.len - 1 and std.ascii.isWhitespace(tag[i])) : (i += 1) {}
+        if (i == tag.len - 2 and tag[i] == '/') return true;
+        const start = i;
+        while (i < tag.len - 1 and !std.ascii.isWhitespace(tag[i]) and tag[i] != '=' and tag[i] != '/') : (i += 1) {}
+        if (i == start) return false;
+        while (i < tag.len - 1 and std.ascii.isWhitespace(tag[i])) : (i += 1) {}
+        if (i < tag.len - 1 and tag[i] == '=') {
+            i += 1;
+            while (i < tag.len - 1 and std.ascii.isWhitespace(tag[i])) : (i += 1) {}
+            if (i < tag.len - 1 and (tag[i] == '\'' or tag[i] == '"')) {
+                const quote = tag[i];
+                i += 1;
+                while (i < tag.len - 1 and tag[i] != quote) : (i += 1) {}
+                if (i < tag.len - 1) i += 1;
+            } else {
+                while (i < tag.len - 1 and !std.ascii.isWhitespace(tag[i])) : (i += 1) {}
+            }
+        }
+    }
+    return false;
+}
+
+/// Contract 3 (caller-buffer): compacts completed markup in place. Running
+/// after conversion also handles start tags split across ERB fragments.
+/// Quoted attributes, comments, raw text and foreign markup stay verbatim.
+fn normalizeVoidElements(bytes: []u8) []u8 {
+    var read: usize = 0;
+    var written: usize = 0;
+    var raw: ?[]const u8 = null;
+    var foreign_depth: usize = 0;
+    while (read < bytes.len) {
+        if (raw) |name| {
+            const closing = bytes[read..];
+            if (!(std.mem.startsWith(u8, closing, "</") and
+                std.ascii.startsWithIgnoreCase(closing[2..], name) and
+                closing.len > name.len + 2 and
+                (closing[name.len + 2] == '>' or closing[name.len + 2] == '/' or std.ascii.isWhitespace(closing[name.len + 2]))))
+            {
+                bytes[written] = bytes[read];
+                written += 1;
+                read += 1;
+                continue;
+            }
+            raw = null;
+        }
+        if (std.mem.startsWith(u8, bytes[read..], "<!--")) {
+            const end = if (std.mem.indexOf(u8, bytes[read + 4 ..], "-->")) |offset| read + 4 + offset + 3 else bytes.len;
+            std.mem.copyForwards(u8, bytes[written..][0 .. end - read], bytes[read..end]);
+            written += end - read;
+            read = end;
+            continue;
+        }
+        // In foreign content CDATA is text through ]]>, including apparent
+        // end tags and comment openers. Raw text was consumed above first.
+        if (foreign_depth > 0 and std.mem.startsWith(u8, bytes[read..], "<![CDATA[")) {
+            const end = if (std.mem.indexOf(u8, bytes[read + 9 ..], "]]>")) |offset| read + 9 + offset + 3 else bytes.len;
+            std.mem.copyForwards(u8, bytes[written..][0 .. end - read], bytes[read..end]);
+            written += end - read;
+            read = end;
+            continue;
+        }
+        // A literal '<' in prose must not swallow the next real tag.
+        // Markup starts with a letter, an end-tag letter, or a declaration.
+        const tail = bytes[read..];
+        const markup = tail.len > 1 and (std.ascii.isAlphabetic(tail[1]) or
+            tail[1] == '!' or tail[1] == '?' or
+            (tail[1] == '/' and tail.len > 2 and std.ascii.isAlphabetic(tail[2])));
+        if (bytes[read] != '<' or !markup) {
+            bytes[written] = bytes[read];
+            written += 1;
+            read += 1;
+            continue;
+        }
+        const end = tagEnd(bytes, read) orelse bytes.len;
+        const closing = read + 1 < end and bytes[read + 1] == '/';
+        const name_start = read + (if (closing) @as(usize, 2) else 1);
+        var name_end = name_start;
+        while (name_end < end and !std.ascii.isWhitespace(bytes[name_end]) and bytes[name_end] != '/' and bytes[name_end] != '>') : (name_end += 1) {}
+        const name = bytes[name_start..name_end];
+        var is_void = false;
+        inline for (.{ "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr" }) |tag| {
+            if (std.ascii.eqlIgnoreCase(name, tag)) is_void = true;
+        }
+        const foreign = std.ascii.eqlIgnoreCase(name, "svg") or std.ascii.eqlIgnoreCase(name, "math");
+        const self_closing = end >= read + 3 and bytes[end - 2] == '/' and bytes[end - 1] == '>' and hasClosingSlash(bytes[read..end], name_end - read);
+        if (foreign) {
+            if (closing) {
+                foreign_depth -|= 1;
+            } else if (!self_closing) foreign_depth += 1;
+        }
+        if (!closing and foreign_depth == 0) {
+            if (std.ascii.eqlIgnoreCase(name, "plaintext")) {
+                std.mem.copyForwards(u8, bytes[written..][0 .. bytes.len - read], bytes[read..]);
+                return bytes[0 .. written + bytes.len - read];
+            }
+            // HTML parsing's RAWTEXT, script-data and RCDATA elements.
+            // Preserve noscript conservatively (raw text when scripting is on).
+            // https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody
+            inline for (.{ "script", "style", "textarea", "title", "iframe", "xmp", "noembed", "noframes", "noscript" }) |tag| {
+                if (std.ascii.eqlIgnoreCase(name, tag)) raw = tag;
+            }
+        }
+        const remove_slash = !closing and foreign_depth == 0 and is_void and self_closing;
+        const kept_end = if (remove_slash) end - 2 else end;
+        std.mem.copyForwards(u8, bytes[written..][0 .. kept_end - read], bytes[read..kept_end]);
+        written += kept_end - read;
+        if (remove_slash) {
+            bytes[written] = '>';
+            written += 1;
+        }
+        read = end;
+    }
+    return bytes[0..written];
 }
 
 // ---- escaping ------------------------------------------------------------
@@ -880,25 +1000,28 @@ fn oneLine(gpa: Allocator, code: []const u8) Allocator.Error![]u8 {
     return out.toOwnedSlice(gpa);
 }
 
-/// The finding Stage 1 derived at this exact source position, or `null`.
+/// The finding Stage 1 derived for this node identity, or `null`.
 ///
 /// Public since #167 Stage 3: `scaffold.zig` walks the same node streams to
 /// decide which answered findings become bindings, and it must reach the id
-/// the SAME way this file does. Re-deriving it there from `line`/`col` by
+/// the SAME way this file does. Re-deriving it there from source coordinates by
 /// hand is exactly the drift ruling S22's "never re-derive ids" forbids.
 ///
 /// Matched on the id's `loc` tail rather than on `line`/`col` fields because
 /// `Finding` carries only `line`: `findings.zig` folds line+col into the id
-/// (`…​.L3C5`), and that string is unique per node by construction (see its
-/// `lessThan` doc). The leading `.` is part of the needle so `L3C5` cannot
+/// (`…​.L3C5`, `…​.L3C5H<fingerprint>N<occurrence>` for shared positions, or `…​.H<fingerprint>N<occurrence>`
+/// when coordinates are absent), unique per node
+/// (see its `lessThan` doc). The leading `.` is part of the needle so `L3C5` cannot
 /// match the tail of `L13C5`. `loc` contains neither `%` nor `.`, so
 /// `escapePart` is the identity on it and no un-escaping is needed.
 ///
 /// Contract 3 (caller-buffer): allocates nothing; the result borrows
 /// `finding_list`.
-pub fn findingIdFor(finding_list: []const findings.Finding, path: []const u8, line: u64, col: u64) ?[]const u8 {
-    var buf: [48]u8 = undefined;
-    const needle = std.fmt.bufPrint(&buf, ".L{d}C{d}", .{ line, col }) catch return null;
+pub fn findingIdFor(finding_list: []const findings.Finding, path: []const u8, node: fragments.Node) ?[]const u8 {
+    var buf: [fragments.Node.identity_capacity + 1]u8 = undefined;
+    buf[0] = '.';
+    const identity = node.identity(buf[1..]) catch return null;
+    const needle = buf[0 .. identity.len + 1];
     for (finding_list) |f| {
         if (!std.mem.eql(u8, f.path, path)) continue;
         if (std.mem.endsWith(u8, f.id, needle)) return f.id;
@@ -1111,7 +1234,7 @@ const Converter = struct {
     /// opening marker (only at depth 0). Returns true when the marker was a
     /// `rails:finding` -- the only case that gets a paired `rails:end`.
     fn openRegion(c: *Converter, path: []const u8, n: fragments.Node) Allocator.Error!bool {
-        const id = findingIdFor(c.ctx.findings, path, n.line, n.col);
+        const id = findingIdFor(c.ctx.findings, path, n);
         if (id) |x| try c.ids.append(c.gpa, x);
         if (c.finding_depth > 0) return false;
         if (id) |x| {
@@ -1181,9 +1304,9 @@ const Converter = struct {
     fn bindingAt(c: *Converter, path: []const u8, n: fragments.Node) ?Binding {
         for (c.ctx.bindings) |b| {
             const at = b.at orelse continue;
-            if (at.line == n.line and at.col == n.col and std.mem.eql(u8, at.path, path)) return b;
+            if (at.line == n.line and at.col == n.col and at.stream_ordinal == n.stream_ordinal and (n.stream_ordinal == 0 or std.mem.eql(u8, &at.fingerprint, &n.fingerprint())) and std.mem.eql(u8, at.path, path)) return b;
         }
-        const id = findingIdFor(c.ctx.findings, path, n.line, n.col) orelse return null;
+        const id = findingIdFor(c.ctx.findings, path, n) orelse return null;
         for (c.ctx.bindings) |b| {
             if (b.at != null) continue;
             if (std.mem.eql(u8, b.finding_id, id)) return b;
@@ -1239,7 +1362,7 @@ const Converter = struct {
     ) Allocator.Error!void {
         for (region) |m| {
             if (m.text != null) continue;
-            const mid = findingIdFor(c.ctx.findings, path, m.line, m.col) orelse continue;
+            const mid = findingIdFor(c.ctx.findings, path, m) orelse continue;
             try c.bound.append(c.gpa, mid);
             if (std.mem.eql(u8, mid, by)) continue;
             // Deduped on the spot rather than in `finalize`: a template graph
@@ -2518,6 +2641,7 @@ pub fn convert(gpa: Allocator, ctx: Context, tpl: fragments.Template, kind: Kind
         }
         if (out.items.len > 0 and out.items[out.items.len - 1] != '\n') try out.append(gpa, '\n');
     }
+    out.items.len = normalizeVoidElements(out.items).len;
     const bytes = try out.toOwnedSlice(gpa);
     errdefer gpa.free(bytes);
 
@@ -3531,10 +3655,10 @@ test "convert: every kind treated as a finding has a Stage 1 derivation row -- n
             // still hold if the lookup matched on the wrong path, or stopped
             // matching at all. Without this the two halves could each be right
             // on their own and never line up.
-            try std.testing.expect(findingIdFor(derived, "app/views/pages/a.html.erb", 1, 1) != null);
+            try std.testing.expect(findingIdFor(derived, "app/views/pages/a.html.erb", cNode(.unknown, 1, 1, null)) != null);
             try std.testing.expectEqualStrings(
                 derived[0].id,
-                findingIdFor(derived, "app/views/pages/a.html.erb", 1, 1).?,
+                findingIdFor(derived, "app/views/pages/a.html.erb", cNode(.unknown, 1, 1, null)).?,
             );
         }
     }
@@ -5048,4 +5172,67 @@ test "convert: with no bindings the same template converts exactly as before" {
     try std.testing.expectEqual(@as(usize, 1), out.open_finding_ids.len);
     try std.testing.expectEqual(@as(usize, 0), out.bound_finding_ids.len);
     try std.testing.expectEqual(@as(usize, 0), out.islands.len);
+}
+
+test "convert: self-closing HTML void tags in views and layouts become SuperHTML" {
+    const gpa = std.testing.allocator;
+    const nodes = [_]fragments.Node{tNode("<p>hi<br/>there</p><hr /><img alt=\"a > b\" src=\"/x\" />", 1)};
+    for ([_]Kind{ .view, .layout }) |kind| {
+        const out = try convert(gpa, .{ .routes = &.{}, .assets = &.{}, .fragments = &.{}, .findings = &.{}, .layout_stem = null }, mkTemplate("app/views/pages/about.html.erb", &nodes), kind);
+        defer freeOutput(gpa, out);
+        try std.testing.expect(std.mem.indexOf(u8, out.bytes, "<p>hi<br>there</p><hr ><img alt=\"a > b\" src=\"/x\" >") != null);
+    }
+}
+
+test "normalizeVoidElements preserves attributes, comments, raw text and foreign tags" {
+    const source = "<!-- <br/> --><script>if (a < b) x = '<br/>';</script><style>x{content:'<hr />'}</style><textarea><img /></textarea><svg><br/><path /></svg><br-custom/><img src=/keep/><img alt=\"<br/>\" /><BR/>";
+    var bytes: [source.len]u8 = source.*;
+    try std.testing.expectEqualStrings("<!-- <br/> --><script>if (a < b) x = '<br/>';</script><style>x{content:'<hr />'}</style><textarea><img /></textarea><svg><br/><path /></svg><br-custom/><img src=/keep/><img alt=\"<br/>\" ><BR>", normalizeVoidElements(&bytes));
+}
+
+test "void normalization resumes after literal less-than characters" {
+    const gpa = std.testing.allocator;
+    const bytes = try gpa.dupe(u8, "<p>1 < 2<br/>world</p>< 3<hr />");
+    defer gpa.free(bytes);
+    try std.testing.expectEqualStrings("<p>1 < 2<br>world</p>< 3<hr >", normalizeVoidElements(bytes));
+}
+
+// HTML's RAWTEXT/RCDATA families, including obsolete elements whose parser
+// behavior still applies. A near-match end tag must not end the text region.
+test "void normalization preserves every raw-text family and resumes after its close" {
+    const gpa = std.testing.allocator;
+    for ([_][]const u8{ "iframe", "xmp", "noembed", "noframes", "script", "style", "textarea", "title", "noscript" }) |name| {
+        const source = try std.fmt.allocPrint(gpa, "<BR/><{s}><br/></{s}x><hr /></{s}><img />", .{ name, name, name });
+        defer gpa.free(source);
+        const expected = try std.fmt.allocPrint(gpa, "<BR><{s}><br/></{s}x><hr /></{s}><img >", .{ name, name, name });
+        defer gpa.free(expected);
+        try std.testing.expectEqualStrings(expected, normalizeVoidElements(source));
+    }
+}
+
+test "void normalization preserves plaintext through EOF and accepts raw closing delimiters" {
+    const source = "<br/><IFRAME/><br/></IFRAME/><hr/><plaintext><br/></plaintext><hr/>";
+    var bytes: [source.len]u8 = source.*;
+    try std.testing.expectEqualStrings("<br><IFRAME/><br/></IFRAME/><hr><plaintext><br/></plaintext><hr/>", normalizeVoidElements(&bytes));
+}
+
+test "void normalization consumes foreign CDATA through its terminator" {
+    const source = "<br/><svg><![CDATA[1 > </svg><br/><!--]]></svg><hr/>";
+    var bytes: [source.len]u8 = source.*;
+    try std.testing.expectEqualStrings("<br><svg><![CDATA[1 > </svg><br/><!--]]></svg><hr>", normalizeVoidElements(&bytes));
+    const unfinished = "<math><![CDATA[1 > </math><br/><!--";
+    var rest: [unfinished.len]u8 = unfinished.*;
+    try std.testing.expectEqualStrings(unfinished, normalizeVoidElements(&rest));
+}
+
+test "void normalization compares complete HTML tag names" {
+    const source = "<br_custom/><br.more/><script_widget><br/></script_widget><script.widget><hr/></script.widget><svg_custom><img/></svg_custom>";
+    var bytes: [source.len]u8 = source.*;
+    try std.testing.expectEqualStrings("<br_custom/><br.more/><script_widget><br></script_widget><script.widget><hr></script.widget><svg_custom><img></svg_custom>", normalizeVoidElements(&bytes));
+}
+
+test "void normalization ignores comment openers inside raw text" {
+    const source = "<script><!-- <br/></script><br/><textarea><!-- <hr/></textarea><hr/>";
+    var bytes: [source.len]u8 = source.*;
+    try std.testing.expectEqualStrings("<script><!-- <br/></script><br><textarea><!-- <hr/></textarea><hr>", normalizeVoidElements(&bytes));
 }
