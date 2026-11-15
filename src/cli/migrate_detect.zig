@@ -771,7 +771,7 @@ const shared_map = [_]SharedMap{
 
 /// Known forbidden-npm → shim suggestion (so the doctor still points the way).
 const forbidden_shim = [_]struct { spec: []const u8, target: []const u8 }{
-    .{ .spec = "react-google-recaptcha", .target = "@z/runtime/compat (ReCAPTCHA)" },
+    .{ .spec = "react-google-recaptcha", .target = "@z/runtime/compat (ReCAPTCHA); rename sitekey to siteKey; expiry/error call onChange(\"\"); unsupported: badge, hl, type, stoken, isolated, grecaptcha, asyncScriptOnLoad, ref execution methods" },
 };
 
 /// Analyse a single React/Astro component source and return a `PortReport`

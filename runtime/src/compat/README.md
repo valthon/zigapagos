@@ -85,9 +85,19 @@ const ref = useRef<RecaptchaHandle>(null);
 // ref.current.reset()     — reset the widget + clear the token
 ```
 
-Drop-in for `react-google-recaptcha`.  Loads the Google reCAPTCHA v2 script via
+Supports a subset of `react-google-recaptcha`. Loads the Google reCAPTCHA v2 script via
 `host.loadScript` (de-duped, SSR no-op), renders a `div.g-recaptcha-container`
 placeholder during SSR, then calls `grecaptcha.render` on mount.
+
+Supported props: required `siteKey` (rename the npm package's `sitekey`),
+`onChange(token: string)`, `onExpired()`, `onErrored()`,
+`size` (`normal`, `compact`, `invisible`), `theme` (`light`, `dark`),
+`tabindex` (number), and `ref`. Size, theme and tabindex are passed to Google
+only when supplied. Expiry and error clear the stored token, call `onChange("")`
+(the compat convention, rather than `null`), then call `onExpired` or `onErrored`.
+The ref supports `getValue()` and `reset()`; invisible-widget execution methods
+are not supported. Other npm props, including `badge`, `hl`, `type`, `stoken`,
+`isolated`, `grecaptcha`, and `asyncScriptOnLoad`, are not supported.
 
 **Why the `grecaptcha.render` callback captures the token, not
 `host.recaptchaToken()`:** The original design drafted a `host.recaptchaToken()`
@@ -111,6 +121,7 @@ Hook variant for callers that own the container element rather than using the
 `<ReCAPTCHA>` component directly.  The `render(el)` call must be made after the
 grecaptcha script has fully loaded; calling it before the script resolves is a
 no-op (the widget will not appear).
+Expiry and error callbacks both clear the token returned by `getToken()`.
 
 ---
 
