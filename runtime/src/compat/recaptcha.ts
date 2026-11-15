@@ -37,6 +37,8 @@ export const ReCAPTCHA = forwardRef<RecaptchaHandle, RecaptchaProps>(
     const elRef = useRef<HTMLDivElement | null>(null);
     const widgetId = useRef<number | null>(null);
     const tokenRef = useRef<string>("");
+    const callbacksRef = useRef(props);
+    callbacksRef.current = props;
 
     useImperativeHandle(ref, () => ({
       getValue: () => tokenRef.current,
@@ -60,9 +62,9 @@ export const ReCAPTCHA = forwardRef<RecaptchaHandle, RecaptchaProps>(
             ...(props.size !== undefined ? { size: props.size } : {}),
             ...(props.theme !== undefined ? { theme: props.theme } : {}),
             ...(props.tabindex !== undefined ? { tabindex: props.tabindex } : {}),
-            callback: (t: string) => { tokenRef.current = t; props.onChange?.(t); },
-            "expired-callback": () => { tokenRef.current = ""; props.onChange?.(""); props.onExpired?.(); },
-            "error-callback": () => { tokenRef.current = ""; props.onChange?.(""); props.onErrored?.(); },
+            callback: (t: string) => { tokenRef.current = t; callbacksRef.current.onChange?.(t); },
+            "expired-callback": () => { tokenRef.current = ""; callbacksRef.current.onChange?.(""); callbacksRef.current.onExpired?.(); },
+            "error-callback": () => { tokenRef.current = ""; callbacksRef.current.onChange?.(""); callbacksRef.current.onErrored?.(); },
           });
         };
         g.ready ? g.ready(doRender) : doRender();
