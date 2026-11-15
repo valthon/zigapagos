@@ -42,7 +42,7 @@ for directive, source, good in [
     result = subprocess.run([str(repo/'zig-out/bin/zigapagos'), 'release', '--force'], cwd=work, capture_output=True, text=True, env=os.environ | {"ZIGAPAGOS_RUNTIME_DIR": str(repo/"runtime")})
     assert (result.returncode == 0) == good, (directive, source, result.returncode, result.stderr)
     if good:
-        assert json.loads((out/'csp-sources.json').read_text()) == [{'directive': directive, 'sources': [source]}]
+        assert json.loads((out/'csp-sources.json').read_text())['csp_extra_sources'] == [{'directive': directive, 'sources': [source]}]
         for artifact in ['csp.zigbase.txt', 'csp.nginx.conf', 'csp.apache.conf']:
             rendered = source.replace('%', '%%') if artifact == 'csp.apache.conf' else source
             assert rendered in (out/artifact).read_text(), artifact

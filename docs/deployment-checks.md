@@ -182,5 +182,11 @@ Use your DSN's actual ingest origin. Release with `ZIGAPAGOS_RUNTIME_DIR` pointi
 the runtime directory (as the npm launcher and project build scripts do). All three
 host artifacts include the declarations and retain generated hashes. Keep the generated
 `csp-sources.json` with the release tree: the deploy checker reads it and expects the
-same extended policy. A different served policy still fails. With no declarations,
+same extended policy. Keep `.zigapagos-csp-ownership.json` too: release records
+installed user assets there, and both the checker and standalone emitter ignore
+those assets as declarations even when their contents resemble generated metadata.
+Legacy bare-array metadata is accepted when no user ownership is recorded. An older
+tree with a same-shaped user asset needs a release rebuild first: the checker has
+no project asset inventory from which to recover that distinction. A different
+served policy still fails. With no declarations,
 the default policy is unchanged. See the [migration examples](migration/astro-to-zigapagos.md#content-security-policy).

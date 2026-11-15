@@ -729,7 +729,9 @@ sources when migrating. Runtime injection is invisible to the built-HTML scan:
 copying the application code alone can leave monitoring or a CAPTCHA blocked.
 Declare these sources through [`csp_extra_sources`](https://github.com/valthon/zigapagos/blob/main/docs/configuration.md#csp_extra_sources)
 inside `Site` in `zigapagos.ziggy`, then deploy the regenerated CSP artifact and
-retain `csp-sources.json` for the deploy checker.
+retain `csp-sources.json` and `.zigapagos-csp-ownership.json` for the deploy
+checker and subsequent standalone emitter runs. The ownership record keeps installed
+user assets from being interpreted as declarations, regardless of their contents.
 
 For a Sentry loader plus reCAPTCHA integration:
 

@@ -972,6 +972,56 @@ fn reportSitemapStaticAssetCollision(
     }
 }
 
+/// Compare the installed site-asset path with root metadata. Site assets are
+/// shared across multilingual variants and install under assets_prefix_path,
+/// independently of each locale's output_path_prefix (see the install pass).
+/// Self-freeing allocator contract: the normalized path is scratch only.
+pub fn isCspRootAsset(gpa: Allocator, build: *const Build, asset: PathName) error{OutOfMemory}!bool {
+    return isRootAssetPath(gpa, build, asset, "csp-sources.json");
+}
+
+/// Self-freeing: resolves only a scratch installed path.
+pub fn isRootAssetPath(gpa: Allocator, build: *const Build, asset: PathName, path: []const u8) error{OutOfMemory}!bool {
+    const prefix = switch (build.cfg.*) {
+        .Site => "",
+        .Multilingual => |ml| ml.assets_prefix_path,
+    };
+    var path_buf: [std.fs.max_path_bytes + 1 + fingerprint.hash_len]u8 = undefined;
+    // Same destination formatter and bound as the site-asset install pass.
+    const dest = std.mem.trimStart(u8, std.fmt.bufPrint(&path_buf, "{f}", .{
+        fingerprint.fmtUrl(asset, &build.st, &build.pt, &build.asset_fingerprints),
+    }) catch unreachable, "/");
+    const installed = try std.fs.path.resolve(gpa, &.{ prefix, dest });
+    defer gpa.free(installed);
+    return std.mem.eql(u8, installed, path);
+}
+
+fn reportCspStaticAssetCollision(
+    gpa: Allocator,
+    build: *Build,
+    configured_path: []const u8,
+) error{OutOfMemory}!void {
+    const message = "static asset 'csp-sources.json' selected by static_assets entry '{s}' collides with the generated CSP metadata " ++
+        "(zigapagos.ziggy: csp_extra_sources)";
+    if (diag.format == .json) {
+        var msg_buf: [1024]u8 = undefined;
+        diag.emit(.{
+            .code = .ZP_STATIC_ASSET_OUTPUT_COLLISION,
+            .severity = .@"error",
+            .message = diag.render(&msg_buf, message, .{configured_path}),
+        });
+    } else {
+        std.debug.print("error: " ++ message ++ "\n", .{configured_path});
+    }
+
+    if (build.mode == .memory) {
+        try build.mode.memory.errors.append(gpa, .{
+            .ref = "",
+            .msg = try std.fmt.allocPrint(gpa, "error: " ++ message ++ "\n", .{configured_path}),
+        });
+    }
+}
+
 pub fn run(
     io: Io,
     gpa: Allocator,
@@ -1132,6 +1182,7 @@ pub fn run(
 
     var static_assets_errors = false;
     var sitemap_static_collision_reported = false;
+    var csp_static_collision_reported = false;
     {
         const tracy_frame = tracy.namedFrame("scan content");
         defer tracy_frame.end();
@@ -1216,6 +1267,14 @@ pub fn run(
                         entry.key_ptr.fmt(&build.st, &build.pt, null, "/"),
                     }) catch continue;
                     if (prefix.len == 0 or std.mem.startsWith(u8, asset_path, prefix)) {
+                        if (build.cfg.getCspExtraSources().len > 0 and
+                            try isCspRootAsset(gpa, &build, entry.key_ptr.*) and
+                            !csp_static_collision_reported)
+                        {
+                            try reportCspStaticAssetCollision(gpa, &build, path);
+                            csp_static_collision_reported = true;
+                            static_assets_errors = true;
+                        }
                         if (build.cfg.getSitemap() and
                             isSitemapRootAsset(&build, entry.key_ptr.*) and
                             !sitemap_static_collision_reported)
@@ -1266,6 +1325,14 @@ pub fn run(
 
             if (PathName.get(&build.st, &build.pt, path)) |pn| {
                 if (build.site_assets.getPtr(pn)) |rc| {
+                    if (build.cfg.getCspExtraSources().len > 0 and
+                        try isCspRootAsset(gpa, &build, pn) and
+                        !csp_static_collision_reported)
+                    {
+                        try reportCspStaticAssetCollision(gpa, &build, path);
+                        csp_static_collision_reported = true;
+                        static_assets_errors = true;
+                    }
                     if (build.cfg.getSitemap() and
                         isSitemapRootAsset(&build, pn) and
                         !sitemap_static_collision_reported)

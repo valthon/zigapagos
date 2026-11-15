@@ -1031,3 +1031,17 @@ test("Apache CSP headers escape percent format specifiers without changing the p
   expect(emitCsp([], "nginx", [], [], false, extras).content).toContain(`Content-Security-Policy "${value}"`);
   expect(emitCsp([], "zigbase", [], [], false, extras).content).toContain(`Content-Security-Policy: ${value}`);
 });
+
+test("new fetch directives retain the extended default regardless of declaration order", () => {
+  const extras = [
+    { directive: "default-src", sources: ["https://cdn.example"] },
+    ...["connect-src", "frame-src", "img-src", "font-src", "style-src"].map(directive => ({ directive, sources: ["data:"] })),
+  ];
+  const value = cspHeaderValue([], [], [], false, extras);
+  for (const { directive } of extras.slice(1)) {
+    expect(value.split("; ").find(part => part.startsWith(directive + " "))).toBe(`${directive} 'self' https://cdn.example data:`);
+  }
+  expect(cspHeaderValue([], [], [], false, extras.toReversed())).toBe(value);
+  expect(value).toContain("object-src 'none'");
+  expect(value).toContain("script-src 'self';");
+});

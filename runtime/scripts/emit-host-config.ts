@@ -661,6 +661,7 @@ export function scanExternalLinkOrigins(htmlStrings: string[]): string[] {
 /** Release metadata, shared with the deploy checker; absent means no author opt-in. */
 export type CspExtraSources = { directive: string; sources: string[] }[];
 export const CSP_SOURCES_FILE = "csp-sources.json";
+export const CSP_OWNERSHIP_FILE = ".zigapagos-csp-ownership.json";
 const CSP_DIRECTIVES = ["default-src", "script-src", "frame-src", "connect-src", "img-src", "style-src", "style-src-elem", "style-src-attr", "font-src", "object-src", "base-uri"];
 
 export function parseCspSources(value: unknown): CspExtraSources {
@@ -677,9 +678,39 @@ export function parseCspSources(value: unknown): CspExtraSources {
   return value;
 }
 
-export function readCspSources(site: string): CspExtraSources {
+/** Shape of current generated declarations; ownership is recorded separately. */
+export function serializeCspSources(extras: CspExtraSources): string {
+  return JSON.stringify({ generated_by: "emit-host-config.ts", csp_extra_sources: extras }) + "\n";
+}
+
+// Release's installed-asset inventory is authoritative. Persist that decision
+// separately so marker-shaped (or legacy-shaped) assets remain opaque to readers.
+function cspSourcesAsset(site: string): boolean {
+  const path = `${site}/${CSP_OWNERSHIP_FILE}`;
+  if (!existsSync(path)) return false;
+  const value = JSON.parse(readFileSync(path, "utf8"));
+  if (value?.generated_by !== "emit-host-config.ts" || typeof value.csp_sources_asset !== "boolean")
+    throw new Error(`emit-host-config: ${path} collides with CSP ownership metadata`);
+  return value.csp_sources_asset && existsSync(`${site}/${CSP_SOURCES_FILE}`);
+}
+
+function generatedCspSources(site: string, asset = cspSourcesAsset(site)): CspExtraSources | undefined {
+  if (asset) return undefined;
   const path = `${site}/${CSP_SOURCES_FILE}`;
-  return existsSync(path) ? parseCspSources(JSON.parse(readFileSync(path, "utf8"))) : [];
+  if (!existsSync(path)) return undefined;
+  const text = readFileSync(path, "utf8");
+  let value;
+  try { value = JSON.parse(text); }
+  catch { return undefined; } // Unrelated files are preserved, including non-JSON assets.
+  // Pre-marker main builds wrote a bare array. With no installed-asset
+  // ownership record this is the legacy generated format, not a collision.
+  if (Array.isArray(value)) return parseCspSources(value);
+  if (value?.generated_by !== "emit-host-config.ts") return undefined;
+  return parseCspSources(value.csp_extra_sources);
+}
+
+export function readCspSources(site: string): CspExtraSources {
+  return generatedCspSources(site) ?? [];
 }
 
 /** The default site-wide CSP header VALUE (before explicit author opt-ins).
@@ -746,10 +777,13 @@ export function cspHeaderValue(hashes: string[], linkOrigins: string[] = [], sty
       declared.set(name, set);
     }
   }
-  for (const name of [...declared.keys()].sort()) {
-    const additions = [...declared.get(name)!].sort();
+  // Resolve the effective default before materializing any fallback directive
+  // (connect-src sorts before default-src).
+  const names = [...declared.keys()].sort();
+  for (const name of ["default-src", ...names.filter(name => name !== "default-src")]) {
+    const additions = [...(declared.get(name) ?? [])].sort();
     if (!additions.length) continue;
-    const tokens = [...new Set([...(policy.get(name) ?? ["'self'"]), ...additions])];
+    const tokens = [...new Set([...(policy.get(name) ?? policy.get("default-src")!), ...additions])];
     policy.set(name, tokens.length > 1 ? tokens.filter(t => t !== "'none'") : tokens);
   }
   return [...policy].map(([name, tokens]) => `${name} ${tokens.join(" ")}`).join("; ");
@@ -1008,21 +1042,31 @@ if (import.meta.main) {
   let override = "";
   let report = "";
   let cspSources: CspExtraSources | undefined;
+  let sourcesAsset = false;
   const emitted: string[] = [];
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--site") site = args[++i] ?? "";
     else if (args[i] === "--target") override = args[++i] ?? "";
     else if (args[i] === "--csp-extra-sources") cspSources = parseCspSources(JSON.parse(args[++i] ?? ""));
+    else if (args[i] === "--csp-sources-asset") sourcesAsset = true;
     else if (args[i] === "--report") report = args[++i] ?? "";
   }
   if (!site) { console.error("Usage: emit-host-config.ts --site <outputDir> [--target zigbase|nginx|apache]"); process.exit(1); }
 
-  const extras = cspSources ?? readCspSources(site);
+  sourcesAsset = cspSourcesAsset(site) || sourcesAsset;
+  const extras = cspSources ?? (sourcesAsset ? [] : readCspSources(site));
   const sourcesPath = `${site}/${CSP_SOURCES_FILE}`;
+  const ownedSources = generatedCspSources(site, sourcesAsset);
   if (extras.length) {
-    writeFileSync(sourcesPath, JSON.stringify(extras) + "\n");
+    if (existsSync(sourcesPath) && ownedSources === undefined)
+      throw new Error(`emit-host-config: ${sourcesPath} collides with CSP metadata; preserve or rename the user asset`);
+    writeFileSync(sourcesPath, serializeCspSources(extras));
     emitted.push(CSP_SOURCES_FILE);
-  } else if (existsSync(sourcesPath)) unlinkSync(sourcesPath);
+  } else if (ownedSources !== undefined) unlinkSync(sourcesPath);
+  writeFileSync(`${site}/${CSP_OWNERSHIP_FILE}`, JSON.stringify({
+    generated_by: "emit-host-config.ts", csp_sources_asset: sourcesAsset,
+  }) + "\n");
+  emitted.push(CSP_OWNERSHIP_FILE);
   const glob = new Bun.Glob("**/routing-manifest.json");
   let count = 0;
   const manifests: Manifest[] = [];
