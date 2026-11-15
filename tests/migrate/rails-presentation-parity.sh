@@ -28,6 +28,25 @@ echo "PASS: static Rails parity harness contract"
 command -v ruby >/dev/null 2>&1 || skip "ruby is not on PATH; Rails discovery cannot run"
 command -v bun >/dev/null 2>&1 || skip "bun is not on PATH; the fixed parity runner cannot run"
 
+# ZigBase's cluster socket and Chrome's profile sockets have a 107-byte
+# Unix-domain path limit. Keep their scratch independent of inherited TMPDIR,
+# while fixtures and prepared data still exercise that inherited location.
+REPLAY_TMP="$(mktemp -d /tmp/zp-rails.XXXXXX)"
+WORK=""
+DOWNLOAD_WORK=""
+cleanup() {
+  if [[ -n "$WORK" ]]; then rm -rf "$WORK"; fi
+  if [[ -n "$DOWNLOAD_WORK" ]]; then rm -rf "$DOWNLOAD_WORK"; fi
+  rm -rf "$REPLAY_TMP"
+}
+trap cleanup EXIT
+
+run_e2e() {
+  local scratch
+  scratch="$(mktemp -d "$REPLAY_TMP/run.XXXXXX")" || return
+  TMPDIR="$scratch" "$ZIGAPAGOS" e2e "$@"
+}
+
 PIN="$(sed -n 's/^[[:space:]]*pub const pinned_version[[:space:]]*=[[:space:]]*"\(v\{0,1\}[0-9.]*\)".*/\1/p' "$REPO/src/cli/zigbase.zig")"
 [[ -n "$PIN" ]] || fail "could not read the owned ZigBase pin"
 CACHE_ROOT="${XDG_CACHE_HOME:-${HOME:-}/.cache}"
@@ -50,17 +69,16 @@ else
   DOWNLOAD_WORK="$(mktemp -d)"
   mkdir -p "$DOWNLOAD_WORK/site"
   printf '<!doctype html><title>download probe</title>\n' > "$DOWNLOAD_WORK/site/index.html"
-  "$ZIGAPAGOS" e2e --download-zigbase --site="$DOWNLOAD_WORK/site" -- true \
+  run_e2e --download-zigbase --site="$DOWNLOAD_WORK/site" -- true \
     || fail "explicit pinned ZigBase download failed"
   rm -rf "$DOWNLOAD_WORK"
+  DOWNLOAD_WORK=""
   [[ -x "$CACHE_ZIGBASE" ]] || fail "download succeeded but $CACHE_ZIGBASE is absent"
   ZIGBASE="$CACHE_ZIGBASE"
 fi
 echo "using real ZigBase: $ZIGBASE"
 
 WORK="$(mktemp -d)"
-cleanup() { rm -rf "$WORK"; }
-trap cleanup EXIT
 cp -R "$REPO/tests/migrate/rails-presentation" "$WORK/app"
 TARGET="$WORK/target"
 BACKEND="$WORK/app/backend/openapi.json"
@@ -83,13 +101,13 @@ echo "building generated target..."
 
 run_bun() {
   local data="$1"
-  "$ZIGAPAGOS" e2e --site="$TARGET/zig-out/site" --data-dir="$data" \
+  run_e2e --site="$TARGET/zig-out/site" --data-dir="$data" \
     --zigbase="$ZIGBASE" -- bash -c 'cd "$1" && exec bun test/parity.ts' _ "$TARGET"
 }
 
 run_browser() {
   local data="$1"
-  "$ZIGAPAGOS" e2e --site="$TARGET/zig-out/site" --data-dir="$data" \
+  run_e2e --site="$TARGET/zig-out/site" --data-dir="$data" \
     --zigbase="$ZIGBASE" -- bash -c 'cd "$1" && exec python3 test/journey_playwright.py' _ "$TARGET"
 }
 
@@ -97,9 +115,9 @@ prepare_data() {
   local data="$1"
   local apply_output
   mkdir -p "$data"
-  "$ZIGBASE" migrate --data-dir "$data" \
+  TMPDIR="$REPLAY_TMP" "$ZIGBASE" migrate --data-dir "$data" \
     || fail "real ZigBase migrate failed for $data"
-  apply_output="$("$ZIGBASE" schema apply "$SCHEMA" --data-dir "$data" 2>&1)" \
+  apply_output="$(TMPDIR="$REPLAY_TMP" "$ZIGBASE" schema apply "$SCHEMA" --data-dir "$data" 2>&1)" \
     || { echo "$apply_output"; fail "real ZigBase schema apply failed for $data"; }
   echo "$apply_output"
   # v0.12.0 returned success after printing UnknownCommand. Require the
