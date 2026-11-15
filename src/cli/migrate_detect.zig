@@ -1658,3 +1658,370 @@ test "framework detection: Hugo default config directory markers" {
         try testing.expect(found);
     }
 }
+
+pub const ContentSource = enum { hugo, jekyll, eleventy, hexo };
+
+pub const ContentFields = struct {
+    title: ?[]const u8 = null,
+    date: ?[]const u8 = null,
+    description: ?[]const u8 = null,
+    draft: bool = false,
+    raw_frontmatter: ?[]const u8 = null,
+    has_unconverted: bool = false,
+    body: []const u8,
+};
+
+fn scalar(value: []const u8) []const u8 {
+    const trimmed = std.mem.trim(u8, value, " \t\r");
+    if (trimmed.len >= 2 and
+        ((trimmed[0] == '"' and trimmed[trimmed.len - 1] == '"') or
+            (trimmed[0] == '\'' and trimmed[trimmed.len - 1] == '\'')))
+    {
+        return trimmed[1 .. trimmed.len - 1];
+    }
+    return trimmed;
+}
+
+fn simpleScalar(value: []const u8) bool {
+    const trimmed = std.mem.trim(u8, value, " \t\r");
+    if (trimmed.len == 0) return true;
+    if ((trimmed[0] == '"' and trimmed[trimmed.len - 1] == '"') or
+        (trimmed[0] == '\'' and trimmed[trimmed.len - 1] == '\'')) return true;
+    return trimmed[0] != '[' and trimmed[0] != '{' and
+        !std.mem.eql(u8, trimmed, "|") and !std.mem.eql(u8, trimmed, ">");
+}
+
+/// Recognize only the single-line scalar values this importer can read without
+/// a YAML parser. Reject complex/escaped values rather than guessing whether a
+/// prefix containing them is metadata or ordinary Markdown.
+fn hexoMappingScalar(raw: []const u8) bool {
+    const value = std.mem.trim(u8, raw, " \t\r");
+    if (value.len == 0) return true;
+    if (value[0] == '#') return false;
+    if (value[0] == '\'' or value[0] == '"') {
+        const quote = value[0];
+        if (value.len < 2 or value[value.len - 1] != quote) return false;
+        // No escaping/decoding is implemented by scalar().
+        for (value[1 .. value.len - 1]) |c| {
+            if (c == quote or (quote == '"' and c == '\\')) return false;
+        }
+        return true;
+    }
+    if (std.mem.indexOfScalar(u8, "[],{}&*!|>%@`", value[0]) != null) return false;
+    if ((value[0] == '-' or value[0] == '?' or value[0] == ':') and
+        (value.len == 1 or value[1] == ' ' or value[1] == '\t')) return false;
+    for (value, 0..) |c, i| {
+        if (c == '#' and i > 0 and (value[i - 1] == ' ' or value[i - 1] == '\t')) return false;
+        if (c == ':' and (i + 1 == value.len or value[i + 1] == ' ' or value[i + 1] == '\t')) return false;
+    }
+    return true;
+}
+
+/// Validate the ENTIRE prefix, not just its first mapping-looking line. This
+/// deliberately supports flat mappings only: blank/comment lines plus column-
+/// zero identifier keys and single-line scalar values. Unsupported YAML stays
+/// body text, as does prose with a colon followed by a non-mapping paragraph.
+fn hexoMappingPrefix(raw: []const u8) bool {
+    var has_entry = false;
+    var lines = std.mem.splitScalar(u8, raw, '\n');
+    while (lines.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        if (trimmed.len == 0 or trimmed[0] == '#') continue;
+        if (line[0] == ' ' or line[0] == '\t') return false;
+        const colon = std.mem.indexOfScalar(u8, trimmed, ':') orelse return false;
+        if (colon + 1 < trimmed.len and trimmed[colon + 1] != ' ' and trimmed[colon + 1] != '\t') return false;
+        const key = std.mem.trimEnd(u8, trimmed[0..colon], " \t");
+        if (key.len == 0 or (!std.ascii.isAlphabetic(key[0]) and key[0] != '_')) return false;
+        for (key) |c| {
+            if (!std.ascii.isAlphanumeric(c) and c != '_' and c != '-' and c != '.') return false;
+        }
+        if (!hexoMappingScalar(trimmed[colon + 1 ..])) return false;
+        has_entry = true;
+    }
+    return has_entry;
+}
+
+// YAML 1.2 core accepts these exact spellings, not arbitrary mixed case or
+// YAML 1.1 yes/no/on/off. TOML accepts only lowercase boolean literals.
+fn contentBoolean(value: []const u8, yaml: bool) ?bool {
+    if (std.mem.eql(u8, value, "true")) return true;
+    if (std.mem.eql(u8, value, "false")) return false;
+    if (yaml) {
+        if (std.mem.eql(u8, value, "True") or std.mem.eql(u8, value, "TRUE")) return true;
+        if (std.mem.eql(u8, value, "False") or std.mem.eql(u8, value, "FALSE")) return false;
+    }
+    return null;
+}
+
+/// Caller-buffer contract: all fields borrow from src; no allocation or execution.
+/// The converter reads scalar mappings, rather than evaluating language engines.
+pub fn parseContentFields(src: []const u8, source: ContentSource) ContentFields {
+    var result: ContentFields = .{ .body = src };
+    const first_end = std.mem.indexOfScalar(u8, src, '\n') orelse src.len;
+    const first = std.mem.trimEnd(u8, src[0..first_end], " \t\r");
+    // Language names start with a letter; additional hyphens alone are a
+    // Markdown thematic break, not an executable front-matter opener.
+    const tagged = source == .eleventy and std.mem.startsWith(u8, first, "---") and
+        first.len > 3 and std.ascii.isAlphabetic(first[3]);
+    const fence: []const u8 = if (std.mem.eql(u8, first, "---") or tagged)
+        "---"
+    else if (std.mem.eql(u8, first, "+++"))
+        "+++"
+    else
+        "";
+    const fenceless = fence.len == 0 and source == .hexo;
+    if (fence.len == 0 and !fenceless) return result;
+    // hexo-front-matter refuses the new form when a separator prefixes the file,
+    // even when the old form has no valid closing separator.
+    if (fenceless and (std.mem.startsWith(u8, src, "---") or std.mem.startsWith(u8, src, ";;;"))) return result;
+
+    const opening_end = if (fenceless) 0 else if (first_end < src.len) first_end + 1 else src.len;
+    var cursor = if (fenceless) if (first_end < src.len) first_end + 1 else src.len else opening_end;
+    var closing_start: ?usize = null;
+    while (cursor <= src.len) {
+        const line_end = std.mem.indexOfScalarPos(u8, src, cursor, '\n') orelse src.len;
+        const line = std.mem.trimEnd(u8, src[cursor..line_end], "\r");
+        // rFrontMatterNew matches a run of >= 3 hyphens at column zero,
+        // without requiring a newline after the run (---Body is accepted).
+        var separator_len: usize = 0;
+        if (fenceless) {
+            while (separator_len < line.len and line[separator_len] == '-') : (separator_len += 1) {}
+        }
+        if ((fenceless and separator_len >= 3) or (!fenceless and std.mem.eql(u8, line, fence))) {
+            closing_start = cursor;
+            if (fenceless and separator_len < line.len) {
+                result.body = src[cursor + separator_len ..];
+            } else {
+                result.body = if (line_end < src.len) src[line_end + 1 ..] else "";
+            }
+            break;
+        }
+        cursor = if (line_end < src.len) line_end + 1 else src.len + 1;
+    }
+    const frontmatter_end = closing_start orelse {
+        // An unterminated executable block must not become published body text.
+        if (tagged) return .{ .body = "", .draft = true, .has_unconverted = true, .raw_frontmatter = src[opening_end..] };
+        return .{ .body = src };
+    };
+    const raw = src[opening_end..frontmatter_end];
+    if (fenceless and !hexoMappingPrefix(raw)) return .{ .body = src };
+    result.raw_frontmatter = raw;
+    if (tagged) {
+        result.draft = true;
+        result.has_unconverted = true;
+        return result;
+    }
+
+    var lines = std.mem.splitScalar(u8, src[opening_end..frontmatter_end], '\n');
+    while (lines.next()) |raw_line| {
+        const line = std.mem.trim(u8, raw_line, " \t\r");
+        if (line.len == 0 or line[0] == '#') continue;
+        const colon = std.mem.indexOfScalar(u8, line, ':');
+        const equals = std.mem.indexOfScalar(u8, line, '=');
+        const sep = if (colon) |c| if (equals) |e| @min(c, e) else c else equals orelse {
+            result.has_unconverted = true;
+            continue;
+        };
+        const key = std.mem.trim(u8, line[0..sep], " \t");
+        const raw_value = line[sep + 1 ..];
+        const value = scalar(raw_value);
+        if (std.mem.eql(u8, key, "title")) {
+            if (simpleScalar(raw_value)) result.title = value else result.has_unconverted = true;
+        } else if (std.mem.eql(u8, key, "date")) {
+            if (simpleScalar(raw_value)) result.date = value else result.has_unconverted = true;
+        } else if (std.mem.eql(u8, key, "description")) {
+            if (simpleScalar(raw_value)) result.description = value else result.has_unconverted = true;
+        } else if (std.mem.eql(u8, key, "draft")) {
+            if (contentBoolean(value, !std.mem.eql(u8, fence, "+++"))) |draft| {
+                result.draft = draft;
+            } else {
+                result.has_unconverted = true;
+            }
+        } else if (std.mem.eql(u8, key, "published")) {
+            if (contentBoolean(value, !std.mem.eql(u8, fence, "+++"))) |published| {
+                if (!published) result.draft = true;
+            } else {
+                result.has_unconverted = true;
+            }
+        } else {
+            result.has_unconverted = true;
+        }
+    }
+    return result;
+}
+
+test "Hexo fence-less published False stays private" {
+    const got = parseContentFields("title: Private\npublished: False\n---\nSecret body", .hexo);
+    try std.testing.expectEqualStrings("Secret body", got.body);
+    try std.testing.expect(got.draft);
+    try std.testing.expect(!got.has_unconverted);
+}
+
+test "Hexo fenced published FALSE stays private" {
+    const got = parseContentFields("---\ntitle: Private\npublished: FALSE\n---\nSecret body", .hexo);
+    try std.testing.expectEqualStrings("Secret body", got.body);
+    try std.testing.expect(got.draft);
+    try std.testing.expect(!got.has_unconverted);
+}
+
+test "content booleans follow YAML core spellings and TOML lowercase" {
+    for ([_]ContentSource{ .hugo, .jekyll, .eleventy, .hexo }) |source| {
+        for ([_][]const u8{ "---\n", "" }) |opening| {
+            if (opening.len == 0 and source != .hexo) continue;
+            for ([_][]const u8{ "draft", "published" }) |key| {
+                for ([_][]const u8{ "true", "True", "TRUE", "false", "False", "FALSE" }, 0..) |value, i| {
+                    const src = try std.fmt.allocPrint(std.testing.allocator, "{s}{s}: {s}\n---\nBody", .{ opening, key, value });
+                    defer std.testing.allocator.free(src);
+                    const got = parseContentFields(src, source);
+                    try std.testing.expectEqual(if (std.mem.eql(u8, key, "draft")) i < 3 else i >= 3, got.draft);
+                    try std.testing.expect(!got.has_unconverted);
+                    try std.testing.expectEqualStrings("Body", got.body);
+                }
+                for ([_][]const u8{ "yes", "no", "on", "off", "YES", "NO", "ON", "OFF", "tRuE", "fAlSe" }) |value| {
+                    const src = try std.fmt.allocPrint(std.testing.allocator, "{s}{s}: {s}\n---\nBody", .{ opening, key, value });
+                    defer std.testing.allocator.free(src);
+                    const got = parseContentFields(src, source);
+                    try std.testing.expect(!got.draft);
+                    try std.testing.expect(got.has_unconverted);
+                }
+            }
+        }
+    }
+    for ([_][]const u8{ "draft", "published" }) |key| {
+        for ([_][]const u8{ "true", "false", "True", "TRUE", "False", "FALSE" }, 0..) |value, i| {
+            const src = try std.fmt.allocPrint(std.testing.allocator, "+++\n{s} = {s}\n+++\nBody", .{ key, value });
+            defer std.testing.allocator.free(src);
+            const got = parseContentFields(src, .hugo);
+            try std.testing.expectEqual(i >= 2, got.has_unconverted);
+            try std.testing.expectEqual(if (std.mem.eql(u8, key, "draft")) i == 0 else i == 1, got.draft);
+        }
+    }
+}
+
+test "Eleventy language frontmatter is quarantined" {
+    for ([_][]const u8{ "js", "javascript", "json", "yaml", "custom" }) |lang| {
+        const src = try std.fmt.allocPrint(std.testing.allocator, "---{s} \t\r\nconst draft = true; title = \"Private\";\r\n---\r\nSecret body", .{lang});
+        defer std.testing.allocator.free(src);
+        const got = parseContentFields(src, .eleventy);
+        try std.testing.expect(got.draft);
+        try std.testing.expect(got.has_unconverted);
+        try std.testing.expectEqualStrings("const draft = true; title = \"Private\";\r\n", got.raw_frontmatter.?);
+        try std.testing.expectEqualStrings("Secret body", got.body);
+    }
+}
+
+test "Hugo opening frontmatter fences allow trailing blanks" {
+    for ([_][]const u8{ "+++ \t\ntitle = 'A'\n+++\nBody", "---\t \r\ntitle: A\r\n---\r\nBody" }) |src| {
+        const got = parseContentFields(src, .hugo);
+        try std.testing.expectEqualStrings("A", got.title orelse "");
+        try std.testing.expectEqualStrings("Body", got.body);
+        try std.testing.expect(!got.has_unconverted);
+    }
+}
+
+test "Hexo fence-less mapping preserves draft title and date" {
+    for ([_][]const u8{ "\n---\n", "\r\n----\r\n", "\n---" }) |closing| {
+        const src = try std.fmt.allocPrint(std.testing.allocator, "title: A\npublished: false\ndate: 2013-12-24 23:29:08{s}Body", .{closing});
+        defer std.testing.allocator.free(src);
+        const got = parseContentFields(src, .hexo);
+        try std.testing.expectEqualStrings("A", got.title orelse "");
+        try std.testing.expectEqualStrings("2013-12-24 23:29:08", got.date orelse "");
+        try std.testing.expect(got.draft);
+        try std.testing.expectEqualStrings("Body", got.body);
+    }
+}
+
+test "plain YAML and thematic-break controls for content adapters" {
+    for ([_]ContentSource{ .hexo, .jekyll, .eleventy }) |source| {
+        const yaml = parseContentFields("---\ntitle: A\ndraft: true\n---\nBody", source);
+        try std.testing.expectEqualStrings("A", yaml.title.?);
+        try std.testing.expect(yaml.draft);
+        try std.testing.expectEqualStrings("Body", yaml.body);
+        for ([_][]const u8{ "Ordinary prose\n\n---\nBody", "https://example.com\n---\nBody" }) |body| {
+            const plain = parseContentFields(body, source);
+            try std.testing.expectEqualStrings(body, plain.body);
+            try std.testing.expectEqual(null, plain.raw_frontmatter);
+        }
+        if (source != .hexo) {
+            const body = "title: A\npublished: false\n---\nBody";
+            try std.testing.expectEqualStrings(body, parseContentFields(body, source).body);
+        }
+    }
+}
+
+test "unterminated Eleventy language block stays private" {
+    const got = parseContentFields("---js\nmodule.exports = { draft: true };", .eleventy);
+    try std.testing.expect(got.draft and got.has_unconverted);
+    try std.testing.expectEqualStrings("", got.body);
+    try std.testing.expectEqualStrings("module.exports = { draft: true };", got.raw_frontmatter.?);
+}
+
+test "hyphen-only thematic breaks remain ordinary body in every adapter" {
+    for ([_]ContentSource{ .hugo, .jekyll, .eleventy, .hexo }) |source| {
+        for ([_][]const u8{
+            "----\n\nPublic ordinary page\n",
+            "-----\n\nPublic ordinary page\n",
+            "---- \t\r\n\r\nPublic ordinary page\r\n",
+            "-----\nPublic ordinary page\n---\nMore body\n",
+        }) |body| {
+            const got = parseContentFields(body, source);
+            try std.testing.expectEqualStrings(body, got.body);
+            try std.testing.expect(!got.draft);
+            try std.testing.expect(!got.has_unconverted);
+            try std.testing.expectEqual(null, got.raw_frontmatter);
+        }
+    }
+}
+
+test "Hexo mapping detection skips comments but not prose or prefixed separators" {
+    const got = parseContentFields("# metadata\n\ntitle: A\npublished: false\n---\nBody", .hexo);
+    try std.testing.expect(got.draft);
+    try std.testing.expectEqualStrings("A", got.title.?);
+    for ([_][]const u8{ "---invalid\ntitle: A\n---\nBody", ";;;invalid\ntitle: A\n---\nBody", "Paragraph\ntitle: A\n---\nBody" }) |src| {
+        try std.testing.expectEqualStrings(src, parseContentFields(src, .hexo).body);
+    }
+}
+
+test "Hexo colon-bearing prose before a thematic break remains body" {
+    const body = "Note: this is ordinary Markdown.\n\nThis paragraph must remain visible.\n\n---\n\nRemaining body";
+    const got = parseContentFields(body, .hexo);
+    try std.testing.expectEqualStrings(body, got.body);
+    try std.testing.expectEqual(null, got.raw_frontmatter);
+    try std.testing.expect(!got.has_unconverted);
+    try std.testing.expect(!got.draft);
+}
+
+test "Hexo validates every fence-less mapping entry conservatively" {
+    for ([_][]const u8{
+        "title: A\npublished: false\nNot metadata\n---\nBody",
+        "title: A\ndescription: plain: invalid\n---\nBody",
+        "title: A\ndescription: 'unclosed\n---\nBody",
+        "title: A\ndescription: [unclosed\n---\nBody",
+        "title: A\n  continuation\n---\nBody",
+        "title: A\ntags:\n  - news\n---\nBody",
+        "title: A\nnested:\n  published: false\n---\nBody",
+        "title: A\n\"quoted key\": value\n---\nBody",
+        "title: A\n```\ncode\n```\n---\nBody",
+    }) |body| {
+        const got = parseContentFields(body, .hexo);
+        try std.testing.expectEqualStrings(body, got.body);
+        try std.testing.expectEqual(null, got.raw_frontmatter);
+    }
+    const got = parseContentFields("# metadata\ntitle: 'A'\n\ndate: 2013-12-24 23:29:08\n# comment\npublished: false\npermalink: https://example.com/a\n---\nBody", .hexo);
+    try std.testing.expectEqualStrings("A", got.title.?);
+    try std.testing.expect(got.draft);
+    try std.testing.expectEqualStrings("Body", got.body);
+}
+
+test "Hexo mapping-shaped prose has the same ambiguity as YAML metadata" {
+    for ([_][]const u8{
+        "Note: ordinary prose\n---\nBody",
+        "Note: ordinary prose\n\nWarning: more prose\n---\nBody",
+        "# A Markdown heading\nNote: ordinary prose\n---\nBody",
+    }) |src| {
+        const got = parseContentFields(src, .hexo);
+        try std.testing.expectEqualStrings("Body", got.body);
+        try std.testing.expect(got.raw_frontmatter != null);
+        try std.testing.expect(got.has_unconverted);
+    }
+}

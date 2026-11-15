@@ -355,6 +355,12 @@ permalink: /hello/
 ---
 # Eleventy body
 MD
+cat > "$ELEVENTY/src/private.md" <<'MD'
+---js
+const draft = true;
+---
+Eleventy secret draft body 251
+MD
 : > "$ELEVENTY/src/_includes/card.njk"
 : > "$ELEVENTY/src/_layouts/base.njk"
 echo '{"siteName":"Example"}' > "$ELEVENTY/src/_data/site.json"
@@ -371,6 +377,17 @@ grep -q 'permalink: /hello/' "$ELEVENTY_OUT" || fail "Eleventy permalink was not
 grep -xF '# Eleventy body' "$ELEVENTY_OUT" || fail "Eleventy Markdown body was not preserved"
 grep -xF 'eleventy-icon' "$WORK/eleventy-assets/favicon.ico" || fail "Eleventy public asset was not copied at its URL path"
 grep -xF 'eleventy-logo' "$WORK/eleventy-assets/img/logo.txt" || fail "Eleventy root img asset was not copied at its URL path"
+
+# A language engine is never executed during import. Its unresolved draft
+# must remain excluded by the generated project's own production build.
+ELEVENTY_TARGET="$WORK/eleventy-target"
+"$ZIGAPAGOS" migrate "$ELEVENTY" --target "$ELEVENTY_TARGET"
+grep -xF '.draft = true,' "$ELEVENTY_TARGET/content/private.smd" || fail "Eleventy JS draft became public"
+grep -q 'migration_review = true' "$ELEVENTY_TARGET/content/private.smd" || fail "Eleventy JS review flag missing"
+grep -q 'migration_frontmatter = "const draft = true;' "$ELEVENTY_TARGET/content/private.smd" || fail "Eleventy JS block lost"
+( cd "$ELEVENTY_TARGET" && ZIGAPAGOS_BIN="$ZIGAPAGOS" bash "$ELEVENTY_TARGET/build.sh" ) || fail "Eleventy target build failed"
+[[ -f "$ELEVENTY_TARGET/zig-out/site/index.html" ]] || fail "Eleventy target emitted no homepage"
+! grep -rFq 'Eleventy secret draft body 251' "$ELEVENTY_TARGET/zig-out/site" || fail "Eleventy draft body was published"
 
 # Hexo: package/structure disambiguates its shared _config.yml name from
 # Jekyll, source/_posts paths normalize, drafts stay drafts, and theme EJS is
@@ -406,6 +423,29 @@ title: An idea
 ---
 Draft body
 MD
+cat > "$HEXO/source/_posts/private.md" <<'MD'
+title: Private Hexo title
+published: False
+date: 2013-12-24 23:29:08
+---
+Hexo secret draft body 258
+MD
+cat > "$HEXO/source/_posts/private-fenced.md" <<'MD'
+---
+title: Private fenced Hexo title
+published: FALSE
+---
+Hexo fenced secret draft body 270
+MD
+cat > "$HEXO/source/note.md" <<'MD'
+Note: this is ordinary Markdown.
+
+This paragraph must remain visible.
+
+---
+
+Remaining body
+MD
 printf 'hexo-image\n' > "$HEXO/source/images/photo.txt"
 mkdir -p "$HEXO/source/_posts/hello"
 printf 'relocated-post-image\n' > "$HEXO/source/_posts/hello/photo.txt"
@@ -432,6 +472,18 @@ HEXO_TARGET="$WORK/hexo-target"
 grep -xF '    .title = "Next Level Developer",' "$HEXO_TARGET/zigapagos.ziggy" || fail "Hexo title was not carried into the target config"
 grep -xF '    .host_url = "https://nextleveldeveloper.com",' "$HEXO_TARGET/zigapagos.ziggy" || fail "Hexo URL was not carried into the target config"
 ( cd "$HEXO_TARGET" && "$ZIGAPAGOS" validate ) || fail "assembled Hexo target is not valid Zigapagos input"
+grep -xF '.title = "Private Hexo title",' "$HEXO_TARGET/content/posts/private.smd" || fail "Hexo fence-less title was lost"
+grep -xF '.date = @date("2013-12-24T23:29:08"),' "$HEXO_TARGET/content/posts/private.smd" || fail "Hexo fence-less date was lost"
+grep -xF 'Note: this is ordinary Markdown.' "$HEXO_TARGET/content/note.smd" || fail "Hexo colon-bearing prose was stripped"
+grep -xF 'This paragraph must remain visible.' "$HEXO_TARGET/content/note.smd" || fail "Hexo paragraph was stripped"
+( cd "$HEXO_TARGET" && ZIGAPAGOS_BIN="$ZIGAPAGOS" bash "$HEXO_TARGET/build.sh" ) || fail "Hexo target build failed"
+[[ -f "$HEXO_TARGET/zig-out/site/index.html" ]] || fail "Hexo target emitted no homepage"
+! grep -rFq 'Hexo secret draft body 258' "$HEXO_TARGET/zig-out/site" || fail "Hexo draft body was published"
+! grep -rFq 'Hexo fenced secret draft body 270' "$HEXO_TARGET/zig-out/site" || fail "Hexo fenced draft body was published"
+[[ ! -e "$HEXO_TARGET/zig-out/site/posts/private/index.html" ]] || fail "Hexo fence-less draft route was published"
+[[ ! -e "$HEXO_TARGET/zig-out/site/posts/private-fenced/index.html" ]] || fail "Hexo fenced draft route was published"
+grep -xF '.draft = true,' "$HEXO_TARGET/content/posts/private.smd" || fail "Hexo fence-less draft became public"
+grep -xF '.draft = true,' "$HEXO_TARGET/content/posts/private-fenced.smd" || fail "Hexo fenced draft became public"
 mkdir -p "$VALIDATE/content/writing" "$VALIDATE/content/drafts"
 cp tests/rendering/simple/content/index.smd "$VALIDATE/content/writing/index.smd"
 cp tests/rendering/simple/content/index.smd "$VALIDATE/content/drafts/index.smd"

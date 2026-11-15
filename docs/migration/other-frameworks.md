@@ -214,7 +214,8 @@ root `hugo.{toml,yaml,yml,json}` and
 
 `--convert-content DIR` converts `.md`/`.markdown` pages below `content/`, maps
 `_index.md` to `index.smd`, recognizes scalar `title`, `date`, `description`, and
-`draft` frontmatter from YAML or TOML, and preserves the Markdown body. It adds
+`draft` frontmatter from YAML or TOML, and preserves the Markdown body. Opening
+`---` and `+++` fences may have trailing spaces or tabs (including with CRLF). It adds
 `custom.migration_source`, `migration_framework`, and `migration_review = true`
 so review status travels with every generated page. HTML layouts and shortcodes
 remain worklist items. If the source contains fields outside the recognized
@@ -262,7 +263,11 @@ and `content/` trees, and keeps `_layouts` and `_includes` out of the page list.
 roots, strips `src/` or `content/` from output paths, preserves Markdown bodies,
 and carries layouts, permalinks, tags, and other unconverted data in
 `custom.migration_frontmatter` for review. HTML and template-language inputs
-remain worklist items.
+remain worklist items. Language-tagged `---<lang>` blocks (including `---js`)
+are recognized but never executed or interpreted as scalar YAML/TOML. Their
+raw contents are retained in `custom.migration_frontmatter`, with
+`migration_review = true` and `.draft = true` until manually ported. Even an
+unterminated language block is retained privately rather than copied into the body.
 
 ## Hexo
 
@@ -282,6 +287,32 @@ theme EJS, Swig, or Nunjucks templates.
 `--convert-content DIR` converts Markdown content, preserves bodies and
 unconverted metadata, and normalizes `_posts`/`_drafts` paths. ISO dates written
 with either dashes or Hexo's common `YYYY/MM/DD` form become Ziggy timestamps.
+Both ordinary fenced YAML and Hexo's fence-less scalar YAML mappings are read;
+`published: false` becomes `.draft = true`. For every content adapter, YAML
+`draft` and `published` accept the YAML 1.2 core spellings `true`, `True`, `TRUE`,
+`false`, `False`, and `FALSE`; `published: False` and `published: FALSE` also
+become drafts. YAML 1.1 `yes`/`no`/`on`/`off` remain unconverted review fields.
+TOML booleans accept only lowercase `true` and `false`.
+The fence-less form is Hexo-only:
+a nonempty metadata prefix precedes a column-zero run of at least three
+hyphens, and the file must not itself begin with `---` or `;;;`. Following
+hexo-front-matter's `rFrontMatterNew`, text immediately after the separator
+run can begin the body without a newline. The entire prefix must fit the
+converter's flat, single-line scalar mapping subset: every nonblank,
+noncomment line is an unindented `key: value` entry, with a colon followed by
+whitespace or end of line. Keys start with an ASCII letter or underscore and
+contain only ASCII letters, digits, underscores, dots, and hyphens. Values
+are empty, plain single-line scalars, or simple matching quoted strings;
+unquoted mapping colons, escaped quotes, inline comments, collections, and
+indented continuations are unsupported. If any line fails validation, the
+entire original document remains body text. Complex YAML and JSON front matter
+require a manual port.
+
+This syntax cannot distinguish metadata from Markdown that is itself a valid
+mapping: a single `Note: prose` line, several such lines separated by blanks,
+or Markdown `#` headings followed only by mapping entries before `---` are
+accepted as metadata, just as Hexo accepts them. Ordinary paragraphs, URLs,
+lists, or code fences anywhere in the prefix keep it in the body instead.
 Theme templates, Hexo tag syntax, plugin output, and generated indexes remain
 review work. The converter removes the `<!-- more -->` excerpt marker and
 translates simple `<blockquote>`/`<footer>` blocks to Markdown outside fenced
