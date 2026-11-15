@@ -64,7 +64,49 @@ for (const [option, prop] of [["expired-callback", "onExpired"], ["error-callbac
   });
 }
 
-test("useRecaptcha clears solved tokens on expiry and error", async () => {
+for (const option of ["callback", "expired-callback", "error-callback"] as const) {
+  for (const update of ["replace", "add", "remove"] as const) {
+    test(`${option} uses current callbacks after same-siteKey rerender (${update})`, async () => {
+      installGrecaptcha();
+      const ref: { current: RecaptchaHandle | null } = { current: null };
+      const oldCalls: string[] = [];
+      const newCalls: string[] = [];
+      const handlers = (calls: string[]) => ({
+        onChange: (token: string) => {
+          expect(ref.current?.getValue()).toBe(token);
+          calls.push(`change:${token}`);
+        },
+        onExpired: () => {
+          expect(ref.current?.getValue()).toBe("");
+          calls.push("expired");
+        },
+        onErrored: () => {
+          expect(ref.current?.getValue()).toBe("");
+          calls.push("errored");
+        },
+      });
+      r = renderIsland(ReCAPTCHA, {
+        siteKey: "KEY", ref, ...(update === "add" ? {} : handlers(oldCalls)),
+      }, { host: { scripts: { [API]: true } } });
+      await flush();
+      const widgetCallbacks = captured;
+      captured.callback("INITIAL");
+      oldCalls.length = 0;
+      await r.rerender({
+        siteKey: "KEY", ref, ...(update === "remove" ? {} : handlers(newCalls)),
+      });
+      expect(captured).toBe(widgetCallbacks);
+      widgetCallbacks[option]("LATEST");
+      expect(ref.current?.getValue()).toBe(option === "callback" ? "LATEST" : "");
+      expect(oldCalls).toEqual([]);
+      expect(newCalls).toEqual(update === "remove" ? [] : option === "callback"
+        ? ["change:LATEST"]
+        : ["change:", option === "expired-callback" ? "expired" : "errored"]);
+    });
+  }
+}
+
+test("useRecaptcha clears solved tokens on expiry and error after rerender", async () => {
   installGrecaptcha();
   let api: ReturnType<typeof useRecaptcha> | undefined;
   function Fixture() { api = useRecaptcha("HOOK_KEY"); return null; }
@@ -75,6 +117,7 @@ test("useRecaptcha clears solved tokens on expiry and error", async () => {
     "callback", "error-callback", "expired-callback", "sitekey",
   ]);
   expect(captured.sitekey).toBe("HOOK_KEY");
+  await r.rerender({});
   for (const option of ["expired-callback", "error-callback"]) {
     captured.callback("SOLVED");
     expect(api!.getToken()).toBe("SOLVED");
