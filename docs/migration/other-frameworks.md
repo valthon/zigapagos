@@ -43,6 +43,44 @@ automatic conversions.
 Generated files never overwrite earlier work: a collision is written beside it
 as `.new`, `.new.2`, and so on.
 
+## Worklist inventory scope
+
+Non-Astro entries are sorted lexicographically by source-relative path before
+writing any section. `Content files not converted` names each extra content file
+with its reason; these entries never participate in automatic conversion or
+React scaffolding. An empty section means no candidates in this documented
+scope, rather than proof that arbitrary framework configuration has been evaluated.
+
+For Hugo, Jekyll, and Eleventy, a recursive inventory supplements the conversion
+roots with `.md`, `.markdown`, and `.html` files elsewhere in the project. This
+includes Hugo custom/per-language `contentDir` trees, Jekyll subdirectories and
+`_collection` directories, and nested Eleventy inputs (including input `"."`).
+These files are listed as outside conventional conversion roots and require a
+manual port. In-scope HTML/template pages also appear here with the reason that
+only Markdown is converted. Configured roots, collection output flags, ignore
+rules, and executable Eleventy configuration are not interpreted; the inventory
+is conservative and can include files the source does not render.
+
+For Next.js, Gatsby, and Nuxt/Vue, the same recursive inventory lists unhandled
+`.md`, `.markdown`, and `.mdx` content, including `_posts/`, `content/`,
+`content/blog/`, and `data/blog/`. Files already in the route/template inventory
+are not duplicated. Content-layer conversion remains manual.
+
+The inventory excludes the resolved report output path (default `MIGRATION.md`
+or custom `--output`), including when it is inside the source tree. Other source
+files named `MIGRATION.md` remain eligible for inventory.
+The output's existing parent directory is resolved through the filesystem before
+joining its filename, so symlinked parents and `..` match the report's write path.
+If that parent does not exist, no source path is excluded as the report.
+
+The supplemental walk does not follow symlinks, skips dot-prefixed entries and
+root `README.md`, and excludes directory basenames `node_modules`, `vendor`,
+`dist`, `build`, `out`, `_site`, `zig-out`, `zig-cache`, `_layouts`, `_includes`,
+and `_data`. Dependencies, outputs, and conventional template/data roots are
+outside this supplemental content scan. Review source configuration for content outside the
+project or inside excluded trees. A traversal failure stops the run with the
+directory and error instead of reporting an empty inventory.
+
 ## Deterministic asset copy
 
 `--copy-assets <target-assets-dir>` handles the conventional source trees whose
@@ -178,8 +216,9 @@ The scanner inventories `src/pages`, `src/templates`, and `src/components`.
 ## Nuxt and Vue
 
 The scanner inventories Nuxt's `pages/`, `layouts/`, and `components/` forms,
-including their `src/` variants. For a plain Vue application it inventories the
-complete `src/**/*.vue` tree, since Vue itself imposes no route/component
+including their `src/` and Nuxt 4 `app/` variants. Root `app.vue`,
+`src/app.vue`, and `app/app.vue` are inventoried as application layouts. For a
+plain Vue application it inventories the complete `src/**/*.vue` tree, since Vue itself imposes no route/component
 directory convention. A Nuxt config or `nuxt`/`vue` package dependency enables
 auto-detection; `--from vue` remains useful in a monorepo.
 
@@ -202,6 +241,9 @@ The scanner inventories `content/` and `layouts/`. Hugo detection recognizes
 root `hugo.{toml,yaml,yml,json}` and
 `config/_default/{hugo,config}.{toml,yaml,yml,json}`. Legacy root
 `config.{toml,yaml,yml}` requires both `content/` and `layouts/`.
+
+The supplemental content inventory above names possible pages in custom
+content roots.
 
 - Markdown content usually maps directly after translating frontmatter types,
   dates, aliases, draft behavior, and taxonomy fields.
@@ -226,7 +268,9 @@ target date uses a conspicuous epoch placeholder until it is reviewed.
 
 ## Jekyll
 
-The scanner inventories `_posts`, `_pages`, `_layouts`, and `_includes`.
+The conversion scanner inventories root pages, `_posts`, `_pages`, `_layouts`,
+and `_includes`. Subdirectory and collection candidates outside these roots are
+named in `Content files not converted`, as described above.
 
 - Markdown posts/pages map to content after translating YAML frontmatter,
   permalinks, collections, defaults, drafts, and date behavior.
@@ -250,6 +294,8 @@ work.
 The scanner recognizes `.eleventy.*`, `eleventy.config.*`, or the
 `@11ty/eleventy` package. It inventories root content plus conventional `src/`
 and `content/` trees, and keeps `_layouts` and `_includes` out of the page list.
+Other nested Markdown/HTML inputs are named in `Content files not converted`;
+`dir.input` is not evaluated or used to expand conversion scope.
 
 - Markdown and HTML inputs map to content; Nunjucks/Liquid/JavaScript templates
   map to SuperHTML layouts or generated content according to their output role.

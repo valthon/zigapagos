@@ -43,6 +43,123 @@ for name in hugo config; do
   done
 done
 
+# Worklist coverage regressions (#254, #260, #261). Keep checking after a
+# missing entry so a baseline run demonstrates every reproduction independently.
+coverage_failures=0
+coverage_has() {
+  if ! grep -Fq -- "$2" "$1"; then
+    echo "FAIL coverage: $2"
+    coverage_failures=$((coverage_failures + 1))
+  fi
+}
+for fw in hugo jekyll 11ty next gatsby nuxt; do
+  site="$WORK/coverage-$fw"
+  mkdir -p "$site"
+  case "$fw" in
+    hugo)
+      printf "contentDir = 'content.en'\n" > "$site/hugo.toml"
+      paths='content.en/a.md content/a.md content.en/extra.html assets/source.md'
+      ;;
+    jekyll)
+      printf 'title: x\ncollections: {docs: {output: true}}\n' > "$site/_config.yml"
+      printf "gem 'jekyll'\n" > "$site/Gemfile"
+      paths='docs/a.md _docs/a.md docs/extra.html a.md'
+      ;;
+    11ty)
+      printf 'export default function () {}\nexport const config = { dir: { input: "." } };\n' > "$site/eleventy.config.js"
+      paths='posts/a.md posts/extra.html a.md'
+      ;;
+    next|gatsby|nuxt)
+      printf '{"dependencies":{"%s":"4.0.0"}}\n' "$fw" > "$site/package.json"
+      paths='_posts/a.md content/blog/b.md data/blog/c.mdx'
+      ;;
+  esac
+  for path in $paths; do
+    mkdir -p "$(dirname "$site/$path")"
+    printf '%s\n' '---' 'title: A' '---' 'A' > "$site/$path"
+  done
+  mkdir -p "$site/node_modules/ignored" "$site/.hidden"
+  printf 'ignored\n' > "$site/node_modules/ignored/no.md"
+  printf 'ignored\n' > "$site/.hidden/no.md"
+  ln -s node_modules/ignored "$site/linked"
+  if [[ "$fw" == nuxt ]]; then
+    for path in app.vue src/app.vue app/app.vue pages/about.vue layouts/default.vue components/Old.vue src/pages/old.vue src/layouts/old.vue src/components/Old.vue app/pages/about.vue app/layouts/default.vue app/components/New.vue; do
+      mkdir -p "$(dirname "$site/$path")"
+      printf '<template><p>About</p></template>\n' > "$site/$path"
+    done
+  fi
+  "$ZIGAPAGOS" migrate "$site" --from "$fw" --target "$WORK/coverage-out-$fw" > "$WORK/coverage-$fw.log" 2>&1
+  report="$WORK/coverage-out-$fw/MIGRATION.md"
+  coverage_has "$report" '### Content files not converted'
+  for path in $paths; do coverage_has "$report" "\`$path\`"; done
+  case "$fw" in
+    hugo|jekyll|11ty) coverage_has "$report" 'outside the adapter' ;;
+    *) coverage_has "$report" 'content-layer Markdown/MDX requires an explicit port' ;;
+  esac
+  awk '/^### Content files not converted/{inside=1;next} /^### /{inside=0} inside && /^- \[ \]/{print}' "$report" > "$WORK/content-lines"
+  LC_ALL=C sort -c "$WORK/content-lines" || fail 'unconverted content is not sorted'
+  if [[ "$fw" == nuxt ]]; then
+    for path in app.vue src/app.vue app/app.vue pages/about.vue layouts/default.vue components/Old.vue src/pages/old.vue src/layouts/old.vue src/components/Old.vue app/pages/about.vue app/layouts/default.vue app/components/New.vue; do
+      coverage_has "$report" "\`$path\`"
+    done
+  fi
+  ! grep -Fq 'no.md' "$report" || fail "coverage included dependencies/hidden files"
+  case "$fw" in
+    hugo)
+      [[ -f "$WORK/coverage-out-$fw/content/a.smd" ]] || fail 'Hugo control did not convert'
+      [[ ! -e "$WORK/coverage-out-$fw/content/content.en/a.smd" ]] || fail 'custom Hugo content unexpectedly converted'
+      ;;
+    jekyll|11ty) [[ -f "$WORK/coverage-out-$fw/content/a.smd" ]] || fail "$fw root control did not convert" ;;
+    next|gatsby|nuxt) [[ ! -f "$WORK/coverage-out-$fw/content/posts/a.smd" ]] || fail 'content layer was converted' ;;
+  esac
+  "$ZIGAPAGOS" migrate "$site" --from "$fw" -o "$WORK/coverage-repeat-$fw.md" > /dev/null 2>&1
+  "$ZIGAPAGOS" migrate "$site" --from "$fw" -o "$WORK/coverage-repeat2-$fw.md" > /dev/null 2>&1
+  cmp "$WORK/coverage-repeat-$fw.md" "$WORK/coverage-repeat2-$fw.md" || fail 'worklist is unstable'
+done
+[[ "$coverage_failures" == 0 ]] || fail "$coverage_failures missing worklist entries/sections"
+
+# Reports inside the source must not become input on the next run. Only the
+# resolved output path is excluded; a source page with the same basename stays.
+for fw in next gatsby nuxt hugo jekyll 11ty; do
+  for mode in default custom conventional; do
+    site="$WORK/report-$fw-$mode"
+    mkdir -p "$site/content"
+    printf 'Source page\n' > "$site/content/MIGRATION.md"
+    report_name=MIGRATION.md
+    output_args=()
+    if [[ "$mode" != default ]]; then
+      report_dir=reports
+      if [[ "$mode" == conventional ]]; then report_dir=content; fi
+      mkdir -p "$site/$report_dir"
+      report_name="$report_dir/worklist.markdown"
+      output_args=(--output "$site/$report_dir/../$report_name")
+      printf 'Another source page\n' > "$site/MIGRATION.md"
+    fi
+    for run in first second; do
+      (cd "$site" && "$ZIGAPAGOS" migrate . --from "$fw" "${output_args[@]}") > /dev/null 2>&1
+      cp "$site/$report_name" "$WORK/report-$fw-$mode-$run.md"
+    done
+    cmp "$WORK/report-$fw-$mode-first.md" "$WORK/report-$fw-$mode-second.md" || fail "$fw $mode report inventoried itself on repeat run"
+    grep -Fq '`content/MIGRATION.md`' "$site/$report_name" || fail "$fw excluded a source page by basename"
+    if [[ "$mode" != default ]]; then
+      grep -Fq '`MIGRATION.md`' "$site/$report_name" || fail "$fw excluded an unrelated root MIGRATION.md"
+    fi
+  done
+done
+
+# Resolve symlinks before interpreting '..', just as opening the report does.
+site="$WORK/report-symlink-parent"
+mkdir -p "$site/real/nested"
+ln -s real/nested "$site/link"
+printf 'Unrelated source page\n' > "$site/report.md"
+for run in first second; do
+  (cd "$site" && "$ZIGAPAGOS" migrate . --from next --output link/../report.md) > /dev/null 2>&1
+  cp "$site/real/report.md" "$WORK/report-symlink-$run.md"
+done
+cmp "$WORK/report-symlink-first.md" "$WORK/report-symlink-second.md" || fail 'symlink/.. report inventoried itself on repeat run'
+grep -Fq '`report.md`' "$site/real/report.md" || fail 'symlink/.. output excluded the unrelated root report.md'
+! grep -Fq '`real/report.md`' "$site/real/report.md" || fail 'symlink/.. output inventoried the real report'
+
 # Next.js: no next.config file on purpose. Detection must use package.json,
 # and a colocated App Router client module must become a scaffold candidate.
 NEXT="$WORK/next"
