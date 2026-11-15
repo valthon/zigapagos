@@ -37,6 +37,50 @@ const Writer = std.Io.Writer;
 
 pub const Format = enum { text, json };
 
+/// Contract 3 (caller-buffer): borrows the source and highlight buffer.
+/// cmark's autolink extension can supply zero or paragraph-relative columns,
+/// including an end before the start. Treat these as untrusted display bounds.
+pub fn markdownExcerpt(
+    buf: []u8,
+    line: []const u8,
+    start_col: usize,
+    end_col: ?usize,
+    inclusive_end: bool,
+) struct { line: []const u8, col: usize, highlight: []const u8 } {
+    const left = std.mem.trimStart(u8, line, &std.ascii.whitespace);
+    const trimmed = std.mem.trimEnd(u8, left, &std.ascii.whitespace);
+    const indent = line.len - left.len;
+    const col = std.math.clamp(start_col, 1, @max(line.len, 1));
+    const start = @min(col - 1 -| indent, trimmed.len -| 1);
+    const end = if (end_col) |c|
+        @min((c -| 1 -| indent) +| @intFromBool(inclusive_end), trimmed.len)
+    else
+        trimmed.len;
+    // Always retain one caret, even for an empty line or a reversed range.
+    const spaces = @min(start, buf.len -| 1);
+    const count = @min(@max(end -| start, 1), buf.len - spaces);
+    @memset(buf[0..spaces], ' ');
+    @memset(buf[spaces..][0..count], '^');
+    return .{ .line = trimmed, .col = col, .highlight = buf[0 .. spaces + count] };
+}
+
+test "diag: markdown excerpts bound malformed foreign columns" {
+    var buf: [32]u8 = undefined;
+    const zero = markdownExcerpt(&buf, "http://e:x", 0, 10, true);
+    try std.testing.expectEqual(1, zero.col);
+    try std.testing.expectEqualStrings("^^^^^^^^^^", zero.highlight);
+    const reversed = markdownExcerpt(&buf, "http://e:x", 41, 9, true);
+    try std.testing.expectEqual(10, reversed.col);
+    try std.testing.expectEqualStrings("         ^", reversed.highlight);
+    const indented = markdownExcerpt(&buf, "    abc   ", 0, null, true);
+    try std.testing.expectEqualStrings("abc", indented.line);
+    try std.testing.expectEqualStrings("^^^", indented.highlight);
+    const empty = markdownExcerpt(&buf, "", 0, 0, false);
+    try std.testing.expectEqualStrings("^", empty.highlight);
+    const huge = markdownExcerpt(&buf, "abc", std.math.maxInt(usize), std.math.maxInt(usize), true);
+    try std.testing.expectEqualStrings("  ^", huge.highlight);
+}
+
 /// `--format=VALUE` -> the parsed `Format`, or `null` on an unrecognised
 /// value. Never fatals: this runs both from `scanArgv` (before any real
 /// argument parser exists, so there is nothing to hand a good error message
