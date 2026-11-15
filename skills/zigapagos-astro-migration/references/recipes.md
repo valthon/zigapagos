@@ -338,6 +338,15 @@ It reports four categories:
 The import suggestions for forbidden npm packages point at the `@z/runtime/compat`
 shims: e.g. `react-google-recaptcha` → `@z/runtime/compat (ReCAPTCHA)`.
 
+`ReCAPTCHA` supports `siteKey` (rename npm's `sitekey`), `onChange`, `onExpired`,
+`onErrored`, `size` (`normal`/`compact`/`invisible`), `theme` (`light`/`dark`),
+`tabindex`, and a ref with `getValue()`/`reset()`. Size, theme and tabindex are
+omitted from `grecaptcha.render` unless supplied. Expiry and error clear the
+stored token and call `onChange("")`, then the matching callback; adapt callers
+that expect `null`. `useRecaptcha(siteKey)` also clears its token on expiry/error.
+Unsupported npm props include `badge`, `hl`, `type`, `stoken`, `isolated`,
+`grecaptcha`, and `asyncScriptOnLoad`; ref execution methods are unsupported.
+
 ### JSON output
 
 Pass `--json` to emit a machine-readable object instead of the Markdown checklist

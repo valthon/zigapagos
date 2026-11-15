@@ -1,6 +1,6 @@
 import { test, expect, afterEach } from "bun:test";
 import { renderIsland, flush, type RenderResult } from "@z/runtime/testing";
-import { ReCAPTCHA, type RecaptchaHandle } from "@z/runtime/compat";
+import { ReCAPTCHA, useRecaptcha, type RecaptchaHandle } from "@z/runtime/compat";
 
 const API = "https://www.google.com/recaptcha/api.js";
 let captured: any;
@@ -22,6 +22,65 @@ test("renders an empty container server-side then explicit-renders on mount with
   expect(r.html()).toContain("g-recaptcha-container");   // static SSR placeholder
   await flush();                                         // flush loadScript().then + effects
   expect(captured?.sitekey).toBe("KEY");
+  expect(Object.keys(captured).sort()).toEqual([
+    "callback", "error-callback", "expired-callback", "sitekey",
+  ]);
+});
+
+test("passes size, theme and lowercase tabindex to the widget", async () => {
+  installGrecaptcha();
+  r = renderIsland(ReCAPTCHA, { siteKey: "KEY", size: "compact", theme: "dark", tabindex: 0 },
+    { host: { scripts: { [API]: true } } });
+  await flush();
+  expect(captured.size).toBe("compact");
+  expect(captured.theme).toBe("dark");
+  expect(captured.tabindex).toBe(0);
+});
+
+for (const [option, prop] of [["expired-callback", "onExpired"], ["error-callback", "onErrored"]] as const) {
+  test(`${option} clears a solved token before notifying callers`, async () => {
+    installGrecaptcha();
+    const ref: { current: RecaptchaHandle | null } = { current: null };
+    const tokens: string[] = [];
+    let calls = 0;
+    r = renderIsland(ReCAPTCHA, {
+      siteKey: "KEY", ref,
+      onChange: (token: string) => {
+        expect(ref.current?.getValue()).toBe(token);
+        tokens.push(token);
+      },
+      [prop]: () => {
+        expect(ref.current?.getValue()).toBe("");
+        calls++;
+      },
+    }, { host: { scripts: { [API]: true } } });
+    await flush();
+    captured.callback("SOLVED");
+    expect(typeof captured[option]).toBe("function");
+    captured[option]();
+    expect(ref.current?.getValue()).toBe("");
+    expect(tokens).toEqual(["SOLVED", ""]);
+    expect(calls).toBe(1);
+  });
+}
+
+test("useRecaptcha clears solved tokens on expiry and error", async () => {
+  installGrecaptcha();
+  let api: ReturnType<typeof useRecaptcha> | undefined;
+  function Fixture() { api = useRecaptcha("HOOK_KEY"); return null; }
+  r = renderIsland(Fixture, {}, { host: { scripts: { [API]: true } } });
+  await flush();
+  api!.render(document.createElement("div"));
+  expect(Object.keys(captured).sort()).toEqual([
+    "callback", "error-callback", "expired-callback", "sitekey",
+  ]);
+  expect(captured.sitekey).toBe("HOOK_KEY");
+  for (const option of ["expired-callback", "error-callback"]) {
+    captured.callback("SOLVED");
+    expect(api!.getToken()).toBe("SOLVED");
+    captured[option]();
+    expect(api!.getToken()).toBe("");
+  }
 });
 
 test("the callback delivers the token to the handle + onChange; reset() resets the widget", async () => {

@@ -4,11 +4,25 @@ const API_URL = "https://www.google.com/recaptcha/api.js";
 
 export interface RecaptchaHandle { getValue(): string; reset(): void }
 
+interface RecaptchaProps {
+  siteKey: string;
+  onChange?: (token: string) => void;
+  onExpired?: () => void;
+  onErrored?: () => void;
+  size?: "normal" | "compact" | "invisible";
+  theme?: "light" | "dark";
+  tabindex?: number;
+}
+
 interface Grecaptcha {
   render(el: Element, opts: {
     sitekey: string;
     callback?: (t: string) => void;
     "expired-callback"?: () => void;
+    "error-callback"?: () => void;
+    size?: RecaptchaProps["size"];
+    theme?: RecaptchaProps["theme"];
+    tabindex?: number;
   }): number;
   reset(id?: number): void;
   ready?(cb: () => void): void;
@@ -18,7 +32,7 @@ function grecaptcha(): Grecaptcha | undefined {
   return typeof window === "undefined" ? undefined : (window as any).grecaptcha;
 }
 
-export const ReCAPTCHA = forwardRef<RecaptchaHandle, { siteKey: string; onChange?: (token: string) => void }>(
+export const ReCAPTCHA = forwardRef<RecaptchaHandle, RecaptchaProps>(
   (props, ref) => {
     const elRef = useRef<HTMLDivElement | null>(null);
     const widgetId = useRef<number | null>(null);
@@ -43,8 +57,12 @@ export const ReCAPTCHA = forwardRef<RecaptchaHandle, { siteKey: string; onChange
           if (cancelled || !elRef.current || widgetId.current != null) return;
           widgetId.current = g.render(elRef.current!, {
             sitekey: props.siteKey,
+            ...(props.size !== undefined ? { size: props.size } : {}),
+            ...(props.theme !== undefined ? { theme: props.theme } : {}),
+            ...(props.tabindex !== undefined ? { tabindex: props.tabindex } : {}),
             callback: (t: string) => { tokenRef.current = t; props.onChange?.(t); },
-            "expired-callback": () => { tokenRef.current = ""; props.onChange?.(""); },
+            "expired-callback": () => { tokenRef.current = ""; props.onChange?.(""); props.onExpired?.(); },
+            "error-callback": () => { tokenRef.current = ""; props.onChange?.(""); props.onErrored?.(); },
           });
         };
         g.ready ? g.ready(doRender) : doRender();
@@ -76,6 +94,8 @@ export function useRecaptcha(siteKey: string): { getToken(): string; reset(): vo
       widgetId.current = g.render(el, {
         sitekey: siteKey,
         callback: (t: string) => { tokenRef.current = t; },
+        "expired-callback": () => { tokenRef.current = ""; },
+        "error-callback": () => { tokenRef.current = ""; },
       });
     },
   };
