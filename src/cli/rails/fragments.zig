@@ -22,7 +22,7 @@
 //! a spawn/exit/response failure, a malformed line, a well-formed
 //! `{"ok":false,...}` -- appends exactly ONE `RAILS_TEMPLATES_UNAVAILABLE`
 //! blocker (`integrity = false`, `severity = .@"error"`) and returns an
-//! empty `templates` slice. There is no second "missing" code the way
+//! one unreadable template per requested path. There is no second "missing" code the way
 //! `controllers.zig` has `RAILS_CONTROLLERS_MISSING`: this op is handed an
 //! explicit path list by its caller rather than discovering a directory of
 //! its own, so "there is nothing to look at" is not a failure here at all --
@@ -211,7 +211,7 @@ pub const Attr = struct {
 /// one field such a consumer reads is also the one field a text run really
 /// carries is what keeps it safe.
 ///
-/// Contract 2 (owned-result): `text`, `code`, `name`, `value`, every element
+/// Contract 2 (owned-result): `text`, `code`, `identity_source`, `name`, `value`, every element
 /// of `args`, and both halves of every `attrs` entry are fresh `gpa`
 /// allocations independent of the decoded response's JSON arena;
 /// `freeResult` is the release.
@@ -221,14 +221,22 @@ pub const Node = struct {
     /// `.unknown` for a wire kind this build does not recognise -- the node
     /// still rides through with its position and source text.
     kind: Kind,
-    /// 1-based, in TEMPLATE coordinates (`templates.rb` maps Prism's
-    /// generated-program positions back through its own line map).
+    /// Zero for an absent/invalid position, otherwise 1-based in TEMPLATE
+    /// coordinates (mapped back from Prism by `templates.rb`).
     line: u64,
     col: u64,
+    /// 1-based occurrence among nodes with the same fingerprint when positions
+    /// are invalid or shared; zero for a unique valid position.
+    stream_ordinal: usize = 0,
+
     /// True when this fragment was written as an output tag (`<%= %>`).
     output: bool,
     /// The fragment's own source text, as written in the template.
     code: []const u8,
+    /// Complete Ruby AST source span, including cross-fragment predicates,
+    /// branches and bodies. Owned when present; opening `code` stays usable
+    /// by conversion. Null for older sidecars and HTML element markers.
+    identity_source: ?[]const u8 = null,
     name: ?[]const u8,
     value: ?[]const u8,
     args: []const []const u8,
@@ -243,7 +251,58 @@ pub const Node = struct {
     /// The construct was recognised but one of its operands is not a
     /// literal, so no name/value could be recovered statically.
     dynamic: bool,
+
+    // Enough for two u64 coordinates, a 128-bit fingerprint and an occurrence.
+    pub const identity_capacity = 96;
+
+    /// Contract 3 (caller-buffer): shared finding/lookup identity. Unique
+    /// positions retain their ids. Shared positions retain their coordinates
+    /// plus H<fingerprint>N<occurrence>; positionless nodes omit coordinates.
+    pub fn identity(n: Node, buffer: []u8) std.fmt.BufPrintError![]u8 {
+        if (n.stream_ordinal != 0) {
+            const hex = std.fmt.bytesToHex(n.fingerprint(), .lower);
+            if (n.line > 0 and n.col > 0) return std.fmt.bufPrint(buffer, "L{d}C{d}H{s}N{d}", .{ n.line, n.col, hex, n.stream_ordinal });
+            return std.fmt.bufPrint(buffer, "H{s}N{d}", .{ hex, n.stream_ordinal });
+        }
+        return std.fmt.bufPrint(buffer, "L{d}C{d}", .{ n.line, n.col });
+    }
+
+    /// Contract 3 (caller-buffer): SHA-256 truncated to 128 bits. Hash source
+    /// and decoded payload, excluding coordinates and the occurrence itself.
+    /// Length framing keeps different field boundaries from aliasing.
+    pub fn fingerprint(n: Node) [16]u8 {
+        var hash = std.crypto.hash.sha2.Sha256.init(.{});
+        fingerprintPart(&hash, n.code);
+        if (n.identity_source) |source| fingerprintPart(&hash, source);
+        fingerprintPart(&hash, @tagName(n.kind));
+        hash.update(&.{ @intFromBool(n.output), @intFromBool(n.missing), @intFromBool(n.dynamic) });
+        fingerprintPart(&hash, n.text orelse "");
+        fingerprintPart(&hash, n.name orelse "");
+        fingerprintPart(&hash, n.value orelse "");
+        var count: [8]u8 = undefined;
+        std.mem.writeInt(u64, &count, @intCast(n.args.len), .little);
+        hash.update(&count);
+        for (n.args) |arg| fingerprintPart(&hash, arg);
+        std.mem.writeInt(u64, &count, @intCast(n.attrs.len), .little);
+        hash.update(&count);
+        for (n.attrs) |attr| {
+            fingerprintPart(&hash, attr.key);
+            fingerprintPart(&hash, attr.value);
+            fingerprintPart(&hash, @tagName(attr.kind));
+        }
+        var digest: [32]u8 = undefined;
+        hash.final(&digest);
+        return digest[0..16].*;
+    }
 };
+
+/// Contract 3 (caller-buffer): feeds one length-delimited field into a hash.
+fn fingerprintPart(hash: *std.crypto.hash.sha2.Sha256, bytes: []const u8) void {
+    var length: [8]u8 = undefined;
+    std.mem.writeInt(u64, &length, @intCast(bytes.len), .little);
+    hash.update(&length);
+    hash.update(bytes);
+}
 
 /// One `templates[]` entry: either a recovered node stream, or the reason
 /// there isn't one. Exactly one of `nodes` being non-empty, `error_message`
@@ -356,10 +415,11 @@ const WireNode = struct {
     t: []const u8,
     text: ?[]const u8 = null,
     kind: ?[]const u8 = null,
-    line: u64 = 0,
-    col: u64 = 0,
+    line: i128 = 0,
+    col: i128 = 0,
     output: bool = false,
     code: ?[]const u8 = null,
+    identity_source: ?[]const u8 = null,
     name: ?[]const u8 = null,
     value: ?[]const u8 = null,
     /// Elements are optional because `literal_args` emits a nil for an
@@ -445,6 +505,9 @@ fn dupeNode(gpa: Allocator, wn: WireNode) Allocator.Error!Node {
     const code = try gpa.dupe(u8, wn.code orelse "");
     errdefer gpa.free(code);
 
+    const identity_source: ?[]const u8 = if (wn.identity_source) |source| try gpa.dupe(u8, source) else null;
+    errdefer if (identity_source) |source| gpa.free(source);
+
     const name: ?[]const u8 = if (wn.name) |n| try gpa.dupe(u8, n) else null;
     errdefer if (name) |n| gpa.free(n);
 
@@ -491,13 +554,19 @@ fn dupeNode(gpa: Allocator, wn: WireNode) Allocator.Error!Node {
         attrs_filled = i + 1;
     }
 
+    const source_line = std.math.cast(u64, wn.line) orelse 0;
+    const source_col = std.math.cast(u64, wn.col) orelse 0;
+    const positioned = source_line > 0 and source_col > 0;
     return .{
         .text = text,
         .kind = if (is_text) .unknown else kindFromWire(wn.kind orelse ""),
-        .line = wn.line,
-        .col = wn.col,
+        // Zero is the internal absent-position sentinel. One bad code
+        // position cannot invalidate other fragments or other templates.
+        .line = if (is_text or positioned) source_line else 0,
+        .col = if (!is_text and positioned) source_col else 0,
         .output = wn.output,
         .code = code,
+        .identity_source = identity_source,
         .name = name,
         .value = value,
         .args = args,
@@ -515,6 +584,7 @@ fn freeAttr(gpa: Allocator, a: Attr) void {
 fn freeNode(gpa: Allocator, n: Node) void {
     if (n.text) |t| gpa.free(t);
     gpa.free(n.code);
+    if (n.identity_source) |source| gpa.free(source);
     if (n.name) |v| gpa.free(v);
     if (n.value) |v| gpa.free(v);
     for (n.args) |a| gpa.free(a);
@@ -557,9 +627,36 @@ fn dupeTemplate(gpa: Allocator, wt: WireTemplate) Allocator.Error!Template {
         for (nodes[0..filled]) |n| freeNode(gpa, n);
         gpa.free(nodes);
     }
+    // Coordinates describe source, not identity: a postfix control and its
+    // enclosed output call may legitimately start at the same source byte.
+    var positions: std.AutoHashMap(struct { line: u64, col: u64 }, usize) = .init(gpa);
+    defer positions.deinit();
     for (wt.nodes, 0..) |wn, i| {
         nodes[i] = try dupeNode(gpa, wn);
         filled = i + 1;
+        if (nodes[i].text != null) continue;
+        if (nodes[i].line == 0) {
+            nodes[i].stream_ordinal = i + 1;
+            continue;
+        }
+        const entry = try positions.getOrPut(.{ .line = nodes[i].line, .col = nodes[i].col });
+        if (entry.found_existing) {
+            const first = entry.value_ptr.*;
+            nodes[first].stream_ordinal = first + 1;
+            nodes[i].stream_ordinal = i + 1;
+        } else entry.value_ptr.* = i;
+    }
+
+    // Count equal fingerprints, not all preceding nodes: unrelated insertions
+    // must not move an existing answer onto another source fragment.
+    var occurrences: std.AutoHashMap([16]u8, usize) = .init(gpa);
+    defer occurrences.deinit();
+    for (nodes) |*node| {
+        if (node.text != null) continue;
+        const entry = try occurrences.getOrPut(node.fingerprint());
+        if (!entry.found_existing) entry.value_ptr.* = 0;
+        entry.value_ptr.* += 1;
+        if (node.stream_ordinal != 0) node.stream_ordinal = entry.value_ptr.*;
     }
 
     return .{
@@ -726,7 +823,42 @@ fn decodeResponse(
 ///
 /// `environ_map` is threaded down the same way `routes.zig`'s
 /// `discoverRoutes` receives it -- see that function's doc.
+/// Contract 2 (owned-result): a failed request still returns one unreadable
+/// entry per requested path, so findings.derive can offer retain/blocked.
+/// freeResult releases the complete result.
 pub fn discoverTemplates(
+    io: Io,
+    gpa: Allocator,
+    root_path: []const u8,
+    paths: []const []const u8,
+    blocker_list: *std.ArrayListUnmanaged(blockers.Blocker),
+    environ_map: *const std.process.Environ.Map,
+) Allocator.Error!Result {
+    const before = blocker_list.items.len;
+    var result = try queryTemplates(io, gpa, root_path, paths, blocker_list, environ_map);
+    errdefer freeResult(gpa, result);
+    if (result.templates.len != 0) return result;
+    for (blocker_list.items[before..]) |blocker| {
+        if (!std.mem.eql(u8, blocker.code, unavailable_code)) continue;
+        const templates = try gpa.alloc(Template, paths.len);
+        var filled: usize = 0;
+        errdefer {
+            for (templates[0..filled]) |template| freeTemplate(gpa, template);
+            gpa.free(templates);
+        }
+        for (paths, 0..) |path, i| {
+            templates[i] = try dupeTemplate(gpa, .{ .path = path, .unreadable = blocker.detail });
+            filled += 1;
+        }
+        gpa.free(result.templates);
+        result.templates = templates;
+        break;
+    }
+    return result;
+}
+
+/// Contract 2 (owned-result): freeResult releases the response graph.
+fn queryTemplates(
     io: Io,
     gpa: Allocator,
     root_path: []const u8,
@@ -1057,7 +1189,7 @@ test "decodeResponse: OOM at any point leaves no leak" {
     // the arity the decoder actually meets in the field -- a later change
     // that started duping the type string would otherwise sweep untested.
     const line =
-        \\{"ok":true,"locale":"en","templates":[{"path":"a.html.erb","nodes":[{"t":"text","text":"x","line":1},{"t":"code","kind":"asset","line":1,"col":2,"output":true,"code":"image_tag \"l\"","name":"image_tag","args":["l"],"attrs":[["alt","L"]]},{"t":"code","kind":"component_root","line":2,"col":1,"output":false,"code":"<div data-react-class=\"C\">","name":"C","value":"div","attrs":[["p","3","number"]]}],"parity_h1":"Heading","parity_links":["/","/posts"]}],"i18n_errors":[{"path":"config/locales/en.yml","detail":"Psych::SyntaxError"}],"ruby":{"available":true,"version":"3.4.10"}}
+        \\{"ok":true,"locale":"en","templates":[{"path":"a.html.erb","nodes":[{"t":"text","text":"x","line":1},{"t":"code","kind":"asset","identity_source":"image_tag source","line":1,"col":2,"output":true,"code":"image_tag \"l\"","name":"image_tag","args":["l"],"attrs":[["alt","L"]]},{"t":"code","kind":"component_root","line":2,"col":1,"output":false,"code":"<div data-react-class=\"C\">","name":"C","value":"div","attrs":[["p","3","number"]]}],"parity_h1":"Heading","parity_links":["/","/posts"]}],"i18n_errors":[{"path":"config/locales/en.yml","detail":"Psych::SyntaxError"}],"ruby":{"available":true,"version":"3.4.10"}}
     ;
     var fail_index: usize = 0;
     var reached_success = false;
@@ -1264,7 +1396,7 @@ test "discoverTemplates: a non-empty path list with no ZIGAPAGOS_RUNTIME_DIR deg
     defer env.deinit();
     const r = try discoverTemplates(std.testing.io, gpa, ".", &.{"app/views/posts/index.html.erb"}, &list, &env);
     defer freeResult(gpa, r);
-    try std.testing.expectEqual(@as(usize, 0), r.templates.len);
+    try std.testing.expectEqual(@as(usize, 1), r.templates.len);
     try std.testing.expectEqual(@as(usize, 1), list.items.len);
     try std.testing.expectEqualStrings("RAILS_TEMPLATES_UNAVAILABLE", list.items[0].code);
     try std.testing.expectEqualStrings("sidecar/rails/analyze.rb", list.items[0].path);
@@ -1285,7 +1417,7 @@ test "discoverTemplates: ZIGAPAGOS_RUBY pointing at a nonexistent binary yields 
     const r = try discoverTemplates(std.testing.io, gpa, "tests/migrate/rails-sample", &.{"app/views/posts/index.html.erb"}, &list, &env);
     defer freeResult(gpa, r);
 
-    try std.testing.expectEqual(@as(usize, 0), r.templates.len);
+    try std.testing.expectEqual(@as(usize, 1), r.templates.len);
     try std.testing.expectEqual(@as(usize, 1), list.items.len);
     try std.testing.expectEqualStrings("RAILS_TEMPLATES_UNAVAILABLE", list.items[0].code);
     // F3: `path` names the sidecar script, never the machine-specific
@@ -1361,7 +1493,7 @@ test "discoverTemplates: an unresolvable sidecar script reports a machine-stable
     const r = try discoverTemplates(std.testing.io, gpa, ".", &.{"app/views/posts/index.html.erb"}, &list, &env);
     defer freeResult(gpa, r);
 
-    try std.testing.expectEqual(@as(usize, 0), r.templates.len);
+    try std.testing.expectEqual(@as(usize, 1), r.templates.len);
     try std.testing.expectEqual(@as(usize, 1), list.items.len);
     try std.testing.expectEqualStrings("RAILS_TEMPLATES_UNAVAILABLE", list.items[0].code);
     // The whole point: a literal, app-root-relative constant, NOT the joined
@@ -1372,4 +1504,156 @@ test "discoverTemplates: an unresolvable sidecar script reports a machine-stable
     try std.testing.expect(std.mem.indexOf(u8, list.items[0].detail, "no-such-runtime-dir-xyz") != null);
     try std.testing.expect(std.mem.indexOf(u8, list.items[0].detail, "FileNotFound") != null);
     try std.testing.expect(!r.ruby.available);
+}
+
+test "decodeResponse: invalid positions degrade only their own fragment" {
+    const gpa = std.testing.allocator;
+    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    defer blockers.freeList(gpa, &list);
+    const result = try decodeResponse(gpa,
+        \\{ "ok": true, "templates": [{"path":"a.erb","nodes":[{"t":"code","kind":"unknown","line":1,"col":-2},{"t":"code","kind":"unknown","line":1,"col":0},{"t":"code","kind":"literal","line":2,"col":5},{"t":"code","line":-1,"col":3}]}] }
+    , &list);
+    defer freeResult(gpa, result);
+    try std.testing.expectEqual(@as(usize, 0), list.items.len);
+    try std.testing.expectEqual(@as(usize, 1), result.templates.len);
+    const nodes = result.templates[0].nodes;
+    try std.testing.expectEqual(@as(usize, 4), nodes.len);
+    for ([_]usize{ 0, 1, 3 }) |i| {
+        try std.testing.expectEqual(@as(u64, 0), nodes[i].line);
+        try std.testing.expectEqual(@as(u64, 0), nodes[i].col);
+    }
+    try std.testing.expectEqual(@as(u64, 2), nodes[2].line);
+    try std.testing.expectEqual(@as(u64, 5), nodes[2].col);
+}
+
+test "invalid positions retain independent finding and decision identities within one template" {
+    const findings = @import("findings.zig");
+    const convert = @import("convert.zig");
+    const decisions = @import("decisions.zig");
+    const gpa = std.testing.allocator;
+    var blockers_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    defer blockers.freeList(gpa, &blockers_list);
+    const result = try decodeResponse(gpa,
+        \\{"ok":true,"templates":[{"path":"app/views/pages/show.html.erb","nodes":[{"t":"code","kind":"unknown","output":true,"code":"foo(1)","line":1,"col":-2},{"t":"code","kind":"unknown","output":true,"code":"bar(2)","line":2,"col":-2}]}]}
+    , &blockers_list);
+    defer freeResult(gpa, result);
+    const fs = try findings.derive(gpa, .{ .templates = result.templates, .layouts = &.{}, .controller_files = &.{}, .route_names = &.{}, .locale = null });
+    defer findings.free(gpa, fs);
+    try std.testing.expectEqual(@as(usize, 2), fs.len);
+    try std.testing.expect(!std.mem.eql(u8, fs[0].id, fs[1].id));
+    try std.testing.expect(std.mem.endsWith(u8, fs[0].id, "N1"));
+    try std.testing.expect(std.mem.endsWith(u8, fs[1].id, "N1"));
+    const json = try std.fmt.allocPrint(gpa,
+        \\{{"schema":"zigapagos.rails-decisions/1","decisions":[{{"id":"{s}","choice":"retain","rationale":"keep first"}},{{"id":"{s}","choice":"blocked","rationale":"block second"}}]}}
+    , .{ fs[0].id, fs[1].id });
+    defer gpa.free(json);
+    var problems: std.ArrayListUnmanaged(decisions.Problem) = .empty;
+    defer decisions.freeProblems(gpa, &problems);
+    const parsed = try decisions.parse(gpa, json, fs, &.{}, &problems);
+    defer decisions.free(gpa, parsed);
+    try std.testing.expectEqual(@as(usize, 0), problems.items.len);
+    try std.testing.expectEqual(@as(usize, 2), parsed.decisions.len);
+    try std.testing.expectEqualStrings("retain", decisions.lookup(parsed, fs[0].id).?.choice);
+    try std.testing.expectEqualStrings("blocked", decisions.lookup(parsed, fs[1].id).?.choice);
+    const ctx: convert.Context = .{ .routes = &.{}, .assets = &.{}, .fragments = result.templates, .findings = fs, .layout_stem = null };
+    const out = try convert.convert(gpa, ctx, result.templates[0], .view);
+    defer convert.freeOutput(gpa, out);
+    try std.testing.expectEqual(@as(usize, 2), out.open_finding_ids.len);
+    for (fs) |f| try std.testing.expect(std.mem.indexOf(u8, out.bytes, f.id) != null);
+    // Re-read those saved answers after an unrelated insertion, and use the
+    // saved second id as a component binding. It must still replace bar only.
+    const inserted = try decodeResponse(gpa,
+        \\{"ok":true,"templates":[{"path":"app/views/pages/show.html.erb","nodes":[{"t":"code","kind":"unknown","output":true,"code":"added(3)"},{"t":"code","kind":"unknown","output":true,"code":"foo(1)"},{"t":"code","kind":"unknown","output":true,"code":"bar(2)"}]}]}
+    , &blockers_list);
+    defer freeResult(gpa, inserted);
+    const after = try findings.derive(gpa, .{ .templates = inserted.templates, .layouts = &.{}, .controller_files = &.{}, .route_names = &.{}, .locale = null });
+    defer findings.free(gpa, after);
+    const reloaded = try decisions.parse(gpa, json, after, &.{}, &problems);
+    defer decisions.free(gpa, reloaded);
+    const tpl = inserted.templates[0];
+    const foo = convert.findingIdFor(after, tpl.path, tpl.nodes[1]).?;
+    const bar = convert.findingIdFor(after, tpl.path, tpl.nodes[2]).?;
+    const original_tpl = result.templates[0];
+    const original_foo = convert.findingIdFor(fs, original_tpl.path, original_tpl.nodes[0]).?;
+    const original_bar = convert.findingIdFor(fs, original_tpl.path, original_tpl.nodes[1]).?;
+    try std.testing.expectEqualStrings(decisions.lookup(parsed, original_foo).?.choice, decisions.lookup(reloaded, foo).?.choice);
+    try std.testing.expectEqualStrings(decisions.lookup(parsed, original_bar).?.choice, decisions.lookup(reloaded, bar).?.choice);
+    const saved_binding: convert.Binding = .{ .finding_id = decisions.lookup(parsed, original_bar).?.id, .kind = .component, .verb = "", .path = "", .operation_id = "", .collection = null, .island = "components/Bar.island.tsx", .redirect_to = null };
+    const converted = try convert.convert(gpa, .{ .routes = &.{}, .assets = &.{}, .fragments = inserted.templates, .findings = after, .layout_stem = null, .bindings = &.{saved_binding} }, tpl, .view);
+    defer convert.freeOutput(gpa, converted);
+    try std.testing.expectEqual(@as(usize, 2), converted.open_finding_ids.len);
+    try std.testing.expectEqual(@as(usize, 1), converted.bound_finding_ids.len);
+    try std.testing.expectEqualStrings(bar, converted.bound_finding_ids[0]);
+    try std.testing.expect(std.mem.indexOf(u8, converted.bytes, foo) != null);
+
+    // Answer either fragment alone: the other must remain open.
+    for (0..2) |i| {
+        const binding: convert.Binding = .{ .finding_id = fs[i].id, .kind = .component, .verb = "", .path = "", .operation_id = "", .collection = null, .island = "components/Only.island.tsx", .redirect_to = null };
+        var bound_ctx = ctx;
+        bound_ctx.bindings = &.{binding};
+        const bound = try convert.convert(gpa, bound_ctx, result.templates[0], .view);
+        defer convert.freeOutput(gpa, bound);
+        try std.testing.expectEqual(@as(usize, 1), bound.open_finding_ids.len);
+        try std.testing.expectEqualStrings(fs[1 - i].id, bound.open_finding_ids[0]);
+        try std.testing.expectEqual(@as(usize, 1), bound.bound_finding_ids.len);
+        try std.testing.expectEqualStrings(fs[i].id, bound.bound_finding_ids[0]);
+    }
+}
+
+test "shared valid coordinates retain distinct control and helper identities" {
+    const findings = @import("findings.zig");
+    const convert = @import("convert.zig");
+    const gpa = std.testing.allocator;
+    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    defer blockers.freeList(gpa, &list);
+    const result = try decodeResponse(gpa,
+        \\{"ok":true,"templates":[{"path":"app/views/pages/show.html.erb","nodes":[{"t":"code","kind":"control","name":"if","code":"foo(1) do","line":1,"col":5},{"t":"code","kind":"unknown","output":true,"code":"foo(1)","line":1,"col":5}]}]}
+    , &list);
+    defer freeResult(gpa, result);
+    const fs = try findings.derive(gpa, .{ .templates = result.templates, .layouts = &.{}, .controller_files = &.{}, .route_names = &.{}, .locale = null });
+    defer findings.free(gpa, fs);
+    try std.testing.expectEqual(@as(usize, 2), fs.len);
+    const tpl = result.templates[0];
+    const control_id = convert.findingIdFor(fs, tpl.path, tpl.nodes[0]).?;
+    const helper_id = convert.findingIdFor(fs, tpl.path, tpl.nodes[1]).?;
+    try std.testing.expect(!std.mem.eql(u8, control_id, helper_id));
+    try std.testing.expect(std.mem.startsWith(u8, control_id, "RAILS_TEMPLATE_CONTROL_FLOW."));
+    try std.testing.expect(std.mem.startsWith(u8, helper_id, "RAILS_HELPER_UNKNOWN."));
+    for (tpl.nodes) |node| {
+        try std.testing.expectEqual(@as(u64, 1), node.line);
+        try std.testing.expectEqual(@as(u64, 5), node.col);
+    }
+}
+
+test "fingerprint occurrences distinguish duplicates and preserve unique positions" {
+    const gpa = std.testing.allocator;
+    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    defer blockers.freeList(gpa, &list);
+    const result = try decodeResponse(gpa,
+        \\{"ok":true,"templates":[{"path":"a.erb","nodes":[{"t":"code","kind":"unknown","code":"foo(1)"},{"t":"code","kind":"unknown","code":"other(2)"},{"t":"code","kind":"unknown","code":"foo(1)"},{"t":"code","kind":"unknown","code":"foo(1)","line":4,"col":5},{"t":"code","kind":"unknown","code":"foo(1)","line":7,"col":3},{"t":"code","kind":"unknown","code":"bar(2)","line":7,"col":3}]}]}
+    , &list);
+    defer freeResult(gpa, result);
+    const nodes = result.templates[0].nodes;
+    var a: [Node.identity_capacity]u8 = undefined;
+    var b: [Node.identity_capacity]u8 = undefined;
+    const first = try nodes[0].identity(&a);
+    const duplicate = try nodes[2].identity(&b);
+    try std.testing.expect(std.mem.endsWith(u8, first, "N1"));
+    try std.testing.expect(std.mem.endsWith(u8, duplicate, "N2"));
+    try std.testing.expectEqualStrings(first[0 .. first.len - 1], duplicate[0 .. duplicate.len - 1]);
+    try std.testing.expectEqualStrings("L4C5", try nodes[3].identity(&a));
+    try std.testing.expect(!std.mem.eql(u8, try nodes[4].identity(&a), try nodes[5].identity(&b)));
+}
+
+test "fingerprint includes the decoded complete Ruby source span" {
+    const gpa = std.testing.allocator;
+    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    defer blockers.freeList(gpa, &list);
+    const result = try decodeResponse(gpa,
+        \\{"ok":true,"templates":[{"path":"a.erb","nodes":[{"t":"code","kind":"control","code":"foo do","identity_source":"foo do; end if ok"},{"t":"code","kind":"control","code":"foo do","identity_source":"foo do; end if changed"}]}]}
+    , &list);
+    defer freeResult(gpa, result);
+    const nodes = result.templates[0].nodes;
+    try std.testing.expectEqualStrings("foo do; end if ok", nodes[0].identity_source.?);
+    try std.testing.expect(!std.mem.eql(u8, &nodes[0].fingerprint(), &nodes[1].fingerprint()));
 }

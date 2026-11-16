@@ -474,10 +474,10 @@ set -e
   || fail "all-blocked handoff must be complete"
 grep -qF '0 page(s)' <<<"$all_blocked_out" \
   || fail "all-blocked summary must report zero pages: $all_blocked_out"
-[[ -f "$WORK/all-blocked/content/.gitkeep" ]] \
+[[ -f "$WORK/all-blocked/content/index.smd" ]] \
   || fail "zero-page target must preserve the content root"
 [[ "$(find "$WORK/all-blocked/content" -type f | wc -l)" -eq 1 ]] \
-  || fail "zero-page target must not invent a content page"
+  || fail "all-blocked target must contain only the root placeholder"
 ( cd "$WORK/all-blocked" && ZIGAPAGOS_BIN="$ZIGAPAGOS" bash build.sh >"$WORK/all-blocked-release.log" 2>&1 ) \
   || { cat "$WORK/all-blocked-release.log"; fail "all-blocked target build.sh failed"; }
 

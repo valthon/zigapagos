@@ -34,6 +34,24 @@ def check_presentation(label, src, expected)
   $failures += 1
 end
 
+# #262: modifier nodes begin at a generated wrapper, not at author source.
+["if", "unless"].each do |modifier|
+  [["<%=", "", 5], ["<%", "", 4], ["<%=", "xx", 7], ["<%", "xx", 6]].each do |tag, prefix, col|
+    src = "#{prefix}#{tag} tag.div do %>a<% end #{modifier} ok %>"
+    check_node "modifier block column #{tag} #{prefix} #{modifier}", src, 0, { line: 1, col: col }
+    if kinds(src).any? { |n| n[:col] < 1 }
+      warn "FAIL modifier block has a non-positive column: #{src}"
+      $failures += 1
+    end
+  end
+end
+
+["if", "unless"].each do |modifier|
+  src = "<%= foo(1) do %>a<% end #{modifier} ok %>"
+  check_node "postfix control preserves source column #{modifier}", src, 0, { kind: "control", line: 1, col: 5 }
+  check_node "enclosed output preserves source column #{modifier}", src, 1, { kind: "unknown", line: 1, col: 5 }
+end
+
 check_presentation "literal heading and links are explicit parity facts",
                    '<h1> About &amp; help </h1><a href="/posts">Posts</a><a href=/>Home</a>',
                    { parity_h1: "About & help", parity_h1_node: 0,
@@ -646,6 +664,25 @@ check_node "a dynamic Turbo Stream target stays unsupported",
 check_node "an unknown Turbo Stream action stays unsupported",
            "<%= turbo_stream.invoke \"posts\" %>", 0,
            { kind: "turbo_stream", name: "posts", value: nil, dynamic: true }
+
+# Identity covers the full Ruby AST span, including later fragments and
+# statements whose position is taken from an inner expression.
+[
+  ["postfix if", "<%= foo(1) do %>a<% end if ok %>", "<%= foo(1) do %>a<% end if changed %>"],
+  ["postfix unless", "<%= foo(1) do %>a<% end unless ok %>", "<%= foo(1) do %>a<% end unless changed %>"],
+  ["postfix while", "<% foo do %>a<% end while ok %>", "<% foo do %>a<% end while changed %>"],
+  ["postfix until", "<% foo do %>a<% end until ok %>", "<% foo do %>a<% end until changed %>"],
+  ["if branch", "<% if ok %>a<% elsif other %>b<% end %>", "<% if ok %>a<% elsif changed %>b<% end %>"],
+  ["case branch", "<% case x %><% when other %>a<% end %>", "<% case x %><% when changed %>a<% end %>"],
+  ["output block body", "<%= foo do %>a<% end %>", "<%= foo do %>b<% end %>"],
+  ["statement block body", "<% foo do %>a<% end %>", "<% foo do %>b<% end %>"]
+].each do |label, before, after|
+  a, b = [before, after].map { |src| kinds(src).first[:identity_source] }
+  unless a && b && a != b
+    warn "FAIL identity source covers #{label}: #{a.inspect} / #{b.inspect}"
+    $failures += 1
+  end
+end
 
 abort "#{$failures} templates failure(s)" if $failures > 0
 puts "PASS: templates_test.rb"

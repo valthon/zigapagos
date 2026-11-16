@@ -1943,7 +1943,7 @@ fn bindJourneyTemplate(
             continue;
         }
         if (n.kind != .form) continue;
-        if (convert.findingIdFor(d.findings, view, n.line, n.col) != null) continue;
+        if (convert.findingIdFor(d.findings, view, n) != null) continue;
 
         // Sign-up when the form asks for the confirmation ZigBase's
         // `<Base>Create` schema requires, or when the view belongs to the
@@ -1972,7 +1972,7 @@ fn bindJourneyTemplate(
             .island = auth_form_island_path,
             .redirect_to = if (signup) j.signup_redirect else j.signin_redirect,
             .props = props,
-            .at = .{ .path = view, .line = n.line, .col = n.col },
+            .at = .{ .path = view, .line = n.line, .col = n.col, .stream_ordinal = n.stream_ordinal, .fingerprint = n.fingerprint() },
         });
     }
 }
@@ -1988,7 +1988,7 @@ fn formHasConfirmation(nodes: []const fragments.Node, open: fragments.Node) bool
     for (nodes) |n| {
         if (n.text != null) continue;
         if (!inside) {
-            if (n.line == open.line and n.col == open.col and n.kind == .form) inside = true;
+            if (n.line == open.line and n.col == open.col and n.stream_ordinal == open.stream_ordinal and (n.stream_ordinal == 0 or std.mem.eql(u8, &n.fingerprint(), &open.fingerprint())) and n.kind == .form) inside = true;
             continue;
         }
         if (n.kind == .block_end) {
@@ -2046,7 +2046,7 @@ fn bindAuthStatus(
         for (tpl.nodes, 0..) |n, ni| {
             if (n.text != null or n.kind != .request_state) continue;
             if (!isAuthStatusName(n.name)) continue;
-            const id = convert.findingIdFor(d.findings, tpl.path, n.line, n.col) orelse continue;
+            const id = convert.findingIdFor(d.findings, tpl.path, n) orelse continue;
             const f = findingById(d.findings, id) orelse continue;
             if (!std.mem.eql(u8, f.code, findings.code_request_time_state)) continue;
             const dec = decisions.lookup(ctx.in.decisions, id) orelse continue;
@@ -2447,7 +2447,7 @@ fn bindTemplate(
                 continue;
             },
             .stimulus, .turbo_frame, .turbo_stream, .component_root => {
-                const id = convert.findingIdFor(d.findings, view, n.line, n.col) orelse continue;
+                const id = convert.findingIdFor(d.findings, view, n) orelse continue;
                 const dec = decisions.lookup(ctx.in.decisions, id) orelse continue;
                 if (n.kind == .stimulus and (std.mem.eql(u8, dec.choice, "island") or std.mem.eql(u8, dec.choice, "drop"))) {
                     var names: std.ArrayListUnmanaged([]const u8) = .empty;
@@ -2530,7 +2530,7 @@ fn bindTemplate(
                 continue;
             },
             .ivar => {
-                const id = convert.findingIdFor(d.findings, view, n.line, n.col) orelse continue;
+                const id = convert.findingIdFor(d.findings, view, n) orelse continue;
                 const dec = decisions.lookup(ctx.in.decisions, id) orelse continue;
                 if (!std.mem.eql(u8, dec.choice, "island") and !std.mem.eql(u8, dec.choice, "backend")) continue;
                 const doc = ctx.in.backend orelse continue;
@@ -2564,7 +2564,7 @@ fn bindTemplate(
             .form, .form_field, .link_to => {},
             else => continue,
         }
-        const id = convert.findingIdFor(d.findings, view, n.line, n.col) orelse continue;
+        const id = convert.findingIdFor(d.findings, view, n) orelse continue;
         const f = findingById(d.findings, id) orelse continue;
         if (!std.mem.eql(u8, f.code, findings.code_backend_endpoint)) continue;
         const dec = decisions.lookup(ctx.in.decisions, id) orelse continue;
@@ -2937,9 +2937,28 @@ fn dynamicRoute(
         try out.addOpenNote(gpa, "dynamic route segment: undecided", .{});
         return;
     };
-    out.decision_id = try gpa.dupe(u8, decision.id);
-
     if (std.mem.eql(u8, decision.choice, "spa")) {
+        // A SPA choice cannot vouch for templates the sidecar never read.
+        // Include the entire reachable graph (view, layout and partials),
+        // and apply acknowledgements before settling or emitting the SPA.
+        const d = ctx.in.discovery;
+        const before = out.open_ids.items.len;
+        if (route_index < d.route_templates.len) {
+            const rt = d.route_templates[route_index];
+            for (d.findings) |f| {
+                if (!std.mem.eql(u8, f.code, "RAILS_TEMPLATE_UNSCANNED")) continue;
+                const in_layout = if (rt.layout) |path| std.mem.eql(u8, f.path, path) else false;
+                if (in_layout or contains(rt.templates, f.path))
+                    try appendOwnedUnique(gpa, &out.open_ids, f.id);
+            }
+        }
+        try applyAcknowledgements(ctx, out, r, out.open_ids.items[before..], &.{}, &.{});
+        if (out.status == .retained or out.status == .blocked) return;
+        if (out.open_ids.items.len > before) {
+            try out.addOpenNote(gpa, "SPA template graph is unavailable", .{});
+            return;
+        }
+        out.decision_id = try gpa.dupe(u8, decision.id);
         const seg = resolve.spaSegment(r.path);
         // Ruling S13: `spa` is only APPLIED when the first segment is static.
         // A top-level dynamic route (`get "/:slug"`) has `:slug` as its first
@@ -2985,6 +3004,7 @@ fn dynamicRoute(
         // wrong is a write failure, which aborts the whole run.
         return;
     }
+    out.decision_id = try gpa.dupe(u8, decision.id);
     try applyAcknowledgement(ctx, out, r, decision, &.{}, &.{});
 }
 
@@ -3015,7 +3035,7 @@ fn spaViewPort(ctx: *Ctx, out: *Outcome, route_index: usize) WriteError!?SpaView
     const param = soleRouteParam(route.path) orelse return null;
     for (tpl.nodes) |node| {
         if (node.text != null or node.kind != .ivar) continue;
-        const id = convert.findingIdFor(d.findings, view, node.line, node.col) orelse continue;
+        const id = convert.findingIdFor(d.findings, view, node) orelse continue;
         try appendOwnedUnique(gpa, &out.open_ids, id);
         const dec = decisions.lookup(ctx.in.decisions, id) orelse {
             try out.addOpenNote(gpa, "request-time state on SPA route: undecided", .{});
@@ -3372,7 +3392,7 @@ fn dataCollectionForDecision(ctx: *Ctx, dec: decisions.Decision) []const u8 {
 fn findingIsIvar(ctx: *Ctx, id: []const u8) bool {
     for (ctx.in.discovery.fragments) |tpl| for (tpl.nodes) |node| {
         if (node.text != null or node.kind != .ivar) continue;
-        const node_id = convert.findingIdFor(ctx.in.discovery.findings, tpl.path, node.line, node.col) orelse continue;
+        const node_id = convert.findingIdFor(ctx.in.discovery.findings, tpl.path, node) orelse continue;
         if (std.mem.eql(u8, node_id, id)) return true;
     };
     return false;
@@ -4262,7 +4282,7 @@ fn stimulusMounts(gpa: Allocator, ctx: *Ctx, identifier: []const u8) Allocator.E
             break;
         };
         if (!found) continue;
-        const id = convert.findingIdFor(ctx.in.discovery.findings, tpl.path, node.line, node.col) orelse continue;
+        const id = convert.findingIdFor(ctx.in.discovery.findings, tpl.path, node) orelse continue;
         const decision = decisions.lookup(ctx.in.decisions, id) orelse continue;
         if (!std.mem.eql(u8, decision.choice, "island")) continue;
         try out.append(gpa, .{ .path = tpl.path, .line = node.line, .col = node.col, .code = node.code, .finding_id = id, .absorbed = false, .enclosed = false });
@@ -5836,26 +5856,40 @@ fn writeClientLib(ctx: *Ctx, auth_collection: ?[]const u8, with_realtime: bool) 
     try ctx.writeFile(client_lib_path, realtime);
 }
 
+const root_placeholder =
+    \\---
+    \\.title = "Migration placeholder",
+    \\.date = @date("1970-01-01T00:00:00"),
+    \\.layout = "migration-placeholder.shtml",
+    \\.draft = true,
+    \\---
+    \\The source routes need a semantic port. Start with `MIGRATION.md`.
+    \\
+;
+
+const root_placeholder_layout =
+    \\<!DOCTYPE html>
+    \\<html><head><title :text="$page.title"></title></head>
+    \\<body><h1 :text="$page.title"></h1><div :html="$page.content()"></div></body></html>
+    \\
+;
+
 fn writeProjectFiles(ctx: *Ctx, acc: *Acc) WriteError!void {
     const gpa = ctx.gpa;
 
-    // `release` opens the configured content root even when there are no
-    // pages to render. Every route may legitimately have been acknowledged
-    // as `blocked`/`retained` (and backend/redirect routes never write a
-    // page), so a complete handoff can otherwise emit a build.sh whose first
-    // release fails with FileNotFound. Keep the root in the generated project
-    // without inventing a page; root.zig treats this exact filename as a
-    // directory placeholder and excludes it from content/asset accounting.
-    var has_content_page = false;
-    outer: for (acc.routes.items) |route| {
+    // A partly converted app still needs a root page to release. The
+    // draft placeholder supplies the root section without publishing /.
+    // It is project scaffolding, never evidence that / migrated.
+    var has_root_page = false;
+    for (acc.routes.items) |route| {
         for (route.artifacts) |artifact| {
-            if (std.mem.startsWith(u8, artifact, "content/")) {
-                has_content_page = true;
-                break :outer;
-            }
+            if (std.mem.eql(u8, artifact, "content/index.smd")) has_root_page = true;
         }
     }
-    if (!has_content_page) try ctx.writeFile("content/.gitkeep", "");
+    if (!has_root_page) {
+        try ctx.writeFile("content/index.smd", root_placeholder);
+        try ctx.writeFile("layouts/migration-placeholder.shtml", root_placeholder_layout);
+    }
 
     const config = try emitConfig(gpa, ctx.in.app_name, acc.assets.items.len > 0);
     defer gpa.free(config);
@@ -5980,7 +6014,7 @@ fn collectComponentSources(gpa: Allocator, ctx: *Ctx, written: []const []const u
     errdefer queue.deinit(gpa);
     for (ctx.in.discovery.fragments) |tpl| for (tpl.nodes) |node| {
         if (node.text != null or node.kind != .component_root) continue;
-        const id = convert.findingIdFor(ctx.in.discovery.findings, tpl.path, node.line, node.col) orelse continue;
+        const id = convert.findingIdFor(ctx.in.discovery.findings, tpl.path, node) orelse continue;
         const binding = bindingById(ctx.bindings.all, id) orelse continue;
         if (binding.kind != .component or !contains(written, binding.island)) continue;
         const source = componentSource(ctx.in.discovery.js_sources, node.name orelse "") orelse continue;
@@ -6451,6 +6485,7 @@ test "write: a static content route becomes a layout, a view and a content page"
         .claude_md = "claude\n",
     }, &err_path, &err_cause);
     defer freeResult(gpa, res);
+    try testing.expect(targetHas(&tmp, "content/index.smd"));
 
     try testing.expectEqual(@as(usize, 1), res.routes.len);
     try testing.expectEqual(Status.migrated, res.routes[0].status);
@@ -6651,9 +6686,9 @@ test "write: a route whose view cannot be converted is acknowledged by a decisio
         try testing.expectEqual(Status.blocked, res.routes[0].status);
         try testing.expectEqualStrings(finding_list[0].id, res.routes[0].decision_id.?);
         try testing.expect(!targetHas(&tmp, "content/posts/legacy/index.smd"));
-        const placeholder = try readTarget(gpa, &tmp, "content/.gitkeep");
+        const placeholder = try readTarget(gpa, &tmp, "content/index.smd");
         defer gpa.free(placeholder);
-        try testing.expectEqual(@as(usize, 0), placeholder.len);
+        try testing.expectEqualStrings(root_placeholder, placeholder);
     }
 }
 
@@ -12853,7 +12888,10 @@ test "write: retain on the nested control still outranks the island around it" {
     try testing.expectEqualStrings(j.button_id, root.decision_id orelse "");
     try testing.expectEqual(Status.retained, root.status);
     try testing.expect(std.mem.indexOf(u8, root.note orelse "", "superseded") == null);
-    try testing.expect(!targetHas(&j.tmp, "content/index.smd"));
+    const placeholder = try readTarget(gpa, &j.tmp, "content/index.smd");
+    defer gpa.free(placeholder);
+    try testing.expectEqualStrings(root_placeholder, placeholder);
+    try testing.expectEqual(@as(usize, 0), root.artifacts.len);
 }
 
 test "write: retain on the auth journey scaffolds nothing at all" {
@@ -15313,4 +15351,57 @@ test "write: a dynamic route ports its record view into the SPA and carries layo
     try testing.expect(std.mem.indexOf(u8, spa, "h += esc(String(rec.title ?? \"\"));") != null);
     try testing.expect(std.mem.indexOf(u8, spa, "TODO: port GET /posts/:id/edit (posts#edit)") != null);
     try testing.expect(targetHas(&tmp, client_lib_path));
+}
+
+test "write: unavailable templates give every affected route an answerable finding" {
+    const blockers = @import("blockers.zig");
+    const gpa = testing.allocator;
+    var env: std.process.Environ.Map = .init(gpa);
+    defer env.deinit();
+    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    defer blockers.freeList(gpa, &blocker_list);
+    var paths = [_][]const u8{ "app/views/pages/show.html.erb", "app/views/pages/about.html.erb" };
+    const recovered = try fragments.discoverTemplates(testing.io, gpa, ".", &paths, &blocker_list, &env);
+    defer fragments.freeResult(gpa, recovered);
+    const fs = try findings.derive(gpa, .{ .templates = recovered.templates, .layouts = &.{}, .controller_files = &.{}, .route_names = &.{}, .locale = null });
+    defer findings.free(gpa, fs);
+    try testing.expectEqual(@as(usize, 2), fs.len);
+    var rs = [_]route_mod.Route{ tRoute("GET", "/", "pages", "show", 1), tRoute("GET", "/about", "pages", "about", 2) };
+    var vs = [_]classify.Verdict{ tVerdict(.content), tVerdict(.content) };
+    var rts = [_]rails.RouteTemplates{ .{ .templates = paths[0..1], .layout = null }, .{ .templates = paths[1..2], .layout = null } };
+    var d = emptyDiscovery();
+    d.routes = &rs;
+    d.classifications = &vs;
+    d.route_templates = &rts;
+    d.fragments = recovered.templates;
+    d.findings = fs;
+    d.blockers = blocker_list.items;
+    var answers = [_]decisions.Decision{
+        .{ .id = fs[0].id, .choice = "blocked", .rationale = "analysis unavailable", .artifact = null },
+        .{ .id = fs[1].id, .choice = "blocked", .rationale = "analysis unavailable", .artifact = null },
+    };
+    for ([_]bool{ false, true }) |answered| {
+        var tmp = testing.tmpDir(.{});
+        defer tmp.cleanup();
+        const target = try tmpTarget(gpa, &tmp);
+        defer gpa.free(target);
+        var err_path: ?[]const u8 = null;
+        defer if (err_path) |path| gpa.free(path);
+        var err_cause: ?anyerror = null;
+        const res = try write(testing.io, gpa, .{
+            .discovery = &d,
+            .decisions = .{ .decisions = if (answered) &answers else &.{}, .stale = &.{} },
+            .source_root = tmp.dir,
+            .target = target,
+            .app_name = "App",
+            .runtime_path = null,
+            .agents_md = "",
+            .claude_md = "",
+        }, &err_path, &err_cause);
+        defer freeResult(gpa, res);
+        for (res.routes) |route| {
+            try testing.expectEqual(if (answered) Status.blocked else Status.open, route.status);
+            if (!answered) try testing.expectEqual(@as(usize, 1), route.open_finding_ids.len);
+        }
+    }
 }

@@ -157,7 +157,7 @@ fn decisionReplacesRegion(discovery: *const rails.Discovery, template: fragments
         .request_state, .ivar, .errors, .form, .component_root => {},
         else => return false,
     }
-    const finding_id = convert.findingIdFor(discovery.findings, template.path, node.line, node.col) orelse return false;
+    const finding_id = convert.findingIdFor(discovery.findings, template.path, node) orelse return false;
     const decision = decisions.lookup(discovery.decisions, finding_id) orelse return false;
     return !std.mem.eql(u8, decision.choice, "retain") and
         !std.mem.eql(u8, decision.choice, "blocked") and
@@ -318,7 +318,7 @@ fn fieldsForEndpoint(gpa: Allocator, discovery: *const rails.Discovery, operatio
     var open: ?usize = null;
     for (template.nodes, 0..) |node, i| {
         if (node.text != null or node.kind != .form) continue;
-        const node_id = convert.findingIdFor(discovery.findings, template.path, node.line, node.col) orelse continue;
+        const node_id = convert.findingIdFor(discovery.findings, template.path, node) orelse continue;
         if (std.mem.eql(u8, node_id, finding.id)) {
             open = i;
             break;

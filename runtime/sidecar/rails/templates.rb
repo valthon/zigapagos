@@ -39,7 +39,7 @@ module RailsTemplates
   # Structural fragments (`<% end %>`, `<% else %>`, `<% when 1 %>`) produce
   # no classified node of their own but DO produce a token, so `block_end` /
   # `block_else` consume it -- see Walker#take_structural.
-  BLOCK_END_TAG = /\A(end|\})\z/
+  BLOCK_END_TAG = /\A(end|\})(?:\s+(?:if|unless)\b.*)?\z/
   BLOCK_ELSE_TAG = /\A(else|elsif|when|in)\b/
 
   def self.analyze(src, path:, i18n:)
@@ -330,7 +330,11 @@ module RailsTemplates
     def emit_statement(node)
       case node
       when Prism::IfNode, Prism::UnlessNode
-        tok = emit(control_info(node.predicate, node.is_a?(Prism::IfNode) ? "if" : "unless"), node)
+        # A postfix condition around an output block starts at `_outb` in
+        # generated Ruby. Its source starts at the inner call instead.
+        first = statements_of(node.statements).first
+        pos = first && out_kind(first) && node.location.start_offset == first.location.start_offset ? first_position(inner_arg(first)) : node
+        tok = emit(control_info(node.predicate, node.is_a?(Prism::IfNode) ? "if" : "unless"), node, pos)
         return if contained_in_token?(node, tok)
         with_block_depth { walk_statements(statements_of(node.statements)) }
         sub = node.is_a?(Prism::IfNode) ? node.subsequent : node.else_clause
@@ -718,13 +722,13 @@ module RailsTemplates
     def block_end(node)
       line = src_line(node.location.end_line)
       tok = take_structural(line, BLOCK_END_TAG)
-      @nodes << { t: "code", kind: "block_end", line: line, col: tok ? tok[:col] : 0, output: false, code: tok ? tok[:code].strip : "" }
+      @nodes << { t: "code", kind: "block_end", line: line, col: tok ? tok[:col] : src_col(node.location.end_line, node.location.end_column), output: false, code: tok ? tok[:code].strip : "" }
     end
 
     def block_else(branch)
       line = src_line(branch.location.start_line)
       tok = take_structural(line, BLOCK_ELSE_TAG)
-      @nodes << { t: "code", kind: "block_else", line: line, col: tok ? tok[:col] : 0, output: false, code: tok ? tok[:code].strip : "" }
+      @nodes << { t: "code", kind: "block_else", line: line, col: tok ? tok[:col] : src_col(branch.location.start_line, branch.location.start_column), output: false, code: tok ? tok[:code].strip : "" }
     end
 
     # Ruling R2c: a branch is named by what it BRANCHES ON. `<% if
@@ -1045,7 +1049,12 @@ module RailsTemplates
       line = src_line(loc.start_line)
       tok = take_token(line, loc.start_line)
       @nodes << { t: "code", line: line, col: src_col(loc.start_line, loc.start_column), output: false,
-                  code: (tok ? tok[:code].strip : safe_slice(pos)) }.merge(info)
+                  code: (tok ? tok[:code].strip : safe_slice(pos)),
+                  # Keep conversion's opening fragment separate from identity.
+                  # The complete AST span includes closing postfix predicates,
+                  # branches and block bodies, even when `pos` is an inner call.
+                  # Generated wrappers are deterministic and contain no positions.
+                  identity_source: safe_slice(node) }.merge(info)
       tok
     end
 
