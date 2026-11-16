@@ -2,6 +2,7 @@ import { test, expect } from "bun:test";
 import { symlinkSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { planChecks, checkDeployment } from "../../runtime/scripts/check-static-deploy.ts";
+import { serializeCspSources } from "../../runtime/scripts/emit-host-config.ts";
 import { fixture } from "./fixture.ts";
 
 for (const prefix of ["", "/preview"]) {
@@ -87,7 +88,7 @@ test("missing manifest bundle cannot produce a passing plan", () => {
 test("checker requires declared extras and rejects a different policy", async () => {
   const f = fixture();
   try {
-    writeFileSync(join(f.site, "csp-sources.json"), JSON.stringify([{ directive: "connect-src", sources: ["https://api.example"] }]));
+    writeFileSync(join(f.site, "csp-sources.json"), serializeCspSources([{ directive: "connect-src", sources: ["https://api.example"] }]));
     const plan = planChecks(f.site, f.url);
     expect(plan.csp).toContain("connect-src 'self' https://api.example");
     expect((await checkDeployment(plan)).findings.some((v) => v.code === "csp")).toBe(true);

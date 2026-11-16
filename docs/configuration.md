@@ -108,7 +108,8 @@ CSP policy separators.
 
 Sources are deduplicated and added in sorted order; repeated directive entries
 are unioned. Existing sources and generated hashes stay. A directive previously
-falling back to `default-src` is emitted explicitly with `'self'`. `style-src`
+falling back to `default-src` is emitted explicitly with the effective extended
+`default-src` sources, then its own additions. `style-src`
 extras also extend `style-src-elem`, which otherwise takes precedence. `'none'`
 is omitted from any nonempty union containing other sources, following CSP
 semantics. These are additional permissions, not a replacement policy; security
@@ -118,8 +119,29 @@ and should only be declared deliberately.
 Release emits all host formats via the runtime emitter (`ZIGAPAGOS_RUNTIME_DIR`).
 The generated `csp-sources.json` records these inputs for subsequent emitter and
 deploy-checker runs; retain it with the output. Removing the config field removes
-stale metadata on the next full runtime-enabled release. The default CSP artifact
-contents are byte-for-byte unchanged when the field is absent or empty.
+stale generated metadata on the next full runtime-enabled release. Release records
+installed user-file ownership in `.zigapagos-csp-ownership.json`; retain that file
+with the output too. The deploy checker and later standalone emitter runs honor
+this decision even if the user file resembles generated metadata. That ownership
+filename is reserved: installing an asset there fails without overwriting it.
+Unrelated files of the same name are preserved and cause an error when declarations
+would overwrite them. A previously recorded user file stays protected after asset
+deselection; remove it from the output explicitly before generating declarations.
+Pre-marker main builds wrote declarations as a bare JSON array. Without an
+installed asset or recorded user ownership, that legacy format is read as
+declarations and migrated on release (or removed when declarations are cleared).
+For older trees containing a same-shaped user asset, rebuild with release first
+so its asset inventory records ownership before standalone emitter/checker use.
+Installing a root
+`csp-sources.json` via `static_assets` (including `"**"`) while declarations are
+present fails validation before output writes, following sitemap collision checks.
+Collision and ownership checks use the installed path: a multilingual site's
+`assets_prefix_path = "static"` installs that asset at `static/csp-sources.json`,
+which can coexist with root metadata. Without declarations a root asset remains
+an ordinary user file. From a child
+directory, metadata and host configuration use the project's default `public/`;
+an explicit `--output` remains relative to the invocation directory. The default
+CSP artifact contents are byte-for-byte unchanged when the field is absent or empty.
 
 ## The build invocation
 

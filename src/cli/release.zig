@@ -234,12 +234,33 @@ pub fn release(
     // and install phases have written them.
     // An extras-only static site must also regenerate after removing its
     // declarations; --force preserves unrelated files in the output tree.
-    const csp_metadata_path = try std.fs.path.join(gpa, &.{ cmd.output_dir_path orelse "public", "csp-sources.json" });
+    const host_output_path = if (cmd.output_dir_path) |path|
+        try gpa.dupe(u8, path)
+    else
+        try std.fs.path.join(gpa, &.{ base_dir_path, "public" });
+    defer gpa.free(host_output_path);
+    const csp_metadata_path = try std.fs.path.join(gpa, &.{ host_output_path, "csp-sources.json" });
     defer gpa.free(csp_metadata_path);
     const had_csp_metadata = if (Io.Dir.cwd().access(io, csp_metadata_path, .{})) true else |err| switch (err) {
         error.FileNotFound => false,
         else => fatal.msg("error checking CSP metadata: {t}\n", .{err}),
     };
+    // Like the sitemap pass, use the selected asset inventory rather than
+    // treating the existence (or contents) of a same-named file as ownership.
+    var csp_sources_asset = false;
+    var asset_it = build.site_assets.iterator();
+    while (asset_it.next()) |entry| {
+        if (entry.value_ptr.raw > 0 and
+            try root.isRootAssetPath(gpa, &build, entry.key_ptr.*, ".zigapagos-csp-ownership.json"))
+        {
+            fatal.msg("error: installed asset collides with reserved .zigapagos-csp-ownership.json\n", .{});
+        }
+        if (entry.value_ptr.raw > 0 and
+            try root.isCspRootAsset(gpa, &build, entry.key_ptr.*))
+        {
+            csp_sources_asset = true;
+        }
+    }
     if (rt_defaults) |rt| if (cmd.islands.len > 0 or cmd.spas.len > 0 or cfg.getCspExtraSources().len > 0 or had_csp_metadata) {
         const report_dir = try std.fs.path.join(gpa, &.{ base_dir_path, bundle_cache_path });
         defer gpa.free(report_dir);
@@ -255,10 +276,11 @@ pub fn release(
         defer gpa.free(csp_sources);
         runDriver(io, gpa, cmd.bun_path orelse "bun", ".", &.{
             rt.host_config_emitter,
+            if (csp_sources_asset) "--csp-sources-asset" else "",
             "--csp-extra-sources",
             csp_sources,
             "--site",
-            cmd.output_dir_path orelse "public",
+            host_output_path,
             "--report",
             if (cmd.summary) report_path else "",
         }, environ_map) catch |err| fatal.msg(
