@@ -142,7 +142,7 @@ registrator update (20.12.0); its patch was not applied.
 | `preact-render-to-string` | 6.7.0 | Current stable release |
 | TypeScript | 6.0.3 | Latest compatible 6.x release; see below |
 | Zig | 0.17.1 | Released compiler selected by the November toolchain port |
-| ZigBase | 0.13.0 | Current release; existing CLI/install pin retained |
+| ZigBase | 0.14.0 | Prebuilt CLI/install pin; built on Zig 0.17.1 |
 
 All three Bun lockfiles were resolved using Bun 1.4.2. The site and example
 lockfiles were regenerated so their `file:` runtime dependency records carry

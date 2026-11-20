@@ -28,6 +28,13 @@
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { join, normalize } from "node:path";
 
+// A harness owns this process: an inherited agent/background preference must
+// never detach it and leave the server outside teardown's child handle.
+if (process.env.ZIGBASE_SERVE_BACKGROUND !== "0") {
+  console.error("stub-zigbase: harness must force ZIGBASE_SERVE_BACKGROUND=0");
+  process.exit(2);
+}
+
 const args = process.argv.slice(2);
 if (args[0] !== "serve") {
   console.error(`stub-zigbase: UnknownCommand: expected 'serve', got: ${args.join(" ")}`);

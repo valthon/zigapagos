@@ -123,16 +123,19 @@ dependency range is derived from.
 The locator tries three places in order: `--zigbase=PATH`, then `zigbase` on
 `PATH`, then the pinned release in the cache.
 
-The pinned release is **v0.13.0** from `valthon/zigbase`, cached at:
+The pinned release is **v0.14.0** from `valthon/zigbase`, cached at:
 
 ```
-$XDG_CACHE_HOME/zigapagos/zigbase/v0.13.0/zigbase
+$XDG_CACHE_HOME/zigapagos/zigbase/v0.14.0/zigbase
 ```
 
-falling back to `$HOME/.cache/zigapagos/zigbase/v0.13.0/zigbase` when
-`XDG_CACHE_HOME` is unset, and `%LOCALAPPDATA%\zigapagos\zigbase\v0.13.0\zigbase.exe`
+falling back to `$HOME/.cache/zigapagos/zigbase/v0.14.0/zigbase` when
+`XDG_CACHE_HOME` is unset, and `%LOCALAPPDATA%\zigapagos\zigbase\v0.14.0\zigbase.exe`
 on Windows. Dropping a binary there yourself works; nothing else looks at the
 directory.
+
+Both commands keep their managed server child in the foreground so teardown
+also stops the server, including in an agent environment.
 
 Who fetches it differs by command, deliberately:
 

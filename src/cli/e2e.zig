@@ -261,10 +261,17 @@ pub fn e2e(
         .io = io,
         .gpa = gpa,
         // stdio inherit (the spawn default): zigbase's own log streams through.
-        .server = std.process.spawn(io, .{ .argv = zb_argv.items }) catch |err| fatal.msg(
-            "error: e2e: failed to spawn zigbase ({s}): {s}\n",
-            .{ located.path, @errorName(err) },
-        ),
+        // The harness owns this child. ZigBase's agent-aware auto-background
+        // mode must not detach it beyond teardown's process handle.
+        .server = blk: {
+            var server_env = try environ_map.clone(gpa);
+            defer server_env.deinit();
+            try server_env.put("ZIGBASE_SERVE_BACKGROUND", "0");
+            break :blk std.process.spawn(io, .{ .argv = zb_argv.items, .environ_map = &server_env }) catch |err| fatal.msg(
+                "error: e2e: failed to spawn zigbase ({s}): {s}\n",
+                .{ located.path, @errorName(err) },
+            );
+        },
         .temp_data_dir = if (data_dir_is_temp) data_dir else null,
     };
 

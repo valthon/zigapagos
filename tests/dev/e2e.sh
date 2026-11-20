@@ -22,6 +22,7 @@
 #   (e) locator: with no zigbase anywhere, it fails with actionable
 #       instructions (skipped when a real zigbase or a cached pin exists).
 set -euo pipefail
+export ZIGBASE_SERVE_BACKGROUND=1 # the harness must override this in its server child
 cd "$(dirname "$0")"
 HERE="$(pwd)"
 REPO="$(cd ../.. && pwd)"
