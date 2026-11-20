@@ -30,7 +30,7 @@ pub fn setup(b: *std.Build) void {
                 const run_apigen = addApigenRun(b);
 
                 const git_add = b.addSystemCommand(&.{ "git", "add" });
-                git_add.addDirectoryArg(b.path("contract/generated"));
+                git_add.addDirectoryArg2(b.path("contract/generated"), .{});
                 git_add.setName("git add contract/generated");
                 git_add.step.dependOn(&run_apigen.step);
 
@@ -40,7 +40,7 @@ pub fn setup(b: *std.Build) void {
                     "--cached",
                     "--exit-code",
                 });
-                diff.addDirectoryArg(b.path("contract/generated"));
+                diff.addDirectoryArg2(b.path("contract/generated"), .{});
                 diff.setName("git diff contract/generated");
                 diff.step.dependOn(&git_add.step);
 
@@ -88,9 +88,12 @@ const CodegenMode = enum { openapi, zigbase };
 /// Absent / unreadable / unparseable => .openapi (the default; full back-compat,
 /// so a repo with no config keeps the exact OpenAPI api-gen/api-check wiring).
 fn codegenMode(b: *std.Build) CodegenMode {
-    const bytes = b.build_root.handle.readFileAlloc(
+    b.dependOnDirectoryContents(b.path("contract"));
+    b.root.access(b.graph.io, "contract/codegen.config.json", .{}) catch return .openapi;
+    b.dependOnFileContents(b.path("contract/codegen.config.json"));
+    const bytes = std.Io.Dir.cwd().readFileAlloc(
         b.graph.io,
-        "contract/codegen.config.json",
+        b.root.joinString(b.allocator, "contract/codegen.config.json") catch @panic("OOM"),
         b.allocator,
         .limited(64 * 1024),
     ) catch return .openapi;

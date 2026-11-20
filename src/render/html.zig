@@ -115,7 +115,7 @@ pub fn html(
             false;
 
         // var buf: [1024]u8 = undefined;
-        // tracy.messageCopy(std.fmt.bufPrint(&buf, "{} {s}", .{
+        // tracy.messageCopy(std.mem.print(&buf, "{} {s}", .{
         //     node.nodeType(),
         //     @tagName(ev.dir),
         // }) catch unreachable);
@@ -286,7 +286,11 @@ pub fn html(
                 .exit => {},
             },
             .FOOTNOTE_DEFINITION => switch (ev.dir) {
-                .enter => {},
+                // The new SuperMD pin keeps definitions in the document tree.
+                // Render their body only on the explicit footnote path.
+                .enter => if (start.nodeType() != .FOOTNOTE_DEFINITION) {
+                    it.reset(node, .exit);
+                },
                 .exit => {},
             },
             .HTML_INLINE => switch (ev.dir) {
@@ -386,10 +390,10 @@ pub fn html(
                 },
             },
 
-            else => |nt| if (@intFromEnum(nt) == c.CMARK_NODE_STRIKETHROUGH) switch (ev.dir) {
+            else => |nt| if (@backingInt(nt) == c.CMARK_NODE_STRIKETHROUGH) switch (ev.dir) {
                 .enter => try w.writeAll("<del>"),
                 .exit => try w.writeAll("</del>"),
-            } else if (@intFromEnum(nt) == c.CMARK_NODE_TABLE) switch (ev.dir) {
+            } else if (@backingInt(nt) == c.CMARK_NODE_TABLE) switch (ev.dir) {
                 .enter => {
                     table_alignments = node.getTableAlignments();
                     try w.writeAll("<table>");
@@ -398,7 +402,7 @@ pub fn html(
                     table_alignments = &.{};
                     try w.writeAll("</table>");
                 },
-            } else if (@intFromEnum(nt) == c.CMARK_NODE_TABLE_ROW) switch (ev.dir) {
+            } else if (@backingInt(nt) == c.CMARK_NODE_TABLE_ROW) switch (ev.dir) {
                 .enter => {
                     table_in_header = node.isTableHeader();
                     try w.writeAll("<tr>");
@@ -408,7 +412,7 @@ pub fn html(
                     table_cell_id = 0;
                     try w.writeAll("</tr>");
                 },
-            } else if (@intFromEnum(nt) == c.CMARK_NODE_TABLE_CELL) switch (ev.dir) {
+            } else if (@backingInt(nt) == c.CMARK_NODE_TABLE_CELL) switch (ev.dir) {
                 .enter => {
                     if (table_in_header) {
                         try w.writeAll("<th");
@@ -461,6 +465,7 @@ fn renderDirective(
     const node = ev.node;
     const directive = node.getDirective() orelse return renderLink(ev, ctx, w);
     switch (directive.kind) {
+        .audio => return error.UnsupportedAudioDirective,
         .section, .block, .heading => {},
         .mathtex => |katek| switch (ev.dir) {
             .enter => {
@@ -784,7 +789,7 @@ fn printVariantUrl(
     switch (src) {
         .page_asset => |pa| {
             try ctx.printLinkPrefix(w, page._scan.variant_id, page != ctx.page);
-            const path: Path = @enumFromInt(pa.resolved.path);
+            const path: Path = @fromBackingInt(@intCast(pa.resolved.path));
             const v = ctx._meta.build.variants[page._scan.variant_id];
             for (path.slice(&v.path_table)) |comp| {
                 try writeSrcsetSegment(w, comp.slice(&v.string_table));
@@ -794,7 +799,7 @@ fn printVariantUrl(
         },
         .site_asset => |sa| {
             try printAssetUrlPrefix(ctx, page, w, false);
-            const path: Path = @enumFromInt(sa.resolved.path);
+            const path: Path = @fromBackingInt(@intCast(sa.resolved.path));
             for (path.slice(&ctx._meta.build.pt)) |comp| {
                 try writeSrcsetSegment(w, comp.slice(&ctx._meta.build.st));
                 try w.writeAll("/");
@@ -873,7 +878,7 @@ fn printUrl(
                 page != ctx.page,
             );
 
-            const path: Path = @enumFromInt(p.resolved.path);
+            const path: Path = @fromBackingInt(@intCast(p.resolved.path));
             const v = ctx._meta.build.variants[p.resolved.variant_id];
             if (p.resolved.alt) |a| {
                 if (a[0] != '/') {
@@ -902,8 +907,8 @@ fn printUrl(
             );
 
             const pn: PathName = .{
-                .path = @enumFromInt(pa.resolved.path),
-                .name = @enumFromInt(pa.resolved.name),
+                .path = @fromBackingInt(@intCast(pa.resolved.path)),
+                .name = @fromBackingInt(@intCast(pa.resolved.name)),
             };
 
             const v = ctx._meta.build.variants[page._scan.variant_id];
@@ -918,8 +923,8 @@ fn printUrl(
             try printAssetUrlPrefix(ctx, page, w, false);
 
             const pn: PathName = .{
-                .path = @enumFromInt(sa.resolved.path),
-                .name = @enumFromInt(sa.resolved.name),
+                .path = @fromBackingInt(@intCast(sa.resolved.path)),
+                .name = @fromBackingInt(@intCast(sa.resolved.name)),
             };
 
             // The SuperMD-directive twin of `context/Asset.zig`'s `.site` arm:

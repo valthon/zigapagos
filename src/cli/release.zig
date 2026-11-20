@@ -19,10 +19,17 @@ pub fn release(
     args: []const []const u8,
     environ_map: *const std.process.Environ.Map,
 ) bool {
-    errdefer |err| switch (err) {
+    return releaseInner(io, gpa, args, environ_map) catch |err| switch (err) {
         error.OutOfMemory => fatal.oom(),
     };
+}
 
+fn releaseInner(
+    io: Io,
+    gpa: Allocator,
+    args: []const []const u8,
+    environ_map: *const std.process.Environ.Map,
+) !bool {
     var cmd: Command = try .parse(gpa, args);
     // Authoritative assignment: main.zig's scanArgv already set diag.format
     // as a stderr-suppression optimisation (before std.Progress/the banners),
@@ -151,7 +158,7 @@ pub fn release(
     const island_manifest_path = parseIslandManifestPath(environ_map);
 
     worker.start(io);
-    defer if (builtin.mode == .Debug) worker.stopWaitAndDeinit(io);
+    defer if (builtin.optimize == .debug) worker.stopWaitAndDeinit(io);
 
     var summary: Summary = .{};
     defer summary.deinit(gpa);
@@ -181,7 +188,7 @@ pub fn release(
         .summary_sink = if (cmd.summary) &summary else null,
     }) catch fatal.oom();
 
-    defer if (builtin.mode == .Debug) build.deinit(io, gpa);
+    defer if (builtin.optimize == .debug) build.deinit(io, gpa);
 
     if (tracy.enable) {
         tracy.frameMarkNamed("waiting for tracy");
@@ -318,7 +325,7 @@ fn missingSpaClientAsset(
     cmd: *const Command,
 ) Allocator.Error!?MissingSpaClientAsset {
     for (cmd.spas) |sp| {
-        const entry_path = try std.fmt.allocPrint(gpa, "spa/{s}.js", .{spa_mod.spaName(sp.src)});
+        const entry_path = try gpa.print("spa/{s}.js", .{spa_mod.spaName(sp.src)});
         if (!hasBuildAssetInstallPath(&cmd.build_assets, entry_path)) {
             return .{ .spa_src = sp.src, .install_path = entry_path };
         }
@@ -367,7 +374,7 @@ fn validateSpaClientAssets(gpa: Allocator, cmd: *Command) void {
     // here makes that declared install happen instead of validating it and then
     // pruning it as apparently unreferenced during root.run's install pass.
     for (cmd.spas) |sp| {
-        const entry_path = std.fmt.allocPrint(gpa, "spa/{s}.js", .{spa_mod.spaName(sp.src)}) catch fatal.oom();
+        const entry_path = gpa.print("spa/{s}.js", .{spa_mod.spaName(sp.src)}) catch fatal.oom();
         markBuildAssetReferencedByInstallPath(&cmd.build_assets, entry_path);
         gpa.free(entry_path);
         markBuildAssetReferencedByInstallPath(&cmd.build_assets, "zigapagos-runtime.js");
@@ -1153,20 +1160,20 @@ fn bundleSharedRuntime(
     );
     const rt_out = try std.fs.path.join(gpa, &.{ cache_abs, "zigapagos-runtime.js" });
     const rt_dep = try std.fs.path.join(gpa, &.{ cache_abs, "zigapagos-runtime.d" });
-    const rt_map = try std.fmt.allocPrint(gpa, "{s}.map", .{rt_out});
+    const rt_map = try gpa.print("{s}.map", .{rt_out});
     var argv: std.ArrayListUnmanaged([]const u8) = .empty;
     try argv.appendSlice(gpa, &.{
         driver,
-        try std.fmt.allocPrint(gpa, "--entry={s}", .{runtime_entry}),
-        try std.fmt.allocPrint(gpa, "--outfile={s}", .{rt_out}),
-        try std.fmt.allocPrint(gpa, "--depfile={s}", .{rt_dep}),
+        try gpa.print("--entry={s}", .{runtime_entry}),
+        try gpa.print("--outfile={s}", .{rt_out}),
+        try gpa.print("--depfile={s}", .{rt_dep}),
         "--minify",
     });
     // The driver writes `<mapfile>` and retargets the bundle's
     // `sourceMappingURL` to its basename, so staging the map next to the
     // runtime is all it takes for the browser to fetch it.
     if (cmd.source_maps) try argv.appendSlice(gpa, &.{
-        try std.fmt.allocPrint(gpa, "--mapfile={s}", .{rt_map}),
+        try gpa.print("--mapfile={s}", .{rt_map}),
         "--sourcemap",
     });
     try runDriver(io, gpa, bun_path, src_dir, argv.items, env);
@@ -1210,14 +1217,14 @@ fn bundleIslands(
     var built = try std.ArrayListUnmanaged([]const u8).initCapacity(gpa, cmd.islands.len);
     for (cmd.islands) |src| {
         const name = bundleName(src);
-        const out = try std.fmt.allocPrint(gpa, "{s}/{s}.js", .{ cache_abs, name });
-        const dep = try std.fmt.allocPrint(gpa, "{s}/{s}.d", .{ cache_abs, name });
+        const out = try gpa.print("{s}/{s}.js", .{ cache_abs, name });
+        const dep = try gpa.print("{s}/{s}.d", .{ cache_abs, name });
         var argv: std.ArrayListUnmanaged([]const u8) = .empty;
         try argv.appendSlice(gpa, &.{
             driver,
-            try std.fmt.allocPrint(gpa, "--entry={s}", .{src}),
-            try std.fmt.allocPrint(gpa, "--outfile={s}", .{out}),
-            try std.fmt.allocPrint(gpa, "--depfile={s}", .{dep}),
+            try gpa.print("--entry={s}", .{src}),
+            try gpa.print("--outfile={s}", .{out}),
+            try gpa.print("--depfile={s}", .{dep}),
             // Kept external so the bundle imports the bare specifier and the
             // page's import map resolves it to the shared runtime above.
             // Inlining it would give the page a SECOND Preact.
@@ -1230,9 +1237,9 @@ fn bundleIslands(
         // a plain `zigapagos release`, which is what keeps release bundles
         // byte-identical to a hot-free build.
         if (hot) try argv.append(gpa, "--hot");
-        const map = try std.fmt.allocPrint(gpa, "{s}.map", .{out});
+        const map = try gpa.print("{s}.map", .{out});
         if (cmd.source_maps) try argv.appendSlice(gpa, &.{
-            try std.fmt.allocPrint(gpa, "--mapfile={s}", .{map}),
+            try gpa.print("--mapfile={s}", .{map}),
             "--sourcemap",
         });
         try runDriver(io, gpa, bun_path, src_dir, argv.items, env);
@@ -1240,16 +1247,16 @@ fn bundleIslands(
         try addBundleAsset(
             gpa,
             cmd,
-            try std.fmt.allocPrint(gpa, "island_{s}", .{name}),
+            try gpa.print("island_{s}", .{name}),
             out,
-            try std.fmt.allocPrint(gpa, "islands/{s}.js", .{name}),
+            try gpa.print("islands/{s}.js", .{name}),
         );
         if (cmd.source_maps) try addBundleAsset(
             gpa,
             cmd,
-            try std.fmt.allocPrint(gpa, "island_{s}_map", .{name}),
+            try gpa.print("island_{s}_map", .{name}),
             map,
-            try std.fmt.allocPrint(gpa, "islands/{s}.js.map", .{name}),
+            try gpa.print("islands/{s}.js.map", .{name}),
         );
     }
     return built.items;
@@ -1290,19 +1297,19 @@ fn sliceIslandsRuntime(
     env: *const std.process.Environ.Map,
 ) !void {
     const gpa = arena.a;
-    const outdir = try std.fmt.allocPrint(gpa, "{s}/islands-rt", .{cache_abs});
-    const manifest = try std.fmt.allocPrint(gpa, "{s}/islands-slice.json", .{cache_abs});
+    const outdir = try gpa.print("{s}/islands-rt", .{cache_abs});
+    const manifest = try gpa.print("{s}/islands-slice.json", .{cache_abs});
 
     var argv: std.ArrayListUnmanaged([]const u8) = .empty;
     try argv.append(gpa, rt.islands_runtime_driver);
-    for (bundles) |b| try argv.append(gpa, try std.fmt.allocPrint(gpa, "--bundle={s}", .{b}));
+    for (bundles) |b| try argv.append(gpa, try gpa.print("--bundle={s}", .{b}));
     try argv.appendSlice(gpa, &.{
-        try std.fmt.allocPrint(gpa, "--islands-module={s}", .{rt.islands_module}),
-        try std.fmt.allocPrint(gpa, "--index-module={s}", .{rt.index_module}),
-        try std.fmt.allocPrint(gpa, "--jsx-module={s}", .{rt.jsx_module}),
-        try std.fmt.allocPrint(gpa, "--outdir={s}", .{outdir}),
-        try std.fmt.allocPrint(gpa, "--manifest={s}", .{manifest}),
-        try std.fmt.allocPrint(gpa, "--depfile={s}/islands-rt.d", .{cache_abs}),
+        try gpa.print("--islands-module={s}", .{rt.islands_module}),
+        try gpa.print("--index-module={s}", .{rt.index_module}),
+        try gpa.print("--jsx-module={s}", .{rt.jsx_module}),
+        try gpa.print("--outdir={s}", .{outdir}),
+        try gpa.print("--manifest={s}", .{manifest}),
+        try gpa.print("--depfile={s}/islands-rt.d", .{cache_abs}),
         "--minify",
     });
     // Written into `outdir`, which is installed wholesale below, so the map
@@ -1350,19 +1357,19 @@ fn bundleSpas(
 
         // 1. The code-split client bundle. `--external=@z/runtime` keeps the SPA
         // on the page's ONE Preact, exactly as an island bundle does.
-        const outdir = try std.fmt.allocPrint(gpa, "{s}/spa-{s}", .{ cache_abs, name });
-        const chunks_json = try std.fmt.allocPrint(gpa, "{s}/{s}-chunks.json", .{ cache_abs, name });
-        const capture_json = try std.fmt.allocPrint(gpa, "{s}/{s}-sources.json", .{ cache_abs, name });
+        const outdir = try gpa.print("{s}/spa-{s}", .{ cache_abs, name });
+        const chunks_json = try gpa.print("{s}/{s}-chunks.json", .{ cache_abs, name });
+        const capture_json = try gpa.print("{s}/{s}-sources.json", .{ cache_abs, name });
         var argv: std.ArrayListUnmanaged([]const u8) = .empty;
         try argv.appendSlice(gpa, &.{
             rt.spa_bundle_driver,
-            try std.fmt.allocPrint(gpa, "--source-cache-dir={s}/client-source", .{std.fs.path.dirname(cache_abs).?}),
-            try std.fmt.allocPrint(gpa, "--source-capture={s}", .{capture_json}),
-            try std.fmt.allocPrint(gpa, "--entry={s}", .{sp.src}),
-            try std.fmt.allocPrint(gpa, "--outdir={s}", .{outdir}),
-            try std.fmt.allocPrint(gpa, "--entry-name={s}.js", .{name}),
-            try std.fmt.allocPrint(gpa, "--chunks-json={s}", .{chunks_json}),
-            try std.fmt.allocPrint(gpa, "--depfile={s}/{s}.d", .{ cache_abs, name }),
+            try gpa.print("--source-cache-dir={s}/client-source", .{std.fs.path.dirname(cache_abs).?}),
+            try gpa.print("--source-capture={s}", .{capture_json}),
+            try gpa.print("--entry={s}", .{sp.src}),
+            try gpa.print("--outdir={s}", .{outdir}),
+            try gpa.print("--entry-name={s}.js", .{name}),
+            try gpa.print("--chunks-json={s}", .{chunks_json}),
+            try gpa.print("--depfile={s}/{s}.d", .{ cache_abs, name }),
             "--external=@z/runtime",
             "--external=@z/runtime/jsx-runtime",
             "--minify",
@@ -1372,7 +1379,7 @@ fn bundleSpas(
         // land at /spa/<name>.js.map (+ per-chunk maps) with no extra wiring.
         if (cmd.source_maps) try argv.append(gpa, "--sourcemap");
         try runDriver(io, gpa, bun_path, src_dir, argv.items, env);
-        try installBundleDir(io, arena, cmd, outdir, try std.fmt.allocPrint(gpa, "spa_{s}", .{name}), "spa");
+        try installBundleDir(io, arena, cmd, outdir, try gpa.print("spa_{s}", .{name}), "spa");
         sp.chunks_json = chunks_json;
 
         // 2. The per-deployable runtime slice. On the SLICED decision this writes
@@ -1381,25 +1388,25 @@ fn bundleSpas(
         // `{"fallback":true}` manifest, so the loop below installs nothing and
         // the SPA's shells point at the shared runtime instead. Both outcomes are
         // normal, which is why the empty directory is not an error here.
-        const rt_outdir = try std.fmt.allocPrint(gpa, "{s}/spa-rt-{s}", .{ cache_abs, name });
-        const slice_json = try std.fmt.allocPrint(gpa, "{s}/{s}-slice.json", .{ cache_abs, name });
+        const rt_outdir = try gpa.print("{s}/spa-rt-{s}", .{ cache_abs, name });
+        const slice_json = try gpa.print("{s}/{s}-slice.json", .{ cache_abs, name });
         var rt_argv: std.ArrayListUnmanaged([]const u8) = .empty;
         try rt_argv.appendSlice(gpa, &.{
             rt.spa_runtime_driver,
-            try std.fmt.allocPrint(gpa, "--source-capture={s}", .{capture_json}),
-            try std.fmt.allocPrint(gpa, "--entry={s}", .{sp.src}),
-            try std.fmt.allocPrint(gpa, "--spa-entry={s}", .{rt.spa_entry}),
-            try std.fmt.allocPrint(gpa, "--host-module={s}", .{rt.host_module}),
-            try std.fmt.allocPrint(gpa, "--ssr-env-module={s}", .{rt.ssr_env_module}),
-            try std.fmt.allocPrint(gpa, "--outdir={s}", .{rt_outdir}),
-            try std.fmt.allocPrint(gpa, "--name={s}", .{name}),
-            try std.fmt.allocPrint(gpa, "--manifest={s}", .{slice_json}),
-            try std.fmt.allocPrint(gpa, "--depfile={s}/{s}-rt.d", .{ cache_abs, name }),
+            try gpa.print("--source-capture={s}", .{capture_json}),
+            try gpa.print("--entry={s}", .{sp.src}),
+            try gpa.print("--spa-entry={s}", .{rt.spa_entry}),
+            try gpa.print("--host-module={s}", .{rt.host_module}),
+            try gpa.print("--ssr-env-module={s}", .{rt.ssr_env_module}),
+            try gpa.print("--outdir={s}", .{rt_outdir}),
+            try gpa.print("--name={s}", .{name}),
+            try gpa.print("--manifest={s}", .{slice_json}),
+            try gpa.print("--depfile={s}/{s}-rt.d", .{ cache_abs, name }),
             "--minify",
         });
         if (cmd.source_maps) try rt_argv.append(gpa, "--sourcemap");
         try runDriver(io, gpa, bun_path, src_dir, rt_argv.items, env);
-        try installBundleDir(io, arena, cmd, rt_outdir, try std.fmt.allocPrint(gpa, "spa_rt_{s}", .{name}), "spa");
+        try installBundleDir(io, arena, cmd, rt_outdir, try gpa.print("spa_rt_{s}", .{name}), "spa");
         sp.slice_json = slice_json;
     }
 }
@@ -1437,9 +1444,9 @@ fn installBundleDir(
         try addBundleAsset(
             gpa,
             cmd,
-            try std.fmt.allocPrint(gpa, "{s}/{s}", .{ key, entry.name }),
-            try std.fmt.allocPrint(gpa, "{s}/{s}", .{ dir, entry.name }),
-            try std.fmt.allocPrint(gpa, "{s}/{s}", .{ prefix, entry.name }),
+            try gpa.print("{s}/{s}", .{ key, entry.name }),
+            try gpa.print("{s}/{s}", .{ dir, entry.name }),
+            try gpa.print("{s}/{s}", .{ prefix, entry.name }),
         );
     }
 }

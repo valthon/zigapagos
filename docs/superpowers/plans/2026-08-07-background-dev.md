@@ -6,11 +6,11 @@
 
 **Architecture:** No supervisor. The parent re-execs its own binary detached (own pgid, stderr→log file), using lockfile appearance as the readiness handshake. Liveness is a kernel-held `flock` on `.zigbase/dev.lock` (dropped on death — no PID-reuse false positives); session facts live in `.zigbase/dev.json`. The SSE reload server becomes an always-on control server that also answers `GET /_zigapagos/status` with build generation/status/error fed by the rebuild loop.
 
-**Tech Stack:** Zig 0.16.0 only (no new deps). `std.process.spawn` (`pgid`, `StdIo.file`), `std.c.flock` + `std.posix.LOCK`, `std.json.Stringify` / `std.json.parseFromSliceLeaky` (repo-established patterns), `std.http.Server` (already in `reload.zig`), bash e2e against `tests/dev/stub-zigbase.ts`.
+**Tech Stack:** Zig 0.17.1 only (no new deps). `std.process.spawn` (`pgid`, `StdIo.file`), `std.c.flock` + `std.posix.LOCK`, `std.json.Stringify` / `std.json.parseFromSliceLeaky` (repo-established patterns), `std.http.Server` (already in `reload.zig`), bash e2e against `tests/dev/stub-zigbase.ts`.
 
 ## Global Constraints
 
-- Zig is pinned to **0.16.0** (`mise.toml`, `build.zig.zon`); check `zig version` before believing configure-time errors.
+- Zig is pinned to **0.17.1** (`mise.toml`, `build.zig.zon`); check `zig version` before believing configure-time errors.
 - **`zig fmt` gate**: run `git ls-files -z '*.zig' | xargs -0 -r zig fmt --check` before every push; never reformat `zig-pkg/`.
 - **`zig build check -Dsingle-threaded` must stay green.** The new control verbs (`stop|status|logs`) must be reachable and compiled under it; anything touching `std.Thread` must be comptime-pruned (`if (comptime !builtin.single_threaded)`), never runtime-skipped.
 - **Test anchors**: every new `src/cli/*.zig` file needs a `_ = @import(...)` line in a `src/main.zig` test block whose name matches the suite filter, or its tests silently never compile (see `src/main.zig:246-256`). New dev tests are named `test "dev …"` to match `test-dev`'s `"dev"` filter (`build/tests.zig`).
@@ -1688,7 +1688,7 @@ pub fn background(
 (The single-threaded gate stays where it is — ABOVE parse it would block `--help`-style paths; the background parent itself is thread-free, but it re-execs a child that will hit the gate and die fast with a clear log, which the parent then reports. Simpler: also duplicate the gate check before `background()` dispatch — add `if (builtin.single_threaded)` fatal above the dispatch so the parent refuses immediately rather than via a dead child. Implement it that way: the parse-then-gate order in current code already prints usage errors before the gate anyway.)
 
 Engineer notes:
-- `std.posix.waitpid` return shape: check the 0.16 signature (`grep -n 'pub fn waitpid' <std>/posix.zig`); adjust the `res.pid` check accordingly.
+- `std.posix.waitpid` return shape: check the installed Zig 0.17.1 signature (`grep -n 'pub fn waitpid' <std>/posix.zig`); adjust the `res.pid` check accordingly.
 - `child.id` is optional (`?pid_t`) per `reaper.track` (`dev.zig:743-745`).
 - `kill(-pid, …)`: negative-pid group kill needs `@intCast`; if `std.posix.kill` rejects negatives by type, use `std.c.kill(-child_pid, SIG.TERM)`.
 

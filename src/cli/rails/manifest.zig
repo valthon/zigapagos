@@ -1128,9 +1128,9 @@ test "build: two runs from differently-named directories produce byte-identical 
     defer tmp.cleanup();
     const leaf_a = "manifest-determinism-app-one-with-a-long-name";
     const leaf_b = "mdt2";
-    const name_a = try std.fmt.allocPrint(gpa, ".zig-cache/tmp/{s}/{s}", .{ &tmp.sub_path, leaf_a });
+    const name_a = try gpa.print(".zig-cache/tmp/{s}/{s}", .{ &tmp.sub_path, leaf_a });
     defer gpa.free(name_a);
-    const name_b = try std.fmt.allocPrint(gpa, ".zig-cache/tmp/{s}/{s}", .{ &tmp.sub_path, leaf_b });
+    const name_b = try gpa.print(".zig-cache/tmp/{s}/{s}", .{ &tmp.sub_path, leaf_b });
     defer gpa.free(name_b);
 
     var dir_a = try tmp.dir.createDirPathOpen(io, leaf_a, .{ .open_options = .{ .iterate = true } });

@@ -56,7 +56,10 @@ function stripBanner(body: string): string {
 
 for (const entry of REGISTRY) {
   const raw = readFileSync(join(REPO_ROOT, entry.canonical), "utf8");
-  const body = transformBody(stripBanner(raw), {
+  // Branding exemptions are source-review metadata, not published content.
+  // SuperMD rejects inline HTML comments as well as other inline HTML.
+  const content = stripBanner(raw).replace(/<!-- branding-ok[:][^\n]*?-->/g, "");
+  const body = transformBody(content, {
     canonicalPath: entry.canonical,
     published: PUBLISHED,
     githubBlobBase: BLOB,

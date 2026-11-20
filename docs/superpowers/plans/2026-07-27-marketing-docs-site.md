@@ -6,11 +6,11 @@
 
 **Architecture:** Thin `.smd` content files select rich per-page `.shtml` layouts that all `<extend template="base.shtml">`. Interactive examples are real `.island.tsx` components (islands cannot live in `.smd` — SuperMD forbids raw HTML). Reference docs are generated into `site/content/docs/` from canonical repo markdown by a Bun script, so they cannot drift. One real `.spa.tsx` is mounted at `/demos/app` to demonstrate native SPAs.
 
-**Tech Stack:** Zigapagos (Zig 0.16), SuperMD content, SuperHTML layouts, Ziggy frontmatter, Bun 1.2 for the mirror generator and islands, bash for the deploy gate, Playwright for hydration smoke tests.
+**Tech Stack:** Zigapagos (Zig 0.17.1), SuperMD content, SuperHTML layouts, Ziggy frontmatter, Bun 1.2 for the mirror generator and islands, bash for the deploy gate, Playwright for hydration smoke tests.
 
 ## Global Constraints
 
-- **Zig 0.16.0 and Bun 1.2**, pinned by `mise.toml`. Run `zig version` before believing a wall of dependency errors.
+- **Zig 0.17.1 and Bun 1.2**, pinned by `mise.toml`. Run `zig version` before believing a wall of dependency errors.
 - **A fresh worktree needs `cd runtime && bun install --frozen-lockfile` once**, and `cd site && bun install` before any site build. Without it every bun-dependent step fails in ways that look like code breakage.
 - **SuperMD forbids raw HTML.** `<island>`, `<div>`, `<br>` etc. in a `.smd` body fail the build with `html_is_forbidden`. All markup lives in `.shtml` layouts.
 - **Frontmatter is Ziggy, not YAML**: `.title = "…"`, `.date = @date("…")`, `.layout = "…"`, `.draft = false`, custom fields under `.custom = { … }`, read as `$page.custom.get('name')`.
@@ -1711,7 +1711,7 @@ Create `site/content/docs/quick-start.smd`:
 
 ## Install the toolchain
 
-Zigapagos needs Zig 0.16 and Bun 1.2. The repository pins both with
+Zigapagos needs Zig 0.17.1 and Bun 1.2. The repository pins both with
 [mise](https://mise.jdx.dev/), so the shortest path is:
 
 ```sh
@@ -3136,7 +3136,7 @@ Create `site/layouts/download.shtml`:
   <div class="wrap prose">
     <h1>Download</h1>
     <p class="lede">
-      Zigapagos builds to a single binary. It needs Zig 0.16 and Bun 1.2 at build
+      Zigapagos builds to a single binary. It needs Zig 0.17.1 and Bun 1.2 at build
       time; the binary it produces needs Bun only when your project has islands
       or SPAs to render.
     </p>
@@ -3144,7 +3144,7 @@ Create `site/layouts/download.shtml`:
     <h2>Build from source</h2>
     <pre><code>git clone https://github.com/valthon/zigapagos
 cd zigapagos
-mise install     # pins zig 0.16 + bun 1.2
+mise install     # pins zig 0.17.1 + bun 1.2
 zig build        # → zig-out/bin/zigapagos</code></pre>
     <p>
       If <code>zig</code> resolves to another version the build fails at configure
@@ -3163,9 +3163,9 @@ zig build        # → zig-out/bin/zigapagos</code></pre>
 
     <h2>Platforms</h2>
     <p>
-      Linux and macOS are built and tested in CI. Windows is currently
-      unsupported — two inherited source files do not compile on stable Zig
-      0.16, and support returns with the Zig 0.17 port. See the
+      Linux and macOS are built and tested in CI. The tree cross-compiles
+      for x86_64-windows on Zig 0.17.1; native Windows CI and release
+      archives remain separate work. See the
       <a href="$site.page('docs/roadmap').link()">roadmap</a>.
     </p>
 

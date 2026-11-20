@@ -422,7 +422,7 @@ pub fn dev(
     // children (the rebuild, then zigbase); when one of them dies, the reader's
     // first question is whether the corpse is dev or something dev started, and
     // a log that names dev's own pid answers it without guessing.
-    std.debug.print("dev: starting (pid {d})\n", .{std.c.getpid()});
+    std.debug.print("dev: starting (pid {d})\n", .{(if (builtin.target.os.tag == .windows) std.os.windows.GetCurrentProcessId() else std.c.getpid())});
 
     // Input discovery: assets, layouts, content and i18n + per-locale content,
     // anchored at the site root — plus the island/SPA source dirs, either given
@@ -733,7 +733,7 @@ pub fn dev(
     // (3) Port (the persistent data dir was created before the initial build).
     const port = if (cmd.port == 0) e2e.pickFreePort(io) else cmd.port;
     var port_buf: [5]u8 = undefined;
-    const port_str = std.fmt.bufPrint(&port_buf, "{d}", .{port}) catch unreachable;
+    const port_str = std.mem.print(&port_buf, "{d}", .{port}) catch unreachable;
     const address = Io.net.IpAddress.parse(cmd.host, port) catch fatal.msg(
         "error: dev: --host must be an IP literal the readiness probe can connect to (got '{s}')\n",
         .{cmd.host},
@@ -773,7 +773,7 @@ pub fn dev(
 
     e2e.waitReady(&harness, address, ready_path, cmd.timeout_ms);
 
-    const self_pid: i64 = @intCast(std.c.getpid());
+    const self_pid: i64 = @intCast((if (builtin.target.os.tag == .windows) std.os.windows.GetCurrentProcessId() else std.c.getpid()));
     // ready_path (not a bare "/") so the lockfile/status `url` — the string
     // `dev --background`'s ready summary, `dev stop`/`status`'s "already
     // running at" line and `/_zigapagos/status` all print VERBATIM, with no
@@ -781,7 +781,7 @@ pub fn dev(
     // lf.host/lf.port, never lf.url) — lands on a page that actually exists
     // on a prefixed site instead of the 404ing bare origin (issue #152:
     // --background is agent-auto-enabled, so this is the DEFAULT agent flow).
-    const url = std.fmt.allocPrint(gpa, "http://{s}:{d}{s}", .{ cmd.host, port, ready_path }) catch fatal.oom();
+    const url = gpa.print("http://{s}:{d}{s}", .{ cmd.host, port, ready_path }) catch fatal.oom();
     const started_at = blk: {
         const buf = gpa.create([20]u8) catch fatal.oom();
         const secs: u64 = @intCast(@divTrunc(Io.Clock.real.now(io).nanoseconds, std.time.ns_per_s));
@@ -792,7 +792,7 @@ pub fn dev(
     if (!cmd.ignore_lock) {
         dev_lockfile.write(io, gpa, data_dir_abs, .{
             .pid = self_pid,
-            .zigbase_pid = if (harness.server.id) |id| @intCast(id) else 0,
+            .zigbase_pid = if (builtin.target.os.tag == .windows) 0 else if (harness.server.id) |id| @intCast(id) else 0,
             .host = cmd.host,
             .port = port,
             .url = url,
@@ -1008,7 +1008,7 @@ fn prepareSpaFallbacks(io: Io, site_abs: []const u8) void {
 /// itself between fork and exec — and `std.process.spawn` exposes no post-fork
 /// hook, so setting it would mean hand-rolling fork/exec for this one call. Not
 /// done; `pkill zigbase` remains the recovery for a `kill -9`-ed session.
-const reaper = if (builtin.os.tag == .windows) struct {
+const reaper = if (builtin.target.os.tag == .windows) struct {
     pub fn track(_: std.process.Child) void {}
     pub fn install() void {}
 } else struct {
@@ -1434,8 +1434,8 @@ fn countWatchedFiles(
 fn islandModuleUrl(gpa: Allocator, url_prefix: []const u8, stem: []const u8) []const u8 {
     const trimmed = std.mem.trim(u8, url_prefix, "/");
     if (trimmed.len == 0)
-        return std.fmt.allocPrint(gpa, "/islands/{s}.js", .{stem}) catch fatal.oom();
-    return std.fmt.allocPrint(gpa, "/{s}/islands/{s}.js", .{ trimmed, stem }) catch fatal.oom();
+        return gpa.print("/islands/{s}.js", .{stem}) catch fatal.oom();
+    return gpa.print("/{s}/islands/{s}.js", .{ trimmed, stem }) catch fatal.oom();
 }
 
 /// True for files the island/SPA bundler can import (the only files whose
@@ -1586,7 +1586,7 @@ fn islandPagesFromManifest(
 /// (e.g. `content` + `blog/foo.md` → `content/blog/foo.md`). Any host
 /// backslash separators in `entry_path` are normalized to '/'.
 fn relPagePath(gpa: Allocator, rel_prefix: []const u8, entry_path: []const u8) []const u8 {
-    const out = std.fmt.allocPrint(gpa, "{s}/{s}", .{ rel_prefix, entry_path }) catch fatal.oom();
+    const out = gpa.print("{s}/{s}", .{ rel_prefix, entry_path }) catch fatal.oom();
     if (std.fs.path.sep != '/') std.mem.replaceScalar(u8, out, std.fs.path.sep, '/');
     return out;
 }
@@ -1656,8 +1656,8 @@ fn defaultRebuildArgv(
         // `executablePathAlloc` returns a SENTINEL slice (`[:0]u8`), whose
         // allocation is one byte longer than its `.len`. Freeing it through a
         // plain `[]const u8` therefore hands the allocator the wrong size —
-        // DebugAllocator reports "Allocation size N does not match free size
-        // N-1" — so the sentinel is dropped here, into an exactly-sized copy
+        // SafeAllocator rejects that allocation-size mismatch, so the
+        // sentinel is dropped here, into an exactly-sized copy
         // the rest of the list can be freed uniformly.
         const self_z = std.process.executablePathAlloc(io, gpa) catch |err| fatal.msg(
             "error: dev: this executable's own path is unavailable ({s}); pass an " ++
@@ -1668,7 +1668,7 @@ fn defaultRebuildArgv(
         try items.append(gpa, try gpa.dupe(u8, self_z));
     }
     try items.append(gpa, try gpa.dupe(u8, "release"));
-    try items.append(gpa, try std.fmt.allocPrint(gpa, "--output={s}", .{site}));
+    try items.append(gpa, try gpa.print("--output={s}", .{site}));
     // `--force`: the output dir is rebuilt in place on every change, and the
     // very first rebuild of an existing tree would otherwise refuse to touch a
     // directory it did not create.
@@ -2016,7 +2016,7 @@ test "dev pathIsInside detects equality and descendants only" {
 }
 
 test "dev pathIsInside handles a trailing-separator dir (the filesystem root)" {
-    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (builtin.target.os.tag == .windows) return error.SkipZigTest;
     // `resolve` keeps the trailing separator ONLY for the root — and
     // everything lives inside "/".
     try std.testing.expect(pathIsInside("/", "/a"));
@@ -2277,7 +2277,7 @@ const SilencedStderr = struct {
 };
 
 test "dev SPA fallback failures do not terminate the session and can recover" {
-    if (builtin.os.tag == .windows) return error.SkipZigTest else {
+    if (builtin.target.os.tag == .windows) return error.SkipZigTest else {
         const io = std.testing.io;
         var tmp = std.testing.tmpDir(.{ .iterate = true });
         defer tmp.cleanup();
@@ -2308,7 +2308,7 @@ test "dev dirHasChangeSince: a walk it cannot finish answers 'changed', not 'unc
     // changed" for a tree that was never fully scanned — and a layout edit in
     // the unscanned part would be classified `.incremental` and never reach the
     // browser, while the loop printed "rebuild OK".
-    if (builtin.os.tag == .windows) return error.SkipZigTest else {
+    if (builtin.target.os.tag == .windows) return error.SkipZigTest else {
         const gpa = std.testing.allocator;
         const io = std.testing.io;
 
@@ -2328,7 +2328,7 @@ test "dev dirHasChangeSince: a walk it cannot finish answers 'changed', not 'unc
         const cutoff = std.math.maxInt(i128);
         try std.testing.expect(!dirHasChangeSince(io, gpa, abs, cutoff));
 
-        const no_access: Io.File.Permissions = @enumFromInt(0);
+        const no_access: Io.File.Permissions = @fromBackingInt(@intCast(0));
         try tmp.dir.setFilePermissions(io, "partials", no_access, .{});
         // Restore before cleanup, or `deleteTree` cannot remove the subtree.
         defer tmp.dir.setFilePermissions(io, "partials", .default_dir, .{}) catch {};
@@ -2346,7 +2346,7 @@ test "dev reaper: a terminating signal kills the tracked zigbase (no orphan on t
     // The watch loop never returns, so nothing else ever tears the child down:
     // without this the zigbase of a killed dev session keeps holding the serve
     // port and the data dir, and the next `zigapagos dev` cannot bind.
-    if (builtin.os.tag == .windows) return error.SkipZigTest else {
+    if (builtin.target.os.tag == .windows) return error.SkipZigTest else {
         const io = std.testing.io;
 
         var child = try std.process.spawn(io, .{
@@ -2417,7 +2417,7 @@ test "dev rebuild: a stale capture file is never replayed when the capture canno
     // equivalent permission model here, so this pins the fix on the
     // platforms it is reachable on — matching the module's other POSIX-only
     // tests.
-    if (comptime builtin.os.tag == .windows) return;
+    if (comptime builtin.target.os.tag == .windows) return;
     if (comptime builtin.single_threaded) return; // spawn paths untested here anyway
     const gpa = std.testing.allocator;
     const io = std.testing.io;

@@ -49,6 +49,6 @@ body:
     attributes:
       label: Zigapagos Version
       description: "The output of `zigapagos version`, if you have it built — mainly so we know whether this already landed on main."
-      placeholder: "v0.11.2-dev.19+22ea4a0"
+      placeholder: "zigapagos 0.5.0; commit: 22ea4a012345"
     validations:
       required: false

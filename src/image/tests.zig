@@ -206,8 +206,8 @@ test "images: variantBasename is param-addressed" {
 
 test "images: eligible gates on format and animation" {
     const plan = @import("plan.zig");
-    const jpeg_magic = [_]u8{ 0xFF, 0xD8, 0xFF, 0xE0 } ++ [_]u8{0} ** 12;
-    const png_magic = [_]u8{ 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A } ++ [_]u8{0} ** 8;
+    const jpeg_magic = [_]u8{ 0xFF, 0xD8, 0xFF, 0xE0 } ++ @as([12]u8, @splat(0));
+    const png_magic = [_]u8{ 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A } ++ @as([8]u8, @splat(0));
     try std.testing.expect(plan.eligible(&jpeg_magic));
     try std.testing.expect(plan.eligible(&png_magic));
     // Both fixtures below are >=16 bytes (#147: they used to be under the
@@ -220,9 +220,9 @@ test "images: eligible gates on format and animation" {
     try std.testing.expect(!plan.eligible(&gif_magic)); // gif: never
     try std.testing.expect(!plan.eligible("<svg xmlns=\"http://www.w3.org/2000/svg\">")); // not raster
     // Still WebP (VP8 chunk) yes; animated WebP (VP8X with anim flag) no.
-    var still = [_]u8{ 'R', 'I', 'F', 'F', 0x00, 0x00, 0x00, 0x00, 'W', 'E', 'B', 'P', 'V', 'P', '8', ' ' } ++ [_]u8{0} ** 8;
+    var still = [_]u8{ 'R', 'I', 'F', 'F', 0x00, 0x00, 0x00, 0x00, 'W', 'E', 'B', 'P', 'V', 'P', '8', ' ' } ++ @as([8]u8, @splat(0));
     try std.testing.expect(plan.eligible(&still));
-    var anim = [_]u8{ 'R', 'I', 'F', 'F', 0x00, 0x00, 0x00, 0x00, 'W', 'E', 'B', 'P', 'V', 'P', '8', 'X', 0x0a, 0x00, 0x00, 0x00, 0x12 } ++ [_]u8{0} ** 4;
+    var anim = [_]u8{ 'R', 'I', 'F', 'F', 0x00, 0x00, 0x00, 0x00, 'W', 'E', 'B', 'P', 'V', 'P', '8', 'X', 0x0a, 0x00, 0x00, 0x00, 0x12 } ++ @as([4]u8, @splat(0));
     try std.testing.expect(!plan.eligible(&anim));
 }
 

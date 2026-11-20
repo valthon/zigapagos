@@ -93,7 +93,7 @@ EOF
 EOF
 
   cat >| "$d/build/release.zig" <<'EOF'
-zip.addDirectoryArg(exe.getEmittedBin());
+zip.addFileArg2(exe.getEmittedBin(), .{});
 tar.addArg("zigapagos");
 EOF
 

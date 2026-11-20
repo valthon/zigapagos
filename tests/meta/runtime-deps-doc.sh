@@ -128,7 +128,7 @@ grep -qE '"private"[[:space:]]*:[[:space:]]*true' "$PKG" ||
 
 # ── 5. A release archive carries the binary alone ───────────────────────────
 grep -qF 'tar.addArg("zigapagos")' "$ARCHIVE" || bad "$ARCHIVE no longer tars the bare binary — recheck $DOC's distribution table"
-grep -qF 'zip.addDirectoryArg(' "$ARCHIVE" || bad "$ARCHIVE no longer zips the emitted binary — recheck $DOC's distribution table"
+grep -qF 'zip.addFileArg2(' "$ARCHIVE" || bad "$ARCHIVE no longer zips the emitted binary — recheck $DOC's distribution table"
 if hits=$(grep -nE '(addArg|addDirectoryArg|addFileArg).*runtime' "$ARCHIVE"); then
   bad "$ARCHIVE adds a runtime tree to an archive, but $DOC says an archive ships the binary alone:"
   printf '%s\n' "$hits" | sed 's/^/      /' >&2

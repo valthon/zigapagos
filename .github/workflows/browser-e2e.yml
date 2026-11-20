@@ -122,12 +122,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          # Not depth-1: build/config.zig bakes `git describe --tags` into the
-          # binary, and both scripts build it. Same setting every e2e job in
-          # ci.yml uses.
+          # Retain history for scripts that inspect repository fixtures.
           fetch-depth: 0
 
-      - name: Setup toolchain (mise — zig 0.16.0 + bun 1.4.4)
+      - name: Setup toolchain (mise — zig 0.17.1 + bun 1.4.4)
         uses: jdx/mise-action@v5
         with:
           cache: true
@@ -141,7 +139,7 @@ jobs:
       # Keep these in lockstep with mise.toml.
       - name: Pin tool versions globally (shims must resolve outside the repo)
         run: |
-          mise use -g zig@0.16.0 bun@1.4.4
+          mise use -g zig@0.17.1 bun@1.4.4
           ( cd "$(mktemp -d)" && bun --version && zig version )
 
       - name: Get Zig version

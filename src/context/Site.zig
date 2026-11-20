@@ -315,7 +315,7 @@ pub const Builtins = struct {
                 return Value.errFmt(gpa, "missing page '{s}'", .{ref});
             };
 
-            const index_html: StringTable.String = @enumFromInt(11);
+            const index_html: StringTable.String = @fromBackingInt(@intCast(11));
             std.debug.assert(variant.string_table.get("index.html") == index_html);
             const pn: PathName = .{
                 .path = path,
@@ -409,7 +409,7 @@ pub const Builtins = struct {
                     ref,
                 });
 
-                const index_html: StringTable.String = @enumFromInt(11);
+                const index_html: StringTable.String = @fromBackingInt(@intCast(11));
                 const hint = v.urls.get(.{
                     .path = path,
                     .name = index_html,

@@ -56,10 +56,15 @@ check() {
     fi
   done
 }
+# SuperMD d294f18f (the Zig 0.17.1 port's pin) resolves same-page fragment refs
+# and rejects inline HTML itself, so `[x](#missing)` is its `unknown ref` and
+# `<div>raw</div>` its `inline_html` ("markdown inline html syntax is
+# forbidden") rather than the ZP_UNKNOWN_REF / html_is_forbidden the previous
+# pin produced. The positions under test are unchanged.
 for blanks in 0 1 2; do
   check '[x](/nope/)' "$blanks" ZP_UNKNOWN_PAGE '' "$((6+blanks))"
-  check '[x](#missing)' "$blanks" ZP_UNKNOWN_REF '' "$((6+blanks))"
-  check '<div>raw</div>' "$blanks" ZP_SUPERMD html_is_forbidden "$((6+blanks))"
+  check '[x](#missing)' "$blanks" ZP_SUPERMD 'unknown ref' "$((6+blanks))"
+  check '<div>raw</div>' "$blanks" ZP_SUPERMD 'inline html syntax is forbidden' "$((6+blanks))"
 done
 check 'http://e:x' 1 ZP_SUPERMD '[scripty] invalid URL' 7
 check '- https://example.com:port/' 1 ZP_SUPERMD '[scripty] invalid URL' 7

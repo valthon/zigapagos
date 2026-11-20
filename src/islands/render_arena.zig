@@ -10,7 +10,7 @@
 //!
 //! Why it lives under `src/islands/` rather than `src/`: `src/islands/props.zig`
 //! and `src/islands/sidecar.zig` are the ROOT source files of their own test
-//! modules (`zig build test-props` / `test-sidecar`), and Zig 0.16 rejects an
+//! modules (`zig build test-props` / `test-sidecar`), and Zig 0.17 rejects an
 //! import that escapes a module's own directory ("import of file outside module
 //! path" — the same rule that forces `cli/init_from_astro.zig`'s tests to reuse
 //! the exe module instead of being their own root, and that keeps

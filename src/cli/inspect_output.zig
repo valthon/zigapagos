@@ -177,7 +177,8 @@ fn run(io: Io, gpa: Allocator, cmd: Command) !bool {
         }
     }
     var exceeded: usize = 0;
-    inline for (std.meta.fields(Budgets)) |field| {
+    inline for (@typeInfo(Budgets).@"struct".field_names) |field_name| {
+        const field = .{ .name = field_name };
         if (@field(cmd.budgets, field.name)) |limit| {
             const actual = @field(totals, field.name);
             const passed = actual <= limit;

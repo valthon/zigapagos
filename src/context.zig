@@ -74,7 +74,7 @@ pub const Value = union(enum) {
     pub const Iterator = context.Iterator;
 
     pub fn errFmt(gpa: Allocator, comptime fmt: []const u8, args: anytype) !Value {
-        const err_msg = try std.fmt.allocPrint(gpa, fmt, args);
+        const err_msg = try gpa.print(fmt, args);
         return .{ .err = err_msg };
     }
 

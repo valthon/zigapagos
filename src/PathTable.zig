@@ -45,10 +45,10 @@ pub const PathName = packed struct {
         };
     }
 
-    pub const empty_name: String = @enumFromInt(0);
-    pub const empty_path: Path = @enumFromInt(0);
+    pub const empty_name: String = @fromBackingInt(@intCast(0));
+    pub const empty_path: Path = @fromBackingInt(@intCast(0));
     pub fn get(st: *const StringTable, pt: *const PathTable, src: []const u8) ?PathName {
-        if (builtin.mode == .Debug) {
+        if (builtin.optimize == .debug) {
             assert(!std.mem.endsWith(u8, src, "/\\"));
             assert(st.get("") == empty_name);
             assert(pt.get(&.{}) == empty_path);
@@ -170,9 +170,9 @@ pub fn internPathWithName(
     // Only borrow the prefix after reserving: growth can relocate its storage.
     const path_prefix = if (prefix_path) |p| p.slice(pt) else &.{};
     const old_len = pt.path_components.items.len;
-    const new_off: Path = @enumFromInt(
+    const new_off: Path = @fromBackingInt(@intCast(
         std.math.cast(u32, old_len) orelse return error.OutOfMemory,
-    );
+    ));
     const components = pt.path_components.items[old_len..].ptr[0 .. component_count + path_prefix.len];
 
     @memcpy(components.ptr, path_prefix);
@@ -190,7 +190,7 @@ pub fn internPathWithName(
     if (gop.found_existing) return .{ .path = gop.key_ptr.*, .name = name };
 
     pt.path_components.items.len += path_components.len;
-    pt.path_components.appendAssumeCapacity(@enumFromInt(0));
+    pt.path_components.appendAssumeCapacity(@fromBackingInt(@intCast(0)));
 
     gop.key_ptr.* = new_off;
 
@@ -219,9 +219,9 @@ pub fn internPath(
     // If the path is new, we then adjust len to "append" the new data.
     try pt.path_components.ensureUnusedCapacity(gpa, component_count + 1);
     const old_len = pt.path_components.items.len;
-    const new_off: Path = @enumFromInt(
+    const new_off: Path = @fromBackingInt(@intCast(
         std.math.cast(u32, old_len) orelse return error.OutOfMemory,
-    );
+    ));
     const components = pt.path_components.items[old_len..].ptr[0..component_count];
     for (components) |*cmp| cmp.* = try string_table.intern(gpa, it.next().?);
 
@@ -234,7 +234,7 @@ pub fn internPath(
     if (gop.found_existing) return gop.key_ptr.*;
 
     pt.path_components.items.len += component_count;
-    pt.path_components.appendAssumeCapacity(@enumFromInt(0));
+    pt.path_components.appendAssumeCapacity(@fromBackingInt(@intCast(0)));
 
     gop.key_ptr.* = new_off;
 
@@ -247,9 +247,9 @@ pub fn intern(pt: *PathTable, gpa: Allocator, components: []const String) !Path 
     // value uninitialized.
     try pt.path_components.ensureUnusedCapacity(gpa, components.len + 1);
 
-    const new_off: Path = @enumFromInt(
+    const new_off: Path = @fromBackingInt(@intCast(
         std.math.cast(u32, pt.path_components.items.len) orelse return error.OutOfMemory,
-    );
+    ));
 
     const gop = try pt.path_map.getOrPutContextAdapted(
         gpa,
@@ -260,7 +260,7 @@ pub fn intern(pt: *PathTable, gpa: Allocator, components: []const String) !Path 
     if (gop.found_existing) return gop.key_ptr.*;
 
     pt.path_components.appendSliceAssumeCapacity(components);
-    pt.path_components.appendAssumeCapacity(@enumFromInt(0));
+    pt.path_components.appendAssumeCapacity(@fromBackingInt(@intCast(0)));
 
     gop.key_ptr.* = new_off;
 
@@ -286,9 +286,9 @@ pub fn internExtend(
 
     // As in every other intern path, reject an unrepresentable offset before
     // getOrPut can create an entry whose key has not been initialized.
-    const new_off: Path = @enumFromInt(
+    const new_off: Path = @fromBackingInt(@intCast(
         std.math.cast(u32, pt.path_components.items.len) orelse return error.OutOfMemory,
-    );
+    ));
 
     const gop = try pt.path_map.getOrPutContextAdapted(
         gpa,
@@ -299,7 +299,7 @@ pub fn internExtend(
     if (gop.found_existing) return gop.key_ptr.*;
 
     pt.path_components.items.len += new.len;
-    pt.path_components.appendAssumeCapacity(@enumFromInt(0));
+    pt.path_components.appendAssumeCapacity(@fromBackingInt(@intCast(0)));
 
     gop.key_ptr.* = new_off;
 
@@ -334,8 +334,8 @@ pub const Path = enum(u32) {
         pub fn hash(ctx: @This(), key: Path) u64 {
             return std.hash_map.hashString(
                 mem.sliceAsBytes(mem.sliceTo(
-                    ctx.components[@intFromEnum(key)..],
-                    @enumFromInt(0),
+                    ctx.components[@backingInt(key)..],
+                    @fromBackingInt(@intCast(0)),
                 )),
             );
         }
@@ -347,8 +347,8 @@ pub const Path = enum(u32) {
         pub fn eql(ctx: @This(), a: []const u8, b: Path) bool {
             return mem.eql(u8, a, mem.sliceAsBytes(
                 mem.sliceTo(
-                    ctx.components[@intFromEnum(b)..],
-                    @enumFromInt(0),
+                    ctx.components[@backingInt(b)..],
+                    @fromBackingInt(@intCast(0)),
                 ),
             ));
         }
@@ -357,15 +357,15 @@ pub const Path = enum(u32) {
             assert(mem.indexOfScalar(
                 String,
                 @alignCast(mem.bytesAsSlice(String, adapted_key)),
-                @enumFromInt(0),
+                @fromBackingInt(@intCast(0)),
             ) == null);
             return std.hash_map.hashString(adapted_key);
         }
     };
 
     pub fn slice(index: Path, pt: *const PathTable) []const String {
-        const start_slice = pt.path_components.items[@intFromEnum(index)..];
-        return start_slice[0..mem.indexOfScalar(String, start_slice, @enumFromInt(0)).?];
+        const start_slice = pt.path_components.items[@backingInt(index)..];
+        return start_slice[0..mem.indexOfScalar(String, start_slice, @fromBackingInt(@intCast(0))).?];
     }
 
     // pub fn bytesSlice(
@@ -487,7 +487,7 @@ test "PathTable named relative path survives component storage growth" {
     // Force the next intern to grow the allocation holding the base path.
     try path_table.path_components.appendNTimes(
         gpa,
-        @enumFromInt(0),
+        @fromBackingInt(0),
         path_table.path_components.capacity - path_table.path_components.items.len,
     );
     try std.testing.expectEqual(path_table.path_components.capacity, path_table.path_components.items.len);
@@ -511,7 +511,7 @@ test "PathTable OOM cannot leave an uninitialized map entry" {
     var path_table: PathTable = .empty;
     defer path_table.deinit(gpa);
 
-    const component: String = @enumFromInt(1);
+    const component: String = @fromBackingInt(@intCast(1));
     try std.testing.expectError(error.OutOfMemory, path_table.intern(gpa, &.{component}));
     try std.testing.expectEqual(null, path_table.get(&.{component}));
 }

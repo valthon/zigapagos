@@ -16,14 +16,14 @@
 #   - SHA256SUMS is generated separately from the uploads, so it can disagree
 #     with what actually landed on the release — and everybody who verifies a
 #     download would then be verifying against a lie.
-#   - the release binary is built with `-Doptimize=ReleaseFast` and a
-#     `version` baked in from the git tag. Neither is exercised by the debug
+#   - the release binary is built with `-Doptimize=fast` and a
+#     manifest version and injected commit. Neither is exercised by the debug
 #     builds CI runs, so "compiles in CI" does not imply "runs when published".
 #
 # So this workflow downloads the published assets exactly as a user would,
 # verifies each one against the published SHA256SUMS, extracts it, and then
 # makes the binary do real work: `zigapagos version` (must report the release
-# tag it was cut from), then `zigapagos init` + `zigapagos release` to scaffold
+# version and commit), then `zigapagos init` + `zigapagos release` to scaffold
 # and build a whole site. That last part is the point — process startup only
 # proves the loader is happy, whereas a full build exercises the embedded init
 # templates, the SuperMD/SHTML render passes, treesitter highlighting and the
@@ -191,6 +191,11 @@ jobs:
       TAG: ${{ needs.resolve.outputs.tag }}
       ARCHIVE: ${{ matrix.archive }}
     steps:
+      - name: Checkout tag history for provenance verification
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
       # For the npm step at the end. Both runner images ship a node, but which one
       # is an image property that changes under us; the archive checks below do not
       # care and the npm one should not have to guess.
@@ -310,7 +315,7 @@ jobs:
           # architecture check: a wrong-arch binary simply will not run.
           file "$bin" || true
 
-      - name: "zigapagos version reports the release tag"
+      - name: "zigapagos version reports release provenance"
         run: |
           set -uo pipefail
           bin="${RUNNER_TEMP}/extracted/zigapagos"
@@ -326,17 +331,15 @@ jobs:
             exit 1
           fi
 
-          # build/config.zig bakes `git describe --match '*.*.*' --tags` into the
-          # binary, and build/release.zig refuses to build unless that is an
-          # exact tag matching build.zig.zon's version. So the shipped binary
-          # must report the tag it was cut from. A mismatch means the release
-          # assets were built from something other than the tag they are
-          # attached to — a stale or mis-tagged upload.
-          if ! printf '%s' "$out" | grep -qF "$TAG"; then
-            echo "::error::'zigapagos version' did not report '${TAG}'."
-            echo "The archive attached to release ${TAG} contains a binary built from a"
-            echo "different revision. Check that release.yml checked out the tag with"
-            echo "fetch-depth: 0 (a shallow checkout has no tags and versions as -dev)."
+          # Peel annotated tags and compare the twelve characters the CLI prints.
+          expected_commit="$(git -C "$GITHUB_WORKSPACE" rev-parse "$TAG^{commit}")" || exit 1
+          expected_commit="${expected_commit:0:12}"
+          if ! printf '%s\n' "$out" | grep -qxF "zigapagos ${TAG#v}"; then
+            echo "::error::shipped binary does not report manifest version ${TAG#v}."
+            exit 1
+          fi
+          if ! printf '%s\n' "$out" | grep -qxF "commit:      $expected_commit"; then
+            echo "::error::shipped binary does not report tag ${TAG} commit ${expected_commit}."
             exit 1
           fi
           echo "PASS: shipped binary reports ${TAG}."
@@ -448,10 +451,16 @@ jobs:
             echo "::error::the npm-installed 'zigapagos version' exited ${status} on ${{ matrix.label }}."
             exit 1
           fi
-          if ! printf '%s' "$out" | grep -qF "$TAG"; then
+          if ! printf '%s\n' "$out" | grep -qxF "zigapagos ${TAG#v}"; then
             echo "::error::the npm-installed CLI did not report '${TAG}'."
             echo "npm is serving a binary built from something other than the tag whose"
             echo "version it was published under."
+            exit 1
+          fi
+          expected_commit="$(git -C "$GITHUB_WORKSPACE" rev-parse "$TAG^{commit}")" || exit 1
+          expected_commit="${expected_commit:0:12}"
+          if ! printf '%s\n' "$out" | grep -qxF "commit:      $expected_commit"; then
+            echo "::error::the npm-installed CLI does not report tag ${TAG} commit ${expected_commit}."
             exit 1
           fi
           echo "PASS: npm install zigapagos@${version} runs and reports ${TAG}."

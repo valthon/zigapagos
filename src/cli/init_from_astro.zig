@@ -95,7 +95,7 @@ pub fn parseArgs(args: []const []const u8) Options {
 
 fn defaultOut(gpa: Allocator, astro_dir: []const u8) []const u8 {
     const base = std.fs.path.basename(astro_dir);
-    return std.fmt.allocPrint(gpa, "./{s}-tsx", .{base}) catch fatal.oom();
+    return gpa.print("./{s}-tsx", .{base}) catch fatal.oom();
 }
 
 // ---------------------------------------------------------------------------
@@ -142,7 +142,7 @@ pub fn writeFile(
     const f = base_dir.createFile(io, basename_str, .{ .exclusive = true }) catch |err| switch (err) {
         error.PathAlreadyExists => {
             var new_name_buf: [4096]u8 = undefined;
-            const new_name = std.fmt.bufPrint(&new_name_buf, "{s}.new", .{basename_str}) catch
+            const new_name = std.mem.print(&new_name_buf, "{s}.new", .{basename_str}) catch
                 fatal.msg("path too long for .new suffix: {s}\n", .{rel});
             const nf = base_dir.createFile(io, new_name, .{ .exclusive = false }) catch |e|
                 fatal.file(new_name, e);
@@ -167,7 +167,7 @@ pub fn writeFile(
 /// Pass `"TODO-SET-RUNTIME-PATH"` when the path is not yet known; the caller
 /// is responsible for resolving `Options.runtime_path ?? placeholder`.
 pub fn emitPackageJson(gpa: Allocator, name: []const u8, runtime_path: []const u8) []const u8 {
-    return std.fmt.allocPrint(gpa,
+    return gpa.print(
         \\{{
         \\  "name": "{s}",
         \\  "private": true,
@@ -329,8 +329,7 @@ pub fn emitBuildSh(gpa: Allocator, islands: []const migrate.Entry) []const u8 {
         buf.appendSlice(gpa, "\n") catch fatal.oom();
         for (islands) |e| {
             const name = detect.moduleName(e.path);
-            const line = std.fmt.allocPrint(
-                gpa,
+            const line = gpa.print(
                 "  --island=components/{s}.island.tsx \\\n",
                 .{name},
             ) catch fatal.oom();
@@ -449,7 +448,7 @@ pub fn emitZigapagosZiggy(gpa: Allocator, title: []const u8, host_url: []const u
     const safe_host = escapeZiggyStr(gpa, host_url);
     defer gpa.free(safe_host);
 
-    return std.fmt.allocPrint(gpa,
+    return gpa.print(
         \\Site {{
         \\    .title = "{s}",
         \\    .host_url = "{s}",
@@ -483,7 +482,7 @@ pub fn emitContentStub(gpa: Allocator, name: []const u8, orig_astro_markup: []co
     const safe_name = escapeZiggyStr(gpa, name);
     defer gpa.free(safe_name);
 
-    return std.fmt.allocPrint(gpa,
+    return gpa.print(
         \\---
         \\.title = "{s}",
         \\.date = @date("1970-01-01T00:00:00"),
@@ -511,7 +510,7 @@ pub fn emitSectionIndexStub(
 ) []const u8 {
     const safe_name = escapeZiggyStr(gpa, name);
     defer gpa.free(safe_name);
-    return std.fmt.allocPrint(gpa,
+    return gpa.print(
         \\---
         \\.title = "{s}",
         \\.date = @date("1970-01-01T00:00:00"),
@@ -557,8 +556,7 @@ pub fn emitLayoutStub(gpa: Allocator, name: []const u8, islands: []const migrate
     // One <island> per detected island; blank line before each, newline after.
     for (islands) |e| {
         const island_name = detect.moduleName(e.path);
-        const line = std.fmt.allocPrint(
-            gpa,
+        const line = gpa.print(
             "\n    <island src=\"components/{s}.island.tsx\" client:load></island>\n",
             .{island_name},
         ) catch fatal.oom();
@@ -860,7 +858,7 @@ pub fn run(io: Io, gpa: Allocator, args: []const []const u8) bool {
     for (res.entries) |e| {
         const spec = e.paginate orelse continue;
         if (spec.section.len == 0) continue; // root paginate: content/index.smd already written; MIGRATION.md carries the instruction
-        const rel = std.fmt.allocPrint(a, "content/{s}/index.smd", .{spec.section}) catch fatal.oom();
+        const rel = a.print("content/{s}/index.smd", .{spec.section}) catch fatal.oom();
         trackOutcome(&written, writeFile(io, out_dir, rel, emitSectionIndexStub(a, spec.section, spec), o.force));
     }
 

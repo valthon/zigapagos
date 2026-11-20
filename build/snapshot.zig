@@ -17,7 +17,7 @@ pub fn setup(
         .root_module = b.createModule(.{
             .root_source_file = b.path("build/camera.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
         }),
     });
 
@@ -27,7 +27,7 @@ pub fn setup(
         "--cached",
         "--exit-code",
     });
-    diff.addDirectoryArg(b.path("tests"));
+    diff.addDirectoryArg2(b.path("tests"), .{});
     diff.setName("git diff tests/");
     test_step.dependOn(&diff.step);
 
@@ -35,13 +35,14 @@ pub fn setup(
     // the diff. It's also not a bad automatism since it avoids the problem of
     // forgetting to stage new snapshot files.
     const git_add = b.addSystemCommand(&.{ "git", "add" });
-    git_add.addDirectoryArg(b.path("tests/"));
+    git_add.addDirectoryArg2(b.path("tests/"), .{});
     git_add.setName("git add tests/");
     diff.step.dependOn(&git_add.step);
 
     // content scanning
     {
-        const tests_dir = try b.build_root.handle.openDir(b.graph.io, "tests/content-scanning", .{
+        b.dependOnDirectoryContents(b.path("tests/content-scanning"));
+        const tests_dir = try b.root.openDir(b.graph.io, "tests/content-scanning", .{
             .iterate = true,
         });
 
@@ -56,7 +57,7 @@ pub fn setup(
             });
 
             const run_camera = b.addRunArtifact(camera);
-            run_camera.addArtifactArg(zigapagos_exe);
+            run_camera.addArtifactArg2(zigapagos_exe, .{});
             run_camera.addArg("debug");
             run_camera.setCwd(b.path(path));
             run_camera.has_side_effects = true;
@@ -86,7 +87,8 @@ fn addRenderSuites(
     dir: []const u8,
     extra_args: []const []const u8,
 ) !void {
-    const tests_dir = try b.build_root.handle.openDir(b.graph.io, dir, .{
+    b.dependOnDirectoryContents(b.path(dir));
+    const tests_dir = try b.root.openDir(b.graph.io, dir, .{
         .iterate = true,
     });
 

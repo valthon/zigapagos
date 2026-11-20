@@ -122,8 +122,8 @@ pub const Summary = struct {
     fn sortEntries(s: *Summary) void {
         std.mem.sort(Entry, s.entries.items, {}, struct {
             fn lessThan(_: void, a: Entry, b: Entry) bool {
-                const ao = @intFromEnum(a.category);
-                const bo = @intFromEnum(b.category);
+                const ao = @backingInt(a.category);
+                const bo = @backingInt(b.category);
                 if (ao != bo) return ao < bo;
                 return std.mem.lessThan(u8, a.path, b.path);
             }

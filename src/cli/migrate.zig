@@ -896,7 +896,7 @@ fn railsPageCount(result: rails.scaffold.Result) usize {
 }
 
 /// `scaffold.Status` -> `handoff.Status`. An explicit exhaustive switch rather
-/// than `@enumFromInt`/`stringToEnum`: the two enums are declared in different
+/// than `@fromBackingInt`/`stringToEnum`: the two enums are declared in different
 /// files for good reasons (one is a conversion outcome, one is a wire value),
 /// and a rename or a new member on either side must break the build here
 /// instead of silently re-mapping a route's status.
@@ -1078,7 +1078,7 @@ test "railsRootEvidence: an unreadable probe is not rendered as evidence" {
 fn railsManifestPath(gpa: Allocator, out_path: []const u8) []const u8 {
     const dir = std.fs.path.dirname(out_path);
     const stem = std.fs.path.stem(std.fs.path.basename(out_path));
-    const name = std.fmt.allocPrint(gpa, "{s}.manifest.json", .{stem}) catch fatal.oom();
+    const name = gpa.print("{s}.manifest.json", .{stem}) catch fatal.oom();
     defer gpa.free(name);
     if (dir) |d| return std.fs.path.join(gpa, &.{ d, name }) catch fatal.oom();
     return gpa.dupe(u8, name) catch fatal.oom();
@@ -1498,7 +1498,7 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
         var evidence_buf: [max_root_evidence][]const u8 = undefined;
         const root_evidence = railsRootEvidence(evidence, &evidence_buf);
         const manifest_bytes = rails.manifest.build(gpa, .{
-            .generator_version = options.version,
+            .generator_version = options.version ++ "+" ++ options.commit,
             .root_evidence = root_evidence,
             .discovery = &discovery,
         }) catch |err| switch (err) {
@@ -1578,7 +1578,7 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
             };
 
             const handoff_bytes = rails.handoff.build(gpa, .{
-                .generator_version = options.version,
+                .generator_version = options.version ++ "+" ++ options.commit,
                 .discovery = &discovery,
                 .routes = route_rows,
                 .assets = asset_rows,
@@ -1956,15 +1956,13 @@ fn processImportLine(
             const has_default_binding = brace_pos > indent_len + "import ".len;
             if (has_default_binding) {
                 // Strip the default binding; keep only the named imports block.
-                return .{ .text = std.fmt.allocPrint(
-                    gpa,
+                return .{ .text = gpa.print(
                     "{s}import {s} from \"@z/runtime\"{s}",
                     .{ before_from[0..indent_len], named_part, line[spec_end + 1 ..] },
                 ) catch fatal.oom(), .owned = true };
             }
             // No default binding — just rewrite the specifier to @z/runtime.
-            return .{ .text = std.fmt.allocPrint(
-                gpa,
+            return .{ .text = gpa.print(
                 "{s}\"@z/runtime\"{s}",
                 .{ line[0..after_from], line[spec_end + 1 ..] },
             ) catch fatal.oom(), .owned = true };
@@ -2121,9 +2119,9 @@ fn openMigrationOutput(io: Io, gpa: Allocator, out_path: []const u8, force: bool
     var n: u32 = 1;
     while (n <= max_new_versions) : (n += 1) {
         const candidate = if (n == 1)
-            std.fmt.allocPrint(gpa, "{s}.new", .{out_path}) catch fatal.oom()
+            gpa.print("{s}.new", .{out_path}) catch fatal.oom()
         else
-            std.fmt.allocPrint(gpa, "{s}.new.{d}", .{ out_path, n }) catch fatal.oom();
+            gpa.print("{s}.new.{d}", .{ out_path, n }) catch fatal.oom();
         if (Io.Dir.cwd().createFile(io, candidate, .{ .exclusive = true })) |f| {
             return .{ .file = f, .path = candidate, .path_owned = true, .collided = true };
         } else |err| switch (err) {
@@ -2178,7 +2176,7 @@ pub fn scaffoldIslands(io: Io, gpa: Allocator, astro_root: Io.Dir, scaffold_dir:
         };
         defer gpa.free(src);
 
-        const base_name = std.fmt.allocPrint(gpa, "{s}.island.tsx", .{name}) catch fatal.oom();
+        const base_name = gpa.print("{s}.island.tsx", .{name}) catch fatal.oom();
         defer gpa.free(base_name);
         const out_path = std.fs.path.join(gpa, &.{ scaffold_dir, base_name }) catch fatal.oom();
         defer gpa.free(out_path);
@@ -2634,7 +2632,7 @@ fn targetHasEntries(io: Io, path: []const u8) bool {
 /// reason, in which case the caller must `return 1`.
 ///
 /// Ruling S3-R4: NOT `fatal.file`. That call routes through `fatal.msg`,
-/// which panics when `builtin.mode == .Debug` -- and Debug is what `zig
+/// which panics when `builtin.optimize == .debug` -- and Debug is what `zig
 /// build` produces and what every shell e2e drives, so a missing file, an
 /// unreadable one (mode 000), a directory passed where a file was meant, and
 /// a document over the size cap all arrived as SIGABRT/134 rather than as
@@ -2785,10 +2783,10 @@ fn emitTargetConfig(gpa: Allocator, metadata: TargetMetadata, with_assets: bool)
     const prefix_line = if (metadata.url_path_prefix) |prefix| blk: {
         const safe = configEscape(gpa, prefix);
         defer gpa.free(safe);
-        break :blk std.fmt.allocPrint(gpa, "    .url_path_prefix = \"{s}\",\n", .{safe}) catch fatal.oom();
+        break :blk gpa.print("    .url_path_prefix = \"{s}\",\n", .{safe}) catch fatal.oom();
     } else gpa.dupe(u8, "") catch fatal.oom();
     defer gpa.free(prefix_line);
-    return std.fmt.allocPrint(gpa,
+    return gpa.print(
         \\Site {{
         \\    .title = "{s}",
         \\    .host_url = "{s}",
@@ -2801,7 +2799,7 @@ fn emitTargetConfig(gpa: Allocator, metadata: TargetMetadata, with_assets: bool)
 }
 
 fn emitTargetBuildSh(gpa: Allocator, has_islands: bool) []const u8 {
-    return std.fmt.allocPrint(gpa,
+    return gpa.print(
         \\#!/usr/bin/env bash
         \\set -euo pipefail
         \\cd "$(dirname "$0")"
@@ -2817,7 +2815,7 @@ fn runtimePathIsJsonSafe(runtime_path: []const u8) bool {
 
 fn emitTargetPackage(gpa: Allocator, name: []const u8, runtime_path: []const u8) []const u8 {
     std.debug.assert(runtimePathIsJsonSafe(runtime_path));
-    return std.fmt.allocPrint(gpa,
+    return gpa.print(
         \\{{
         \\  "name": "{s}",
         \\  "private": true,
@@ -2931,7 +2929,7 @@ fn buildOtherReport(gpa: Allocator, source: Source, dir_path: []const u8, entrie
     var aw: std.Io.Writer.Allocating = .init(gpa);
     const w = &aw.writer;
     const establish_target = if (assembled_target) |target|
-        std.fmt.allocPrint(gpa, "- [x] Minimal Zigapagos target assembled in `{s}` by `--target`.\n", .{target}) catch fatal.oom()
+        gpa.print("- [x] Minimal Zigapagos target assembled in `{s}` by `--target`.\n", .{target}) catch fatal.oom()
     else
         gpa.dupe(u8, "- [ ] Run `zigapagos init` in a separate target directory.\n") catch fatal.oom();
     defer gpa.free(establish_target);
@@ -3054,7 +3052,7 @@ pub fn buildReport(gpa: Allocator, dir_path: []const u8, entries: []const Entry,
     var aw: std.Io.Writer.Allocating = .init(gpa);
     const w = &aw.writer;
     const scaffold_target = if (assembled_target) |target|
-        std.fmt.allocPrint(gpa, "- [x] Minimal target scaffold assembled in `{s}` by `--target`.\n", .{target}) catch fatal.oom()
+        gpa.print("- [x] Minimal target scaffold assembled in `{s}` by `--target`.\n", .{target}) catch fatal.oom()
     else
         gpa.dupe(u8, "- [ ] `zigapagos.ziggy` (begins with `Site {`), `content/`, `layouts/`, `assets/`, `components/`, `build.sh`\n") catch fatal.oom();
     defer gpa.free(scaffold_target);
@@ -3560,7 +3558,7 @@ test "readFileContent reads a source larger than 64 KiB in full (no truncation)"
 /// through `Io.Dir.cwd()`, so its output directory must be addressable from the
 /// process cwd; `tmpDir` places its tree at `.zig-cache/tmp/<sub_path>`.
 fn testTmpPath(gpa: Allocator, tmp: *const std.testing.TmpDir, rel: []const u8) ![]u8 {
-    return std.fmt.allocPrint(gpa, ".zig-cache/tmp/{s}/{s}", .{ tmp.sub_path, rel });
+    return gpa.print(".zig-cache/tmp/{s}/{s}", .{ tmp.sub_path, rel });
 }
 
 test "readFileContent surfaces an unreadable source instead of an empty slice" {

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The rendered TOC must explicitly balance list tags across heading jumps.
+# The rendered TOC must explicitly balance list tags across valid level changes.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 BIN="${ZIGAPAGOS_BIN:-$PWD/zig-out/bin/zigapagos}"
@@ -11,7 +11,7 @@ from pathlib import Path
 import sys
 root = Path(sys.argv[1])
 (root / 'layouts/page.shtml').write_text('''<!doctype html><html><head><title :text="$page.title"></title></head><body><nav :html="$page.toc()"></nav><main :html="$page.content()"></main></body></html>''')
-cases = {'index': [], 'one': [1], 'siblings': [1,1,1], 'deep': [3], 'descend': [1,2,4], 'ascend': [4,2,1], 'mixed': [2,4,3,2,5]}
+cases = {'index': [], 'one': [1], 'siblings': [1,1,1], 'deep': [1,2,3,4,5,6], 'descend': [1,2,3,4], 'ascend': [1,2,3,4,2,1], 'mixed': [1,2,3,2,3,4,1]}
 for name, levels in cases.items():
     body = '\n\n'.join('#'*level + f' []($heading.id("item-{i}")) Item {i}' for i, level in enumerate(levels))
     (root / 'content' / (name+'.smd')).write_text('---\n.title = "Outline",\n.layout = "page.shtml",\n---\n'+body+'\n')
@@ -36,7 +36,7 @@ class Outline(HTMLParser):
         if self.active and tag in ('ul','li','a'):
             assert self.stack and self.stack[-1] == tag, (tag,self.stack)
             self.stack.pop()
-counts={'index.html':0,'one/index.html':1,'siblings/index.html':3,'deep/index.html':1,'descend/index.html':3,'ascend/index.html':3,'mixed/index.html':5}
+counts={'index.html':0,'one/index.html':1,'siblings/index.html':3,'deep/index.html':6,'descend/index.html':4,'ascend/index.html':6,'mixed/index.html':7}
 root=Path(sys.argv[1])
 for filename,count in counts.items():
     outline=Outline(); outline.feed((root/filename).read_text())

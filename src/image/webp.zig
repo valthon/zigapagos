@@ -1,8 +1,7 @@
 //! Hand-written externs for libwebp's simple encode API (issue #132).
 //!
-//! Deliberately NOT translate-c: released Zig 0.16.0 crashes translating
-//! large C headers for aarch64 (the reason src/hacks/ exists for wuffs).
-//! Six declarations need no translation and no per-target shims.
+//! Six stable C ABI declarations need no generated translation or per-target
+//! shims. Wuffs uses its package's build-time translate-c output separately.
 //! The C library itself is compiled from source by `build/exe.zig`'s
 //! `addWebpLib` — same everywhere the wuffs impl is wired.
 

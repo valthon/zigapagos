@@ -19,7 +19,7 @@ pub const Pair = struct { name: []const u8, value: []const u8 };
 /// benefit (2) — and they die with the page render that resolved the props (3).
 pub fn resolveToJson(arena: RenderArena, props_src: []const u8, dyn: []const Pair) ![]u8 {
     const src = if (props_src.len == 0) "{}" else props_src;
-    const code = try arena.a.dupeZ(u8, src);
+    const code = try arena.a.dupeSentinel(u8, src, 0);
     const dynamic = try ziggy.parseLeaky(ziggy.dynamic.Value, arena.a, code, .{});
     var root = try dynamicToJson(arena, dynamic);
     // `:props` must be a struct/map at the top level.
@@ -78,7 +78,7 @@ fn applyOverrides(arena: RenderArena, obj: *std.json.ObjectMap, dyn: []const Pai
             error.OutOfMemory => return error.OutOfMemory,
             else => .{ .string = pair.value },
         };
-        // std.json.ObjectMap is unmanaged on 0.16: put takes the allocator.
+        // std.json.ObjectMap is unmanaged on 0.17: put takes the allocator.
         try obj.put(arena.a, pair.name, value);
     }
 }

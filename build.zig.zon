@@ -2,11 +2,11 @@
     .name = .zigapagos,
     .version = "0.5.0",
     .fingerprint = 0xdd20b203a298a456,
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.1",
     .dependencies = .{
         .scripty = .{
-            .url = "git+https://github.com/kristoff-it/scripty#77f2eac9d31ea9b8eb9eec494b2c0a318bfe4ec6",
-            .hash = "scripty-0.1.0-LKK5O6wTAQC9Z751KlmpGsHLadbbNYXA7vrdGesxSZl-",
+            .url = "git+https://github.com/kristoff-it/scripty#48006feaa0d75fd3548ae222d47c0ee9bf9f0a7a",
+            .hash = "scripty-0.1.0-LKK5O9kUAQB8WklvNpHxJ_mhlRotbxGaiR3GFmGdHm_V",
         },
         .tracy = .{
             .url = "git+https://github.com/kristoff-it/tracy#67d2d89e351048c76fc6d161e0ac09d8a831dc60",
@@ -17,33 +17,37 @@
             .hash = "mime-3.0.0-zwmL--0gAAByELrj57sRm2EFBRzjKLFrMgHQcs7sFZev",
         },
         .wuffs = .{
-            .url = "git+https://github.com/allyourcodebase/wuffs#6fd35cb51e90c4f69c64f3a2c28eb8aa36dc9c8b",
-            .hash = "wuffs-0.4.0-alpha.9+3837.20240914-3CHJgRMKAAAuMytwtlaBGjTMPVuDQSnCE3qMGg2NDTfr",
+            .url = "git+https://github.com/allyourcodebase/wuffs#b410781f44698b221fb7c996323563f260eae944",
+            .hash = "wuffs-0.4.0-alpha.9+3837.20240914-3CHJgY8LAADtPnOWAFD0GgnP0MKcB9XPGy_WXENdJC6S",
         },
         .frameworks = .{
-            .url = "git+https://code.hexops.org/hexops/xcode-frameworks.git#62f660e82e4eddb5007cb4cf06a6d3d31237f05e",
-            .hash = "N-V-__8AAMikhQnOIqoH0uy5aepJKs8Zy0VqznnW3n94VSZN",
+            .url = "git+https://code.hexops.org/hexops/xcode-frameworks.git#8a1cfb373587ea4c9bb1468b7c986462d8d4e10e",
+            .hash = "N-V-__8AALShqgXkvqYU6f__FrA22SMWmi2TXCJjNTO1m8XJ",
             .lazy = true,
         },
         .superhtml = .{
-            .url = "git+https://github.com/kristoff-it/superhtml#39dc8b3681f14f28fe29ceeadae1fbea54715689",
-            .hash = "superhtml-0.6.2-Y7MdPPxxJADIaKZNpvhc_ks3HIaienrTtii-AYCibeAb",
+            .url = "git+https://github.com/kristoff-it/superhtml#b00f3d25e7e8103d18c08961ca39be7c282923ed",
+            .hash = "superhtml-0.7.1-Y7MdPL6bJgC9-jD4-EKen7iR9BOO6PGeWNQVlpWa-8Xx",
         },
         .zeit = .{
-            .url = "git+https://github.com/rockorager/zeit?ref=0.16#1b1c95b2282c3003bb79ff6f44d3021ddcb279c1",
-            .hash = "zeit-0.6.0-5I6bk7q6AgBdMJxze3D4l9ylQhkviQ_BX9FigDt13MFn",
+            .url = "git+https://github.com/rockorager/zeit#ed64c36035fe44d6372c20cbcd447b0090687167",
+            .hash = "zeit-0.10.0-dev-5I6bk4i0AgANIwpoMN_iBL-OGEpyDuInvQLfrPe_FVb1",
         },
         .flow_syntax = .{
-            .url = "git+https://github.com/neurocyte/flow-syntax?ref=zig-0.16#42d51f7f5aebcc4686ef10a7b92aaa4a2788d766",
-            .hash = "flow_syntax-0.7.2-X8jOoR2XAQB8znsXciEch_MMZgMsQTNvxOPLcQwiy5vU",
+            .url = "git+https://github.com/neurocyte/flow-syntax#641e1942c99734e25af8887b0e651ee068121189",
+            .hash = "flow_syntax-0.7.2-X8jOoa9VAgBX7T0oH-_x6AxtFMjFPmMXKGAMMwG9JZPk",
         },
         .ziggy = .{
-            .url = "git+https://github.com/kristoff-it/ziggy?ref=old#fa265838bb38954e9e6500da2a72bb808bf274ce",
-            .hash = "ziggy-0.1.0-kTg8v15ABgBo1tIbjfvRDHTPJyFg_qho1LwEZ4m_pR8i",
+            .url = "git+https://github.com/kristoff-it/ziggy?ref=old#189d1d5e862e896df49d8afca8e49e0cb1835785",
+            .hash = "ziggy-0.1.0-kTg8v3xBBgD66kzRYoOgByokYiVMupy4dew5buN45X-y",
         },
         .supermd = .{
-            .url = "git+https://github.com/kristoff-it/supermd#4132146450f1ecbaa3fbd75cfeabccd754d6e716",
-            .hash = "supermd-0.1.0-3Mco3CiXWABRpK_kiTdTuVJ7eZOm102_E8j5C6qyRh_2",
+            .url = "git+https://github.com/kristoff-it/supermd#d294f18f05b9f8ca908bbbe3778ae313ace629de",
+            .hash = "supermd-0.1.0-3Mco3FK_WADp-glLo0rNAfyuvGa2ksQZD9bY44TxrZ-Q",
+        },
+        .translate_c = .{
+            .url = "git+https://codeberg.org/ziglang/translate-c?ref=zig-0.17.x#cfac21f3199b2b02ce3fd7db652aa456421fe4ab",
+            .hash = "translate_c-2.0.2-Q_BUWvBNBwDnyehSiuAJmdFcMYHYGA-Jc3KiYdrV2Dqx",
         },
         .libwebp = .{
             .url = "https://github.com/webmproject/libwebp/archive/refs/tags/v1.6.0.tar.gz",

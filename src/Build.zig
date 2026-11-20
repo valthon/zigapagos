@@ -338,10 +338,6 @@ test "Build.island_sidecar defaults to null and deinit tolerates it" {
 /// recursivly upwards from cwd. Once the config file is found,
 /// it ensures the existence of all required directories.
 pub fn load(io: Io, gpa: Allocator, cfg: *const root.Config, opts: root.Options) Build {
-    errdefer |err| switch (err) {
-        error.OutOfMemory => fatal.oom(),
-    };
-
     const base_dir = Io.Dir.cwd().openDir(
         io,
         opts.base_dir_path,
@@ -362,10 +358,14 @@ pub fn load(io: Io, gpa: Allocator, cfg: *const root.Config, opts: root.Options)
     ) catch |err| fatal.dir(cfg.getAssetsDirPath(), err);
 
     var table: StringTable = .empty;
-    _ = try table.intern(gpa, "");
+    _ = (table.intern(gpa, "") catch |err| switch (err) {
+        error.OutOfMemory => fatal.oom(),
+    });
 
     var path_table: PathTable = .empty;
-    _ = try path_table.intern(gpa, &.{});
+    _ = (path_table.intern(gpa, &.{}) catch |err| switch (err) {
+        error.OutOfMemory => fatal.oom(),
+    });
 
     const mode: Mode = switch (opts.mode) {
         .memory => .{ .memory = .{} },
@@ -410,7 +410,9 @@ pub fn load(io: Io, gpa: Allocator, cfg: *const root.Config, opts: root.Options)
     // off, so there is no null to check. gpa-backed (build lifetime), not the
     // per-render-job arena, which would erase the dedup set on the very next
     // job.
-    const missing_page_warnings = try gpa.create(context.MissingPage.Warnings);
+    const missing_page_warnings = (gpa.create(context.MissingPage.Warnings) catch |err| switch (err) {
+        error.OutOfMemory => fatal.oom(),
+    });
     missing_page_warnings.* = .init(gpa);
 
     return .{
@@ -443,10 +445,6 @@ fn loadSiteData(
     base_dir: Io.Dir,
     data_dir_path: []const u8,
 ) std.StringHashMapUnmanaged(context.Map.ZiggyMap) {
-    errdefer |err| switch (err) {
-        error.OutOfMemory => fatal.oom(),
-    };
-
     const arena = arena_state.allocator();
     var out: std.StringHashMapUnmanaged(context.Map.ZiggyMap) = .empty;
 
@@ -463,7 +461,9 @@ fn loadSiteData(
         const ext = ".ziggy";
         if (!std.mem.endsWith(u8, entry.name, ext)) continue;
 
-        const name = try arena.dupe(u8, entry.name);
+        const name = (arena.dupe(u8, entry.name) catch |err| switch (err) {
+            error.OutOfMemory => fatal.oom(),
+        });
         const src = data_dir.readFileAllocOptions(
             io,
             name,
@@ -487,7 +487,9 @@ fn loadSiteData(
         };
 
         const key = name[0 .. name.len - ext.len];
-        try out.put(arena, key, map);
+        (out.put(arena, key, map) catch |err| switch (err) {
+            error.OutOfMemory => fatal.oom(),
+        });
     }
 
     return out;
@@ -524,7 +526,7 @@ pub fn scanSiteAssets(
     var dir_stack: std.ArrayListUnmanaged([]const u8) = .empty;
     try dir_stack.append(arena, "");
 
-    const empty_path: Path = @enumFromInt(0);
+    const empty_path: Path = @fromBackingInt(@intCast(0));
     assert(b.pt.get(&.{}) == empty_path);
 
     var progress = root.progress.start("Scan assets", 0);
@@ -604,7 +606,7 @@ pub fn scanTemplates(b: *Build, io: Io, gpa: Allocator, arena: Allocator) !void 
         templates: bool,
     }) = .empty;
     try dir_stack.append(arena, .{
-        .p = @enumFromInt(0),
+        .p = @fromBackingInt(@intCast(0)),
         .path = "",
         .templates = false,
     });

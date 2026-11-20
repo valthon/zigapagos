@@ -457,7 +457,7 @@ fn isRootRelative(v: []const u8) bool {
 /// paths as unsupported rather than assuming character references decoded.
 fn attrValue(attr: superhtml.html.Tokenizer.Attr, src: []const u8) ?[]const u8 {
     const v = attr.value orelse return null;
-    return v.span.slice(src);
+    return v.loc.slice(src);
 }
 
 /// Fires on a URL-valued social/canonical meta whose value is root-relative.
@@ -619,7 +619,7 @@ fn checkOneLink(
     var norm = url_path;
     if (ctx.url_prefix.len > 0) {
         var rooted_buf: [std.fs.max_path_bytes]u8 = undefined;
-        const rooted = std.fmt.bufPrint(&rooted_buf, "/{s}", .{url_path}) catch {
+        const rooted = std.mem.print(&rooted_buf, "/{s}", .{url_path}) catch {
             try reportUnresolvable(ctx, doc, attr_name, original, error.TooLong);
             return;
         };
@@ -643,9 +643,9 @@ fn checkOneLink(
         if (matched) return;
         var suggest_buf: [std.fs.max_path_bytes]u8 = undefined;
         const suggested = if (norm.len == 0)
-            std.fmt.bufPrint(&suggest_buf, "/{s}", .{ctx.url_prefix})
+            std.mem.print(&suggest_buf, "/{s}", .{ctx.url_prefix})
         else
-            std.fmt.bufPrint(&suggest_buf, "/{s}/{s}", .{ ctx.url_prefix, norm });
+            std.mem.print(&suggest_buf, "/{s}/{s}", .{ ctx.url_prefix, norm });
         if (suggested) |s| {
             try report(
                 ctx,
@@ -692,9 +692,9 @@ pub fn localUrlPath(buf: []u8, document: []const u8, prefix: []const u8, path: [
     const directory = if (std.mem.lastIndexOfAny(u8, document, "/\\")) |i| document[0 .. i + 1] else "";
     var joined_buf: [std.fs.max_path_bytes]u8 = undefined;
     const joined = if (prefix.len == 0)
-        std.fmt.bufPrint(&joined_buf, "{s}{s}", .{ directory, path })
+        std.mem.print(&joined_buf, "{s}{s}", .{ directory, path })
     else
-        std.fmt.bufPrint(&joined_buf, "{s}/{s}{s}", .{ prefix, directory, path });
+        std.mem.print(&joined_buf, "{s}/{s}{s}", .{ prefix, directory, path });
     const combined = joined catch return error.TooLong;
     // The walker uses native separators on Windows; URLs always use '/'.
     for (combined) |*c| if (c.* == '\\') {
@@ -767,13 +767,13 @@ fn resolves(ctx: *Ctx, norm: []const u8) bool {
     if (isRegularFile(ctx, norm)) return true;
 
     var buf1: [std.fs.max_path_bytes]u8 = undefined;
-    if (std.fmt.bufPrint(&buf1, "{s}/index.html", .{norm})) |p| {
+    if (std.mem.print(&buf1, "{s}/index.html", .{norm})) |p| {
         if (isRegularFile(ctx, p)) return true;
     } else |_| {}
 
     if (!std.mem.endsWith(u8, norm, ".html")) {
         var buf2: [std.fs.max_path_bytes]u8 = undefined;
-        if (std.fmt.bufPrint(&buf2, "{s}.html", .{norm})) |p| {
+        if (std.mem.print(&buf2, "{s}.html", .{norm})) |p| {
             if (isRegularFile(ctx, p)) return true;
         } else |_| {}
     }
@@ -984,8 +984,8 @@ test "doctor: normalizeLexical distinguishes 'too long' from 'escapes root'" {
     var buf: [256]u8 = undefined;
 
     // Over the BYTE cap: one segment longer than `buf`.
-    const long_seg = "a" ** 300;
-    try std.testing.expectError(error.TooLong, normalizeLexical(&buf, long_seg));
+    const long_seg = @as([300]u8, @splat('a'));
+    try std.testing.expectError(error.TooLong, normalizeLexical(&buf, &long_seg));
 
     // Over the SEGMENT cap, while staying inside the byte cap: 300 one-byte
     // segments is 599 bytes of input but 300 > max_path_segments.

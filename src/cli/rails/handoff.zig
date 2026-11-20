@@ -651,7 +651,7 @@ fn orderEndpoint(a: ?Endpoint, b: ?Endpoint) std.math.Order {
 /// instability cannot reach the output.
 fn entryOrder(a: RouteEntry, b: RouteEntry) std.math.Order {
     // Declaration order of `Status`, which is itself the wire enum order.
-    const status = std.math.order(@intFromEnum(a.status), @intFromEnum(b.status));
+    const status = std.math.order(@backingInt(a.status), @backingInt(b.status));
     if (status != .eq) return status;
     const artifacts = orderStringList(a.artifacts, b.artifacts);
     if (artifacts != .eq) return artifacts;

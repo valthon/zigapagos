@@ -520,3 +520,10 @@ test("frontmatter: block starts and ends with --- and a trailing blank line", ()
   expect(lines[lines.length - 2]).toBe("---");
   expect(lines[lines.length - 1]).toBe("");
 });
+
+
+test("stripLeadingTitle: keeps body heading levels, fenced examples and anchors", () => {
+  const body = "# Title\n\n## First\n\n### Child\n\n```md\n## Example\n```\n";
+  const out = transformBody(body, opts({ stripLeadingTitle: true }));
+  expect(out).toBe('\n## []($heading.id("first")) First\n\n### []($heading.id("child")) Child\n\n```md\n## Example\n```\n');
+});

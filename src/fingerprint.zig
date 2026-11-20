@@ -146,11 +146,11 @@ fn nameFromDigest(
     digest: [Blake3.digest_length]u8,
 ) Allocator.Error![]u8 {
     var hex: [hash_len]u8 = undefined;
-    _ = std.fmt.bufPrint(&hex, "{x}", .{digest[0 .. hash_len / 2]}) catch unreachable;
+    _ = std.mem.print(&hex, "{x}", .{digest[0 .. hash_len / 2]}) catch unreachable;
 
     const ext = std.fs.path.extension(basename);
     const stem = basename[0 .. basename.len - ext.len];
-    return std.fmt.allocPrint(gpa, "{s}.{s}{s}", .{ stem, &hex, ext });
+    return gpa.print("{s}.{s}{s}", .{ stem, &hex, ext });
 }
 
 /// Print the install-relative URL/path of a site asset, substituting the
@@ -278,7 +278,7 @@ test "assets: fingerprint fmtUrl substitutes only mapped assets" {
     // Mapped ⇒ the fingerprinted basename, directory prefix preserved.
     try std.testing.expectEqualStrings(
         "css/site.deadbeef.css",
-        try std.fmt.bufPrint(&buf, "{f}", .{fmtUrl(hashed, &st, &pt, &map)}),
+        try std.mem.print(&buf, "{f}", .{fmtUrl(hashed, &st, &pt, &map)}),
     );
     // Unmapped ⇒ byte-identical to what `PathName.fmt` would have printed.
     // This is the case that covers every build with the feature switched off
@@ -286,8 +286,8 @@ test "assets: fingerprint fmtUrl substitutes only mapped assets" {
     // pins "no config change ⇒ no output change".
     var expected_buf: [128]u8 = undefined;
     try std.testing.expectEqualStrings(
-        try std.fmt.bufPrint(&expected_buf, "{f}", .{plain.fmt(&st, &pt, null, "/")}),
-        try std.fmt.bufPrint(&buf, "{f}", .{fmtUrl(plain, &st, &pt, &map)}),
+        try std.mem.print(&expected_buf, "{f}", .{plain.fmt(&st, &pt, null, "/")}),
+        try std.mem.print(&buf, "{f}", .{fmtUrl(plain, &st, &pt, &map)}),
     );
 }
 
@@ -311,7 +311,7 @@ test "assets: fingerprint hashFile agrees with hashName across chunk boundaries"
         for (bytes, 0..) |*b, j| b.* = @truncate(j *% 31 +% i);
 
         var name_buf: [32]u8 = undefined;
-        const file_name = try std.fmt.bufPrint(&name_buf, "asset-{d}.css", .{i});
+        const file_name = try std.mem.print(&name_buf, "asset-{d}.css", .{i});
         {
             const f = try tmp.dir.createFile(testing_io, file_name, .{});
             defer f.close(testing_io);

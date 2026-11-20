@@ -4,7 +4,7 @@
 //!
 //! A table of contents over `build/`:
 //!
-//!   config.zig    `-D` user options + the git-derived version
+//!   config.zig    `-D` user options + manifest version + Git commit
 //!   exe.zig       the `zigapagos` executable, `check` and `run`
 //!   deps.zig      upstream modules shared by every compilation
 //!   release.zig   `release` — the cross-compiled target matrix
@@ -36,7 +36,7 @@ pub fn build(b: *std.Build) !void {
     // existence of this artifact.
     const zigapagos_exe = exe.addZigapagosExe(b, cfg.exeConfig());
 
-    release.setup(b, cfg.version);
+    release.setup(b, cfg);
     const docgen_reference_exe = docgen.setup(b, cfg);
 
     const check = exe.addCheckStep(b, zigapagos_exe);

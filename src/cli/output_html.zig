@@ -6,7 +6,7 @@ pub fn attribute(node: superhtml.html.Ast.Node, source: []const u8, ast: superht
     var it = node.startTagIterator(source, ast.language);
     while (it.next(source)) |attr| {
         if (!std.ascii.eqlIgnoreCase(attr.name.slice(source), name)) continue;
-        return if (attr.value) |value| value.span.slice(source) else "";
+        return if (attr.value) |value| value.loc.slice(source) else "";
     }
     return null;
 }
@@ -29,7 +29,7 @@ pub fn urlScope(raw: []const u8) []const u8 {
 pub fn scriptIsJavaScript(script_type: []const u8, language: []const u8) bool {
     var language_buf: [128]u8 = undefined;
     const effective = if (script_type.len == 0 and language.len != 0)
-        std.fmt.bufPrint(&language_buf, "text/{s}", .{language}) catch return false
+        std.mem.print(&language_buf, "text/{s}", .{language}) catch return false
     else
         script_type;
     const trimmed = std.mem.trim(u8, effective, " \t\r\n\x0c");

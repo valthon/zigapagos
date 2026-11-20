@@ -6,13 +6,13 @@
 
 **Architecture:** A new `src/cli/rails/` package holds Rails-shaped logic, deliberately split so that all decision logic is **pure functions over slices** (std-only, unit-testable) and all filesystem I/O is a thin walker layer. `src/cli/migrate.zig` keeps ownership of CLI parsing, detection dispatch, and `fatal.*` error exits; the rails package never calls `fatal` and returns errors instead.
 
-**Tech Stack:** Zig 0.16, `std.Io` (`Io.Dir.openFile` / `openDir` / `walk` / `readFileAlloc`), bash for e2e.
+**Tech Stack:** Zig 0.17.1, `std.Io` (`Io.Dir.openFile` / `openDir` / `walk` / `readFileAlloc`), bash for e2e.
 
 **Spec:** `docs/superpowers/specs/2026-08-22-rails-source-discovery-design.md`
 
 ## Global Constraints
 
-- Zig **0.16.0** exactly (`mise.toml`, `build.zig.zon` `.minimum_zig_version`). Check `zig version` before believing a configure-time error.
+- Zig **0.17.1** exactly (`mise.toml`, `build.zig.zon` `.minimum_zig_version`). Check `zig version` before believing a configure-time error.
 - **`zig fmt` is gated with no exceptions.** Run `git ls-files -z '*.zig' | xargs -0 -r zig fmt --check` before every commit. Never reformat `zig-pkg/` (gitignored vendored deps).
 - **Allocator contracts (NO_SLOP.md §2.2a).** Every allocator-taking function must be exactly one of the four contracts and say which in a doc comment. Everything in this stage is **contract 1 (self-freeing)** — frees all scratch, one allocation escapes as the return — or **contract 3 (caller-buffer)**. No arena is introduced, so no `scripts/allocator-allowlist.txt` row is needed. Verify with `bash scripts/check-allocator-contracts.sh`.
 - **The rails package is std-only.** It must not `@import` across the `src/` boundary (no `../fatal.zig`), so it can be registered as a `standalone` test suite. Errors return to `migrate.zig`, which owns all `fatal.*` calls.

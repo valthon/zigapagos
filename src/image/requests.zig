@@ -18,7 +18,7 @@ const std = @import("std");
 const Io = std.Io;
 const plan = @import("plan.zig");
 
-// std.Thread.Mutex does not exist on this toolchain (zig 0.16): locking here
+// std.Thread.Mutex does not exist on this toolchain (zig 0.17): locking here
 // follows the established repo pattern for a mutex guarding worker-job shared
 // state (`Build.island_props_checks_mutex`, used from `worker.zig`'s
 // `page_analyze` jobs) — `std.Io.Mutex` + `lockUncancelable`/`unlock`, both

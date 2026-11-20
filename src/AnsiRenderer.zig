@@ -32,13 +32,12 @@ const Style = struct {
     };
 
     fn print(style: Style, out: *Writer, open: bool) !void {
-        comptime var fields: [std.meta.fields(Style).len]std.builtin.Type.StructField = undefined;
-        @memcpy(&fields, std.meta.fields(Style));
-        comptime std.mem.reverse(std.builtin.Type.StructField, &fields);
+        const names = @typeInfo(Style).@"struct".field_names;
         const FieldEnum = std.meta.FieldEnum(Style);
-        inline for (fields) |field| {
-            const value = @field(style, field.name);
-            const tag: ?std.meta.Tuple(&.{ []const u8, ?[]const u8 }) = switch (@field(FieldEnum, field.name)) {
+        inline for (0..names.len) |i| {
+            const name = names[names.len - 1 - i];
+            const value = @field(style, name);
+            const tag: ?@Tuple(&.{ []const u8, ?[]const u8 }) = switch (@field(FieldEnum, name)) {
                 .bold => if (value) .{ "b", null } else null,
                 .dim => if (value) .{ "span", "style=\"filter: brightness(75%)\"" } else null,
                 .foreground => if (value) |color| .{ "span", switch (color) {
@@ -144,7 +143,7 @@ fn render(renderer: *AnsiRenderer, reader: *Reader, writer: *Writer) !void {
                         0 => renderer.current_style = .{},
                         1 => renderer.current_style.bold = true,
                         2 => renderer.current_style.dim = true,
-                        30...37 => renderer.current_style.foreground = @enumFromInt(n - 30),
+                        30...37 => renderer.current_style.foreground = @fromBackingInt(@intCast(n - 30)),
                         else => {},
                     }
 

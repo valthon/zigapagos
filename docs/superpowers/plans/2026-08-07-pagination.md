@@ -6,11 +6,11 @@
 
 **Architecture:** Extend the proven `alternatives` N-render machinery with a `pagination` arm on `RenderJobKind`; per-render window state rides on `context.Root` (never on `Page` — the same `*Page` is read by N worker threads); a main-thread planning pass after `Section.sortPages` computes page counts and registers extra output URLs in `Variant.urls`; a fifth path helper in `worker.zig` keeps `explain`/`--summary` honest. Spec: `docs/superpowers/specs/2026-08-07-pagination-design.md`.
 
-**Tech Stack:** Zig 0.16 (via mise), superhtml/scripty/ziggy (vendored in gitignored `zig-pkg/` — never edit), bash e2e, git-diff snapshot tests.
+**Tech Stack:** Zig 0.17.1 (via mise), superhtml/scripty/ziggy (vendored in gitignored `zig-pkg/` — never edit), bash e2e, git-diff snapshot tests.
 
 ## Global Constraints
 
-- Check `zig version` → must be 0.16.0 before believing any build error (version skew produces walls of fake dependency errors).
+- Check `zig version` → must be 0.17.1 before believing any build error (version skew produces walls of fake dependency errors).
 - Branch: `worktree-pagination-design` (already exists, has the spec). Never push to `main`.
 - The git index is shared across worktrees: always commit with explicit paths — `git add <paths> && git commit -m … -- <paths>`. Never bare `git stash`.
 - zsh: no `${PIPESTATUS[0]}`; run commands unpiped and check `$?`. Use `>|` for redirects if noclobber bites.

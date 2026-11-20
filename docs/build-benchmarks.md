@@ -14,7 +14,7 @@ or include fixture generation in timed samples:
 ```sh
 bun runtime/scripts/bench-release.ts \
   --binary=zig-out/bin/zigapagos --rounds=10 \
-  '--build-info=Zig 0.16.0 ReleaseFast native'
+  '--build-info=Zig 0.17.1 fast native'
 ```
 
 Compare two executables against the same runtime tree:
@@ -22,11 +22,11 @@ Compare two executables against the same runtime tree:
 ```sh
 bun runtime/scripts/bench-release.ts \
   --baseline=/tmp/zigapagos-before --binary=zig-out/bin/zigapagos --rounds=10 \
-  '--build-info=Zig 0.16.0 ReleaseFast native; matching build flags' > result.json
+  '--build-info=Zig 0.17.1 fast native; matching build flags' > result.json
 ```
 
 Use matching compiler versions, optimization modes, and CPU targets. Build each
-binary with `zig build -Doptimize=ReleaseFast` before running the comparison.
+binary with `zig build -Doptimize=fast` before running the comparison.
 The runner reports binary versions/hashes, implementation source hashes, Bun
 version, OS/architecture, CPU model/core count, every timing sample in execution
 order, driver invocations, and output-tree hashes/file counts/bytes.

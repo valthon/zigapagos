@@ -204,8 +204,9 @@ pub const Reference = struct {
 
 pub fn analyzeValues() []const Reference.Type {
     const info = @typeInfo(context.Value).@"union";
-    var values: [info.fields.len]Reference.Type = undefined;
-    inline for (info.fields, &values) |f, *v| {
+    var values: [info.field_names.len]Reference.Type = undefined;
+    inline for (info.field_names, info.field_types, &values) |field_name, field_type, *v| {
+        const f = .{ .name = field_name, .type = field_type };
         const t = getStructType(f.type) orelse {
             std.debug.assert(f.type == []const u8);
             v.* = .{
@@ -253,11 +254,11 @@ fn getStructType(T: type) ?type {
 
 fn analyzeBuiltins(T: type) []const Reference.Builtin {
     const info = @typeInfo(T.Builtins).@"struct";
-    var decls: [info.decls.len]Reference.Builtin = undefined;
-    inline for (info.decls, &decls) |decl, *b| {
-        const t = @field(T.Builtins, decl.name);
+    var decls: [info.decl_names.len]Reference.Builtin = undefined;
+    inline for (info.decl_names, &decls) |decl, *b| {
+        const t = @field(T.Builtins, decl);
         b.* = .{
-            .name = decl.name,
+            .name = decl,
             .signature = t.signature,
             .description = t.docs_description,
             .examples = t.examples,
@@ -269,9 +270,10 @@ fn analyzeBuiltins(T: type) []const Reference.Builtin {
 
 fn analyzeFields(T: type) []const Reference.Field {
     const info = @typeInfo(T).@"struct";
-    var reference_fields: [info.fields.len]Reference.Field = undefined;
+    var reference_fields: [info.field_names.len]Reference.Field = undefined;
     var idx: usize = 0;
-    for (info.fields) |tf| {
+    for (info.field_names, info.field_types) |field_name, field_type| {
+        const tf = .{ .name = field_name, .type = field_type };
         if (!@hasDecl(T, "Fields")) continue;
         if (tf.name[0] == '_') continue;
         reference_fields[idx] = .{

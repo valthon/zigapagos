@@ -5,11 +5,7 @@ const Io = std.Io;
 const fatal = @import("../../fatal.zig");
 const Debouncer = @import("../watcher.zig").Debouncer;
 
-// const c = @cImport({
-//     @cInclude("CoreServices/CoreServices.h");
-// });
-// const c = @import("c");
-const c = @import("../../hacks/CoreFoundation.h.zig");
+const c = @import("c");
 
 const log = std.log.scoped(.watcher);
 
@@ -38,10 +34,12 @@ pub fn start(watcher: *MacosWatcher) !void {
 }
 
 pub fn listen(watcher: *MacosWatcher) void {
-    errdefer |err| switch (err) {
+    return listenInner(watcher) catch |err| switch (err) {
         error.OutOfMemory => fatal.oom(),
     };
+}
 
+fn listenInner(watcher: *MacosWatcher) !void {
     const macos_paths = try watcher.gpa.alloc(
         c.CFStringRef,
         watcher.dir_paths.len,
@@ -71,7 +69,13 @@ pub fn listen(watcher: *MacosWatcher) void {
         null,
     ) orelse fatal.msg("error: macos watcher unable to create the watch-paths array", .{});
 
-    var stream_context: c.FSEventStreamContext = .{ .info = watcher };
+    var stream_context: c.FSEventStreamContext = .{
+        .version = 0,
+        .info = watcher,
+        .retain = null,
+        .release = null,
+        .copyDescription = null,
+    };
     const stream: c.FSEventStreamRef = c.FSEventStreamCreate(
         null,
         &macosCallback,

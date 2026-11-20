@@ -6,7 +6,7 @@
 
 **Architecture:** Classification joins three inputs that already exist separately — Stage 2's routes (verb, controller, action), Stage 1's inventory (which templates exist), and two new inspections: controller-action *shape* from a Prism AST (a new sidecar op) and template *content* markers (a Zig text scan). The classifier itself is a pure function so every rule is unit-testable without a filesystem or a sidecar.
 
-**Tech Stack:** Zig 0.16, Ruby 3.4.10 with **Prism from stdlib — no gems**, NDJSON, bash for e2e.
+**Tech Stack:** Zig 0.17.1, Ruby 3.4.10 with **Prism from stdlib — no gems**, NDJSON, bash for e2e.
 
 **Spec:** `docs/superpowers/specs/2026-08-22-rails-source-discovery-design.md`
 
@@ -14,7 +14,7 @@
 
 ## Global Constraints
 
-- Zig **0.16.0**; Ruby pinned in `mise.toml`. CI consumes both via `jdx/mise-action`.
+- Zig **0.17.1**; Ruby pinned in `mise.toml`. CI consumes both via `jdx/mise-action`.
 - **`zig fmt` is gated with no exceptions**: `git ls-files -z '*.zig' | xargs -0 -r zig fmt --check` must print nothing.
 - **`src/cli/rails/` stays std-only**: no `@import` may escape that directory, never `../../fatal.zig`. All `fatal.*` stays in `migrate.zig`.
 - **The sidecar uses no gems.** Prism is stdlib. `static_ast` mode exists to work on an app that *cannot boot*.

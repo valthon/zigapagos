@@ -210,7 +210,7 @@ shell, and real-browser tests.
 
 ## Contributing
 
-Building *Zigapagos itself* is the only thing that needs a Zig toolchain (0.16.0
+Building *Zigapagos itself* is the only thing that needs a Zig toolchain (0.17.1
 — we track released Zig, not nightlies). See
 [CONTRIBUTING.md](CONTRIBUTING.md) for the setup, the test suites, and the
 review standard in [NO_SLOP.md](NO_SLOP.md).

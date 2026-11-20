@@ -122,8 +122,8 @@ case "$uname_s" in
     BUN_OS="darwin"
     ;;
   MINGW*|MSYS*|CYGWIN*|Windows_NT)
-    fail "Windows is not supported yet (upstream's WindowsWatcher.zig/wuffs.zig do not
-compile on released Zig 0.16.0). Use WSL2 meanwhile."
+    fail "Windows is not supported yet (release archives and native validation are pending).
+The source cross-compiles for Windows. Use WSL2 meanwhile."
     ;;
   *)
     fail "unsupported OS '$uname_s'. Prebuilt: Linux and macOS."

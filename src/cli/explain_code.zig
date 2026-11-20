@@ -86,8 +86,9 @@ pub fn explainCode(args: []const []const u8) bool {
 }
 
 fn listAll() void {
-    inline for (@typeInfo(diag.Code).@"enum".fields) |field| {
-        const code: diag.Code = @enumFromInt(field.value);
+    inline for (@typeInfo(diag.Code).@"enum".field_names) |field_name| {
+        const field = .{ .name = field_name };
+        const code: diag.Code = @field(diag.Code, field.name);
         switch (diag.format) {
             .json => emitEntry(code),
             .text => {

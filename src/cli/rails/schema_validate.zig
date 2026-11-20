@@ -52,7 +52,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 /// Contract 2 (owned-result): every string in the returned slice is a
-/// fresh `gpa` allocation (built via `std.fmt.allocPrint`); the slice
+/// fresh `gpa` allocation (built via `Allocator.print`); the slice
 /// itself is also `gpa`-owned. Release both with `freeErrors`. An empty
 /// slice means `instance` validates against `schema`.
 ///
@@ -94,7 +94,7 @@ fn addError(
     args: anytype,
 ) Allocator.Error!void {
     const shown_path = if (path.len == 0) "/" else path;
-    const msg = try std.fmt.allocPrint(gpa, "{s}: " ++ fmt, .{shown_path} ++ args);
+    const msg = try gpa.print("{s}: " ++ fmt, .{shown_path} ++ args);
     try errors.append(gpa, msg);
 }
 
@@ -166,7 +166,7 @@ fn validateNode(
                 for (arr.items, 0..) |item, idx| {
                     const before = path.items.len;
                     var idx_buf: [32]u8 = undefined;
-                    const idx_str = std.fmt.bufPrint(&idx_buf, "/{d}", .{idx}) catch unreachable;
+                    const idx_str = std.mem.print(&idx_buf, "/{d}", .{idx}) catch unreachable;
                     try path.appendSlice(gpa, idx_str);
                     try validateNode(gpa, items_schema, item, path, errors);
                     path.shrinkRetainingCapacity(before);

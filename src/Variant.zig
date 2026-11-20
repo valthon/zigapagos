@@ -178,7 +178,7 @@ pub const Section = struct {
         const Entry = struct { id: u32, url: []const u8 };
         const entries = arena.alloc(Entry, ids.len) catch fatal.oom();
         for (entries, ids) |*e, id| {
-            const url = std.fmt.allocPrint(arena, "{f}", .{
+            const url = arena.print("{f}", .{
                 pages[id]._scan.url.fmt(
                     &v.string_table,
                     &v.path_table,
@@ -257,12 +257,24 @@ pub fn scanContentDir(
     multilingual: ?MultilingualScanParams,
     output_path_prefix: []const u8,
 ) void {
-    const zone = tracy.trace(@src());
-    defer zone.end();
-
-    errdefer |err| switch (err) {
+    return scanContentDirInner(variant, io, gpa, arena, base_dir, content_dir_path, variant_id, multilingual, output_path_prefix) catch |err| switch (err) {
         error.OutOfMemory => fatal.oom(),
     };
+}
+
+fn scanContentDirInner(
+    variant: *Variant,
+    io: Io,
+    gpa: Allocator,
+    arena: Allocator,
+    base_dir: Io.Dir,
+    content_dir_path: []const u8,
+    variant_id: u32,
+    multilingual: ?MultilingualScanParams,
+    output_path_prefix: []const u8,
+) !void {
+    const zone = tracy.trace(@src());
+    defer zone.end();
 
     var path_table: PathTable = .empty;
     _ = try path_table.intern(gpa, &.{}); // empty path
@@ -400,7 +412,7 @@ pub fn scanContentDir(
                 .parent_section_id = dir_entry.parent_section,
                 .variant_id = variant_id,
             };
-            if (builtin.mode == .Debug) {
+            if (builtin.optimize == .debug) {
                 index_page._debug = .{ .stage = .init(.scanned) };
             }
 
@@ -478,7 +490,7 @@ pub fn scanContentDir(
         const pages_old_len = pages.items.len;
         try pages.resize(gpa, pages_old_len + page_names.items.len);
 
-        if (builtin.mode == .Debug) {
+        if (builtin.optimize == .debug) {
             const Ctx = struct {
                 st: *StringTable,
                 pub fn lessThan(ctx: @This(), lhs: String, rhs: String) bool {
@@ -531,7 +543,7 @@ pub fn scanContentDir(
                 .parent_section_id = current_section,
                 .variant_id = variant_id,
             };
-            if (builtin.mode == .Debug) {
+            if (builtin.optimize == .debug) {
                 p._debug = .{ .stage = .init(.scanned) };
             }
 
@@ -608,8 +620,7 @@ pub fn scanContentDir(
     var i18n_arena = std.heap.ArenaAllocator.init(gpa);
     // Present when in a multilingual site
     if (multilingual) |ml| {
-        const name = try std.fmt.allocPrint(
-            i18n_arena.allocator(),
+        const name = try i18n_arena.allocator().print(
             "{s}.ziggy",
             .{ml.locale_code},
         );
@@ -674,7 +685,7 @@ pub fn paginationPathName(
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     switch (style) {
         .page_dir, .plain_dir => {
-            const dir = std.fmt.bufPrint(&buf, "{f}{s}{d}", .{
+            const dir = std.mem.print(&buf, "{f}{s}{d}", .{
                 page._scan.url.fmt(&v.string_table, &v.path_table, null, true),
                 if (style == .page_dir) "page/" else "",
                 n,
@@ -685,7 +696,7 @@ pub fn paginationPathName(
             };
         },
         .page_html => {
-            const name = std.fmt.bufPrint(&buf, "page-{d}.html", .{n}) catch return error.NameTooLong;
+            const name = std.mem.print(&buf, "page-{d}.html", .{n}) catch return error.NameTooLong;
             return .{
                 .path = page._scan.url,
                 .name = try v.string_table.intern(gpa, name),
@@ -717,7 +728,7 @@ pub fn paginationPathNameLookup(
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     switch (style) {
         .page_dir, .plain_dir => {
-            const full = std.fmt.bufPrint(&buf, "{f}{s}{d}/index.html", .{
+            const full = std.mem.print(&buf, "{f}{s}{d}/index.html", .{
                 page._scan.url.fmt(&v.string_table, &v.path_table, null, true),
                 if (style == .page_dir) "page/" else "",
                 n,
@@ -725,7 +736,7 @@ pub fn paginationPathNameLookup(
             return PathName.get(&v.string_table, &v.path_table, full);
         },
         .page_html => {
-            const name = std.fmt.bufPrint(&buf, "page-{d}.html", .{n}) catch return null;
+            const name = std.mem.print(&buf, "page-{d}.html", .{n}) catch return null;
             return .{
                 .path = page._scan.url,
                 .name = v.string_table.get(name) orelse return null,
@@ -804,7 +815,7 @@ pub fn installAssets(
         if (hint.kind.page_asset.raw == 0) continue;
 
         var buf: [std.fs.max_path_bytes]u8 = undefined;
-        const install_path = std.fmt.bufPrint(&buf, "{s}{s}{f}", .{
+        const install_path = std.mem.print(&buf, "{s}{s}{f}", .{
             v.output_path_prefix,
             if (v.output_path_prefix.len > 0) "/" else "",
             key.fmt(

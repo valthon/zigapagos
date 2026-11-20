@@ -789,7 +789,7 @@ const forbidden_shim = [_]struct { spec: []const u8, target: []const u8 }{
 /// This is the one genuine contract-4 site in the tree that does NOT carry the
 /// `RenderArena` marker type, and the reason is mechanical, not a judgment:
 /// `src/cli/migrate_detect.zig` is the ROOT source file of its own test module
-/// (`zig build test-migrate`), and Zig 0.16 refuses an import that escapes a
+/// (`zig build test-migrate`), and Zig 0.17 refuses an import that escapes a
 /// module's directory — so it cannot reach `src/islands/render_arena.zig`.
 /// Adopting the type here needs a one-line build/tests.zig change (pass the type as a
 /// module import to `migrate_tests`), which is deliberately not made here.
@@ -1634,7 +1634,7 @@ test "framework detection: Hexo keywords, scripts and values do not declare Next
 
 test "framework detection: real dependencies in all four maps declare Next.js" {
     for ([_][]const u8{ "dependencies", "devDependencies", "peerDependencies", "optionalDependencies" }) |section| {
-        const package = try std.fmt.allocPrint(testing.allocator, "{{\"{s}\":{{\"next\":\"16\"}}}}", .{section});
+        const package = try testing.allocator.print("{{\"{s}\":{{\"next\":\"16\"}}}}", .{section});
         defer testing.allocator.free(package);
         try testing.expect(try packageDeclares(testing.allocator, package, "next"));
     }
@@ -1870,7 +1870,7 @@ test "content booleans follow YAML core spellings and TOML lowercase" {
             if (opening.len == 0 and source != .hexo) continue;
             for ([_][]const u8{ "draft", "published" }) |key| {
                 for ([_][]const u8{ "true", "True", "TRUE", "false", "False", "FALSE" }, 0..) |value, i| {
-                    const src = try std.fmt.allocPrint(std.testing.allocator, "{s}{s}: {s}\n---\nBody", .{ opening, key, value });
+                    const src = try std.testing.allocator.print("{s}{s}: {s}\n---\nBody", .{ opening, key, value });
                     defer std.testing.allocator.free(src);
                     const got = parseContentFields(src, source);
                     try std.testing.expectEqual(if (std.mem.eql(u8, key, "draft")) i < 3 else i >= 3, got.draft);
@@ -1878,7 +1878,7 @@ test "content booleans follow YAML core spellings and TOML lowercase" {
                     try std.testing.expectEqualStrings("Body", got.body);
                 }
                 for ([_][]const u8{ "yes", "no", "on", "off", "YES", "NO", "ON", "OFF", "tRuE", "fAlSe" }) |value| {
-                    const src = try std.fmt.allocPrint(std.testing.allocator, "{s}{s}: {s}\n---\nBody", .{ opening, key, value });
+                    const src = try std.testing.allocator.print("{s}{s}: {s}\n---\nBody", .{ opening, key, value });
                     defer std.testing.allocator.free(src);
                     const got = parseContentFields(src, source);
                     try std.testing.expect(!got.draft);
@@ -1889,7 +1889,7 @@ test "content booleans follow YAML core spellings and TOML lowercase" {
     }
     for ([_][]const u8{ "draft", "published" }) |key| {
         for ([_][]const u8{ "true", "false", "True", "TRUE", "False", "FALSE" }, 0..) |value, i| {
-            const src = try std.fmt.allocPrint(std.testing.allocator, "+++\n{s} = {s}\n+++\nBody", .{ key, value });
+            const src = try std.testing.allocator.print("+++\n{s} = {s}\n+++\nBody", .{ key, value });
             defer std.testing.allocator.free(src);
             const got = parseContentFields(src, .hugo);
             try std.testing.expectEqual(i >= 2, got.has_unconverted);
@@ -1900,7 +1900,7 @@ test "content booleans follow YAML core spellings and TOML lowercase" {
 
 test "Eleventy language frontmatter is quarantined" {
     for ([_][]const u8{ "js", "javascript", "json", "yaml", "custom" }) |lang| {
-        const src = try std.fmt.allocPrint(std.testing.allocator, "---{s} \t\r\nconst draft = true; title = \"Private\";\r\n---\r\nSecret body", .{lang});
+        const src = try std.testing.allocator.print("---{s} \t\r\nconst draft = true; title = \"Private\";\r\n---\r\nSecret body", .{lang});
         defer std.testing.allocator.free(src);
         const got = parseContentFields(src, .eleventy);
         try std.testing.expect(got.draft);
@@ -1921,7 +1921,7 @@ test "Hugo opening frontmatter fences allow trailing blanks" {
 
 test "Hexo fence-less mapping preserves draft title and date" {
     for ([_][]const u8{ "\n---\n", "\r\n----\r\n", "\n---" }) |closing| {
-        const src = try std.fmt.allocPrint(std.testing.allocator, "title: A\npublished: false\ndate: 2013-12-24 23:29:08{s}Body", .{closing});
+        const src = try std.testing.allocator.print("title: A\npublished: false\ndate: 2013-12-24 23:29:08{s}Body", .{closing});
         defer std.testing.allocator.free(src);
         const got = parseContentFields(src, .hexo);
         try std.testing.expectEqualStrings("A", got.title orelse "");

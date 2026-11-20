@@ -203,7 +203,7 @@ fn claimSlug(
     }
     const n = gop.value_ptr.*;
     gop.value_ptr.* = n + 1;
-    return std.fmt.allocPrint(alloc, "{s}-{d}", .{ base, n });
+    return alloc.print("{s}-{d}", .{ base, n });
 }
 
 /// The injection pass. Called once per page (see `src/context/Page.zig`'s
@@ -357,7 +357,7 @@ fn parseTestAst(gpa: Allocator, src: []const u8) !supermd.Ast {
     supermd.c.cmark_gfm_core_extensions_ensure_registered();
     const cmark = supermd.Ast.CmarkParser.default();
     defer supermd.c.cmark_parser_free(cmark.parser);
-    return supermd.Ast.init(gpa, src, cmark);
+    return supermd.Ast.init(gpa, src, cmark, .{});
 }
 
 test "slugify: em-dash flanked by spaces produces GitHub's double hyphen" {

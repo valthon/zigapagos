@@ -18,7 +18,7 @@ pub fn msg(comptime fmt: []const u8, args: anytype) noreturn {
         std.process.exit(1);
     }
     std.debug.print(fmt, args);
-    if (builtin.mode == .Debug) std.debug.panic("\n\n(Zigapagos debug stack trace)\n", .{});
+    if (builtin.optimize == .debug) std.debug.panic("\n\n(Zigapagos debug stack trace)\n", .{});
     std.process.exit(1);
 }
 

@@ -84,7 +84,7 @@ pub fn generateProgram(
         }
         const alias = gop.value_ptr.*;
 
-        const pair_key = try std.fmt.allocPrint(arena.a, "{s}\x00{s}", .{ abs, chk.props_json });
+        const pair_key = try arena.a.print("{s}\x00{s}", .{ abs, chk.props_json });
         if (try seen_pair.fetchPut(arena.a, pair_key, {}) != null) continue; // dup pair
 
         const n = const_check_idx.items.len;
@@ -119,7 +119,7 @@ pub fn generateTsconfig(
     base_tsconfig_abs: []const u8,
     program_abs: []const u8,
 ) ![]const u8 {
-    return std.fmt.allocPrint(alloc,
+    return alloc.print(
         \\{{
         \\  "extends": "{s}",
         \\  "compilerOptions": {{
@@ -148,7 +148,7 @@ pub fn parseDiagnostics(
     program_basename: []const u8,
 ) ![]const Diag {
     var diags: std.ArrayListUnmanaged(Diag) = .empty;
-    const prefix = try std.fmt.allocPrint(arena.a, "{s}(", .{program_basename});
+    const prefix = try arena.a.print("{s}(", .{program_basename});
     var it = std.mem.splitScalar(u8, stdout, '\n');
     while (it.next()) |line| {
         if (!std.mem.startsWith(u8, line, prefix)) continue;
@@ -171,8 +171,7 @@ pub fn parseDiagnostics(
 
 /// Contract 1: one `allocPrint` out.
 pub fn formatDiagnostic(alloc: std.mem.Allocator, diag: Diag, check: PropsCheck) ![]const u8 {
-    return std.fmt.allocPrint(
-        alloc,
+    return alloc.print(
         "props mismatch on {s}  <island src=\"{s}\" id=\"{s}\">\n" ++
             "  resolved props: {s}\n" ++
             "  {s} ({s})",

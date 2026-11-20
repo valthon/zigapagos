@@ -231,7 +231,7 @@ pub fn walk(io: Io, gpa: Allocator, root: Io.Dir) Allocator.Error!WalkResult {
         };
         defer dir.close(io);
         // Unlike migrate.zig's `copyAssetRoot` walk, `Io.Dir.walk` here is
-        // typed `Allocator.Error!Walker` (0.16.0) -- OutOfMemory is the only
+        // typed `Allocator.Error!Walker` (0.17.1) -- OutOfMemory is the only
         // possible failure, so it propagates directly rather than being
         // switched on.
         var walker = try dir.walk(gpa);
@@ -257,7 +257,7 @@ pub fn walk(io: Io, gpa: Allocator, root: Io.Dir) Allocator.Error!WalkResult {
             // operation resolves it and applies the inside-root policy before
             // reading.
             if (entry.kind != .file and entry.kind != .sym_link) continue;
-            const rel = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ top, entry.path });
+            const rel = try gpa.print("{s}/{s}", .{ top, entry.path });
             errdefer gpa.free(rel);
             // Normalize Windows separators so classification and output are
             // platform-independent.
@@ -349,7 +349,7 @@ pub fn appendUnsupportedEngineBlockers(
     for (entries) |e| {
         const label = unsupportedEngineLabel(e) orelse continue;
         var buf: [64]u8 = undefined;
-        const detail = std.fmt.bufPrint(&buf, "{s} template is not converted", .{label}) catch unreachable;
+        const detail = std.mem.print(&buf, "{s} template is not converted", .{label}) catch unreachable;
         // `.warn`: the brief's own canonical example of an expected,
         // correctly-detected finding -- a Haml/Slim view is a fact about
         // this one file, not evidence the rest of the inventory is wrong.

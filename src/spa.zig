@@ -142,8 +142,8 @@ fn resolveRuntimeUrl(
 fn deleteStaleSlicedRuntime(io: std.Io, alloc: std.mem.Allocator, out_dir: std.Io.Dir, name: []const u8, fallback: bool) !void {
     if (!fallback) return;
     const rel_paths = [_][]const u8{
-        try std.fmt.allocPrint(alloc, "spa/{s}-runtime.js", .{name}),
-        try std.fmt.allocPrint(alloc, "spa/{s}-runtime.js.map", .{name}),
+        try alloc.print("spa/{s}-runtime.js", .{name}),
+        try alloc.print("spa/{s}-runtime.js.map", .{name}),
     };
     defer for (rel_paths) |rel_path| alloc.free(rel_path);
     for (rel_paths) |rel_path| {
@@ -291,7 +291,7 @@ pub fn prerenderAll(
         const disk_prefix = std.mem.trimStart(u8, base, "/"); // "" (root) or e.g. "app"
         const title = desc.spa.title orelse "App";
         const noindex = desc.spa.noindex orelse true;
-        const bundle_url = try pass.prefixed(arena.a, url_path_prefix, try std.fmt.allocPrint(arena.a, "/spa/{s}.js", .{spaName(src)}));
+        const bundle_url = try pass.prefixed(arena.a, url_path_prefix, try arena.a.print("/spa/{s}.js", .{spaName(src)}));
         // The runtime this SPA's shells load: its per-deployable sliced runtime
         // when the slice manifest names one, else the shared runtime. The
         // fallback decision is taken on the RAW (un-prefixed) URL — that's the
@@ -327,7 +327,7 @@ pub fn prerenderAll(
         const route_chunks = if (split_assets) |s| s.routeChunks else null;
         var immutable_assets: std.ArrayList([]const u8) = .empty;
         if (split_assets) |s| for (s.immutableAssets) |asset| {
-            try immutable_assets.append(arena.a, try pass.prefixed(arena.a, url_path_prefix, try std.fmt.allocPrint(arena.a, "/spa/{s}", .{asset})));
+            try immutable_assets.append(arena.a, try pass.prefixed(arena.a, url_path_prefix, try arena.a.print("/spa/{s}", .{asset})));
         };
 
         // The `spa.head` hook is shared across every route of
@@ -430,7 +430,7 @@ pub fn prerenderAll(
             var asset_it = build.site_assets.iterator();
             var asset_name_buf: [std.fs.max_path_bytes]u8 = undefined;
             while (asset_it.next()) |asset_entry| {
-                const asset_path = std.fmt.bufPrint(&asset_name_buf, "{f}", .{
+                const asset_path = std.mem.print(&asset_name_buf, "{f}", .{
                     asset_entry.key_ptr.fmt(&build.st, &build.pt, null, "/"),
                 }) catch continue;
                 if (std.mem.endsWith(u8, asset_path, ".css")) {
@@ -477,7 +477,7 @@ pub fn prerenderAll(
             // A lazy route's chunk URL (`/spa/<chunk>`), matched by the route's
             // in-app full path — preloaded in the shell so it fetches alongside.
             const chunk_url: ?[]const u8 = if (route_chunks) |rc|
-                (if (rc.map.get(rt.path)) |c| try pass.prefixed(arena.a, url_path_prefix, try std.fmt.allocPrint(arena.a, "/spa/{s}", .{c})) else null)
+                (if (rc.map.get(rt.path)) |c| try pass.prefixed(arena.a, url_path_prefix, try arena.a.print("/spa/{s}", .{c})) else null)
             else
                 null;
             if (planned.static_url) |u| try claimStaticUrlOrFatal(arena.a, &static_seen, src, u, rt.path);
@@ -679,7 +679,7 @@ fn chooseFallback(
     has_root_index: bool,
     dynamics: []const DynamicEntry,
 ) !?[]const u8 {
-    if (has_root_index) return try std.fmt.allocPrint(alloc, "{s}/index.html", .{base});
+    if (has_root_index) return try alloc.print("{s}/index.html", .{base});
     if (dynamics.len != 0) return try alloc.dupe(u8, dynamics[0].shell);
     return null;
 }
@@ -693,7 +693,7 @@ fn chooseFallback(
 /// instead of borrowing it, so the caller frees unconditionally.
 fn diskJoin(alloc: std.mem.Allocator, prefix: []const u8, rest: []const u8) ![]const u8 {
     if (prefix.len == 0) return alloc.dupe(u8, rest);
-    return std.fmt.allocPrint(alloc, "{s}/{s}", .{ prefix, rest });
+    return alloc.print("{s}/{s}", .{ prefix, rest });
 }
 
 /// NO_SLOP.md §2.2a contract 4 (`RenderArena`): a `PlannedRoute` is four or five
@@ -710,12 +710,12 @@ fn planRoute(arena: RenderArena, base: []const u8, rt: sidecar.RouteMeta) !Plann
     const ssr = try substituteParams(arena.a, base, rt.path);
     if (!rt.dynamic) {
         const url = try joinUrl(arena.a, base, rt.path, true); // trailing slash
-        const out_path = try std.fmt.allocPrint(arena.a, "{s}index.html", .{std.mem.trimStart(u8, url, "/")});
+        const out_path = try arena.a.print("{s}index.html", .{std.mem.trimStart(u8, url, "/")});
         return .{ .ssr_pathname = ssr, .out_path = out_path, .static_url = url, .dynamic = null };
     }
     // dynamic: one _shell.html at the pattern's static prefix dir.
     const dir = try patternDir(arena.a, base, rt.path); // e.g. "/app/club" for "/club/:id"
-    const shell = try std.fmt.allocPrint(arena.a, "{s}/_shell.html", .{dir});
+    const shell = try arena.a.print("{s}/_shell.html", .{dir});
     // On-disk path is `dir` minus its leading "/". For a root-mounted SPA whose
     // first route segment is dynamic (`/:x`, `/*`), `patternDir` returns "" —
     // the disk path must then be the bare "_shell.html" with NO leading slash;
@@ -724,7 +724,7 @@ fn planRoute(arena: RenderArena, base: []const u8, rt: sidecar.RouteMeta) !Plann
     // root, escaping the output dir (AUDF-001). `diskJoin` inserts the "/"
     // separator only when the prefix is non-empty.
     const out_path = try diskJoin(arena.a, std.mem.trimStart(u8, dir, "/"), "_shell.html");
-    const pattern = try std.fmt.allocPrint(arena.a, "{s}{s}", .{ base, rt.path });
+    const pattern = try arena.a.print("{s}{s}", .{ base, rt.path });
     return .{ .ssr_pathname = ssr, .out_path = out_path, .static_url = null, .dynamic = .{ .pattern = pattern, .shell = shell } };
 }
 
@@ -762,7 +762,7 @@ fn renderFlagsSnapshot(alloc: std.mem.Allocator, flags: ?std.json.ArrayHashMap(b
     try w.writeAll("},\"experiments\":{}}");
     const json = try pass.escapeScriptContent(alloc, aw.written());
     defer alloc.free(json);
-    return std.fmt.allocPrint(alloc, "<script type=\"application/json\" data-z-flags>{s}</script>", .{json});
+    return alloc.print("<script type=\"application/json\" data-z-flags>{s}</script>", .{json});
 }
 
 const ShellOptions = struct {
@@ -785,7 +785,7 @@ fn renderShell(alloc: std.mem.Allocator, title: []const u8, noindex: bool, bundl
     const lang_attr = if (shell.lang) |lang| blk: {
         const escaped = try escapeHtml(alloc, lang);
         defer alloc.free(escaped);
-        break :blk try std.fmt.allocPrint(alloc, " lang=\"{s}\"", .{escaped});
+        break :blk try alloc.print(" lang=\"{s}\"", .{escaped});
     } else "";
     defer alloc.free(lang_attr);
     const robots = if (noindex) "<meta name=\"robots\" content=\"noindex\">" else "";
@@ -796,7 +796,7 @@ fn renderShell(alloc: std.mem.Allocator, title: []const u8, noindex: bool, bundl
     // routes with no lazy chunk and for reusable namespace/404 fallbacks,
     // whose requested URL may point at an entirely different view.
     const chunk_preload = if (chunk_url != null and !shell.reusable_fallback)
-        try std.fmt.allocPrint(alloc, "<link rel=\"modulepreload\" href=\"{s}\">", .{chunk_url.?})
+        try alloc.print("<link rel=\"modulepreload\" href=\"{s}\">", .{chunk_url.?})
     else
         "";
     defer alloc.free(chunk_preload);
@@ -813,13 +813,13 @@ fn renderShell(alloc: std.mem.Allocator, title: []const u8, noindex: bool, bundl
     const prefix_attr = if (url_prefix.len != 0) blk: {
         const escaped_prefix = try escapeHtml(alloc, url_prefix);
         defer alloc.free(escaped_prefix);
-        break :blk try std.fmt.allocPrint(alloc, " data-z-prefix=\"{s}\"", .{escaped_prefix});
+        break :blk try alloc.print(" data-z-prefix=\"{s}\"", .{escaped_prefix});
     } else "";
     defer alloc.free(prefix_attr);
     const pathname_attr = if (shell.pathname) |path| blk: {
         const escaped = try escapeHtml(alloc, path);
         defer alloc.free(escaped);
-        break :blk try std.fmt.allocPrint(alloc, " data-z-prerender-path=\"{s}\"", .{escaped});
+        break :blk try alloc.print(" data-z-prerender-path=\"{s}\"", .{escaped});
     } else "";
     defer alloc.free(pathname_attr);
     // The runtime tags (preload/import-map/script) point at `runtime_url` — the
@@ -845,7 +845,7 @@ fn renderShell(alloc: std.mem.Allocator, title: []const u8, noindex: bool, bundl
     // flaky: a cold cache usually loses the race, a warm one wins it and breaks).
     // `head_links` rides right after the map for the same reason: it may itself
     // contain a stylesheet/preconnect `<link>`, which the spec treats the same way.
-    return std.fmt.allocPrint(alloc, "<!DOCTYPE html><html{[lang_attr]s}><head><meta charset=\"utf-8\">" ++
+    return alloc.print("<!DOCTYPE html><html{[lang_attr]s}><head><meta charset=\"utf-8\">" ++
         "<meta name=\"viewport\" content=\"{[viewport]s}\">" ++
         "<title>{[title]s}</title>{[robots]s}" ++
         "{[import_map]s}" ++
@@ -973,7 +973,7 @@ fn fingerprintedHref(
     const cut = std.mem.indexOfAny(u8, href, "?#") orelse href.len;
     const path = href[0..cut];
     const slash = std.mem.lastIndexOfScalar(u8, path, '/') orelse 0;
-    return std.fmt.allocPrint(alloc, "{s}{s}{s}", .{
+    return alloc.print("{s}{s}{s}", .{
         path[0 .. slash + 1],
         hashed,
         href[cut..],
@@ -1226,7 +1226,7 @@ pub fn spaName(src: []const u8) []const u8 {
 /// "app/App.spa.tsx" -> "/App".
 /// Contract 1.
 fn defaultBase(alloc: std.mem.Allocator, src: []const u8) ![]const u8 {
-    return std.fmt.allocPrint(alloc, "/{s}", .{spaName(src)});
+    return alloc.print("/{s}", .{spaName(src)});
 }
 
 /// Join `base` + `path`, replacing each `:seg` param with `_` and a trailing

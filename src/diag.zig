@@ -761,16 +761,16 @@ test "diag: every Code appears in diag-codes.frozen [ACTIVE]" {
     var active = try frozenLines(active_section, gpa);
     defer active.deinit(gpa);
 
-    inline for (@typeInfo(Code).@"enum".fields) |field| {
+    inline for (@typeInfo(Code).@"enum".field_names) |name| {
         var found = false;
         for (active.items) |line| {
-            if (std.mem.eql(u8, line, field.name)) {
+            if (std.mem.eql(u8, line, name)) {
                 found = true;
                 break;
             }
         }
         if (!found) {
-            std.debug.print("Code.{s} has no matching line in [ACTIVE]\n", .{field.name});
+            std.debug.print("Code.{s} has no matching line in [ACTIVE]\n", .{name});
         }
         try std.testing.expect(found);
     }
@@ -797,10 +797,10 @@ test "diag: no Code matches a [RETIRED] line" {
     var retired = try frozenLines(retired_section, gpa);
     defer retired.deinit(gpa);
 
-    inline for (@typeInfo(Code).@"enum".fields) |field| {
+    inline for (@typeInfo(Code).@"enum".field_names) |name| {
         for (retired.items) |line| {
-            if (std.mem.eql(u8, line, field.name)) {
-                std.debug.print("Code.{s} reuses a RETIRED name -- pick a new one\n", .{field.name});
+            if (std.mem.eql(u8, line, name)) {
+                std.debug.print("Code.{s} reuses a RETIRED name -- pick a new one\n", .{name});
                 try std.testing.expect(false);
             }
         }
@@ -827,8 +827,8 @@ test "diag: [ACTIVE] is alphabetically sorted and has no duplicates" {
 }
 
 test "diag: every Code has a non-empty summary and explanation" {
-    inline for (@typeInfo(Code).@"enum".fields) |field| {
-        const c: Code = @enumFromInt(field.value);
+    inline for (@typeInfo(Code).@"enum".field_names) |name| {
+        const c: Code = @field(Code, name);
         const i = info(c);
         try std.testing.expect(i.summary.len > 0);
         try std.testing.expect(i.explanation.len > 0);

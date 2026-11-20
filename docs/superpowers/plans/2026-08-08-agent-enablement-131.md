@@ -6,11 +6,11 @@
 
 **Architecture:** The NDJSON machinery already exists (`src/diag.zig`: global `diag.format`, `emit`, `ZP_*` code registry, `fatal.msg`/`usageError` auto-emit `ZP_FATAL` in JSON mode). Tasks 1–3 extend the `--format=json` flag to three more commands by (a) growing the `main.zig` pre-scan gate one command at a time and (b) teaching each command's parser the flag. `doctor` gets its own NDJSON report shape on **stdout** (its report stream) while build-diagnostic fatals stay on stderr. Task 4 adds two embedded template files to `init`. Task 5 creates `skills/zigapagos-astro-migration/` with reference copies of `docs/migration/*` kept honest by a new shell gate.
 
-**Tech Stack:** Zig 0.16 (via mise), bash shell e2e tests (`tests/*/*.sh`, auto-globbed by CI), bun (only for NDJSON parsing inside tests).
+**Tech Stack:** Zig 0.17.1 (via mise), bash shell e2e tests (`tests/*/*.sh`, auto-globbed by CI), bun (only for NDJSON parsing inside tests).
 
 ## Global Constraints
 
-- Toolchain: `mise.toml` pins zig 0.16.0 — run zig via the shell's resolved `zig` (or `mise exec -- zig`). If configure-time dependency errors appear, check `zig version` first (version skew, not code).
+- Toolchain: `mise.toml` pins zig 0.17.1 — run zig via the shell's resolved `zig` (or `mise exec -- zig`). If configure-time dependency errors appear, check `zig version` first (version skew, not code).
 - Formatting gate: `git ls-files -z '*.zig' | xargs -0 -r zig fmt --check` must pass before every commit that touches `.zig` files.
 - Compile gates after each Zig task: `zig build check` AND `zig build check -Dsingle-threaded` (the latter is a real gate — test-only code that reaches `std.Thread.spawn` is a hard compile error there).
 - Unit-test steps are per-suite: `zig build test-validate`, `zig build test-doctor`. (`zig build test` runs snapshots only, NOT unit tests.)

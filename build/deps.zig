@@ -25,7 +25,7 @@ pub const Upstream = struct {
 pub fn upstream(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
     tracy: bool,
 ) Upstream {
     const scripty = b.dependency("scripty", .{
@@ -52,7 +52,7 @@ pub fn upstream(
     }).module("supermd");
     supermd.addImport("scripty", scripty);
     supermd.addImport("superhtml", superhtml);
-    supermd.addImport("ziggy", ziggy);
+    // SuperMD owns its newer Ziggy API; our config module keeps Ziggy old.
 
     const zeit = b.dependency("zeit", .{
         .target = target,
@@ -66,4 +66,20 @@ pub fn upstream(
         .supermd = supermd,
         .zeit = zeit,
     };
+}
+
+/// Translate the SDK headers for the macOS watcher, using the same framework
+/// search paths as the executable that imports them.
+pub fn macos(b: *std.Build, module: *std.Build.Module, target: std.Build.ResolvedTarget, optimize: std.lang.Optimize, frameworks: *std.Build.Dependency) void {
+    const Translator = @import("translate_c").Translator;
+    const tr: Translator = .init(b.dependency("translate_c", .{ .optimize = .fast }), .{
+        .c_source_file = b.path("src/c.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    tr.addIncludePath(frameworks.path("include"));
+    tr.addFrameworkPath(frameworks.path("Frameworks"));
+    tr.mod.addLibraryPath(frameworks.path("lib"));
+    tr.mod.linkFramework("CoreServices", .{});
+    module.addImport("c", tr.mod);
 }

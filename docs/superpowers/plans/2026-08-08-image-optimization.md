@@ -6,13 +6,13 @@
 
 **Architecture:** wuffs (already vendored, decode-only) hands us RGBA pixels; a first-party linear-light Lanczos3 resampler produces variants; vendored libwebp (hand-written externs, no translate-c) encodes. Variant *names* are pure functions of `(source bytes, params)`, computed by a single-threaded planner before the render pass (same write-once/lock-free-read discipline as `asset_fingerprints`), so render never waits on pixels; the pixel work runs as worker jobs in the asset-install phase, backed by `.zigapagos-cache/images/`.
 
-**Tech Stack:** Zig 0.16 (released, no nightlies), wuffs 0.4 (existing pin + checked-in `src/hacks/` shims), libwebp (new tarball dep, compiled by us), Blake3 (`std.crypto`), bash e2e under `tests/images/`.
+**Tech Stack:** Zig 0.17.1 (released, no nightlies), wuffs 0.4 (existing pin + checked-in `src/hacks/` shims), libwebp (new tarball dep, compiled by us), Blake3 (`std.crypto`), bash e2e under `tests/images/`.
 
 **Spec:** `docs/superpowers/specs/2026-08-08-image-optimization-design.md`. Read it first.
 
 ## Global Constraints
 
-- `zig version` must be **0.16.0** (mise resolves it); dependency-graph errors at configure time are version skew, not code defects.
+- `zig version` must be **0.17.1** (mise resolves it); dependency-graph errors at configure time are version skew, not code defects.
 - `git ls-files -z '*.zig' | xargs -0 -r zig fmt --check` must pass before every push. Never reformat `zig-pkg/` (gitignored materialized deps).
 - `zig build check` and `zig build check -Dsingle-threaded` must stay green after every task. A test that reaches `std.Thread.spawn` needs `if (comptime !builtin.single_threaded)` pruning — a runtime skip does NOT help.
 - Every allocator-taking function states its NO_SLOP §2.2a contract (1 self-freeing / 2 owned-result / 3 caller-buffer / 4 arena-scoped) in its doc comment. Run `bash scripts/check-allocator-contracts.sh` after Zig tasks. No new `scripts/allocator-allowlist.txt` rows are expected.

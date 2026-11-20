@@ -53,8 +53,7 @@ pub const shared_runtime_url = "/zigapagos-runtime.js";
 /// `allocPrint` escapes and nothing else is allocated. Arena-scoped callers reach
 /// it through `RenderArena.a`.
 pub fn importMapFor(alloc: std.mem.Allocator, runtime_url: []const u8) ![]u8 {
-    return std.fmt.allocPrint(
-        alloc,
+    return alloc.print(
         "<script type=\"importmap\">{{\"imports\":{{" ++
             "\"@z/runtime\":\"{[u]s}\"," ++
             "\"@z/runtime/jsx-runtime\":\"{[u]s}\"," ++
@@ -74,13 +73,13 @@ pub fn importMapFor(alloc: std.mem.Allocator, runtime_url: []const u8) ![]u8 {
 /// `runtime_script`, but for an arbitrary runtime URL (see `importMapFor`).
 /// Contract 1.
 pub fn runtimeScriptFor(alloc: std.mem.Allocator, runtime_url: []const u8) ![]u8 {
-    return std.fmt.allocPrint(alloc, "<script type=\"module\" src=\"{s}\"></script>", .{runtime_url});
+    return alloc.print("<script type=\"module\" src=\"{s}\"></script>", .{runtime_url});
 }
 
 /// `runtime_preload`, but for an arbitrary runtime URL (see `importMapFor`).
 /// Contract 1.
 pub fn runtimePreloadFor(alloc: std.mem.Allocator, runtime_url: []const u8) ![]u8 {
-    return std.fmt.allocPrint(alloc, "<link rel=\"modulepreload\" href=\"{s}\">", .{runtime_url});
+    return alloc.print("<link rel=\"modulepreload\" href=\"{s}\">", .{runtime_url});
 }
 
 /// One failed island SSR render, recorded into the caller-owned
@@ -204,7 +203,7 @@ pub const ProcessOptions = struct {
 pub fn prefixed(alloc: std.mem.Allocator, prefix: []const u8, url: []const u8) ![]const u8 {
     const trimmed = std.mem.trim(u8, prefix, "/");
     if (trimmed.len == 0) return alloc.dupe(u8, url);
-    return std.fmt.allocPrint(alloc, "/{s}{s}", .{ trimmed, url });
+    return alloc.print("/{s}{s}", .{ trimmed, url });
 }
 
 /// The build-time `<script type="speculationrules">` block for issue #128:
@@ -225,8 +224,7 @@ pub fn prefixed(alloc: std.mem.Allocator, prefix: []const u8, url: []const u8) !
 pub fn speculationRulesTag(alloc: std.mem.Allocator, url_prefix: []const u8) ![]u8 {
     const pattern = try prefixed(alloc, url_prefix, "/*");
     defer alloc.free(pattern);
-    return std.fmt.allocPrint(
-        alloc,
+    return alloc.print(
         "<script type=\"speculationrules\">{{\"prefetch\":[{{\"where\":{{\"href_matches\":\"{s}\"}},\"eagerness\":\"moderate\"}}]}}</script>",
         .{pattern},
     );
@@ -837,7 +835,7 @@ fn rewrite(
         defer if (expanded_markdown_slots) |owned| gpa.free(owned);
         const slot_html = if (expanded_markdown_slots) |owned| owned else raw_slot_html;
 
-        const id = try std.fmt.allocPrint(arena.a, "z-island-{d}", .{counter.*});
+        const id = try arena.a.print("z-island-{d}", .{counter.*});
         counter.* += 1;
 
         // Arena-dupe src and client so all IslandInstance fields are arena-owned.
@@ -1022,7 +1020,7 @@ fn rewrite(
 
         // client:media carries a query, emitted as data-z-media for the runtime.
         const media_attr = if (cd.value) |v|
-            try std.fmt.allocPrint(arena.a, " data-z-media=\"{s}\"", .{v})
+            try arena.a.print(" data-z-media=\"{s}\"", .{v})
         else
             "";
 
@@ -1357,7 +1355,7 @@ pub fn islandModuleName(src: []const u8) []const u8 {
 /// Map a component `src` to the URL of its bundled JS module.
 /// "components/Hero.island.tsx" -> "/islands/Hero.island.js". Contract 1.
 fn moduleUrl(alloc: std.mem.Allocator, src: []const u8) ![]u8 {
-    return std.fmt.allocPrint(alloc, "/islands/{s}.js", .{islandModuleName(src)});
+    return alloc.print("/islands/{s}.js", .{islandModuleName(src)});
 }
 
 /// True when `names` contains `needle`. Contract 3: allocates nothing.
@@ -1854,7 +1852,7 @@ const StubRenderer = struct {
         // Echo enough to assert against: the src basename and the props JSON.
         var name = src;
         if (std.mem.lastIndexOfScalar(u8, name, '/')) |s| name = name[s + 1 ..];
-        return std.fmt.allocPrint(arena.a, "<stub data-src=\"{s}\">{s}</stub>", .{ name, props_json });
+        return arena.a.print("<stub data-src=\"{s}\">{s}</stub>", .{ name, props_json });
     }
 };
 
@@ -1906,7 +1904,7 @@ test "process forwards page_url to the renderer as pathname" {
             _ = props_json;
             _ = slots_json;
             _ = err_out;
-            return std.fmt.allocPrint(ra.a, "<p>path: {s}</p>", .{pathname});
+            return ra.a.print("<p>path: {s}</p>", .{pathname});
         }
     };
 
@@ -1944,7 +1942,7 @@ test "process forwards the URL-PREFIXED page_url as the island's SSR pathname" {
                 self.seen[self.n] = try ra.a.dupe(u8, pathname);
                 self.n += 1;
             }
-            return std.fmt.allocPrint(ra.a, "<p>path: {s}</p>", .{pathname});
+            return ra.a.print("<p>path: {s}</p>", .{pathname});
         }
     };
     const input = "<main><island src=\"components/Location.zig\" client:load :props='{}'></island></main>";

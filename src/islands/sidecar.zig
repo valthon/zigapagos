@@ -840,9 +840,9 @@ test "concurrent renders against one Sidecar stay correct (mutex serializes)" {
             var a_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
             defer a_state.deinit();
             const arena = RenderArena.from(&a_state);
-            const props = std.fmt.bufPrint(&buf, "{{\"start\":{d},\"label\":\"t\"}}", .{n}) catch return;
+            const props = std.mem.print(&buf, "{{\"start\":{d},\"label\":\"t\"}}", .{n}) catch return;
             const html = sc.render(arena, "runtime/test/fixtures/Counter.island.tsx", props, "", "/", null) catch return;
-            const want = std.fmt.allocPrint(arena.a, "<button>t: {d}</button>", .{n}) catch return;
+            const want = arena.a.print("<button>t: {d}</button>", .{n}) catch return;
             if (std.mem.eql(u8, html, want)) _ = ok.fetchAdd(1, .monotonic);
         }
     };

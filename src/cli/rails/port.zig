@@ -478,7 +478,7 @@ const Scan = struct {
     /// allocated. Cheap to write, ugly to debug.
     fn fail(s: *Scan, comptime fmt: []const u8, args: anytype) Allocator.Error!void {
         if (s.bad != null) return;
-        const why = try std.fmt.allocPrint(s.gpa, fmt, args);
+        const why = try s.gpa.print(fmt, args);
         s.bad = why;
     }
 
@@ -1287,7 +1287,7 @@ pub fn recordBody(
 
     if (r.bad == null and r.ctrls.items.len != 0) {
         const c = r.ctrls.items[r.ctrls.items.len - 1];
-        const why = try std.fmt.allocPrint(gpa, "`{s}` is never closed in this region", .{c.cond});
+        const why = try gpa.print("`{s}` is never closed in this region", .{c.cond});
         r.bad = .{ .kind = .control, .line = c.line, .col = c.col, .why = why };
     }
 
@@ -1402,7 +1402,7 @@ const Rec = struct {
     /// `r.bad = .{ … .why = try … }` is not the same thing.
     fn fail(r: *Rec, n: fragments.Node, comptime fmt: []const u8, args: anytype) Allocator.Error!void {
         if (r.bad != null) return;
-        const why = try std.fmt.allocPrint(r.gpa, fmt, args);
+        const why = try r.gpa.print(fmt, args);
         r.bad = .{ .kind = n.kind, .line = n.line, .col = n.col, .why = why };
     }
 
@@ -1494,7 +1494,7 @@ const Rec = struct {
                 );
                 const access = try accessExpr(r.gpa, ref);
                 defer r.gpa.free(access);
-                const js = try std.fmt.allocPrint(r.gpa, "esc(String({s} ?? \"\"))", .{access});
+                const js = try r.gpa.print("esc(String({s} ?? \"\"))", .{access});
                 defer r.gpa.free(js);
                 try r.top().code(r.gpa, js);
                 return r.flush();
@@ -1584,7 +1584,7 @@ const Rec = struct {
                 // `/{rel}` is the same URL `scaffold.zig` records as the
                 // asset's `target_url`; `$site.asset(…)`, which `convert`
                 // emits into SuperHTML, means nothing inside a JS string.
-                url = try std.fmt.allocPrint(r.gpa, "/{s}", .{rel});
+                url = try r.gpa.print("/{s}", .{rel});
             }
             const href = url orelse literal;
             if (std.mem.eql(u8, helper, "image_tag")) {
@@ -1666,9 +1666,9 @@ const Rec = struct {
             const access = if (ref.field != null)
                 try accessExpr(r.gpa, ref)
             else
-                try std.fmt.allocPrint(r.gpa, "{s}.id", .{ref.js});
+                try r.gpa.print("{s}.id", .{ref.js});
             defer r.gpa.free(access);
-            const js = try std.fmt.allocPrint(r.gpa, "encodeURIComponent(String({s} ?? \"\"))", .{access});
+            const js = try r.gpa.print("encodeURIComponent(String({s} ?? \"\"))", .{access});
             defer r.gpa.free(js);
             try r.top().code(r.gpa, js);
         }
@@ -1676,7 +1676,7 @@ const Rec = struct {
 
         if (text_access) |t| {
             try r.markup("\">");
-            const js = try std.fmt.allocPrint(r.gpa, "esc(String({s} ?? \"\"))", .{t});
+            const js = try r.gpa.print("esc(String({s} ?? \"\"))", .{t});
             defer r.gpa.free(js);
             try r.top().code(r.gpa, js);
             try r.markup("</a>");
@@ -1703,16 +1703,14 @@ const Rec = struct {
         const access = try accessExpr(r.gpa, ref);
         defer r.gpa.free(access);
         const cond = if (ref.predicate)
-            try std.fmt.allocPrint(r.gpa, "{s}{s}", .{ if (negate) "!" else "", access })
+            try r.gpa.print("{s}{s}", .{ if (negate) "!" else "", access })
         else if (negate)
-            try std.fmt.allocPrint(
-                r.gpa,
+            try r.gpa.print(
                 "!({s} !== null && {s} !== undefined && {s} !== false)",
                 .{ access, access, access },
             )
         else
-            try std.fmt.allocPrint(
-                r.gpa,
+            try r.gpa.print(
                 "{s} !== null && {s} !== undefined && {s} !== false",
                 .{ access, access, access },
             );
@@ -1756,7 +1754,7 @@ const Rec = struct {
         }
         const then_arm = c.then_expr orelse arm;
         const else_arm = if (c.then_expr != null) arm else "\"\"";
-        const s = try std.fmt.allocPrint(r.gpa, "({s} ? {s} : {s})", .{ c.cond, then_arm, else_arm });
+        const s = try r.gpa.print("({s} ? {s} : {s})", .{ c.cond, then_arm, else_arm });
         defer r.gpa.free(s);
         try r.top().code(r.gpa, s);
         return r.flush();
@@ -1886,7 +1884,7 @@ fn aliasRef(aliases: []const Alias, code: []const u8) ?Ref {
 /// Contract 1 (self-freeing): the returned `rec` / `rec.title` is the only
 /// allocation and is the caller's to free.
 fn accessExpr(gpa: Allocator, ref: Ref) Allocator.Error![]u8 {
-    if (ref.field) |f| return std.fmt.allocPrint(gpa, "{s}.{s}", .{ ref.js, f });
+    if (ref.field) |f| return gpa.print("{s}.{s}", .{ ref.js, f });
     return gpa.dupe(u8, ref.js);
 }
 
@@ -1994,7 +1992,7 @@ fn appendJsEscaped(gpa: Allocator, out: *std.ArrayList(u8), text: []const u8) Al
         '\t' => try out.appendSlice(gpa, "\\t"),
         0...8, 11, 12, 14...31, 127 => {
             var buf: [6]u8 = undefined;
-            const s = std.fmt.bufPrint(&buf, "\\u{x:0>4}", .{ch}) catch unreachable;
+            const s = std.mem.print(&buf, "\\u{x:0>4}", .{ch}) catch unreachable;
             try out.appendSlice(gpa, s);
         },
         else => try out.append(gpa, ch),

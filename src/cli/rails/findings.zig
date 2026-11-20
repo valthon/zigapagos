@@ -339,7 +339,7 @@ pub fn findingId(gpa: Allocator, code: []const u8, path: []const u8, loc: []cons
     defer gpa.free(path_esc);
     const loc_esc = try escapePart(gpa, loc);
     defer gpa.free(loc_esc);
-    return std.fmt.allocPrint(gpa, "{s}.{s}.{s}", .{ code_esc, path_esc, loc_esc });
+    return gpa.print("{s}.{s}.{s}", .{ code_esc, path_esc, loc_esc });
 }
 
 /// The id of a ROUTE-scoped finding (#167 Stage 2): `<code>.config/routes.rb.
@@ -418,7 +418,7 @@ pub fn routeVerbFindingId(
     defer gpa.free(verb_esc);
     const resource_esc = try escapePart(gpa, resource orelse "");
     defer gpa.free(resource_esc);
-    return std.fmt.allocPrint(gpa, "{s}.{s}.{s}", .{ base, verb_esc, resource_esc });
+    return gpa.print("{s}.{s}.{s}", .{ base, verb_esc, resource_esc });
 }
 
 /// True when a route path has a `:param` or `*glob` segment -- i.e. when it
@@ -1303,16 +1303,16 @@ fn deriveRouteFindings(
         // Formatted here rather than imported because `rails.zig` is this
         // package's ROOT and imports this file; the two-token format is
         // simpler to restate than that cycle is to reason about.
-        const id = try std.fmt.allocPrint(gpa, "{s} {s}", .{ r.verb, r.path });
+        const id = try gpa.print("{s} {s}", .{ r.verb, r.path });
         errdefer gpa.free(id);
         const detail: ?[]u8 = switch (row) {
             .auth_guard => blk: {
                 const f = authGuardFor(in.filters, r.controller, r.action).?;
-                break :blk try std.fmt.allocPrint(gpa, "{s} on {s}", .{ f.name orelse "", f.controller });
+                break :blk try gpa.print("{s} on {s}", .{ f.name orelse "", f.controller });
             },
             .content_collision => blk: {
                 const w = in.routes[collisionWinner(in.content_collisions, i).?];
-                break :blk try std.fmt.allocPrint(gpa, "{s} {s}", .{ w.verb, w.path });
+                break :blk try gpa.print("{s} {s}", .{ w.verb, w.path });
             },
             else => null,
         };
@@ -1451,7 +1451,7 @@ fn deriveAuthJourney(
     }
     for (in.routes, 0..) |r, i| {
         if (!journeyRoute(journey, i)) continue;
-        const id = try std.fmt.allocPrint(gpa, "{s} {s}", .{ r.verb, r.path });
+        const id = try gpa.print("{s} {s}", .{ r.verb, r.path });
         errdefer gpa.free(id);
         try hits.append(gpa, .{ .line = r.source.line, .id = id });
     }
@@ -1515,7 +1515,7 @@ fn nodeLoc(gpa: Allocator, node: fragments.Node) Allocator.Error![]u8 {
 }
 
 fn lineLoc(gpa: Allocator, line: u64) Allocator.Error![]u8 {
-    return std.fmt.allocPrint(gpa, "L{d}", .{line});
+    return gpa.print("L{d}", .{line});
 }
 
 /// The `loc` for a finding whose trigger has no source position at all: the
@@ -1821,7 +1821,7 @@ fn stringLessThan(_: void, a: []const u8, b: []const u8) bool {
 /// Contract 2 (owned-result), inherited from the caller's output list:
 /// formatting scratch is freed before return and only appended bytes remain.
 fn appendFmt(gpa: Allocator, out: *std.ArrayListUnmanaged(u8), comptime fmt: []const u8, args: anytype) Allocator.Error!void {
-    const text = try std.fmt.allocPrint(gpa, fmt, args);
+    const text = try gpa.print(fmt, args);
     defer gpa.free(text);
     try out.appendSlice(gpa, text);
 }
@@ -1885,7 +1885,7 @@ fn stimulusMessage(
             return .{ .message = try message.toOwnedSlice(gpa), .portable = false };
         }
         for (actions.list) |action| {
-            const label = try std.fmt.allocPrint(gpa, "{s}->{s}#{s}", .{ action.event, action.identifier, action.method });
+            const label = try gpa.print("{s}->{s}#{s}", .{ action.event, action.identifier, action.method });
             errdefer gpa.free(label);
             try action_labels.append(gpa, label);
         }
@@ -1997,7 +1997,7 @@ fn relativeImportSource(gpa: Allocator, in: DeriveInput, importer: []const u8, s
         if (suffix.len == 0) {
             if (!std.mem.endsWith(u8, base, ".jsx") and !std.mem.endsWith(u8, base, ".tsx") and !std.mem.endsWith(u8, base, ".js") and !std.mem.endsWith(u8, base, ".ts")) continue;
         }
-        const candidate = try std.fmt.allocPrint(gpa, "{s}{s}", .{ base, suffix });
+        const candidate = try gpa.print("{s}{s}", .{ base, suffix });
         defer gpa.free(candidate);
         if (sourceByPath(in.js_sources, candidate)) |source| return source;
     }
@@ -2015,13 +2015,13 @@ fn componentProblem(gpa: Allocator, in: DeriveInput, root: port.JsSource) Alloca
         const source = queue.items[i];
         const imports = try port.reactImports(gpa, source.bytes);
         defer gpa.free(imports.list);
-        if (imports.unsupported) |why| return try std.fmt.allocPrint(gpa, "port cannot follow {s}: {s}", .{ std.fs.path.basename(source.path), why });
+        if (imports.unsupported) |why| return try gpa.print("port cannot follow {s}: {s}", .{ std.fs.path.basename(source.path), why });
         for (imports.list) |imp| {
             if (!imp.relative) {
                 if (port.isBridgeResolved(imp.spec) or npmHas(in.npm_dependencies, imp.spec)) continue;
-                return try std.fmt.allocPrint(gpa, "import \"{s}\" from {s} has no version in package.json", .{ imp.spec, std.fs.path.basename(source.path) });
+                return try gpa.print("import \"{s}\" from {s} has no version in package.json", .{ imp.spec, std.fs.path.basename(source.path) });
             }
-            const child = (try relativeImportSource(gpa, in, source.path, imp.spec)) orelse return try std.fmt.allocPrint(gpa, "import \"{s}\" from {s} cannot be bundled", .{ imp.spec, std.fs.path.basename(source.path) });
+            const child = (try relativeImportSource(gpa, in, source.path, imp.spec)) orelse return try gpa.print("import \"{s}\" from {s} cannot be bundled", .{ imp.spec, std.fs.path.basename(source.path) });
             var seen = false;
             for (queue.items) |queued| {
                 if (std.mem.eql(u8, queued.path, child.path)) seen = true;
@@ -2196,7 +2196,7 @@ fn deriveNode(
             const loc = try nodeLoc(gpa, node);
             defer gpa.free(loc);
             const name = node.name orelse "";
-            const message = try std.fmt.allocPrint(gpa, "unknown helper `{s}`", .{name});
+            const message = try gpa.print("unknown helper `{s}`", .{name});
             defer gpa.free(message);
             try appendFinding(gpa, list, "RAILS_HELPER_UNKNOWN", .warn, path, node.line, loc, message, &choices_island_retain_blocked);
         },
@@ -2204,7 +2204,7 @@ fn deriveNode(
             const loc = try nodeLoc(gpa, node);
             defer gpa.free(loc);
             const name = node.name orelse "";
-            const message = try std.fmt.allocPrint(gpa, "request-time state `{s}`", .{name});
+            const message = try gpa.print("request-time state `{s}`", .{name});
             defer gpa.free(message);
             try appendFinding(gpa, list, code_request_time_state, .warn, path, node.line, loc, message, &choices_full);
         },
@@ -2219,7 +2219,7 @@ fn deriveNode(
         .vue_root => {
             const loc = try nodeLoc(gpa, node);
             defer gpa.free(loc);
-            const message = try std.fmt.allocPrint(gpa, "Vue root `{s}`: the runtime bridge is React-only", .{node.name orelse ""});
+            const message = try gpa.print("Vue root `{s}`: the runtime bridge is React-only", .{node.name orelse ""});
             defer gpa.free(message);
             try appendFinding(gpa, list, code_component_vue_unsupported, .warn, path, node.line, loc, message, &choices_retain_blocked);
         },
@@ -2229,9 +2229,9 @@ fn deriveNode(
             defer gpa.free(loc);
             const key = node.name orelse "";
             const base = if (locale) |l|
-                try std.fmt.allocPrint(gpa, "missing translation `{s}` (locale {s})", .{ key, l })
+                try gpa.print("missing translation `{s}` (locale {s})", .{ key, l })
             else
-                try std.fmt.allocPrint(gpa, "missing translation `{s}`", .{key});
+                try gpa.print("missing translation `{s}`", .{key});
             defer gpa.free(base);
             // R16: with a locale file broken, `missing` says far less than it
             // normally does -- the table it was looked up in is empty or
@@ -2242,7 +2242,7 @@ fn deriveNode(
             // sentence of context on a per-key finding, not the locale
             // report, and the blockers carry every file individually.
             const message = if (in_i18n_error_paths.len > 0)
-                try std.fmt.allocPrint(gpa, "{s} — a locale file failed to load: {s}", .{ base, in_i18n_error_paths[0] })
+                try gpa.print("{s} — a locale file failed to load: {s}", .{ base, in_i18n_error_paths[0] })
             else
                 try gpa.dupe(u8, base);
             defer gpa.free(message);
@@ -2257,7 +2257,7 @@ fn deriveNode(
             if (!node.dynamic) return;
             const loc = try nodeLoc(gpa, node);
             defer gpa.free(loc);
-            const message = try std.fmt.allocPrint(gpa, "named yield `{s}` has a default branch `{s}` that cannot be represented statically", .{ node.name orelse "", node.value orelse "" });
+            const message = try gpa.print("named yield `{s}` has a default branch `{s}` that cannot be represented statically", .{ node.name orelse "", node.value orelse "" });
             defer gpa.free(message);
             try appendFinding(gpa, list, "RAILS_NAMED_YIELD_DEFAULT", .warn, path, node.line, loc, message, &choices_retain_blocked);
         },
@@ -2265,7 +2265,7 @@ fn deriveNode(
             const loc = try nodeLoc(gpa, node);
             defer gpa.free(loc);
             const name = node.name orelse "";
-            const message = try std.fmt.allocPrint(gpa, "dynamic render target `{s}`", .{name});
+            const message = try gpa.print("dynamic render target `{s}`", .{name});
             defer gpa.free(message);
             try appendFinding(gpa, list, "RAILS_PARTIAL_DYNAMIC", .warn, path, node.line, loc, message, &choices_island_spa_retain_blocked);
         },
@@ -2273,7 +2273,7 @@ fn deriveNode(
             const loc = try nodeLoc(gpa, node);
             defer gpa.free(loc);
             const name = node.name orelse "";
-            const message = try std.fmt.allocPrint(gpa, "route helper `{s}` has non-literal arguments", .{name});
+            const message = try gpa.print("route helper `{s}` has non-literal arguments", .{name});
             defer gpa.free(message);
             try appendFinding(gpa, list, "RAILS_ROUTE_HELPER_DYNAMIC", .warn, path, node.line, loc, message, &choices_island_spa_retain_blocked);
         },
@@ -2302,7 +2302,7 @@ fn deriveNode(
             const loc = try nodeLoc(gpa, node);
             defer gpa.free(loc);
             if (routeNameUnknown(route_names, name)) {
-                const message = try std.fmt.allocPrint(gpa, "route helper `{s}` matches no certain named route", .{name});
+                const message = try gpa.print("route helper `{s}` matches no certain named route", .{name});
                 defer gpa.free(message);
                 try appendFinding(gpa, list, "RAILS_ROUTE_HELPER_UNKNOWN", .warn, path, node.line, loc, message, &choices_retain_blocked);
                 return;
@@ -2330,7 +2330,7 @@ fn deriveNode(
                 gpa.free(u);
                 return;
             }
-            const message = try std.fmt.allocPrint(gpa, "route helper `{s}` cannot be built from {d} literal argument{s}", .{ name, args.len, if (args.len == 1) "" else "s" });
+            const message = try gpa.print("route helper `{s}` cannot be built from {d} literal argument{s}", .{ name, args.len, if (args.len == 1) "" else "s" });
             defer gpa.free(message);
             try appendFinding(gpa, list, code_route_helper_unresolved, .warn, path, node.line, loc, message, &choices_retain_blocked);
         },
@@ -2338,7 +2338,7 @@ fn deriveNode(
             const loc = try nodeLoc(gpa, node);
             defer gpa.free(loc);
             const name = node.name orelse "";
-            const message = try std.fmt.allocPrint(gpa, "control flow `{s}`", .{name});
+            const message = try gpa.print("control flow `{s}`", .{name});
             defer gpa.free(message);
             try appendFinding(gpa, list, "RAILS_TEMPLATE_CONTROL_FLOW", .warn, path, node.line, loc, message, &choices_island_spa_retain_blocked);
         },
@@ -2372,8 +2372,7 @@ fn deriveNode(
                     // against, and nothing is missing to report.
                     if (resolve.isAbsoluteAssetLiteral(literal)) continue;
                     const found = resolve.assetFor(asset_list, helper, literal) orelse
-                        break :blk try std.fmt.allocPrint(
-                            gpa,
+                        break :blk try gpa.print(
                             "asset helper `{s}` names `{s}`, which matches no file under app/assets/ or public/",
                             .{ helper, literal },
                         );
@@ -2382,8 +2381,7 @@ fn deriveNode(
                     // operator is told which file to port rather than sent
                     // hunting.
                     if (found.deterministic) continue;
-                    break :blk try std.fmt.allocPrint(
-                        gpa,
+                    break :blk try gpa.print(
                         "asset `{s}` has no deterministic public URL; its target path cannot be derived without guessing",
                         .{found.source},
                     );
@@ -2473,7 +2471,7 @@ fn deriveNode(
             // the same code an `@post.errors` read through `.ivar` gets.
             const loc = try nodeLoc(gpa, node);
             defer gpa.free(loc);
-            const message = try std.fmt.allocPrint(gpa, "validation errors of `{s}`", .{node.name orelse ""});
+            const message = try gpa.print("validation errors of `{s}`", .{node.name orelse ""});
             defer gpa.free(message);
             // #167 Stage 3 widens this row with `island`: the converter can
             // now render `ZigbaseError.data` where the ERB rendered
@@ -2493,13 +2491,13 @@ fn deriveNode(
             const has_src = node.value != null or attrValue(node, "src") != null;
             const message = if (url) |u|
                 if (frameIsApi(in, node, u))
-                    try std.fmt.allocPrint(gpa, "turbo-frame `{s}` src={s} is API traffic", .{ name, u })
+                    try gpa.print("turbo-frame `{s}` src={s} is API traffic", .{ name, u })
                 else
-                    try std.fmt.allocPrint(gpa, "turbo-frame `{s}` src={s}", .{ name, u })
+                    try gpa.print("turbo-frame `{s}` src={s}", .{ name, u })
             else if (!has_src and !node.missing)
-                try std.fmt.allocPrint(gpa, "turbo-frame `{s}` (no src)", .{name})
+                try gpa.print("turbo-frame `{s}` (no src)", .{name})
             else
-                try std.fmt.allocPrint(gpa, "turbo-frame `{s}` src is request-time state", .{name});
+                try gpa.print("turbo-frame `{s}` src is request-time state", .{name});
             defer gpa.free(message);
             const choices: []const []const u8 = if (url != null and !frameIsApi(in, node, url.?))
                 &choices_island_retain_blocked
@@ -2514,15 +2512,15 @@ fn deriveNode(
             defer gpa.free(loc);
             const portable = portableTurboStream(nodes, node);
             const message = if (portable and std.mem.eql(u8, node.value.?, "subscribe"))
-                try std.fmt.allocPrint(gpa, "turbo-stream `{s}` subscription can become a realtime island", .{node.name.?})
+                try gpa.print("turbo-stream `{s}` subscription can become a realtime island", .{node.name.?})
             else if (portable)
-                try std.fmt.allocPrint(gpa, "turbo-stream `{s}` action {s} can become a realtime island", .{ node.name.?, node.value.? })
+                try gpa.print("turbo-stream `{s}` action {s} can become a realtime island", .{ node.name.?, node.value.? })
             else if (node.dynamic)
-                try std.fmt.allocPrint(gpa, "turbo-stream `{s}` has a request-time stream target or unsupported action (see #{d})", .{ node.name orelse "", turbo_stream_issue })
+                try gpa.print("turbo-stream `{s}` has a request-time stream target or unsupported action (see #{d})", .{ node.name orelse "", turbo_stream_issue })
             else if (node.value) |action|
-                try std.fmt.allocPrint(gpa, "turbo-stream `{s}` action {s} has no unambiguous literal subscription topic in this template (see #{d})", .{ node.name orelse "", action, turbo_stream_issue })
+                try gpa.print("turbo-stream `{s}` action {s} has no unambiguous literal subscription topic in this template (see #{d})", .{ node.name orelse "", action, turbo_stream_issue })
             else
-                try std.fmt.allocPrint(gpa, "turbo-stream `{s}`: a realtime subscription has no converter (see #{d})", .{ node.name orelse "", turbo_stream_issue });
+                try gpa.print("turbo-stream `{s}`: a realtime subscription has no converter (see #{d})", .{ node.name orelse "", turbo_stream_issue });
             defer gpa.free(message);
             try appendFinding(gpa, list, code_turbo_stream, .warn, path, node.line, loc, message, if (portable) &choices_realtime_retain_blocked else &choices_retain_blocked);
         },
@@ -2531,7 +2529,7 @@ fn deriveNode(
             defer gpa.free(loc);
             const name = node.name orelse "";
             if (node.dynamic) {
-                const message = try std.fmt.allocPrint(gpa, "React root `{s}` with request-time props", .{name});
+                const message = try gpa.print("React root `{s}` with request-time props", .{name});
                 defer gpa.free(message);
                 try appendFinding(gpa, list, code_component_props_dynamic, .warn, path, node.line, loc, message, &choices_retain_blocked);
                 return;
@@ -2611,19 +2609,19 @@ const ContextFailureWalker = struct {
     fn render(w: *ContextFailureWalker, path: []const u8, node: fragments.Node, answerable_depth: usize) Allocator.Error!void {
         const target = node.name orelse return w.appendOnce(code_partial_unresolved, path, node, "partial render has no literal target");
         const partial_path = convert.partialPathIn(w.templates, path, target) orelse {
-            const message = try std.fmt.allocPrint(w.gpa, "partial `{s}` cannot be located", .{target});
+            const message = try w.gpa.print("partial `{s}` cannot be located", .{target});
             defer w.gpa.free(message);
             return w.appendOnce(code_partial_unresolved, path, node, message);
         };
         for (w.stack.items) |ancestor| {
             if (!std.mem.eql(u8, ancestor, partial_path)) continue;
-            const message = try std.fmt.allocPrint(w.gpa, "partial `{s}` closes a render cycle", .{target});
+            const message = try w.gpa.print("partial `{s}` closes a render cycle", .{target});
             defer w.gpa.free(message);
             return w.appendOnce(code_partial_unresolved, path, node, message);
         }
         const tpl = templateByPath(w.templates, partial_path) orelse unreachable;
         if (tpl.error_message != null or tpl.unreadable != null) {
-            const message = try std.fmt.allocPrint(w.gpa, "partial `{s}` cannot be converted", .{target});
+            const message = try w.gpa.print("partial `{s}` cannot be converted", .{target});
             defer w.gpa.free(message);
             return w.appendOnce(code_partial_unresolved, path, node, message);
         }
@@ -2657,7 +2655,7 @@ const ContextFailureWalker = struct {
                         }
                     };
                     if (!bound and answerable_depth == 0) {
-                        const message = try std.fmt.allocPrint(w.gpa, "template local `{s}` has no literal binding", .{node.name orelse ""});
+                        const message = try w.gpa.print("template local `{s}` has no literal binding", .{node.name orelse ""});
                         defer w.gpa.free(message);
                         try w.appendOnce(code_local_unbound, path, node, message);
                     }
@@ -2787,9 +2785,9 @@ pub fn derive(gpa: Allocator, in: DeriveInput) Allocator.Error![]Finding {
                     }
                 }
                 if (covered) continue;
-                const loc = try std.fmt.allocPrint(gpa, "marker-{s}", .{marker_name});
+                const loc = try gpa.print("marker-{s}", .{marker_name});
                 defer gpa.free(loc);
-                const message = try std.fmt.allocPrint(gpa, "stimulus `{s}`; the opening element is split by ERB and has no portable extent", .{marker_name});
+                const message = try gpa.print("stimulus `{s}`; the opening element is split by ERB and has no portable extent", .{marker_name});
                 defer gpa.free(message);
                 try appendFinding(gpa, &list, code_stimulus_controller, .warn, tpl.path, null, loc, message, &choices_retain_blocked);
             }
@@ -2799,7 +2797,7 @@ pub fn derive(gpa: Allocator, in: DeriveInput) Allocator.Error![]Finding {
             const line = tpl.error_line orelse 0;
             const loc = try lineLoc(gpa, line);
             defer gpa.free(loc);
-            const message = try std.fmt.allocPrint(gpa, "template does not parse: {s}", .{em});
+            const message = try gpa.print("template does not parse: {s}", .{em});
             defer gpa.free(message);
             try appendFinding(gpa, &list, "RAILS_TEMPLATE_PARSE_ERROR", .@"error", tpl.path, tpl.error_line, loc, message, &choices_retain_blocked);
         }
@@ -2811,7 +2809,7 @@ pub fn derive(gpa: Allocator, in: DeriveInput) Allocator.Error![]Finding {
         // and one template yields at most one of these, so it is unique per
         // (code, path) the way every other `loc` is.
         if (tpl.unreadable) |why| {
-            const message = try std.fmt.allocPrint(gpa, "template was not analysed: {s}", .{why});
+            const message = try gpa.print("template was not analysed: {s}", .{why});
             defer gpa.free(message);
             try appendFinding(gpa, &list, "RAILS_TEMPLATE_UNSCANNED", .warn, tpl.path, null, unscanned_loc, message, &choices_retain_blocked);
         }
@@ -2843,7 +2841,7 @@ pub fn derive(gpa: Allocator, in: DeriveInput) Allocator.Error![]Finding {
 
     for (in.layouts) |layout| {
         if (!layout.dynamic) continue;
-        const fallback_path = try std.fmt.allocPrint(gpa, "app/controllers/{s}_controller.rb", .{layout.controller});
+        const fallback_path = try gpa.print("app/controllers/{s}_controller.rb", .{layout.controller});
         defer gpa.free(fallback_path);
         var path: []const u8 = fallback_path;
         for (in.controller_files) |cf| {
@@ -2861,7 +2859,7 @@ pub fn derive(gpa: Allocator, in: DeriveInput) Allocator.Error![]Finding {
     // `RAILS_TEMPLATE_ENGINE_UNSUPPORTED` blocker. `line` is null and `loc`
     // is a word for the reason `unsupported_engine_loc` documents.
     for (in.unsupported_templates) |t| {
-        const message = try std.fmt.allocPrint(gpa, "{s} template is not converted: no converter reads this engine", .{t.label});
+        const message = try gpa.print("{s} template is not converted: no converter reads this engine", .{t.label});
         defer gpa.free(message);
         try appendFinding(gpa, &list, code_template_engine_unsupported, .warn, t.path, null, unsupported_engine_loc, message, &choices_retain_blocked);
     }

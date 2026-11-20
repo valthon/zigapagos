@@ -80,39 +80,19 @@ jobs:
             archive: aarch64-macos.zip
     runs-on: ${{ matrix.runner }}
     steps:
-      # fetch-depth: 0 is load-bearing, not caution. build/config.zig derives the
-      # version from `git describe --match '*.*.*' --tags`, and build/release.zig
-      # registers a *failing* `release` step unless that returns an exact tag. A
-      # shallow checkout has no tags, so `release` would fail with
-      # "git tag missing, cannot make release builds" on every run.
+      # Keep release history available for changelog tooling.
       - name: Checkout
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      # build/release.zig also refuses to build when the tag disagrees with the
-      # zon package version, and scripts/extract-release-notes.sh is what turns
-      # CHANGELOG.md into the release body. Both are two seconds of bash, and
-      # both are checked here — before the toolchain install and the ReleaseFast
-      # build — so a version bump forgotten in build.zig.zon or a missing
-      # changelog section fails in ~10s instead of after every runner in the
-      # matrix has built a binary that will never be published.
+      # This is the release tag-versus-manifest guard, before compilation.
+      # The configure phase never reads tags or launches Git.
       - name: Check tag against build.zig.zon and CHANGELOG.md
         if: github.event_name == 'push'
         run: |
           scripts/assert-version.sh "$GITHUB_REF_NAME"
           scripts/extract-release-notes.sh --check "$GITHUB_REF_NAME"
-
-      # A smoke run has no tag, so `zig build release` would fail its gate before
-      # compiling anything. Synthesise the tag build/release.zig demands in the
-      # ephemeral checkout: `-f` because the real v0.1.0 exists on the remote at
-      # an older commit and fetch-depth:0 brought it along. Nothing pushes it —
-      # this job has `contents: read` and never runs a git write against origin.
-      - name: Synthesise the zon-matching tag (smoke run only)
-        if: github.event_name != 'push'
-        run: |
-          git tag -f "v$(scripts/assert-version.sh --print)" HEAD
-          git describe --match '*.*.*' --tags
 
       - name: Setup toolchain (zig + bun via mise)
         uses: jdx/mise-action@v5
@@ -135,7 +115,7 @@ jobs:
           done
 
       - name: Build ${{ matrix.target }}
-        run: zig build release -Drelease-target=${{ matrix.target }}
+        run: zig build release -Drelease-target=${{ matrix.target }} -Dcommit=${{ github.sha }}
 
       # `-Drelease-target` selects exactly one row of the matrix in
       # build/release.zig, so exactly one archive must appear. Asserting the

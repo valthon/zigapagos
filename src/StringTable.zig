@@ -46,9 +46,9 @@ pub fn intern(
     );
     if (gop.found_existing) return gop.key_ptr.*;
 
-    const new_off: String = @enumFromInt(
+    const new_off: String = @fromBackingInt(@intCast(
         std.math.cast(u32, st.string_bytes.items.len) orelse return error.OutOfMemory,
-    );
+    ));
 
     st.string_bytes.appendSliceAssumeCapacity(bytes);
     st.string_bytes.appendAssumeCapacity(0);
@@ -84,7 +84,7 @@ pub const String = enum(u32) {
         }
 
         pub fn hash(ctx: @This(), key: String) u64 {
-            return std.hash_map.hashString(mem.sliceTo(ctx.bytes[@intFromEnum(key)..], 0));
+            return std.hash_map.hashString(mem.sliceTo(ctx.bytes[@backingInt(key)..], 0));
         }
     };
 
@@ -92,7 +92,7 @@ pub const String = enum(u32) {
         bytes: []const u8,
 
         pub fn eql(ctx: @This(), a: []const u8, b: String) bool {
-            return mem.eql(u8, a, mem.sliceTo(ctx.bytes[@intFromEnum(b)..], 0));
+            return mem.eql(u8, a, mem.sliceTo(ctx.bytes[@backingInt(b)..], 0));
         }
 
         pub fn hash(_: @This(), adapted_key: []const u8) u64 {
@@ -102,7 +102,7 @@ pub const String = enum(u32) {
     };
 
     pub fn slice(index: String, st: *const StringTable) [:0]const u8 {
-        const start_slice = st.string_bytes.items[@intFromEnum(index)..];
+        const start_slice = st.string_bytes.items[@backingInt(index)..];
         return start_slice[0..mem.indexOfScalar(u8, start_slice, 0).? :0];
     }
 };

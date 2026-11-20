@@ -6,7 +6,7 @@
 
 **Architecture:** A Ruby sidecar (`runtime/sidecar/rails/`) speaks NDJSON over stdin/stdout, mirroring the existing Bun sidecar (`runtime/sidecar/render.ts` + `src/islands/sidecar.zig`). Zig spawns it, sends one request per line, and folds the result into the Stage 1 report. The rails package stays std-only; the sidecar client lives in `src/cli/rails/` and returns errors, never `fatal.*`.
 
-**Tech Stack:** Zig 0.16, Ruby (pinned in `mise.toml`) with **Prism from stdlib — no gems**, NDJSON, bash for e2e.
+**Tech Stack:** Zig 0.17.1, Ruby (pinned in `mise.toml`) with **Prism from stdlib — no gems**, NDJSON, bash for e2e.
 
 **Spec:** `docs/superpowers/specs/2026-08-22-rails-source-discovery-design.md`
 
@@ -14,7 +14,7 @@
 
 ## Global Constraints
 
-- Zig **0.16.0** exactly; Ruby pinned in `mise.toml` (the repo's single source of truth for toolchains — CI consumes it via `jdx/mise-action`; do **not** add a separate setup action).
+- Zig **0.17.1** exactly; Ruby pinned in `mise.toml` (the repo's single source of truth for toolchains — CI consumes it via `jdx/mise-action`; do **not** add a separate setup action).
 - **`zig fmt` is gated with no exceptions**: `git ls-files -z '*.zig' | xargs -0 -r zig fmt --check` must print nothing.
 - **Allocator contracts (NO_SLOP.md §2.2a)**: every allocator-taking function names its contract in a doc comment. A **wrong** label is worse than none — Stage 1 shipped one and it was caught in review. `bash scripts/check-allocator-contracts.sh` must pass.
 - **`src/cli/rails/` stays std-only**: no `@import` may escape that directory, never `../../fatal.zig`. All `fatal.*` stays in `migrate.zig`.
@@ -102,7 +102,7 @@ Expected: prints a JSON line with both versions, exit 0. If `ruby` is not on PAT
 
 ```toml
 [tools]
-zig = "0.16.0"
+zig = "0.17.1"
 bun = "1.3.14"
 ruby = "3.4"
 ```

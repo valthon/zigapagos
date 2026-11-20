@@ -173,7 +173,7 @@ The [application guide](building-apps.md) covers styling, deployment, and pairin
   reliable. Prioritize gaps demonstrated by real application migrations over
   adding new framework names. Unsupported behavior must remain visible.
 - [ ] **Dev log rotation.** Bound logs for long-running background sessions.
-- [ ] **Windows builds.** Gated on the Zig 0.17 port described above.
+- [ ] **Native Windows validation and release archives.** The tree now cross-compiles; add a native runner separately.
 
 ## Evidence and positioning maintenance
 
@@ -214,27 +214,26 @@ Policy:
 
 - **Sync at upstream release tags only** — never track upstream main/nightly.
   Each sync is a deliberate merge with its own branch, test pass, and review.
-- **The Zig 0.17 port is deferred until Zig 0.17.0 is released.** Upstream moved
-  to 0.17.0-dev; we stay on released Zig 0.16.0. When 0.17.0 ships, the port and
-  the next upstream tag sync land together.
-- **Keep the seam narrow:** new features go in new files with guarded hooks.
-  The upstream-touched surface is ~18 files; avoid growing it without need.
+- **The Zig 0.17.1 port landed independently of an upstream tag sync.** Only
+  compiler and dependency API changes required by the port were adopted. The
+  next upstream release-tag sync is still pending; new config APIs, static
+  asset directories, `$site.index` and `forbid_subsections` are separate work.
+- **Fix the file that is wrong**, inherited or fork-authored; do not introduce
+  a wrapper or generator just to hide a diff from an inherited file.
 
 ---
 
 ## Platform support
 
-- **Windows is unsupported until the Zig 0.17 port.** Inherited upstream code
-  (`src/cli/watcher/WindowsWatcher.zig`, `src/wuffs.zig`) does not compile on
-  stable Zig 0.16.0 (`std.os.windows` does not expose `OVERLAPPED` /
-  `PAGE_READONLY`); the fix rides the upstream 0.17-dev branch. CI runs ubuntu +
-  macOS; `windows-latest` returns with the port.
+- **The tree cross-compiles for x86_64-windows on Zig 0.17.1.** Ubuntu CI runs
+  `zig build check -Dtarget=x86_64-windows`. A native Windows runner and release
+  archives remain separate steps; the matrix stays ubuntu + macOS. The POSIX
+  daemon/control plane remains unavailable on Windows.
 - **arm64 is supported** on Linux and macOS with native release archives, npm
   platform packages, and the shell installer.
-- **FreeBSD is not currently a supported build target.** There is no checked-in
-  Wuffs translation shim for it, no release archive, and `dev` still selects
+- **FreeBSD is not currently a supported build target.** There is no release archive, and `dev` still selects
   the inotify-based Linux watcher instead of a native kqueue backend. FreeBSD
-  15 added inotify, but that does not close the Wuffs or target-selection gaps.
+  15 added inotify, but that does not close the release or target-selection gaps.
 
 ---
 

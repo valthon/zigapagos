@@ -1,0 +1,92 @@
+*-----------------------------------------------*
+|  WARNING: THIS IS A DEBUG BUILD OF ZIGAPAGOS  |
+|-----------------------------------------------|
+| Debug builds enable expensive sanity checks   |
+| that reduce performance.                      |
+|                                               |
+| To create a release build, run:               |
+|                                               |
+|           zig build --release=fast            |
+|                                               |
+| If you're investigating a bug in Zigapagos,   |
+| then a debug build might turn confusing       |
+| behavior into a crash.                        |
+|                                               |
+| To disable all forms of concurrency, you can  |
+| add the following flag to your build command: |
+|                                               |
+|              -Dsingle-threaded                |
+|                                               |
+*-----------------------------------------------*
+
+content/blockquote-suffix.smd:8:3: error: block/section heading with text outside of inner link
+|    > # [Title]($block.id('quote')) suffix
+|      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+| -- note: all text must be inside the inner link
+
+content/empty-fragment.smd:8:1: error: unknown ref
+|    [top](#)
+|    ^^^^^^^^
+
+content/heading-above-baseline.smd:10:1: error: heading above the document's first heading level
+|    # Above baseline
+|    ^^^^^^^^^^^^^^^^
+| -- note: first heading (level 2) on line 8 col 1:
+|    ## First
+|    ^^^^^^^^
+
+content/heading-gap-from-h1.smd:10:1: error: skipped heading level
+|    ### Third
+|    ^^^^^^^^^
+| -- note: previous heading (level 1):
+|    # First
+|    ^^^^^^^
+
+content/heading-gap.smd:10:1: error: skipped heading level
+|    #### Fourth
+|    ^^^^^^^^^^^
+| -- note: previous heading (level 2):
+|    ## First
+|    ^^^^^^^^
+
+content/inline-html.smd:8:6: error: markdown inline html syntax is forbidden
+|    Text <span>inline</span>.
+|         ^^^^^^
+| -- note: superhtml supports `=html` code blocks as an alternative
+
+content/inline-html.smd:8:18: error: markdown inline html syntax is forbidden
+|    Text <span>inline</span>.
+|                     ^^^^^^^
+| -- note: superhtml supports `=html` code blocks as an alternative
+
+content/section-suffix.smd:8:1: error: block/section heading with text outside of inner link
+|    # [Title]($section.id('intro')) suffix
+|    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+| -- note: all text must be inside the inner link
+
+content/section-suffix.smd:12:1: error: unknown ref
+|    [section](#intro)
+|    ^^^^^^^^^^^^^^^^^
+
+----------------------------
+       -- VARIANT --
+----------------------------
+.id = 0,
+.content_dir_path = content
+
+  ------- SECTION -------
+.index = 1,
+.section_path = content/,
+.pages = [
+    content/section-suffix.smd
+    content/inline-html.smd
+    content/heading-gap-from-h1.smd
+    content/heading-gap.smd
+    content/heading-above-baseline.smd
+    content/empty-fragment.smd
+    content/blockquote-suffix.smd
+],
+
+
+
+ ----- EXIT CODE: 1 -----

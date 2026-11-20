@@ -66,11 +66,11 @@ pub fn run(io: Io, gpa: Allocator, d: Job) void {
     const st: *const StringTable = resolved.st;
     const pt: *const PathTable = resolved.pt;
     const pn: PathName = .{
-        .path = @enumFromInt(d.ref.path),
-        .name = @enumFromInt(d.ref.name),
+        .path = @fromBackingInt(@intCast(d.ref.path)),
+        .name = @fromBackingInt(@intCast(d.ref.name)),
     };
     var path_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const rel = std.fmt.bufPrint(&path_buf, "{f}", .{
+    const rel = std.mem.print(&path_buf, "{f}", .{
         pn.fmt(st, pt, null, "/"),
     }) catch unreachable;
 
@@ -394,9 +394,9 @@ fn tmpName(buf: []u8, nonce: u128, ref: plan.SourceRef, variant: plan.Variant, e
     // An encoder can outlive a killed parent and its released cache lock.
     // A fresh 128-bit build nonce keeps that orphan's output path separate
     // from a new build's interchange files; only the parent installs output.
-    return std.fmt.bufPrint(buf, ".tmp.v2.{x:0>32}.{d}.{d}.{d}.{d}.{d}.{s}{s}", .{
+    return std.mem.print(buf, ".tmp.v2.{x:0>32}.{d}.{d}.{d}.{d}.{d}.{s}{s}", .{
         nonce,
-        @intFromEnum(ref.kind),
+        @backingInt(ref.kind),
         ref.variant_id,
         ref.path,
         ref.name,
@@ -421,7 +421,7 @@ fn destPath(
     path: Path,
     basename: []const u8,
 ) []const u8 {
-    return std.fmt.bufPrint(buf, "{f}{s}", .{
+    return std.mem.print(buf, "{f}{s}", .{
         path.fmt(st, pt, prefix, true),
         basename,
     }) catch unreachable;
