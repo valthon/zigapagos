@@ -117,22 +117,6 @@ jobs:
       - name: Setup toolchain (zig + bun via mise)
         uses: jdx/mise-action@v5
 
-      # The one translate-c pin left — SuperMD's transitive one (the root
-      # manifest's unconsumed direct entry was deleted) — normally resolves from
-      # Codeberg, but Codeberg capability discovery has failed persistently from
-      # GitHub-hosted runners (tracked in #121). The official
-      # ziglang/translate-c GitHub archive contains the identical commits. Zig
-      # caches by content hash, so warming that hash lets the unchanged graph
-      # resolve without contacting Codeberg.
-      #
-      # Remove only this step when #121 confirms Codeberg is reachable from
-      # hosted runners again, or when no resolved pin uses Codeberg. Pin
-      # changes still fail closed, although when Codeberg is unavailable the
-      # later fetch retry may report its general dependency-fetch diagnostic
-      # before the resolved-graph check can name an obsolete warmed hash.
-      - name: Warm translate-c cache from the official GitHub archive
-        shell: bash
-        run: bash scripts/rescue-codeberg.sh --warm-only-env "$GITHUB_ENV"
 
       - name: Fetch dependencies
         shell: bash
@@ -148,26 +132,6 @@ jobs:
               exit 1
             fi
             sleep $((attempt * 10))
-          done
-
-          # WARMED_TRANSLATE_C_HASHES is supplied only by the temporary mirror
-          # step. If that step is removed under #121, dependency fetching and
-          # retries remain intact and this loop naturally has nothing to check.
-          for expected in ${WARMED_TRANSLATE_C_HASHES:-}; do
-            found=0
-            grep -qF ".hash = \"$expected\"" build.zig.zon && found=1
-            if [ "$found" -eq 0 ]; then
-              while IFS= read -r zon; do
-                if grep -qF ".hash = \"$expected\"" "$zon"; then
-                  found=1
-                  break
-                fi
-              done < <(find zig-pkg -type f -name build.zig.zon)
-            fi
-            if [ "$found" -eq 0 ]; then
-              echo "::error::warmed translate-c hash is absent from the resolved dependency graph: $expected"
-              exit 1
-            fi
           done
 
       - name: Build ${{ matrix.target }}
