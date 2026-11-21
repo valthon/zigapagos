@@ -158,7 +158,10 @@ Codes: `ZP_MISSING_SITE_ASSET`, `ZP_MISSING_PAGE_ASSET`,
 content/index.smd:9:1: warning: unknown code-fence language 'jsonc'; emitting the block unhighlighted (did you mean 'json'?)
 ```
 
-**Cause.** The fence's info string is not a registered syntax.
+**Cause.** The fence's info string is not a registered syntax. `console` is
+accepted for shell sessions in both fenced blocks and the code directive.
+A compiler built with `-Dhighlight=false` accepts every language name without
+this warning.
 
 **This is a warning, not an error** — the block is emitted unhighlighted and the
 build succeeds. `zigapagos languages` prints the registered list, and a

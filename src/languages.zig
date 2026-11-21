@@ -5,7 +5,7 @@
 //! file rather than the inherited src/worker.zig so upstream syncs stay
 //! tractable (see CLAUDE.md's "Architecture" section).
 const std = @import("std");
-const syntax = @import("syntax");
+const options = @import("options");
 
 /// Bounded case-insensitive Levenshtein distance between `a` and `b`, or null
 /// if the two strings' length difference alone already exceeds `threshold`
@@ -99,6 +99,8 @@ fn isPrefixMatch(a: []const u8, b: []const u8) bool {
 /// regardless, but `levenshtein`'s length-gap short-circuit keeps the common
 /// "not even close" case from running the DP at all.
 pub fn suggest(input: []const u8) ?[]const u8 {
+    if (!options.enable_treesitter) return null;
+    const syntax = @import("syntax");
     const threshold: usize = if (input.len < 4) 1 else 2;
 
     var best: ?[]const u8 = null;
@@ -135,14 +137,17 @@ pub fn suggest(input: []const u8) ?[]const u8 {
 }
 
 test "suggest: jsonc suggests json" {
+    if (comptime !options.enable_treesitter) return error.SkipZigTest;
     try std.testing.expectEqualStrings("json", suggest("jsonc").?);
 }
 
 test "suggest: zig++ suggests zig" {
+    if (comptime !options.enable_treesitter) return error.SkipZigTest;
     try std.testing.expectEqualStrings("zig", suggest("zig++").?);
 }
 
 test "suggest: is case-insensitive" {
+    if (comptime !options.enable_treesitter) return error.SkipZigTest;
     try std.testing.expectEqualStrings("json", suggest("JSONC").?);
 }
 
@@ -156,7 +161,8 @@ test "suggest: yml is accepted by languageExists's guess fallback, so it never r
     // languageExists here, or importing worker.zig and creating a cycle) so a
     // flow_syntax version bump that broke this falls out of this test, not a
     // silently-wrong suggestion in the wild.
-    try std.testing.expect(syntax.FileType.guess_static("file.yml", "") != null);
+    if (comptime !options.enable_treesitter) return error.SkipZigTest;
+    try std.testing.expect(@import("syntax").FileType.guess_static("file.yml", "") != null);
 }
 
 test "suggest: no near match returns null" {
@@ -177,6 +183,7 @@ test "suggest: nginx (issue #31's own example) returns null, not 'nix'" {
 }
 
 test "suggest: distance-2 prefix relation is still suggested (zig++ -> zig)" {
+    if (comptime !options.enable_treesitter) return error.SkipZigTest;
     // Pins the rule directly, independent of the "zig++ suggests zig" test
     // above (which exercises the same case but doesn't name the mechanism):
     // "zig" is a case-insensitive prefix of "zig++", so the distance-2 match

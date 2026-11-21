@@ -255,6 +255,12 @@ fn presentationFor(gpa: Allocator, discovery: *const rails.Discovery, route_inde
 }
 
 fn contentType(path: []const u8) []const u8 {
+    if (std.mem.endsWith(u8, path, ".mp3")) return "audio/mpeg";
+    if (std.mem.endsWith(u8, path, ".wav")) return "audio/wav";
+    if (std.mem.endsWith(u8, path, ".ogg") or std.mem.endsWith(u8, path, ".oga")) return "audio/ogg";
+    if (std.mem.endsWith(u8, path, ".m4a")) return "audio/mp4";
+    if (std.mem.endsWith(u8, path, ".aac")) return "audio/aac";
+    if (std.mem.endsWith(u8, path, ".flac")) return "audio/flac";
     if (std.mem.endsWith(u8, path, ".css")) return "text/css";
     if (std.mem.endsWith(u8, path, ".js") or std.mem.endsWith(u8, path, ".mjs")) return "application/javascript";
     if (std.mem.endsWith(u8, path, ".html") or std.mem.endsWith(u8, path, ".htm")) return "text/html";
@@ -610,6 +616,13 @@ pub fn build(gpa: Allocator, discovery: *const rails.Discovery, scaffold_result:
 const testing = std.testing;
 
 test "contentType matches stock ZigBase for common Rails web assets" {
+    try testing.expectEqualStrings("audio/mpeg", contentType("/assets/talk.12345678.mp3"));
+    try testing.expectEqualStrings("audio/wav", contentType("/assets/talk.wav"));
+    try testing.expectEqualStrings("audio/ogg", contentType("/assets/talk.oga"));
+    try testing.expectEqualStrings("audio/ogg", contentType("/assets/talk.ogg"));
+    try testing.expectEqualStrings("audio/mp4", contentType("/assets/talk.m4a"));
+    try testing.expectEqualStrings("audio/aac", contentType("/assets/talk.aac"));
+    try testing.expectEqualStrings("audio/flac", contentType("/assets/talk.flac"));
     try testing.expectEqualStrings("application/javascript", contentType("/assets/application.js"));
     try testing.expectEqualStrings("application/javascript", contentType("/assets/module.mjs"));
     try testing.expectEqualStrings("font/woff2", contentType("/assets/inter.woff2"));

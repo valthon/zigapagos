@@ -51,6 +51,7 @@ zig build                      # → zig-out/bin/zigapagos
 zig build test                 # SNAPSHOT tests only — see below
 zig build check                # compile exe + all test binaries, run nothing
 zig build check -Dsingle-threaded   # required guard, see below
+zig build check -Dhighlight=false   # no syntax/tree-sitter imports or language warnings
 zig build api-check            # fail if contract/generated drifted from the schema
 cd runtime && bun install --frozen-lockfile   # ONCE per fresh worktree
 cd runtime && bun test         # TypeScript suite (750 tests)

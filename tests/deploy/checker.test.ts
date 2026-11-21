@@ -97,3 +97,18 @@ test("checker requires declared extras and rejects a different policy", async ()
     finally { withExtras.close(); }
   } finally { f.close(); }
 });
+
+for (const broken of ["", "audio-mime"]) {
+  test(`audio deployment checks bytes and MIME (${broken || "correct"})`, async () => {
+    const f = fixture("/preview", broken, [{ directive: "media-src", sources: ["https://media.example.com"] }], true);
+    try {
+      const plan = planChecks(f.site, f.url);
+      expect(plan.probes.some(p => p.path === "/talk.abcdef12.mp3")).toBe(true);
+      expect(plan.csp).toContain("media-src 'self' https://media.example.com");
+      const result = await checkDeployment(plan);
+      expect(result.ok).toBe(!broken);
+      expect(f.received).toContain("/preview/talk.abcdef12.mp3");
+      if (broken) expect(result.findings.some(f => f.path === "/talk.abcdef12.mp3" && f.code === "mime")).toBe(true);
+    } finally { f.close(); }
+  });
+}

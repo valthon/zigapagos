@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { cspHeaderValue, scanInlineScriptHashes, serializeCspSources } from "../../runtime/scripts/emit-host-config.ts";
 
-export function fixture(prefix = "", broken = "", extras: import("../../runtime/scripts/emit-host-config.ts").CspExtraSources = []) {
+export function fixture(prefix = "", broken = "", extras: import("../../runtime/scripts/emit-host-config.ts").CspExtraSources = [], audio = false) {
   const site = mkdtempSync(join(tmpdir(), "zigapagos-deploy-"));
   const files: Record<string, string> = {
     "index.html": '<!doctype html><title>Home</title><script>console.log("home")</script>',
@@ -17,6 +17,7 @@ export function fixture(prefix = "", broken = "", extras: import("../../runtime/
     "spa/lazy-XYZ123.js": "export const lazy=true;",
     "space # % ?.css": "body{margin:0}",
   };
+  if (audio) files["talk.abcdef12.mp3"] = "audio fixture bytes";
   for (const [file, body] of Object.entries(files)) {
     mkdirSync(dirname(join(site, file)), { recursive: true });
     writeFileSync(join(site, file), body);
@@ -50,7 +51,7 @@ export function fixture(prefix = "", broken = "", extras: import("../../runtime/
       if (broken === "asset-fallback" && file === "app.js") file = "index.html";
       const html = file.endsWith(".html");
       const headers: Record<string, string> = {
-        "Content-Type": html ? "text/html" : file.endsWith(".css") ? "text/css" : "text/javascript",
+        "Content-Type": file.endsWith(".mp3") && broken !== "audio-mime" ? "audio/mpeg" : html ? "text/html" : file.endsWith(".css") ? "text/css" : "text/javascript",
         "Cache-Control": /abcdef12|lazy-XYZ123/.test(file) ? "public, max-age=31536000, immutable" : "no-cache",
       };
       if (html && broken !== "csp") headers["Content-Security-Policy"] = csp;

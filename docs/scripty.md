@@ -1790,6 +1790,52 @@ Sets the source location of this directive to a site asset.
 
 Sets the source location of this directive to a build asset.
 
+### `$audio`
+
+An embedded audio file.
+
+Any text placed between `[]` will be used as a caption for the audio
+file.
+
+Example:
+```markdown
+[This is the caption]($audio.asset('foo.wav'))
+```
+
+#### `$audio.loop(Bool) -> anydirective`
+
+If true, the audio file will seek back to the start upon reaching
+the end.
+
+#### `$audio.muted(Bool) -> anydirective`
+
+If true, the audio file will be silenced at start.
+
+#### `$audio.autoplay(Bool) -> anydirective`
+
+If true, the audio file will start playing automatically.
+
+#### `$audio.hide_controls(Bool) -> anydirective`
+
+If true, the audio file will hide its controls (e.g. play/pause,
+volume).
+
+#### `$audio.url(str) -> anydirective`
+
+Sets the source location of this directive to an external URL.
+
+#### `$audio.asset(str) -> anydirective`
+
+Sets the source location of this directive to a page asset.
+
+#### `$audio.siteAsset(str) -> anydirective`
+
+Sets the source location of this directive to a site asset.
+
+#### `$audio.buildAsset(str) -> anydirective`
+
+Sets the source location of this directive to a build asset.
+
 ### `$link`
 
 A link.
@@ -1900,6 +1946,15 @@ Example:
 ```markdown
 [This is the caption]($code.asset('foo.zig'))
 ```
+
+Use `console` for shell sessions, in a fenced block (` ```console `)
+or with `$code.language('console')`. Lines beginning with `$`, `#`,
+or a bracketed prompt followed by `$` or `#` emit `prompt` and
+`command` spans. Other lines remain output text; all are HTML-escaped.
+Style these classes in your code stylesheet.
+Building the compiler with `-Dhighlight=false` omits syntax/tree-sitter
+dependencies and accepts every language name without warnings. Ordinary
+code is escaped plaintext; console formatting remains available.
 
 #### `$code.asset(str) -> anydirective`
 

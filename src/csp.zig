@@ -7,7 +7,7 @@ pub const ExtraSources = struct {
 };
 
 pub fn validDirective(value: []const u8) bool {
-    for ([_][]const u8{ "default-src", "script-src", "frame-src", "connect-src", "img-src", "style-src", "style-src-elem", "style-src-attr", "font-src", "object-src", "base-uri" }) |name| {
+    for ([_][]const u8{ "default-src", "script-src", "frame-src", "connect-src", "img-src", "media-src", "style-src", "style-src-elem", "style-src-attr", "font-src", "object-src", "base-uri" }) |name| {
         if (std.mem.eql(u8, value, name)) return true;
     }
     return false;
@@ -75,5 +75,6 @@ test "validate CSP source expressions" {
     for ([_][]const u8{ "'self'", "'sha256-YWJj'", "'nonce-YWJj=='", "data:", "*", "https://*.example.com:*/path%20name/", "example.com:443" }) |source| try std.testing.expect(validSource(source));
     for ([_][]const u8{ "", "https://", "https://example.com;img-src", "https://example.com/\n", "https://example.com/?q", "https://example.com/#f", "'sha256-!!!'", "https://example.com/%GG", "https://example.com:abc", "https://user@example.com", "'made-up'" }) |source| try std.testing.expect(!validSource(source));
     try std.testing.expect(validDirective("frame-src"));
+    try std.testing.expect(validDirective("media-src"));
     try std.testing.expect(!validDirective("scripts-src"));
 }

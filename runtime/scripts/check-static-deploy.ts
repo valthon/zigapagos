@@ -16,6 +16,13 @@ export type Probe = { path: string; file: string; mime: string; cache: string; h
 export type Plan = { site: string; base: URL; csp: string; probes: Probe[] };
 export type Report = { ok: boolean; checked: number; findings: Finding[] };
 const MIME: Record<string, string[]> = {
+  ".mp3": ["audio/mpeg"],
+  ".wav": ["audio/wav", "audio/x-wav"],
+  ".ogg": ["audio/ogg"],
+  ".oga": ["audio/ogg"],
+  ".m4a": ["audio/mp4"],
+  ".aac": ["audio/aac"],
+  ".flac": ["audio/flac", "audio/x-flac"],
   ".html": ["text/html"], ".css": ["text/css"],
   ".js": ["text/javascript", "application/javascript"],
   ".mjs": ["text/javascript", "application/javascript"],

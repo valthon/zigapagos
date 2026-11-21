@@ -15,6 +15,35 @@ PATH`) are mentioned only where they differ.
 For a running host, [deployment checks](deployment-checks.md) compare served
 frontend bytes and generated headers with the release tree.
 
+## Audio embeds
+
+Use the audio directive like an image or video source:
+
+```markdown
+[Recording caption]($audio.siteAsset('talk.mp3').loop(true).muted(true))
+[]($audio.asset('local.wav'))
+[]($audio.url('https://media.example.com/talk.mp3').hide_controls(true))
+[]($audio.buildAsset('recording'))
+```
+
+`loop`, `autoplay`, `muted` and `hide_controls` take booleans. Controls are
+visible by default. The shared `id`, `attrs` (CSS classes) and `title`
+functions apply to the `audio` element. A caption wraps it in `figure` with a `figcaption`. URLs and
+metadata are HTML-escaped. Site assets use the same refcounts, missing-asset
+diagnostics and fingerprints as images/video; page and build assets keep their
+existing install names. See the [audio reference](scripty.md#audio) for the
+source functions.
+
+Import maps remain JavaScript-only. Local audio is permitted by the generated
+CSP's `default-src 'self'`. For remote audio, declare its origin in
+[`csp_extra_sources`](configuration.md#csp_extra_sources) under `media-src`;
+the emitters preserve the effective default sources and add the declared ones.
+The deployment checker probes installed MP3, WAV, Ogg, M4A, AAC and FLAC files
+for bytes, cache headers and audio content types. The host configs rely on the
+server's MIME database, so enable its audio mappings. `doctor` checks emitted
+local source URLs; `inspect-output` continues measuring HTML/CSS/JS bytes and
+does not include media in those totals.
+
 ## Production CSS minification
 
 Run `zigapagos release --css-minify` to minify referenced and explicitly static

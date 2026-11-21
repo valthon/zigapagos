@@ -9,7 +9,7 @@ const superhtml = @import("superhtml");
 const scripty = @import("scripty");
 const ziggy = @import("ziggy");
 const tracy = @import("tracy");
-const syntax = @import("syntax");
+const options = @import("options");
 const languages = @import("languages.zig");
 const root = @import("root.zig");
 const fatal = @import("fatal.zig");
@@ -673,7 +673,7 @@ fn analyzeContent(
                 directive.kind.code.src = .{ .url = snippet };
             },
 
-            // Link, Image, Video directives
+            // Link, Image, Video and Audio directives
             inline else => |*val| {
                 switch (val.src.?) {
                     .url => continue :outer,
@@ -2034,11 +2034,15 @@ fn renderPageInner(
 
 // Null language evaluates to true for convenience.
 pub fn languageExists(language: ?[]const u8) bool {
+    if (!options.enable_treesitter) return true;
     const lang = language orelse return true;
 
     if (std.mem.eql(u8, lang, "=html")) return true;
     if (std.mem.eql(u8, lang, "=mathtex")) return true;
 
+    if (std.mem.eql(u8, lang, "console")) return true;
+
+    const syntax = @import("syntax");
     if (syntax.FileType.get_by_name_static(lang) == null) {
         var buf: [1024]u8 = undefined;
         const filename = std.mem.print(

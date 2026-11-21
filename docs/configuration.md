@@ -106,7 +106,7 @@ Each entry has a string `directive` and an array of string `sources`:
 ```
 
 Supported directives: `default-src`, `script-src`, `frame-src`, `connect-src`,
-`img-src`, `style-src`, `style-src-elem`, `style-src-attr`, `font-src`, `object-src`,
+`img-src`, `media-src`, `style-src`, `style-src-elem`, `style-src-attr`, `font-src`, `object-src`,
 and `base-uri`. Unknown directives fail config validation with the field name.
 Sources must be individual CSP source expressions: host sources (optionally a
 scheme, wildcard subdomain, port and path), scheme sources such as `data:` or

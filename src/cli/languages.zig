@@ -1,11 +1,11 @@
 const std = @import("std");
-const syntax = @import("syntax");
+const options = @import("options");
 const fatal = @import("../fatal.zig");
 
 /// `zigapagos languages` (issue #31): print every code-fence language
-/// flow_syntax registers -- name, extensions, description -- plus the two
+/// flow_syntax registers -- name, extensions, description -- plus the three
 /// specials `languageExists` (src/worker.zig) accepts outside that registry,
-/// `=html` and `=mathtex`. Exists so a rejected/warned-on fence language has
+/// `console`, `=html` and `=mathtex`. Exists so a rejected/warned-on fence language has
 /// somewhere to look instead of "guess, build, fail, guess again".
 ///
 /// No test blocks here on purpose (see CLAUDE.md's constraint for this file):
@@ -23,7 +23,9 @@ pub fn languages(args: []const []const u8) bool {
         fatal.usageError("error: unexpected cli argument '{s}'\n", .{arg});
     }
 
-    for (syntax.FileType.get_all()) |ft| {
+    if (!options.enable_treesitter) {
+        std.debug.print("Syntax highlighting disabled: every language name is accepted.\n", .{});
+    } else for (@import("syntax").FileType.get_all()) |ft| {
         std.debug.print("{s} (", .{ft.name});
         for (ft.extensions, 0..) |ext, i| {
             if (i > 0) std.debug.print(", ", .{});
@@ -32,6 +34,7 @@ pub fn languages(args: []const []const u8) bool {
         std.debug.print("): {s}\n", .{ft.description});
     }
 
+    std.debug.print("console (no extensions): shell prompt and command spans\n", .{});
     std.debug.print("=html (no extensions): raw HTML passthrough, not highlighted\n", .{});
     std.debug.print("=mathtex (no extensions): inline math directive\n", .{});
 
@@ -43,7 +46,7 @@ const help_message =
     \\
     \\Print every code-fence / $code language registered for syntax
     \\highlighting: its name, its recognized extensions, and a description.
-    \\Also lists the two specials, =html and =mathtex, that are accepted
+    \\Also lists console, =html and =mathtex, which are accepted
     \\outside that registry.
     \\
     \\Command specific options:

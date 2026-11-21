@@ -662,7 +662,7 @@ export function scanExternalLinkOrigins(htmlStrings: string[]): string[] {
 export type CspExtraSources = { directive: string; sources: string[] }[];
 export const CSP_SOURCES_FILE = "csp-sources.json";
 export const CSP_OWNERSHIP_FILE = ".zigapagos-csp-ownership.json";
-const CSP_DIRECTIVES = ["default-src", "script-src", "frame-src", "connect-src", "img-src", "style-src", "style-src-elem", "style-src-attr", "font-src", "object-src", "base-uri"];
+const CSP_DIRECTIVES = ["default-src", "script-src", "frame-src", "connect-src", "img-src", "media-src", "style-src", "style-src-elem", "style-src-attr", "font-src", "object-src", "base-uri"];
 
 export function parseCspSources(value: unknown): CspExtraSources {
   if (!Array.isArray(value)) throw new Error("csp_extra_sources must be an array");

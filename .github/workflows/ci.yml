@@ -414,6 +414,12 @@ jobs:
       # test-only code, e.g. a test calling std.Thread.spawn) without running
       # anything, so no bun/network is needed; the dep objects are already warm
       # from the build above.
+      - name: Check highlighting-disabled build (exe + all test binaries)
+        run: |
+          zig build check -Dhighlight=false
+          zig build -Dhighlight=false --prefix zig-out/no-highlight
+          ZIGAPAGOS_BIN="$PWD/zig-out/no-highlight/bin/zigapagos" bash tests/rendering/highlight-off.sh --highlight-off
+
       - name: Check single-threaded build (exe + all test binaries)
         run: zig build check -Dsingle-threaded
 
