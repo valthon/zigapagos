@@ -15,16 +15,22 @@ pub fn debug(
     gpa: Allocator,
     args: []const []const u8,
 ) bool {
-    errdefer |err| switch (err) {
+    return debugInner(io, gpa, args) catch |err| switch (err) {
         error.OutOfMemory => fatal.oom(),
     };
+}
 
+fn debugInner(
+    io: Io,
+    gpa: Allocator,
+    args: []const []const u8,
+) !bool {
     const cmd: Command = try .parse(gpa, args);
 
     const cfg, const base_dir_path = root.Config.load(io, gpa);
 
     worker.start(io);
-    defer if (builtin.mode == .Debug) worker.stopWaitAndDeinit(io);
+    defer if (builtin.optimize == .debug) worker.stopWaitAndDeinit(io);
 
     // build_assets: *const std.StringArrayHashMapUnmanaged(BuildAsset) = .empty;
     const build = root.run(io, gpa, &cfg, .{
@@ -34,7 +40,7 @@ pub fn debug(
         .mode = .memory,
     }) catch fatal.oom();
 
-    defer if (builtin.mode == .Debug) build.deinit(io, gpa);
+    defer if (builtin.optimize == .debug) build.deinit(io, gpa);
 
     for (build.variants, 0..) |*variant, vidx| {
         std.debug.print(
@@ -55,7 +61,7 @@ pub fn debug(
                 var br: [std.fs.max_path_bytes]u8 = undefined;
                 return std.mem.order(
                     u8,
-                    std.fmt.bufPrint(&bl, "{f}", .{
+                    std.mem.print(&bl, "{f}", .{
                         lhs.content_sub_path.fmt(
                             &v.string_table,
                             &v.path_table,
@@ -63,7 +69,7 @@ pub fn debug(
                             false,
                         ),
                     }) catch unreachable,
-                    std.fmt.bufPrint(&br, "{f}", .{
+                    std.mem.print(&br, "{f}", .{
                         rhs.content_sub_path.fmt(
                             &v.string_table,
                             &v.path_table,

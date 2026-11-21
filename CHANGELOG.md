@@ -17,30 +17,26 @@ Two things to know before reading it:
 - **This repository does not carry the forked project's release tags.** A
   single fork-point tag, `fork-point-zine-v0-11-2`, marks where the history <!-- branding-ok: the tag is named for the upstream release it marks -->
   diverges, and `0.1.0` was the first Zigapagos version number — `build.zig.zon`
-  declares the current one. `zigapagos version` prints the string
-  `build/config.zig` stamped into the binary at build time, derived from
-  `git describe --match '*.*.*' --tags` against the tags that actually exist
-  here, never from an inherited tag, because there are none to describe against.
-  It has exactly three shapes:
+  declares the current one. `zigapagos version` uses the same version-and-commit
+  scheme as ZigBase, independently of release tags:
 
-  - `v0.2.0` — the build sat on a release tag, so describe's output is used
-    verbatim.
-  - `v0.2.0-dev.7+e1d7033` — an untagged commit: the last release tag, how many
-    commits past it, and the abbreviated hash. This is deliberately *not* how
-    `git describe` spells it. The height is moved into a `-dev.` pre-release, the
-    hash into `+` build metadata, and describe's conventional `g` prefix is
-    dropped, so everything after the leading `v` is a valid semver version and
-    orders against the releases below. The `v` is not part of that version number
-    — semver excludes it — it is carried over from the tag name, which describe
-    returns verbatim.
-  - `unknown` — `git` is missing, or `git describe` failed: nothing to describe
-    against, because the checkout is shallow, or because the tree is not a git
-    repository at all. CI's own `build-binary` job is the shallow case, so the
-    binary it uploads says `unknown` while a release build says the tag.
+  ```text
+  zigapagos 0.5.0
+  commit:      e1d7033abcde
+  build:       fast
+  target:      x86_64-linux-musl
+  zig:         0.17.1
+  ```
 
-  `tests/npm/packaging.sh` pins the installed binary's output to that grammar and
-  `tests/changelog/version-shape.sh` pins this list to it, so the tool and this
-  paragraph cannot disagree without a gate going red.
+  The version always comes from `build.zig.zon`. The commit is the first twelve
+  SHA characters read directly from Git metadata, or `unknown` for a source
+  archive without `.git`. CI and release builds inject their revision with
+  `-Dcommit=<sha>`; that value is truncated to its first twelve characters when printed. The configure phase never
+  launches Git. Migration manifests combine provenance as `version+commit`.
+  Release CI checks that the tag matches the manifest version before building.
+  This pre-1.0 change retires the tag-derived version stamp for consistency with
+  ZigBase. `tests/npm/packaging.sh` checks the installed binary's five-line output,
+  and `tests/changelog/version-shape.sh` checks this documented scheme.
 
 ## [Unreleased]
 

@@ -154,7 +154,8 @@ pub const ValueKind = enum { string, number, boolean, null };
 /// shorten a props list the target is typechecked against. The same
 /// `inline for` keeps the enum the single source of truth.
 pub fn valueKindFromWire(s: []const u8) ValueKind {
-    inline for (@typeInfo(ValueKind).@"enum".fields) |f| {
+    inline for (@typeInfo(ValueKind).@"enum".field_names) |field_name| {
+        const f = .{ .name = field_name };
         if (std.mem.eql(u8, f.name, s)) return @field(ValueKind, f.name);
     }
     return .string;
@@ -167,7 +168,8 @@ pub fn valueKindFromWire(s: []const u8) ValueKind {
 /// spelling decodable) instead of a hand-maintained parallel table that can
 /// drift from the enum next to it.
 pub fn kindFromWire(s: []const u8) Kind {
-    inline for (@typeInfo(Kind).@"enum".fields) |f| {
+    inline for (@typeInfo(Kind).@"enum".field_names) |field_name| {
+        const f = .{ .name = field_name };
         if (std.mem.eql(u8, f.name, s)) return @field(Kind, f.name);
     }
     // Not an error and not a dropped node -- see the module doc.
@@ -261,10 +263,10 @@ pub const Node = struct {
     pub fn identity(n: Node, buffer: []u8) std.fmt.BufPrintError![]u8 {
         if (n.stream_ordinal != 0) {
             const hex = std.fmt.bytesToHex(n.fingerprint(), .lower);
-            if (n.line > 0 and n.col > 0) return std.fmt.bufPrint(buffer, "L{d}C{d}H{s}N{d}", .{ n.line, n.col, hex, n.stream_ordinal });
-            return std.fmt.bufPrint(buffer, "H{s}N{d}", .{ hex, n.stream_ordinal });
+            if (n.line > 0 and n.col > 0) return std.mem.print(buffer, "L{d}C{d}H{s}N{d}", .{ n.line, n.col, hex, n.stream_ordinal });
+            return std.mem.print(buffer, "H{s}N{d}", .{ hex, n.stream_ordinal });
         }
-        return std.fmt.bufPrint(buffer, "L{d}C{d}", .{ n.line, n.col });
+        return std.mem.print(buffer, "L{d}C{d}", .{ n.line, n.col });
     }
 
     /// Contract 3 (caller-buffer): SHA-256 truncated to 128 bits. Hash source
@@ -901,7 +903,7 @@ fn queryTemplates(
         // belongs (same split as the spawn branch below, which keeps
         // `ruby_path` out of `path` for the identical reason).
         var buf: [Io.Dir.max_path_bytes + 64]u8 = undefined;
-        const detail = std.fmt.bufPrint(&buf, "{s}: {t}", .{ script_path, err }) catch @errorName(err);
+        const detail = std.mem.print(&buf, "{s}: {t}", .{ script_path, err }) catch @errorName(err);
         try blockers.append(gpa, blocker_list, unavailable_code, sidecar_path, detail, false, .@"error", null, null);
         return none;
     };
@@ -917,7 +919,7 @@ fn queryTemplates(
             // itself -- and is identical on every machine; `root_path` moves
             // into `detail`.
             var buf: [Io.Dir.max_path_bytes + 64]u8 = undefined;
-            const detail = std.fmt.bufPrint(&buf, "{s}: {t}", .{ root_path, err }) catch @errorName(err);
+            const detail = std.mem.print(&buf, "{s}: {t}", .{ root_path, err }) catch @errorName(err);
             try blockers.append(gpa, blocker_list, unavailable_code, ".", detail, false, .@"error", null, null);
             return none;
         },
@@ -940,7 +942,7 @@ fn queryTemplates(
             // `controllers.zig`'s identical branch). The interpreter is
             // still named, in free-text `detail` instead.
             var buf: [Io.Dir.max_path_bytes + 64]u8 = undefined;
-            const detail = std.fmt.bufPrint(&buf, "interpreter '{s}': {t}", .{ ruby_path, err }) catch @errorName(err);
+            const detail = std.mem.print(&buf, "interpreter '{s}': {t}", .{ ruby_path, err }) catch @errorName(err);
             try blockers.append(gpa, blocker_list, unavailable_code, sidecar_path, detail, false, .@"error", null, null);
             return none;
         },
@@ -977,7 +979,7 @@ fn queryTemplates(
     switch (term) {
         .exited => |code| if (code != 0) {
             var buf: [48]u8 = undefined;
-            const detail = std.fmt.bufPrint(&buf, "ruby exited {d}", .{code}) catch "ruby exited nonzero";
+            const detail = std.mem.print(&buf, "ruby exited {d}", .{code}) catch "ruby exited nonzero";
             try blockers.append(gpa, blocker_list, unavailable_code, sidecar_path, detail, false, .@"error", null, null);
             return none;
         },
@@ -1347,7 +1349,8 @@ test "decodeResponse: a pre-Stage-4 payload decodes exactly as before" {
 }
 
 test "valueKindFromWire covers every enum tag and falls back to string" {
-    inline for (@typeInfo(ValueKind).@"enum".fields) |f| {
+    inline for (@typeInfo(ValueKind).@"enum".field_names) |field_name| {
+        const f = .{ .name = field_name };
         try std.testing.expectEqual(@field(ValueKind, f.name), valueKindFromWire(f.name));
     }
     // An unrecognised type name degrades to the kind every pre-Stage-4 pair
@@ -1359,7 +1362,8 @@ test "valueKindFromWire covers every enum tag and falls back to string" {
 }
 
 test "kindFromWire covers every enum tag and falls back to unknown" {
-    inline for (@typeInfo(Kind).@"enum".fields) |f| {
+    inline for (@typeInfo(Kind).@"enum".field_names) |field_name| {
+        const f = .{ .name = field_name };
         try std.testing.expectEqual(@field(Kind, f.name), kindFromWire(f.name));
     }
     try std.testing.expectEqual(Kind.unknown, kindFromWire("never_heard_of_it"));
@@ -1543,7 +1547,7 @@ test "invalid positions retain independent finding and decision identities withi
     try std.testing.expect(!std.mem.eql(u8, fs[0].id, fs[1].id));
     try std.testing.expect(std.mem.endsWith(u8, fs[0].id, "N1"));
     try std.testing.expect(std.mem.endsWith(u8, fs[1].id, "N1"));
-    const json = try std.fmt.allocPrint(gpa,
+    const json = try gpa.print(
         \\{{"schema":"zigapagos.rails-decisions/1","decisions":[{{"id":"{s}","choice":"retain","rationale":"keep first"}},{{"id":"{s}","choice":"blocked","rationale":"block second"}}]}}
     , .{ fs[0].id, fs[1].id });
     defer gpa.free(json);

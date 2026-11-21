@@ -488,7 +488,7 @@ pub fn run(
     environ_map: *std.process.Environ.Map,
 ) error{OutOfMemory}!noreturn {
     _ = environ_map;
-    if (builtin.os.tag == .windows) fatal.msg(
+    if (builtin.target.os.tag == .windows) fatal.msg(
         "error: dev {s} is not supported on Windows yet (see docs/ROADMAP.md)\n",
         .{@tagName(verb)},
     );
@@ -842,8 +842,10 @@ fn fetchBody(io: Io, gpa: Allocator, address: Io.net.IpAddress, path: []const u8
 }
 
 fn fetchBodyWithTimeout(io: Io, gpa: Allocator, address: Io.net.IpAddress, path: []const u8, timeout_ms: u32) ![]u8 {
+    // The daemon/control plane still requires POSIX flock, poll and signals.
+    if (comptime builtin.target.os.tag == .windows) return error.UnsupportedPlatform;
     const deadline = Io.Clock.awake.now(io).toMilliseconds() + timeout_ms;
-    // The address is this machine's dev listener. Zig 0.16's threaded I/O
+    // The address is this machine's dev listener. Zig 0.17's threaded I/O
     // panics for a connect timeout; bound response reads explicitly below.
     var stream = try address.connect(io, .{ .mode = .stream });
     defer stream.close(io);
@@ -856,10 +858,10 @@ fn fetchBodyWithTimeout(io: Io, gpa: Allocator, address: Io.net.IpAddress, path:
     try writer.interface.flush();
 
     var in_buf: [4096]u8 = undefined;
-    // Zig 0.16's stream reader exposes no per-read deadline. Use poll/read on
+    // Zig 0.17's stream reader exposes no per-read deadline. Use poll/read on
     // its socket so a peer that never closes cannot hang even single-threaded
     // dev control. This escape hatch is POSIX-only (our current host targets);
-    // revisit it when Windows support returns with the 0.17 I/O port. The
+    // Windows daemon control remains unavailable. The
     // connect-timeout limitation above is separate from this read deadline.
     var all: std.ArrayListUnmanaged(u8) = .empty;
     defer all.deinit(gpa);
@@ -928,6 +930,8 @@ pub const stop_starting_detail =
 /// and remove the lockfile. Also handles the dev-already-dead (kill -9) case:
 /// the sweep runs regardless. Contract 1.
 pub fn stopInstance(io: Io, gpa: Allocator, data_dir_abs: []const u8) enum { stopped, none, starting } {
+    // Windows cannot acquire a daemon lock (dev_lockfile.acquire).
+    if (comptime builtin.target.os.tag == .windows) return .none;
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const lf = dev_lockfile.read(arena_state.allocator(), io, data_dir_abs);
@@ -1009,7 +1013,7 @@ pub fn stopInstance(io: Io, gpa: Allocator, data_dir_abs: []const u8) enum { sto
 /// Classifies a signal-0 (existence-only, no signal sent) probe on `pid`.
 /// `SIG` is a non-exhaustive enum with no named zero member (0 isn't a real
 /// signal, just POSIX's kill(2) convention for "probe"), hence
-/// `@enumFromInt(0)` rather than a tag literal like `.TERM` elsewhere in this
+/// `@fromBackingInt(0)` rather than a tag literal like `.TERM` elsewhere in this
 /// file. `ProcessNotFound` and `PermissionDenied` both come back as an
 /// `error`, but they mean opposite things — the same distinction
 /// `dev.zig`'s `reaper.terminate()` makes: NotFound is "gone", nothing to
@@ -1019,7 +1023,7 @@ pub fn stopInstance(io: Io, gpa: Allocator, data_dir_abs: []const u8) enum { sto
 /// up" is the safe default for a failure mode we don't understand — it never
 /// leads to killing something we're unsure about.
 fn probeAlive(pid: std.posix.pid_t) enum { alive, gone, not_ours } {
-    std.posix.kill(pid, @enumFromInt(0)) catch |err| return switch (err) {
+    std.posix.kill(pid, @fromBackingInt(@intCast(0))) catch |err| return switch (err) {
         error.ProcessNotFound => .gone,
         error.PermissionDenied => .not_ours,
         error.Unexpected => .gone,
@@ -1057,6 +1061,7 @@ fn probeHealth(io: Io, gpa: Allocator, host: []const u8, port: u16) bool {
 /// process is worse than leaving a squatter). Always removes the lockfile.
 /// Contract 1.
 pub fn sweepOrphan(io: Io, gpa: Allocator, data_dir_abs: []const u8) void {
+    if (comptime builtin.target.os.tag == .windows) return;
     defer dev_lockfile.remove(io, gpa, data_dir_abs);
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
@@ -1212,7 +1217,7 @@ pub fn background(
     raw_args: []const []const u8,
     environ_map: *std.process.Environ.Map,
 ) error{OutOfMemory}!noreturn {
-    if (builtin.os.tag == .windows) fatal.msg(
+    if (builtin.target.os.tag == .windows) fatal.msg(
         "error: dev --background is not supported on Windows yet (see docs/ROADMAP.md)\n",
         .{},
     );
@@ -1298,7 +1303,7 @@ pub fn background(
 
         // Child death check: waitpid(WNOHANG) — kill(pid,0) is not enough, a
         // zombie still "exists" to it. `std.posix` has no `waitpid` in this
-        // Zig (0.16.0; verified absent from lib/std/posix.zig) — Threaded.zig's
+        // Zig (0.17.1; verified absent from lib/std/posix.zig) — Threaded.zig's
         // own `childWaitPosix` reaps through `posix.system.waitpid` (i.e.
         // `std.c.waitpid`) directly, so this mirrors the standard library's
         // own idiom rather than inventing a new one.

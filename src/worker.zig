@@ -100,14 +100,16 @@ pub const Job = union(enum) {
 };
 
 pub fn start(io: Io) void {
+    return startInner(io) catch |err| switch (err) {
+        error.OutOfMemory => fatal.oom(),
+    };
+}
+
+fn startInner(io: Io) !void {
     assert(!started);
     started = true;
 
     wg = .{ .io = io };
-
-    errdefer |err| switch (err) {
-        error.OutOfMemory => fatal.oom(),
-    };
 
     supermd.c.cmark_gfm_core_extensions_ensure_registered();
 
@@ -132,7 +134,7 @@ pub fn start(io: Io) void {
 }
 
 pub fn stopWaitAndDeinit(io: Io) void {
-    if (builtin.mode != .Debug) return;
+    if (builtin.optimize != .debug) return;
     if (builtin.single_threaded) addJob(io, .leave);
 
     for (threads) |_| addJob(io, .leave);
@@ -150,7 +152,7 @@ pub fn addJob(io: Io, job: Job) void {
         const continue_ = runOneJob(io, single_threaded_arena, job);
         _ = single_threaded_arena_state.reset(.retain_capacity);
 
-        if (builtin.mode == .Debug and !continue_) {
+        if (builtin.optimize == .debug and !continue_) {
             single_threaded_arena_state.deinit();
         }
     } else {
@@ -263,18 +265,31 @@ fn analyzePage(
     variant_id: u32,
     page: *Page,
 ) void {
+    return analyzePageInner(io, arena, progress, build, variant_id, page) catch |err| switch (err) {
+        error.OutOfMemory => fatal.oom(),
+    };
+}
+
+fn analyzePageInner(
+    io: Io,
+    arena: Allocator,
+    progress: std.Progress.Node,
+    build: *const Build,
+    variant_id: u32,
+    page: *Page,
+) !void {
     const zone = tracy.trace(@src());
     defer zone.end();
 
     assert(page._parse.status == .parsed);
-    if (builtin.mode == .Debug) {
+    if (builtin.optimize == .debug) {
         const last = page._debug.stage.swap(.analyzed, .monotonic);
         assert(last == .parsed);
     }
 
     const v = &build.variants[variant_id];
     var buf: [std.fs.max_path_bytes]u8 = undefined;
-    const page_path = std.fmt.bufPrint(&buf, "{f}", .{
+    const page_path = std.mem.print(&buf, "{f}", .{
         page._scan.file.fmt(
             &v.string_table,
             &v.path_table,
@@ -289,10 +304,6 @@ fn analyzePage(
     // We do not set all of analysis because it might contain a missing
     // layout error put there by the main thread.
     // page._analysis = .{};
-
-    errdefer |err| switch (err) {
-        error.OutOfMemory => fatal.oom(),
-    };
 
     var arena_state = page._parse.arena.promote(gpa);
     defer page._parse.arena = arena_state.state;
@@ -477,9 +488,9 @@ fn analyzeContent(
     const errors = &page._analysis.page;
     const variant = &b.variants[variant_id];
     const autosize = b.cfg.getImageAutosize();
-    const index_smd: String = @enumFromInt(1);
+    const index_smd: String = @fromBackingInt(@intCast(1));
     assert(variant.string_table.get("index.smd") == index_smd);
-    const index_html: String = @enumFromInt(11);
+    const index_html: String = @fromBackingInt(@intCast(11));
     assert(variant.string_table.get("index.html") == index_html);
 
     var current: ?supermd.Node = ast.md.root.firstChild();
@@ -546,7 +557,7 @@ fn analyzeContent(
                                 switch (hint.kind) {
                                     .page_asset => {
                                         break :blk .{
-                                            try std.fmt.allocPrint(scratch, "{f}", .{
+                                            try scratch.print("{f}", .{
                                                 pn.fmt(
                                                     &variant.string_table,
                                                     &variant.path_table,
@@ -686,7 +697,7 @@ fn analyzeContent(
                         }
 
                         if (val.ref) |ref| {
-                            if (!val.ref_unsafe and !ast.ids.contains(ref) and ref.len > 0) {
+                            if (!val.ref_unsafe and !ast.ids.contains(ref)) {
                                 try errors.append(page_arena, .{
                                     .node = n,
                                     .kind = .{
@@ -713,7 +724,7 @@ fn analyzeContent(
                                     p.ref,
                                 )) |path| break :blk path;
                                 log.debug("page link '{s}': path not found", .{p.ref});
-                                if (builtin.mode == .Debug) {
+                                if (builtin.optimize == .debug) {
                                     var it = std.mem.tokenizeScalar(u8, p.ref, '/');
                                     while (it.next()) |c| {
                                         log.debug("'{s}' -> [{?d}]", .{
@@ -937,7 +948,7 @@ fn analyzeContent(
                         p.resolved = .{
                             .page_id = hint.id,
                             .variant_id = other_page._scan.variant_id,
-                            .path = @intFromEnum(path),
+                            .path = @backingInt(path),
                         };
 
                         if (val.alternative) |alt_name| {
@@ -1017,11 +1028,11 @@ fn analyzeContent(
                                         //       grab image size info if needed
                                         _ = rc.fetchAdd(1, .acq_rel);
                                         pa.resolved = .{
-                                            .path = @intFromEnum(path),
-                                            .name = @intFromEnum(name),
+                                            .path = @backingInt(path),
+                                            .name = @backingInt(name),
                                         };
 
-                                        const bytes = try std.fmt.allocPrint(scratch, "{f}", .{
+                                        const bytes = try scratch.print("{f}", .{
                                             pn.fmt(
                                                 &variant.string_table,
                                                 &variant.path_table,
@@ -1044,8 +1055,8 @@ fn analyzeContent(
                                             image_requests.register(io, gpa, .{
                                                 .kind = .page,
                                                 .variant_id = variant_id,
-                                                .path = @intFromEnum(path),
-                                                .name = @intFromEnum(name),
+                                                .path = @backingInt(path),
+                                                .name = @backingInt(name),
                                             }) catch fatal.oom();
                                         }
                                         continue :outer;
@@ -1081,8 +1092,8 @@ fn analyzeContent(
                                 if (b.site_assets.getPtr(pn)) |rc| {
                                     _ = rc.fetchAdd(1, .acq_rel);
                                     sa.resolved = .{
-                                        .path = @intFromEnum(path),
-                                        .name = @intFromEnum(name),
+                                        .path = @backingInt(path),
+                                        .name = @backingInt(name),
                                     };
 
                                     if (autosize and directive.kind == .image and directive.kind.image.size == null) {
@@ -1099,8 +1110,8 @@ fn analyzeContent(
                                         image_requests.register(io, gpa, .{
                                             .kind = .site,
                                             .variant_id = 0,
-                                            .path = @intFromEnum(path),
-                                            .name = @intFromEnum(name),
+                                            .path = @backingInt(path),
+                                            .name = @backingInt(name),
                                         }) catch fatal.oom();
                                     }
                                     continue :outer;
@@ -1212,7 +1223,7 @@ pub fn pageDir(
     variant: *const Variant,
     page: *const Page,
 ) ![]const u8 {
-    return std.fmt.allocPrint(alloc, "{f}", .{urlFmt(cfg, variant, page)});
+    return alloc.print("{f}", .{urlFmt(cfg, variant, page)});
 }
 
 /// A page's MAIN output path (its rendered `index.html`), relative to the
@@ -1229,7 +1240,7 @@ pub fn mainOutputPath(
     variant: *const Variant,
     page: *const Page,
 ) ![]const u8 {
-    return std.fmt.allocPrint(alloc, "{f}index.html", .{urlFmt(cfg, variant, page)});
+    return alloc.print("{f}index.html", .{urlFmt(cfg, variant, page)});
 }
 
 /// The output path of one of a page's `aliases` entries or one
@@ -1260,7 +1271,7 @@ pub fn suffixedOutputPath(
     suffix: []const u8,
 ) ![]const u8 {
     if (suffix[0] == '/') return alloc.dupe(u8, suffix[1..]);
-    return std.fmt.allocPrint(alloc, "{f}{s}", .{ urlFmt(cfg, variant, page), suffix });
+    return alloc.print("{f}{s}", .{ urlFmt(cfg, variant, page), suffix });
 }
 
 /// The page-dir-relative suffix of pagination page `n` (n >= 2) under the
@@ -1275,9 +1286,9 @@ pub fn paginationSuffix(
 ) ![]const u8 {
     assert(n >= 2);
     return switch (style) {
-        .page_dir => std.fmt.allocPrint(alloc, "page/{d}/index.html", .{n}),
-        .plain_dir => std.fmt.allocPrint(alloc, "{d}/index.html", .{n}),
-        .page_html => std.fmt.allocPrint(alloc, "page-{d}.html", .{n}),
+        .page_dir => alloc.print("page/{d}/index.html", .{n}),
+        .plain_dir => alloc.print("{d}/index.html", .{n}),
+        .page_html => alloc.print("page-{d}.html", .{n}),
     };
 }
 
@@ -1324,7 +1335,7 @@ pub fn paginationOutputPath(
 ) ![]const u8 {
     const suffix = try paginationSuffix(alloc, style, n);
     defer alloc.free(suffix);
-    return std.fmt.allocPrint(alloc, "{f}{s}", .{ urlFmt(cfg, variant, page), suffix });
+    return alloc.print("{f}{s}", .{ urlFmt(cfg, variant, page), suffix });
 }
 
 /// The page-dir-relative DIRECTORY that pagination page `n` occupies, for the
@@ -1340,8 +1351,8 @@ pub fn paginationPruneDir(
 ) !?[]const u8 {
     assert(n >= 2);
     return switch (style) {
-        .page_dir => try std.fmt.allocPrint(alloc, "page/{d}", .{n}),
-        .plain_dir => try std.fmt.allocPrint(alloc, "{d}", .{n}),
+        .page_dir => try alloc.print("page/{d}", .{n}),
+        .plain_dir => try alloc.print("{d}", .{n}),
         .page_html => null,
     };
 }
@@ -1368,10 +1379,9 @@ fn evalContentIslandProp(
     };
     return switch (result.value) {
         .string => |value| .{ .value = try arena.a.dupe(u8, value.value) },
-        .int => |value| .{ .value = try std.fmt.allocPrint(arena.a, "{d}", .{value.value}) },
+        .int => |value| .{ .value = try arena.a.print("{d}", .{value.value}) },
         .err => |message| .{ .err = try arena.a.dupe(u8, message) },
-        else => .{ .err = try std.fmt.allocPrint(
-            arena.a,
+        else => .{ .err = try arena.a.print(
             "expression must evaluate to a string or integer, got {s}",
             .{@tagName(result.value)},
         ) },
@@ -1385,7 +1395,7 @@ fn reportIslandError(alloc: Allocator, code: diag.Code, page: []const u8, compti
         log.err(fmt, args);
         return;
     }
-    const message = std.fmt.allocPrint(alloc, fmt, args) catch fatal.oom();
+    const message = alloc.print(fmt, args) catch fatal.oom();
     defer alloc.free(message);
     diag.emit(.{ .code = code, .severity = .@"error", .file = page, .message = message });
 }
@@ -1424,18 +1434,31 @@ fn renderPage(
     page: *Page,
     kind: RenderJobKind,
 ) void {
-    const zone = tracy.trace(@src());
-    defer zone.end();
-
-    errdefer |err| switch (err) {
+    return renderPageInner(io, arena, progress, build, sites, page, kind) catch |err| switch (err) {
         error.OutOfMemory => fatal.oom(),
     };
+}
+
+fn renderPageInner(
+    io: Io,
+    /// NO_SLOP.md §2.2a contract 4: the per-job arena, reset after every job.
+    /// `islands.process` requires it by type; the plain contract-1 helpers here
+    /// reach it through `arena.a`.
+    arena: RenderArena,
+    progress: std.Progress.Node,
+    build: *Build,
+    sites: *const std.StringArrayHashMapUnmanaged(context.Site),
+    page: *Page,
+    kind: RenderJobKind,
+) !void {
+    const zone = tracy.trace(@src());
+    defer zone.end();
 
     const variant_id = page._scan.variant_id;
     const variant = &build.variants[variant_id];
 
     var buf: [std.fs.max_path_bytes]u8 = undefined;
-    const page_path = std.fmt.bufPrint(&buf, "{f}", .{
+    const page_path = std.mem.print(&buf, "{f}", .{
         page._scan.file.fmt(
             &variant.string_table,
             &variant.path_table,
@@ -1450,12 +1473,12 @@ fn renderPage(
         .main => page_path,
         .alternative => |idx| blk: {
             const alt_name = page.alternatives[idx].name;
-            break :blk try std.fmt.allocPrint(arena.a, "{s} (alternative '{s}')", .{
+            break :blk try arena.a.print("{s} (alternative '{s}')", .{
                 page_path,
                 alt_name,
             });
         },
-        .pagination => |n| try std.fmt.allocPrint(arena.a, "{s} (page {d})", .{ page_path, n }),
+        .pagination => |n| try arena.a.print("{s} (page {d})", .{ page_path, n }),
     };
 
     const p = progress.start(progress_name, 0);
@@ -1674,10 +1697,10 @@ fn renderPage(
         // the island SSR pass so `z.host.pathname()` matches the client's
         // window.location. Mirrors the canonical-URL formatting used for output dirs.
         const island_pathname_base = switch (build.cfg.*) {
-            .Site => try std.fmt.allocPrint(arena.a, "/{f}", .{
+            .Site => try arena.a.print("/{f}", .{
                 page._scan.url.fmt(&variant.string_table, &variant.path_table, null, true),
             }),
-            .Multilingual => try std.fmt.allocPrint(arena.a, "/{f}", .{
+            .Multilingual => try arena.a.print("/{f}", .{
                 page._scan.url.fmt(&variant.string_table, &variant.path_table, variant.output_path_prefix, true),
             }),
         };
@@ -1690,7 +1713,7 @@ fn renderPage(
         // a paginated view of this page's URL.
         const island_pathname = switch (kind) {
             .main, .alternative => island_pathname_base,
-            .pagination => |n| try std.fmt.allocPrint(arena.a, "{s}{s}", .{
+            .pagination => |n| try arena.a.print("{s}{s}", .{
                 island_pathname_base,
                 try paginationPathnameTail(arena.a, page.pagination.?.url_style, n),
             }),
@@ -1836,7 +1859,7 @@ fn renderPage(
             // string the incremental changed-files set matches on (see
             // root.zig's render loop).
             var src_buf: [std.fs.max_path_bytes]u8 = undefined;
-            const page_src_path = std.fmt.bufPrint(&src_buf, "{f}", .{
+            const page_src_path = std.mem.print(&src_buf, "{f}", .{
                 page._scan.file.fmt(
                     &variant.string_table,
                     &variant.path_table,
@@ -2013,7 +2036,7 @@ pub fn languageExists(language: ?[]const u8) bool {
 
     if (syntax.FileType.get_by_name_static(lang) == null) {
         var buf: [1024]u8 = undefined;
-        const filename = std.fmt.bufPrint(
+        const filename = std.mem.print(
             &buf,
             "file.{s}",
             .{lang},

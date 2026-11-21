@@ -33,7 +33,7 @@
 //!
 //! The STRUCTURE below -- every field, its JSON type, its nullability, its
 //! nesting, every enum's exact member set -- comes from `@typeInfo(T)` /
-//! `std.meta.fields(T)`, walked in each struct's OWN declaration order (a
+//! `@typeInfo(T).@"struct".field_names`, walked in each struct's OWN declaration order (a
 //! comptime-fixed, therefore deterministic, order -- there is no unordered
 //! iteration anywhere in this file to sort). A struct edit in `manifest.zig`
 //! changes this file's OUTPUT the next time it runs, without this file
@@ -528,7 +528,8 @@ fn enumSchema(comptime T: type, arena: Allocator) Allocator.Error!std.json.Value
     var members: std.json.Array = .init(arena);
     // `@typeInfo(T).@"enum".fields` is comptime-ordered exactly as `T`'s
     // own declaration lists its members -- no runtime iteration to sort.
-    inline for (@typeInfo(T).@"enum".fields) |f| {
+    inline for (@typeInfo(T).@"enum".field_names) |field_name| {
+        const f = .{ .name = field_name };
         try members.append(strVal(f.name));
     }
     try o.put(arena, "enum", .{ .array = members });
@@ -544,7 +545,7 @@ fn structSchema(
     const type_name = @typeName(T);
     var props: std.json.ObjectMap = .empty;
     var required: std.json.Array = .init(arena);
-    // `std.meta.fields(T)` walks in T's own declaration order (comptime,
+    // `@typeInfo(T).@"struct".field_names` walks in T's own declaration order (comptime,
     // therefore fixed on every run) -- this IS the wire key order the
     // manifest emitter (`manifest.zig`'s `build`, via `std.json.
     // Stringify`) actually produces, per that file's own "key ordering is
@@ -552,7 +553,8 @@ fn structSchema(
     // emitter always writes every declared key, `null` included, for an
     // optional field -- see `manifest.zig`'s golden-bytes test, where
     // `"version": null` is a present key, not an absent one.
-    inline for (std.meta.fields(T)) |f| {
+    inline for (@typeInfo(T).@"struct".field_names, @typeInfo(T).@"struct".field_types) |field_name, field_type| {
+        const f = .{ .name = field_name, .type = field_type };
         var field_schema = try schemaFor(f.type, table, hits, arena);
         if (overrideFor(table, hits, type_name, f.name)) |text| {
             try field_schema.object.put(arena, "description", strVal(text));
@@ -588,7 +590,8 @@ fn flattenedTaggedUnionSchema(
     }
 
     var arms: std.json.Array = .init(arena);
-    inline for (info.fields) |variant| {
+    inline for (info.field_names, info.field_types) |variant_name, variant_type| {
+        const variant = .{ .name = variant_name, .type = variant_type };
         const payload_info = @typeInfo(variant.type);
         if (payload_info != .@"struct") {
             @compileError("rails schema_gen: flattened union payload must be a struct: " ++ @typeName(variant.type));
@@ -596,7 +599,8 @@ fn flattenedTaggedUnionSchema(
 
         var props: std.json.ObjectMap = .empty;
         var required: std.json.Array = .init(arena);
-        inline for (std.meta.fields(variant.type), 0..) |field, i| {
+        inline for (@typeInfo(variant.type).@"struct".field_names, @typeInfo(variant.type).@"struct".field_types, 0..) |field_name, field_type, i| {
+            const field = .{ .name = field_name, .type = field_type };
             var field_schema = try schemaFor(field.type, table, hits, arena);
             if (overrideFor(table, hits, @typeName(variant.type), field.name)) |text| {
                 try field_schema.object.put(arena, "description", strVal(text));

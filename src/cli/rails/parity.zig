@@ -445,9 +445,9 @@ fn appendAuth(gpa: Allocator, entries: *std.ArrayListUnmanaged(handoff.ParityEnt
         if (std.mem.endsWith(u8, controller, "registrations") and (signup_page == null or std.mem.lessThan(u8, route.path, signup_page.?))) signup_page = route.path;
     }
     if (signup_page) |page| {
-        const id = try std.fmt.allocPrint(gpa, "signup:{s}", .{name});
+        const id = try gpa.print("signup:{s}", .{name});
         errdefer gpa.free(id);
-        const url = try std.fmt.allocPrint(gpa, "/api/collections/{s}/records", .{name});
+        const url = try gpa.print("/api/collections/{s}/records", .{name});
         errdefer gpa.free(url);
         const owned_name = try gpa.dupe(u8, name);
         errdefer gpa.free(owned_name);
@@ -456,9 +456,9 @@ fn appendAuth(gpa: Allocator, entries: *std.ArrayListUnmanaged(handoff.ParityEnt
         try entries.append(gpa, .{ .signup = .{ .id = id, .url = url, .expect = .{ .status = 201, .collection = owned_name, .page_url = owned_page } } });
     }
     if (signin_page) |page| {
-        const id = try std.fmt.allocPrint(gpa, "signin:{s}", .{name});
+        const id = try gpa.print("signin:{s}", .{name});
         errdefer gpa.free(id);
-        const url = try std.fmt.allocPrint(gpa, "/api/collections/{s}/auth-with-password", .{name});
+        const url = try gpa.print("/api/collections/{s}/auth-with-password", .{name});
         errdefer gpa.free(url);
         const owned_name = try gpa.dupe(u8, name);
         errdefer gpa.free(owned_name);
@@ -488,9 +488,9 @@ pub fn build(gpa: Allocator, discovery: *const rails.Discovery, scaffold_result:
                 if (presentation.h1) |h1| gpa.free(h1);
                 freeStrings(gpa, presentation.links);
             }
-            const route_id = try std.fmt.allocPrint(gpa, "{s} {s}", .{ route.verb, route.path });
+            const route_id = try gpa.print("{s} {s}", .{ route.verb, route.path });
             defer gpa.free(route_id);
-            const id = try std.fmt.allocPrint(gpa, "navigate:{s}", .{route_id});
+            const id = try gpa.print("navigate:{s}", .{route_id});
             errdefer gpa.free(id);
             const url = try gpa.dupe(u8, route.path);
             errdefer gpa.free(url);
@@ -512,7 +512,7 @@ pub fn build(gpa: Allocator, discovery: *const rails.Discovery, scaffold_result:
             .locked, .superuser, .path_secret, .unknown => false,
         } else false;
         if (fields.len > 0 and authenticated_allowed and page_url != null) {
-            const id = try std.fmt.allocPrint(gpa, "submit_allowed:{s}", .{endpoint.operation_id});
+            const id = try gpa.print("submit_allowed:{s}", .{endpoint.operation_id});
             errdefer gpa.free(id);
             const url = try replayUrl(gpa, endpoint.path);
             errdefer gpa.free(url);
@@ -536,7 +536,7 @@ pub fn build(gpa: Allocator, discovery: *const rails.Discovery, scaffold_result:
             } } });
         }
         if (operation) |op| if (op.access != .public and op.access != .unknown) {
-            const id = try std.fmt.allocPrint(gpa, "submit_denied:{s}", .{endpoint.operation_id});
+            const id = try gpa.print("submit_denied:{s}", .{endpoint.operation_id});
             errdefer gpa.free(id);
             const url = try replayUrl(gpa, endpoint.path);
             errdefer gpa.free(url);
@@ -564,7 +564,7 @@ pub fn build(gpa: Allocator, discovery: *const rails.Discovery, scaffold_result:
             break;
         };
         if (invalid_field) |field| if (authenticated_allowed and page_url != null) {
-            const id = try std.fmt.allocPrint(gpa, "validation_error:{s}:{s}", .{ endpoint.operation_id, field });
+            const id = try gpa.print("validation_error:{s}:{s}", .{ endpoint.operation_id, field });
             errdefer gpa.free(id);
             const url = try replayUrl(gpa, endpoint.path);
             errdefer gpa.free(url);
@@ -593,7 +593,7 @@ pub fn build(gpa: Allocator, discovery: *const rails.Discovery, scaffold_result:
     }
 
     for (scaffold_result.assets) |asset| {
-        const id = try std.fmt.allocPrint(gpa, "asset:{s}", .{asset.target_url});
+        const id = try gpa.print("asset:{s}", .{asset.target_url});
         errdefer gpa.free(id);
         const url = try gpa.dupe(u8, asset.target_url);
         errdefer gpa.free(url);

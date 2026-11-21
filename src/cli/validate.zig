@@ -36,7 +36,7 @@ const BuildAsset = root.BuildAsset;
 /// NO_SLOP.md §2.2a contract 1 (self-freeing): every allocation this function
 /// makes directly is freed before it returns (`cmd.deinit`); `build` is a
 /// bigger graph, but it too is torn down here (`build.deinit`), gated on
-/// `builtin.mode == .Debug` for the SAME reason `release.zig`/`debug.zig` gate
+/// `builtin.optimize == .debug` for the SAME reason `release.zig`/`debug.zig` gate
 /// their own teardown that way -- the process exits immediately after `main`
 /// returns, so a Release build skips the teardown walk on purpose (it would
 /// just be free()s right before `exit`), while Debug keeps it so the leak
@@ -58,7 +58,7 @@ pub fn validate(
     const cfg, const base_dir_path = root.Config.load(io, gpa);
 
     worker.start(io);
-    defer if (builtin.mode == .Debug) worker.stopWaitAndDeinit(io);
+    defer if (builtin.optimize == .debug) worker.stopWaitAndDeinit(io);
 
     // DELIBERATELY NOT FACTORED into a shared helper with explain.zig's
     // identical-looking preamble: `Build` stores `cfg: *const root.Config`,
@@ -75,7 +75,7 @@ pub fn validate(
         .allow_missing_pages = cmd.allow_missing_pages,
         .island_sidecar_optional = true,
     }) catch fatal.oom();
-    defer if (builtin.mode == .Debug) build.deinit(io, gpa);
+    defer if (builtin.optimize == .debug) build.deinit(io, gpa);
 
     const failed = build.any_prerendering_error or build.any_rendering_error.load(.acquire);
 

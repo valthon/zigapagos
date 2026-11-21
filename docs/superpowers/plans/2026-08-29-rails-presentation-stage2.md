@@ -6,7 +6,7 @@
 
 **Architecture:** Four new std-only modules in `src/cli/rails/` — `resolve.zig` (pure lookups: route helper → URL, asset helper → target path, route → content path/layout names), `convert.zig` (a `fragments.Template` node stream → SuperHTML bytes, or findings), `decisions.zig` (read/validate the operator's answers), `scaffold.zig` (write the target tree, returning per-route outcomes), `handoff.zig` (status/completion + JSON + a second generated schema) — wired into `migrate.zig`'s Rails branch between the manifest write and its early return, replacing the "converts nothing" narrowing. The `/1` manifest is untouched; the handoff is a separate versioned artifact.
 
-**Tech Stack:** Zig 0.16.0 (std-only inside `src/cli/rails/`), bash e2e under `tests/migrate/`, `jq`, Ruby 3.4 (unchanged sidecar), `bun` only for the optional SPA scaffold build in CI.
+**Tech Stack:** Zig 0.17.1 (std-only inside `src/cli/rails/`), bash e2e under `tests/migrate/`, `jq`, Ruby 3.4 (unchanged sidecar), `bun` only for the optional SPA scaffold build in CI.
 
 **Spec:** `docs/superpowers/specs/2026-08-29-rails-presentation-migration-design.md` — sections "Conversion: what a route becomes", "Findings, decisions, handoff", "Failure behavior", "Staging" item 2. Stage 1 (merged, PR #175) supplies `Discovery.fragments`/`.findings`/`.routes[].name`/`.route_templates[].layout`.
 

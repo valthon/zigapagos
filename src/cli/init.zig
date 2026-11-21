@@ -342,7 +342,7 @@ fn appPackage(io: Io, gpa: Allocator, explicit_path: ?[]const u8, env_path: ?[]c
     const relative = std.fs.path.relative(gpa, cwd, null, cwd, absolute) catch fatal.oom();
     defer gpa.free(relative);
     const chosen = explicit_path orelse relative;
-    const dependency = std.fmt.allocPrint(gpa, "file:{s}", .{chosen}) catch fatal.oom();
+    const dependency = gpa.print("file:{s}", .{chosen}) catch fatal.oom();
     defer gpa.free(dependency);
     std.debug.print("Application runtime link: {s}\nKeep this workspace location available; update package.json if you move it.\n", .{dependency});
     return std.json.Stringify.valueAlloc(gpa, .{

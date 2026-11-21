@@ -74,7 +74,7 @@ allocator-taking function must be exactly one of these, and say which:
   **`RenderArena.forTest` is the way OFF this list.** It installs a non-arena allocator behind an arena-scoped signature, so a test satisfies the type while keeping the leak detector on — and that is a *harsher* execution, since arena-scoped code must be correct under any allocator anyway (the contract-1 helpers it reaches through `.a` are). Reach for it first; a row in the allowlist is the fallback for code that genuinely cannot run on a GPA (a `*Leaky` parse graph with no `deinit`). Swapping the arena for another non-detecting allocator (a stack `FixedBufferAllocator`, say) is **not** a fix — it hides the site from the scanner and restores no detection.
   **Three spellings, not two.** `ArenaAllocator.init(std.testing.allocator)` and `ArenaAllocator.init(testing.allocator)` are the obvious ones; the spelling this repo uses *most* is `ArenaAllocator.init(gpa)` with a preceding `const gpa = std.testing.allocator;`. Most sites under `src/` are alias-spelled, so a grep for the two literal forms misses the majority of them. Any reviewer check that greps must resolve the alias. (Deliberately no totals here: they move with every commit, and a hard-coded one would be exactly the stale-doc defect §6.2 flags. The rows in `scripts/allocator-allowlist.txt` *are* the inventory; `--list` prints the live one.)
   **The gate:** every file that has any such site is listed — with a count and a one-line written justification — in `scripts/allocator-allowlist.txt`. `scripts/check-allocator-contracts.sh` resolves aliases scoped by brace depth (so a function *parameter* named `gpa` is not a false positive) and fails when a file grows a new site or an unlisted file acquires one. Run it with `--list` for the current inventory; it runs in CI.
-  The remaining rows are not a pile of broken tests. Almost all of them exercise an API that takes a `RenderArena` and parses with a `*Leaky` entry point (`ziggy.parseLeaky` — the only dynamic-value parse ziggy has — or `std.json.parseFromSliceLeaky`) into a graph with no `deinit`, which the raw testing allocator therefore could not free; the two exceptions carry their own reason on the row (`render_arena.zig`, where the arena is the thing under test, and `cli/migrate_detect.zig`, a genuine contract 4 that cannot *reach* the marker type: it is its own test-module root and Zig 0.16 forbids an import escaping a module's directory). Every row says which. There are no `GRANDFATHERED` rows left; do not add one.
+  The remaining rows are not a pile of broken tests. Almost all of them exercise an API that takes a `RenderArena` and parses with a `*Leaky` entry point (`ziggy.parseLeaky` — the only dynamic-value parse ziggy has — or `std.json.parseFromSliceLeaky`) into a graph with no `deinit`, which the raw testing allocator therefore could not free; the two exceptions carry their own reason on the row (`render_arena.zig`, where the arena is the thing under test, and `cli/migrate_detect.zig`, a genuine contract 4 that cannot *reach* the marker type: it is its own test-module root and Zig forbids an import escaping a module's directory). Every row says which. There are no `GRANDFATHERED` rows left; do not add one.
 
 ### 2.3 Errors are values — none may be silently ignored
 - **Rule:** *Errors are values, and may not be ignored.* Every error union is handled with `try`, `catch`, an explicit switch on the error set, or a **deliberate** `unreachable`/`catch unreachable` that is genuinely provable.
@@ -99,6 +99,32 @@ allocator-taking function must be exactly one of these, and say which:
 - **Flag:** heavy comptime/`anytype` machinery where a plain runtime function or a small explicit interface would be clearer and cheaper to compile.
 - **Flag:** `anytype` parameters that erase intent and could be a concrete type or a small explicit vtable.
 - **Trade-off to weigh:** comptime cleverness vs. readability and compile time — Zig prizes fast builds; gratuitous comptime taxes them.
+
+### 2.7 Zig 0.17 spellings — deprecated forms are a finding
+
+- **Rule:** use the current spellings; code that still compiles through a deprecated alias is still a finding. Check against the installed standard library. The [Zig 0.17 release notes](https://ziglang.org/download/0.17.0/release-notes.html) explain the language, library and build-system changes.
+
+| Deprecated / removed | Current |
+| --- | --- |
+| `std.fmt.allocPrint` / `allocPrintSentinel` | `Allocator.print` / `printSentinel` |
+| `std.fmt.bufPrint` / `bufPrintSentinel` | `std.mem.print` / `printSentinel` |
+| Repeated arrays with `**` | `@splat` (with an explicit array type when needed) |
+| `std.heap.DebugAllocator` | `std.heap.SafeAllocator` (`init(backing, options)`; `deinit() == 0` means no leaks) |
+| `std.builtin.*` / `OptimizeMode` | `std.lang.*` / `std.lang.Optimize` with `.debug`, `.safe`, `.fast`, `.small` |
+| `std.meta.fields` / `Type.StructField` | `@typeInfo(T)` parallel `field_names`, `field_types`, `field_attrs` |
+| `@intFromEnum` / `@enumFromInt` | `@backingInt` / `@fromBackingInt` |
+| `ArrayList.getLast` / `getLastOrNull` | `last().?` / `last()` |
+| `@import("builtin").os` / `.cpu` / `.abi` / `.mode` | `.target.os` / `.target.cpu` / `.target.abi` / `.optimize` |
+| `std.heap.stackFallback` | `std.heap.BufferFirstAllocator` |
+| `EnumSet.initEmpty` / `initFull` | `.empty` / `.full` |
+| `std.ascii.indexOfIgnoreCase` | `std.ascii.findIgnoreCase` |
+
+- **Flag:** a deprecated spelling in authored code, including build scripts. Do not keep compatibility branches for the old compiler.
+- **Rule:** `@bitCast` is for integers and packed structs only; use `@ptrCast` for type punning. Read every cast in a port: array/vector casts now use the logical bit representation, so they can change meaning without an error; extern-aggregate casts are rejected.
+- **Flag:** an array/vector `@bitCast`, or an unaudited cast in a toolchain port. Check `std.mem.containsAtLeastScalar` too: its last two parameters swapped.
+- **Rule:** configure-time reads are declared with `dependOnFileContents`, `dependOnFileMetadata` or `dependOnDirectory*`. Track absence as well as presence (track the nearest existing parent when an absent file cannot be hashed).
+- **Flag:** undeclared configure-time reads, `findProgram`, or `std.Build.Graph.poisonCache` in our build logic. Check with `zig build --cache-poison=disallowed`; when dependencies poison configuration, isolate their calls temporarily for the experiment and report the exception, never suppress it silently.
+- **Why:** aliases defer the next port; changed cast semantics and stale cached configuration can produce wrong output while still compiling successfully.
 
 ---
 
@@ -209,6 +235,7 @@ Also note the honest source-strength split: §2–§5 rest on **primary** source
 - [ ] No unused variables/imports, no shadowing, no misleading indentation, no reachable `unreachable`
 - [ ] Assertions encode proven invariants, not swept-under states
 - [ ] Correctness reasoned to edge cases — not "tests pass"; concrete failure scenario for each finding
+- [ ] Current Zig 0.17 spellings; scalar/packed `@bitCast` audited; configure inputs declared (§2.7)
 - [ ] Hot, high-cardinality structs aren't obviously cache-hostile (padding/pointers/rare fields inline)
 
 **Readability/idiom — suggest (don't block):**

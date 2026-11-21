@@ -5,9 +5,9 @@ const std = @import("std");
 const deps = @import("deps.zig");
 
 pub const ZigapagosExeConfig = struct {
+    commit: []const u8,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
-    version_string: []const u8,
+    optimize: std.lang.Optimize,
     tsan: bool = false,
     enable_tracy: bool = false,
     highlight: bool = true,
@@ -43,15 +43,16 @@ pub fn addZigapagosExe(zb: *std.Build, cfg: ZigapagosExeConfig) *std.Build.Step.
             \\const std = @import("std");
             \\pub const tsan = {};
             \\pub const enable_treesitter = {};
-            \\pub const version = "{s}";
             \\pub const log_scope_levels: []const std.log.ScopeLevel = &.{{
             \\
-        , .{ cfg.tsan, cfg.highlight, cfg.version_string }) catch @panic("OOM");
+        , .{ cfg.tsan, cfg.highlight }) catch @panic("OOM");
 
         for (cfg.scopes) |l| options.contents.print(zb.allocator,
             \\.{{.scope = .{f}, .level = .debug}},
         , .{std.zig.fmtId(l)}) catch @panic("OOM");
         options.contents.print(zb.allocator, "}};", .{}) catch @panic("OOM");
+        options.addOption([]const u8, "version", @import("../build.zig.zon").version);
+        options.addOption([]const u8, "commit", cfg.commit);
         break :blk options.createModule();
     };
 
@@ -80,6 +81,7 @@ pub fn addZigapagosExe(zb: *std.Build, cfg: ZigapagosExeConfig) *std.Build.Step.
             zigapagos_exe.root_module.addFrameworkPath(frameworks.path("Frameworks"));
             zigapagos_exe.root_module.addLibraryPath(frameworks.path("lib"));
             zigapagos_exe.root_module.linkFramework("CoreServices", .{});
+            deps.macos(zb, zigapagos_exe.root_module, target, optimize, frameworks);
         },
     }
 
@@ -100,45 +102,16 @@ pub fn addZigapagosExe(zb: *std.Build, cfg: ZigapagosExeConfig) *std.Build.Step.
     return zigapagos_exe;
 }
 
-/// Wire the Wuffs C implementation together with the checked-in translated
-/// header for `target`. Released Zig 0.16.0 crashes while translating Wuffs for
-/// aarch64, so local and release builds must share these pretranslated modules
-/// rather than letting either path invoke translate-c implicitly.
+/// Share the package's translated declarations and C implementation with every
+/// image consumer, including the isolated image test suite (issue #132).
 pub fn addWuffsImports(
     zb: *std.Build,
     module: *std.Build.Module,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
 ) void {
     const wuffs = zb.dependency("wuffs", .{ .target = target, .optimize = optimize });
-
-    module.addImport("_wuffs", wuffs.module("impl"));
-    module.addImport("wuffs", zb.createModule(.{
-        .root_source_file = switch (target.result.cpu.arch.family()) {
-            .aarch64 => switch (target.result.os.tag) {
-                .macos => zb.path("src/hacks/wuffs-temp-aarch64-macos.h.zig"),
-                .linux => zb.path("src/hacks/wuffs-temp-aarch64-linux.h.zig"),
-                else => noWuffsShim(target),
-            },
-            .x86 => switch (target.result.os.tag) {
-                .macos => zb.path("src/hacks/wuffs-temp-x86-macos.h.zig"),
-                .linux => zb.path("src/hacks/wuffs-temp-x86-linux.h.zig"),
-                .windows => zb.path("src/hacks/wuffs-temp-x86-windows.h.zig"),
-                else => noWuffsShim(target),
-            },
-            else => noWuffsShim(target),
-        },
-
-        .target = target,
-        .optimize = optimize,
-    }));
-}
-
-fn noWuffsShim(target: std.Build.ResolvedTarget) noreturn {
-    std.debug.panic(
-        "no checked-in wuffs shim for {s}-{s}; add one under src/hacks/",
-        .{ @tagName(target.result.cpu.arch), @tagName(target.result.os.tag) },
-    );
+    module.addImport("wuffs", wuffs.module("wuffs"));
 }
 
 // Generated from the vendored libwebp tarball (issue #132):
@@ -281,7 +254,7 @@ pub fn addWebpLib(
     zb: *std.Build,
     module: *std.Build.Module,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
 ) void {
     const dep = zb.dependency("libwebp", .{});
     const lib = zb.addLibrary(.{
@@ -324,6 +297,6 @@ pub fn addRunStep(b: *std.Build, zigapagos_exe: *std.Build.Step.Compile) void {
     const run_step = b.step("run", "run the standalone zigapagos executable");
     const zigapagos_run = b.addRunArtifact(zigapagos_exe);
     zigapagos_run.setCwd(b.path("standalone-test"));
-    if (b.args) |args| zigapagos_run.addArgs(args);
+    zigapagos_run.addPassthruArgs();
     run_step.dependOn(&zigapagos_run.step);
 }

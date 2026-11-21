@@ -635,7 +635,7 @@ test "build: zero findings still renders the section, saying so" {
 /// and a wall-clock stamp would make identical input produce differing output.
 ///
 /// Deviation from the brief: the brief sketched `out.writer(gpa)` on an
-/// `ArrayListUnmanaged(u8)`, but that method doesn't exist on 0.16.0's
+/// `ArrayListUnmanaged(u8)`, but that method doesn't exist on 0.17.1's
 /// `ArrayListUnmanaged` -- `migrate.zig`'s `buildOtherReport`/`buildReport`
 /// (the real precedent for this exact job) instead use
 /// `std.Io.Writer.Allocating`, whose `print`/`writeAll` return
@@ -905,7 +905,7 @@ pub fn blockerLessThan(_: void, a: Blocker, b: Blocker) bool {
             .eq => switch (std.mem.order(u8, a.detail, b.detail)) {
                 .lt => true,
                 .gt => false,
-                .eq => switch (std.math.order(@intFromEnum(a.severity), @intFromEnum(b.severity))) {
+                .eq => switch (std.math.order(@backingInt(a.severity), @backingInt(b.severity))) {
                     .lt => true,
                     .gt => false,
                     .eq => orderOptionalString(a.route_id, b.route_id) == .lt,

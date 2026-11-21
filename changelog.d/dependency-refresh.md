@@ -7,5 +7,6 @@
   and example lockfiles. Declare the Node types minimum explicitly so fresh
   consumer installs cannot select an older major via the registry default.
 - Refresh Scripty, SuperHTML, Ziggy, Zeit, Flow Syntax, and the macOS framework
-  SDK pins. Keep Zig 0.16.0 and TypeScript 6.0.3 for compiler compatibility;
+  SDK pins. Zig 0.17.1 is required after the compiler port; keep TypeScript
+  6.0.3 for compiler compatibility;
   see `docs/dependency-audit.md` for the checked versions and deferred updates.

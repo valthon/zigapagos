@@ -6,4 +6,4 @@
 .draft = false,
 ---
 
-This is a test for <ctx>, see the corresponding layout.
+This is a test for `<ctx>`, see the corresponding layout.

@@ -100,7 +100,7 @@ pub fn setup(b: *std.Build, cfg: config.Config) Exes {
             const run = addSchemaGenRun(b, exe, doc);
 
             const git_add = b.addSystemCommand(&.{ "git", "add" });
-            git_add.addFileArg(b.path(doc.path));
+            git_add.addFileArg2(b.path(doc.path), .{});
             git_add.setName(b.fmt("git add {s}", .{doc.path}));
             git_add.step.dependOn(&run.step);
 
@@ -110,7 +110,7 @@ pub fn setup(b: *std.Build, cfg: config.Config) Exes {
                 "--cached",
                 "--exit-code",
             });
-            diff.addFileArg(b.path(doc.path));
+            diff.addFileArg2(b.path(doc.path), .{});
             diff.setName(b.fmt("git diff {s}", .{doc.path}));
             diff.step.dependOn(&git_add.step);
 
@@ -136,7 +136,7 @@ const schema_docs = [_]SchemaDoc{
 fn addSchemaGenRun(b: *std.Build, exe: *std.Build.Step.Compile, doc: SchemaDoc) *std.Build.Step.Run {
     const run = b.addRunArtifact(exe);
     if (doc.flag.len != 0) run.addArg(doc.flag);
-    run.addFileArg(b.path(doc.path));
+    run.addFileArg2(b.path(doc.path), .{});
     // Writes into the source tree every time — the whole point is to
     // overwrite what is there, so the Run cache must never treat this as a
     // no-op (mirrors docgen.zig's docgen_reference Run and codegen.zig's

@@ -220,7 +220,7 @@ pub fn e2e(
     // (2) Free port + data dir.
     const port = pickFreePort(io);
     var port_buf: [5]u8 = undefined;
-    const port_str = std.fmt.bufPrint(&port_buf, "{d}", .{port}) catch unreachable;
+    const port_str = std.mem.print(&port_buf, "{d}", .{port}) catch unreachable;
 
     const data_dir_is_temp = cmd.data_dir == null;
     const data_dir = cmd.data_dir orelse try makeFreshTempDataDir(io, gpa, environ_map);
@@ -261,10 +261,17 @@ pub fn e2e(
         .io = io,
         .gpa = gpa,
         // stdio inherit (the spawn default): zigbase's own log streams through.
-        .server = std.process.spawn(io, .{ .argv = zb_argv.items }) catch |err| fatal.msg(
-            "error: e2e: failed to spawn zigbase ({s}): {s}\n",
-            .{ located.path, @errorName(err) },
-        ),
+        // The harness owns this child. ZigBase's agent-aware auto-background
+        // mode must not detach it beyond teardown's process handle.
+        .server = blk: {
+            var server_env = try environ_map.clone(gpa);
+            defer server_env.deinit();
+            try server_env.put("ZIGBASE_SERVE_BACKGROUND", "0");
+            break :blk std.process.spawn(io, .{ .argv = zb_argv.items, .environ_map = &server_env }) catch |err| fatal.msg(
+                "error: e2e: failed to spawn zigbase ({s}): {s}\n",
+                .{ located.path, @errorName(err) },
+            );
+        },
         .temp_data_dir = if (data_dir_is_temp) data_dir else null,
     };
 
@@ -274,7 +281,7 @@ pub fn e2e(
     waitReady(&harness, address, ready_path, cmd.timeout_ms);
 
     // (5) Run the user command with the origin exported.
-    const origin = std.fmt.allocPrint(gpa, "http://127.0.0.1:{d}", .{port}) catch fatal.oom();
+    const origin = gpa.print("http://127.0.0.1:{d}", .{port}) catch fatal.oom();
     environ_map.put("ZIGAPAGOS_ORIGIN", origin) catch fatal.oom();
 
     std.debug.print("e2e: ready (GET {s} -> 200 at {s}); running:", .{ ready_path, origin });
@@ -430,14 +437,14 @@ fn makeFreshTempDataDir(
 ) error{OutOfMemory}![]const u8 {
     const tmp_root = environ_map.get("TMPDIR") orelse
         environ_map.get("TEMP") orelse
-        (if (builtin.os.tag == .windows) fatal.msg(
+        (if (builtin.target.os.tag == .windows) fatal.msg(
             "error: e2e: no TEMP dir in the environment; pass --data-dir=DIR\n",
             .{},
         ) else "/tmp");
     var rand_bytes: [8]u8 = undefined;
     io.random(&rand_bytes);
     const hex = std.fmt.bytesToHex(rand_bytes, .lower);
-    const name = try std.fmt.allocPrint(gpa, "zigapagos-e2e-{s}", .{hex});
+    const name = try gpa.print("zigapagos-e2e-{s}", .{hex});
     defer gpa.free(name);
     const path = try std.fs.path.join(gpa, &.{ tmp_root, name });
     Io.Dir.cwd().createDirPath(io, path) catch |err| fatal.msg(
@@ -511,9 +518,9 @@ pub fn stageServedRoot(
     const trimmed = std.mem.trim(u8, prefix, "/");
     if (trimmed.len == 0) return site_dir_abs;
 
-    const next_root_abs = try std.fmt.allocPrint(gpa, "{s}.next", .{staging_root_abs});
+    const next_root_abs = try gpa.print("{s}.next", .{staging_root_abs});
     defer gpa.free(next_root_abs);
-    const previous_root_abs = try std.fmt.allocPrint(gpa, "{s}.previous", .{staging_root_abs});
+    const previous_root_abs = try gpa.print("{s}.previous", .{staging_root_abs});
     defer gpa.free(previous_root_abs);
 
     // Interrupted refreshes may leave either scratch tree behind. Remove them
@@ -577,7 +584,7 @@ pub fn stageServedRoot(
 pub fn defaultReadyPath(gpa: Allocator, prefix: []const u8) error{OutOfMemory}![]const u8 {
     const trimmed = std.mem.trim(u8, prefix, "/");
     if (trimmed.len == 0) return "/";
-    return std.fmt.allocPrint(gpa, "/{s}/", .{trimmed});
+    return gpa.print("/{s}/", .{trimmed});
 }
 
 // --- unit tests (run via `zig build test-e2e`, filter "e2e") -------------------

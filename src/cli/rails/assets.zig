@@ -355,7 +355,7 @@ fn findSprocketsManifestPath(io: Io, gpa: Allocator, root: Io.Dir) Allocator.Err
         // missed it).
         best = null;
         defer gpa.free(name);
-        return try std.fmt.allocPrint(gpa, "public/assets/{s}", .{name});
+        return try gpa.print("public/assets/{s}", .{name});
     }
     return null;
 }
@@ -470,18 +470,18 @@ fn resolveViaManifest(
 ) Allocator.Error!Asset {
     if (manifest) |mv| {
         if (manifestLookup(mv, nested_key, e_path)) |digested| {
-            const url = try std.fmt.allocPrint(gpa, "/assets/{s}", .{digested});
+            const url = try gpa.print("/assets/{s}", .{digested});
             return .{ .source = source, .public_url = url, .pipeline = pipeline, .deterministic = true };
         }
         var buf: [96]u8 = undefined;
-        const detail = std.fmt.bufPrint(&buf, "asset is not listed in the compiled {s} manifest", .{@tagName(pipeline)}) catch
+        const detail = std.mem.print(&buf, "asset is not listed in the compiled {s} manifest", .{@tagName(pipeline)}) catch
             "asset is not listed in the compiled manifest";
         try blockers.append(gpa, blocker_list, "RAILS_ASSET_DIGEST_UNAVAILABLE", e_path, detail, false, .warn, null, null);
         return .{ .source = source, .public_url = null, .pipeline = pipeline, .deterministic = false };
     }
     var buf: [96]u8 = undefined;
     const detail = manifest_unusable_reason orelse
-        (std.fmt.bufPrint(&buf, "no compiled {s} manifest was found under public/assets/", .{@tagName(pipeline)}) catch
+        (std.mem.print(&buf, "no compiled {s} manifest was found under public/assets/", .{@tagName(pipeline)}) catch
             "no compiled manifest was found under public/assets/");
     try blockers.append(gpa, blocker_list, "RAILS_ASSET_MANIFEST_MISSING", e_path, detail, false, .warn, null, null);
     return .{ .source = source, .public_url = null, .pipeline = pipeline, .deterministic = false };
@@ -516,7 +516,7 @@ fn buildAsset(
     // "confident but wrong" story this file exists to avoid, even though a
     // pipeline gem may well be declared for the REST of the app's assets.
     if (std.mem.startsWith(u8, e.path, "public/")) {
-        const url = try std.fmt.allocPrint(gpa, "/{s}", .{e.path["public/".len..]});
+        const url = try gpa.print("/{s}", .{e.path["public/".len..]});
         return .{ .source = source, .public_url = url, .pipeline = null, .deterministic = true };
     }
 

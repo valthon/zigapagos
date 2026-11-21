@@ -66,7 +66,7 @@ pagination: ?Pagination = null,
 
 /// Only present in debug builds to catch programming errors
 /// in the processing pipeline.
-_debug: if (builtin.mode != .Debug) void else struct {
+_debug: if (builtin.optimize != .debug) void else struct {
     stage: std.atomic.Value(Stage),
     pub const Stage = enum(u8) { scanned, parsed, analyzed, rendered };
 } = undefined,
@@ -111,6 +111,7 @@ _parse: struct {
 
     // Available if status == .parsed
     ast: supermd.Ast,
+    heading_baseline_errors: []const HeadingBaselineError = &.{},
 } = undefined,
 
 // Valid if parse.active = true and parse.status == .parsed
@@ -486,12 +487,23 @@ pub fn parse(
     drafts: bool,
     auto_heading_ids: bool,
 ) void {
-    const zone = tracy.trace(@src());
-    defer zone.end();
-
-    errdefer |err| switch (err) {
+    return parseInner(p, io, gpa, cmark, progress, variant, drafts, auto_heading_ids) catch |err| switch (err) {
         error.OutOfMemory => fatal.oom(),
     };
+}
+
+fn parseInner(
+    p: *Page,
+    io: Io,
+    gpa: Allocator,
+    cmark: supermd.Ast.CmarkParser,
+    progress: ?std.Progress.Node,
+    variant: *const @import("../Variant.zig"),
+    drafts: bool,
+    auto_heading_ids: bool,
+) !void {
+    const zone = tracy.trace(@src());
+    defer zone.end();
 
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     // const path_bytes = buf[0..p._scan.path.bytesSlice(
@@ -502,7 +514,7 @@ pub fn parse(
     //     p._scan.name,
     // )];
 
-    const path_bytes = std.fmt.bufPrint(&buf, "{f}", .{
+    const path_bytes = std.mem.print(&buf, "{f}", .{
         p._scan.file.fmt(
             &variant.string_table,
             &variant.path_table,
@@ -511,7 +523,7 @@ pub fn parse(
         ),
     }) catch unreachable;
 
-    if (builtin.mode == .Debug) {
+    if (builtin.optimize == .debug) {
         const last = p._debug.stage.swap(.parsed, .acq_rel);
         assert(last == .scanned);
 
@@ -557,7 +569,16 @@ pub fn parse(
 
     var fm: ziggy.FrontmatterMeta = .{};
     var diag: ziggy.Diagnostic = .{ .path = null };
-    p.* = ziggy.parseLeaky(Page, arena, full_src, .{
+    // Ziggy's frontmatter parser reads ONE token past the closing `---` (its
+    // trailing-token check), so Markdown body text reached its tokenizer. On
+    // Zig 0.17.1 a body that opens with `-` (a list item) made ziggy old
+    // @189d1d5e call std.zig.parseNumberLiteral on an empty slice
+    // (Tokenizer.zig:442, finishNumber), which now asserts instead of
+    // returning .failure: SIGABRT on any list-first page. Hand ziggy only the
+    // frontmatter region so the body is never tokenized; `fm.offset` is
+    // unchanged because the region starts at byte 0.
+    const fm_src = try frontmatterRegion(arena, full_src);
+    p.* = ziggy.parseLeaky(Page, arena, fm_src, .{
         .diagnostic = &diag,
         .frontmatter_meta = &fm,
     }) catch |err| switch (err) {
@@ -590,7 +611,8 @@ pub fn parse(
     // the SuperMD data correctly, so te do that unconditionally in order to
     // report more errors at once.
 
-    var ast = try supermd.Ast.init(gpa, full_src[fm.offset..], cmark);
+    var ast = try supermd.Ast.init(gpa, full_src[fm.offset..], cmark, .{ .auto_target_blank = true });
+    const heading_baseline_errors = try applyHeadingBaseline(arena, &ast);
     if (auto_heading_ids) try heading_slugs.apply(gpa, &ast);
 
     p._parse = .{
@@ -599,6 +621,7 @@ pub fn parse(
         .full_src = full_src,
         .fm = fm,
         .ast = ast,
+        .heading_baseline_errors = heading_baseline_errors,
         .status = .parsed,
     };
 }
@@ -1264,12 +1287,12 @@ pub const Builtins = struct {
                 return .{ .page = other_page };
             }
 
-            const index_html: StringTable.String = @enumFromInt(11);
+            const index_html: StringTable.String = @fromBackingInt(@intCast(11));
 
             const v = &ctx._meta.build.variants[p._scan.variant_id];
 
             var buf: [std.fs.max_path_bytes]u8 = undefined;
-            const page_url = std.fmt.bufPrint(&buf, "{f}", .{
+            const page_url = std.mem.print(&buf, "{f}", .{
                 p._scan.url.fmt(
                     &v.string_table,
                     &v.path_table,
@@ -1358,11 +1381,11 @@ pub const Builtins = struct {
                 return Optional.init(gpa, other_page);
             }
 
-            const index_html: StringTable.String = @enumFromInt(11);
+            const index_html: StringTable.String = @fromBackingInt(@intCast(11));
             const v = &ctx._meta.build.variants[p._scan.variant_id];
 
             var buf: [std.fs.max_path_bytes]u8 = undefined;
-            const page_url = std.fmt.bufPrint(&buf, "{f}", .{
+            const page_url = std.mem.print(&buf, "{f}", .{
                 p._scan.url.fmt(
                     &v.string_table,
                     &v.path_table,
@@ -1420,12 +1443,12 @@ pub const Builtins = struct {
                 return context.Array.init(gpa, Value, pages.items) catch fatal.oom();
             }
 
-            const index_html: StringTable.String = @enumFromInt(11);
+            const index_html: StringTable.String = @fromBackingInt(@intCast(11));
 
             const v = &ctx._meta.build.variants[p._scan.variant_id];
 
             var buf: [std.fs.max_path_bytes]u8 = undefined;
-            const page_url = std.fmt.bufPrint(&buf, "{f}", .{
+            const page_url = std.mem.print(&buf, "{f}", .{
                 p._scan.url.fmt(
                     &v.string_table,
                     &v.path_table,
@@ -2202,20 +2225,24 @@ pub const Builtins = struct {
             const ast = p._parse.ast;
 
             var sections: std.ArrayList(ContentSection) = .empty;
+            defer sections.deinit(gpa);
+            errdefer for (sections.items) |*section| section.data.fields.deinit(gpa);
             var it = ast.ids.iterator();
             while (it.next()) |kv| {
                 const d = kv.value_ptr.getDirective() orelse continue;
                 if (d.kind == .section) {
+                    var data = try directiveData(gpa, d.data);
+                    errdefer data.fields.deinit(gpa);
                     try sections.append(gpa, .{
                         .id = d.id orelse "",
-                        .data = d.data,
+                        .data = data,
                         ._node = kv.value_ptr.*,
                         ._page = p,
                     });
                 }
             }
 
-            return Value.from(gpa, try sections.toOwnedSlice(gpa));
+            return Value.from(gpa, sections.items);
         }
     };
 
@@ -2299,7 +2326,7 @@ pub const Builtins = struct {
 
 pub const ContentSection = struct {
     id: []const u8,
-    data: supermd.Directive.Data = .{},
+    data: context.Map.ZiggyMap = .{},
     _node: supermd.Node,
     _page: *const Page,
 
@@ -2500,4 +2527,134 @@ test "pagination: analysis error variants carry codes and titles" {
     const sec_err: FrontmatterAnalysisError = .pagination_not_section;
     try testing.expectEqual(diagcodes.Code.ZP_PAGINATION_NOT_SECTION, sec_err.code());
     try testing.expect(sec_err.title().len > 0);
+}
+
+/// NO_SLOP §2.2a contract 2: caller owns the returned map index and calls
+/// fields.deinit(gpa); keys and bytes borrow the page AST. Directive.data only
+/// accepts string pairs. Keep that API on our old Ziggy map without replacing
+/// the Ziggy implementation SuperMD itself needs.
+fn directiveData(gpa: Allocator, data: supermd.Directive.Data) Allocator.Error!context.Map.ZiggyMap {
+    var out: context.Map.ZiggyMap = .{};
+    errdefer out.fields.deinit(gpa);
+    var it = data.fields.iterator();
+    while (it.next()) |kv| {
+        try out.fields.put(gpa, kv.key_ptr.*, .{ .bytes = kv.value_ptr.bytes });
+    }
+    return out;
+}
+
+/// The frontmatter region of a page source: from the opening `---` through the
+/// first later line that starts with `---` (ziggy's own delimiter rule, see its
+/// Tokenizer `.start` state). A source that does not open with `---`, or never
+/// closes, is returned whole so ziggy reports MissingFrontmatter /
+/// OpenFrontmatter exactly as before.
+///
+/// NO_SLOP §2.2a contract 1: the one allocation that escapes is the returned
+/// sentinel copy (ziggy wants `[:0]const u8`); nothing else is allocated.
+fn frontmatterRegion(alloc: Allocator, src: [:0]const u8) Allocator.Error![:0]const u8 {
+    if (!std.mem.startsWith(u8, src, "---")) return src;
+    // The closing delimiter is a line that STARTS with `---`; ziggy itself
+    // does not require the line to end there.
+    const nl = std.mem.indexOfPos(u8, src, 3, "\n---") orelse return src;
+    const end = nl + "\n---".len;
+    return try alloc.dupeSentinel(u8, src[0..end], 0);
+}
+
+test "frontmatterRegion stops at the closing delimiter and copies nothing else" {
+    const alloc = std.testing.allocator;
+    const page: [:0]const u8 = "---\n.title = \"T\",\n---\n- list item\n";
+    const fm = try frontmatterRegion(alloc, page);
+    defer alloc.free(fm);
+    try std.testing.expectEqualStrings("---\n.title = \"T\",\n---", fm);
+    // Open frontmatter and no frontmatter are passed through untouched.
+    const open: [:0]const u8 = "---\n.title = \"T\",\n- not closed\n";
+    try std.testing.expectEqual(open.ptr, (try frontmatterRegion(alloc, open)).ptr);
+    const none: [:0]const u8 = "# just markdown\n";
+    try std.testing.expectEqual(none.ptr, (try frontmatterRegion(alloc, none)).ptr);
+}
+
+/// A local dialect diagnostic with the same source-preview format as SuperMD.
+pub const HeadingBaselineError = struct {
+    heading: supermd.Node,
+    first: supermd.Node,
+
+    pub fn fmt(err: HeadingBaselineError, fm_lines: usize, src: []const u8, path: []const u8) Fmt {
+        return .{ .err = err, .fm_lines = fm_lines, .src = src, .path = path };
+    }
+
+    pub const Fmt = struct {
+        err: HeadingBaselineError,
+        fm_lines: usize,
+        src: []const u8,
+        path: []const u8,
+
+        pub fn format(f: Fmt, w: *std.Io.Writer) std.Io.Writer.Error!void {
+            const range = f.err.heading.range();
+            const first_range = f.err.first.range();
+            var preview = supermd.Ast.linePreview(f.src, range);
+            preview.carets += 1;
+            var first_preview = supermd.Ast.linePreview(f.src, first_range);
+            first_preview.carets += 1;
+            try w.print(
+                \\{s}:{}:{}: error: heading above the document's first heading level
+                \\{f}
+                \\| -- note: first heading (level {}) on line {} col {}:
+                \\{f}
+                \\
+            , .{
+                f.path,                f.fm_lines + range.start.row, range.start.col,
+                preview,               f.err.first.headingLevel(),   f.fm_lines + first_range.start.row,
+                first_range.start.col, first_preview,
+            });
+        }
+    };
+};
+
+/// NO_SLOP §2.2a contract 1: frees scratch, returns one diagnostic slice.
+/// The caller owns the result (production uses the page's parse arena).
+/// Only the first top-level heading's gap is relaxed; later gaps stay upstream.
+fn applyHeadingBaseline(gpa: Allocator, ast: *supermd.Ast) Allocator.Error![]HeadingBaselineError {
+    const errors = @constCast(ast.errors);
+    var kept: usize = 0;
+    for (errors) |err| {
+        if (err.kind == .heading_skip and err.kind.heading_skip.last == null) continue;
+        errors[kept] = err;
+        kept += 1;
+    }
+    ast.errors = errors[0..kept];
+
+    var above: std.ArrayList(HeadingBaselineError) = .empty;
+    defer above.deinit(gpa);
+    var first: ?supermd.Node = null;
+    var sectioned = false;
+    var it = supermd.Ast.Iter.init(ast.md.root);
+    defer it.deinit();
+    while (it.next()) |ev| {
+        if (ev.dir != .enter) continue;
+        // SuperMD stops its hierarchy check once it encounters a section.
+        // Include heading-less sections and nested sections in that state.
+        if (ev.node.getDirective()) |d| {
+            // Rejected heading suffixes never enter SuperMD's sectioned path.
+            const rejected_suffix = ev.node.nodeType() == .LINK and
+                ev.node.parent() != null and ev.node.parent().?.nodeType() == .HEADING and
+                ev.node.nextSibling() != null;
+            if (d.kind == .section and !rejected_suffix) sectioned = true;
+        }
+        if (ev.node.nodeType() != .HEADING) continue;
+        // analyzeHeading sets sectioned before checking this heading, even
+        // when a section has no id and therefore was not attached to it.
+        if (ev.node.firstChild()) |link| {
+            if (link.getDirective()) |d| {
+                if (d.kind == .section and link.nextSibling() == null) sectioned = true;
+            }
+        }
+        if (ev.node.parent() != null) continue;
+        if (sectioned) continue;
+        if (first) |baseline| {
+            if (ev.node.headingLevel() < baseline.headingLevel()) {
+                try above.append(gpa, .{ .heading = ev.node, .first = baseline });
+            }
+        } else first = ev.node;
+    }
+    return above.toOwnedSlice(gpa);
 }

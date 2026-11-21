@@ -5,19 +5,9 @@
 #   scripts/assert-version.sh <expected-version>   compare; exit non-zero on mismatch
 #   scripts/assert-version.sh --print              print build.zig.zon's version
 #
-# Why this exists as a script rather than a workflow inline: build/release.zig
-# already refuses to build when the git tag disagrees with the zon version, but
-# it only says so after `zig build release` has configured — on the release
-# workflow that is *after* the toolchain install and dependency fetch, and on a
-# per-target matrix it is after N runners have each paid for that. Running the
-# same comparison as two seconds of bash at the top of every release job fails
-# fast with both values side by side. Extracting it also makes it testable
-# (tests/release/scripts.sh) and callable from more than one job without the
-# copy drifting.
-#
-# The `--print` mode exists for the release workflow's PR smoke run, which has
-# no tag and must synthesise the zon-matching one locally. Keeping the .zon
-# parse in exactly one place is the point.
+# This is release.yml's tag-versus-manifest guard. Run it before building any
+# release artifacts: the spawn-free configure phase does not inspect tags.
+# --print also lets scripts query the manifest version without a Zig toolchain.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

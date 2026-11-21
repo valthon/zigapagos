@@ -31,30 +31,28 @@ const fatal = @import("../fatal.zig");
 /// verified against this harness. (The `.spa`-marker contract needs >= 0.10.0;
 /// the `serve` CLI flags used by e2e are identical from v0.10.0 through main.)
 ///
-/// v0.13.0 is the first stock release with the declarative `schema apply`
-/// surface used by generated migration parity tests. Zigapagos still drives a
-/// PREBUILT zigbase through the unchanged standalone `serve` flags
-/// (`--http-host`, `--http-port`, `--data-dir`, `--serve-static`,
-/// `--insecure-cookies`); the new CLI surface initializes the same isolated
-/// data directory before that server starts.
-pub const pinned_version = "v0.13.0";
+/// v0.14.0 is the first release built with Zig 0.17.1. Its Breaking section
+/// retains the standalone `serve` flags used here (`--http-host`, `--http-port`,
+/// `--data-dir`, `--serve-static`, `--insecure-cookies`) and the declarative
+/// `schema apply` surface used by generated migration parity tests.
+pub const pinned_version = "v0.14.0";
 
 /// The GitHub repo the pinned release is published under.
 pub const release_repo = "valthon/zigbase";
 
 /// Platform spelling of the binary name.
-pub const exe_name = if (builtin.os.tag == .windows) "zigbase.exe" else "zigbase";
+pub const exe_name = if (builtin.target.os.tag == .windows) "zigbase.exe" else "zigbase";
 
 /// This host's release-asset target (the release channel publishes
 /// `zigbase-<ver>-<target>.tar.gz` for these), or null when the channel
 /// ships no asset for this platform.
-pub const asset_target: ?[]const u8 = switch (builtin.os.tag) {
-    .linux => switch (builtin.cpu.arch) {
+pub const asset_target: ?[]const u8 = switch (builtin.target.os.tag) {
+    .linux => switch (builtin.target.cpu.arch) {
         .x86_64 => "x86_64-linux-musl",
         .aarch64 => "aarch64-linux-musl",
         else => null,
     },
-    .macos => switch (builtin.cpu.arch) {
+    .macos => switch (builtin.target.cpu.arch) {
         .x86_64 => "x86_64-macos",
         .aarch64 => "aarch64-macos",
         else => null,
@@ -116,7 +114,7 @@ pub fn cachedPath(
     gpa: Allocator,
     environ_map: *const std.process.Environ.Map,
 ) error{OutOfMemory}!?[]const u8 {
-    if (builtin.os.tag == .windows) {
+    if (builtin.target.os.tag == .windows) {
         const root = environ_map.get("LOCALAPPDATA") orelse return null;
         return try std.fs.path.join(gpa, &.{ root, "zigapagos", "zigbase", pinned_version, exe_name });
     }
@@ -134,13 +132,12 @@ pub fn cachedPath(
 /// published asset. Caller owns the result.
 pub fn assetName(gpa: Allocator) error{OutOfMemory}!?[]const u8 {
     const target = asset_target orelse return null;
-    return try std.fmt.allocPrint(gpa, "zigbase-{s}-{s}.tar.gz", .{ pinned_version[1..], target });
+    return try gpa.print("zigbase-{s}-{s}.tar.gz", .{ pinned_version[1..], target });
 }
 
 /// Download URL for one file of the pinned release. Caller owns the result.
 pub fn releaseUrl(gpa: Allocator, file: []const u8) error{OutOfMemory}![]const u8 {
-    return std.fmt.allocPrint(
-        gpa,
+    return gpa.print(
         "https://github.com/{s}/releases/download/{s}/{s}",
         .{ release_repo, pinned_version, file },
     );
@@ -258,7 +255,7 @@ pub fn missingMessage(
 ) error{OutOfMemory}![]const u8 {
     const cache = try cachedPath(gpa, environ_map);
     defer if (cache) |c| gpa.free(c);
-    return std.fmt.allocPrint(gpa,
+    return gpa.print(
         \\error: zigbase binary not found
         \\
         \\This workflow serves the built site with the STOCK ZigBase binary
@@ -351,7 +348,7 @@ test "e2e zigbase: empty environment yields null (and a message that still guide
 }
 
 test "e2e zigbase: cachedPath honors XDG_CACHE_HOME, then HOME/.cache" {
-    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (builtin.target.os.tag == .windows) return error.SkipZigTest;
     const gpa = std.testing.allocator;
     var env = std.process.Environ.Map.init(gpa);
     defer env.deinit();
@@ -377,7 +374,7 @@ test "e2e zigbase: cachedPath honors XDG_CACHE_HOME, then HOME/.cache" {
 }
 
 test "e2e zigbase: release asset name + URL match the channel's naming" {
-    // Verified against `gh release view v0.13.0` (valthon/zigbase): assets are
+    // Release assets verified 2026-11-20 for v0.14.0 (valthon/zigbase):
     // zigbase-<ver>-<target>.tar.gz plus SHA256SUMS, under
     // github.com/valthon/zigbase/releases/download/<tag>/.
     const gpa = std.testing.allocator;

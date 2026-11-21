@@ -1,0 +1,2 @@
+<!DOCTYPE html>
+<html><head><title>Compatibility</title></head><body><div :html="$page.content()"></div></body></html>

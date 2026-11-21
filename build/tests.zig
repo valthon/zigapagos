@@ -31,7 +31,7 @@ const Standalone = struct {
     /// Run the test binary from the repo root (it reads repo-relative fixtures
     /// or spawns repo-relative scripts).
     repo_root_cwd: bool = false,
-    /// Wires the wuffs shims + compiled libwebp into this suite's root
+    /// Wires the translated Wuffs module + compiled libwebp into this suite's root
     /// module, the same way `addZigapagosExe` wires them into the exe, so
     /// the suite cannot drift from production linkage (issue #132).
     image_deps: bool = false,
@@ -129,7 +129,7 @@ const standalone: []const Standalone = &.{
 /// Two reasons a suite lands here rather than in `standalone`:
 ///
 ///  * The file under test @imports across a `src/` subdirectory boundary (e.g.
-///    init_from_astro.zig's `@import("../fatal.zig")`), which Zig 0.16's module
+///    init_from_astro.zig's `@import("../fatal.zig")`), which Zig 0.17's module
 ///    system rejects for a standalone root module — the file-ownership check
 ///    fires before lazy analysis. Reusing the exe module (already wired with
 ///    every dep) sidesteps that.
@@ -141,7 +141,7 @@ const standalone: []const Standalone = &.{
 ///    inclusion, and `filters` selects that anchor plus the real tests it
 ///    pulls in.
 ///
-/// In Zig 0.16, `filters` is a compile-time option — passed to the compiler as
+/// In Zig 0.17, `filters` is a compile-time option — passed to the compiler as
 /// --test-filter, not to the test binary at runtime.
 const ExeModule = struct {
     step_name: []const u8,
@@ -276,34 +276,20 @@ pub fn setup(
     zigapagos_exe: *std.Build.Step.Compile,
     check: *std.Build.Step,
 ) void {
-    const ziggy = b.dependency("ziggy", .{
-        .target = cfg.target,
-        .optimize = cfg.optimize,
-    }).module("ziggy");
-
     // NOTE: every standalone test module below threads `single_threaded`
     // through, so `-Dsingle-threaded` genuinely applies to it and
     // `check` (which compiles all of these) catches single-threaded rot in
     // test-only code, not just in the exe.
     for (standalone) |suite| {
         const target = if (suite.host_target) b.graph.host else cfg.target;
-        const tests = b.addTest(.{
+        const tests = addTest(b, cfg, .{
             .root_module = b.createModule(.{
                 .root_source_file = b.path(suite.root_source_file),
                 .target = target,
                 .optimize = cfg.optimize,
                 .single_threaded = cfg.single_threaded,
             }),
-        });
-        if (suite.ziggy) tests.root_module.addImport("ziggy", ziggy);
-        if (suite.supermd) {
-            const up = deps.upstream(b, target, cfg.optimize, cfg.enable_tracy);
-            tests.root_module.addImport("supermd", up.supermd);
-        }
-        if (suite.image_deps) {
-            exe_build.addWuffsImports(b, tests.root_module, target, cfg.optimize);
-            exe_build.addWebpLib(b, tests.root_module, target, cfg.optimize);
-        }
+        }, .{ .ziggy = suite.ziggy, .supermd = suite.supermd, .image_deps = suite.image_deps });
         check.dependOn(&tests.step);
         const run_tests = b.addRunArtifact(tests);
         if (suite.repo_root_cwd) run_tests.setCwd(b.path("."));
@@ -311,13 +297,50 @@ pub fn setup(
     }
 
     for (exe_module) |suite| {
-        const tests = b.addTest(.{
+        const tests = addTest(b, cfg, .{
             .root_module = zigapagos_exe.root_module,
             .filters = suite.filters,
-        });
+        }, .{});
         if (suite.checked) check.dependOn(&tests.step);
         const run_tests = b.addRunArtifact(tests);
         if (suite.repo_root_cwd) run_tests.setCwd(b.path("."));
         b.step(suite.step_name, suite.description).dependOn(&run_tests.step);
     }
+}
+
+/// Resolve test-only imports from the root, never from the global -Dtarget.
+/// Exe-module suites already inherit all imports/linkage from build/exe.zig,
+/// which resolves them for that same root target.
+fn addTest(
+    b: *std.Build,
+    cfg: config.Config,
+    options: std.Build.TestOptions,
+    imports: struct { ziggy: bool = false, supermd: bool = false, image_deps: bool = false },
+) *std.Build.Step.Compile {
+    const tests = b.addTest(options);
+    const module = tests.root_module;
+    const target = module.resolved_target.?;
+    const optimize = module.optimize.?;
+    if (imports.ziggy) {
+        const ziggy = b.dependency("ziggy", .{
+            .target = target,
+            .optimize = optimize,
+        }).module("ziggy");
+        module.addImport("ziggy", ziggy);
+    }
+    if (imports.supermd) {
+        const up = deps.upstream(b, target, optimize, cfg.enable_tracy);
+        module.addImport("supermd", up.supermd);
+    }
+    if (imports.image_deps) {
+        exe_build.addWuffsImports(b, module, target, optimize);
+        exe_build.addWebpLib(b, module, target, optimize);
+    }
+    // #279: Zig 0.17.1's self-hosted aarch64 backend needs >32 GB for
+    // test-props in debug; LLVM needs 369 MB. Apply to both suite families,
+    // using each artifact's resolved target (some standalone suites pin host).
+    if (target.result.cpu.arch == .aarch64 and optimize == .debug) {
+        tests.use_llvm = true;
+    }
+    return tests;
 }

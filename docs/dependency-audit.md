@@ -1,5 +1,13 @@
 # Dependency audits
 
+## Zig 0.17.1 migration — 2026-11-20
+
+The compiler port landed separately from the pending upstream tag sync. ZigBase
+is pinned to v0.14.0, the first release built on Zig 0.17.1. Ziggy stays on the
+`old` API at 189d1d5e; SuperMD retains its own transitive Ziggy main module.
+The selected Zig package pins below now describe this port. Earlier npm audit
+results retain their original dates and measurements.
+
 ## Preact 11 migration — 2026-11-07
 
 Upgraded Preact from 10.29.8 to 11.2.0, the npm `latest` release checked on
@@ -70,9 +78,7 @@ package versions were downgraded and no package overrides were added.
 
 Retained Preact 10.29.8: the Preact 11 update in PR #241 fails when the compat
 bridge re-exports the removed `SuspenseList`. TypeScript stays at 6.0.3
-because the slicer and hot transform require its compiler API. Zig remains
-0.16.0; moving it and the compiler-dependent Zig package pins to 0.17 requires
-a migration. Tailwind/CLI 4.3.3 are current. The Rails migration fixtures
+because the slicer and hot transform require its compiler API. Zig was retained at that audit; the separate 0.17.1 migration is recorded above. Tailwind/CLI 4.3.3 are current. The Rails migration fixtures
 continue to model historical input projects; their Gemfile lock versions
 were not upgraded.
 
@@ -135,8 +141,8 @@ registrator update (20.12.0); its patch was not applied.
 | Preact | 10.29.8 | Current stable release; 11 is a prerelease |
 | `preact-render-to-string` | 6.7.0 | Current stable release |
 | TypeScript | 6.0.3 | Latest compatible 6.x release; see below |
-| Zig | 0.16.0 | Latest released compiler; 0.17 is a development series |
-| ZigBase | 0.13.0 | Current release; existing CLI/install pin retained |
+| Zig | 0.17.1 | Released compiler selected by the November toolchain port |
+| ZigBase | 0.14.0 | Prebuilt CLI/install pin; built on Zig 0.17.1 |
 
 All three Bun lockfiles were resolved using Bun 1.4.2. The site and example
 lockfiles were regenerated so their `file:` runtime dependency records carry
@@ -174,16 +180,17 @@ development heads are not automatically compatible with released Zig.
 
 | Package | Selected revision | Result |
 | --- | --- | --- |
-| Scripty | `77f2eac9d31e` | Latest revision before the Zig 0.17 migration |
+| Scripty | `48006feaa0d7` | Zig 0.17-compatible upstream pin |
 | Tracy | `67d2d89e3510` | Already at upstream HEAD |
 | MIME | `a2ed0cba3b14` | Already at upstream HEAD |
-| Wuffs | `6fd35cb51e90` | Retained; subsequent changes require Zig 0.17 |
-| Xcode frameworks | `62f660e82e4e` | Updated to upstream HEAD |
-| SuperHTML | `39dc8b3681f1` | Latest revision before the Zig 0.17 migration |
-| Zeit | `1b1c95b2282c` | Current `0.16` branch; includes Windows DST fixes |
-| Flow Syntax | `42d51f7f5aeb` | Current `zig-0.16` branch |
-| Ziggy | `fa265838bb38` | Latest `old` revision before the Zig 0.17 migration |
-| SuperMD | `4132146450f1` | Retained; newer main requires Zig 0.17 |
+| Wuffs | `b410781f4469` | Build-time translate-c package |
+| Xcode frameworks | `8a1cfb373587` | SDK headers for macOS translation |
+| SuperHTML | `b00f3d25e7e8` | 0.7.1; Zig 0.17-compatible |
+| Zeit | `ed64c36035fe` | Zig 0.17-compatible upstream pin |
+| Flow Syntax | `641e1942c997` | Main branch; Zig 0.17-compatible |
+| Ziggy | `189d1d5e862e` | Old API; library tests pass on 0.17.1 |
+| SuperMD | `d294f18f05b9` | Required API adaptations only |
+| translate-c | `cfac21f3199b` | Official `zig-0.17.x` package |
 | libwebp | 1.6.0 | Current stable release tag |
 
 Transitive Zig pins remain owned by their upstream package manifests and were

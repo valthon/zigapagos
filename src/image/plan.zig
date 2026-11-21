@@ -22,7 +22,7 @@ pub const SourceRef = struct {
     kind: enum(u8) { site, page },
     /// 0 for `.site` (multilingual sites keep one copy of site assets).
     variant_id: u32,
-    /// `@intFromEnum` of the interned PathTable.Path / StringTable.String.
+    /// `@backingInt` of the interned PathTable.Path / StringTable.String.
     path: u32,
     name: u32,
 };
@@ -134,7 +134,7 @@ pub fn variantBasename(
     var hasher: Blake3 = .init(.{});
     hasher.update(source_bytes);
     var params: [64]u8 = undefined;
-    hasher.update(std.fmt.bufPrint(
+    hasher.update(std.mem.print(
         &params,
         ";v1;w={d};c={s};q={d};ev={d}",
         .{ width, @tagName(codec), quality, encoder_version },
@@ -142,11 +142,11 @@ pub fn variantBasename(
     var digest: [Blake3.digest_length]u8 = undefined;
     hasher.final(&digest);
     var hex: [hash_hex_len]u8 = undefined;
-    _ = std.fmt.bufPrint(&hex, "{x}", .{digest[0 .. hash_hex_len / 2]}) catch unreachable;
+    _ = std.mem.print(&hex, "{x}", .{digest[0 .. hash_hex_len / 2]}) catch unreachable;
 
     const ext = std.fs.path.extension(source_basename);
     const stem = source_basename[0 .. source_basename.len - ext.len];
-    return std.fmt.allocPrint(gpa, "{s}.{s}.{d}.{s}", .{
+    return gpa.print("{s}.{s}.{d}.{s}", .{
         stem, &hex, width, @tagName(codec),
     });
 }

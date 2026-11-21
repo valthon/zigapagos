@@ -483,7 +483,7 @@ pub fn assetFor(items: []const assets.Asset, helper: []const u8, literal: []cons
     const logical = blk: {
         const ext = kind.ext orelse break :blk bare;
         if (std.mem.endsWith(u8, bare, ext)) break :blk bare;
-        break :blk std.fmt.bufPrint(&logical_buf, "{s}{s}", .{ bare, ext }) catch return null;
+        break :blk std.mem.print(&logical_buf, "{s}{s}", .{ bare, ext }) catch return null;
     };
     // The logical name minus its final extension, for the swapped
     // preprocessor forms. Only the BASENAME's dots count: a directory
@@ -523,18 +523,18 @@ pub fn assetFor(items: []const assets.Asset, helper: []const u8, literal: []cons
     for (0..dirs.len + 1) |i| {
         var root_buf: [candidate_max]u8 = undefined;
         const root = if (i < dirs.len)
-            std.fmt.bufPrint(&root_buf, "app/assets/{s}/", .{dirs[i]}) catch return null
+            std.mem.print(&root_buf, "app/assets/{s}/", .{dirs[i]}) catch return null
         else
             "public/";
 
         var buf: [candidate_max]u8 = undefined;
-        if (find(items, std.fmt.bufPrint(&buf, "{s}{s}", .{ root, logical }) catch continue)) |hit| return hit;
+        if (find(items, std.mem.print(&buf, "{s}{s}", .{ root, logical }) catch continue)) |hit| return hit;
         for (forms.chained) |suffix| {
-            const c = std.fmt.bufPrint(&buf, "{s}{s}{s}", .{ root, logical, suffix }) catch continue;
+            const c = std.mem.print(&buf, "{s}{s}{s}", .{ root, logical, suffix }) catch continue;
             if (find(items, c)) |hit| return hit;
         }
         for (forms.swapped) |suffix| {
-            const c = std.fmt.bufPrint(&buf, "{s}{s}{s}", .{ root, stem, suffix }) catch continue;
+            const c = std.mem.print(&buf, "{s}{s}{s}", .{ root, stem, suffix }) catch continue;
             if (find(items, c)) |hit| return hit;
         }
     }

@@ -1439,22 +1439,22 @@ not get rendered directly in the page.
 
 Adds data key-value pairs of a Directive.
 
-In SuperHTML data key-value pairs can be accessed 
+In SuperHTML data key-value pairs can be accessed
 programmatically in a template when rendering
 a section, while data will turn into `data-foo`
-attributes otherwise. 
+attributes otherwise.
 
 ### `$section`
 
 A content section, used to define a portion of content
-that can be rendered individually by a template. 
+that can be rendered individually by a template.
 
 ### `$block`
 
-When placed at the beginning of a Markdown quote block, the quote 
+When placed at the beginning of a Markdown quote block, the quote
 block becomes a styleable container for elements.
 
-SuperHTML will automatically give the class `block` when rendering 
+SuperHTML will automatically give the class `block` when rendering
 Block directives.
 
 Example:
@@ -1468,7 +1468,7 @@ Example:
 >This is now a block.
 >Lorem ipsum.
 
-Differently from Sections, Blocks cannot be rendered independently 
+Differently from Sections, Blocks cannot be rendered independently
 and can be nested.
 
 Example:
@@ -1491,8 +1491,8 @@ Example:
 >
 >back to the outer block
 
-A block can optionally wrap a Markdown heading element. In this case  
-the generated Block will be rendered with two separate sub-containers: 
+A block can optionally wrap a Markdown heading element. In this case
+the generated Block will be rendered with two separate sub-containers:
 one for the block title and one for the body.
 
 Example:
@@ -1532,7 +1532,7 @@ Allows giving an id and attributes to a heading element.
 
 Example:
 ```markdown
-# [Title]($heading.id('foo').attrs('bar', 'baz'))
+# [Title]($heading.id('foo').attrs('bar','baz'))
 ```
 
 This will be rendered by SuperHTML as:
@@ -1566,17 +1566,17 @@ Sets the width and/or height of the image.
 
 When both dimensions are non-zero, the image will be resized to exactly those dimensions:
 ```markdown
-[Image caption]($image.asset('example.jpg').size(800, 600))
+[Image caption]($image.asset('example.jpg').size(800,600))
 ```
 
 To specify width while maintaining aspect ratio, set height to 0:
 ```markdown
-[Image caption]($image.asset('example.jpg').size(800, 0))
+[Image caption]($image.asset('example.jpg').size(800,0))
 ```
 
 To specify height while maintaining aspect ratio, set width to 0:
 ```markdown
-[Image caption]($image.asset('example.jpg').size(0, 600))
+[Image caption]($image.asset('example.jpg').size(0,600))
 ```
 
 
@@ -1609,24 +1609,24 @@ Example:
 
 #### `$video.loop(Bool) -> anydirective`
 
-If true, the video will seek back to the start upon reaching the 
+If true, the video will seek back to the start upon reaching the
 end.
 
 #### `$video.muted(Bool) -> anydirective`
 
-If true, the video will be silenced at start. 
+If true, the video will be silenced at start.
 
 #### `$video.autoplay(Bool) -> anydirective`
 
-If true, the video will start playing automatically. 
+If true, the video will start playing automatically.
 
 #### `$video.controls(Bool) -> anydirective`
 
-If true, the video will display controls (e.g. play/pause, volume). 
+If true, the video will display controls (e.g. play/pause, volume).
 
 #### `$video.pip(Bool) -> anydirective`
 
-If **false**, clients shouldn't try to display the video in a 
+If **false**, clients shouldn't try to display the video in a
 Picture-in-Picture context.
 
 #### `$video.url(str) -> anydirective`
@@ -1712,7 +1712,7 @@ filename).
 
 #### `$link.new(Bool) -> anydirective`
 
-When `true` it asks readers to open the link in a new window or 
+When `true` it asks readers to open the link in a new window or
 tab.
 
 #### `$link.alternative(str) -> anydirective`
@@ -1721,7 +1721,7 @@ When linking to a content page, allows to link to a specific
 alternative version of the page, which can be particularly
 useful when referencing the RSS feed version of a page.
 
-The string argument is the name of an alrenative as defined 
+The string argument is the name of an alrenative as defined
 in the page's `alternatives` frontmatter property.
 
 #### `$link.ref(str) -> anydirective`
@@ -1730,11 +1730,11 @@ Deep-links to a specific element (like a section or any
 directive that specifies an `id`) of either the current
 page or a target page set with `page()`.
 
-Zigapagos tracks all ids defined in content files so referencing 
+Zigapagos tracks all ids defined in content files so referencing
 an id that doesn't exist will result in a build error.
 
-Zigapagos does not track ids defined inside of templates so 
-use `unsafeRef` to deep-link to those. 
+Zigapagos does not track ids defined inside of templates so
+use `unsafeRef` to deep-link to those.
 
 With `auto_heading_ids` enabled, this includes generated heading slugs:
 `$link.ref('hello-world')` can target `# Hello World`. Missing slugs still fail.
@@ -1743,7 +1743,7 @@ With `auto_heading_ids` enabled, this includes generated heading slugs:
 
 Like `ref` but Zigapagos will not perform any id checking.
 
-Can be used to deep-link to ids specified in templates. 
+Can be used to deep-link to ids specified in templates.
 
 ### `$code`
 
@@ -1779,7 +1779,7 @@ syntax highlighting.
  The second argument is inclusive.
 
  ```
- []($code.asset("main.zig").lines(10, 15))
+ []($code.asset("main.zig").lines(10,15))
  ```
  This will include only lines 10 - 15 from the main.zig asset file.
 
@@ -1789,7 +1789,7 @@ Allows giving an id and attributes to some text.
 
 Example:
 ```markdown
-Hello [World]($text.id('foo').attrs('bar', 'baz'))!
+Hello [World]($text.id('foo').attrs('bar','baz'))!
 ```
 
 This will be rendered by SuperHTML as:
@@ -1806,7 +1806,7 @@ Note that the formula must be enclosed in backticks to avoid
 collisions with other SuperMD syntax.
 
 This JS based solution is temporary. Zigapagos will eventually implement
-its own way of outputting MathML at buildtime so that clients won't 
+its own way of outputting MathML at buildtime so that clients won't
 need to have JS enabled.
 
 To render math formulas as separate blocks, use this syntax:
@@ -1817,7 +1817,7 @@ To render math formulas as separate blocks, use this syntax:
 
 Example:
 ```markdown
-Here's some [`x+\sqrt{1-x^2}`]($mathtex) math. 
+Here's some [`x+\sqrt{1-x^2}`]($mathtex) math.
 ```
 
 This will be rendered by SuperHTML as:

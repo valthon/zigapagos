@@ -885,7 +885,7 @@ fn writeAssets(ctx: *Ctx, acc: *Acc) WriteError!void {
         errdefer gpa.free(source_copy);
         const rails_url = if (a.public_url) |u| try gpa.dupe(u8, u) else null;
         errdefer if (rails_url) |u| gpa.free(u);
-        const target_url = try std.fmt.allocPrint(gpa, "/{s}", .{rel});
+        const target_url = try gpa.print("/{s}", .{rel});
         errdefer gpa.free(target_url);
         try acc.assets.append(gpa, .{
             .source = source_copy,
@@ -1199,9 +1199,9 @@ const Outcome = struct {
     /// Appends an informational note. Never changes the status.
     fn addNote(self: *Outcome, gpa: Allocator, comptime fmt: []const u8, args: anytype) Allocator.Error!void {
         const text = if (self.note) |old|
-            try std.fmt.allocPrint(gpa, "{s}; " ++ fmt, .{old} ++ args)
+            try gpa.print("{s}; " ++ fmt, .{old} ++ args)
         else
-            try std.fmt.allocPrint(gpa, fmt, args);
+            try gpa.print(fmt, args);
         if (self.note) |old| gpa.free(old);
         self.note = text;
     }
@@ -1842,7 +1842,7 @@ fn journeyScaffold(ctx: *Ctx, acc: *BindingAcc) Allocator.Error!?JourneyScaffold
 
     return .{
         .finding_id = jid,
-        .status_id = try acc.keep(gpa, try std.fmt.allocPrint(gpa, "{s}#AuthStatus", .{jid})),
+        .status_id = try acc.keep(gpa, try gpa.print("{s}#AuthStatus", .{jid})),
         .collection = collection,
         .signin_redirect = try journeyRedirect(ctx, acc, "sessions"),
         .signup_redirect = try journeyRedirect(ctx, acc, "registrations"),
@@ -1866,19 +1866,16 @@ fn journeyEndpoints(ctx: *Ctx, acc: *BindingAcc, j: JourneyScaffold) Allocator.E
 
     const base = try authBaseName(gpa, j.collection);
     defer gpa.free(base);
-    const create_id = try acc.keep(gpa, try std.fmt.allocPrint(gpa, "create{s}", .{base}));
-    const auth_path = try acc.keep(gpa, try std.fmt.allocPrint(
-        gpa,
+    const create_id = try acc.keep(gpa, try gpa.print("create{s}", .{base}));
+    const auth_path = try acc.keep(gpa, try gpa.print(
         "/api/collections/{s}/auth-with-password",
         .{j.collection},
     ));
-    const logout_path = try acc.keep(gpa, try std.fmt.allocPrint(
-        gpa,
+    const logout_path = try acc.keep(gpa, try gpa.print(
         "/api/collections/{s}/auth-logout",
         .{j.collection},
     ));
-    const records_path = try acc.keep(gpa, try std.fmt.allocPrint(
-        gpa,
+    const records_path = try acc.keep(gpa, try gpa.print(
         "/api/collections/{s}/records",
         .{j.collection},
     ));
@@ -1952,8 +1949,7 @@ fn bindJourneyTemplate(
         const signup = std.mem.eql(u8, controller, "registrations") or
             formHasConfirmation(tpl.nodes, n);
         const mode = if (signup) "signup" else "signin";
-        const props = try acc.keep(gpa, try std.fmt.allocPrint(
-            gpa,
+        const props = try acc.keep(gpa, try gpa.print(
             "{{ .mode = \"{s}\" }}",
             .{mode},
         ));
@@ -2841,7 +2837,7 @@ fn routeOutcome(
     if (out.artifacts.items.len > 0) {
         const path_copy = try gpa.dupe(u8, content_path.?);
         errdefer gpa.free(path_copy);
-        const id_copy = try std.fmt.allocPrint(gpa, "{s} {s}", .{ r.verb, r.path });
+        const id_copy = try gpa.print("{s} {s}", .{ r.verb, r.path });
         errdefer gpa.free(id_copy);
         try claims.append(gpa, .{ .path = path_copy, .route_id = id_copy });
     }
@@ -4035,7 +4031,7 @@ fn ensureLayout(ctx: *Ctx, acc: *Acc, cache: *LayoutCache, layout_path: []const 
 
     const stem = try gpa.dupe(u8, resolve.layoutStem(layout_path));
     errdefer gpa.free(stem);
-    const artifact = try std.fmt.allocPrint(gpa, "layouts/templates/{s}.shtml", .{stem});
+    const artifact = try gpa.print("layouts/templates/{s}.shtml", .{stem});
     errdefer gpa.free(artifact);
     try ctx.writeFile(artifact, output.bytes);
 
@@ -4126,7 +4122,7 @@ fn ensureView(
 
     const bytes: []const u8 = output.bytes;
     const stem = resolve.viewStem(view_path);
-    const artifact = try std.fmt.allocPrint(gpa, "layouts/{s}.shtml", .{stem});
+    const artifact = try gpa.print("layouts/{s}.shtml", .{stem});
     errdefer gpa.free(artifact);
     // NOT written here (ruling S20): whether this view is written at all
     // depends on what the operator decided about the findings this very
@@ -4137,7 +4133,7 @@ fn ensureView(
 
     const source = try gpa.dupe(u8, view_path);
     errdefer gpa.free(source);
-    const layout_value = try std.fmt.allocPrint(gpa, "{s}.shtml", .{stem});
+    const layout_value = try gpa.print("{s}.shtml", .{stem});
     errdefer gpa.free(layout_value);
     const title = if (output.title) |t| try gpa.dupe(u8, t) else null;
     errdefer if (title) |t| gpa.free(t);
@@ -4504,9 +4500,9 @@ fn copiedComponentPath(gpa: Allocator, source_path: []const u8) Allocator.Error!
     const component_prefix = "app/javascript/components/";
     const javascript_prefix = "app/javascript/";
     if (std.mem.startsWith(u8, source_path, component_prefix))
-        return std.fmt.allocPrint(gpa, "components/react/{s}", .{source_path[component_prefix.len..]});
+        return gpa.print("components/react/{s}", .{source_path[component_prefix.len..]});
     if (std.mem.startsWith(u8, source_path, javascript_prefix))
-        return std.fmt.allocPrint(gpa, "components/react/_/{s}", .{source_path[javascript_prefix.len..]});
+        return gpa.print("components/react/_/{s}", .{source_path[javascript_prefix.len..]});
     return gpa.dupe(u8, source_path);
 }
 
@@ -5405,7 +5401,7 @@ fn writeSpas(ctx: *Ctx, acc: *Acc, list: []const SpaRoute) WriteError!void {
         var j = i + 1;
         while (j < order.len and std.mem.eql(u8, list[order[j]].segment, segment)) j += 1;
 
-        const path = try std.fmt.allocPrint(gpa, "spa/{s}.spa.tsx", .{segment});
+        const path = try gpa.print("spa/{s}.spa.tsx", .{segment});
         errdefer gpa.free(path);
         const source = try emitSpa(ctx, segment, list, order[i..j]);
         defer gpa.free(source);
@@ -5498,7 +5494,7 @@ fn emitSpa(ctx: *Ctx, segment: []const u8, list: []const SpaRoute, group: []cons
                 if (!asset.deterministic) continue;
                 const target = try resolve.assetTargetPath(gpa, asset.source);
                 defer gpa.free(target);
-                const href = try std.fmt.allocPrint(gpa, "/{s}", .{target});
+                const href = try gpa.print("/{s}", .{target});
                 errdefer gpa.free(href);
                 if (contains(heads.items, href)) {
                     gpa.free(href);
@@ -5637,7 +5633,7 @@ fn componentName(gpa: Allocator, r: route_mod.Route, taken: []const []const u8) 
     var n: usize = 2;
     while (contains(taken, candidate)) {
         gpa.free(candidate);
-        candidate = try std.fmt.allocPrint(gpa, "{s}_{d}", .{ base.items, n });
+        candidate = try gpa.print("{s}_{d}", .{ base.items, n });
         n += 1;
     }
     return candidate;
@@ -5829,7 +5825,7 @@ fn emitStreamIsland(gpa: Allocator) Allocator.Error![]u8 {
 /// the result.
 fn writeClientLib(ctx: *Ctx, auth_collection: ?[]const u8, with_realtime: bool) WriteError!void {
     const gpa = ctx.gpa;
-    const base = if (auth_collection) |c| try std.fmt.allocPrint(gpa,
+    const base = if (auth_collection) |c| try gpa.print(
         \\import {{ createClient, LocalAuthStore }} from "@zigbase/client";
         \\export const zb = createClient("", {{ authStore: new LocalAuthStore(), authCollection: "{s}", fetch: (input, init) => globalThis.fetch(input, init) }});
         \\
@@ -5841,7 +5837,7 @@ fn writeClientLib(ctx: *Ctx, auth_collection: ?[]const u8, with_realtime: bool) 
     defer gpa.free(base);
     if (!with_realtime) return ctx.writeFile(client_lib_path, base);
 
-    const realtime = if (auth_collection) |c| try std.fmt.allocPrint(gpa,
+    const realtime = if (auth_collection) |c| try gpa.print(
         \\import {{ createClient, LocalAuthStore }} from "@zigbase/client";
         \\import {{ withRealtime }} from "@zigbase/client/realtime";
         \\export const zb = withRealtime(createClient("", {{ authStore: new LocalAuthStore(), authCollection: "{s}", fetch: (input, init) => globalThis.fetch(input, init) }}));
@@ -6002,7 +5998,7 @@ fn relativeJsSource(gpa: Allocator, sources: []const port.JsSource, importer: []
     const joined = try std.mem.join(gpa, "/", parts.items);
     defer gpa.free(joined);
     for ([_][]const u8{ "", ".jsx", ".tsx", ".js", ".ts", "/index.jsx", "/index.tsx", "/index.js", "/index.ts" }) |suffix| {
-        const candidate = try std.fmt.allocPrint(gpa, "{s}{s}", .{ joined, suffix });
+        const candidate = try gpa.print("{s}{s}", .{ joined, suffix });
         defer gpa.free(candidate);
         if (sourceByPath(sources, candidate)) |source| return source;
     }
@@ -6085,7 +6081,7 @@ fn emitConfig(gpa: Allocator, app_name: []const u8, with_assets: bool) Allocator
     var title: std.ArrayListUnmanaged(u8) = .empty;
     defer title.deinit(gpa);
     try appendZiggyEscaped(gpa, &title, app_name);
-    return std.fmt.allocPrint(gpa,
+    return gpa.print(
         \\Site {{
         \\    .title = "{s}",
         \\    .host_url = "https://example.com",
@@ -6190,7 +6186,7 @@ fn emitPackage(
     const placeholder = "TODO-SET-RUNTIME-PATH";
     const path = if (runtime_path) |p| (if (jsonSafe(p)) p else placeholder) else placeholder;
 
-    return std.fmt.allocPrint(gpa,
+    return gpa.print(
         \\{{
         \\  "name": "{s}",
         \\  "private": true,
@@ -6351,18 +6347,18 @@ fn tTemplate(path: []const u8, nodes: []const fragments.Node) fragments.Template
 
 /// The target path a test writes into: cwd-relative, like production's.
 fn tmpTarget(gpa: Allocator, tmp: *std.testing.TmpDir) ![]u8 {
-    return std.fmt.allocPrint(gpa, ".zig-cache/tmp/{s}/out", .{tmp.sub_path});
+    return gpa.print(".zig-cache/tmp/{s}/out", .{tmp.sub_path});
 }
 
 fn readTarget(gpa: Allocator, tmp: *std.testing.TmpDir, relative: []const u8) ![]u8 {
-    const p = try std.fmt.allocPrint(gpa, "out/{s}", .{relative});
+    const p = try gpa.print("out/{s}", .{relative});
     defer gpa.free(p);
     return tmp.dir.readFileAlloc(std.testing.io, p, gpa, .limited(1024 * 1024));
 }
 
 fn targetHas(tmp: *std.testing.TmpDir, relative: []const u8) bool {
     const gpa = testing.allocator;
-    const p = std.fmt.allocPrint(gpa, "out/{s}", .{relative}) catch return false;
+    const p = gpa.print("out/{s}", .{relative}) catch return false;
     defer gpa.free(p);
     tmp.dir.access(std.testing.io, p, .{}) catch return false;
     return true;
@@ -8866,7 +8862,7 @@ test "emitBuildSh: the emitted script parses, and each --spa/--island reaches th
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "build.sh", .data = script });
-    const path = try std.fmt.allocPrint(gpa, ".zig-cache/tmp/{s}/build.sh", .{tmp.sub_path});
+    const path = try gpa.print(".zig-cache/tmp/{s}/build.sh", .{tmp.sub_path});
     defer gpa.free(path);
 
     // 1. It is a well-formed shell script at all.
@@ -8880,7 +8876,7 @@ test "emitBuildSh: the emitted script parses, and each --spa/--island reaches th
     const exec_line = lastLine(script);
     try testing.expect(std.mem.startsWith(u8, exec_line, "exec \"${ZIGAPAGOS_BIN:-zigapagos}\""));
     const tail = exec_line["exec \"${ZIGAPAGOS_BIN:-zigapagos}\"".len..];
-    const program = try std.fmt.allocPrint(gpa, "set -euo pipefail\nprintf '%s\\n'{s}", .{tail});
+    const program = try gpa.print("set -euo pipefail\nprintf '%s\\n'{s}", .{tail});
     defer gpa.free(program);
 
     const replay = try runBash(gpa, &.{ "bash", "-c", program });
@@ -9242,7 +9238,7 @@ fn runBound(gpa: Allocator, opts: BoundOpts) !BoundRun {
 
     var problems: std.ArrayListUnmanaged(decisions.Problem) = .empty;
     defer decisions.freeProblems(gpa, &problems);
-    const answers = if (opts.choice) |c| try std.fmt.allocPrint(gpa,
+    const answers = if (opts.choice) |c| try gpa.print(
         \\{{"schema":"zigapagos.rails-decisions/1","decisions":[
         \\  {{"id":"{s}","choice":"{s}","rationale":"the form posts a record"}}
         \\]}}
@@ -9678,7 +9674,7 @@ test "write: a bound route answered retain writes no page and no island (ruling 
 
     var problems: std.ArrayListUnmanaged(decisions.Problem) = .empty;
     defer decisions.freeProblems(gpa, &problems);
-    const answers = try std.fmt.allocPrint(gpa,
+    const answers = try gpa.print(
         \\{{"schema":"zigapagos.rails-decisions/1","decisions":[
         \\  {{"id":"{s}","choice":"createPosts","rationale":"the form posts a record"}},
         \\  {{"id":"{s}","choice":"retain","rationale":"the summary stays on Rails"}}
@@ -11162,7 +11158,7 @@ test "write: an unanswered mutating link keeps its page open, naming the link's 
     // route is gone.
     const layout = try readTarget(gpa, &linked.tmp, "layouts/a_b/new.shtml");
     defer gpa.free(layout);
-    const marker = try std.fmt.allocPrint(gpa, "<!-- rails:finding {s} -->", .{link_id});
+    const marker = try gpa.print("<!-- rails:finding {s} -->", .{link_id});
     defer gpa.free(marker);
     try testing.expect(std.mem.indexOf(u8, layout, marker) != null);
     try testing.expect(std.mem.indexOf(u8, layout, "<a href") == null);
@@ -12704,7 +12700,7 @@ test "authBaseName is ZigBase's own <Base> rule, so the synthesized create id is
 
     const base = try authBaseName(gpa, "blog_users");
     defer gpa.free(base);
-    const id = try std.fmt.allocPrint(gpa, "create{s}", .{base});
+    const id = try gpa.print("create{s}", .{base});
     defer gpa.free(id);
     try testing.expectEqualStrings("BlogUsers", base);
     try testing.expect(backend_mod.operationFor(doc, id) != null);
@@ -15166,7 +15162,7 @@ test "write: island and backend choices emit the same document-backed data islan
         try testing.expectEqual(Status.migrated, result.routes[0].status);
         try testing.expect(result.routes[0].endpoint == null);
         const bytes = try readTarget(gpa, &tmp, "components/data/posts_index.island.tsx");
-        const collection_call = try std.fmt.allocPrint(gpa, "zb.collection(\"{s}\").getList", .{case.collection});
+        const collection_call = try gpa.print("zb.collection(\"{s}\").getList", .{case.collection});
         defer gpa.free(collection_call);
         try testing.expect(std.mem.indexOf(u8, bytes, collection_call) != null);
         if (run_index == 0) {

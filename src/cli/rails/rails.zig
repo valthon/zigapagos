@@ -37,7 +37,7 @@ pub const schema_validate = @import("schema_validate.zig");
 // runs them all. Without this the standalone binary never sees them --
 // `_ = sidecar_client` is required here even though that file currently has
 // no `test` blocks of its own: without the `_ =` reference this module's
-// lazy analysis (Zig 0.16) never reaches `sidecar_client.zig`'s decls at
+// lazy analysis (Zig 0.17) never reaches `sidecar_client.zig`'s decls at
 // all, so a test ADDED there later would silently not run either.
 test {
     std.testing.refAllDecls(@This());
@@ -496,7 +496,7 @@ fn combineRuby(
             // a half-written op name. `len == 0` (the FIRST chunk already
             // overflowed, which 192 bytes makes unreachable for any real
             // `RUBY_VERSION`) falls back to the static sentence below.
-            const chunk = std.fmt.bufPrint(buf[len..], "{s}{s} op reported ruby {s}", .{ sep, h.op, v }) catch break;
+            const chunk = std.mem.print(buf[len..], "{s}{s} op reported ruby {s}", .{ sep, h.op, v }) catch break;
             len += chunk.len;
         }
         const detail: []const u8 = if (len == 0) "sidecar ops reported different ruby versions" else buf[0..len];
@@ -770,7 +770,7 @@ test "combineRuby: a version string longer than the fixed buffer is truncated, n
     var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
-    const too_long = "3." ++ "9" ** 40; // 42 bytes, far past version_buf's 32
+    const too_long = "3." ++ @as([40]u8, @splat('9')); // 42 bytes, far past version_buf's 32
     try std.testing.expect(too_long.len > 32);
 
     const info = try combineRuby(
@@ -796,7 +796,7 @@ test "RubyInfo.version: a version longer than the fixed buffer is truncated, not
     // 32-byte truncated result, never `null`). See `version`'s doc for the
     // full reasoning.
     var info: RubyInfo = .{ .available = true };
-    const too_long = "3." ++ "9" ** 40; // far past version_buf's 32 bytes
+    const too_long = "3." ++ @as([40]u8, @splat('9')); // far past version_buf's 32 bytes
     const n = @min(too_long.len, info.version_buf.len);
     @memcpy(info.version_buf[0..n], too_long[0..n]);
     info.version_len = @intCast(n);
@@ -944,12 +944,12 @@ fn resolveJsModule(gpa: Allocator, entries: []const inventory.Entry, importer: [
         return null;
     }
     for (js_source_exts) |ext| {
-        const candidate = try std.fmt.allocPrint(gpa, "{s}{s}", .{ base, ext });
+        const candidate = try gpa.print("{s}{s}", .{ base, ext });
         defer gpa.free(candidate);
         if (inventoryPath(entries, candidate) != null) return try gpa.dupe(u8, candidate);
     }
     for (js_source_exts) |ext| {
-        const candidate = try std.fmt.allocPrint(gpa, "{s}/index{s}", .{ base, ext });
+        const candidate = try gpa.print("{s}/index{s}", .{ base, ext });
         defer gpa.free(candidate);
         if (inventoryPath(entries, candidate) != null) return try gpa.dupe(u8, candidate);
     }
@@ -1010,7 +1010,7 @@ fn discoverJsSources(
                     const stem = port.controllerStem(&stem_buf, identifier);
                     if (stem.len == 0) continue;
                     for ([_][]const u8{ ".js", ".ts", ".jsx", ".tsx" }) |ext| {
-                        const candidate = try std.fmt.allocPrint(gpa, "{s}{s}", .{ stem, ext });
+                        const candidate = try gpa.print("{s}{s}", .{ stem, ext });
                         defer gpa.free(candidate);
                         if (try appendJsSource(io, gpa, root, entries, &list, candidate)) break;
                     }
@@ -1021,7 +1021,7 @@ fn discoverJsSources(
             const name = node.name orelse continue;
             var root_path: ?[]u8 = null;
             for (js_source_exts) |ext| {
-                const candidate = try std.fmt.allocPrint(gpa, "app/javascript/components/{s}{s}", .{ name, ext });
+                const candidate = try gpa.print("app/javascript/components/{s}{s}", .{ name, ext });
                 if (inventoryPath(entries, candidate) != null) {
                     root_path = candidate;
                     break;
@@ -1095,10 +1095,10 @@ test "discoverJsSources reads only a named root and caps its closure at 32 files
         paths[i] = if (i == 0)
             try gpa.dupe(u8, "app/javascript/components/Root.jsx")
         else
-            try std.fmt.allocPrint(gpa, "app/javascript/components/{d}.jsx", .{i});
+            try gpa.print("app/javascript/components/{d}.jsx", .{i});
         entries[i] = .{ .path = paths[i], .kind = .js_module, .engine = .none };
         const bytes = if (i < 32)
-            try std.fmt.allocPrint(gpa, "import './{d}';", .{i + 1})
+            try gpa.print("import './{d}';", .{i + 1})
         else
             try gpa.dupe(u8, "export default 32;");
         defer gpa.free(bytes);
@@ -1611,8 +1611,7 @@ pub fn discover(
         // is a warning, not a failure. `route_id` is null: a finding id is not
         // a route, and this run has no finding to look one up from.
         for (parsed_decisions.stale) |s| {
-            const detail = try std.fmt.allocPrint(
-                gpa,
+            const detail = try gpa.print(
                 "decision for `{s}` answers no finding in this run; delete it or re-check the id",
                 .{s.id},
             );
@@ -2234,7 +2233,7 @@ pub const route_id_buf_len = 512;
 /// companion case (a blocker's `route_id` naming only ONE of several routes
 /// a shared, unreadable template affects).
 pub fn formatRouteId(buf: *[route_id_buf_len]u8, r: routes.Route) []const u8 {
-    return std.fmt.bufPrint(buf, "{s} {s}", .{ r.verb, r.path }) catch r.path;
+    return std.mem.print(buf, "{s} {s}", .{ r.verb, r.path }) catch r.path;
 }
 
 /// See `TransitiveScan`'s doc for the ownership contract this returns
@@ -2395,7 +2394,7 @@ fn transitiveScan(
                         // RAILS_TEMPLATE_RENDER_DEPTH_EXCEEDED already uses
                         // just above.
                         var buf: [256]u8 = undefined;
-                        const detail = std.fmt.bufPrint(
+                        const detail = std.mem.print(
                             &buf,
                             "renders a dynamic partial target that cannot be resolved statically: {s}",
                             .{t.text},
@@ -2421,7 +2420,7 @@ fn transitiveScan(
                         // a literal target naming no known template is
                         // still a dropped edge, not "renders nothing".
                         var buf: [256]u8 = undefined;
-                        const detail = std.fmt.bufPrint(
+                        const detail = std.mem.print(
                             &buf,
                             "renders a partial target that does not match any known template: {s}",
                             .{t.text},

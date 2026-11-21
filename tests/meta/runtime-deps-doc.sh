@@ -94,7 +94,7 @@ if [ -n "$PIN" ]; then
   while IFS= read -r v; do
     [ "$v" = "$PIN" ] || bad "$DOC names version '$v', but the pin is '$PIN'"
   done < <(grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' "$DOC" | sort -u)
-  # The bare (v-less) spelling too: `@zigbase/server@0.13.0` in prose.
+  # The bare (v-less) spelling too: `@zigbase/server@0.14.0` in prose.
   while IFS= read -r v; do
     [ "$v" = "${PIN#v}" ] || bad "$DOC names @zigbase/server@$v, but the pin is ${PIN#v}"
   done < <(grep -oE '@zigbase/server@[0-9][^ `)]*' "$DOC" | sed 's/^@zigbase\/server@//' | sort -u)
@@ -128,7 +128,7 @@ grep -qE '"private"[[:space:]]*:[[:space:]]*true' "$PKG" ||
 
 # ── 5. A release archive carries the binary alone ───────────────────────────
 grep -qF 'tar.addArg("zigapagos")' "$ARCHIVE" || bad "$ARCHIVE no longer tars the bare binary — recheck $DOC's distribution table"
-grep -qF 'zip.addDirectoryArg(' "$ARCHIVE" || bad "$ARCHIVE no longer zips the emitted binary — recheck $DOC's distribution table"
+grep -qF 'zip.addFileArg2(' "$ARCHIVE" || bad "$ARCHIVE no longer zips the emitted binary — recheck $DOC's distribution table"
 if hits=$(grep -nE '(addArg|addDirectoryArg|addFileArg).*runtime' "$ARCHIVE"); then
   bad "$ARCHIVE adds a runtime tree to an archive, but $DOC says an archive ships the binary alone:"
   printf '%s\n' "$hits" | sed 's/^/      /' >&2

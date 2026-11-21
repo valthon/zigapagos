@@ -104,9 +104,9 @@ pub fn Table(E: type, Size: type) type {
 
             // Keep every fallible check before getOrPut: a newly-created map
             // entry must never escape with an uninitialized key.
-            const new_off: Element = @enumFromInt(
+            const new_off: Element = @fromBackingInt(@intCast(
                 std.math.cast(Size, st.elements.items.len) orelse return error.OutOfMemory,
-            );
+            ));
 
             const gop = try st.element_map.getOrPutContextAdapted(
                 gpa,
@@ -152,11 +152,11 @@ pub fn Table(E: type, Size: type) type {
                 pub fn hash(ctx: @This(), key: Element) u64 {
                     switch (E) {
                         u8 => return std.hash_map.hashString(
-                            mem.sliceTo(ctx.elements[@intFromEnum(key)..], 0),
+                            mem.sliceTo(ctx.elements[@backingInt(key)..], 0),
                         ),
 
                         else => return std.hash_map.hashString(
-                            mem.sliceAsBytes(mem.sliceTo(ctx.elements[@intFromEnum(key)..], 0)),
+                            mem.sliceAsBytes(mem.sliceTo(ctx.elements[@backingInt(key)..], 0)),
                         ),
                     }
                 }
@@ -169,7 +169,7 @@ pub fn Table(E: type, Size: type) type {
                     return mem.eql(
                         E,
                         @alignCast(mem.bytesAsSlice(E, a)),
-                        mem.sliceTo(ctx.elements[@intFromEnum(b)..], 0),
+                        mem.sliceTo(ctx.elements[@backingInt(b)..], 0),
                     );
                 }
 
@@ -180,7 +180,7 @@ pub fn Table(E: type, Size: type) type {
             };
 
             pub fn slice(index: Element, table: *const Self) [:0]const E {
-                const start_slice = table.elements.items[@intFromEnum(index)..];
+                const start_slice = table.elements.items[@backingInt(index)..];
                 return start_slice[0..mem.indexOfScalar(E, start_slice, 0).? :0];
             }
         };

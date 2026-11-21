@@ -258,7 +258,7 @@ pub const Builtins = struct {
             switch (asset._meta.kind) {
                 .page => |variant_id| {
                     const v = &ctx._meta.build.variants[variant_id];
-                    const path = std.fmt.bufPrint(&buf, "{f}", .{
+                    const path = std.mem.print(&buf, "{f}", .{
                         asset._meta.url.fmt(
                             &v.string_table,
                             &v.path_table,
@@ -274,7 +274,7 @@ pub const Builtins = struct {
                 },
                 .site => {
                     markSiteRead(ctx, asset._meta.url);
-                    const path = std.fmt.bufPrint(&buf, "{f}", .{
+                    const path = std.mem.print(&buf, "{f}", .{
                         asset._meta.url.fmt(
                             &ctx._meta.build.st,
                             &ctx._meta.build.pt,
@@ -324,7 +324,7 @@ pub const Builtins = struct {
             switch (asset._meta.kind) {
                 .page => |variant_id| {
                     const v = &ctx._meta.build.variants[variant_id];
-                    const path = std.fmt.bufPrint(&buf, "{f}", .{
+                    const path = std.mem.print(&buf, "{f}", .{
                         asset._meta.url.fmt(
                             &v.string_table,
                             &v.path_table,
@@ -345,7 +345,7 @@ pub const Builtins = struct {
                 },
                 .site => {
                     markSiteRead(ctx, asset._meta.url);
-                    const path = std.fmt.bufPrint(&buf, "{f}", .{
+                    const path = std.mem.print(&buf, "{f}", .{
                         asset._meta.url.fmt(
                             &ctx._meta.build.st,
                             &ctx._meta.build.pt,
@@ -400,7 +400,7 @@ pub const Builtins = struct {
             const data = switch (asset._meta.kind) {
                 .page => |variant_id| blk: {
                     const v = &ctx._meta.build.variants[variant_id];
-                    const path = std.fmt.bufPrint(&buf, "{f}", .{
+                    const path = std.mem.print(&buf, "{f}", .{
                         asset._meta.url.fmt(
                             &v.string_table,
                             &v.path_table,
@@ -420,7 +420,7 @@ pub const Builtins = struct {
                 },
                 .site => blk: {
                     markSiteRead(ctx, asset._meta.url);
-                    const path = std.fmt.bufPrint(&buf, "{f}", .{
+                    const path = std.mem.print(&buf, "{f}", .{
                         asset._meta.url.fmt(
                             &ctx._meta.build.st,
                             &ctx._meta.build.pt,
@@ -487,7 +487,7 @@ pub const Builtins = struct {
             const data = switch (asset._meta.kind) {
                 .page => |variant_id| blk: {
                     const v = &ctx._meta.build.variants[variant_id];
-                    const path = std.fmt.bufPrint(&buf, "{f}", .{
+                    const path = std.mem.print(&buf, "{f}", .{
                         asset._meta.url.fmt(
                             &v.string_table,
                             &v.path_table,
@@ -509,7 +509,7 @@ pub const Builtins = struct {
                 },
                 .site => blk: {
                     markSiteRead(ctx, asset._meta.url);
-                    const path = std.fmt.bufPrint(&buf, "{f}", .{
+                    const path = std.mem.print(&buf, "{f}", .{
                         asset._meta.url.fmt(
                             &ctx._meta.build.st,
                             &ctx._meta.build.pt,

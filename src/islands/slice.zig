@@ -6,7 +6,7 @@
 //! This module reads that manifest so `src/islands/pass.zig` can decide, per
 //! page, whether every island on it is covered.
 //!
-//! Module-root constraint (Zig 0.16): `src/islands/tests.zig` is `test-islands`'s
+//! Module-root constraint (Zig 0.17): `src/islands/tests.zig` is `test-islands`'s
 //! root, so nothing here may `@import` outside `src/islands/` — in particular
 //! not `../fatal.zig`. Failures are therefore returned as errors and `root.zig`
 //! turns them into the `fatal.msg` exit.
@@ -123,7 +123,7 @@ pub fn deleteStaleRuntime(io: std.Io, out_dir: std.Io.Dir, fallback: bool) !void
 /// NO_SLOP.md §2.2a contract 1 (self-freeing): one allocation escapes as the
 /// return; every caller frees it.
 fn testTmpPath(gpa: std.mem.Allocator, tmp: *const std.testing.TmpDir, rel: []const u8) ![]u8 {
-    return std.fmt.allocPrint(gpa, ".zig-cache/tmp/{s}/{s}", .{ tmp.sub_path, rel });
+    return gpa.print(".zig-cache/tmp/{s}/{s}", .{ tmp.sub_path, rel });
 }
 
 test "a sliced manifest parses into an owned url + island list" {

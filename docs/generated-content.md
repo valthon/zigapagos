@@ -63,8 +63,8 @@ until a reader lands on a page that says the wrong thing.
 ## The five transformations
 
 Ordinary Markdown is not SuperMD, and the gap is not cosmetic. The first four below are
-hard build errors if left undone, not quality-of-life niceties; the fifth is the one that
-merely produces a wrong-looking page.
+hard build errors if left undone, not quality-of-life niceties; the fifth avoids
+a duplicate page title.
 
 1. **Ziggy frontmatter, not YAML.** SuperMD parses a page's frontmatter block as Ziggy. A
    canonical file that opens with a YAML frontmatter block (the common shape for a doc
@@ -124,7 +124,14 @@ merely produces a wrong-looking page.
    spurious top-level entry to the page's own table of contents. Only the very first
    top-level heading is eligible, and only when nothing but blank lines precede it — every
    canonical doc opens with exactly that shape once its banner blockquote is stripped, so
-   this is "drop the title," not a general heading-removal pass.
+   this is "drop the title," not a general heading-removal pass. Body headings
+   keep their original levels: the first top-level heading establishes the document's
+   baseline (usually H2 after the title is removed). Later headings must not skip
+   levels going deeper or rise above that baseline: `## → ### → ##` is valid,
+   while `## → ####` and `## → #` are errors. This deliberate relaxation of
+   SuperMD's H1 start supports titles in frontmatter. Documents with no top-level
+   headings, sectioned documents (`$section`), and headings inside blockquotes or
+   lists keep SuperMD's existing behavior. Fenced examples and heading ids do not change.
 
 Three of those five — the link rewrite, the heading ids and the title strip — are gated on
 "is this line inside a fenced code block?", so the fence tracker is load-bearing for all of
@@ -139,11 +146,12 @@ string is `=html`. And a closing fence must use the opener's character, be at le
 and carry no info string of its own. Only the first token of an opening fence's info string is
 treated as the language for the remap in (4); anything after it is preserved as authored.
 
-What this pattern deliberately does **not** do is sanitize raw HTML. SuperMD rejects
-HTML **blocks** in the page body (`html_is_forbidden`), including standalone HTML
-comments. Inline HTML, such as a `<span>` within a paragraph, passes through. A
-canonical file that grows an HTML block fails the site build loudly, at the point
-the mistake was made. Silently
+What this pattern deliberately does **not** do is sanitize raw HTML. SuperMD rejects raw
+HTML, including inline HTML (`inline_html`), so a canonical file that grows an
+HTML tag fails the site build loudly. Use code spans for literal tag names,
+`=html` fences for supported HTML output, or SuperMD directives/components.
+The site generator removes source-only branding exemption comments before
+conversion; they carry review metadata rather than reader-facing content. Silently
 stripping such a block instead would turn a loud authoring mistake into a quietly
 incomplete published page.
 

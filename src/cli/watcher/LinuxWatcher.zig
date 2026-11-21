@@ -41,10 +41,17 @@ pub fn init(
     debouncer: *Debouncer,
     dir_paths: []const []const u8,
 ) LinuxWatcher {
-    errdefer |err| fatal.msg("error: unable to start the file watcher: {s}", .{
+    return initInner(io, gpa, debouncer, dir_paths) catch |err| fatal.msg("error: unable to start the file watcher: {s}", .{
         @errorName(err),
     });
+}
 
+fn initInner(
+    io: Io,
+    gpa: std.mem.Allocator,
+    debouncer: *Debouncer,
+    dir_paths: []const []const u8,
+) !LinuxWatcher {
     const notify_fd = try inotify_init1(notify_init_flags);
     var watcher: LinuxWatcher = .{
         .io = io,

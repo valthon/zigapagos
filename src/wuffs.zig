@@ -8,7 +8,7 @@ const Allocator = std.mem.Allocator;
 
 const log = std.log.scoped(.wuffs);
 
-const win = if (builtin.os.tag != .windows) void else struct {
+const win = if (builtin.target.os.tag != .windows) void else struct {
     //HANDLE CreateFileMappingA(
     //  [in]           HANDLE                hFile,
     //  [in, optional] LPSECURITY_ATTRIBUTES lpFileMappingAttributes,
@@ -90,7 +90,7 @@ pub fn setImageSize(
                 file_mapping = win.CreateFileMappingA(
                     image.handle,
                     null,
-                    windows.PAGE_READONLY,
+                    @as(windows.DWORD, 0x02),
                     0,
                     0,
                     null,

@@ -316,10 +316,12 @@ pub const Config = union(enum) {
     /// found. The directory is then used by other code to place the output
     /// directory unless the user overrides that location from the CLI.
     pub fn load(io: Io, arena: Allocator) struct { Config, []const u8 } {
-        errdefer |err| switch (err) {
+        return loadInner(io, arena) catch |err| switch (err) {
             error.OutOfMemory => fatal.oom(),
         };
+    }
 
+    fn loadInner(io: Io, arena: Allocator) !struct { Config, []const u8 } {
         const cwd_path = std.process.currentPathAlloc(io, arena) catch |err| {
             fatal.msg("error while trying to get the cwd path: {s}\n", .{
                 @errorName(err),
@@ -967,7 +969,7 @@ fn reportSitemapStaticAssetCollision(
     if (build.mode == .memory) {
         try build.mode.memory.errors.append(gpa, .{
             .ref = "",
-            .msg = try std.fmt.allocPrint(gpa, "error: " ++ message ++ "\n", .{configured_path}),
+            .msg = try gpa.print("error: " ++ message ++ "\n", .{configured_path}),
         });
     }
 }
@@ -988,7 +990,7 @@ pub fn isRootAssetPath(gpa: Allocator, build: *const Build, asset: PathName, pat
     };
     var path_buf: [std.fs.max_path_bytes + 1 + fingerprint.hash_len]u8 = undefined;
     // Same destination formatter and bound as the site-asset install pass.
-    const dest = std.mem.trimStart(u8, std.fmt.bufPrint(&path_buf, "{f}", .{
+    const dest = std.mem.trimStart(u8, std.mem.print(&path_buf, "{f}", .{
         fingerprint.fmtUrl(asset, &build.st, &build.pt, &build.asset_fingerprints),
     }) catch unreachable, "/");
     const installed = try std.fs.path.resolve(gpa, &.{ prefix, dest });
@@ -1017,7 +1019,7 @@ fn reportCspStaticAssetCollision(
     if (build.mode == .memory) {
         try build.mode.memory.errors.append(gpa, .{
             .ref = "",
-            .msg = try std.fmt.allocPrint(gpa, "error: " ++ message ++ "\n", .{configured_path}),
+            .msg = try gpa.print("error: " ++ message ++ "\n", .{configured_path}),
         });
     }
 }
@@ -1225,7 +1227,7 @@ pub fn run(
         // directory in this thread.
         // TODO: find a better moment for this work
         try build.scanTemplates(io, gpa, arena);
-        if (builtin.mode == .Debug) {
+        if (builtin.optimize == .debug) {
             const Ctx = struct {
                 b: *Build,
                 pub fn lessThan(ctx: @This(), lid: usize, rid: usize) bool {
@@ -1233,10 +1235,10 @@ pub fn run(
                     var rbuf: [std.fs.max_path_bytes]u8 = undefined;
 
                     const keys = ctx.b.templates.entries.items(.key);
-                    const lhs = std.fmt.bufPrint(&lbuf, "{f}", .{
+                    const lhs = std.mem.print(&lbuf, "{f}", .{
                         keys[lid].fmt(&ctx.b.st, &ctx.b.pt, null, "/"),
                     }) catch unreachable;
-                    const rhs = std.fmt.bufPrint(&rbuf, "{f}", .{
+                    const rhs = std.mem.print(&rbuf, "{f}", .{
                         keys[rid].fmt(&ctx.b.st, &ctx.b.pt, null, "/"),
                     }) catch unreachable;
 
@@ -1263,7 +1265,7 @@ pub fn run(
                 var glob_it = build.site_assets.iterator();
                 var name_buf: [std.fs.max_path_bytes]u8 = undefined;
                 while (glob_it.next()) |entry| {
-                    const asset_path = std.fmt.bufPrint(&name_buf, "{f}", .{
+                    const asset_path = std.mem.print(&name_buf, "{f}", .{
                         entry.key_ptr.fmt(&build.st, &build.pt, null, "/"),
                     }) catch continue;
                     if (prefix.len == 0 or std.mem.startsWith(u8, asset_path, prefix)) {
@@ -1312,8 +1314,7 @@ pub fn run(
                     if (build.mode == .memory) {
                         try build.mode.memory.errors.append(gpa, .{
                             .ref = "",
-                            .msg = try std.fmt.allocPrint(
-                                gpa,
+                            .msg = try gpa.print(
                                 "error: static asset glob '{s}' matched no assets\n",
                                 .{path},
                             ),
@@ -1363,8 +1364,7 @@ pub fn run(
             if (build.mode == .memory) {
                 try build.mode.memory.errors.append(gpa, .{
                     .ref = "",
-                    .msg = try std.fmt.allocPrint(
-                        gpa,
+                    .msg = try gpa.print(
                         "error: static asset '{s}' does not exist\n",
                         .{path},
                     ),
@@ -1409,7 +1409,7 @@ pub fn run(
                 i18n_errors = true;
 
                 var buf: [std.fs.max_path_bytes]u8 = undefined;
-                const path = std.fmt.bufPrint(&buf, "{f}", .{fmtJoin('/', &.{
+                const path = std.mem.print(&buf, "{f}", .{fmtJoin('/', &.{
                     build.cfg.Multilingual.i18n_dir_path,
                     v.i18n_diag.path.?,
                 })}) catch v.i18n_diag.path.?;
@@ -1429,8 +1429,7 @@ pub fn run(
                 if (build.mode == .memory) {
                     try build.mode.memory.errors.append(gpa, .{
                         .ref = "",
-                        .msg = try std.fmt.allocPrint(
-                            gpa,
+                        .msg = try gpa.print(
                             "{f}\n\n",
                             .{v.i18n_diag.fmt(v.i18n_src)},
                         ),
@@ -1484,7 +1483,7 @@ pub fn run(
 
                 pages_to_parse += s.pages.items.len;
 
-                const index_smd: String = @enumFromInt(1);
+                const index_smd: String = @fromBackingInt(@intCast(1));
                 assert(v.string_table.get("index.smd").? == index_smd);
                 for (s.pages.items) |page_index| {
                     const p = &v.pages.items[page_index];
@@ -1699,7 +1698,7 @@ pub fn run(
                         if (build.mode == .memory) {
                             try build.mode.memory.errors.append(gpa, .{
                                 .ref = "",
-                                .msg = try std.fmt.allocPrint(gpa,
+                                .msg = try gpa.print(
                                     \\{f}:{}:1 error: frontmatter framing error
                                     \\   {s}
                                     \\
@@ -1727,7 +1726,7 @@ pub fn run(
                         }
 
                         var buf: [std.fs.max_path_bytes]u8 = undefined;
-                        const path = std.fmt.bufPrint(&buf, "{f}", .{
+                        const path = std.mem.print(&buf, "{f}", .{
                             p._scan.file.fmt(
                                 &v.string_table,
                                 &v.path_table,
@@ -1751,8 +1750,7 @@ pub fn run(
                         if (build.mode == .memory) {
                             try build.mode.memory.errors.append(gpa, .{
                                 .ref = "",
-                                .msg = try std.fmt.allocPrint(
-                                    gpa,
+                                .msg = try gpa.print(
                                     "{f}\n\n",
                                     .{ziggy_diag.fmt(p._parse.full_src)},
                                 ),
@@ -1840,7 +1838,7 @@ pub fn run(
                     }
                 }
 
-                if (p._parse.ast.errors.len > 0) {
+                if (p._parse.ast.errors.len > 0 or p._parse.heading_baseline_errors.len > 0) {
                     if (!parse_errors) {
                         parse_errors = true;
                     }
@@ -1852,6 +1850,7 @@ pub fn run(
                         v,
                         p._scan.file,
                         &p._parse.ast,
+                        p._parse.heading_baseline_errors,
                         p._parse.full_src[p._parse.fm.offset..],
                         // The tokenizer line count includes lookahead past the fence.
                         // Derive the offset from the exact slice fed to SuperMD.
@@ -1977,7 +1976,7 @@ pub fn run(
                     if (build.mode == .memory) {
                         try build.mode.memory.errors.append(gpa, .{
                             .ref = "",
-                            .msg = try std.fmt.allocPrint(gpa,
+                            .msg = try gpa.print(
                                 \\{f}:{}:{}: error: {s}
                                 \\|    {s}
                                 \\|    {s}
@@ -2086,7 +2085,7 @@ pub fn run(
                         // contract this call already had before NoteLine let the
                         // note collapse into the same format string instead of a
                         // second allocPrint.
-                        const msg = try std.fmt.allocPrint(gpa,
+                        const msg = try gpa.print(
                             \\{f}:{}:{}: {s}: {f}
                             \\|    {s}
                             \\|    {s}
@@ -2173,7 +2172,7 @@ pub fn run(
                         if (build.mode == .memory) {
                             try build.mode.memory.errors.append(gpa, .{
                                 .ref = "",
-                                .msg = try std.fmt.allocPrint(gpa,
+                                .msg = try gpa.print(
                                     \\error: duplicate translation_key '{s}' within one locale
                                     \\   between  {f}
                                     \\   and      {f}
@@ -2219,8 +2218,8 @@ pub fn run(
                 //     const path = p._scan.md_path;
                 //     const name = p._scan.md_name;
 
-                //     const index_smd: String = @enumFromInt(1);
-                //     const index_html: String = @enumFromInt(11);
+                //     const index_smd: String = @fromBackingInt(1);
+                //     const index_html: String = @fromBackingInt(11);
                 //     assert(v.string_table.get("index.smd").? == index_smd);
                 //     assert(v.string_table.get("index.html").? == index_html);
                 //     const url: PathName = blk: {
@@ -2442,13 +2441,13 @@ pub fn run(
         const entries = try arena.alloc(Entry, v.sectionless_dirs.items.len);
         for (entries, v.sectionless_dirs.items) |*e, sd| {
             e.* = .{
-                .dir = try std.fmt.allocPrint(arena, "{f}", .{
+                .dir = try arena.print("{f}", .{
                     sd.path.fmt(&v.string_table, &v.path_table, v.content_dir_path, true),
                 }),
-                .url = try std.fmt.allocPrint(arena, "{f}", .{
+                .url = try arena.print("{f}", .{
                     sd.path.fmt(&v.string_table, &v.path_table, null, true),
                 }),
-                .stem = try std.fmt.allocPrint(arena, "{f}", .{
+                .stem = try arena.print("{f}", .{
                     sd.path.fmt(&v.string_table, &v.path_table, v.content_dir_path, false),
                 }),
                 .page_count = sd.page_count,
@@ -2527,7 +2526,7 @@ pub fn run(
                 if (build.mode == .memory) {
                     try build.mode.memory.errors.append(gpa, .{
                         .ref = "",
-                        .msg = try std.fmt.allocPrint(gpa,
+                        .msg = try gpa.print(
                             \\{f}: error: output url collision detected
                             \\   between  {f}
                             \\   and      {f}
@@ -2553,7 +2552,7 @@ pub fn run(
                 template_errors = true;
             }
 
-            const path = try std.fmt.allocPrint(arena, "{f}", .{
+            const path = try arena.print("{f}", .{
                 tpn.fmt(
                     &build.st,
                     &build.pt,
@@ -2600,7 +2599,7 @@ pub fn run(
                 template_errors = true;
             }
 
-            const path = try std.fmt.allocPrint(arena, "{f}", .{
+            const path = try arena.print("{f}", .{
                 tpn.fmt(
                     &build.st,
                     &build.pt,
@@ -2647,7 +2646,7 @@ pub fn run(
             try template.lintDirectiveAttrs(gpa, &bads);
             if (bads.items.len > 0) {
                 template_errors = true;
-                const path = try std.fmt.allocPrint(arena, "{f}", .{
+                const path = try arena.print("{f}", .{
                     tpn.fmt(&build.st, &build.pt, build.cfg.getLayoutsDirPath(), "/"),
                 });
 
@@ -2718,7 +2717,7 @@ pub fn run(
             try template.lintInertDirectives(gpa, &inert);
             if (inert.items.len > 0) {
                 template_errors = true;
-                const path = try std.fmt.allocPrint(arena, "{f}", .{
+                const path = try arena.print("{f}", .{
                     tpn.fmt(&build.st, &build.pt, build.cfg.getLayoutsDirPath(), "/"),
                 });
 
@@ -2831,7 +2830,7 @@ pub fn run(
             if (!template_errors) {
                 template_errors = true;
             }
-            const path = try std.fmt.allocPrint(arena, "{f}", .{
+            const path = try arena.print("{f}", .{
                 tpn.fmt(
                     &build.st,
                     &build.pt,
@@ -2840,7 +2839,7 @@ pub fn run(
                 ),
             });
 
-            const parent_name = template.ast.nodes[template.ast.extends_idx].templateValue().span.slice(template.src);
+            const parent_name = template.ast.nodes[template.ast.extends_idx].templateValue().loc.slice(template.src);
             if (diag.format == .json) {
                 var msg_buf: [1024]u8 = undefined;
                 diag.emit(.{
@@ -2861,7 +2860,7 @@ pub fn run(
             if (build.mode == .memory) {
                 try build.mode.memory.errors.append(gpa, .{
                     .ref = "",
-                    .msg = try std.fmt.allocPrint(gpa,
+                    .msg = try gpa.print(
                         \\{s}: error: extending a template that doesn't exist 
                         \\   template '{s}' does not exist
                         \\
@@ -2891,7 +2890,7 @@ pub fn run(
     // release build, or the dev loop's full-rebuild fallback) renders every page.
     const incremental = build.mode == .disk and options.changed_files.len > 0;
     var changed_set: std.StringHashMapUnmanaged(void) = .empty;
-    defer if (builtin.mode == .Debug) changed_set.deinit(gpa);
+    defer if (builtin.optimize == .debug) changed_set.deinit(gpa);
     if (incremental) {
         try changed_set.ensureUnusedCapacity(gpa, @intCast(options.changed_files.len));
         for (options.changed_files) |cf| changed_set.putAssumeCapacity(cf, {});
@@ -2988,7 +2987,7 @@ pub fn run(
                     // max_path_bytes. Fail loudly instead; worker.zig:1239 formats
                     // this same string for the manifest, so the two must agree or a
                     // manifest key and a changed-set key silently diverge.
-                    const src_path = std.fmt.bufPrint(&path_buf, "{f}", .{
+                    const src_path = std.mem.print(&path_buf, "{f}", .{
                         p._scan.file.fmt(&v.string_table, &v.path_table, v.content_dir_path, "/"),
                     }) catch |err| fatal.msg(
                         "error: content path too long to format for the incremental change set ({s}): {f}\n",
@@ -3193,7 +3192,7 @@ pub fn run(
                             defer gpa.free(sub);
                             const page_dir = try worker.pageDir(gpa, build.cfg, v, index_page);
                             defer gpa.free(page_dir);
-                            const full = try std.fmt.allocPrint(gpa, "{s}{s}", .{ page_dir, sub });
+                            const full = try gpa.print("{s}{s}", .{ page_dir, sub });
                             defer gpa.free(full);
                             // Best-effort: a non-empty dir (a foreign output
                             // nested under it, or a stale sibling this sweep
@@ -3205,7 +3204,7 @@ pub fn run(
                                 // The shared `page/` parent, e.g. `blog/page/`
                                 // for `blog/page/2/` -- only removable once
                                 // every `page/N/` under it is gone too.
-                                const page_parent = try std.fmt.allocPrint(gpa, "{s}page", .{page_dir});
+                                const page_parent = try gpa.print("{s}page", .{page_dir});
                                 defer gpa.free(page_parent);
                                 build.mode.disk.output_dir.deleteDir(io, page_parent) catch {};
                             }
@@ -3363,7 +3362,7 @@ pub fn run(
             //     key.name,
             // )];
 
-            const path = std.fmt.bufPrint(&buf, "{f}", .{
+            const path = std.mem.print(&buf, "{f}", .{
                 key.fmt(
                     &build.st,
                     &build.pt,
@@ -3381,7 +3380,7 @@ pub fn run(
                 // disagree. With fingerprinting off (or for a `static_assets`
                 // entry) the map has no entry and this reproduces `path`
                 // byte-for-byte.
-                const dest = std.mem.trimStart(u8, std.fmt.bufPrint(&dest_buf, "{f}", .{
+                const dest = std.mem.trimStart(u8, std.mem.print(&dest_buf, "{f}", .{
                     fingerprint.fmtUrl(
                         key,
                         &build.st,
@@ -3455,7 +3454,7 @@ pub fn run(
                 if (entry.value_ptr.kind != .page_asset) continue;
                 if (entry.value_ptr.kind.page_asset.raw == 0) continue;
                 var asset_buf: [std.fs.max_path_bytes]u8 = undefined;
-                const install_path = std.fmt.bufPrint(&asset_buf, "{s}{s}{f}", .{
+                const install_path = std.mem.print(&asset_buf, "{s}{s}{f}", .{
                     v.output_path_prefix,
                     if (v.output_path_prefix.len > 0) "/" else "",
                     entry.key_ptr.fmt(&v.string_table, &v.path_table, null, ""),
@@ -3594,10 +3593,10 @@ fn planImageVariants(io: Io, gpa: Allocator, build: *Build, opts: ImageOptimize)
         const st = resolved.st;
         const pt = resolved.pt;
         const pn: PathName = .{
-            .path = @enumFromInt(ref.path),
-            .name = @enumFromInt(ref.name),
+            .path = @fromBackingInt(@intCast(ref.path)),
+            .name = @fromBackingInt(@intCast(ref.name)),
         };
-        const rel = std.fmt.bufPrint(&path_buf, "{f}", .{
+        const rel = std.mem.print(&path_buf, "{f}", .{
             pn.fmt(st, pt, null, "/"),
         }) catch continue;
 
@@ -3723,7 +3722,7 @@ fn computeAssetFingerprints(io: Io, gpa: Allocator, build: *Build) void {
         p.completeOne();
         if (entry.value_ptr.raw > 0) continue; // `static_assets`: stable path
 
-        const path = std.fmt.bufPrint(&buf, "{f}", .{
+        const path = std.mem.print(&buf, "{f}", .{
             entry.key_ptr.fmt(&build.st, &build.pt, null, "/"),
         }) catch continue;
 
@@ -3996,7 +3995,7 @@ fn reportPrunedSiteAssets(gpa: Allocator, build: *const Build) void {
             if (reads.raw > 0) continue;
         }
         if (isDirectoryPlaceholder(entry.key_ptr.name.slice(&build.st))) continue;
-        const path = std.fmt.bufPrint(&buf, "{f}", .{
+        const path = std.mem.print(&buf, "{f}", .{
             entry.key_ptr.fmt(&build.st, &build.pt, null, "/"),
         }) catch continue;
         // A failed dup only costs this one line of the report, so drop the
@@ -4299,13 +4298,27 @@ fn printSuperMdErrors(
     v: *Variant,
     file: PathName,
     ast: *const supermd.Ast,
+    heading_baseline_errors: []const context.Page.HeadingBaselineError,
     md_src: []const u8,
     fm_lines: usize,
 ) void {
-    _ = arena;
-    errdefer |err| switch (err) {
+    return printSuperMdErrorsInner(gpa, arena, build, v, file, ast, heading_baseline_errors, md_src, fm_lines) catch |err| switch (err) {
         error.OutOfMemory => fatal.oom(),
     };
+}
+
+fn printSuperMdErrorsInner(
+    gpa: Allocator,
+    arena: Allocator,
+    build: *Build,
+    v: *Variant,
+    file: PathName,
+    ast: *const supermd.Ast,
+    heading_baseline_errors: []const context.Page.HeadingBaselineError,
+    md_src: []const u8,
+    fm_lines: usize,
+) !void {
+    _ = arena;
 
     // \\It's strongly recommended to setup your editor to
     // \\leverage the `supermd` CLI tool in order to obtain
@@ -4314,7 +4327,34 @@ fn printSuperMdErrors(
     // \\Download it from here:
     // \\   https://github.com/kristoff-it/supermd
 
+    for (heading_baseline_errors) |err| {
+        const path = try gpa.print("{f}", .{
+            file.fmt(&v.string_table, &v.path_table, v.content_dir_path, ""),
+        });
+        defer gpa.free(path);
+        const rendered = try gpa.print("{f}\n", .{err.fmt(fm_lines, md_src, path)});
+        defer gpa.free(rendered);
+        try emitSuperMdDiagnostic(gpa, build, path, err.heading.range(), fm_lines, rendered);
+    }
+
     for (ast.errors) |err| {
+        switch (err.kind) {
+            .heading_skip, .inline_html, .invalid_ref, .heading_link_sibling => {
+                // Use SuperMD's own wording and source previews for its dialect
+                // rules, including notes about the previous heading/inner link.
+                const path = try gpa.print("{f}", .{
+                    file.fmt(&v.string_table, &v.path_table, v.content_dir_path, ""),
+                });
+                defer gpa.free(path);
+                const rendered = try gpa.print("{f}\n", .{
+                    err.fmt(@intCast(fm_lines), md_src, path),
+                });
+                defer gpa.free(rendered);
+                try emitSuperMdDiagnostic(gpa, build, path, err.main, fm_lines, rendered);
+                continue;
+            },
+            else => {},
+        }
         const range = err.main;
         const line = blk: {
             var it = std.mem.splitScalar(u8, md_src, '\n');
@@ -4348,8 +4388,7 @@ fn printSuperMdErrors(
         // Saturating subtraction because of a bug related to html comments
         // in markdown.
         // const lines = range.end.row -| range.start.row;
-        // const lines_fmt = if (lines == 0) "" else try std.fmt.allocPrint(
-        //     arena,
+        // const lines_fmt = if (lines == 0) "" else try arena.print(
         //     "(+{} lines)",
         //     .{lines},
         // );
@@ -4461,7 +4500,7 @@ fn printSuperMdErrors(
             // Contract 1 (self-freeing, NO_SLOP §2.2a): `memory_msg` is the only
             // allocation and it escapes as-is into build.mode.memory.errors, which
             // owns it from here on.
-            const memory_msg = try std.fmt.allocPrint(gpa,
+            const memory_msg = try gpa.print(
                 \\{f}:{}:{}: [{s}] {s}
                 \\|    {s}
                 \\|    {s}
@@ -4632,5 +4671,41 @@ pub fn validatePath(
         if (c.len == 0) {
             if (it.next() != null) return error.EmptyComponent;
         }
+    }
+}
+
+/// Reports both upstream and local Markdown diagnostics through the same sinks.
+fn emitSuperMdDiagnostic(
+    gpa: Allocator,
+    build: *Build,
+    path: []const u8,
+    range: supermd.Range,
+    fm_lines: usize,
+    rendered: []const u8,
+) Allocator.Error!void {
+    if (diag.format == .json) {
+        // The formatter's first line is path:line:col: error: message.
+        // Keep JSON's structured location and upstream message separate.
+        const prefix = try gpa.print("{s}:{}:{}: error: ", .{
+            path, fm_lines + range.start.row, range.start.col,
+        });
+        defer gpa.free(prefix);
+        const message = rendered[prefix.len..];
+        const end = std.mem.indexOfScalar(u8, message, '\n') orelse message.len;
+        diag.emit(.{
+            .code = .ZP_SUPERMD,
+            .severity = .@"error",
+            .file = path,
+            .line = fm_lines + range.start.row,
+            .col = range.start.col,
+            .message = message[0..end],
+        });
+    } else {
+        std.debug.print("{s}", .{rendered});
+    }
+    if (build.mode == .memory) {
+        const owned = try gpa.dupe(u8, rendered);
+        errdefer gpa.free(owned);
+        try build.mode.memory.errors.append(gpa, .{ .ref = "", .msg = owned });
     }
 }

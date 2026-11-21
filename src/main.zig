@@ -38,24 +38,26 @@ const Command = enum {
     develop,
 };
 
-var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
+var debug_allocator: std.heap.SafeAllocator = .init(std.heap.page_allocator, .{});
 pub const gpa = if (builtin.single_threaded)
     debug_allocator.allocator()
 else
     std.heap.smp_allocator;
 
 pub fn main(init: std.process.Init) u8 {
-    const io = init.io;
-
-    errdefer |err| switch (err) {
+    return mainInner(init) catch |err| switch (err) {
         error.OutOfMemory, error.Unexpected => fatal.oom(),
     };
+}
+
+fn mainInner(init: std.process.Init) !u8 {
+    const io = init.io;
 
     // Bound before std.Progress.start (moved up from below the banners, where
     // it originally sat) because scanArgv below needs it, and scanArgv must
     // run before Progress and the Debug/tracy/tsan banners -- all three write
     // to stderr and would interleave with the NDJSON stream otherwise. The
-    // errdefer above still covers this call (error.OutOfMemory,
+    // main's catch still covers this call (error.OutOfMemory,
     // error.Unexpected), unchanged by the move.
     const args = try init.minimal.args.toSlice(init.arena.allocator());
 
@@ -86,6 +88,9 @@ pub fn main(init: std.process.Init) u8 {
         if (diag.scanArgv(args[2..])) |f| diag.format = f;
     }
 
+    if (args.len >= 2 and (std.mem.eql(u8, args[1], "version") or
+        std.mem.eql(u8, args[1], "-v") or std.mem.eql(u8, args[1], "--version"))) printVersion();
+
     root.progress = std.Progress.start(io, .{
         .draw_buffer = &root.progress_buf,
         // In JSON mode stderr carries the NDJSON diagnostic stream; a
@@ -100,7 +105,7 @@ pub fn main(init: std.process.Init) u8 {
     // The Debug/tracy/tsan warning banners are text-mode noise: in JSON mode
     // they would be the first (unparseable) lines on the NDJSON stream.
     if (diag.format == .text) {
-        if (builtin.mode == .Debug) {
+        if (builtin.optimize == .debug) {
             std.debug.print(
                 \\*-----------------------------------------------*
                 \\|  WARNING: THIS IS A DEBUG BUILD OF ZIGAPAGOS  |
@@ -200,8 +205,26 @@ pub fn main(init: std.process.Init) u8 {
     };
 }
 
+// NO_SLOP §2.2a contract 3: borrows the input; allocates nothing.
+fn printedCommit(commit: []const u8) []const u8 {
+    return commit[0..@min(commit.len, 12)];
+}
+
+test "parse: printed commit truncates injected SHA and retains unknown" {
+    try std.testing.expectEqualStrings("0123456789ab", printedCommit("0123456789abcdef0123456789abcdef01234567"));
+    try std.testing.expectEqualStrings("0123456789ab", printedCommit("0123456789ab"));
+    try std.testing.expectEqualStrings("unknown", printedCommit("unknown"));
+}
+
 fn printVersion() noreturn {
-    std.debug.print("{s}\n", .{options.version});
+    std.debug.print(
+        \\zigapagos {s}
+        \\commit:      {s}
+        \\build:       {s}
+        \\target:      {s}-{s}-{s}
+        \\zig:         {s}
+        \\
+    , .{ options.version, printedCommit(options.commit), @tagName(builtin.optimize), @tagName(builtin.target.cpu.arch), @tagName(builtin.target.os.tag), @tagName(builtin.target.abi), builtin.zig_version_string });
     std.process.exit(0);
 }
 
@@ -220,7 +243,7 @@ test "debug: cli" {
 
 // Pull init_from_astro.zig into the test compilation unit for `zig build test-init`.
 // Its @import("../fatal.zig") crosses the src/cli/ module boundary, so it
-// cannot be compiled as a standalone root module in Zig 0.16.  Using the
+// cannot be compiled as a standalone root module in Zig 0.17.  Using the
 // fully-wired zigapagos_exe.root_module as the test root and this anchor to force
 // eager inclusion is the same pattern used for release.zig above.
 test "init-from-astro" {
@@ -297,7 +320,7 @@ test "explain: cli" {
 // Pull languages.zig into the test compilation unit for `zig build test-init`
 // and `test-spa`. languages.zig is only reached through worker.zig's
 // top-level import, and that one level of indirection past main.zig itself
-// isn't enough for Zig 0.16 to eagerly analyze its `test` blocks — same
+// isn't enough for Zig 0.17 to eagerly analyze its `test` blocks — same
 // reason as the anchors above, one hop further out. `test-init`/`test-spa`
 // (build/tests.zig) both run with an EMPTY filter, so this anchor's own name
 // doesn't need to match anything.
@@ -308,7 +331,7 @@ test "languages" {
 // Pull Template.zig into the test compilation unit for `zig build test-init`.
 // Template.zig is reached only through root.zig's top-level import, and — same
 // as languages.zig above — that one hop past main.zig is not enough for Zig
-// 0.16 to eagerly analyze its `test` blocks: without this anchor the
+// 0.17 to eagerly analyze its `test` blocks: without this anchor the
 // `lintInertDirectives` tests compile clean and simply never run. `test-init`
 // runs with an EMPTY filter, so this anchor's own name need not match anything.
 test "templates" {
@@ -320,7 +343,7 @@ test "templates" {
 //
 // This anchor is NOT redundant with main.zig's top-level `const root =
 // @import("root.zig")`. Under a `--test-filter` (and `filters` is a
-// COMPILE-time option in Zig 0.16, see build/tests.zig) the compiler analyzes
+// COMPILE-time option in Zig 0.17, see build/tests.zig) the compiler analyzes
 // only the test decls whose name MATCHES, and a top-level `const` is analyzed
 // only when something already-analyzed references it. `root` is referenced
 // from `main()`'s body, which a test build never analyzes — so with no

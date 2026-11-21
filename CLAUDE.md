@@ -4,20 +4,35 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Toolchain
 
-`mise.toml` pins **zig 0.16.0** and **bun 1.4.4**; `build.zig.zon` sets
-`.minimum_zig_version = "0.16.0"`. Your shell is expected to resolve those — the commands below are
+`mise.toml` pins **zig 0.17.1** and **bun 1.4.4**; `build.zig.zon` sets
+`.minimum_zig_version = "0.17.1"`. Your shell is expected to resolve those — the commands below are
 written bare.
 
-If `zig` resolves to a different version, the build fails at *configure* time with a wall of
-dependency errors (`std.Io.Dir`, `Child.StdIo`, `Build.Graph.io`). They look like code defects and
-are pure version skew, so check `zig version` before believing them.
+Use `zig version` to check the compiler before diagnosing configure or dependency
+errors: dependency build scripts are compiled during configure, so version skew can
+fail before any first-party source is compiled.
+
+Our configure-time Git, codegen-config and snapshot-directory reads declare their
+inputs. Version is `build.zig.zon`'s version; commit is a spawn-free, twelve-character
+SHA read from Git metadata (`unknown` without `.git`). `-Dcommit=<sha>` overrides
+it for CI/release. `zigapagos version` prints ZigBase's version/commit/build/target/Zig
+format. Release CI's `scripts/assert-version.sh` check enforces tag versus zon.
+Configure caching is nevertheless defeated by `findProgram` calls in
+SuperHTML b00f3d25 and SuperMD's transitive Ziggy main 7fc62a53 until fixed upstream.
 
 **Do not add a repo-level `.tool-versions`.** `mise.toml` is the single source of truth and mise
 reads it directly; a second file beside it is a version pin that can silently drift.
 
-The repo tracks *released* Zig, not nightlies. CI runs ubuntu + macOS only: Windows is dropped
-because upstream's `WindowsWatcher.zig`/`wuffs.zig` don't compile on stable 0.16.0, and is slated to
-return with the Zig 0.17 port at the next upstream release-tag sync (see `docs/ROADMAP.md`).
+The repo tracks *released* Zig, not nightlies. CI runs ubuntu + macOS and
+cross-compiles the tree for x86_64-windows on ubuntu. A native Windows runner and
+Windows release archives remain separate work (see `docs/ROADMAP.md`). The POSIX
+daemon/control plane (`dev --background`, flock and signals) remains unavailable
+on Windows.
+
+**Known limitation (Zig 0.17.1, #279):** the self-hosted aarch64 backend
+needs >32 GB for the test-props binary in debug mode. `build/tests.zig`
+selects LLVM for aarch64 debug test builds, so
+`zig build check -Dtarget=aarch64-macos` passes again.
 
 ### Verifying a command actually passed
 
@@ -66,7 +81,7 @@ zig build test-islands test-props test-migrate test-sidecar test-init \
 ```
 
 **Running a single test.** Each `test-*` step is already a *filtered slice* of one test binary.
-In Zig 0.16 `filters` is a **compile-time** option (passed to the compiler as `--test-filter`),
+In Zig 0.17 `filters` is a **compile-time** option (passed to the compiler as `--test-filter`),
 declared per step in `build/tests.zig` — there is no runtime flag to narrow a run. To isolate one
 test, run its suite step, or temporarily narrow that step's `filters` in `build/tests.zig`.
 
@@ -184,7 +199,7 @@ The behaviour these subsystems are *supposed* to have is specified in `docs/isla
 `docs/migration/` is written as a deterministic mapping spec so an agent can complete an
 Astro→zigapagos port unattended — read it before changing the importer.
 
-**Module-root constraint (Zig 0.16).** `src/islands/props.zig` and `src/islands/sidecar.zig` are
+**Module-root constraint (Zig 0.17).** `src/islands/props.zig` and `src/islands/sidecar.zig` are
 the root source files of their own test modules (`test-props`, `test-sidecar`), and Zig rejects an
 import that escapes a module's own directory. This is why `render_arena.zig` lives in
 `src/islands/` despite being used from `spa.zig`, `root.zig`, `worker.zig` and `src/cli/` —

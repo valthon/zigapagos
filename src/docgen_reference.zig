@@ -1,15 +1,8 @@
 //! Fork-added (issue #37): the generator behind `docs/scripty.md`.
 //!
-//! WHY THIS IS NOT `src/docgen.zig`. That file is inherited from upstream and
-//! is kept clean so release-tag syncs stay tractable (CLAUDE.md, "Architecture").
-//! It is also, on this tree, dead: it calls `std.process.argsAlloc` (gone in Zig
-//! 0.16) and reads `context.Template` (renamed to `context.Root`), so
-//! `zig build -Ddocgen` does not compile. Its output shape is upstream's too —
-//! a `.smd` with an upstream author byline and a `scripty-reference.shtml`
-//! layout that does not exist here. So this is a separate root file that
-//! borrows the IDEA (walk the context types with @typeInfo, read the metadata
-//! the builtins already carry) and nothing else; upstream's file is untouched
-//! and a future sync can replace it wholesale without touching this.
+//! The legacy `src/docgen.zig` emits an upstream-specific `.smd` page and
+//! layout. This generator owns the fork's published reference format and
+//! reads the metadata directly from the context and dependency types.
 //!
 //! WHAT IT READS. Every Scripty builtin in this codebase already carries its
 //! own documentation — `signature`, `docs_description` and often `examples` are
@@ -437,9 +430,10 @@ fn scanScriptyToken(text: []const u8, start: usize) usize {
 fn analyzeValueTypes() []const TypeDoc {
     @setEvalBranchQuota(1_000_000);
     const info = @typeInfo(context.Value).@"union";
-    var out: [info.fields.len]TypeDoc = undefined;
+    var out: [info.field_names.len]TypeDoc = undefined;
     var n: usize = 0;
-    inline for (info.fields) |f| {
+    inline for (info.field_names, info.field_types) |field_name, field_type| {
+        const f = .{ .name = field_name, .type = field_type };
         const T = structTypeOf(f.type) orelse continue;
         if (!@hasDecl(T, "Builtins")) continue;
         out[n] = analyzeType(T, shortTypeName(T));
@@ -464,24 +458,29 @@ fn analyzeType(comptime T: type, comptime name: []const u8) TypeDoc {
 fn analyzeDirectiveKinds() []const TypeDoc {
     @setEvalBranchQuota(1_000_000);
     const info = @typeInfo(supermd.Directive.Kind).@"union";
-    var out: [info.fields.len]TypeDoc = undefined;
-    inline for (info.fields, &out) |f, *t| {
-        t.* = analyzeType(f.type, f.name);
+    var out: [info.field_names.len]TypeDoc = undefined;
+    var n: usize = 0;
+    inline for (info.field_names, info.field_types) |name, T| {
+        // The dependency knows audio; this compiler port does not adopt its
+        // renderer. Only publish directives the fork actually supports.
+        if (comptime std.mem.eql(u8, name, "audio")) continue;
+        out[n] = analyzeType(T, name);
+        n += 1;
     }
-    const frozen = out;
+    const frozen = out[0..n].*;
     return &frozen;
 }
 
 fn analyzeBuiltins(comptime T: type) []const Builtin {
     @setEvalBranchQuota(1_000_000);
     const info = @typeInfo(T.Builtins).@"struct";
-    var out: [info.decls.len]Builtin = undefined;
-    inline for (info.decls, &out) |decl, *b| {
-        const D = @field(T.Builtins, decl.name);
+    var out: [info.decl_names.len]Builtin = undefined;
+    inline for (info.decl_names, &out) |decl, *b| {
+        const D = @field(T.Builtins, decl);
         b.* = .{
-            .name = decl.name,
+            .name = decl,
             .params = if (comptime isDirectiveSetter(D))
-                &.{setterParamName(T, decl.name)}
+                &.{setterParamName(T, decl)}
             else
                 paramNames(D.signature),
             .ret = if (comptime isDirectiveSetter(D))
@@ -522,7 +521,8 @@ fn isDirectiveSetter(comptime D: type) bool {
 /// `collapsible` field is `?bool` takes a bool. The `?` is dropped — it
 /// describes the FIELD being unset, not an optional argument.
 fn setterParamName(comptime T: type, comptime name: []const u8) []const u8 {
-    for (@typeInfo(T).@"struct".fields) |f| {
+    for (@typeInfo(T).@"struct".field_names, @typeInfo(T).@"struct".field_types) |field_name, field_type| {
+        const f = .{ .name = field_name, .type = field_type };
         if (std.mem.eql(u8, f.name, name)) {
             const n = fieldTypeName(f.type);
             return if (n.len > 0 and n[0] == '?') n[1..] else n;
@@ -546,9 +546,10 @@ fn analyzeFields(comptime T: type) []const Field {
     @setEvalBranchQuota(1_000_000);
     if (!@hasDecl(T, "Fields")) return &.{};
     const info = @typeInfo(T).@"struct";
-    var out: [info.fields.len]Field = undefined;
+    var out: [info.field_names.len]Field = undefined;
     var n: usize = 0;
-    inline for (info.fields) |tf| {
+    inline for (info.field_names, info.field_types) |field_name, field_type| {
+        const tf = .{ .name = field_name, .type = field_type };
         if (tf.name[0] == '_') continue; // private: `_meta`, `_items`, …
         if (!@hasDecl(T.Fields, tf.name)) continue;
         out[n] = .{

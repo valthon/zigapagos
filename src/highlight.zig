@@ -127,7 +127,7 @@ pub fn highlightCode(
         ) catch {
             const syntax_fallback_zone = tracy.traceNamed(@src(), "syntax fallback");
             defer syntax_fallback_zone.end();
-            const fake_filename = try std.fmt.allocPrint(arena, "file.{s}", .{lang_name});
+            const fake_filename = try arena.print("file.{s}", .{lang_name});
             break :blk try syntax.create_guess_file_type_static(arena, "", fake_filename, &query_cache);
         };
     };

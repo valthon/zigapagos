@@ -40,7 +40,7 @@ BUN_VERSION="1.4.4"
 # Mirrors `pinned_version` in src/cli/zigbase.zig — the binary looks for exactly
 # this version in exactly the path below, so a different one here would be
 # downloaded and then ignored.
-ZIGBASE_VERSION="v0.13.0"
+ZIGBASE_VERSION="v0.14.0"
 ZIGBASE_REPO="valthon/zigbase"
 
 # --- defaults, overridable ---------------------------------------------------
@@ -122,8 +122,8 @@ case "$uname_s" in
     BUN_OS="darwin"
     ;;
   MINGW*|MSYS*|CYGWIN*|Windows_NT)
-    fail "Windows is not supported yet (upstream's WindowsWatcher.zig/wuffs.zig do not
-compile on released Zig 0.16.0). Use WSL2 meanwhile."
+    fail "Windows is not supported yet (release archives and native validation are pending).
+The source cross-compiles for Windows. Use WSL2 meanwhile."
     ;;
   *)
     fail "unsupported OS '$uname_s'. Prebuilt: Linux and macOS."

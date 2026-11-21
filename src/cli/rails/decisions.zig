@@ -427,7 +427,7 @@ fn addProblem(
     comptime fmt: []const u8,
     args: anytype,
 ) Allocator.Error!void {
-    const message = try std.fmt.allocPrint(gpa, fmt, args);
+    const message = try gpa.print(fmt, args);
     errdefer gpa.free(message);
     const id_copy: ?[]const u8 = if (id) |v| try gpa.dupe(u8, v) else null;
     errdefer if (id_copy) |v| gpa.free(v);

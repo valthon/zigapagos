@@ -602,7 +602,7 @@ pub fn guards(filter: BeforeAction, action: []const u8) bool {
 pub fn looksLikeAuthGuard(filter: BeforeAction) bool {
     const name = filter.name orelse return false;
     for ([_][]const u8{ "login", "auth", "sign", "user" }) |needle| {
-        if (std.ascii.indexOfIgnoreCase(name, needle) != null) return true;
+        if (std.ascii.findIgnoreCase(name, needle) != null) return true;
     }
     return false;
 }
@@ -936,13 +936,13 @@ fn decodeResponse(
         var detail_buf: [320]u8 = undefined;
         const detail = if (recognized)
             (if (u.line) |ln|
-                std.fmt.bufPrint(&detail_buf, "{s} (line {d})", .{ u.detail, ln }) catch u.detail
+                std.mem.print(&detail_buf, "{s} (line {d})", .{ u.detail, ln }) catch u.detail
             else
                 u.detail)
         else if (u.line) |ln|
-            std.fmt.bufPrint(&detail_buf, "unrecognized code {s}: {s} (line {d})", .{ u.code, u.detail, ln }) catch u.detail
+            std.mem.print(&detail_buf, "unrecognized code {s}: {s} (line {d})", .{ u.code, u.detail, ln }) catch u.detail
         else
-            std.fmt.bufPrint(&detail_buf, "unrecognized code {s}: {s}", .{ u.code, u.detail }) catch u.detail;
+            std.mem.print(&detail_buf, "unrecognized code {s}: {s}", .{ u.code, u.detail }) catch u.detail;
         try blockers.append(gpa, blocker_list, code, blocker_path, detail, false, .warn, null, u.line);
     }
 
@@ -1152,7 +1152,7 @@ pub fn discoverControllers(
         // missed. Changed in `routes.zig` and `fragments.zig` at the same
         // time so the three clients stay mirrors.
         var buf: [Io.Dir.max_path_bytes + 64]u8 = undefined;
-        const detail = std.fmt.bufPrint(&buf, "{s}: {t}", .{ script_path, err }) catch @errorName(err);
+        const detail = std.mem.print(&buf, "{s}: {t}", .{ script_path, err }) catch @errorName(err);
         try blockers.append(gpa, blocker_list, "RAILS_CONTROLLERS_UNAVAILABLE", "sidecar/rails/analyze.rb", detail, false, .@"error", null, null);
         return none;
     };
@@ -1168,7 +1168,7 @@ pub fn discoverControllers(
             // itself -- and is identical on every machine; `root_path` moves
             // into `detail`.
             var buf: [Io.Dir.max_path_bytes + 64]u8 = undefined;
-            const detail = std.fmt.bufPrint(&buf, "{s}: {t}", .{ root_path, err }) catch @errorName(err);
+            const detail = std.mem.print(&buf, "{s}: {t}", .{ root_path, err }) catch @errorName(err);
             try blockers.append(gpa, blocker_list, "RAILS_CONTROLLERS_UNAVAILABLE", ".", detail, false, .@"error", null, null);
             return none;
         },
@@ -1191,7 +1191,7 @@ pub fn discoverControllers(
             // documented "relative to the app root". The interpreter is
             // still named, in free-text `detail` instead.
             var buf: [Io.Dir.max_path_bytes + 64]u8 = undefined;
-            const detail = std.fmt.bufPrint(&buf, "interpreter '{s}': {t}", .{ ruby_path, err }) catch @errorName(err);
+            const detail = std.mem.print(&buf, "interpreter '{s}': {t}", .{ ruby_path, err }) catch @errorName(err);
             try blockers.append(gpa, blocker_list, "RAILS_CONTROLLERS_UNAVAILABLE", "sidecar/rails/analyze.rb", detail, false, .@"error", null, null);
             return none;
         },
@@ -1228,7 +1228,7 @@ pub fn discoverControllers(
     switch (term) {
         .exited => |code| if (code != 0) {
             var buf: [48]u8 = undefined;
-            const detail = std.fmt.bufPrint(&buf, "ruby exited {d}", .{code}) catch "ruby exited nonzero";
+            const detail = std.mem.print(&buf, "ruby exited {d}", .{code}) catch "ruby exited nonzero";
             try blockers.append(gpa, blocker_list, "RAILS_CONTROLLERS_UNAVAILABLE", "sidecar/rails/analyze.rb", detail, false, .@"error", null, null);
             return none;
         },

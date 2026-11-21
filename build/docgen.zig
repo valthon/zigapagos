@@ -15,7 +15,7 @@ pub fn setup(b: *std.Build, cfg: config.Config) *std.Build.Step.Compile {
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/docgen.zig"),
             .target = cfg.target,
-            .optimize = .Debug,
+            .optimize = .debug,
         }),
     });
     {
@@ -41,7 +41,7 @@ pub fn setup(b: *std.Build, cfg: config.Config) *std.Build.Step.Compile {
 ///
 /// Deliberately NOT the tool above. `src/docgen.zig` is inherited, is kept
 /// clean for release-tag syncs, and does not currently compile on this tree
-/// (`std.process.argsAlloc` is gone in Zig 0.16, and it reads a
+/// (`std.process.argsAlloc` has been gone since Zig 0.16, and it reads a
 /// `context.Template` that has since been renamed to `context.Root`) — which is
 /// also why `-Ddocgen` is opt-in and nothing depends on it. `src/docgen_reference.zig`
 /// is a separate root file with its own output format.
@@ -57,7 +57,7 @@ fn setupReference(b: *std.Build, cfg: config.Config) *std.Build.Step.Compile {
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/docgen_reference.zig"),
             .target = cfg.target,
-            .optimize = .Debug,
+            .optimize = .debug,
         }),
     });
     {
@@ -69,7 +69,7 @@ fn setupReference(b: *std.Build, cfg: config.Config) *std.Build.Step.Compile {
     }
 
     const run = b.addRunArtifact(exe);
-    run.addFileArg(b.path("docs/scripty.md"));
+    run.addFileArg2(b.path("docs/scripty.md"), .{});
     // The output path is a tracked source file, so the Run cache must never
     // decide this is a no-op: the whole point is to overwrite what is there.
     run.has_side_effects = true;

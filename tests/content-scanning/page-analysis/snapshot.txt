@@ -23,9 +23,20 @@ content/code.smd:18:3: [erroneous_end_tag]
 |    </span> wrong!
 |      ^^^^
 
-content/parse.smd:11:1: [html_is_forbidden] 
+content/parse.smd:9:1: error: markdown inline html syntax is forbidden
+|    <b>wrong</b>
+|    ^^^
+| -- note: superhtml supports `=html` code blocks as an alternative
+
+content/parse.smd:9:9: error: markdown inline html syntax is forbidden
+|    <b>wrong</b>
+|            ^^^^
+| -- note: superhtml supports `=html` code blocks as an alternative
+
+content/parse.smd:11:1: error: markdown inline html syntax is forbidden
 |    <div>wrong block-level html</div>
-|    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+|    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+| -- note: superhtml supports `=html` code blocks as an alternative
 
 content/parse.smd:13:1: [scripty] unexpected token
 |    []($link.page(/other))  //wrong

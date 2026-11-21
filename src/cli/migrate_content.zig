@@ -237,7 +237,7 @@ pub fn render(gpa: Allocator, source: Source, source_path: []const u8, src: []co
 
 fn replaceExtension(gpa: Allocator, path: []const u8) []const u8 {
     const dot = std.mem.lastIndexOfScalar(u8, path, '.') orelse path.len;
-    return std.fmt.allocPrint(gpa, "{s}.smd", .{path[0..dot]}) catch fatal.oom();
+    return gpa.print("{s}.smd", .{path[0..dot]}) catch fatal.oom();
 }
 
 /// NO_SLOP.md section 2.2a contract 1 (self-freeing): returns one owned path
@@ -265,7 +265,7 @@ pub fn outputPath(gpa: Allocator, source: Source, source_path: []const u8) ?[]co
     }
     const replaced = replaceExtension(gpa, relative);
     if (std.mem.endsWith(u8, replaced, "/_index.smd")) {
-        const fixed = std.fmt.allocPrint(gpa, "{s}/index.smd", .{replaced[0 .. replaced.len - "/_index.smd".len]}) catch fatal.oom();
+        const fixed = gpa.print("{s}/index.smd", .{replaced[0 .. replaced.len - "/_index.smd".len]}) catch fatal.oom();
         gpa.free(replaced);
         return fixed;
     }

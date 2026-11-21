@@ -1159,13 +1159,13 @@ const Converter = struct {
     }
 
     fn putFmt(c: *Converter, comptime fmt: []const u8, args: anytype) Allocator.Error!void {
-        const s = try std.fmt.allocPrint(c.gpa, fmt, args);
+        const s = try c.gpa.print(fmt, args);
         defer c.gpa.free(s);
         try c.sink.appendSlice(c.gpa, s);
     }
 
     fn note(c: *Converter, comptime fmt: []const u8, args: anytype) Allocator.Error!void {
-        const s = try std.fmt.allocPrint(c.gpa, fmt, args);
+        const s = try c.gpa.print(fmt, args);
         errdefer c.gpa.free(s);
         try c.dropped.append(c.gpa, s);
     }
@@ -1440,7 +1440,7 @@ const Converter = struct {
                 i += 1;
             }
         }
-        return try std.fmt.allocPrint(c.gpa, "components/stimulus/{s}.island.tsx", .{stem.items});
+        return try c.gpa.print("components/stimulus/{s}.island.tsx", .{stem.items});
     }
 
     fn emitWrapped(c: *Converter, path: []const u8, b: Binding, region: []const fragments.Node, locals: []const fragments.Attr) Allocator.Error!void {
@@ -2263,9 +2263,9 @@ pub fn partialPathIn(
     if (base.len == 0) return null;
     var buf: [512]u8 = undefined;
     const needle = (if (dir.len > 0)
-        std.fmt.bufPrint(&buf, "app/views/{s}/_{s}.", .{ dir, base })
+        std.mem.print(&buf, "app/views/{s}/_{s}.", .{ dir, base })
     else
-        std.fmt.bufPrint(&buf, "app/views/_{s}.", .{base})) catch return null;
+        std.mem.print(&buf, "app/views/_{s}.", .{base})) catch return null;
     // A format/handler chain means several files can share one stem
     // (`_nav.html.erb`, `_nav.json.erb`). The smallest path wins rather
     // than the first in slice order: the fragment list comes off a
@@ -2371,7 +2371,7 @@ fn metaDescription(gpa: Allocator, bytes: []const u8) Allocator.Error!?[]u8 {
 /// Contract 3 (caller-buffer): the result borrows `tag`.
 fn attrValue(tag: []const u8, key: []const u8) ?[]const u8 {
     var buf: [32]u8 = undefined;
-    const needle = std.fmt.bufPrint(&buf, "{s}=", .{key}) catch return null;
+    const needle = std.mem.print(&buf, "{s}=", .{key}) catch return null;
     const at = std.mem.indexOf(u8, tag, needle) orelse return null;
     const q = at + needle.len;
     if (q >= tag.len) return null;
@@ -3635,7 +3635,8 @@ test "convert: every kind treated as a finding has a Stage 1 derivation row -- n
     // list to drift: a new `isFindingKind` entry without a derivation row
     // fails here.
     const gpa = std.testing.allocator;
-    inline for (@typeInfo(fragments.Kind).@"enum".fields) |f| {
+    inline for (@typeInfo(fragments.Kind).@"enum".field_names) |field_name| {
+        const f = .{ .name = field_name };
         const kind = @field(fragments.Kind, f.name);
         if (isFindingKind(kind)) {
             const nodes = [_]fragments.Node{cNode(kind, 1, 1, "x")};
@@ -5202,9 +5203,9 @@ test "void normalization resumes after literal less-than characters" {
 test "void normalization preserves every raw-text family and resumes after its close" {
     const gpa = std.testing.allocator;
     for ([_][]const u8{ "iframe", "xmp", "noembed", "noframes", "script", "style", "textarea", "title", "noscript" }) |name| {
-        const source = try std.fmt.allocPrint(gpa, "<BR/><{s}><br/></{s}x><hr /></{s}><img />", .{ name, name, name });
+        const source = try gpa.print("<BR/><{s}><br/></{s}x><hr /></{s}><img />", .{ name, name, name });
         defer gpa.free(source);
-        const expected = try std.fmt.allocPrint(gpa, "<BR><{s}><br/></{s}x><hr /></{s}><img >", .{ name, name, name });
+        const expected = try gpa.print("<BR><{s}><br/></{s}x><hr /></{s}><img >", .{ name, name, name });
         defer gpa.free(expected);
         try std.testing.expectEqualStrings(expected, normalizeVoidElements(source));
     }

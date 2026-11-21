@@ -6,7 +6,7 @@
 
 **Architecture:** The Ruby sidecar (`runtime/sidecar/rails/`) gains an Erubi-grammar ERB scanner (`erb.rb`), a Prism-based fragment classifier with inline i18n resolution (`templates.rb`, `i18n.rb`), route naming in `routes.rb`, and a `layouts` array in the `controllers` op. The Zig side (`src/cli/rails/`) gains `fragments.zig` (the `templates` op client, one node stream per template) and `findings.zig` (stable ids, choices, derivation from node streams), wires both into `rails.discover`, and extends the `/1` manifest with `findings[]` (schema regenerated under the existing `rails-check` gate). A new fixture app `tests/migrate/rails-presentation/` pins every finding code this stage emits.
 
-**Tech Stack:** Zig 0.16.0 (std-only inside `src/cli/rails/`), Ruby 3.4 stdlib only (`prism`, `json`, `yaml`), bash e2e under `tests/migrate/`, `jq`.
+**Tech Stack:** Zig 0.17.1 (std-only inside `src/cli/rails/`), Ruby 3.4 stdlib only (`prism`, `json`, `yaml`), bash e2e under `tests/migrate/`, `jq`.
 
 **Spec:** `docs/superpowers/specs/2026-08-29-rails-presentation-migration-design.md` — sections "Sidecar extension", "Fragment vocabulary", "Findings, decisions, handoff", "Blocker and finding codes", "Staging" item 1.
 

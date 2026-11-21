@@ -59,7 +59,7 @@ pub fn explain(
     const cfg, const base_dir_path = root.Config.load(io, gpa);
 
     worker.start(io);
-    defer if (builtin.mode == .Debug) worker.stopWaitAndDeinit(io);
+    defer if (builtin.optimize == .debug) worker.stopWaitAndDeinit(io);
 
     // DELIBERATELY NOT FACTORED into a shared helper with validate.zig's
     // identical-looking preamble -- see validate.zig's `validate` doc comment
@@ -73,7 +73,7 @@ pub fn explain(
         .allow_missing_pages = cmd.allow_missing_pages,
         .island_sidecar_optional = true,
     }) catch fatal.oom();
-    defer if (builtin.mode == .Debug) build.deinit(io, gpa);
+    defer if (builtin.optimize == .debug) build.deinit(io, gpa);
 
     if (build.any_prerendering_error) {
         std.debug.print(
@@ -262,7 +262,7 @@ fn routeCandidates(scratch: []u8, route: []const u8, out: *[2]Candidate) usize {
     if (std.mem.endsWith(u8, route, "/")) {
         // A directory route maps to that directory's index.html and nothing
         // else -- there is no second spelling worth trying.
-        const p = std.fmt.bufPrint(scratch, "{s}index.html", .{route}) catch unreachable;
+        const p = std.mem.print(scratch, "{s}index.html", .{route}) catch unreachable;
         out[0] = .{ .path = p, .ends_with_slash = true };
         return 1;
     }
@@ -272,7 +272,7 @@ fn routeCandidates(scratch: []u8, route: []const u8, out: *[2]Candidate) usize {
     // face value: retrying it as a directory would be nonsense.
     if (std.fs.path.extension(route).len != 0) return 1;
 
-    const p = std.fmt.bufPrint(scratch, "{s}/index.html", .{route}) catch unreachable;
+    const p = std.mem.print(scratch, "{s}/index.html", .{route}) catch unreachable;
     out[1] = .{ .path = p, .ends_with_slash = true };
     return 2;
 }
@@ -402,7 +402,7 @@ fn printReport(
                 try w.print("        … extends chain exceeds {d} levels, stopping\n", .{max_depth});
                 break;
             }
-            const parent_name = t.ast.nodes[t.ast.extends_idx].templateValue().span.slice(t.src);
+            const parent_name = t.ast.nodes[t.ast.extends_idx].templateValue().loc.slice(t.src);
             // Freed at the end of every iteration (and on `break`): `PathName.get`
             // interns into `build`'s tables and `templates.get` returns a
             // build-owned template, so nothing below borrows `parent_path`.

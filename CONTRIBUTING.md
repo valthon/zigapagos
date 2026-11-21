@@ -35,24 +35,26 @@ The practical consequence for a contributor:
 `mise.toml` pins the toolchain and is the single source of truth:
 
 ```
-zig = "0.16.0"
+zig = "0.17.1"
 bun = "1.4.4"
 ```
 
 ```sh
-mise install          # or install zig 0.16.0 + bun 1.4.4 yourself
+mise install          # or install zig 0.17.1 + bun 1.4.4 yourself
 ```
 
 This repo tracks **released** Zig, not nightlies — `build.zig.zon` sets
-`.minimum_zig_version = "0.16.0"`. If `zig` resolves to some other version the
+`.minimum_zig_version = "0.17.1"`. If `zig` resolves to some other version the
 build fails at *configure* time with a wall of dependency errors mentioning
-`std.Io.Dir`, `Child.StdIo` or `Build.Graph.io`. They look like real defects and
+changed standard-library APIs. They look like real defects and
 are pure version skew, so check `zig version` before believing them. Do not add a
 repo-level `.tool-versions`: a second pin beside `mise.toml` can silently drift.
 
-CI runs ubuntu and macOS only. Windows is dropped because inherited upstream code
-(`src/cli/watcher/WindowsWatcher.zig`, `src/wuffs.zig`) does not compile on
-stable 0.16.0; it returns with the Zig 0.17 port.
+CI runs ubuntu and macOS, and cross-compiles for x86_64-windows on ubuntu.
+A native Windows runner and Windows release archives remain separate work.
+`zigapagos version` reports the manifest version and a separate Git commit,
+matching ZigBase. Release CI passes `-Dcommit=<sha>` and validates the tag against
+`build.zig.zon` with `scripts/assert-version.sh` before building.
 
 ## Build and test
 
@@ -60,21 +62,6 @@ stable 0.16.0; it returns with the Zig 0.17 port.
 zig build                                      # → zig-out/bin/zigapagos
 cd runtime && bun install --frozen-lockfile     # ONCE per fresh clone/worktree
 ```
-
-If a fresh dependency fetch fails while contacting Codeberg, run:
-
-```sh
-bash scripts/rescue-codeberg.sh
-zig build
-```
-
-The rescue script is an outage-only escape hatch. It derives the exact
-SuperMD-transitive `translate-c` pin (the only Codeberg-hosted dependency in
-the graph) from the checked-in dependency graph, warms that content hash from
-the `translate-c` GitHub mirror, verifies the resolved graph, and changes no
-manifest. A hash mismatch or an unexpected
-source fails closed. Once it succeeds, retry the build command that originally
-failed; normal development does not require the script.
 
 **Trap 1: `zig build test` does not run the unit tests.** It builds the
 three-root snapshot fixtures and diffs them. The Zig unit tests live in **twenty
@@ -101,7 +88,7 @@ cd runtime && bun test src/router   # one file — the filter is a PATH substrin
 ### Running a single Zig test
 
 You can't, not with a flag. Each `test-*` step is already a *filtered slice* of
-one test binary, and in Zig 0.16 `filters` is a **compile-time** option (handed
+one test binary, and in Zig 0.17 `filters` is a **compile-time** option (handed
 to the compiler as `--test-filter`) declared per step in `build/tests.zig`. There
 is no runtime equivalent. So either run the narrowest suite step that covers your
 test, or temporarily narrow that step's `filters` in `build/tests.zig` while you
@@ -310,7 +297,7 @@ recorded? Then no fragment — git history is enough.
 ## Where things are
 
 `CLAUDE.md` at the repo root is the orientation document — pass ordering in
-`src/root.zig`, the render seam, the Zig 0.16 module-root constraint that decides
+`src/root.zig`, the render seam, the Zig 0.17 module-root constraint that decides
 where files may live, and the repo conventions. It is written for an AI assistant
 but it is the most accurate map of the codebase available, so read it as a human
 too.

@@ -391,7 +391,7 @@ pub const Server = struct {
             s.mutex.lock(s.io) catch return;
             defer s.mutex.unlock(s.io);
             seen = s.generation;
-            break :blk std.fmt.bufPrint(&cursor_buffer, "{x}/{d}", .{ s.session_id, seen }) catch return;
+            break :blk std.mem.print(&cursor_buffer, "{x}/{d}", .{ s.session_id, seen }) catch return;
         };
         const missed_update = if (previous_cursor) |previous| !std.mem.eql(u8, previous, cursor) else false;
 
@@ -432,7 +432,7 @@ pub const Server = struct {
                 defer s.mutex.unlock(s.io);
                 while (s.generation == seen) s.cond.waitUncancelable(s.io, &s.mutex);
                 seen = s.generation;
-                break :blk std.fmt.allocPrint(s.gpa, "id: {x}/{d}\ndata: {s}\n\n", .{
+                break :blk s.gpa.print("id: {x}/{d}\ndata: {s}\n\n", .{
                     s.session_id, seen, s.payload orelse "reload",
                 }) catch return;
             };
@@ -542,7 +542,7 @@ fn injectFile(io: Io, gpa: Allocator, dir: Io.Dir, name: []const u8, port: u16, 
     // hit if some other pass already added the snippet).
     if (std.mem.indexOf(u8, html, marker) != null) return;
 
-    const snippet = std.fmt.allocPrint(gpa, snippet_fmt, .{port}) catch return;
+    const snippet = gpa.print(snippet_fmt, .{port}) catch return;
     defer gpa.free(snippet);
 
     const at = insertionPoint(html);
@@ -624,7 +624,7 @@ test "dev live-reload: snippet lands before </body>" {
     const at = insertionPoint(html);
     try std.testing.expectEqualStrings("</body></html>", html[at..]);
 
-    const snippet = try std.fmt.allocPrint(gpa, snippet_fmt, .{4321});
+    const snippet = try gpa.print(snippet_fmt, .{4321});
     defer gpa.free(snippet);
     // The port and marker are both present in the rendered snippet.
     try std.testing.expect(std.mem.indexOf(u8, snippet, ":4321/") != null);
@@ -788,8 +788,8 @@ test "dev live-reload: status json reflects identity and build state" {
 test "dev live-reload: status error tail is bounded" {
     const gpa = std.testing.allocator;
     var s: Server = .init(std.testing.io, gpa, undefined);
-    const big = "x" ** (Server.max_error_tail + 500);
-    s.setBuildFinished(false, 1, big);
+    const big = @as([(Server.max_error_tail + 500)]u8, @splat('x'));
+    s.setBuildFinished(false, 1, &big);
     const json = try s.renderStatusJson(gpa);
     defer gpa.free(json);
     try std.testing.expect(json.len < Server.max_error_tail + 512);

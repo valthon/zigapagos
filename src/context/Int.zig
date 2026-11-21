@@ -188,8 +188,7 @@ pub const Builtins = struct {
                 .{int.value},
             );
 
-            return String.init(try std.fmt.allocPrint(
-                gpa,
+            return String.init(try gpa.print(
                 "{Bi:.0}",
                 .{size},
             ));
@@ -214,7 +213,7 @@ pub const Builtins = struct {
             args: []const Value,
         ) context.CallError!Value {
             if (args.len != 0) return .{ .err = "expected 0 arguments" };
-            return String.init(try std.fmt.allocPrint(gpa, "{}", .{int.value}));
+            return String.init(try gpa.print("{}", .{int.value}));
         }
     };
 };

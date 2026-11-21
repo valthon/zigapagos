@@ -468,7 +468,7 @@ pub fn scan(
     if (gemfile) |src| {
         for (gem_rules) |rule| {
             if (!detect.gemfileDeclares(src, rule.gem)) continue;
-            const ev = try std.fmt.allocPrint(gpa, "Gemfile:{s}", .{rule.gem});
+            const ev = try gpa.print("Gemfile:{s}", .{rule.gem});
             errdefer gpa.free(ev);
             const version: ?[]const u8 = if (gemfile_lock) |lock| blk: {
                 const found = detect.lockedVersion(lock, rule.gem) orelse break :blk null;
@@ -496,7 +496,7 @@ pub fn scan(
         for (pkg_rules) |rule| {
             const val = packageValue(parsed.value, rule.pkg) orelse continue;
             if (has(list.items, rule.name)) continue; // gem already proved it
-            const ev = try std.fmt.allocPrint(gpa, "package.json:{s}", .{rule.pkg});
+            const ev = try gpa.print("package.json:{s}", .{rule.pkg});
             errdefer gpa.free(ev);
             // The dependency's VALUE is the version, but only when it is
             // actually a JSON string -- a workspace/`file:`/git-protocol

@@ -130,7 +130,7 @@ pub fn lintInertDirectives(
         if (node.kind == .extend or node.kind == .super) continue;
 
         var it = node.startTagIterator(t.src, t.html_ast.language);
-        const tag = it.name_span.slice(t.src);
+        const tag = it.name_loc.slice(t.src);
         // This is *literally* the value the buggy renderer reads. Do not
         // substitute `node.kind.isVoid()`: that misses the `.xml`
         // self-closing case, which corrupts output the same way.
@@ -188,12 +188,10 @@ pub fn parse(
     const zone = tracy.trace(@src());
     defer zone.end();
 
-    errdefer |err| switch (err) {
-        error.OutOfMemory => fatal.oom(),
-    };
-
-    const path = try std.fmt.allocPrint(arena, "{f}", .{
+    const path = (arena.print("{f}", .{
         pn.fmt(&build.st, &build.pt, null, "/"),
+    }) catch |err| switch (err) {
+        error.OutOfMemory => fatal.oom(),
     });
 
     const max = std.math.maxInt(u32);
@@ -206,19 +204,25 @@ pub fn parse(
 
     t.src = src;
 
-    t.html_ast = try .init(
+    t.html_ast = (superhtml.html.Ast.init(
         gpa,
         src,
         if (std.mem.endsWith(u8, path, ".xml")) .xml else .superhtml,
         false,
-    );
+    ) catch |err| switch (err) {
+        error.OutOfMemory => fatal.oom(),
+    });
     if (t.html_ast.errors.len > 0) return;
 
-    t.ast = try .init(gpa, t.html_ast, src);
+    t.ast = (superhtml.Ast.init(gpa, t.html_ast, src) catch |err| switch (err) {
+        error.OutOfMemory => fatal.oom(),
+    });
 
     if (t.ast.errors.len == 0 and t.ast.extends_idx != 0) {
-        const parent_name = t.ast.nodes[t.ast.extends_idx].templateValue().span.slice(src);
-        const parent_path = try root.join(arena, &.{ "templates", parent_name }, '/');
+        const parent_name = t.ast.nodes[t.ast.extends_idx].templateValue().loc.slice(src);
+        const parent_path = (root.join(arena, &.{ "templates", parent_name }, '/') catch |err| switch (err) {
+            error.OutOfMemory => fatal.oom(),
+        });
         const parent_pn = PathName.get(&build.st, &build.pt, parent_path) orelse {
             t.missing_parent = true;
             return;

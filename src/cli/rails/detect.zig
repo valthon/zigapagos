@@ -510,7 +510,7 @@ pub fn versionFromLock(
 
     const value = try gpa.dupe(u8, found);
     errdefer gpa.free(value);
-    const evidence = try std.fmt.allocPrint(gpa, "Gemfile.lock:rails ({s})", .{found});
+    const evidence = try gpa.print("Gemfile.lock:rails ({s})", .{found});
     return .{ .value = value, .evidence = evidence };
 }
 

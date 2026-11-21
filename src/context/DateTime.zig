@@ -23,14 +23,12 @@ pub fn init(iso8601: []const u8) !DateTime {
 }
 
 pub fn initUnix(timestamp: i64) !DateTime {
-    const date = try zeit.instant(.{
-        .source = .{ .unix_timestamp = timestamp },
-    });
+    const date = zeit.instant(.{ .unix_timestamp = timestamp }, &zeit.utc);
     return .{ ._inst = date };
 }
 
 pub fn initNow(io: Io) DateTime {
-    const date = zeit.instant(io, .{}) catch unreachable;
+    const date = zeit.instant(.{ .now = io }, &zeit.utc);
     return .{ ._inst = date };
 }
 
@@ -383,8 +381,7 @@ pub const Builtins = struct {
             const weekday = zeit.weekdayFromDays(dse);
 
             const zdt = dt._inst.time();
-            const formatted_date = std.fmt.allocPrint(
-                gpa,
+            const formatted_date = gpa.print(
                 "{s}, {:0>2} {s} {} {:0>2}:{:0>2}:{:0>2} +0000",
                 .{
                     weekday.shortName(),

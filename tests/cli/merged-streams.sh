@@ -4,7 +4,7 @@
 # (issue #78).
 #
 # The defect: the report goes through a BUFFERED `std.Io.Writer` over stdout,
-# flushed once at the very end, built by `Io.File.writer` -- which Zig 0.16
+# flushed once at the very end, built by `Io.File.writer` -- which Zig 0.17
 # documents as POSITIONAL ("the global seek position is not affected"). The
 # Debug-build banner and every `log`/diagnostic line go to stderr via
 # unbuffered `std.debug.print`, immediately, as streaming writes that DO
