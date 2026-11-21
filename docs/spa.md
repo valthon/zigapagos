@@ -1219,14 +1219,14 @@ shipping it.
 The build supports multiple deployment targets via `deploy_target` in the site's `zigapagos.ziggy`:
 
 ```ziggy
-Site {
+.site = .simple(.{
   .title = "My site",
   .host_url = "https://example.com",
   .content_dir_path = "content",
   .layouts_dir_path = "layouts",
   .assets_dir_path = "assets",
   .deploy_target = "zigbase", // default: "zigbase" | "nginx" | "apache"
-}
+})
 ```
 
 Each target emits:
@@ -1572,7 +1572,7 @@ Semantics:
   `{ frontmatter, body }` (frontmatter between the `---` fences is either the ziggy struct the
   content pipeline reads — detected by its leading `.field =` — or YAML via Bun's native
   parser, so an existing gray-matter-style `.md` content dir works without conversion — the same
-  frontmatter the content pipeline reads; `@date("…")` values become their string argument).
+  frontmatter the content pipeline reads; `.date("…")` values become their string argument).
 - **Glob**: an array sorted by path of `{ path, frontmatter, body }` (`.smd`/`.md`) or
   `{ path, data }` (`.json`), `path` relative to the website root.
 - A missing file, an empty glob, or an unsupported extension **fails the build loudly** — a

@@ -1048,7 +1048,7 @@ the host's call, and that difference is not something this converter can hide.
 .title = "About",
 .layout = "pages/about.shtml",
 .custom = {
-    .rails = {
+    "rails": .{
         .route = "GET /about",
         .controller = "pages",
         .action = "about",
@@ -2167,8 +2167,8 @@ generated file's own header says the same thing, citing the design assumption
 (`A5`) that folded the two forms together:
 
 ```html
-<island src="components/AuthForm.island.tsx" client:load :props='{ .mode = "signin" }'></island>
-<island src="components/AuthForm.island.tsx" client:load :props='{ .mode = "signup" }'></island>
+<island src="components/AuthForm.island.tsx" client:load :props='.{ .mode = "signin" }'></island>
+<island src="components/AuthForm.island.tsx" client:load :props='.{ .mode = "signup" }'></island>
 ```
 
 ```tsx
@@ -2792,3 +2792,6 @@ renderer is equivalent; Vue produces no converted page.
    `"complete": true`, then build the target with `bash DIR/build.sh` — after
    pointing `@z/runtime` somewhere real if the target has a `package.json`
    ([§13](#the-generated-project-builds)).
+
+After generating a target, run `zigapagos install-schemas` from its root to
+refresh the Ziggy LSP schemas. `init`, including `init --from-astro`, emits them.

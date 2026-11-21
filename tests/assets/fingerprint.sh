@@ -72,8 +72,8 @@ LAYOUT='<!DOCTYPE html>
 
 CONTENT='---
 .title = "Home",
-.date = @date("2020-07-06T00:00:00"),
-.author = "Test",
+.date = .date("2020-07-06T00:00:00"),
+.authors = ["Test"],
 .layout = "index.shtml",
 .draft = false,
 ---
@@ -88,7 +88,7 @@ scaffold() {
   local dir="$1" css="$2" flag="$3"
   mkdir -p "$dir/content" "$dir/layouts" "$dir/assets/fonts"
   {
-    echo 'Site {'
+    echo '.site = .simple(.{'
     echo '    .title = "Fingerprint",'
     echo '    .host_url = "https://example.com",'
     echo '    .content_dir_path = "content",'
@@ -96,7 +96,7 @@ scaffold() {
     echo '    .assets_dir_path = "assets",'
     echo '    .static_assets = ["favicon.ico"],'
     [[ "$flag" == "on" ]] && echo '    .asset_fingerprint = true,'
-    echo '}'
+    echo '})'
   } > "$dir/zigapagos.ziggy"
   printf '%s' "$LAYOUT" > "$dir/layouts/index.shtml"
   printf '%s' "$CONTENT" > "$dir/content/index.smd"

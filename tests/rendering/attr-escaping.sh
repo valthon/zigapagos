@@ -62,8 +62,8 @@ cp tests/rendering/simple/zigapagos.ziggy "$SITE/"
 cat > "$SITE/content/attr-escaping.smd" <<'EOF'
 ---
 .title = "Attribute escaping",
-.date = @date("2020-07-06T00:00:00"),
-.author = "Sample Author",
+.date = .date("2020-07-06T00:00:00"),
+.authors = ["Sample Author"],
 .layout = "index.shtml",
 .draft = false,
 ---
@@ -137,8 +137,8 @@ echo "PASS: class= carries the escaped payload"
 cat > "$SITE/content/attr-escaping-fence.smd" <<'EOF'
 ---
 .title = "Attribute escaping, code fence",
-.date = @date("2020-07-06T00:00:00"),
-.author = "Sample Author",
+.date = .date("2020-07-06T00:00:00"),
+.authors = ["Sample Author"],
 .layout = "index.shtml",
 .draft = false,
 ---

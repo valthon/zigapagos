@@ -21,6 +21,7 @@ const Signature = @import("doctypes.zig").Signature;
 
 host_url: []const u8,
 title: []const u8,
+custom: context.Map.ZiggyMap = .empty,
 _meta: struct {
     variant_id: u32,
     kind: union(enum) {
@@ -40,6 +41,7 @@ pub const docs_description =
 pub const Dot = true;
 pub const PassByRef = true;
 pub const Fields = struct {
+    pub const custom = "Site-wide custom Ziggy dictionary.";
     pub const host_url =
         \\The host URL, as defined in your `zigapagos.ziggy`.
     ;

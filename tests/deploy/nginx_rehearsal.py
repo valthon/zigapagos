@@ -88,7 +88,7 @@ def rehearsal(work, args, browser, prefix):
     env = dict(os.environ, ZIGAPAGOS_RUNTIME_DIR=str(REPO / 'runtime'))
     command([args.binary, 'init', '--minimal'], cwd=site, env=env)
     config = site / 'zigapagos.ziggy'
-    write(config, config.read_text().replace('Site {', 'Site {\n    .deploy_target = "nginx",\n'
+    write(config, config.read_text().replace('.site = .simple(.{', '.site = .simple(.{\n    .deploy_target = "nginx",\n'
           f'    .url_path_prefix = "{prefix.strip(chr(47))}",'))
     write(site / 'tsconfig.json', json.dumps({'compilerOptions': {'jsx': 'react-jsx', 'jsxImportSource': '@z/runtime'}}))
     write(site / 'app/app.spa.tsx', '''import {Router, Link, lazy, useState} from '@z/runtime';

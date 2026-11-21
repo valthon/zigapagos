@@ -8,7 +8,7 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/site/"{assets/nested,layouts,content}
 cat > "$WORK/site/zigapagos.ziggy" <<'CONFIG'
-Site {
+.site = .simple(.{
  .title = "CSS",
  .host_url = "https://example.com",
  .content_dir_path = "content",
@@ -16,7 +16,7 @@ Site {
  .assets_dir_path = "assets",
  .static_assets = ["one.css", "nested/one.css", "EMPTY.css", "keep.txt"],
  .asset_fingerprint = true,
-}
+})
 CONFIG
 cat > "$WORK/site/layouts/index.shtml" <<'HTML'
 <!DOCTYPE html><html><head><title>CSS</title><link rel="stylesheet" href="$site.asset('linked.css').link()"></head><body><div :html="$page.content()"></div></body></html>
@@ -24,7 +24,7 @@ HTML
 cat > "$WORK/site/content/index.smd" <<'CONTENT'
 ---
 .title = "Home",
-.date = @date("2020-07-06T00:00:00"),
+.date = .date("2020-07-06T00:00:00"),
 .layout = "index.shtml",
 ---
 Home

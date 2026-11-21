@@ -41,13 +41,13 @@ EOF
 
 site_ziggy() { # $1 = host_url literal (already quoted Ziggy string)
   cat >"$WORK/zigapagos.ziggy" <<EOF
-Site {
+.site = .simple(.{
     .title = "Host Url Unset",
     .host_url = $1,
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "content",
-}
+})
 EOF
 }
 

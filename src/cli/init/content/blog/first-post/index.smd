@@ -1,6 +1,6 @@
 ---
 .title = "First Post: Paper Trails",
-.date = @date("1990-01-01T00:00:00"),
+.date = .date("1990-01-01T00:00:00"),
 .layout = "post.shtml",
 ---
 

@@ -115,7 +115,7 @@ the body when it is null, and binds the unwrapped value to `$if` when it is not:
 ```
 
 emits `FOUND:ziggy-value` for a page whose frontmatter has
-`.custom = { .who = "ziggy-value" }`, and nothing for a page without that key.
+`.custom = .{ .who = "ziggy-value" }`, and nothing for a page without that key.
 `$if` is how the existing layouts reach a page's previous/next sibling
 (`<ctx :if="$page.prevPage?()">…<a href="$if.link()">`) without evaluating the
 call twice.

@@ -1,4 +1,4 @@
-Site {
+.site = .simple(.{
     .title = "Styling choices",
     .host_url = "https://example.com",
     .content_dir_path = "content",
@@ -6,4 +6,4 @@ Site {
     .assets_dir_path = "assets",
     // CSS dependencies are not discovered from url()/@import. Keep their paths.
     .static_assets = ["css/tokens.css", "css/plain.css", "fonts/Temml.woff2", "images/grid.svg", "fonts/LICENSE-Temml.txt", "fonts/LICENSE-KaTeX.txt"],
-}
+})

@@ -59,8 +59,8 @@ printf 'const x = 1;\n' > "$SITE/content/probe/snippet.zig"
 cat > "$SITE/content/index.smd" <<'EOF'
 ---
 .title = "Root",
-.date = @date("2020-07-06T00:00:00"),
-.author = "Sample Author",
+.date = .date("2020-07-06T00:00:00"),
+.authors = ["Sample Author"],
 .layout = "index.shtml",
 .draft = false,
 ---
@@ -70,8 +70,8 @@ EOF
 cat > "$SITE/content/probe/index.smd" <<'EOF'
 ---
 .title = "Code directive attrs",
-.date = @date("2020-07-06T00:00:00"),
-.author = "Sample Author",
+.date = .date("2020-07-06T00:00:00"),
+.authors = ["Sample Author"],
 .layout = "index.shtml",
 .draft = false,
 ---

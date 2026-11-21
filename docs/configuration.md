@@ -10,7 +10,7 @@ and SPAs to compile.
 ## zigapagos.ziggy
 
 ```ziggy
-Site {
+.site = .simple(.{
     .title = "My Site",
     .host_url = "https://example.com",
     .url_path_prefix = "",
@@ -19,7 +19,7 @@ Site {
     .assets_dir_path = "assets",
     .deploy_target = "zigbase",
     .sitemap = true,
-}
+})
 ```
 
 `.title` is available in every layout as `$site.title`.
@@ -40,7 +40,7 @@ the project root.
 `nginx`, or `apache`. See [native SPAs](spa.md) for what each
 one generates.
 
-`.image_optimize = {}` turns on build-time image optimization: WebP variants of
+`.image_optimize = .{}` turns on build-time image optimization: WebP variants of
 every content image at configured widths, emitted as a `<picture>` with a full
 `srcset`/`sizes` and the untouched original as the fallback, with opt-in AVIF
 via an external encoder you supply. Off by default (`null`).
@@ -70,7 +70,7 @@ site-root `sitemap.xml` is a build error while the sitemap is enabled, since
 either would otherwise silently collide with it.
 
 `sitemap` is a `Site`-only field — a multilingual `zigapagos.ziggy`
-(`Multilingual { ... }`) has no field of this name, so setting it there is a
+(`.site = .multilingual(.{ ... })`) has no field of this name, so setting it there is a
 config-parse-time "unknown field" error, not a silent no-op. Composing one
 crawler-facing URL set across per-locale hosts/prefixes is a bigger design
 than this feature covers yet.
@@ -88,8 +88,8 @@ Each entry has a string `directive` and an array of string `sources`:
 
 ```ziggy
 .csp_extra_sources = [
-    { .directive = "frame-src", .sources = ["https://www.google.com/recaptcha/"] },
-    { .directive = "connect-src", .sources = ["https://api.example.com"] },
+    .{ .directive = "frame-src", .sources = ["https://www.google.com/recaptcha/"] },
+    .{ .directive = "connect-src", .sources = ["https://api.example.com"] },
 ],
 ```
 
@@ -188,3 +188,16 @@ Build failures write the output tree in place, so a failure partway through
 leaves a partially updated site. The pass order limits the damage — SPA
 validation runs before any page is written — but it is not atomicity. Build to a
 staging directory if you are deploying by syncing the output tree.
+
+## Ziggy 0.3 and editor schemas
+
+The top level is `.site = .simple(.{ ... })` or
+`.site = .multilingual(.{ ... })`; locale entries use `.{ ... }`. There is no
+version field. See the [upgrade guide](migration/ziggy-0.3.md) for the idempotent
+converter and CRLF handling. Run `zigapagos install-schemas` for Ziggy LSP files;
+`init` includes them.
+
+Both site types accept `.custom = { "brand": "Example" }`, available as
+`$site.custom.get('brand')`. `.supermd = .{ .auto_target_blank = false }`
+disables the default new tab behavior for external Markdown links. Omit it
+(or set true) to retain the existing behavior. Heading baselines are unchanged.

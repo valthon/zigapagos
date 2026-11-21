@@ -5,15 +5,15 @@ python3 - "$REPO" "${1:-all}" <<'PY'
 import json, os, shutil, subprocess, sys, tempfile
 from pathlib import Path
 repo, mode = Path(sys.argv[1]), sys.argv[2]
-base = (repo/'tests/rendering/simple/zigapagos.ziggy').read_text().rstrip()[:-1]
-extras = '\n.csp_extra_sources = [{ .directive = "img-src", .sources = ["data:"] }],\n'
+base = (repo/'tests/rendering/simple/zigapagos.ziggy').read_text().rstrip()[:-2]
+extras = '\n.csp_extra_sources = [.{ .directive = "img-src", .sources = ["data:"] }],\n'
 env = os.environ | {'ZIGAPAGOS_RUNTIME_DIR': str(repo/'runtime')}
 with tempfile.TemporaryDirectory() as tmp:
     work = Path(tmp)
     for name in ['content', 'layouts']:
         shutil.copytree(repo/'tests/rendering/simple'/name, work/name)
     def config(fields=''):
-        (work/'zigapagos.ziggy').write_text(base + fields + '}')
+        (work/'zigapagos.ziggy').write_text(base + fields + '})')
     def release(cwd=work, args=()):
         return subprocess.run([str(repo/'zig-out/bin/zigapagos'), 'release', '--force', *args], cwd=cwd, env=env, text=True, capture_output=True)
     if mode in ['all', 'collision']:

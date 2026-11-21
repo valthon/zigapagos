@@ -63,13 +63,13 @@ mkdir -p "$SITE/content" "$SITE/layouts" "$SITE/assets" "$SITE/components"
 : > "$SITE/assets/.keep"
 
 cat > "$SITE/zigapagos.ziggy" <<'EOF'
-Site {
+.site = .simple(.{
     .title = "Islands Runtime Slice Test",
     .host_url = "https://example.com",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "assets",
-}
+})
 EOF
 
 for c in Clean Also Mixed; do
@@ -94,8 +94,8 @@ cat > "$SITE/layouts/covered.shtml" <<'EOF'
   </head>
   <body>
     <div :html="$page.content()"></div>
-    <island src="./components/Clean.island.tsx" client:load :props='{ .start = 1 }'></island>
-    <island src="components/Also.island.tsx" client:load :props='{ .start = 2 }'></island>
+    <island src="./components/Clean.island.tsx" client:load :props='.{ .start = 1 }'></island>
+    <island src="components/Also.island.tsx" client:load :props='.{ .start = 2 }'></island>
   </body>
 </html>
 EOF
@@ -110,8 +110,8 @@ cat > "$SITE/layouts/uncovered.shtml" <<'EOF'
   </head>
   <body>
     <div :html="$page.content()"></div>
-    <island src="components/Clean.island.tsx" client:load :props='{ .start = 3 }'></island>
-    <island src="components/Mixed.island.tsx" client:load :props='{ .start = 4 }'></island>
+    <island src="components/Clean.island.tsx" client:load :props='.{ .start = 3 }'></island>
+    <island src="components/Mixed.island.tsx" client:load :props='.{ .start = 4 }'></island>
   </body>
 </html>
 EOF
@@ -120,8 +120,8 @@ write_page() { # PATH LAYOUT
   cat > "$1" <<EOF
 ---
 .title = "P",
-.date = @date("2020-07-06T00:00:00"),
-.author = "Test",
+.date = .date("2020-07-06T00:00:00"),
+.authors = ["Test"],
 .layout = "$2",
 .draft = false,
 ---

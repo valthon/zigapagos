@@ -17,7 +17,7 @@ trap 'git restore layouts/index.shtml 2>/dev/null || true' EXIT
 # "props mismatch" diagnostic and fails the build (build.sh passes
 # --island-props-check=error).
 perl -0pi -e \
-  's{</body>}{<island src="components/Hero.island.tsx" client:load :props=\x27{ .headline = 5 }\x27></island>\n  </body>}' \
+  's{</body>}{<island src="components/Hero.island.tsx" client:load :props=\x27.{ .headline = 5 }\x27></island>\n  </body>}' \
   layouts/index.shtml
 
 # Verify the injection was applied before spending time building.

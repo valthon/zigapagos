@@ -175,7 +175,7 @@ pub const Binding = struct {
     /// island on the page with a "done" state instead.
     redirect_to: ?[]const u8,
     /// The Ziggy props literal the `<island>` tag carries, WITHOUT the
-    /// surrounding quotes (`{ .mode = "signin" }`), or `null` for an island
+    /// surrounding quotes (`.{ .mode = "signin" }`), or `null` for an island
     /// that takes none.
     ///
     /// Only the auth journey needs this so far: assumption A5 folds sign-in
@@ -2862,10 +2862,10 @@ test "convert: lazy and inline Turbo frames preserve only the promised markup" {
     var lazy_binding = stage4Binding(lazy_finding[0].id, .turbo_frame, "components/TurboFrame.island.tsx");
     lazy_binding.wrap = true;
     lazy_binding.directive = "client:visible";
-    lazy_binding.props = "{ .id = \"latest\", .src = \"/posts\" }";
+    lazy_binding.props = ".{ .id = \"latest\", .src = \"/posts\" }";
     const lazy_out = try convert(gpa, .{ .routes = &.{}, .assets = &.{}, .fragments = &.{}, .findings = &lazy_finding, .layout_stem = null, .bindings = &.{lazy_binding} }, mkTemplate(path, &lazy_nodes), .view);
     defer freeOutput(gpa, lazy_out);
-    try std.testing.expectEqualStrings("<island src=\"components/TurboFrame.island.tsx\" client:visible :props='{ .id = \"latest\", .src = \"/posts\" }'><p>Loading</p></island>\n", lazy_out.bytes);
+    try std.testing.expectEqualStrings("<island src=\"components/TurboFrame.island.tsx\" client:visible :props='.{ .id = \"latest\", .src = \"/posts\" }'><p>Loading</p></island>\n", lazy_out.bytes);
 
     const plain = openNode(.turbo_frame, 2, 1, "static", "turbo_frame_tag \"static\" do");
     var plain_close = endNode(2, 50);
@@ -2901,11 +2901,11 @@ test "convert: component props are emitted verbatim and Turbo Drive attributes g
     const component = cNode(.component_root, 1, 1, "Chart");
     const finding_list = [_]findings.Finding{mkFinding("RAILS_COMPONENT_ROOT.x.L1C1", "RAILS_COMPONENT_ROOT", path, 1)};
     var binding = stage4Binding(finding_list[0].id, .component, "components/Chart.island.tsx");
-    binding.props = "{ .active = true, .points = 3, .series = \"a\\\"b\" }";
+    binding.props = ".{ .active = true, .points = 3, .series = \"a\\\"b\" }";
     const nodes = [_]fragments.Node{ tNode("<main data-turbo-action=\"advance\">", 1), component, tNode("</main><a data-turbo-prefetch=\"false\">x</a>", 2) };
     const out = try convert(gpa, .{ .routes = &.{}, .assets = &.{}, .fragments = &.{}, .findings = &finding_list, .layout_stem = null, .bindings = &.{binding} }, mkTemplate(path, &nodes), .view);
     defer freeOutput(gpa, out);
-    try std.testing.expectEqualStrings("<main><island src=\"components/Chart.island.tsx\" client:load :props='{ .active = true, .points = 3, .series = \"a\\\"b\" }'></island></main><a>x</a>\n", out.bytes);
+    try std.testing.expectEqualStrings("<main><island src=\"components/Chart.island.tsx\" client:load :props='.{ .active = true, .points = 3, .series = \"a\\\"b\" }'></island></main><a>x</a>\n", out.bytes);
     try std.testing.expectEqual(@as(usize, 1), out.dropped.len);
     try std.testing.expectEqualStrings("data-turbo attributes dropped; Turbo Drive is ordinary navigation here", out.dropped[0]);
     const again = try convert(gpa, .{ .routes = &.{}, .assets = &.{}, .fragments = &.{}, .findings = &finding_list, .layout_stem = null, .bindings = &.{binding} }, mkTemplate(path, &nodes), .view);
@@ -3002,7 +3002,7 @@ test "convert: Stage 4 binding branches survive every allocation failure" {
     var drop = stage4Binding(finding_list[1].id, .drop, "");
     drop.identifiers = &.{"modal"};
     var component = stage4Binding(finding_list[2].id, .component, "components/Chart.island.tsx");
-    component.props = "{ .points = 3 }";
+    component.props = ".{ .points = 3 }";
     var data = stage4Binding(finding_list[3].id, .data_list, "components/data/post.island.tsx");
     data.collection = "posts";
     data.aliases = &.{.{ .ruby = "@post", .js = "rec" }};
@@ -4946,7 +4946,7 @@ test "convert: a positional binding reaches a journey form, which has no finding
         .collection = "users",
         .island = "components/AuthForm.island.tsx",
         .redirect_to = "/",
-        .props = "{ .mode = \"signin\" }",
+        .props = ".{ .mode = \"signin\" }",
         .at = .{ .path = "app/views/sessions/new.html.erb", .line = 1, .col = 4 },
     }};
 
@@ -4965,7 +4965,7 @@ test "convert: a positional binding reaches a journey form, which has no finding
     try std.testing.expect(std.mem.indexOf(
         u8,
         out.bytes,
-        "<island src=\"components/AuthForm.island.tsx\" client:load :props='{ .mode = \"signin\" }'></island>",
+        "<island src=\"components/AuthForm.island.tsx\" client:load :props='.{ .mode = \"signin\" }'></island>",
     ) != null);
     try std.testing.expect(std.mem.indexOf(u8, out.bytes, "rails:") == null);
     try std.testing.expectEqual(@as(usize, 1), out.islands.len);
@@ -5003,7 +5003,7 @@ test "convert: a positional binding binds THAT node and no other with the same i
         .collection = "users",
         .island = "components/AuthForm.island.tsx",
         .redirect_to = "/",
-        .props = "{ .mode = \"signin\" }",
+        .props = ".{ .mode = \"signin\" }",
         // A DIFFERENT template's form.
         .at = .{ .path = "app/views/sessions/new.html.erb", .line = 1, .col = 4 },
     }};

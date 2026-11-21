@@ -71,7 +71,7 @@ for (const entry of REGISTRY) {
     },
   });
   const out =
-    // Only what a docs page actually needs. `date`, `author` and `draft` have
+    // Only what a docs page actually needs. `date`, `authors` and `draft` have
     // defaults in src/context/Page.zig and no site layout renders them, so
     // emitting them wrote three dead fields into every mirror -- and stamped a
     // publication date on a generated page that has none (issue #57).

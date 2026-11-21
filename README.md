@@ -80,7 +80,7 @@ map. Omit the directive for server-only HTML with no island JavaScript.
   Variants are cached across rebuilds and never upscaled. Off by default —
   see [docs/images.md](docs/images.md).
 - **Pagination** — a section index opts in with
-  `.pagination = { .page_size = 10 }` and is rendered once per window of
+  `.pagination = .{ .page_size = 10 }` and is rendered once per window of
   subpages, in a choice of three URL styles; `$page.subpages()` returns the
   current window, so an existing layout loop paginates with no edit.
 - **First-class framework migration** — `zigapagos migrate <source>` detects

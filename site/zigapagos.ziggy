@@ -1,4 +1,4 @@
-Site {
+.site = .simple(.{
     .title = "Zigapagos",
     .host_url = "https://valthon.github.io",
     .url_path_prefix = "zigapagos",
@@ -19,4 +19,4 @@ Site {
     //               mirror of the repository-root install.sh, copied in by
     //               build.sh; see the note there.
     .static_assets = ["og.svg", "install.sh"],
-}
+})

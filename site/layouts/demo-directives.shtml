@@ -15,10 +15,10 @@
   <section class="section wrap">
     <p class="eyebrow">Immediately</p>
     <div class="dd-row">
-      <island src="components/DirectiveDemo.island.tsx" client:load :props='{
+      <island src="components/DirectiveDemo.island.tsx" client:load :props='.{
         .directive = "client:load",
         .note = "Hydrates as soon as the page script runs. Use it for components that are broken until interactive — a search box, a login form." }'></island>
-      <island src="components/DirectiveDemo.island.tsx" client:idle :props='{
+      <island src="components/DirectiveDemo.island.tsx" client:idle :props='.{
         .directive = "client:idle",
         .note = "Waits for the browser to be idle. Same result, later, for anything that is nice to have rather than needed at once." }'></island>
     </div>
@@ -33,10 +33,10 @@
     </p>
     <div class="dd-spacer">keep scrolling</div>
     <div class="dd-row">
-      <island src="components/DirectiveDemo.island.tsx" client:visible :props='{
+      <island src="components/DirectiveDemo.island.tsx" client:visible :props='.{
         .directive = "client:visible",
         .note = "Hydrates when the component scrolls into view. Nothing is fetched or executed for it before that." }'></island>
-      <island src="components/DirectiveDemo.island.tsx" client:media="(min-width: 60rem)" :props='{
+      <island src="components/DirectiveDemo.island.tsx" client:media="(min-width: 60rem)" :props='.{
         .directive = "client:media",
         .note = "Hydrates only when the media query matches. Narrow your window below 60rem and reload — it stays grey, and its code is never fetched." }'></island>
     </div>
@@ -45,7 +45,7 @@
   <section class="section wrap">
     <p class="eyebrow">Never on the server</p>
     <div class="dd-row">
-      <island src="components/DirectiveDemo.island.tsx" client:only :props='{
+      <island src="components/DirectiveDemo.island.tsx" client:only :props='.{
         .directive = "client:only",
         .note = "Skipped entirely at build time and rendered only in the browser. For components that touch window or document during render and cannot be server-rendered at all." }'></island>
     </div>

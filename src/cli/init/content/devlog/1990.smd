@@ -1,6 +1,6 @@
 ---
 .title = "Devlog - 1990",
-.date = @date("1990-01-01T00:00:00"),
+.date = .date("1990-01-01T00:00:00"),
 .layout = "devlog.shtml",
 ---
 []($section.id('about'))

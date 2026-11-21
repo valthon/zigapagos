@@ -75,7 +75,7 @@ echo "    OK: no build.zig / build.zig.zon / zig pin"
 # the detected .pagination frontmatter, plus a MIGRATION.md worklist entry.
 test -f "$GEN/site/content/blog/index.smd" \
   || { echo "FAIL: generated project missing content/blog/index.smd (paginate() route)"; exit 1; }
-grep -q '.pagination = { .page_size = 4, .url_style = "plain_dir" },' "$GEN/site/content/blog/index.smd" \
+grep -q '.pagination = .{ .page_size = 4, .url_style = .plain_dir },' "$GEN/site/content/blog/index.smd" \
   || { echo "FAIL: content/blog/index.smd missing detected .pagination frontmatter"; exit 1; }
 echo "    OK: content/blog/index.smd carries .pagination frontmatter"
 

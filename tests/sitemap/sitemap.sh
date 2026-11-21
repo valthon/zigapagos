@@ -76,7 +76,7 @@ mkdir -p "$SITE/content/docs/overview" "$SITE/content/blog" "$SITE/layouts/templ
 ln -s "$REPO/runtime" "$SITE/node_modules/@z/runtime"
 
 cat >"$SITE/zigapagos.ziggy" <<'EOF'
-Site {
+.site = .simple(.{
     .title = "Sitemap Fixture",
     .host_url = "https://example.com",
     .url_path_prefix = "myprefix",
@@ -84,7 +84,7 @@ Site {
     .layouts_dir_path = "layouts",
     .assets_dir_path = "assets",
     .sitemap = true,
-}
+})
 EOF
 
 cat >"$SITE/layouts/templates/base.shtml" <<'EOF'
@@ -133,7 +133,7 @@ cat >"$SITE/content/blog/index.smd" <<'EOF'
 ---
 .title = "Blog",
 .layout = "page.shtml",
-.pagination = { .page_size = 2 },
+.pagination = .{ .page_size = 2 },
 ---
 5 active posts, page_size=2, default url_style (page_dir): 3 windows.
 EOF
@@ -142,7 +142,7 @@ for i in 1 2 3 4 5; do
   cat >"$SITE/content/blog/post$i.smd" <<EOF
 ---
 .title = "Post $i",
-.date = @date("2024-06-0${i}T00:00:00"),
+.date = .date("2024-06-0${i}T00:00:00"),
 .layout = "page.shtml",
 ---
 Post $i.
@@ -154,7 +154,7 @@ done
 cat >"$SITE/content/blog/post6.smd" <<'EOF'
 ---
 .title = "Post 6 (draft)",
-.date = @date("2024-06-06T00:00:00"),
+.date = .date("2024-06-06T00:00:00"),
 .layout = "page.shtml",
 .draft = true,
 ---
@@ -239,13 +239,13 @@ build_args=(
 OFFSITE="$WORK/offsite"
 mkdir -p "$OFFSITE/content" "$OFFSITE/layouts/templates" "$OFFSITE/assets"
 cat >"$OFFSITE/zigapagos.ziggy" <<'EOF'
-Site {
+.site = .simple(.{
     .title = "No Sitemap",
     .host_url = "https://example.com",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "assets",
-}
+})
 EOF
 cp "$SITE/layouts/templates/base.shtml" "$OFFSITE/layouts/templates/base.shtml"
 cp "$SITE/layouts/page.shtml" "$OFFSITE/layouts/page.shtml"
@@ -364,14 +364,14 @@ echo "PASS (8): REVERSE -- sitemap.xml lists exactly the expected ${#EXPECTED[@]
 COLSITE="$WORK/colsite"
 mkdir -p "$COLSITE/content" "$COLSITE/layouts/templates" "$COLSITE/assets"
 cat >"$COLSITE/zigapagos.ziggy" <<'EOF'
-Site {
+.site = .simple(.{
     .title = "Sitemap Collision",
     .host_url = "https://example.com",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "assets",
     .sitemap = true,
-}
+})
 EOF
 cp "$SITE/layouts/templates/base.shtml" "$COLSITE/layouts/templates/base.shtml"
 cp "$SITE/layouts/page.shtml" "$COLSITE/layouts/page.shtml"
@@ -402,14 +402,14 @@ echo "PASS (9): a page aliased to the root 'sitemap.xml' is a hard build error"
 ALTSITE="$WORK/altsite"
 mkdir -p "$ALTSITE/content" "$ALTSITE/layouts/templates" "$ALTSITE/assets"
 cat >"$ALTSITE/zigapagos.ziggy" <<'EOF'
-Site {
+.site = .simple(.{
     .title = "Sitemap Alternative Collision",
     .host_url = "https://example.com",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "assets",
     .sitemap = true,
-}
+})
 EOF
 cp "$SITE/layouts/templates/base.shtml" "$ALTSITE/layouts/templates/base.shtml"
 cp "$SITE/layouts/page.shtml" "$ALTSITE/layouts/page.shtml"
@@ -424,7 +424,7 @@ cat >"$ALTSITE/content/rogue.smd" <<'EOF'
 ---
 .title = "Rogue",
 .layout = "page.shtml",
-.alternatives = [{
+.alternatives = [.{
     .name = "custom-sitemap",
     .output = "/sitemap.xml",
     .layout = "page.shtml",
@@ -444,14 +444,14 @@ echo "PASS (10): a page whose alternatives output resolves to the root 'sitemap.
 HUSITE="$WORK/husite"
 mkdir -p "$HUSITE/content" "$HUSITE/layouts/templates" "$HUSITE/assets"
 cat >"$HUSITE/zigapagos.ziggy" <<'EOF'
-Site {
+.site = .simple(.{
     .title = "Bad Host URL",
     .host_url = "",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "assets",
     .sitemap = true,
-}
+})
 EOF
 cp "$SITE/layouts/templates/base.shtml" "$HUSITE/layouts/templates/base.shtml"
 cp "$SITE/layouts/page.shtml" "$HUSITE/layouts/page.shtml"
@@ -474,7 +474,7 @@ echo "PASS (11): 'sitemap = true' with an invalid host_url still fails at config
 TRAILSITE="$WORK/trailsite"
 mkdir -p "$TRAILSITE/content/blog" "$TRAILSITE/layouts/templates" "$TRAILSITE/assets"
 cat >"$TRAILSITE/zigapagos.ziggy" <<'EOF'
-Site {
+.site = .simple(.{
     .title = "Trailing Slash Host",
     .host_url = "https://example.com/",
     .url_path_prefix = "myprefix",
@@ -482,7 +482,7 @@ Site {
     .layouts_dir_path = "layouts",
     .assets_dir_path = "assets",
     .sitemap = true,
-}
+})
 EOF
 cp "$SITE/layouts/templates/base.shtml" "$TRAILSITE/layouts/templates/base.shtml"
 cp "$SITE/layouts/page.shtml" "$TRAILSITE/layouts/page.shtml"
@@ -499,7 +499,7 @@ cat >"$TRAILSITE/content/blog/index.smd" <<'EOF'
 ---
 .title = "Blog",
 .layout = "page.shtml",
-.pagination = { .page_size = 2 },
+.pagination = .{ .page_size = 2 },
 ---
 3 active posts, page_size=2: 2 windows.
 EOF
@@ -507,7 +507,7 @@ for i in 1 2 3; do
   cat >"$TRAILSITE/content/blog/post$i.smd" <<EOF
 ---
 .title = "Post $i",
-.date = @date("2024-06-0${i}T00:00:00"),
+.date = .date("2024-06-0${i}T00:00:00"),
 .layout = "page.shtml",
 ---
 Post $i.
@@ -544,7 +544,7 @@ for static_entry in '"sitemap.xml"' '"**"'; do
   cp "$SITE/content/index.smd" "$STATIC_SITE/content/index.smd"
   printf '%s\n' 'this must never overwrite the generated sitemap' >"$STATIC_SITE/assets/sitemap.xml"
   cat >"$STATIC_SITE/zigapagos.ziggy" <<EOF
-Site {
+.site = .simple(.{
     .title = "Static Sitemap Collision",
     .host_url = "https://example.com",
     .content_dir_path = "content",
@@ -552,7 +552,7 @@ Site {
     .assets_dir_path = "assets",
     .static_assets = [$static_entry],
     .sitemap = true,
-}
+})
 EOF
   set +e
   ( cd "$STATIC_SITE" && "$ZIGAPAGOS" release "--output=$STATIC_SITE/out" --force --format=json ) \

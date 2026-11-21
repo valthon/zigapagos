@@ -11,12 +11,12 @@ const emitter = join(repo, "runtime/scripts/emit-host-config.ts");
 function project() {
   const work = mkdtempSync(join(tmpdir(), "csp-ownership-"));
   for (const name of ["content", "layouts"]) cpSync(join(repo, "tests/rendering/simple", name), join(work, name), { recursive: true });
-  const base = readFileSync(join(repo, "tests/rendering/simple/zigapagos.ziggy"), "utf8").trimEnd().slice(0, -1);
+  const base = readFileSync(join(repo, "tests/rendering/simple/zigapagos.ziggy"), "utf8").trimEnd().slice(0, -2);
   const site = join(work, "public");
   mkdirSync(site);
   return {
     work, site,
-    config(fields = "") { writeFileSync(join(work, "zigapagos.ziggy"), base + fields + "}"); },
+    config(fields = "") { writeFileSync(join(work, "zigapagos.ziggy"), base + fields + "})"); },
     release() {
       const result = Bun.spawnSync([join(repo, "zig-out/bin/zigapagos"), "release", "--force"], {
         cwd: work, env: { ...process.env, ZIGAPAGOS_RUNTIME_DIR: join(repo, "runtime") },
@@ -49,7 +49,7 @@ test("legacy bare-array metadata is read and upgraded in an existing output tree
     expect(readCspSources(p.site)).toEqual(extras);
     writeFileSync(join(p.site, "index.html"), "<title>Old release</title>");
     expect(planChecks(p.site, "http://127.0.0.1/").csp).toContain("connect-src 'self' https://api.example");
-    p.config('\n.csp_extra_sources = [{ .directive = "connect-src", .sources = ["https://api.example"] }],\n');
+    p.config('\n.csp_extra_sources = [.{ .directive = "connect-src", .sources = ["https://api.example"] }],\n');
     p.release();
     expect(readFileSync(metadata, "utf8")).toBe(serializeCspSources(extras));
     await checkTree(p.site);
@@ -81,7 +81,7 @@ for (const [shape, asset] of [["marker", serializeCspSources(extras)], ["legacy"
       await checkTree(p.site);
       // Even after deselection, the recorded user file must not be claimed.
       rmSync(join(p.work, "content/csp-sources.json"));
-      p.config('\n.csp_extra_sources = [{ .directive = "connect-src", .sources = ["https://api.example"] }],\n');
+      p.config('\n.csp_extra_sources = [.{ .directive = "connect-src", .sources = ["https://api.example"] }],\n');
       const collision = Bun.spawnSync([join(repo, "zig-out/bin/zigapagos"), "release", "--force"], {
         cwd: p.work, env: { ...process.env, ZIGAPAGOS_RUNTIME_DIR: join(repo, "runtime") },
       });

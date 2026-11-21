@@ -48,13 +48,13 @@ SITE="$WORK/site"
 mkdir -p "$SITE/content/docs/overview" "$SITE/layouts/templates" "$SITE/components"
 
 cat >"$SITE/zigapagos.ziggy" <<'EOF'
-Site {
+.site = .simple(.{
     .title = "Explain Fixture",
     .host_url = "https://example.com",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "content",
-}
+})
 EOF
 
 cat >"$SITE/layouts/templates/base.shtml" <<'EOF'
@@ -119,7 +119,7 @@ cat >"$SITE/content/docs/overview/index.smd" <<'EOF'
 .title = "Overview",
 .layout = "page.shtml",
 .aliases = ["/overview.html"],
-.alternatives = [{
+.alternatives = [.{
     .name = "rss",
     .output = "index.xml",
     .layout = "rss.shtml",

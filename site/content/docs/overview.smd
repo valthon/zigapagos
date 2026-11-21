@@ -2,7 +2,7 @@
 .title = "Overview",
 .description = "What Zigapagos is, how a build runs, and when to reach for it.",
 .layout = "docs.shtml",
-.custom = { .slug = "overview" },
+.custom = { "slug" : "overview" },
 ---
 
 Zigapagos builds rich interfaces with simple output: HTML, CSS, JavaScript where

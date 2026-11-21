@@ -32,23 +32,23 @@ const StringTable = @import("../StringTable.zig");
 const diagcodes = @import("../diag.zig");
 const join = @import("../root.zig").join;
 
-pub const ziggy_options = struct {
-    pub const skip_fields: []const std.meta.FieldEnum(Page) = &.{
+pub const FrontmatterMeta = struct { offset: u32 = 0, lines: u32 = 0 };
+
+pub const ziggy_options: ziggy.Options(Page) = .{
+    .skip_fields = &.{
         ._debug,
         ._scan,
         ._parse,
         ._analysis,
         ._render,
         ._pagination,
-    };
+    },
 };
 
 title: []const u8,
 description: []const u8 = "",
-// `author` and `date` are optional: marketing/landing pages often have neither.
-// Omitting them yields "" and the Unix epoch respectively. Override the schema in
-// `frontmatter.ziggy-schema` to make them required again — see the migration doc.
-author: []const u8 = "",
+// Authors and date may be omitted; install-schemas supplies editor support.
+authors: []const []const u8 = &.{},
 date: DateTime = DateTime.epoch,
 layout: []const u8,
 draft: bool = false,
@@ -57,7 +57,7 @@ aliases: []const []const u8 = &.{},
 alternatives: []const Alternative = &.{},
 skip_subdirs: bool = false,
 translation_key: ?[]const u8 = null,
-custom: ziggy.dynamic.Value = .{ .kv = .{} },
+custom: ziggy.Dynamic = .{ .kv = .empty },
 /// Opt-in pagination for a section index: the page pass renders this index
 /// once per window of `page_size` active subpages. Only meaningful on an
 /// `index.smd` (validated in analyzeFrontmatter). See docs/superpowers/specs/
@@ -93,12 +93,12 @@ _parse: struct {
         /// File is empty
         empty,
         /// Frontmatter framing error, 'fm' will contain info
-        frontmatter: ziggy.FrontmatterError,
+        frontmatter: error{ MissingFrontmatter, OpenFrontmatter },
         /// Ziggy parsing error. Note that the diagnostic has
         /// its 'path' field set to null and it's the duty of the
         /// code that prints errors to reify a path string to
         /// give to Diagnostic.
-        ziggy: ziggy.Diagnostic,
+        ziggy: @import("../ziggy_diagnostic.zig"),
 
         /// The frontmatter data is in order and the file was parsed.
         /// Note that the ast might contain errors still, and after that
@@ -106,8 +106,8 @@ _parse: struct {
         parsed,
     },
 
-    // Available if status != .empty
-    fm: ziggy.FrontmatterMeta,
+    // Empty metadata for unparsed/empty pages; offsets are populated by parse.
+    fm: FrontmatterMeta = .{},
 
     // Available if status == .parsed
     ast: supermd.Ast,
@@ -375,85 +375,42 @@ pub const FrontmatterAnalysisError = union(enum) {
         };
     }
 
-    pub fn location(
-        err: @This(),
-        src: []const u8,
-        ast: ziggy.Ast,
-    ) ziggy.Tokenizer.Token.Loc {
-        switch (err) {
-            .layout => {
-                assert(ast.nodes[2].tag == .@"struct" or
-                    ast.nodes[2].tag == .braceless_struct);
-                var current = ast.nodes[3];
-                while (true) : (current = ast.nodes[current.next_id]) {
-                    assert(current.tag == .struct_field);
-
-                    const identifier = ast.nodes[current.first_child_id];
-                    if (std.mem.eql(u8, "layout", identifier.loc.src(src))) {
-                        return ast.nodes[identifier.next_id].loc;
+    pub fn location(err: @This(), src: [:0]const u8, ast: ziggy.Ast) ziggy.Tokenizer.Token.Loc {
+        const field_name = switch (err) {
+            .layout => "layout",
+            .alias => "aliases",
+            .alternative => "alternatives",
+            .pagination_size, .pagination_not_section => "pagination",
+        };
+        // Nodes are in preorder; a field's value immediately follows it.
+        for (ast.nodes, 0..) |node, idx| {
+            if (node.tag != .struct_field or node.parent_idx != 1) continue;
+            if (!std.mem.eql(u8, ast.fieldName(src, @intCast(idx)), field_name)) continue;
+            const value_idx = idx + 1;
+            switch (err) {
+                .alias => |which| {
+                    var element = value_idx + 1;
+                    for (0..which) |_| element = ast.nodes[element].next_idx;
+                    return ast.nodes[element + 1].loc;
+                },
+                .alternative => |alt| {
+                    var element = value_idx + 1;
+                    for (0..alt.id) |_| element = ast.nodes[element].next_idx;
+                    const name = switch (alt.kind) {
+                        .name => "name",
+                        .path => "output",
+                        .layout => "layout",
+                    };
+                    for (ast.nodes[element + 2 ..], element + 2..) |field, fi| {
+                        if (field.parent_idx != element + 1 or field.tag != .struct_field) continue;
+                        if (std.mem.eql(u8, ast.fieldName(src, @intCast(fi)), name)) return ast.nodes[fi + 1].loc;
                     }
-                }
-            },
-            .alias => |a| {
-                assert(ast.nodes[2].tag == .@"struct" or
-                    ast.nodes[2].tag == .braceless_struct);
-                var current = ast.nodes[3];
-                while (true) : (current = ast.nodes[current.next_id]) {
-                    assert(current.tag == .struct_field);
-
-                    const identifier = ast.nodes[current.first_child_id];
-                    if (std.mem.eql(u8, "aliases", identifier.loc.src(src))) {
-                        return ast.nodes[identifier.next_id + a + 1].loc;
-                    }
-                }
-            },
-            .alternative => |alt| {
-                assert(ast.nodes[2].tag == .@"struct" or
-                    ast.nodes[2].tag == .braceless_struct);
-                var current = ast.nodes[3];
-                while (true) : (current = ast.nodes[current.next_id]) {
-                    assert(current.tag == .struct_field);
-
-                    const identifier = ast.nodes[current.first_child_id];
-                    if (std.mem.eql(u8, "alternatives", identifier.loc.src(src))) {
-                        var current_alt = ast.nodes[identifier.next_id + 1];
-                        for (0..alt.id) |_| current_alt = ast.nodes[current_alt.next_id];
-                        const field_name = switch (alt.kind) {
-                            .name => "name",
-                            .path => "output",
-                            .layout => "layout",
-                        };
-
-                        var current_field = ast.nodes[current_alt.first_child_id];
-                        while (true) : (current_field = ast.nodes[current_field.next_id]) {
-                            assert(current.tag == .struct_field);
-
-                            const field_ident = ast.nodes[current_field.first_child_id];
-                            if (std.mem.eql(u8, field_name, field_ident.loc.src(src))) {
-                                return ast.nodes[field_ident.next_id].loc;
-                            }
-                        }
-                    }
-                }
-            },
-            .pagination_size, .pagination_not_section => {
-                assert(ast.nodes[2].tag == .@"struct" or
-                    ast.nodes[2].tag == .braceless_struct);
-                var current = ast.nodes[3];
-                while (true) : (current = ast.nodes[current.next_id]) {
-                    assert(current.tag == .struct_field);
-
-                    const identifier = ast.nodes[current.first_child_id];
-                    if (std.mem.eql(u8, "pagination", identifier.loc.src(src))) {
-                        return ast.nodes[identifier.next_id].loc;
-                    }
-                }
-            },
+                    unreachable;
+                },
+                else => return ast.nodes[value_idx].loc,
+            }
         }
-
-        // Failing to find the source location of a reported error is a
-        // programming error.
-        unreachable;
+        unreachable; // A validated field always has a source node.
     }
 };
 
@@ -486,8 +443,9 @@ pub fn parse(
     variant: *const @import("../Variant.zig"),
     drafts: bool,
     auto_heading_ids: bool,
+    auto_target_blank: bool,
 ) void {
-    return parseInner(p, io, gpa, cmark, progress, variant, drafts, auto_heading_ids) catch |err| switch (err) {
+    return parseInner(p, io, gpa, cmark, progress, variant, drafts, auto_heading_ids, auto_target_blank) catch |err| switch (err) {
         error.OutOfMemory => fatal.oom(),
     };
 }
@@ -501,6 +459,7 @@ fn parseInner(
     variant: *const @import("../Variant.zig"),
     drafts: bool,
     auto_heading_ids: bool,
+    auto_target_blank: bool,
 ) !void {
     const zone = tracy.trace(@src());
     defer zone.end();
@@ -546,18 +505,6 @@ fn parseInner(
         0,
     ) catch |err| fatal.file(path_bytes, err);
 
-    if (full_src.len == 0) {
-        p._parse = .{
-            .arena = arena_state.state,
-            .active = true,
-            .full_src = full_src,
-            .status = .empty,
-            .fm = undefined,
-            .ast = undefined,
-        };
-        return;
-    }
-
     // Save and then restore _scan on the way out because it will be overridden
     // with its default value by the ziggy paser.
     const scan = p._scan;
@@ -567,51 +514,59 @@ fn parseInner(
     const debug = p._debug;
     defer p._debug = debug;
 
-    var fm: ziggy.FrontmatterMeta = .{};
-    var diag: ziggy.Diagnostic = .{ .path = null };
-    // Ziggy's frontmatter parser reads ONE token past the closing `---` (its
-    // trailing-token check), so Markdown body text reached its tokenizer. On
-    // Zig 0.17.1 a body that opens with `-` (a list item) made ziggy old
-    // @189d1d5e call std.zig.parseNumberLiteral on an empty slice
-    // (Tokenizer.zig:442, finishNumber), which now asserts instead of
-    // returning .failure: SIGABRT on any list-first page. Hand ziggy only the
-    // frontmatter region so the body is never tokenized; `fm.offset` is
-    // unchanged because the region starts at byte 0.
-    const fm_src = try frontmatterRegion(arena, full_src);
-    p.* = ziggy.parseLeaky(Page, arena, fm_src, .{
-        .diagnostic = &diag,
-        .frontmatter_meta = &fm,
-    }) catch |err| switch (err) {
-        error.OutOfMemory, error.Overflow => fatal.oom(),
-        error.MissingFrontmatter, error.OpenFrontmatter => |fm_err| {
-            p._parse = .{
-                .active = true,
-                .arena = arena_state.state,
-                .full_src = full_src,
-                .fm = fm,
-                .status = .{ .frontmatter = fm_err },
-                .ast = undefined,
-            };
-            return;
-        },
-        error.Syntax => {
-            p._parse = .{
-                .active = true,
-                .arena = arena_state.state,
-                .full_src = full_src,
-                .fm = fm,
-                .status = .{ .ziggy = diag },
-                .ast = undefined,
-            };
-            return;
-        },
+    if (full_src.len == 0) {
+        p._parse = .{
+            .arena = arena_state.state,
+            .active = false,
+            .full_src = full_src,
+            .status = .empty,
+            .ast = undefined,
+        };
+        return;
+    }
+
+    var fm: FrontmatterMeta = .{};
+    const trimmed = std.mem.trimStart(u8, full_src, " \t\n");
+    const framing_error: ?error{ MissingFrontmatter, OpenFrontmatter } = if (!std.mem.startsWith(u8, trimmed, "---"))
+        error.MissingFrontmatter
+    else if (std.mem.indexOf(u8, trimmed[3..], "\n---") == null)
+        error.OpenFrontmatter
+    else
+        null;
+    if (framing_error) |err| {
+        fm.lines = @intCast(std.mem.count(u8, full_src, "\n") + 1);
+        p._parse = .{
+            .active = true,
+            .arena = arena_state.state,
+            .full_src = full_src,
+            .fm = fm,
+            .status = .{ .frontmatter = err },
+            .ast = undefined,
+        };
+        return;
+    }
+    const opts: ziggy.Deserializer.Options = .{ .delimiter = .{ .dashes = @intCast(full_src.len - trimmed.len + 3) } };
+    var diag: @import("../ziggy_diagnostic.zig") = .{ .opts = opts };
+    p.* = ziggy.deserializeLeaky(Page, arena, full_src, &diag.meta, opts) catch |err| {
+        if (err == error.OutOfMemory) return error.OutOfMemory;
+        diag.err = err;
+        p._parse = .{
+            .active = true,
+            .arena = arena_state.state,
+            .full_src = full_src,
+            .fm = fm,
+            .status = .{ .ziggy = diag },
+            .ast = undefined,
+        };
+        return;
     };
+    fm = .{ .offset = diag.meta.doc.end, .lines = diag.meta.doc.lines };
 
     // Note that a frontmatter validation error does not prevent us from parsing
     // the SuperMD data correctly, so te do that unconditionally in order to
     // report more errors at once.
 
-    var ast = try supermd.Ast.init(gpa, full_src[fm.offset..], cmark, .{ .auto_target_blank = true });
+    var ast = try supermd.Ast.init(gpa, full_src[fm.offset..], cmark, .{ .auto_target_blank = auto_target_blank });
     const heading_baseline_errors = try applyHeadingBaseline(arena, &ast);
     if (auto_heading_ids) try heading_slugs.apply(gpa, &ast);
 
@@ -683,10 +638,10 @@ pub const Alternative = struct {
     type: []const u8 = "",
     _page: *const Page = undefined,
 
-    pub const ziggy_options = struct {
-        pub const skip_fields: []const std.meta.FieldEnum(Alternative) = &.{
+    pub const ziggy_options: ziggy.Options(Alternative) = .{
+        .skip_fields = &.{
             ._page,
-        };
+        },
     };
 
     pub const Dot = true;
@@ -972,8 +927,8 @@ pub const Fields = struct {
         \\Description of the page, 
         \\as set in the SuperMD frontmatter.
     ;
-    pub const author =
-        \\Author of the page, 
+    pub const authors =
+        \\Authors of the page (an empty list when omitted),
         \\as set in the SuperMD frontmatter.
     ;
     pub const date =
@@ -1034,7 +989,7 @@ pub const Fields = struct {
         \\Pagination settings of this section index,
         \\as set in the SuperMD frontmatter (null when not paginated).
         \\
-        \\`.pagination = { .page_size = 10 }` makes the build render this
+        \\`.pagination = .{ .page_size = 10 }` makes the build render this
         \\index once per window of 10 active subpages. Use
         \\`$page.pagination?()` for the per-render state (current page,
         \\total pages, prev/next links).
@@ -2326,7 +2281,7 @@ pub const Builtins = struct {
 
 pub const ContentSection = struct {
     id: []const u8,
-    data: context.Map.ZiggyMap = .{},
+    data: context.Map.ZiggyMap = .empty,
     _node: supermd.Node,
     _page: *const Page,
 
@@ -2496,9 +2451,10 @@ test "pagination: frontmatter field parses with defaults" {
     const src =
         \\.title = "Blog",
         \\.layout = "index.shtml",
-        \\.pagination = { .page_size = 10 },
+        \\.pagination = .{ .page_size = 10 },
     ;
-    const page = try ziggy.parseLeaky(Page, arena, src, .{});
+    var meta: ziggy.Deserializer.Meta = .init;
+    const page = try ziggy.deserializeLeaky(Page, arena, src, &meta, .{});
     const pg = page.pagination.?;
     try testing.expectEqual(@as(u32, 10), pg.page_size);
     try testing.expectEqual(Pagination.UrlStyle.page_dir, pg.url_style);
@@ -2506,16 +2462,16 @@ test "pagination: frontmatter field parses with defaults" {
     const src_style =
         \\.title = "Blog",
         \\.layout = "index.shtml",
-        \\.pagination = { .page_size = 3, .url_style = "plain_dir" },
+        \\.pagination = .{ .page_size = 3, .url_style = .plain_dir },
     ;
-    const page2 = try ziggy.parseLeaky(Page, arena, src_style, .{});
+    const page2 = try ziggy.deserializeLeaky(Page, arena, src_style, &meta, .{});
     try testing.expectEqual(Pagination.UrlStyle.plain_dir, page2.pagination.?.url_style);
 
     const src_none =
         \\.title = "Blog",
         \\.layout = "index.shtml",
     ;
-    const page3 = try ziggy.parseLeaky(Page, arena, src_none, .{});
+    const page3 = try ziggy.deserializeLeaky(Page, arena, src_none, &meta, .{});
     try testing.expectEqual(@as(?Pagination, null), page3.pagination);
 }
 
@@ -2531,46 +2487,15 @@ test "pagination: analysis error variants carry codes and titles" {
 
 /// NO_SLOP §2.2a contract 2: caller owns the returned map index and calls
 /// fields.deinit(gpa); keys and bytes borrow the page AST. Directive.data only
-/// accepts string pairs. Keep that API on our old Ziggy map without replacing
-/// the Ziggy implementation SuperMD itself needs.
+/// accepts string pairs; lift them into the dynamic dictionary used by Scripty.
 fn directiveData(gpa: Allocator, data: supermd.Directive.Data) Allocator.Error!context.Map.ZiggyMap {
-    var out: context.Map.ZiggyMap = .{};
+    var out: context.Map.ZiggyMap = .empty;
     errdefer out.fields.deinit(gpa);
     var it = data.fields.iterator();
     while (it.next()) |kv| {
         try out.fields.put(gpa, kv.key_ptr.*, .{ .bytes = kv.value_ptr.bytes });
     }
     return out;
-}
-
-/// The frontmatter region of a page source: from the opening `---` through the
-/// first later line that starts with `---` (ziggy's own delimiter rule, see its
-/// Tokenizer `.start` state). A source that does not open with `---`, or never
-/// closes, is returned whole so ziggy reports MissingFrontmatter /
-/// OpenFrontmatter exactly as before.
-///
-/// NO_SLOP §2.2a contract 1: the one allocation that escapes is the returned
-/// sentinel copy (ziggy wants `[:0]const u8`); nothing else is allocated.
-fn frontmatterRegion(alloc: Allocator, src: [:0]const u8) Allocator.Error![:0]const u8 {
-    if (!std.mem.startsWith(u8, src, "---")) return src;
-    // The closing delimiter is a line that STARTS with `---`; ziggy itself
-    // does not require the line to end there.
-    const nl = std.mem.indexOfPos(u8, src, 3, "\n---") orelse return src;
-    const end = nl + "\n---".len;
-    return try alloc.dupeSentinel(u8, src[0..end], 0);
-}
-
-test "frontmatterRegion stops at the closing delimiter and copies nothing else" {
-    const alloc = std.testing.allocator;
-    const page: [:0]const u8 = "---\n.title = \"T\",\n---\n- list item\n";
-    const fm = try frontmatterRegion(alloc, page);
-    defer alloc.free(fm);
-    try std.testing.expectEqualStrings("---\n.title = \"T\",\n---", fm);
-    // Open frontmatter and no frontmatter are passed through untouched.
-    const open: [:0]const u8 = "---\n.title = \"T\",\n- not closed\n";
-    try std.testing.expectEqual(open.ptr, (try frontmatterRegion(alloc, open)).ptr);
-    const none: [:0]const u8 = "# just markdown\n";
-    try std.testing.expectEqual(none.ptr, (try frontmatterRegion(alloc, none)).ptr);
 }
 
 /// A local dialect diagnostic with the same source-preview format as SuperMD.

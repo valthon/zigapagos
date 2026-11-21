@@ -63,13 +63,13 @@ MJS
 SITE0="$WORK/site0"
 mkdir -p "$SITE0/content" "$SITE0/layouts"
 cat > "$SITE0/zigapagos.ziggy" <<'EOF'
-Site {
+.site = .simple(.{
     .title = "Validate format test",
     .host_url = "https://example.com",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "content",
-}
+})
 EOF
 cat > "$SITE0/layouts/index.shtml" <<'EOF'
 <!DOCTYPE html>
@@ -84,8 +84,8 @@ EOF
 cat > "$SITE0/content/index.smd" <<'EOF'
 ---
 .title = "Home",
-.date = @date("2020-07-06T00:00:00"),
-.author = "Test",
+.date = .date("2020-07-06T00:00:00"),
+.authors = ["Test"],
 .layout = "index.shtml",
 .draft = false,
 ---
@@ -115,8 +115,8 @@ cp "$SITE0/content/index.smd" "$SITE1/content/index.smd"
 cat > "$SITE1/content/other.smd" <<'EOF'
 ---
 .title = "Other",
-.date = @date("2020-07-06T00:00:00"),
-.author = "Test",
+.date = .date("2020-07-06T00:00:00"),
+.authors = ["Test"],
 .layout = "index.shtml",
 .draft = false,
 ---

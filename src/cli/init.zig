@@ -32,6 +32,8 @@ pub fn init(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *cons
 
     const File = struct { path: []const u8, src: []const u8 };
     const files = [_]File{
+        .{ .path = ".zigapagos.ziggy-schema", .src = @embedFile("../schemas/zigapagos.ziggy-schema") },
+        .{ .path = "content/.smd.ziggy-schema", .src = @embedFile("../schemas/page.ziggy-schema") },
         .{
             .path = "AGENTS.md",
             .src = if (cmd.app) @embedFile("init/app/AGENTS.md") else @embedFile("init/AGENTS.md"),
@@ -414,4 +416,24 @@ fn appExportPath(path: []u8) ?[]const u8 {
             std.mem.eql(u8, segment, "..") or std.ascii.eqlIgnoreCase(segment, "node_modules")) return null;
     }
     return decoded;
+}
+
+test "init: shipped Ziggy schemas parse and validate new documents" {
+    const ziggy = @import("ziggy");
+    const testing = std.testing;
+    const cases = .{
+        .{ @embedFile("../schemas/zigapagos.ziggy-schema"), @embedFile("init/minimal/zigapagos.ziggy") },
+        .{ @embedFile("../schemas/page.ziggy-schema"), ".title = \"T\", .layout = \"page.shtml\", .authors = [\"Jane\"], .date = .unix(0), .custom = { \"k\": 1 }, .pagination = .{ .page_size = 2 }," },
+    };
+    inline for (cases) |case| {
+        const schema = try ziggy.schema.Ast.init(testing.allocator, case[0]);
+        defer schema.deinit(testing.allocator);
+        try testing.expectEqual(@as(usize, 0), schema.errors.len);
+        const doc = try ziggy.Ast.init(testing.allocator, case[1], .{});
+        defer doc.deinit(testing.allocator);
+        try testing.expectEqual(@as(usize, 0), doc.errors.len);
+        const errors = try schema.validate(testing.allocator, case[0], doc, case[1]);
+        defer testing.allocator.free(errors);
+        try testing.expectEqual(@as(usize, 0), errors.len);
+    }
 }

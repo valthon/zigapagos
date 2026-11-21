@@ -583,9 +583,10 @@ fn descriptionOf(comptime T: type) []const u8 {
 /// mapping keeps the change on our side of the line instead.
 fn fieldTypeName(comptime T: type) []const u8 {
     return switch (T) {
+        @import("context/Map.zig").ZiggyMap => "Map",
         []const u8 => "String",
         ?[]const u8 => "?String",
-        []const []const u8 => "[String]",
+        []const []const u8 => "[]String",
         bool => "Bool",
         usize, i64 => "Int",
         f64 => "Float",
@@ -594,7 +595,7 @@ fn fieldTypeName(comptime T: type) []const u8 {
             .pointer => |ptr| if (ptr.size == .one)
                 fieldTypeName(ptr.child)
             else
-                "[" ++ fieldTypeName(ptr.child) ++ "]",
+                "[]" ++ fieldTypeName(ptr.child),
             else => shortTypeName(T),
         },
     };

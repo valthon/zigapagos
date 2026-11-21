@@ -55,7 +55,7 @@ new_site() {
     # states BSD/GNU portability as this fixture's goal. Dropping the closing
     # brace and re-appending is the portable spelling of the same edit.
     sed '$d' "$dir/zigapagos.ziggy" > "$dir/zigapagos.ziggy.tmp"
-    printf '    .asset_fingerprint = true,\n}\n' >> "$dir/zigapagos.ziggy.tmp"
+    printf '    .asset_fingerprint = true,\n})\n' >> "$dir/zigapagos.ziggy.tmp"
     mv "$dir/zigapagos.ziggy.tmp" "$dir/zigapagos.ziggy"
     grep -q '^    \.asset_fingerprint = true,$' "$dir/zigapagos.ziggy" ||
       { cat "$dir/zigapagos.ziggy"; fail "could not enable asset_fingerprint in the fixture config"; }

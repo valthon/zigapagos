@@ -8,13 +8,13 @@ trap 'rm -rf "$WORK"' EXIT
 ulimit -c 0
 mkdir -p "$WORK/content" "$WORK/layouts" "$WORK/assets"
 cat > "$WORK/zigapagos.ziggy" <<'SITE'
-Site {
+.site = .simple(.{
     .title = "Positions",
     .host_url = "https://example.com",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "assets",
-}
+})
 SITE
 cat > "$WORK/layouts/index.shtml" <<'HTML'
 <!DOCTYPE html><html><head><title>Positions</title></head><body><div :html="$page.content()"></div></body></html>
@@ -23,7 +23,7 @@ failures=0
 check() {
   local body="$1" blanks="$2" code="$3" message="$4" row="$5"
   {
-    printf '%s\n' '---' '.title = "Repro",' '.date = @date("1970-01-01T00:00:00"),' '.layout = "index.shtml",' '---'
+    printf '%s\n' '---' '.title = "Repro",' '.date = .date("1970-01-01T00:00:00"),' '.layout = "index.shtml",' '---'
     for ((i=0; i<blanks; i++)); do printf '\n'; done
     printf '%s\n' "$body"
   } > "$WORK/content/index.smd"

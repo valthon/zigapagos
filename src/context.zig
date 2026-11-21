@@ -36,6 +36,7 @@ pub const String = @import("context/String.zig");
 pub const Bool = @import("context/Bool.zig");
 pub const Int = @import("context/Int.zig");
 pub const Float = @import("context/Float.zig");
+pub const Union = @import("context/Union.zig");
 pub const Map = @import("context/Map.zig");
 // pub const Slice = @import("context/Slice.zig");
 pub const Optional = @import("context/Optional.zig");
@@ -57,6 +58,7 @@ pub const Value = union(enum) {
     git: Git,
     asset: Asset,
     map: Map,
+    @"union": Union,
     // slice: Slice,
     optional: ?*const context.Optional,
     string: String,
@@ -117,21 +119,24 @@ pub const Value = union(enum) {
         return .{ .bool = .{ .value = b } };
     }
 
-    pub fn fromZiggy(gpa: Allocator, value: ziggy.dynamic.Value) !Value {
+    pub fn fromZiggy(gpa: Allocator, value: ziggy.Dynamic) !Value {
         switch (value) {
             .null => return .{ .optional = null },
             .bool => |b| return .{ .bool = .{ .value = b } },
             .integer => |i| return .{ .int = .{ .value = i } },
             .float => |f| return .{ .float = .{ .f = f } },
             .bytes => |s| return .{ .string = .{ .value = s } },
-            .array => |a| return Array.init(gpa, ziggy.dynamic.Value, a),
-            .tag => |t| {
-                std.debug.assert(std.mem.eql(u8, t.name, "date"));
-                const date = DateTime.init(t.bytes) catch {
-                    return .{ .err = "error parsing date" };
-                };
+            .array => |a| return Array.init(gpa, ziggy.Dynamic, a),
+            .@"union" => |t| {
+                const date = if (std.mem.eql(u8, t.tag, "date") and t.value.* == .bytes)
+                    DateTime.init(t.value.bytes) catch return .{ .err = "error parsing date" }
+                else if (std.mem.eql(u8, t.tag, "unix") and t.value.* == .integer)
+                    DateTime.initUnix(t.value.integer) catch return .{ .err = "error parsing date" }
+                else
+                    return .{ .@"union" = .{ .value = value } };
                 return Value.from(gpa, date);
             },
+            .@"enum" => |tag| return String.init(tag),
             .kv => |kv| return .{ .map = .{ .value = kv } },
         }
     }
@@ -159,7 +164,7 @@ pub const Value = union(enum) {
             []const u8, []u8 => .{ .string = .{ .value = v } },
             bool => .{ .bool = .{ .value = v } },
             i64, usize, u32 => .{ .int = .{ .value = @intCast(v) } },
-            ziggy.dynamic.Value => try fromZiggy(gpa, v),
+            ziggy.Dynamic => try fromZiggy(gpa, v),
             Map.ZiggyMap => .{ .map = .{ .value = v } },
             Map.KV => .{ .map_kv = v },
             *const context.Optional => .{ .optional = v },

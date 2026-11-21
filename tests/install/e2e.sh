@@ -118,13 +118,13 @@ SITE="$WORK/site"
 mkdir -p "$SITE/content" "$SITE/layouts" "$SITE/assets" "$SITE/components"
 : > "$SITE/assets/.keep"
 cat > "$SITE/zigapagos.ziggy" <<'EOF'
-Site {
+.site = .simple(.{
     .title = "Installer Test",
     .host_url = "https://example.com",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "assets",
-}
+})
 EOF
 cat > "$SITE/layouts/plain.shtml" <<'EOF'
 <!DOCTYPE html>
@@ -134,7 +134,7 @@ cat > "$SITE/layouts/plain.shtml" <<'EOF'
     <title :text="$site.title"></title>
   </head>
   <body>
-    <island src="components/Counter.island.tsx" client:load :props='{ .start = 41 }'></island>
+    <island src="components/Counter.island.tsx" client:load :props='.{ .start = 41 }'></island>
     <div :html="$page.content()"></div>
   </body>
 </html>
@@ -148,8 +148,8 @@ EOF
 cat > "$SITE/content/index.smd" <<'EOF'
 ---
 .title = "Home",
-.date = @date("2020-07-06T00:00:00"),
-.author = "Test",
+.date = .date("2020-07-06T00:00:00"),
+.authors = ["Test"],
 .layout = "plain.shtml",
 .draft = false,
 ---

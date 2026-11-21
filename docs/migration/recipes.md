@@ -282,7 +282,7 @@ Mount the island with a `<template slot="NAME">` for each named slot; everything
 the default slot:
 
 ```html
-<island src="components/Panel.island.tsx" client:load :props='{ .title = "Panel" }'>
+<island src="components/Panel.island.tsx" client:load :props='.{ .title = "Panel" }'>
   <template slot="heading"><h2>Custom Heading</h2></template>
   <p>This paragraph goes into the default (children) slot.</p>
   <island src="components/Hero.island.tsx" client:load prop-headline="Nested"></island>

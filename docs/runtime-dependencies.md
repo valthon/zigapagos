@@ -39,6 +39,7 @@ help menu and exits 0, and needs nothing.
 
 | Command | Bun | ZigBase | Notes |
 | --- | --- | --- | --- |
+| `zigapagos install-schemas` | no | no | Writes embedded Ziggy LSP schemas into the configured site. Pure file I/O. |
 | `zigapagos init` | no | no | Writes a sample site. Pure file I/O. |
 | `zigapagos migrate` | no | no | Writes a source-specific worklist; can also scaffold React islands, convert Hugo/Jekyll/Eleventy/Hexo Markdown, or stream conventional static assets without running source code. On a Rails source it additionally needs Ruby ≥ 3.3 on PATH and `ZIGAPAGOS_RUNTIME_DIR` pointed at the `@z/runtime` tree to recover routes from `config/routes.rb`; neither is required for any other source, and a missing/failing Ruby degrades the run rather than failing it. |
 | `zigapagos doctor` | no | no | Reads a built tree. |

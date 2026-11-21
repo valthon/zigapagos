@@ -1,8 +1,8 @@
 ---
 .title = "Download",
 .description = "Install Zigapagos from npm or grab a release binary. No Zig toolchain required.",
-.date = @date("2026-07-27T00:00:00"),
-.author = "Zigapagos",
+.date = .date("2026-07-27T00:00:00"),
+.authors = ["Zigapagos"],
 .layout = "download.shtml",
 .draft = false,
 ---

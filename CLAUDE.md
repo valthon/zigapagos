@@ -18,7 +18,7 @@ SHA read from Git metadata (`unknown` without `.git`). `-Dcommit=<sha>` override
 it for CI/release. `zigapagos version` prints ZigBase's version/commit/build/target/Zig
 format. Release CI's `scripts/assert-version.sh` check enforces tag versus zon.
 Configure caching is nevertheless defeated by `findProgram` calls in
-SuperHTML b00f3d25 and SuperMD's transitive Ziggy main 7fc62a53 until fixed upstream.
+SuperHTML b00f3d25 and the shared Ziggy 0.3.0 module at 7fc62a53 until fixed upstream.
 
 **Do not add a repo-level `.tool-versions`.** `mise.toml` is the single source of truth and mise
 reads it directly; a second file beside it is a version pin that can silently drift.
@@ -239,3 +239,14 @@ turned out to be contract-1 helpers whose tests simply shouldn't have been arena
   Match that density.
 - Regression tests must be verified to **fail without the fix** — that is the only way to know
   they pin anything.
+
+## Ziggy documents
+
+Ziggy 0.3.0 (7fc62a53) parses config, frontmatter, data and island props.
+`zigapagos.ziggy` uses `.site = .simple(.{ ... })` or `.multilingual(.{ ... })`;
+there is no version field. Use `.authors = ["Name"]`, `.date("...")` or
+`.unix(seconds)`, `.{ ... }` structs and `{ "key": value }` dictionaries.
+The site's `supermd.auto_target_blank` defaults to true. Shipped editor schemas
+live only in `src/schemas/`; `install-schemas` writes their site copies and
+`init` creates them. Upgrade existing sites with `scripts/upgrade-ziggy.py`;
+see `docs/migration/ziggy-0.3.md`. Keep skill migration references synchronized.

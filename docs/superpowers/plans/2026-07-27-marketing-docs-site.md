@@ -13,7 +13,7 @@
 - **Zig 0.17.1 and Bun 1.2**, pinned by `mise.toml`. Run `zig version` before believing a wall of dependency errors.
 - **A fresh worktree needs `cd runtime && bun install --frozen-lockfile` once**, and `cd site && bun install` before any site build. Without it every bun-dependent step fails in ways that look like code breakage.
 - **SuperMD forbids raw HTML.** `<island>`, `<div>`, `<br>` etc. in a `.smd` body fail the build with `html_is_forbidden`. All markup lives in `.shtml` layouts.
-- **Frontmatter is Ziggy, not YAML**: `.title = "…"`, `.date = @date("…")`, `.layout = "…"`, `.draft = false`, custom fields under `.custom = { … }`, read as `$page.custom.get('name')`.
+- **Frontmatter is Ziggy, not YAML**: `.title = "…"`, `.date = .date("…")`, `.layout = "…"`, `.draft = false`, custom fields under `.custom = { … }`, read as `$page.custom.get('name')`.
 - **A directory is a section only if it has `index.smd`.** `$page.subpages()` requires it.
 - **`url_path_prefix = "zigapagos"`.** Never hand-write an internal URL. Always `$site.page('docs/overview').link()` and `$site.asset('style.css').link()`.
 - **`zig fmt` is gated with no exceptions.** Before any commit touching `.zig`: `git ls-files -z '*.zig' | xargs -0 -r zig fmt --check`.
@@ -623,8 +623,8 @@ Replace `site/content/index.smd`. The body is empty on purpose — every landing
 ---
 .title = "Zigapagos — Astro's islands, a native core, no Node",
 .description = "A static site generator with a fast native core and Astro-style TSX islands. Zero JS by default, native SPAs, and a migration path off Astro. No Node, no Vite, no bundler config.",
-.date = @date("2026-07-27T00:00:00"),
-.author = "Zigapagos",
+.date = .date("2026-07-27T00:00:00"),
+.authors = ["Zigapagos"],
 .layout = "index.shtml",
 .draft = false,
 ---
@@ -883,11 +883,11 @@ Insert into `site/layouts/index.shtml`, immediately after the `s-zerojs` section
     <p class="eyebrow">Islands in 30 seconds</p>
     <h2>Write a component. Say when it should wake up.</h2>
     <div class="grid-2">
-      <island src="components/CodeTabs.island.tsx" client:visible :props='{
+      <island src="components/CodeTabs.island.tsx" client:visible :props='.{
         .tabs = [
-          { .label = "Counter.island.tsx", .code = "import { useState } from \"@z/runtime\";\n\nexport interface Props { start?: number }\n\nexport default function Counter({ start = 0 }: Props) {\n  const [n, setN] = useState(start);\n  return <button onClick={() => setN(n + 1)}>Clicked {n} times</button>;\n}\n" },
-          { .label = "index.shtml", .code = "<island src=\"components/Counter.island.tsx\"\n        client:visible\n        prop-start=\"0\"></island>\n" },
-          { .label = "what ships", .code = "<!-- server-rendered into the HTML -->\n<z-island id=\"z-island-0\">\n  <button>Clicked 0 times</button>\n</z-island>\n<script type=\"application/json\" data-z-props>{\"start\":0}</script>\n\n<!-- plus one shared runtime, once per page -->\n<script type=\"module\" src=\"/zigapagos-runtime.js\"></script>\n" }
+          .{ .label = "Counter.island.tsx", .code = "import { useState } from \"@z/runtime\";\n\nexport interface Props { start?: number }\n\nexport default function Counter({ start = 0 }: Props) {\n  const [n, setN] = useState(start);\n  return <button onClick={() => setN(n + 1)}>Clicked {n} times</button>;\n}\n" },
+          .{ .label = "index.shtml", .code = "<island src=\"components/Counter.island.tsx\"\n        client:visible\n        prop-start=\"0\"></island>\n" },
+          .{ .label = "what ships", .code = "<!-- server-rendered into the HTML -->\n<z-island id=\"z-island-0\">\n  <button>Clicked 0 times</button>\n</z-island>\n<script type=\"application/json\" data-z-props>{\"start\":0}</script>\n\n<!-- plus one shared runtime, once per page -->\n<script type=\"module\" src=\"/zigapagos-runtime.js\"></script>\n" }
         ] }'></island>
       <div>
         <p>
@@ -966,7 +966,7 @@ Generates `site/content/docs/*.smd` from canonical repo markdown. This is the si
 
 **Interfaces:**
 - Consumes: nothing from earlier tasks.
-- Produces: `site/content/docs/<mirror>.smd` files with Ziggy frontmatter carrying `.title`, `.description`, `.layout = "docs.shtml"`, and `.custom = { .slug = "<slug>" }`. Task 5's `docs.shtml` reads `$page.custom.get('slug')` for sidebar active state.
+- Produces: `site/content/docs/<mirror>.smd` files with Ziggy frontmatter carrying `.title`, `.description`, `.layout = "docs.shtml"`, and `.custom = .{ .slug = "<slug>" }`. Task 5's `docs.shtml` reads `$page.custom.get('slug')` for sidebar active state.
 
 - [ ] **Step 1: Write the failing mirror test**
 
@@ -1207,11 +1207,11 @@ function frontmatter(e: Entry): string {
     "---",
     `.title = ${q(e.title)},`,
     `.description = ${q(e.description)},`,
-    `.date = @date("2026-07-27T00:00:00"),`,
-    `.author = "Zigapagos",`,
+    `.date = .date("2026-07-27T00:00:00"),`,
+    `.authors = ["Zigapagos"],`,
     `.layout = "docs.shtml",`,
     `.draft = false,`,
-    `.custom = { .slug = ${q(e.slug)}, .canonical = ${q(e.canonical)} },`,
+    `.custom = .{ .slug = ${q(e.slug)}, .canonical = ${q(e.canonical)} },`,
     "---",
     "",
   ].join("\n");
@@ -1378,11 +1378,11 @@ Create `site/content/docs/index.smd`:
 ---
 .title = "Documentation",
 .description = "Everything Zigapagos does: islands, native SPAs, migration from Astro, configuration, and reference.",
-.date = @date("2026-07-27T00:00:00"),
-.author = "Zigapagos",
+.date = .date("2026-07-27T00:00:00"),
+.authors = ["Zigapagos"],
 .layout = "docs-index.shtml",
 .draft = false,
-.custom = { .slug = "index" },
+.custom = { "slug": "index" },
 ---
 
 Start with the [overview](/zigapagos/docs/overview/) for what Zigapagos is and how a
@@ -1632,11 +1632,11 @@ Create `site/content/docs/overview.smd`:
 ---
 .title = "Overview",
 .description = "What Zigapagos is, how a build runs, and when to reach for it.",
-.date = @date("2026-07-27T00:00:00"),
-.author = "Zigapagos",
+.date = .date("2026-07-27T00:00:00"),
+.authors = ["Zigapagos"],
 .layout = "docs.shtml",
 .draft = false,
-.custom = { .slug = "overview" },
+.custom = { "slug": "overview" },
 ---
 
 Zigapagos is a static site generator. It renders content and templates with a
@@ -1702,11 +1702,11 @@ Create `site/content/docs/quick-start.smd`:
 ---
 .title = "Quick start",
 .description = "Install the toolchain, generate a site, and see it rebuild as you edit.",
-.date = @date("2026-07-27T00:00:00"),
-.author = "Zigapagos",
+.date = .date("2026-07-27T00:00:00"),
+.authors = ["Zigapagos"],
 .layout = "docs.shtml",
 .draft = false,
-.custom = { .slug = "quick-start" },
+.custom = { "slug": "quick-start" },
 ---
 
 ## Install the toolchain
@@ -1804,11 +1804,11 @@ Create `site/content/docs/tutorial.smd`:
 ---
 .title = "Tutorial",
 .description = "Build a small documentation site with a section, a shared layout, and two islands.",
-.date = @date("2026-07-27T00:00:00"),
-.author = "Zigapagos",
+.date = .date("2026-07-27T00:00:00"),
+.authors = ["Zigapagos"],
 .layout = "docs.shtml",
 .draft = false,
-.custom = { .slug = "tutorial" },
+.custom = .{ .slug = "tutorial" },
 ---
 
 This builds a small documentation site: a homepage, a guides section that lists
@@ -1871,8 +1871,8 @@ A directory becomes a section when it has an `index.smd`. Create
 ```
 ---
 .title = "Guides",
-.date = @date("2026-07-27T00:00:00"),
-.author = "You",
+.date = .date("2026-07-27T00:00:00"),
+.authors = ["You"],
 .layout = "guides.shtml",
 .draft = false,
 ---
@@ -1931,7 +1931,7 @@ Use it with `client:load` — hydrate as soon as the page's JavaScript runs:
 
 ```html
 <island src="components/Filter.island.tsx" client:load
-        :props='{ .items = ["deploying", "islands", "assets"] }'></island>
+        :props='.{ .items = ["deploying", "islands", "assets"] }'></island>
 ```
 
 ## 5. An island that can wait
@@ -1978,11 +1978,11 @@ Create `site/content/docs/configuration.smd`:
 ---
 .title = "Configuration",
 .description = "zigapagos.ziggy, the website() build options, and what each one changes.",
-.date = @date("2026-07-27T00:00:00"),
-.author = "Zigapagos",
+.date = .date("2026-07-27T00:00:00"),
+.authors = ["Zigapagos"],
 .layout = "docs.shtml",
 .draft = false,
-.custom = { .slug = "configuration" },
+.custom = .{ .slug = "configuration" },
 ---
 
 A Zigapagos project is configured in two places: `zigapagos.ziggy` describes the
@@ -1991,7 +1991,7 @@ site, and `build.zig` declares the islands and SPAs the build must compile.
 ## zigapagos.ziggy
 
 ```ziggy
-Site {
+.site = .simple(.{
     .title = "My Site",
     .host_url = "https://example.com",
     .url_path_prefix = "",
@@ -1999,7 +1999,7 @@ Site {
     .layouts_dir_path = "layouts",
     .assets_dir_path = "assets",
     .deploy_target = "zigbase",
-}
+})
 ```
 
 `.title` is available in every layout as `$site.title`.
@@ -2200,8 +2200,8 @@ Create `site/content/demos/index.smd`:
 ---
 .title = "Demos",
 .description = "Live demonstrations: hydration directives, the Astro migration mapping, and a native SPA — all running on this site.",
-.date = @date("2026-07-27T00:00:00"),
-.author = "Zigapagos",
+.date = .date("2026-07-27T00:00:00"),
+.authors = ["Zigapagos"],
 .layout = "demos.shtml",
 .draft = false,
 ---
@@ -2245,8 +2245,8 @@ Create `site/content/demos/directives.smd`:
 ---
 .title = "Hydration directives",
 .description = "The five client: directives, hydrating live so you can watch when each one wakes up.",
-.date = @date("2026-07-27T00:00:00"),
-.author = "Zigapagos",
+.date = .date("2026-07-27T00:00:00"),
+.authors = ["Zigapagos"],
 .layout = "demo-directives.shtml",
 .draft = false,
 ---
@@ -2272,10 +2272,10 @@ Create `site/layouts/demo-directives.shtml`:
   <section class="section wrap">
     <p class="eyebrow">Immediately</p>
     <div class="dd-row">
-      <island src="components/DirectiveDemo.island.tsx" client:load :props='{
+      <island src="components/DirectiveDemo.island.tsx" client:load :props='.{
         .directive = "client:load",
         .note = "Hydrates as soon as the page script runs. Use it for components that are broken until interactive — a search box, a login form." }'></island>
-      <island src="components/DirectiveDemo.island.tsx" client:idle :props='{
+      <island src="components/DirectiveDemo.island.tsx" client:idle :props='.{
         .directive = "client:idle",
         .note = "Waits for the browser to be idle. Same result, later, for anything that is nice to have rather than needed at once." }'></island>
     </div>
@@ -2290,10 +2290,10 @@ Create `site/layouts/demo-directives.shtml`:
     </p>
     <div class="dd-spacer">keep scrolling</div>
     <div class="dd-row">
-      <island src="components/DirectiveDemo.island.tsx" client:visible :props='{
+      <island src="components/DirectiveDemo.island.tsx" client:visible :props='.{
         .directive = "client:visible",
         .note = "Hydrates when the component scrolls into view. Nothing is fetched or executed for it before that." }'></island>
-      <island src="components/DirectiveDemo.island.tsx" client:media="(min-width: 60rem)" :props='{
+      <island src="components/DirectiveDemo.island.tsx" client:media="(min-width: 60rem)" :props='.{
         .directive = "client:media",
         .note = "Hydrates only when the media query matches. Narrow your window below 60rem and reload — it stays grey, and its code is never fetched." }'></island>
     </div>
@@ -2302,7 +2302,7 @@ Create `site/layouts/demo-directives.shtml`:
   <section class="section wrap">
     <p class="eyebrow">Never on the server</p>
     <div class="dd-row">
-      <island src="components/DirectiveDemo.island.tsx" client:only :props='{
+      <island src="components/DirectiveDemo.island.tsx" client:only :props='.{
         .directive = "client:only",
         .note = "Skipped entirely at build time and rendered only in the browser. For components that touch window or document during render and cannot be server-rendered at all." }'></island>
     </div>
@@ -2466,8 +2466,8 @@ Create `site/content/demos/migrate.smd`:
 ---
 .title = "Astro → Zigapagos",
 .description = "The mapping `zigapagos migrate` applies, shown side by side for the patterns an Astro project actually contains.",
-.date = @date("2026-07-27T00:00:00"),
-.author = "Zigapagos",
+.date = .date("2026-07-27T00:00:00"),
+.authors = ["Zigapagos"],
 .layout = "demo-migrate.shtml",
 .draft = false,
 ---
@@ -2492,21 +2492,21 @@ Create `site/layouts/demo-migrate.shtml`:
 
   <section class="section wrap">
     <p class="eyebrow">The mapping</p>
-    <island src="components/MigrateDiff.island.tsx" client:visible :props='{
+    <island src="components/MigrateDiff.island.tsx" client:visible :props='.{
       .cases = [
-        { .title = "A component",
+        .{ .title = "A component",
           .note = "React and Preact components become .island.tsx with the same hooks. The import source changes; the component body usually does not.",
           .before = "// src/components/Counter.jsx\nimport { useState } from \"react\";\n\nexport default function Counter({ start }) {\n  const [n, setN] = useState(start);\n  return <button onClick={() => setN(n + 1)}>{n}</button>;\n}\n",
           .after = "// components/Counter.island.tsx\nimport { useState } from \"@z/runtime\";\n\nexport interface Props { start: number }\n\nexport default function Counter({ start }: Props) {\n  const [n, setN] = useState(start);\n  return <button onClick={() => setN(n + 1)}>{n}</button>;\n}\n" },
-        { .title = "Using it",
+        .{ .title = "Using it",
           .note = "Astro directives map one to one onto client: attributes. Props become prop-NAME attributes, or a :props struct when they are structured.",
           .before = "---\nimport Counter from \"../components/Counter.jsx\";\n---\n<Counter client:visible start={0} />\n",
           .after = "<island src=\"components/Counter.island.tsx\"\n        client:visible\n        prop-start=\"0\"></island>\n" },
-        { .title = "Frontmatter",
+        .{ .title = "Frontmatter",
           .note = "Astro frontmatter is YAML; Zigapagos frontmatter is Ziggy. Known fields map by name and everything else moves under .custom, read as $page.custom.get(...) in the layout.",
           .before = "---\ntitle: Hello\ndescription: A page\nhero:\n  eyebrow: Hi\n  title: We build things\n---\n",
-          .after = "---\n.title = \"Hello\",\n.description = \"A page\",\n.date = @date(\"2026-01-01T00:00:00\"),\n.author = \"You\",\n.layout = \"page.shtml\",\n.draft = false,\n.custom = { .hero = { .eyebrow = \"Hi\", .title = \"We build things\" } },\n---\n" },
-        { .title = "A layout",
+          .after = "---\n.title = \"Hello\",\n.description = \"A page\",\n.date = .date(\"2026-01-01T00:00:00\"),\n.authors = [\"You\"],\n.layout = \"page.shtml\",\n.draft = false,\n.custom = .{ .hero = .{ .eyebrow = \"Hi\", .title = \"We build things\" } },\n---\n" },
+        .{ .title = "A layout",
           .note = "Astro layouts with slots become SuperHTML templates with <super> extension points. Expressions move out of braces and into attribute directives.",
           .before = "---\nconst { title } = Astro.props;\n---\n<html>\n  <head><title>{title}</title></head>\n  <body><slot /></body>\n</html>\n",
           .after = "<!DOCTYPE html>\n<html>\n  <head id=\"head\">\n    <title :text=\"$page.title\"></title>\n    <super>\n  </head>\n  <body id=\"body\"><super></body>\n</html>\n" }
@@ -2784,8 +2784,8 @@ Create `site/content/404.smd`:
 ---
 .title = "Page not found",
 .description = "That page does not exist. Try the documentation index or the homepage.",
-.date = @date("2026-07-27T00:00:00"),
-.author = "Zigapagos",
+.date = .date("2026-07-27T00:00:00"),
+.authors = ["Zigapagos"],
 .layout = "page.shtml",
 .draft = false,
 .aliases = ["/404.html"],
@@ -2968,8 +2968,8 @@ Create `site/content/compare.smd`:
 ---
 .title = "Compare",
 .description = "How Zigapagos differs from Astro, Next.js static export, Eleventy, Hugo, and the generator it forks.",
-.date = @date("2026-07-27T00:00:00"),
-.author = "Zigapagos",
+.date = .date("2026-07-27T00:00:00"),
+.authors = ["Zigapagos"],
 .layout = "compare.shtml",
 .draft = false,
 ---
@@ -3120,8 +3120,8 @@ Create `site/content/download.smd`:
 ---
 .title = "Download",
 .description = "Build Zigapagos from source, or grab a release.",
-.date = @date("2026-07-27T00:00:00"),
-.author = "Zigapagos",
+.date = .date("2026-07-27T00:00:00"),
+.authors = ["Zigapagos"],
 .layout = "download.shtml",
 .draft = false,
 ---

@@ -51,13 +51,13 @@ EOF
 
 site_ziggy() {
   cat <<'EOF'
-Site {
+.site = .simple(.{
     .title = "Alias Warning Test",
     .host_url = "https://example.com",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "content",
-}
+})
 EOF
 }
 
@@ -75,8 +75,8 @@ gen_site() {
   cat > "$dir/content/index.smd" <<EOF
 ---
 .title = "Homepage",
-.date = @date("2020-01-01T00:00:00"),
-.author = "Test Author",
+.date = .date("2020-01-01T00:00:00"),
+.authors = ["Test Author"],
 .layout = "page.shtml",
 .draft = false,
 ---
@@ -86,8 +86,8 @@ EOF
   cat > "$dir/content/sub.smd" <<EOF
 ---
 .title = "Sub Page",
-.date = @date("2020-01-01T00:00:00"),
-.author = "Test Author",
+.date = .date("2020-01-01T00:00:00"),
+.authors = ["Test Author"],
 .layout = "page.shtml",
 .draft = false,
 $aliases_line
@@ -109,8 +109,8 @@ gen_root_site() {
   cat > "$dir/content/index.smd" <<EOF
 ---
 .title = "Homepage",
-.date = @date("2020-01-01T00:00:00"),
-.author = "Test Author",
+.date = .date("2020-01-01T00:00:00"),
+.authors = ["Test Author"],
 .layout = "page.shtml",
 .draft = false,
 $aliases_line

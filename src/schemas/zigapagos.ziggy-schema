@@ -1,0 +1,70 @@
+$ = Config
+
+/// Zigapagos site configuration. No executable/site version field is required.
+struct Config {
+    site: Site,
+}
+union Site {
+    simple: Simple,
+    multilingual: Multilingual,
+}
+struct SuperMD {
+    /// Add target=_blank to external links. Defaults to true.
+    auto_target_blank: ?bool,
+}
+struct Simple {
+    custom: {:}any,
+    supermd: ?SuperMD,
+    title: bytes,
+    host_url: bytes,
+    url_path_prefix: ?bytes,
+    layouts_dir_path: bytes,
+    content_dir_path: bytes,
+    assets_dir_path: bytes,
+    data_dir_path: ?bytes,
+    static_assets: []bytes,
+    image_size_attributes: ?bool,
+    deploy_target: ?bytes,
+    asset_fingerprint: ?bool,
+    auto_heading_ids: ?bool,
+    speculation_rules: ?bool,
+    csp_extra_sources: []CspExtraSources,
+    image_optimize: ?ImageOptimize,
+    sitemap: ?bool,
+}
+struct Multilingual {
+    custom: {:}any,
+    supermd: ?SuperMD,
+    host_url: bytes,
+    i18n_dir_path: bytes,
+    layouts_dir_path: bytes,
+    assets_dir_path: bytes,
+    assets_prefix_path: ?bytes,
+    static_assets: []bytes,
+    data_dir_path: ?bytes,
+    locales: []Locale,
+    asset_fingerprint: ?bool,
+    image_size_attributes: ?bool,
+    auto_heading_ids: ?bool,
+    speculation_rules: ?bool,
+    csp_extra_sources: []CspExtraSources,
+    image_optimize: ?ImageOptimize,
+}
+struct Locale {
+    code: bytes,
+    name: bytes,
+    content_dir_path: bytes,
+    site_title: bytes,
+    host_url_override: ?bytes,
+    output_prefix_override: ?bytes,
+}
+struct ImageOptimize {
+    widths: []int,
+    quality: ?int,
+    sizes: ?bytes,
+    avif_encoder: ?bytes,
+}
+struct CspExtraSources {
+    directive: bytes,
+    sources: []bytes,
+}

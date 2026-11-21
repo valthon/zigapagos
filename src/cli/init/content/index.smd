@@ -27,7 +27,7 @@ required:
 - `.layout` — which template in `layouts/` renders it.
 
 Everything else has a default, so write a field only when something reads it.
-`.date` defaults to the Unix epoch, `.author` to the empty string, `.draft` to
+`.date` defaults to the Unix epoch, `.authors` to an empty list, `.draft` to
 `false`, and `.description`, `.tags` and `.aliases` to empty. That is why the
 blog posts and devlog years in this sample carry a `.date` — `layouts/blog.shtml`,
 `layouts/blog.xml` and `layouts/devlog-archive.shtml` render one for every entry

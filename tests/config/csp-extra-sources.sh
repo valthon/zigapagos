@@ -8,10 +8,10 @@ python3 - "$REPO" "$WORK" <<'CONFIG'
 from pathlib import Path
 import subprocess, sys, json, os
 repo, work = map(Path, sys.argv[1:])
-base = (repo/'tests/rendering/simple/zigapagos.ziggy').read_text().rstrip()[:-1]
+base = (repo/'tests/rendering/simple/zigapagos.ziggy').read_text().rstrip()[:-2]
 # No island/SPA bundle has run in this fresh static site to create the report directory.
 assert not (work/'.zigapagos-cache/bundles').exists()
-(work/'zigapagos.ziggy').write_text(base + '\n.csp_extra_sources = [{ .directive = "script-src", .sources = ["https://js.sentry-cdn.com"] }],\n}\n')
+(work/'zigapagos.ziggy').write_text(base + '\n.csp_extra_sources = [.{ .directive = "script-src", .sources = ["https://js.sentry-cdn.com"] }],\n})\n')
 result = subprocess.run([str(repo/'zig-out/bin/zigapagos'), 'release', '--force', '--summary'], cwd=work, capture_output=True, text=True, env=os.environ | {"ZIGAPAGOS_RUNTIME_DIR": str(repo/"runtime")})
 assert result.returncode == 0, result.stderr
 report = json.loads((work/'.zigapagos-cache/bundles/host-config-report.json').read_text())
@@ -34,7 +34,7 @@ for directive, source, good in [
     ('script-src', 'https://', False),
     ('script-src', 'not a source', False),
 ]:
-    (work/'zigapagos.ziggy').write_text(base + '\n.csp_extra_sources = [{ .directive = '+json.dumps(directive)+', .sources = ['+json.dumps(source)+'] }],\n}\n')
+    (work/'zigapagos.ziggy').write_text(base + '\n.csp_extra_sources = [.{ .directive = '+json.dumps(directive)+', .sources = ['+json.dumps(source)+'] }],\n})\n')
     out = work/'public'
     out.mkdir(exist_ok=True)
     sentinel = out/'index.html'
@@ -49,7 +49,7 @@ for directive, source, good in [
     if not good:
         assert 'csp_extra_sources' in result.stderr, result.stderr
         assert sentinel.read_text() == 'untouched', 'invalid config modified output'
-(work/'zigapagos.ziggy').write_text(base + '}')
+(work/'zigapagos.ziggy').write_text(base + '})')
 result = subprocess.run([str(repo/'zig-out/bin/zigapagos'), 'release', '--force'], cwd=work, capture_output=True, text=True, env=os.environ | {"ZIGAPAGOS_RUNTIME_DIR": str(repo/"runtime")})
 assert result.returncode == 0, result.stderr
 assert not (out/'csp-sources.json').exists(), 'stale CSP declarations survived removal'

@@ -499,13 +499,13 @@ test("frontmatter: a string containing a double quote is escaped", () => {
 });
 
 test("frontmatter: a ziggyRaw value is emitted unquoted", () => {
-  const out = frontmatter({ date: ziggyRaw('@date("2026-07-27T00:00:00")') });
-  expect(out).toContain('.date = @date("2026-07-27T00:00:00"),');
+  const out = frontmatter({ date: ziggyRaw('.date("2026-07-27T00:00:00")') });
+  expect(out).toContain('.date = .date("2026-07-27T00:00:00"),');
 });
 
 test("frontmatter: a nested object renders inline", () => {
   const out = frontmatter({ custom: { slug: "x", n: 1 } });
-  expect(out).toContain('.custom = { .slug = "x", .n = 1 },');
+  expect(out).toContain('.custom = { "slug": "x", "n": 1 },');
 });
 
 test("frontmatter: an empty nested object renders as {}", () => {

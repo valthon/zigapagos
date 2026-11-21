@@ -45,11 +45,11 @@ Ziggy struct literal (`:props`) or individually (`prop-NAME`):
 
 <!-- static Ziggy struct -->
 <island src="components/Flagged.island.tsx" client:load
-        :props='{ .label = "hi" }'></island>
+        :props='.{ .label = "hi" }'></island>
 
 <!-- composite island with named slots -->
 <island src="components/Panel.island.tsx" client:load
-        :props='{ .title = "Panel" }'>
+        :props='.{ .title = "Panel" }'>
   <template slot="heading"><h2>Custom Heading</h2></template>
   <p>default body</p>
 </island>
@@ -122,7 +122,7 @@ subscription stays live.
 
 ```html
 <island src="components/Sidebar.island.tsx" client:media="(min-width: 60rem)"
-        :props='{ .collapsed = false }'></island>
+        :props='.{ .collapsed = false }'></island>
 ```
 
 Two things this does *not* do. It never unmounts: a query that stops matching
@@ -145,7 +145,7 @@ component mounts fresh in the browser and nothing is in the HTML before it does.
 A reserved `fallback` slot fills that window:
 
 ```html
-<island src="components/Chart.island.tsx" client:only :props='{ .series = "a" }'>
+<island src="components/Chart.island.tsx" client:only :props='.{ .series = "a" }'>
   <template slot="fallback"><div class="chart-skeleton">Loading chart…</div></template>
   <p>this is still the default slot, delivered to the component at mount</p>
 </island>
@@ -256,7 +256,7 @@ Some prose.
 
 ```=html
 <z-island src="components/Counter.island.tsx" client:load
-          :props='{ .start = 5 }'></z-island>
+          :props='.{ .start = 5 }'></z-island>
 ```
 
 More prose.
@@ -310,7 +310,7 @@ the surrounding layout:
 ````markdown
 ```=html
 <z-island src="components/Hero.island.tsx" client:load scripty:props
-          :props='{ .theme = "docs" }'
+          :props='.{ .theme = "docs" }'
           prop-title="$page.title"
           prop-items="$page.custom.get('items').toJson()"></z-island>
 ```

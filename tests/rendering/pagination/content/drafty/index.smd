@@ -1,7 +1,7 @@
 ---
 .title = "Drafty",
 .layout = "list.shtml",
-.pagination = { .page_size = 2 },
+.pagination = .{ .page_size = 2 },
 ---
 # Drafty
 

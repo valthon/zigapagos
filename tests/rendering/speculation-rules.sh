@@ -54,16 +54,16 @@ LAYOUT='<!DOCTYPE html>
 
 FRONTMATTER='---
 .title = "Home",
-.date = @date("2020-07-06T00:00:00"),
-.author = "Test",
+.date = .date("2020-07-06T00:00:00"),
+.authors = ["Test"],
 .layout = "index.shtml",
 .draft = false,
 ---'
 
 OTHER_FRONTMATTER='---
 .title = "Other",
-.date = @date("2020-07-06T00:00:00"),
-.author = "Test",
+.date = .date("2020-07-06T00:00:00"),
+.authors = ["Test"],
 .layout = "index.shtml",
 .draft = false,
 ---'
@@ -75,14 +75,14 @@ EXPECTED_TAG_PREFIXED='<script type="speculationrules">{"prefetch":[{"where":{"h
 ON="$WORK/on"; ON_OUT="$WORK/on-out"
 mkdir -p "$ON/content" "$ON/layouts"
 cat > "$ON/zigapagos.ziggy" <<'EOF'
-Site {
+.site = .simple(.{
     .title = "Speculation Rules (on)",
     .host_url = "https://example.com",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "content",
     .speculation_rules = true,
-}
+})
 EOF
 printf '%s' "$LAYOUT" > "$ON/layouts/index.shtml"
 {
@@ -117,7 +117,7 @@ echo "PASS: flag ON (unprefixed) — exact block present on every page, before <
 PFX="$WORK/pfx"; PFX_OUT="$WORK/pfx-out"
 mkdir -p "$PFX/content" "$PFX/layouts"
 cat > "$PFX/zigapagos.ziggy" <<'EOF'
-Site {
+.site = .simple(.{
     .title = "Speculation Rules (prefixed)",
     .host_url = "https://example.com",
     .content_dir_path = "content",
@@ -125,7 +125,7 @@ Site {
     .assets_dir_path = "content",
     .speculation_rules = true,
     .url_path_prefix = "myrepo",
-}
+})
 EOF
 printf '%s' "$LAYOUT" > "$PFX/layouts/index.shtml"
 {
@@ -150,13 +150,13 @@ echo "PASS: flag ON + url_path_prefix — href_matches is \"/myrepo/*\""
 OFF="$WORK/off"; OFF_OUT="$WORK/off-out"
 mkdir -p "$OFF/content" "$OFF/layouts"
 cat > "$OFF/zigapagos.ziggy" <<'EOF'
-Site {
+.site = .simple(.{
     .title = "Speculation Rules (off)",
     .host_url = "https://example.com",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "content",
-}
+})
 EOF
 printf '%s' "$LAYOUT" > "$OFF/layouts/index.shtml"
 {

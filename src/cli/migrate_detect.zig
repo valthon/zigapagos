@@ -140,7 +140,7 @@ pub fn detectPaginate(path: []const u8, src: []const u8) ?PaginateSpec {
 /// covers the one place `[page].astro` differs (page 1's URL).
 pub fn paginateNote(w: anytype, spec: PaginateSpec) !void {
     try w.print(
-        "uses `paginate()`: delete the route file and add `.pagination = {{ .page_size = {d}, .url_style = \"plain_dir\" }}` to `content/{s}{s}index.smd` (mapping reference §11).",
+        "uses `paginate()`: delete the route file and add `.pagination = .{{ .page_size = {d}, .url_style = .plain_dir }}` to `content/{s}{s}index.smd` (mapping reference §11).",
         .{ spec.page_size, spec.section, if (spec.section.len == 0) "" else "/" },
     );
     if (spec.route_form == .numbered) {

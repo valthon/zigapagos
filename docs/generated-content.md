@@ -194,7 +194,7 @@ const page = frontmatter({ title: entry.title, description: entry.description })
 
 `frontmatter` is a minimal Ziggy value emitter, not a general serializer — it handles
 strings, numbers, booleans, an unquoted raw expression via `ziggyRaw(...)` (for something
-like a `@date(...)` call), and nested objects, which render inline to any depth. It does
+like a `.date(...)` call), and nested objects, which render inline to any depth. It does
 not emit arrays; nothing in this pattern needs one, and a project that does should extend
 the value type rather than expect one to already exist.
 

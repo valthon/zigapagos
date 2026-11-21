@@ -126,7 +126,7 @@ PY
 # Default props validation must reject a resolved mismatch even on server-only roots.
 cp "$SITE/layouts/page.shtml" "$SITE/valid-layout"
 cat > "$SITE/layouts/page.shtml" <<'HTML'
-<html><head></head><body><island src="components/Child.island.tsx" :props='{ .label = 42 }'></island></body></html>
+<html><head></head><body><island src="components/Child.island.tsx" :props='.{ .label = 42 }'></island></body></html>
 HTML
 if (cd "$SITE" && "$BIN" release --force --output bad-output > props.log 2>&1); then
  echo 'FAIL: default props checking accepted a number for label:string'; exit 1

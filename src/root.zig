@@ -37,7 +37,11 @@ pub var progress: std.Progress.Node = undefined;
 
 pub const CspExtraSources = @import("csp.zig").ExtraSources;
 
+pub const SuperMD = struct { auto_target_blank: bool = true };
+
 pub const Site = struct {
+    custom: context.Map.ZiggyMap = .empty,
+    supermd: SuperMD = .{},
     /// Title of the website
     title: []const u8,
     /// URL where the website will be hosted.
@@ -180,6 +184,8 @@ pub const Site = struct {
 };
 
 pub const MultilingualSite = struct {
+    custom: context.Map.ZiggyMap = .empty,
+    supermd: SuperMD = .{},
     /// URL where the website will be hosted.
     /// It must not contain a path other than '/'.
     host_url: []const u8,
@@ -310,6 +316,19 @@ pub const Config = union(enum) {
     Multilingual: MultilingualSite,
     Site: Site,
 
+    pub const Document = struct {
+        site: union(enum) { simple: Site, multilingual: MultilingualSite },
+    };
+    pub const ziggy_options: ziggy.Options(Config) = .{ .deserialize = deserialize, .roles = .any };
+
+    fn deserialize(d: *const ziggy.Deserializer, first: ziggy.Tokenizer.Token, top_lvl: bool) ziggy.Deserializer.Error!Config {
+        const doc = try d.deserializeOne(Document, first, top_lvl);
+        return switch (doc.site) {
+            .simple => |site| .{ .Site = site },
+            .multilingual => |site| .{ .Multilingual = site },
+        };
+    }
+
     const config_file_basename = "zigapagos.ziggy";
 
     /// Returns the cfg and the the directory where the config file was
@@ -364,19 +383,18 @@ pub const Config = union(enum) {
             // this file), to avoid shadowing it -- this is a config-load
             // fatal, out of scope for this PR's code conversion (see
             // docs/diagnostics.md's scope section); it still reaches
-            // `fatal.msg`, which handles the JSON branch on its own.
-            var cfg_diag: ziggy.Diagnostic = .{ .path = joined_path };
-            const cfg = ziggy.parseLeaky(Config, arena, data, .{
-                .diagnostic = &cfg_diag,
-                .copy_strings = .to_unescape,
-            }) catch {
-                fatal.msg(
+            // `fatal.usageError`, which handles the JSON branch without a debug panic.
+            var cfg_diag: @import("ziggy_diagnostic.zig") = .{ .path = joined_path };
+            const cfg = ziggy.deserializeLeaky(Config, arena, data, &cfg_diag.meta, .{}) catch |err| {
+                if (err == error.OutOfMemory) return error.OutOfMemory;
+                cfg_diag.err = err;
+                fatal.usageError(
                     \\Error while loading the Zigapagos config file:
                     \\
                     \\{f}
                     \\
                     \\
-                , .{cfg_diag.fmt(data)});
+                , .{cfg_diag.fmt(arena, data)});
             };
 
             cfg.validate();
@@ -1405,7 +1423,7 @@ pub fn run(
         const tracy_frame = tracy.namedFrame("activate sections");
         defer tracy_frame.end();
         for (build.variants) |*v| {
-            if (v.i18n_diag.errors.items.len > 0) {
+            if (v.i18n_diag.err != null) {
                 i18n_errors = true;
 
                 var buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -1421,17 +1439,17 @@ pub fn run(
                         .code = .ZP_I18N_PARSE,
                         .severity = .@"error",
                         .file = path,
-                        .message = diag.render(&msg_buf, "{f}", .{v.i18n_diag.fmt(v.i18n_src)}),
+                        .message = diag.render(&msg_buf, "{f}", .{v.i18n_diag.fmt(arena, v.i18n_src)}),
                     });
                 } else {
-                    std.debug.print("{f}\n\n", .{v.i18n_diag.fmt(v.i18n_src)});
+                    std.debug.print("{f}\n\n", .{v.i18n_diag.fmt(arena, v.i18n_src)});
                 }
                 if (build.mode == .memory) {
                     try build.mode.memory.errors.append(gpa, .{
                         .ref = "",
                         .msg = try gpa.print(
                             "{f}\n\n",
-                            .{v.i18n_diag.fmt(v.i18n_src)},
+                            .{v.i18n_diag.fmt(arena, v.i18n_src)},
                         ),
                     });
                 }
@@ -1442,6 +1460,10 @@ pub fn run(
                 any_content = true;
                 worker.addJob(io, .{
                     .section_activate = .{
+                        .auto_target_blank = switch (build.cfg.*) {
+                            .Site => |site| site.supermd.auto_target_blank,
+                            .Multilingual => |site| site.supermd.auto_target_blank,
+                        },
                         .variant = v,
                         .section = s,
                         .page = &v.pages.items[s.index],
@@ -1490,6 +1512,10 @@ pub fn run(
                     if (p._scan.file.name == index_smd) continue; // already parsed
                     worker.addJob(io, .{
                         .page_parse = .{
+                            .auto_target_blank = switch (build.cfg.*) {
+                                .Site => |site| site.supermd.auto_target_blank,
+                                .Multilingual => |site| site.supermd.auto_target_blank,
+                            },
                             .progress = progress_parse,
                             .drafts = options.drafts,
                             .variant = v,
@@ -1508,6 +1534,7 @@ pub fn run(
                 try sites.putNoClobber(gpa, "", .{
                     .host_url = s.host_url,
                     .title = s.title,
+                    .custom = s.custom,
                     ._meta = .{
                         .variant_id = 0,
                         .kind = .{ .simple = s.url_path_prefix },
@@ -1519,6 +1546,7 @@ pub fn run(
                 for (ml.locales, 0..) |loc, idx| sites.putAssumeCapacityNoClobber(loc.code, .{
                     .host_url = loc.host_url_override orelse ml.host_url,
                     .title = loc.site_title,
+                    .custom = ml.custom,
                     ._meta = .{
                         .variant_id = @intCast(idx),
                         .kind = .{
@@ -1615,7 +1643,7 @@ pub fn run(
         defer tracy_frame.end();
         for (build.variants, 0..) |*v, vidx| {
             for (v.pages.items) |*p| {
-                if (!p._parse.active) continue;
+                if (!p._parse.active and p._parse.status != .empty) continue;
 
                 // First we need to check the frontmatter as the ast will be valid
                 // only if the frontmatter has been correctly identifed as well.
@@ -1742,17 +1770,17 @@ pub fn run(
                                 .code = .ZP_FRONTMATTER_PARSE,
                                 .severity = .@"error",
                                 .file = path,
-                                .message = diag.render(&msg_buf, "{f}", .{ziggy_diag.fmt(p._parse.full_src)}),
+                                .message = diag.render(&msg_buf, "{f}", .{ziggy_diag.fmt(arena, p._parse.full_src)}),
                             });
                         } else {
-                            std.debug.print("{f}\n\n", .{ziggy_diag.fmt(p._parse.full_src)});
+                            std.debug.print("{f}\n\n", .{ziggy_diag.fmt(arena, p._parse.full_src)});
                         }
                         if (build.mode == .memory) {
                             try build.mode.memory.errors.append(gpa, .{
                                 .ref = "",
                                 .msg = try gpa.print(
                                     "{f}\n\n",
-                                    .{ziggy_diag.fmt(p._parse.full_src)},
+                                    .{ziggy_diag.fmt(arena, p._parse.full_src)},
                                 ),
                             });
                         }
@@ -1906,14 +1934,10 @@ pub fn run(
                 }
 
                 const full_src = p._parse.full_src;
-                const ast = ziggy.Ast.init(
-                    arena,
-                    full_src,
-                    false,
-                    true,
-                    true,
-                    null,
-                ) catch fatal.oom();
+                // Parsing already validated this fence; retain its offset when
+                // reconstructing locations for analysis errors.
+                const ziggy_start = std.mem.indexOf(u8, full_src, "---").? + 3;
+                const ast = ziggy.Ast.init(arena, full_src, .{ .delimiter = .{ .dashes = @intCast(ziggy_start) } }) catch fatal.oom();
 
                 for (fm_errors.items) |err| {
                     const loc = err.location(full_src, ast);

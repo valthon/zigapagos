@@ -22,13 +22,13 @@ for path, block in zip(['layouts/templates/base.shtml', 'layouts/page.shtml', 'l
 index = re.search(r'```\n(---\n.*?\n---\n.*?)\n```', doc, re.S)
 assert index, 'tutorial must supply the guides index source'
 (root / 'content/guides/index.smd').write_text(index[1] + '\n')
-(root / 'zigapagos.ziggy').write_text('''Site {
+(root / 'zigapagos.ziggy').write_text('''.site = .simple(.{
  .title = "Tutorial",
  .host_url = "https://example.com",
  .content_dir_path = "content",
  .layouts_dir_path = "layouts",
  .assets_dir_path = "assets",
-}
+})
 ''')
 (root / 'assets/style.css').write_text('body { color: black; }\n')
 for path, title in [('index.smd', 'Home'), ('guides/deploying.smd', 'Deploying'), ('guides/writing.smd', 'Writing')]:

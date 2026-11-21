@@ -71,6 +71,7 @@ const help_menu =
     \\                    with optional byte budgets (read-only)
     \\  doctor [DIR]      Audit a BUILT site tree (default 'public') for
     \\                    root-relative social-meta URLs and dangling links
+    \\  install-schemas   Write Ziggy LSP config and frontmatter schemas
     \\  init              Initialize a Zigapagos site in the current directory
     \\  migrate <dir>     Scan a supported framework and write a migration worklist
     \\  validate          Parse + analyze the site WITHOUT bundling islands,

@@ -9,7 +9,6 @@ const log = std.log.scoped(.variant);
 
 const builtin = @import("builtin");
 const ziggy = @import("ziggy");
-const FrontParser = ziggy.frontmatter.Parser(Page);
 const tracy = @import("tracy");
 const fatal = @import("fatal.zig");
 const worker = @import("worker.zig");
@@ -46,7 +45,7 @@ sectionless_dirs: std.ArrayListUnmanaged(SectionlessDir),
 
 i18n: context.Map.ZiggyMap,
 i18n_src: [:0]const u8,
-i18n_diag: ziggy.Diagnostic,
+i18n_diag: @import("ziggy_diagnostic.zig"),
 i18n_arena: std.heap.ArenaAllocator.State,
 
 const Collision = struct {
@@ -149,11 +148,12 @@ pub const Section = struct {
         index: *Page,
         drafts: bool,
         auto_heading_ids: bool,
+        auto_target_blank: bool,
     ) void {
         const zone = tracy.trace(@src());
         defer zone.end();
 
-        index.parse(io, gpa, worker.cmark, null, variant, drafts, auto_heading_ids);
+        index.parse(io, gpa, worker.cmark, null, variant, drafts, auto_heading_ids, auto_target_blank);
         s.active = index._parse.active;
     }
 
@@ -614,9 +614,9 @@ fn scanContentDirInner(
         dir_names.clearRetainingCapacity();
     }
 
-    var i18n: context.Map.ZiggyMap = .{};
+    var i18n: context.Map.ZiggyMap = .empty;
     var i18n_src: [:0]const u8 = "";
-    var i18n_diag: ziggy.Diagnostic = .{ .path = null };
+    var i18n_diag: @import("ziggy_diagnostic.zig") = .{};
     var i18n_arena = std.heap.ArenaAllocator.init(gpa);
     // Present when in a multilingual site
     if (multilingual) |ml| {
@@ -634,18 +634,10 @@ fn scanContentDirInner(
         ) catch |err| fatal.file(name, err);
 
         i18n_diag.path = name;
-        i18n = ziggy.parseLeaky(
-            context.Map.ZiggyMap,
-            i18n_arena.allocator(),
-            i18n_src,
-            .{ .diagnostic = &i18n_diag },
-        ) catch |err| switch (err) {
-            error.OpenFrontmatter, error.MissingFrontmatter => unreachable,
-            error.Overflow, error.OutOfMemory => return error.OutOfMemory,
-            error.Syntax => .{
-                // We will detect later that an error happened by looking
-                // at the diagnostic struct.
-            },
+        i18n = ziggy.deserializeLeaky(context.Map.ZiggyMap, i18n_arena.allocator(), i18n_src, &i18n_diag.meta, .{}) catch |err| blk: {
+            if (err == error.OutOfMemory) return error.OutOfMemory;
+            i18n_diag.err = err;
+            break :blk .empty;
         };
     }
 

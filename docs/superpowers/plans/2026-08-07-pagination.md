@@ -33,7 +33,7 @@ The `Page` struct IS the ziggy frontmatter schema. Adding the field forces Scrip
 - Modify: `src/context/Page.zig` (fields at :45-59, `Fields` docs at :720-787)
 - Modify: `src/context.zig` (`Value` union at :45-68, `Value.from` at :137-187)
 - Modify: `src/context/doctypes.zig` (`ScriptyParam` at :26-70, `fromType` at :71+)
-- Modify: `frontmatter.ziggy-schema` (repo root; editor-only, ungated)
+- Modify: `src/schemas/page.ziggy-schema` (shipped editor schema; install with `zigapagos install-schemas`)
 
 **Interfaces:**
 - Produces: `Page.pagination: ?Page.Pagination` field; `pub const Page.Pagination = struct { page_size: u32, url_style: UrlStyle = .page_dir }` with `pub const UrlStyle = enum { page_dir, plain_dir, page_html }`. Later tasks read `page.pagination.?.page_size` / `.url_style`.
@@ -151,7 +151,7 @@ and widen the int arm `i64, usize =>` to `i64, usize, u32 =>` (`page_size` is `u
 
 In `src/context/doctypes.zig`: add `Pagination,` to `ScriptyParam` (after `Alternative` at :33) and to `ScriptyParam.Base` (after `Alternative` at :54), and in `fromType` add `context.Page.Pagination => .Pagination,` beside the `Alternative` line (:81). Follow the compiler: `ScriptyParam` has `link`/`name` helpers further down that switch on the tag — add `Pagination` arms wherever the build demands, naming the type `Pagination`.
 
-In `frontmatter.ziggy-schema`: add a `Pagination` struct (`page_size: int`, `url_style: ?bytes`) and reference it from the page struct as an optional field. Also fix the two known drift bugs while here: add the missing `translation_key: ?bytes`, and fix `Alternative` (it declares `title: ?bytes` but the real struct at `Page.zig:568` has required `name: []const u8` and no `title`).
+In `src/schemas/page.ziggy-schema`: add a `Pagination` struct (`page_size: int`, `url_style: ?bytes`) and reference it from the page struct as an optional field. Also fix the two known drift bugs while here: add the missing `translation_key: ?bytes`, and fix `Alternative` (it declares `title: ?bytes` but the real struct at `Page.zig:568` has required `name: []const u8` and no `title`).
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -161,7 +161,7 @@ Run: `zig build test-init` (check `$?` is 0). Then `zig build check` — this co
 
 ```bash
 zig fmt src/context/Page.zig src/context.zig src/context/doctypes.zig
-git add src/context/Page.zig src/context.zig src/context/doctypes.zig frontmatter.ziggy-schema
+git add src/context/Page.zig src/context.zig src/context/doctypes.zig src/schemas/page.ziggy-schema
 git commit -m "Add the pagination frontmatter field and its Scripty value plumbing
 
 The Page struct is the ziggy frontmatter schema, so the opt-in is a
@@ -170,12 +170,12 @@ page with 'missing field'). Every non-underscore Page field must be
 Value.from-able, so the settings struct, its enum, and u32 land in the
 Value union / ScriptyParam in the same change.
 
-Also fixes known drift in the editor-only frontmatter.ziggy-schema
+Also fixes known drift in the shipped src/schemas/page.ziggy-schema
 (missing translation_key; Alternative declared a nonexistent title).
 
 Part of issue #127.
 
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>" -- src/context/Page.zig src/context.zig src/context/doctypes.zig frontmatter.ziggy-schema
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>" -- src/context/Page.zig src/context.zig src/context/doctypes.zig src/schemas/page.ziggy-schema
 ```
 
 ---
@@ -1016,13 +1016,13 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>" -- src/context/Page.zig 
 - [ ] **Step 1: Build the fixture.** `tests/rendering/pagination/zigapagos.ziggy`:
 
 ```ziggy
-Site {
+.site = .simple(.{
     .title = "Pagination Test Website",
     .host_url = "https://example.com",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "content",
-}
+})
 ```
 
 Content tree (dates force the sort order — newest first; use distinct dates):
@@ -1693,7 +1693,7 @@ pub fn emitSectionIndexStub(
     return std.fmt.allocPrint(gpa,
         \\---
         \\.title = "{s}",
-        \\.date = @date("1970-01-01T00:00:00"),
+        \\.date = .date("1970-01-01T00:00:00"),
         \\.layout = "index.shtml",
         \\.draft = false,
         \\.pagination = .{{ .page_size = {d}, .url_style = .plain_dir }},

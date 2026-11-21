@@ -203,7 +203,7 @@ pub fn render(gpa: Allocator, source: Source, source_path: []const u8, src: []co
     const w = &aw.writer;
     w.writeAll("---\n.title = ") catch fatal.oom();
     writeString(w, fields.title orelse fallbackTitle(source_path)) catch fatal.oom();
-    w.writeAll(",\n.date = @date(\"") catch fatal.oom();
+    w.writeAll(",\n.date = .date(\"") catch fatal.oom();
     writeDate(w, fields.date) catch fatal.oom();
     w.writeAll("\"),\n") catch fatal.oom();
     if (fields.description) |description| {
@@ -213,17 +213,17 @@ pub fn render(gpa: Allocator, source: Source, source_path: []const u8, src: []co
     }
     w.writeAll(".layout = \"index.shtml\",\n.draft = ") catch fatal.oom();
     w.writeAll(if (draft) "true" else "false") catch fatal.oom();
-    w.writeAll(",\n.custom = { .migration_source = ") catch fatal.oom();
+    w.writeAll(",\n.custom = { \"migration_source\": ") catch fatal.oom();
     writeString(w, source_path) catch fatal.oom();
-    w.writeAll(", .migration_framework = ") catch fatal.oom();
+    w.writeAll(", \"migration_framework\": ") catch fatal.oom();
     writeString(w, @tagName(source)) catch fatal.oom();
-    w.writeAll(", .migration_review = true") catch fatal.oom();
+    w.writeAll(", \"migration_review\": true") catch fatal.oom();
     if (fields.has_unconverted) {
-        w.writeAll(", .migration_frontmatter = ") catch fatal.oom();
+        w.writeAll(", \"migration_frontmatter\": ") catch fatal.oom();
         writeString(w, fields.raw_frontmatter.?) catch fatal.oom();
     }
     if (invalid_date) {
-        w.writeAll(", .migration_invalid_date = ") catch fatal.oom();
+        w.writeAll(", \"migration_invalid_date\": ") catch fatal.oom();
         writeString(w, fields.date.?) catch fatal.oom();
     }
     w.writeAll(" },\n---\n\n") catch fatal.oom();
@@ -291,10 +291,10 @@ test "YAML frontmatter and Markdown body convert to Ziggy" {
     const got = result.bytes;
     defer gpa.free(got);
     try std.testing.expect(std.mem.indexOf(u8, got, ".title = \"Hello world\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, got, "@date(\"2026-08-15T00:00:00\")") != null);
+    try std.testing.expect(std.mem.indexOf(u8, got, ".date(\"2026-08-15T00:00:00\")") != null);
     try std.testing.expect(std.mem.indexOf(u8, got, ".draft = true") != null);
     try std.testing.expect(result.has_unconverted_frontmatter);
-    try std.testing.expect(std.mem.indexOf(u8, got, ".migration_frontmatter = ") != null);
+    try std.testing.expect(std.mem.indexOf(u8, got, "\"migration_frontmatter\": ") != null);
     try std.testing.expect(std.mem.indexOf(u8, got, "tags: [news]") != null);
     try std.testing.expect(std.mem.endsWith(u8, got, "# Body\n"));
 }
@@ -320,16 +320,16 @@ test "invalid source date falls back to a valid reviewable placeholder" {
     const result = render(gpa, .hugo, "content/bad.md", "---\ndate: 2026-02-30\n---\nBody\n");
     const got = result.bytes;
     defer gpa.free(got);
-    try std.testing.expect(std.mem.indexOf(u8, got, "@date(\"1970-01-01T00:00:00\")") != null);
+    try std.testing.expect(std.mem.indexOf(u8, got, ".date(\"1970-01-01T00:00:00\")") != null);
     try std.testing.expect(result.invalid_date);
-    try std.testing.expect(std.mem.indexOf(u8, got, ".migration_invalid_date = \"2026-02-30\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, got, "\"migration_invalid_date\": \"2026-02-30\"") != null);
 }
 
 test "Hexo slash-form date normalizes to Ziggy ISO form" {
     const gpa = std.testing.allocator;
     const result = render(gpa, .hexo, "source/_posts/hello.md", "---\ndate: 2016/08/19\n---\nBody\n");
     defer gpa.free(result.bytes);
-    try std.testing.expect(std.mem.indexOf(u8, result.bytes, "@date(\"2016-08-19T00:00:00\")") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.bytes, ".date(\"2016-08-19T00:00:00\")") != null);
     try std.testing.expect(!result.invalid_date);
 }
 

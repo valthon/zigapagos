@@ -1,7 +1,7 @@
 ---
 .title = "Page",
-.date = @date("2020-07-06T00:00:00"),
-.author = "Sample Author",
+.date = .date("2020-07-06T00:00:00"),
+.authors = ["Sample Author"],
 .layout = "badextend.shtml",
 .draft = false,
 --- 

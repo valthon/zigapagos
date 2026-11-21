@@ -70,13 +70,13 @@ write_site() {
   ln -s "$REPO/runtime/node_modules" "$dir/node_modules"
   : > "$dir/assets/.keep"
   cat > "$dir/zigapagos.ziggy" <<'EOF'
-Site {
+.site = .simple(.{
     .title = "Content Island Test",
     .host_url = "https://example.com",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "assets",
-}
+})
 EOF
   cat > "$dir/tsconfig.json" <<'EOF'
 {
@@ -128,8 +128,8 @@ EOF
     cat <<'EOF'
 ---
 .title = "Home",
-.date = @date("2020-07-06T00:00:00"),
-.author = "Test",
+.date = .date("2020-07-06T00:00:00"),
+.authors = ["Test"],
 .layout = "plain.shtml",
 .draft = false,
 ---
@@ -154,7 +154,7 @@ release() { # SITE OUT
 SITE_POS="$WORK/pos"; OUT_POS="$WORK/out-pos"
 write_site "$SITE_POS" '```=html
 <z-island src="components/Counter.island.tsx" client:load scripty:props
-          :props='"'"'{ .start = 5 }'"'"'
+          :props='"'"'.{ .start = 5 }'"'"'
           prop-page_title="$page.title" prop-site_title="$site.title"></z-island>
 ```'
 release "$SITE_POS" "$OUT_POS" >"$WORK/pos.log" 2>&1 \
@@ -182,7 +182,7 @@ echo "PASS: a <z-island> inside an =html fence evaluates page/site props, typech
 SITE_LITERAL="$WORK/literal"; OUT_LITERAL="$WORK/out-literal"
 write_site "$SITE_LITERAL" '```=html
 <z-island src="components/Counter.island.tsx" client:load
-          :props='"'"'{ .start = 5, .site_title = "static" }'"'"'
+          :props='"'"'.{ .start = 5, .site_title = "static" }'"'"'
           prop-page_title="$page.title"></z-island>
 ```'
 release "$SITE_LITERAL" "$OUT_LITERAL" >"$WORK/literal.log" 2>&1 \
@@ -195,7 +195,7 @@ echo "PASS: an unmarked content-island prop keeps its dollar-prefixed value lite
 SITE_EXPR="$WORK/expr"; OUT_EXPR="$WORK/out-expr"
 write_site "$SITE_EXPR" '```=html
 <z-island src="components/Counter.island.tsx" client:load scripty:props
-          :props='"'"'{ .start = 5 }'"'"'
+          :props='"'"'.{ .start = 5 }'"'"'
           prop-page_title="$page.not_a_field" prop-site_title="$site.title"></z-island>
 ```'
 set +e
@@ -212,7 +212,7 @@ echo "PASS: an invalid marked Scripty prop fails with page, component, and expre
 # --- (4) negative pin: plain <island> in the SAME fence fails validation ----
 SITE_NEG="$WORK/neg"; OUT_NEG="$WORK/out-neg"
 write_site "$SITE_NEG" '```=html
-<island src="components/Counter.island.tsx" client:load scripty:props :props='"'"'{ .start = 5 }'"'"'
+<island src="components/Counter.island.tsx" client:load scripty:props :props='"'"'.{ .start = 5 }'"'"'
         prop-page_title="$page.title" prop-site_title="$site.title"></island>
 ```'
 set +e
@@ -247,7 +247,7 @@ echo "PASS: the same fixture with the fence removed builds clean (control)"
 SITE_SLOTS="$WORK/slots"; OUT_SLOTS="$WORK/out-slots"
 write_site "$SITE_SLOTS" '```=html
 <z-island src="components/Tabs.island.tsx" client:load
-          :props='"'"'{ .label = "Setup" }'"'"'
+          :props='"'"'.{ .label = "Setup" }'"'"'
           markdown-slot="intro"
           markdown-slot-admin="admin-steps"
           markdown-slot-terminal="terminal-steps"></z-island>
@@ -315,7 +315,7 @@ echo "PASS: named island slots receive native rendered Markdown and highlighted 
 SITE_MISSING="$WORK/missing-slot"; OUT_MISSING="$WORK/out-missing-slot"
 write_site "$SITE_MISSING" '```=html
 <z-island src="components/Tabs.island.tsx" client:load
-          :props='"'"'{ .label = "Setup" }'"'"'
+          :props='"'"'.{ .label = "Setup" }'"'"'
           markdown-slot-admin="does-not-exist"></z-island>
 ```'
 set +e

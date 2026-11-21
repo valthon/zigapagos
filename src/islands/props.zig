@@ -11,8 +11,8 @@ pub const Pair = struct { name: []const u8, value: []const u8 };
 ///
 /// NO_SLOP.md §2.2a contract 4 (`RenderArena`). The escaping return value is a
 /// single buffer, but everything this builds on the way there is not: `ziggy`
-/// exposes ONLY `parseLeaky` (see its `src/root.zig` — there is no non-leaky
-/// parse and therefore no `deinit`), so the untyped `dynamic.Value` tree and the
+/// exposes `deserializeLeaky` (see its `src/root.zig` — this path deliberately uses the leaky
+/// deserializer), so the untyped `dynamic.Value` tree and the
 /// `std.json.Value` tree walked out of it are interlinked graphs with no owner
 /// (1). Freeing them would mean re-walking two recursive trees to release nodes
 /// that are dead the moment the JSON is stringified — pointer-chasing for no
@@ -20,7 +20,8 @@ pub const Pair = struct { name: []const u8, value: []const u8 };
 pub fn resolveToJson(arena: RenderArena, props_src: []const u8, dyn: []const Pair) ![]u8 {
     const src = if (props_src.len == 0) "{}" else props_src;
     const code = try arena.a.dupeSentinel(u8, src, 0);
-    const dynamic = try ziggy.parseLeaky(ziggy.dynamic.Value, arena.a, code, .{});
+    var meta: ziggy.Deserializer.Meta = .init;
+    const dynamic = try ziggy.deserializeLeaky(ziggy.Dynamic, arena.a, code, &meta, .{});
     var root = try dynamicToJson(arena, dynamic);
     // `:props` must be a struct/map at the top level.
     if (root != .object) return error.PropsNotAnObject;
@@ -37,7 +38,7 @@ pub fn resolveToJson(arena: RenderArena, props_src: []const u8, dyn: []const Pai
 /// (`RenderArena`): the returned `std.json.Value` is the interlinked tree
 /// `resolveToJson`'s justification describes — object maps and arrays with no
 /// `deinit`, reclaimed with the render pass.
-fn dynamicToJson(arena: RenderArena, v: ziggy.dynamic.Value) !std.json.Value {
+fn dynamicToJson(arena: RenderArena, v: ziggy.Dynamic) !std.json.Value {
     return switch (v) {
         .kv => |map| blk: {
             var obj: std.json.ObjectMap = .empty;
@@ -57,8 +58,8 @@ fn dynamicToJson(arena: RenderArena, v: ziggy.dynamic.Value) !std.json.Value {
         .float => |f| .{ .float = f },
         .bool => |b| .{ .bool = b },
         .null => .null,
-        // A Ziggy tag (@date("..."), etc.) has no JSON analogue — fail loudly.
-        .tag => error.UnsupportedPropTag,
+        // A Ziggy tag (.date("..."), etc.) has no JSON analogue — fail loudly.
+        .@"union", .@"enum" => error.UnsupportedPropTag,
     };
 }
 
@@ -121,7 +122,7 @@ test "resolveToJson: scalar fields keep source order and JSON types" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = RenderArena.from(&arena_state);
-    const json = try resolveToJson(arena, "{ .start = 5, .label = \"hi\", .open = true }", &.{});
+    const json = try resolveToJson(arena, ".{ .start = 5, .label = \"hi\", .open = true }", &.{});
     try std.testing.expectEqualStrings("{\"start\":5,\"label\":\"hi\",\"open\":true}", json);
 }
 
@@ -129,7 +130,7 @@ test "resolveToJson: nested array-of-structs" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = RenderArena.from(&arena_state);
-    const json = try resolveToJson(arena, "{ .items = [ { .q = \"Q1\", .a = \"A1\" }, { .q = \"Q2\", .a = \"A2\" } ] }", &.{});
+    const json = try resolveToJson(arena, ".{ .items = [ .{ .q = \"Q1\", .a = \"A1\" }, .{ .q = \"Q2\", .a = \"A2\" } ] }", &.{});
     try std.testing.expectEqualStrings("{\"items\":[{\"q\":\"Q1\",\"a\":\"A1\"},{\"q\":\"Q2\",\"a\":\"A2\"}]}", json);
 }
 
@@ -140,7 +141,7 @@ test "resolveToJson: prop-NAME override, scalar coerced via JSON-validity" {
     defer arena_state.deinit();
     const arena = RenderArena.from(&arena_state);
     // "9" is valid JSON (number); "from-page" is not (-> string). Override wins.
-    const json = try resolveToJson(arena, "{ .start = 1, .label = \"base\" }", &.{
+    const json = try resolveToJson(arena, ".{ .start = 1, .label = \"base\" }", &.{
         .{ .name = "start", .value = "9" },
         .{ .name = "label", .value = "from-page" },
     });
@@ -161,7 +162,7 @@ test "resolveToJson: escapes </script> breakout in a string value" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = RenderArena.from(&arena_state);
-    const json = try resolveToJson(arena, "{ .label = \"</script><x>&\" }", &.{});
+    const json = try resolveToJson(arena, ".{ .label = \"</script><x>&\" }", &.{});
     try std.testing.expect(std.mem.indexOf(u8, json, "</script>") == null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\\u003C") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\\u003E") != null);
@@ -172,7 +173,7 @@ test "resolveToJson: malformed :props is a loud error" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = RenderArena.from(&arena_state);
-    try std.testing.expectError(error.Syntax, resolveToJson(arena, "{ .x = ", &.{}));
+    try std.testing.expectError(error.UnexpectedToken, resolveToJson(arena, ".{ .x = ", &.{}));
 }
 
 // --- Task 1 review: additional error-path tests ---
@@ -189,14 +190,14 @@ test "resolveToJson: a Ziggy tag value is a loud error (no JSON analogue)" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = RenderArena.from(&arena_state);
-    // @date(...) is a Ziggy tag; dynamicToJson must reject it, not emit garbage.
-    try std.testing.expectError(error.UnsupportedPropTag, resolveToJson(arena, "{ .at = @date(\"2020-01-01\") }", &.{}));
+    // .date(...) is a Ziggy tag; dynamicToJson must reject it, not emit garbage.
+    try std.testing.expectError(error.UnsupportedPropTag, resolveToJson(arena, ".{ .at = .date(\"2020-01-01\") }", &.{}));
 }
 
 test "resolveToJson: float field round-trips" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = RenderArena.from(&arena_state);
-    const json = try resolveToJson(arena, "{ .ratio = 1.5 }", &.{});
+    const json = try resolveToJson(arena, ".{ .ratio = 1.5 }", &.{});
     try std.testing.expectEqualStrings("{\"ratio\":1.5}", json);
 }

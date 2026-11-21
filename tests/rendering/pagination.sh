@@ -115,7 +115,7 @@ rm "$SITE/content/news/n2.smd" "$SITE/content/news/n3.smd"
 cat >"$SITE/content/news/2.smd" <<'EOF'
 ---
 .title = "Real News Two",
-.date = @date("2024-04-01T00:00:00"),
+.date = .date("2024-04-01T00:00:00"),
 .layout = "post.shtml",
 ---
 # Real News Two

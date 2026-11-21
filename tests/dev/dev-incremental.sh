@@ -66,13 +66,13 @@ mkdir -p "$SRC/assets"
 cp -r "$REPO/tests/rendering/simple/content" "$REPO/tests/rendering/simple/layouts" "$SRC/"
 : > "$SRC/assets/.keep"
 cat > "$SRC/zigapagos.ziggy" <<'EOF'
-Site {
+.site = .simple(.{
     .title = "Incremental Dev Test",
     .host_url = "https://example.com",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "assets",
-}
+})
 EOF
 
 REBUILD=("$ZIGAPAGOS" release "--output=$OUT" --force)

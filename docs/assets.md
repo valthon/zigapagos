@@ -142,14 +142,14 @@ returning visitor last week's stylesheet against today's HTML.
 Turn on fingerprinting (issue #53) and the content hash goes into the filename:
 
 ```ziggy
-Site {
+.site = .simple(.{
     .title = "…",
     .host_url = "https://example.com",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "assets",
     .asset_fingerprint = true,
-}
+})
 ```
 
 ```

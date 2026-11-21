@@ -418,7 +418,12 @@ fn printReport(
     try w.print("frontmatter (after schema defaults):\n", .{});
     try w.print("  .title        = \"{s}\"\n", .{page.title});
     try w.print("  .description  = \"{s}\"\n", .{page.description});
-    try w.print("  .author       = \"{s}\"\n", .{page.author});
+    try w.writeAll("  .authors      = [");
+    for (page.authors, 0..) |author, idx| {
+        if (idx > 0) try w.writeAll(", ");
+        try w.print("\"{f}\"", .{std.zig.fmtString(author)});
+    }
+    try w.writeAll("]\n");
     try w.print("  .date         = ", .{});
     page.date._inst.time().gofmt(w, "2006-01-02T15:04:05Z07:00") catch try w.print("<unformattable>", .{});
     try w.print("\n", .{});

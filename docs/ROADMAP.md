@@ -241,3 +241,5 @@ Policy:
 
 Each item lands the established way: one feature per branch → unit test + real-
 browser e2e → code review → fast-forward merge to main.
+
+- [x] Ziggy 0.3.0 config/frontmatter, site custom data, authors lists, shipped LSP schemas and an idempotent site converter. See [upgrade steps](migration/ziggy-0.3.md).
