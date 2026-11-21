@@ -19,13 +19,36 @@
 |                                               |
 *-----------------------------------------------*
 
-content/code.smd:18:3: [erroneous_end_tag] 
+content/code.smd:18:3: [html] error: erroneous end tag
 |    </span> wrong!
 |      ^^^^
 
 content/date.smd:3:9: error: unable to parse date: InvalidISO8601
 |   .date = .date("2020-7-6T00:00:00"),
 |           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+content/ids.smd:16:1: error: duplicate id 'arst'
+|    [arst2]($text.id("arst"))
+|    ^^^^^^^^^^^^^^^^^^^^^^^^^
+| -- note: first definition was on line 15 col 1:
+|    [arst1]($text.id("arst"))
+|    ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+content/ids.smd:9:1: error: unknown ref
+|    [arst](#apple)
+|    ^^^^^^^^^^^^^^
+
+content/ids.smd:10:1: error: unknown ref
+|    [arst]($link.ref("banana"))
+|    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+content/ids.smd:11:1: error: unknown ref
+|    [arst]($link.ref("orange"))
+|    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+content/ids.smd:12:1: error: unknown ref
+|    [arst]($link.ref("melon"))
+|    ^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 content/parse.smd:9:1: error: markdown inline html syntax is forbidden
 |    <b>wrong</b>
@@ -94,6 +117,29 @@ content/parse.smd:39:1: [scripty] empty component in path
 |    []($link.page('a//foo/..')) //wrong 9/9
 |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+content/parse.smd:42:4: error: missing section id
+|    ## []($section)
+|       ^^^^^^^^^^^^
+| -- note: all heading sections must have an id
+
+content/parse.smd:45:3: [scripty] sections must be top level elements or be embedded in headings
+|    > []($section.id('foo'))
+|      ^^^^^^^^^^^^^^^^^^^^^^
+
+content/parse.smd:50:1: error: vanilla alt text in scripted link syntax
+|    []($link.page("foo") "arst")
+|    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+| -- note: use `.alt()` to provide alt text
+
+content/parse.smd:53:1: error: scripty expression in image syntax
+|    ![]($link)
+|    ^^^^^^^^^^
+| -- note: scripty expressions go in link syntax, remove the '!'
+
+content/parse.smd:56:1: error: link syntax without link or scripty expression
+|    [arst]()
+|    ^^^^^^^^
+
 content/index.smd:17:1: error: missing site asset
 |    []($image.siteAsset('doesntexist.jpg')) //wrong
 |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -153,6 +199,7 @@ content/other.smd:25:1: error: this page has no subpages (page is not a section)
 .pages = [
     content/parse.smd
     content/other.smd
+    content/ids.smd
     content/code.smd
     content/date.smd
 ],

@@ -1407,7 +1407,13 @@ pub fn run(
                     idx, s.parent_section, parent.active,
                 });
 
-                if (!parent.active) s.active = false;
+                if (!parent.active) {
+                    s.active = false;
+                    // Section indexes were parsed concurrently before ancestor
+                    // inactivity was known. Keep their page flags consistent so
+                    // direct lookups and all active-page indexes exclude them.
+                    v.pages.items[s.index]._parse.active = false;
+                }
                 if (!s.active) continue;
 
                 pages_to_parse += s.pages.items.len;
@@ -1492,6 +1498,7 @@ pub fn run(
     // under .plain_dir) aborts the build like any other collision.
     for (build.variants) |*v| {
         for (v.sections.items[1..]) |*s| {
+            if (!s.active) continue;
             const index_page = &v.pages.items[s.index];
             if (!index_page._parse.active) continue;
             if (index_page._parse.status != .parsed) continue;
@@ -1559,6 +1566,8 @@ pub fn run(
                 // First we need to check the frontmatter as the ast will be valid
                 // only if the frontmatter has been correctly identifed as well.
                 switch (p._parse.status) {
+                    .unparsed => unreachable, // scan placeholders are inactive
+
                     .empty => {
                         // Page is empty, print warning and skip it
                         if (diag.format == .json) {
@@ -4338,193 +4347,34 @@ fn printSuperMdErrorsInner(
         defer gpa.free(path);
         const rendered = try gpa.print("{f}\n", .{err.fmt(fm_lines, md_src, path)});
         defer gpa.free(rendered);
-        try emitSuperMdDiagnostic(gpa, build, path, err.heading.range(), fm_lines, rendered);
+        var range = err.heading.range();
+        const preview = diag.MarkdownPreview.init(md_src, range, true);
+        range.start = .{ .row = @intCast(preview.row), .col = @intCast(preview.col) };
+        try emitSuperMdDiagnostic(gpa, build, path, range, fm_lines, rendered);
     }
 
+    const path = try gpa.print("{f}", .{
+        file.fmt(&v.string_table, &v.path_table, v.content_dir_path, ""),
+    });
+    defer gpa.free(path);
     for (ast.errors) |err| {
-        switch (err.kind) {
-            .heading_skip, .inline_html, .invalid_ref, .heading_link_sibling => {
-                // Use SuperMD's own wording and source previews for its dialect
-                // rules, including notes about the previous heading/inner link.
-                const path = try gpa.print("{f}", .{
-                    file.fmt(&v.string_table, &v.path_table, v.content_dir_path, ""),
-                });
-                defer gpa.free(path);
-                const rendered = try gpa.print("{f}\n", .{
-                    err.fmt(@intCast(fm_lines), md_src, path),
-                });
-                defer gpa.free(rendered);
-                try emitSuperMdDiagnostic(gpa, build, path, err.main, fm_lines, rendered);
-                continue;
-            },
-            else => {},
-        }
-        const range = err.main;
-        const line = blk: {
-            var it = std.mem.splitScalar(u8, md_src, '\n');
-            for (1..range.start.row) |_| _ = it.next();
-            break :blk it.next().?;
+        const MarkdownDiagnostic = @import("markdown_diagnostic.zig");
+        const formatter: MarkdownDiagnostic = .{
+            .err = err,
+            .src = md_src,
+            .path = path,
+            .fm_lines = fm_lines,
+            .html_src = MarkdownDiagnostic.htmlSource(ast, err),
         };
-
-        var buf: [1024]u8 = undefined;
-        const excerpt = diag.markdownExcerpt(
-            &buf,
-            line,
-            range.start.col,
-            if (range.start.row == range.end.row) range.end.col else null,
-            err.kind == .scripty,
-        );
-        const line_trim = excerpt.line;
-        const highlight = excerpt.highlight;
-
-        const msg = switch (err.kind) {
-            .scripty => |s| s.err,
-            else => "",
-        };
-
-        // std.debug.print("fm: {}\nerr: {s}\nrange start: {any}\nrange end: {any}", .{
-        //     fm_offset,
-        //     @tagName(err.kind),
-        //     err.main.start,
-        //     err.main.end,
-        // });
-
-        // Saturating subtraction because of a bug related to html comments
-        // in markdown.
-        // const lines = range.end.row -| range.start.row;
-        // const lines_fmt = if (lines == 0) "" else try arena.print(
-        //     "(+{} lines)",
-        //     .{lines},
-        // );
-
-        const tag_name = switch (err.kind) {
-            .html => |h| switch (h.tag) {
-                inline else => |_, t| @tagName(t),
-            },
-            else => @tagName(err.kind),
-        };
-        // issue #32: SuperMD's `pathValidationError` rejects an empty path with
-        // the bare message "path is empty". That fires on `$link.page('')`, which
-        // looks like it should work because `$site.page('')` does (base.shtml's
-        // nav uses it for the home link) -- but the right builtin for "link to
-        // the site's home page" is `$link.site()`, which supermd's own `page`
-        // builtin DESCRIPTION already names, just never in the error itself.
-        // supermd is an external dependency pinned in build.zig.zon (fork policy:
-        // upstream syncs at release tags only), so this hint can't be added at
-        // the source -- this printing path is the legitimate in-repo enrichment
-        // point instead. Matching the exact upstream string is deliberate and
-        // degrades gracefully: if a release-tag sync rewords "path is empty" the
-        // hint just stops firing, and tests/rendering/empty-page-path-hint.sh
-        // (which asserts on it) goes red at sync time rather than silently
-        // drifting. The `.page(` substring check on the source line is what
-        // keeps this off `$image.asset('')` and friends, where "link to the site
-        // homepage" would be actively wrong -- `sub('')`/`sibling('')` are
-        // deliberately NOT hinted for the same reason (see issue #32 scope cut).
-        const empty_page_path_hint = err.kind == .scripty and
-            std.mem.eql(u8, msg, "path is empty") and
-            std.mem.indexOf(u8, line_trim, ".page(") != null;
-
-        // The JSON `help` value mirrors whichever note text mode would have
-        // printed as the second `std.debug.print` block below -- computed
-        // once here so both branches (and the `.memory` block further down)
-        // read from a single source instead of re-deriving it.
-        var help_buf: [256]u8 = undefined;
-        const help_text: ?[]const u8 = switch (err.kind) {
-            .duplicate_id => |dup| diag.render(&help_buf, "original was defined on line {}", .{fm_lines + dup.original.range().start.row}),
-            else => if (empty_page_path_hint)
-                "to link to the site homepage, use $link.site()"
-            else
-                null,
-        };
-
-        if (diag.format == .json) {
-            var path_buf: [std.fs.max_path_bytes]u8 = undefined;
-            var msg_buf: [1024]u8 = undefined;
-            diag.emit(.{
-                .code = .ZP_SUPERMD,
-                .severity = .@"error",
-                .file = diag.render(&path_buf, "{f}", .{file.fmt(&v.string_table, &v.path_table, v.content_dir_path, "")}),
-                .line = fm_lines + range.start.row,
-                .col = excerpt.col,
-                .message = diag.render(&msg_buf, "[{s}] {s}", .{ tag_name, msg }),
-                .help = help_text,
-            });
-        } else {
-            std.debug.print(
-                \\{f}:{}:{}: [{s}] {s}
-                \\|    {s}
-                \\|    {s}
-                \\
-            , .{
-                file.fmt(&v.string_table, &v.path_table, v.content_dir_path, ""),
-                fm_lines + range.start.row,
-                excerpt.col,
-                tag_name,
-                msg,
-                line_trim,
-                highlight,
-            });
-
-            switch (err.kind) {
-                .duplicate_id => |dup| {
-                    std.debug.print(
-                        \\|   note: original was defined on line {}
-                        \\
-                        \\
-                    , .{fm_lines + dup.original.range().start.row});
-                },
-                else => if (empty_page_path_hint) {
-                    std.debug.print(
-                        \\|   note: to link to the site homepage, use $link.site()
-                        \\
-                        \\
-                    , .{});
-                } else {
-                    std.debug.print("\n", .{});
-                },
-            }
-        }
-
-        if (build.mode == .memory) {
-            // Unlike the `.duplicate_id` note above (a pre-existing gap this
-            // change isn't retrofitting), the empty-page-path hint is added to
-            // BOTH output paths, so a memory build's error list carries it too.
-            //
-            // `note_segment` is one of two comptime string literals -- the hint
-            // text is fixed (unlike NoteLine's dynamic PageAnalysisError notes
-            // above), so a plain conditional is enough to collapse this to ONE
-            // allocPrint instead of branching into two near-identical ones. It
-            // carries its own trailing "\n" so the format string's final blank
-            // line reproduces the same "note line + blank separator" shape either
-            // way (see the analogous NoteLine reasoning above).
-            const note_segment: []const u8 = if (empty_page_path_hint)
-                "|   note: to link to the site homepage, use $link.site()\n"
-            else
-                "";
-            // Contract 1 (self-freeing, NO_SLOP §2.2a): `memory_msg` is the only
-            // allocation and it escapes as-is into build.mode.memory.errors, which
-            // owns it from here on.
-            const memory_msg = try gpa.print(
-                \\{f}:{}:{}: [{s}] {s}
-                \\|    {s}
-                \\|    {s}
-                \\{s}
-                \\
-            , .{
-                file.fmt(&v.string_table, &v.path_table, v.content_dir_path, ""),
-                fm_lines + range.start.row,
-                excerpt.col,
-                tag_name,
-                msg,
-                line_trim,
-                highlight,
-                note_segment,
-            });
-            try build.mode.memory.errors.append(gpa, .{
-                .ref = "",
-                .msg = memory_msg,
-            });
-        }
+        const homepage_hint = err.kind == .scripty and
+            std.mem.eql(u8, err.kind.scripty.err, "path is empty") and
+            std.mem.indexOf(u8, formatter.preview().code, ".page(") != null;
+        const rendered = try gpa.print("{f}{s}\n", .{
+            formatter,
+            if (homepage_hint) "|   note: to link to the site homepage, use $link.site()\n" else "",
+        });
+        defer gpa.free(rendered);
+        try emitSuperMdDiagnostic(gpa, build, path, formatter.range(), fm_lines, rendered);
     }
 }
 
@@ -4688,21 +4538,24 @@ fn emitSuperMdDiagnostic(
     rendered: []const u8,
 ) Allocator.Error!void {
     if (diag.format == .json) {
-        // The formatter's first line is path:line:col: error: message.
+        // The first line starts with path:line:col:, followed by an optional
+        // kind tag and error marker. The remaining lines retain related spans.
         // Keep JSON's structured location and upstream message separate.
-        const prefix = try gpa.print("{s}:{}:{}: error: ", .{
+        const prefix = try gpa.print("{s}:{}:{}: ", .{
             path, fm_lines + range.start.row, range.start.col,
         });
         defer gpa.free(prefix);
         const message = rendered[prefix.len..];
         const end = std.mem.indexOfScalar(u8, message, '\n') orelse message.len;
+        const headline = message[0..end];
         diag.emit(.{
             .code = .ZP_SUPERMD,
             .severity = .@"error",
             .file = path,
             .line = fm_lines + range.start.row,
             .col = range.start.col,
-            .message = message[0..end],
+            .message = if (std.mem.startsWith(u8, headline, "error: ")) headline["error: ".len..] else headline,
+            .help = if (end < message.len) std.mem.trim(u8, message[end..], "\n") else null,
         });
     } else {
         std.debug.print("{s}", .{rendered});
@@ -4712,4 +4565,35 @@ fn emitSuperMdDiagnostic(
         errdefer gpa.free(owned);
         try build.mode.memory.errors.append(gpa, .{ .ref = "", .msg = owned });
     }
+}
+
+test "validate: duplicate ID memory diagnostic includes the original definition" {
+    const gpa = std.testing.allocator;
+    const src = "[original]($text.id(\"same\"))\n\n[duplicate]($text.id(\"same\"))\n";
+    supermd.c.cmark_gfm_core_extensions_ensure_registered();
+    const cmark = supermd.Ast.CmarkParser.default();
+    defer supermd.c.cmark_parser_free(cmark.parser);
+    const ast = try supermd.Ast.init(gpa, src, cmark, .{});
+    defer ast.deinit(gpa);
+    var st: StringTable = .empty;
+    defer st.deinit(gpa);
+    _ = try st.intern(gpa, "");
+    var pt: PathTable = .empty;
+    defer pt.deinit(gpa);
+    const file = try pt.internPathWithName(gpa, &st, null, "index.smd");
+    var variant: Variant = undefined;
+    variant.string_table = st;
+    variant.path_table = pt;
+    variant.content_dir_path = "content";
+    var build: Build = undefined;
+    build.mode = .{ .memory = .{} };
+    defer {
+        for (build.mode.memory.errors.items) |err| gpa.free(err.msg);
+        build.mode.memory.errors.deinit(gpa);
+    }
+    try printSuperMdErrorsInner(gpa, gpa, &build, &variant, file, &ast, &.{}, src, 4);
+    try std.testing.expectEqual(1, build.mode.memory.errors.items.len);
+    const message = build.mode.memory.errors.items[0].msg;
+    try std.testing.expect(std.mem.indexOf(u8, message, "first definition was on line 5 col 1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, message, "[original]") != null);
 }

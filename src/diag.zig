@@ -64,6 +64,45 @@ pub fn markdownExcerpt(
     return .{ .line = trimmed, .col = col, .highlight = buf[0 .. spaces + count] };
 }
 
+/// Caller-buffer preview: borrows the source and bounds untrusted parser
+/// ranges, including container-relative columns and missing/truncated lines.
+/// Generic over the parser's range so the core diagnostic module needs no
+/// Markdown dependency. The returned preview borrows src and allocates nothing.
+pub const MarkdownPreview = struct {
+    row: usize,
+    col: usize,
+    code: []const u8,
+    spaces: usize,
+    carets: usize,
+
+    pub fn init(src: []const u8, range: anytype, inclusive_end: bool) MarkdownPreview {
+        var lines = std.mem.splitScalar(u8, src, '\n');
+        var line = lines.next().?; // Even an empty source contains one line.
+        var row: usize = 1;
+        while (row < @max(1, range.start.row)) {
+            line = lines.next() orelse break;
+            row += 1;
+        }
+        const left = std.mem.trimStart(u8, line, &std.ascii.whitespace);
+        const code = std.mem.trimEnd(u8, left, &std.ascii.whitespace);
+        const indent = line.len - left.len;
+        const col = std.math.clamp(@as(usize, range.start.col), @min(indent + 1, @max(line.len, 1)), @max(line.len, 1));
+        const start = @min(col - 1 -| indent, code.len -| 1);
+        const end = if (range.start.row == range.end.row)
+            @min((@as(usize, range.end.col) -| 1 -| indent) +| @intFromBool(inclusive_end), code.len)
+        else
+            code.len;
+        const spaces: usize = @min(start, 1023);
+        return .{ .row = row, .col = col, .code = code, .spaces = spaces, .carets = @min(@max(end -| start, 1), 1024 - spaces) };
+    }
+
+    pub fn format(p: MarkdownPreview, w: *Writer) Writer.Error!void {
+        try w.print("|    {s}\n|    ", .{p.code});
+        try w.splatByteAll(' ', p.spaces);
+        try w.splatByteAll('^', p.carets);
+    }
+};
+
 test "diag: markdown excerpts bound malformed foreign columns" {
     var buf: [32]u8 = undefined;
     const zero = markdownExcerpt(&buf, "http://e:x", 0, 10, true);

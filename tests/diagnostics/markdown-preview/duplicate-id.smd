@@ -1,0 +1,7 @@
+---
+.title = "Bounds",
+.layout = "index.shtml",
+---
+- [first]($text.id("same"))
+
+  [again]($text.id("same"))

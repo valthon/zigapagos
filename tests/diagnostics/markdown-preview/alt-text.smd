@@ -1,0 +1,6 @@
+---
+.title = "Bounds",
+.layout = "index.shtml",
+---
+- [label
+  other]($link.site() "alt")

@@ -214,10 +214,29 @@ Policy:
 
 - **Sync at upstream release tags only** — never track upstream main/nightly.
   Each sync is a deliberate merge with its own branch, test pass, and review.
-- **The Zig 0.17.1 port landed independently of an upstream tag sync.** Only
-  compiler and dependency API changes required by the port were adopted. The
-  next upstream release-tag sync is still pending; new config APIs, static
-  asset directories, `$site.index` and `forbid_subsections` are separate work.
+- **Synced through upstream v0.14.1** (`6cacc90b`), by hand: every non-merge
+  upstream commit from the fork point (v0.11.2) to that tag was read against
+  this tree and its behaviour ported into our code, not merged as a patch. The
+  next sync starts from v0.14.1.
+- **Deliberately not adopted from that range**, so the next sync does not
+  re-litigate them:
+  - the site-versus-binary version check and its config field — the config's
+    top level is `.site = …` alone;
+  - `headings_h2` — the heading-baseline rule in `src/context/Page.zig` covers
+    it;
+  - upstream's `false` default for `auto_target_blank` — ours stays `true`,
+    with `.supermd.auto_target_blank` as the opt-out;
+  - the removal of `$site.pages('a', 'b', …)` — nothing else loops over an
+    explicit list of pages;
+  - FreeBSD and NetBSD release targets and the NetBSD file watcher — no
+    maintainer runs either platform;
+  - everything belonging to subsystems the fork replaced: upstream's dev
+    server, its consumer `build.zig` API and its packaging.
+- **Dependency defects were worked around at our call sites** rather than
+  patched in `zig-pkg/`: the Markdown preview underflow for container-relative
+  HTML columns (`src/markdown_diagnostic.zig`), and dictionary keys that the
+  dynamic Ziggy values no longer unescape (`src/ziggy_dynamic.zig`). Drop the
+  workarounds when the dependencies fix them.
 - **Fix the file that is wrong**, inherited or fork-authored; do not introduce
   a wrapper or generator just to hide a diff from an inherited file.
 
@@ -231,7 +250,10 @@ Policy:
   daemon/control plane remains unavailable on Windows.
 - **arm64 is supported** on Linux and macOS with native release archives, npm
   platform packages, and the shell installer.
-- **FreeBSD is not currently a supported build target.** There is no release archive, and `dev` still selects
+- **FreeBSD and NetBSD are not supported targets, by decision** (2026-11-21):
+  upstream ships release archives for both and a NetBSD watcher, and this fork
+  does not take them until someone who runs those systems needs them.
+  There is no release archive, and `dev` still selects
   the inotify-based Linux watcher instead of a native kqueue backend. FreeBSD
   15 added inotify, but that does not close the release or target-selection gaps.
 

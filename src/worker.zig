@@ -947,7 +947,28 @@ fn analyzeContent(
                                 },
                             });
                             continue :outer;
-                        } else variant.pages.items[hint.id];
+                        } else &variant.pages.items[hint.id];
+
+                        // Scan-time URLs also name empty pages and suppressed
+                        // descendants. Treat these as missing before reading
+                        // frontmatter or the (possibly uninitialized) AST.
+                        if (!other_page._parse.active or other_page._parse.status != .parsed) {
+                            if (b.allow_missing_pages) {
+                                const ref = p.ref;
+                                const url = try missingPageUrl(page_arena, b, variant_id, .{ .resolved = path }, ref);
+                                try errors.append(page_arena, .{
+                                    .node = n,
+                                    .kind = .{ .missing_page_tolerated = .{ .ref = ref, .url = url } },
+                                });
+                                val.src = .{ .url = url };
+                            } else {
+                                try errors.append(page_arena, .{
+                                    .node = n,
+                                    .kind = .{ .unknown_page = .{ .ref = p.ref } },
+                                });
+                            }
+                            continue :outer;
+                        }
 
                         p.resolved = .{
                             .page_id = hint.id,

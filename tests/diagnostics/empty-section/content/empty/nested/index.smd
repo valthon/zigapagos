@@ -1,0 +1,9 @@
+---
+.title = "Hidden section",
+.layout = "leaf.shtml",
+.date = .unix(500),
+.authors = ["hidden-author"],
+.tags = ["hidden-tag"],
+.pagination = .{ .page_size = 1 },
+---
+Body.

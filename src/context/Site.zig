@@ -370,7 +370,19 @@ pub const Builtins = struct {
                 ),
             }
 
-            return .{ .page = &variant.pages.items[hint.id] };
+            const target = &variant.pages.items[hint.id];
+            // A parsed draft root remains addressable as a section container.
+            // Other inactive targets have no published page to hand templates.
+            const container = target._scan.subsection_id;
+            if (target._parse.status != .parsed or
+                (!target._parse.active and (container == 0 or !variant.sections.items[container].active)))
+            {
+                if (ctx._meta.build.allow_missing_pages) {
+                    return context.MissingPage.tolerate(ctx, site, try gpa.dupe(u8, ref));
+                }
+                return Value.errFmt(gpa, "missing page '{s}' (inactive)", .{ref});
+            }
+            return .{ .page = target };
         }
     };
 
@@ -401,17 +413,26 @@ pub const Builtins = struct {
             const v = &ctx._meta.build.variants[site._meta.variant_id];
 
             if (args.len == 0) {
-                const page_list = try gpa.alloc(Value, v.pages.items.len);
+                var count: usize = 0;
+                for (v.pages.items) |p| {
+                    if (p._parse.active and p._parse.status == .parsed) count += 1;
+                }
+                const page_list = try gpa.alloc(Value, count);
                 errdefer gpa.free(page_list);
 
                 var idx: usize = 0;
                 if (v.root_index) |rid| {
-                    page_list[0] = .{ .page = &v.pages.items[rid] };
-                    idx += 1;
+                    const p = &v.pages.items[rid];
+                    if (p._parse.active and p._parse.status == .parsed) {
+                        page_list[idx] = .{ .page = p };
+                        idx += 1;
+                    }
                 }
                 for (v.sections.items[1..]) |*s| {
                     for (s.pages.items) |pid| {
-                        page_list[idx] = .{ .page = &v.pages.items[pid] };
+                        const p = &v.pages.items[pid];
+                        if (!p._parse.active or p._parse.status != .parsed) continue;
+                        page_list[idx] = .{ .page = p };
                         idx += 1;
                     }
                 }
@@ -454,9 +475,9 @@ pub const Builtins = struct {
                 }
 
                 p.* = .{ .page = &v.pages.items[hint.id] };
-                if (!p.page._parse.active) return Value.errFmt(
+                if (!p.page._parse.active or p.page._parse.status != .parsed) return Value.errFmt(
                     gpa,
-                    "page '{s}' is a draft",
+                    "page '{s}' is inactive",
                     .{ref},
                 );
             }

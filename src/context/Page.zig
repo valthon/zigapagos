@@ -82,7 +82,7 @@ _scan: struct {
 } = undefined,
 
 /// Fields populated after parsing the page.
-/// All top-level fields are also available if status == success.
+/// Top-level fields have scan defaults until frontmatter parsing succeeds.
 _parse: struct {
     active: bool,
 
@@ -90,6 +90,8 @@ _parse: struct {
     arena: std.heap.ArenaAllocator.State,
     full_src: [:0]const u8,
     status: union(enum) {
+        /// Scan placeholder, including descendants of inactive sections.
+        unparsed,
         /// File is empty
         empty,
         /// Frontmatter framing error, 'fm' will contain info
@@ -146,6 +148,26 @@ _pagination: ?struct {
     total_pages: u32,
     active_count: u32,
 } = null,
+
+/// Caller-buffer constructor. Scan allocations must install the complete
+/// placeholder before any parse, sort, index, pagination or diagnostic pass.
+/// Required frontmatter fields stay required by Ziggy; only the scan placeholder
+/// supplies empty title/layout values. The AST requires status == .parsed.
+pub fn initScanned(scan: @FieldType(Page, "_scan")) Page {
+    return .{
+        .title = "",
+        .layout = "",
+        ._scan = scan,
+        ._debug = if (builtin.optimize == .debug) .{ .stage = .init(.scanned) } else {},
+        ._parse = .{
+            .active = false,
+            .arena = .{},
+            .full_src = "",
+            .status = .unparsed,
+            .ast = undefined,
+        },
+    };
+}
 
 pub const PageAnalysisError = struct {
     node: supermd.Node,
@@ -1235,8 +1257,12 @@ pub const Builtins = struct {
             );
 
             if (p.translation_key) |tk| {
-                const list = ctx._meta.build.tks.get(tk).?;
-                const other_page = list[other_variant_id] orelse return Value.errFmt(
+                // A parsed draft root is addressable as a container, but its
+                // key has no index entry unless a published counterpart exists.
+                const other_page = (if (ctx._meta.build.tks.get(tk)) |list|
+                    list[other_variant_id]
+                else
+                    null) orelse return Value.errFmt(
                     gpa,
                     "no page with translation key '{s}' in locale '{s}'",
                     .{ tk, code },
@@ -1279,7 +1305,7 @@ pub const Builtins = struct {
                 .{ page_url, code },
             );
 
-            if (hint.kind != .page_main) return Value.errFmt(
+            if (hint.kind != .page_main or !vv.pages.items[hint.id]._parse.active or vv.pages.items[hint.id]._parse.status != .parsed) return Value.errFmt(
                 gpa,
                 "no page '{s}' in locale '{s}'",
                 .{ page_url, code },
@@ -1334,7 +1360,7 @@ pub const Builtins = struct {
             );
 
             if (p.translation_key) |tk| {
-                const list = ctx._meta.build.tks.get(tk).?;
+                const list = ctx._meta.build.tks.get(tk) orelse return Optional.Null;
                 const other_page = list[other_variant_id] orelse return Optional.Null;
                 return Optional.init(gpa, other_page);
             }
@@ -1364,7 +1390,7 @@ pub const Builtins = struct {
                 .name = index_html,
             }) orelse return Optional.Null;
 
-            if (hint.kind != .page_main) return Optional.Null;
+            if (hint.kind != .page_main or !vv.pages.items[hint.id]._parse.active or vv.pages.items[hint.id]._parse.status != .parsed) return Optional.Null;
 
             return Optional.init(gpa, &vv.pages.items[hint.id]);
         }
@@ -1393,7 +1419,7 @@ pub const Builtins = struct {
             var pages: std.ArrayList(Value) = .empty;
 
             if (p.translation_key) |tk| {
-                const list = ctx._meta.build.tks.get(tk).?;
+                const list = ctx._meta.build.tks.get(tk) orelse return context.Array.Empty;
                 for (list) |maybe_variant| if (maybe_variant) |l| try pages.append(gpa, .{
                     .page = l,
                 });
@@ -1430,6 +1456,7 @@ pub const Builtins = struct {
                 if (hint.kind != .page_main) continue;
 
                 const other_page = &vv.pages.items[hint.id];
+                if (!other_page._parse.active or other_page._parse.status != .parsed) continue;
                 if (other_page.translation_key != null) return Value.errFmt(
                     gpa,
                     "This page does not define a translation key, while the page in locale '{s}' does. Give a translation key to all corresponding pages otherwise you will get inconsistent behavior.",
@@ -1550,6 +1577,7 @@ pub const Builtins = struct {
             };
             if (p._scan.subsection_id == 0 or limit == 0) return context.Array.Empty;
             const v = &ctx._meta.build.variants[p._scan.variant_id];
+            if (!v.sections.items[p._scan.subsection_id].active) return context.Array.Empty;
             var sections: std.ArrayList(u32) = .empty;
             defer sections.deinit(gpa);
             try sections.append(gpa, p._scan.subsection_id);
@@ -1607,6 +1635,7 @@ pub const Builtins = struct {
 
             const v = &ctx._meta.build.variants[p._scan.variant_id];
             const s = v.sections.items[p._scan.subsection_id];
+            if (!s.active) return context.Array.Empty;
 
             const pages = try gpa.alloc(Value, s.pages.items.len);
 
@@ -1657,6 +1686,7 @@ pub const Builtins = struct {
 
             const v = &ctx._meta.build.variants[p._scan.variant_id];
             const s = v.sections.items[p._scan.subsection_id];
+            if (!s.active) return context.Array.Empty;
 
             const pages_buf = try gpa.alloc(Value, s.pages.items.len);
 
@@ -1909,6 +1939,7 @@ pub const Builtins = struct {
             args: []const Value,
         ) context.CallError!Value {
             if (args.len != 0) return .{ .err = "expected 0 arguments" };
+            if (!p._parse.active) return context.Optional.Null;
             const state = ctx._pagination orelse return context.Optional.Null;
             // Only the paginated index itself has a window; other pages
             // referenced during the same render (e.g. $site.page(...)) don't.
@@ -2731,10 +2762,8 @@ pub const HeadingBaselineError = struct {
         pub fn format(f: Fmt, w: *std.Io.Writer) std.Io.Writer.Error!void {
             const range = f.err.heading.range();
             const first_range = f.err.first.range();
-            var preview = supermd.Ast.linePreview(f.src, range);
-            preview.carets += 1;
-            var first_preview = supermd.Ast.linePreview(f.src, first_range);
-            first_preview.carets += 1;
+            const preview = diagcodes.MarkdownPreview.init(f.src, range, true);
+            const first_preview = diagcodes.MarkdownPreview.init(f.src, first_range, true);
             try w.print(
                 \\{s}:{}:{}: error: heading above the document's first heading level
                 \\{f}
@@ -2742,9 +2771,9 @@ pub const HeadingBaselineError = struct {
                 \\{f}
                 \\
             , .{
-                f.path,                f.fm_lines + range.start.row, range.start.col,
-                preview,               f.err.first.headingLevel(),   f.fm_lines + first_range.start.row,
-                first_range.start.col, first_preview,
+                f.path,            f.fm_lines + preview.row,   preview.col,
+                preview,           f.err.first.headingLevel(), f.fm_lines + first_preview.row,
+                first_preview.col, first_preview,
             });
         }
     };

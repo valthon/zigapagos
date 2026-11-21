@@ -147,6 +147,8 @@ pub const PageIndex = struct {
 };
 
 pub const Section = struct {
+    // Inactivity applies to the entire subtree: no sorting, page lists,
+    // pagination, counts or author/tag indexes, even through a direct lookup.
     active: bool = true,
     content_sub_path: Path,
     parent_section: u32, // index into sections, 0 = no parent section
@@ -194,7 +196,11 @@ pub const Section = struct {
         defer zone.end();
 
         index.parse(io, gpa, worker.cmark, null, variant, drafts, auto_heading_ids, auto_target_blank);
-        s.active = index._parse.active;
+        // A valid draft root can be a structural container without emitting
+        // its own page (the Rails migrator uses this for retained/blocked /).
+        // Empty roots and inactive non-root sections still suppress subtrees.
+        s.active = index._parse.active or
+            (index._scan.parent_section_id == 0 and index._parse.status == .parsed and index.draft);
     }
 
     pub fn sortPages(
@@ -203,6 +209,8 @@ pub const Section = struct {
         v: *Variant,
         pages: []Page,
     ) void {
+        if (!s.active) return;
+
         // Precompute each page's output URL exactly once into a scratch arena
         // (O(n) formats), then sort with a stable O(n log n) block sort. The
         // previous implementation was an O(n²) insertion sort whose date-tie
@@ -439,17 +447,7 @@ fn scanContentDirInner(
             });
 
             const index_page = try pages.addOne(gpa);
-            index_page._parse.active = false;
-            // Pages are carved from undefined ArrayList memory, so field
-            // defaults never run; initialize every field `Page.deinit` frees to
-            // its empty state so deinit can always run over an unparsed
-            // placeholder — `_render` (AUD-004) and `_parse.arena`, whose free is
-            // unconditional. A later `parse()` overwrites `_parse` wholesale, so
-            // the empty arena is harmless if this page is parsed.
-            index_page._parse.arena = .{};
-            index_page._render = .{};
-            index_page._pagination = null;
-            index_page._scan = .{
+            index_page.* = Page.initScanned(.{
                 .file = .{
                     .path = content_sub_path,
                     .name = index_smd,
@@ -459,10 +457,7 @@ fn scanContentDirInner(
                 .subsection_id = current_section,
                 .parent_section_id = dir_entry.parent_section,
                 .variant_id = variant_id,
-            };
-            if (builtin.optimize == .debug) {
-                index_page._debug = .{ .stage = .init(.scanned) };
-            }
+            });
 
             const pn: PathName = .{ .path = content_sub_path, .name = index_html };
             const lh: LocationHint = .{ .id = page_id, .kind = .page_main };
@@ -573,14 +568,7 @@ fn scanContentDirInner(
             );
 
             sp.* = @intCast(idx);
-            p._parse.active = false;
-            // See the index_page note above: initialize the fields `Page.deinit`
-            // frees — `_render` (AUD-004) and `_parse.arena` — so deinit is safe
-            // over an unparsed placeholder.
-            p._parse.arena = .{};
-            p._render = .{};
-            p._pagination = null;
-            p._scan = .{
+            p.* = Page.initScanned(.{
                 .file = .{
                     .path = content_sub_path,
                     .name = f,
@@ -590,12 +578,9 @@ fn scanContentDirInner(
                 .subsection_id = 0,
                 .parent_section_id = current_section,
                 .variant_id = variant_id,
-            };
-            if (builtin.optimize == .debug) {
-                p._debug = .{ .stage = .init(.scanned) };
-            }
+            });
 
-            log.debug("'{s}/{s}' -> [{d}] -> [{d}]", .{
+            log.debug("'{s}/{s}' -> [{any}] -> [{any}]", .{
                 dir_entry.path,
                 f.slice(&string_table),
                 page_url,

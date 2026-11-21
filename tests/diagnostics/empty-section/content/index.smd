@@ -1,0 +1,9 @@
+---
+.title = "Root",
+.layout = "index.shtml",
+.date = .unix(0),
+.authors = ["hidden-author"],
+.tags = ["hidden-tag"],
+.pagination = .{ .page_size = 1 },
+---
+Body.

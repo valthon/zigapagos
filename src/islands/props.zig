@@ -201,3 +201,19 @@ test "resolveToJson: float field round-trips" {
     const json = try resolveToJson(arena, ".{ .ratio = 1.5 }", &.{});
     try std.testing.expectEqualStrings("{\"ratio\":1.5}", json);
 }
+
+// A fixed buffer owns this leaky parser graph; no allocations escape the test.
+test "dynamic empty containers retain their kinds and union payload" {
+    var storage: [8192]u8 = undefined;
+    var buffer = std.heap.FixedBufferAllocator.init(&storage);
+    var meta: ziggy.Deserializer.Meta = .init;
+    const value = try ziggy.deserializeLeaky(ziggy.Dynamic, buffer.allocator(), ".{ .options = .{}, .dict = {}, .list = [], .tag = .payload(.{}) }", &meta, .{});
+    try std.testing.expect(value.kv.container_kind == .@"struct");
+    try std.testing.expect(value.kv.fields.get("options").?.kv.container_kind == .@"struct");
+    try std.testing.expect(value.kv.fields.get("dict").?.kv.container_kind == .dict);
+    try std.testing.expectEqual(@as(usize, 0), value.kv.fields.get("list").?.array.len);
+    const payload = value.kv.fields.get("tag").?.@"union";
+    try std.testing.expectEqualStrings("payload", payload.tag);
+    try std.testing.expect(payload.value.kv.container_kind == .@"struct");
+    try std.testing.expectEqual(@as(usize, 0), payload.value.kv.fields.count());
+}

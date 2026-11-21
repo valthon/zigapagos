@@ -157,6 +157,31 @@ so a plain `<li id="item">` inside a loop body is not examined at all and emits
 duplicate ids with no error. Treat `id_under_loop` as a guard that catches the
 common shape, not as a guarantee.
 
+## Which pages templates can read
+
+Empty pages, drafts (unless drafts are enabled) and descendants of inactive
+sections are excluded from published-page lists. A valid parsed draft root is
+still a structural container: its children publish, and templates can query its
+section metadata and child lists. It is omitted from published-page enumeration.
+An empty root suppresses its descendants too; give it valid `title` and `layout`
+frontmatter to publish them.
+
+| Reader | Inactive target behavior | Regression coverage |
+| --- | --- | --- |
+| `$site.page(path)` and `$site.index()` | Error, or a missing-page handle with `--allow-missing-pages`; a parsed draft root remains addressable as a structural container. | `tests/scripty/active-pages.sh`, `tests/diagnostics/empty-section.sh` |
+| `$site.pages()` | Omits inactive pages, including the unpublished draft root. | `tests/scripty/active-pages.sh` |
+| `$site.pages(paths...)` | Errors if any requested page is inactive. | `tests/scripty/active-pages.sh` |
+| `$page.locale(code)` | Errors for an inactive counterpart. | `tests/scripty/active-pages.sh` |
+| `$page.locale?(code)` | Returns null for an inactive counterpart. | `tests/scripty/active-pages.sh` |
+| `$page.locales()` | Omits inactive counterparts, with or without translation keys. The translation-key index itself contains only active parsed pages. A draft root whose key has no active counterparts yields an empty list (`locale?` yields null; `locale` errors). | `tests/scripty/active-pages.sh` |
+| `$page.parentSection()` | Returns the active owning section's parsed index, including the draft root container. An inactive subtree supplies no published children from which to reach it. | `tests/scripty/active-pages.sh`, `tests/diagnostics/empty-section.sh` |
+| `subpages()`, `subpagesAlphabetic()`, `leaves()` | Omit inactive pages and subtrees; the draft root's active children remain queryable. | `tests/scripty/active-pages.sh`, `tests/diagnostics/empty-section.sh` |
+| `subpagesByAuthor()`, `subpagesByTag()` | Indexes omit inactive or unparsed pages; missing keys yield empty arrays. | `tests/scripty/active-pages.sh`, `tests/rendering/by-author-tag.sh` |
+| `nextPage?()`, `prevPage?()`, `hasNext()`, `hasPrev()` | Skip inactive siblings; return null/false when no active sibling remains. | `tests/scripty/active-pages.sh` |
+| `pagination?()`, paginator counts and windows | Inactive pages have no paginator; counts/windows include active children only. | `tests/diagnostics/empty-section.sh` |
+| `alternative()`, `link()`, `absLink()`, `linkRef()`, `absLinkRef()`, content readers | Operate on the supplied page; direct inactive lookup fails before these readers run. The parsed draft root remains usable as a container. | `tests/scripty/active-pages.sh` |
+| Markdown `$link.page/sub/sibling/site` with alternatives or refs | Inactive or unparsed targets are missing pages, checked before frontmatter or AST access. `--allow-missing-pages` emits the warning and unresolved URL instead. | `tests/diagnostics/final-seams.sh`, `tests/missing-pages/allow-missing-pages.sh` |
+
 ## The three template-only elements
 
 ### `<ctx>`

@@ -54,7 +54,7 @@ zig build check -Dsingle-threaded   # required guard, see below
 zig build check -Dhighlight=false   # no syntax/tree-sitter imports or language warnings
 zig build api-check            # fail if contract/generated drifted from the schema
 cd runtime && bun install --frozen-lockfile   # ONCE per fresh worktree
-cd runtime && bun test         # TypeScript suite (750 tests)
+cd runtime && bun test         # TypeScript suite (847 tests)
 cd runtime && bun test src/router   # one file — filter is a PATH substring
 bash scripts/check-allocator-contracts.sh   # allocator-contract gate (see NO_SLOP.md §2.2a)
 bash scripts/check-allocator-contracts.test.sh   # the gate's own self-tests
@@ -93,7 +93,7 @@ there. A runtime `return error.SkipZigTest` does **not** help — Zig analyses t
 body regardless of runtime control flow — so prune the branch at comptime:
 `if (comptime !builtin.single_threaded) …`.
 
-**Shell e2e.** CI runs every `tests/*/*.sh` (currently 82). They are hermetic; `tests/dev/*`
+**Shell e2e.** CI runs every `tests/*/*.sh` (currently 126). They are hermetic; `tests/dev/*`
 boot real servers via a stub-zigbase binary and need `bun` on `PATH`. A new `tests/<area>/` is
 picked up by the glob automatically. `tests/branding.sh`, `tests/branding.test.sh` and
 `tests/confidentiality.sh` sit at `tests/` top level on purpose — they are cheap gates CI runs
@@ -105,8 +105,7 @@ block. A reason is required, an unbalanced block fails, and a marker that exempt
 as stale — so it is an exemption you have to justify, not a mute button.
 
 **A fresh git worktree needs `bun install` in `runtime/` before anything bun-dependent.** Without
-it `bun test` reports every file as failing (`0 pass / 54 fail`, an `ENOENT resolving 'typescript'`
-per file) and `examples/tsx-site/build.sh` dies in the SPA-runtime step — both look like code
+it `bun test` reports module-resolution failures (`ENOENT resolving 'typescript'`) and `examples/tsx-site/build.sh` dies in the SPA-runtime step — both look like code
 breakage and are neither.
 
 **Formatting is gated, with no exceptions.** The whole first-party tree is `zig fmt`-clean and CI
@@ -127,7 +126,8 @@ canonical formatter's call, so take it rather than fighting it.
 ## Architecture
 
 A permanent fork of [Zine](https://zine-ssg.io) (fork point `ca8f3e5`, upstream `496e42d`
-v0.11.2) that adds islands architecture and native SPAs. Upstream files are kept close to
+v0.11.2; hand-synced through upstream v0.14.1 `6cacc90b` — `docs/ROADMAP.md` "Fork policy" lists
+what was deliberately not adopted) that adds islands architecture and native SPAs. Upstream files are kept close to
 upstream where that costs nothing, because a release-tag sync is read by hand — but that is a
 mild preference, not a rule. **Fix the file that is actually wrong, inherited or not.** What is
 forbidden is paying daily complexity to avoid an inherited file: never add a generator, shim,

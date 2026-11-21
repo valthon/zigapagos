@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- Accept empty dynamic structs in custom values, data, i18n, asset `.ziggy()` and island props, retaining the struct/dictionary distinction. Report missing opening frontmatter delimiters by filename and exit nonzero from the converter.
+
 - The upgrade tool wraps legacy quoted frontmatter dates in `.date(...)` and preserves body bytes on repeated runs. Unconverted string dates receive upgrade instructions. Complete documentation configs and frontmatter are parser/schema checked, and non-Ziggy examples retain their original language syntax.
 
 - Preserve comments and their terminating newlines throughout conversion, including between legacy identifier/tag tokens. A generated boundary sweep covers 389 variants across six representative documents, plus six parser-checked baselines.

@@ -1,0 +1,8 @@
+<!DOCTYPE html><html><head><title>Empty section</title></head><body>
+<ul id="subpages" :loop="$page.subpages()"><li :text="$loop.it.title"></li></ul>
+<ul id="alphabetic" :loop="$page.subpagesAlphabetic()"><li :text="$loop.it.title"></li></ul>
+<ul id="leaves" :loop="$page.leaves()"><li :text="$loop.it.title"></li></ul>
+<ctx :if="$page.pagination?()"><ctx pg="$if">
+<p id="items" :text="$ctx.pg.total_items"></p><p id="windows" :text="$ctx.pg.total"></p>
+</ctx></ctx>
+</body></html>

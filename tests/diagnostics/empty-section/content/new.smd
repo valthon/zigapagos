@@ -1,0 +1,8 @@
+---
+.title = "Newest",
+.layout = "leaf.shtml",
+.date = .unix(200),
+.authors = ["visible-author"],
+.tags = ["visible-tag"],
+---
+Body.

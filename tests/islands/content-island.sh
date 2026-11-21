@@ -21,7 +21,7 @@
 #       page, component source, and expression in the diagnostic.
 #   (4) NEGATIVE PIN: the identical page, but with the fence's `<z-island>`
 #       swapped for the plain `<island>` spelling, FAILS the build with
-#       superhtml's `invalid_html_tag_name` diagnostic, attributed to the
+#       superhtml's "not a valid html element" diagnostic, attributed to the
 #       `.smd` file. This is what documents *why* the hyphen is mandatory,
 #       and it will fail loudly (not silently pass) if a future supermd/
 #       superhtml sync relaxes or renames that validation.
@@ -227,13 +227,13 @@ set -e
 # Assert on the actual superhtml diagnostic, not just a non-zero exit: this is
 # what pins WHY the hyphen matters and would catch a supermd/superhtml sync
 # that changes how unhyphenated custom elements are handled.
-grep -q 'invalid_html_tag_name' "$WORK/neg.log" \
+grep -q 'not a valid html element' "$WORK/neg.log" \
   || { echo "--- build output ---"; sed -n '1,40p' "$WORK/neg.log"
-       fail "the build failed but not with superhtml's invalid_html_tag_name diagnostic (some other error?)"; }
-grep -qE 'content/index\.smd:[0-9]+:[0-9]+: \[invalid_html_tag_name\]' "$WORK/neg.log" \
+       fail "the build failed without superhtml's readable invalid-element diagnostic"; }
+grep -qE 'content/index\.smd:[0-9]+:[0-9]+: \[html\] error: not a valid html element' "$WORK/neg.log" \
   || { echo "--- build output ---"; sed -n '1,40p' "$WORK/neg.log"
        fail "the diagnostic is not attributed to a .smd line (supermd's line-mapping regressed)"; }
-echo "PASS: a plain <island> inside an =html fence fails with superhtml's invalid_html_tag_name, attributed to the .smd line"
+echo "PASS: a plain <island> inside an =html fence fails with a readable invalid-element diagnostic, attributed to the .smd line"
 
 # --- (5) control: same fixture, no fence at all -> builds clean -------------
 SITE_CTRL="$WORK/ctrl"; OUT_CTRL="$WORK/out-ctrl"
