@@ -235,6 +235,8 @@ pub const Code = enum {
     ZP_FRONTMATTER_FRAMING,
     // emitted by: root.zig, frontmatter failed to parse as Ziggy
     ZP_FRONTMATTER_PARSE,
+    // emitted by: root.zig, date deserialization retained a parser error
+    ZP_INVALID_DATE,
     // emitted by: root.zig, removed skip_subdirs frontmatter field
     ZP_REMOVED_SKIP_SUBDIRS,
     // emitted by: context/Page.zig FrontmatterAnalysisError, forbidden child section
@@ -405,6 +407,10 @@ pub fn info(c: Code) Info {
             \\Check that the file starts with `---` on its own line and that a
             \\second `---` on its own line closes the frontmatter block.
             ,
+        },
+        .ZP_INVALID_DATE => .{
+            .summary = "a frontmatter date is invalid",
+            .explanation = "Use .date(\"YYYY-MM-DDTHH:MM:SS\") with a valid ISO 8601 date, or .unix(seconds). The diagnostic preserves the date parser error and source location.",
         },
         .ZP_FRONTMATTER_PARSE => .{
             .summary = "a content file's frontmatter is not valid Ziggy",

@@ -23,6 +23,10 @@ content/code.smd:18:3: [erroneous_end_tag]
 |    </span> wrong!
 |      ^^^^
 
+content/date.smd:3:9: error: unable to parse date: InvalidISO8601
+|   .date = .date("2020-7-6T00:00:00"),
+|           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
 content/parse.smd:9:1: error: markdown inline html syntax is forbidden
 |    <b>wrong</b>
 |    ^^^
@@ -150,6 +154,7 @@ content/other.smd:25:1: error: this page has no subpages (page is not a section)
     content/parse.smd
     content/other.smd
     content/code.smd
+    content/date.smd
 ],
 
 skater.webp (0)

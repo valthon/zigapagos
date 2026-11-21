@@ -1725,6 +1725,29 @@ pub fn run(
                     .parsed => {},
                 }
 
+                if (p.date._invalid) |invalid| {
+                    parse_errors = true;
+                    const path = try gpa.print("{f}", .{p._scan.file.fmt(&v.string_table, &v.path_table, v.content_dir_path, "")});
+                    defer gpa.free(path);
+                    const sel = invalid.loc.getSelection(p._parse.full_src);
+                    const message = try gpa.print("unable to parse date: {s}", .{invalid.message});
+                    defer gpa.free(message);
+                    const rendered = try gpa.print("{s}:{}:{}: error: {s}\n{f}\n", .{
+                        path,                                                           sel.start.line, sel.start.col, message,
+                        ziggy.Deserializer.linePreview(p._parse.full_src, invalid.loc),
+                    });
+                    defer gpa.free(rendered);
+                    if (diag.format == .json) {
+                        diag.emit(.{ .code = .ZP_INVALID_DATE, .severity = .@"error", .file = path, .line = sel.start.line, .col = sel.start.col, .message = message });
+                    } else std.debug.print("{s}", .{rendered});
+                    if (build.mode == .memory) {
+                        const owned = try gpa.dupe(u8, rendered);
+                        errdefer gpa.free(owned);
+                        try build.mode.memory.errors.append(gpa, .{ .ref = "", .msg = owned });
+                    }
+                    continue;
+                }
+
                 // Validate the layout field and reference count so that we
                 // know to only load layouts that are actively used.
                 // This is in some ways frontmatter analysis work but it's done
