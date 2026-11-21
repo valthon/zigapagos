@@ -126,6 +126,26 @@ pub const LocationHint = struct {
     };
 };
 
+/// Owns lists of page IDs in section date order. Keys borrow page frontmatter.
+pub const PageIndex = struct {
+    entries: std.StringHashMapUnmanaged(std.ArrayList(u32)) = .empty,
+
+    /// Contract 2: allocations belong to this index; caller must deinit it.
+    fn append(idx: *PageIndex, gpa: Allocator, key: []const u8, id: u32) error{OutOfMemory}!void {
+        const entry = try idx.entries.getOrPut(gpa, key);
+        if (!entry.found_existing) entry.value_ptr.* = .empty;
+        try entry.value_ptr.append(gpa, id);
+    }
+
+    /// Contract 2 teardown: frees owned maps/lists; keys remain owned by pages.
+    pub fn deinit(idx: PageIndex, gpa: Allocator) void {
+        var entries = idx.entries;
+        var it = entries.valueIterator();
+        while (it.next()) |list| list.deinit(gpa);
+        entries.deinit(gpa);
+    }
+};
+
 pub const Section = struct {
     active: bool = true,
     content_sub_path: Path,
@@ -133,7 +153,27 @@ pub const Section = struct {
     index: u32, // index into pages
     pages: std.ArrayListUnmanaged(u32) = .empty, // indices into pages
 
+    pages_by_author: PageIndex = .{},
+    pages_by_tag: PageIndex = .{},
+
+    /// Contract 2: section owns the index maps/lists until deinit (also on error).
+    /// Keys borrow parsed frontmatter; rebuild after parse, before any rendering.
+    pub fn indexPages(s: *Section, gpa: Allocator, pages: []const Page) error{OutOfMemory}!void {
+        s.pages_by_author.deinit(gpa);
+        s.pages_by_tag.deinit(gpa);
+        s.pages_by_author = .{};
+        s.pages_by_tag = .{};
+        for (s.pages.items) |id| {
+            const page = &pages[id];
+            if (!page._parse.active or page._parse.status != .parsed) continue;
+            for (page.authors) |key| try s.pages_by_author.append(gpa, key, id);
+            for (page.tags) |key| try s.pages_by_tag.append(gpa, key, id);
+        }
+    }
+
     pub fn deinit(s: *const Section, gpa: Allocator) void {
+        s.pages_by_author.deinit(gpa);
+        s.pages_by_tag.deinit(gpa);
         {
             var p = s.pages;
             p.deinit(gpa);
@@ -293,11 +333,12 @@ fn scanContentDirInner(
     var collisions: std.ArrayListUnmanaged(Collision) = .empty;
     var sectionless_dirs: std.ArrayListUnmanaged(SectionlessDir) = .empty;
 
-    var dir_stack: std.ArrayListUnmanaged(struct {
+    const DirStackEntry = struct {
         path: []const u8,
         parent_section: u32, // index into sections
         page_assets_owner: u32, // index into pages
-    }) = .empty;
+    };
+    var dir_stack: std.ArrayListUnmanaged(DirStackEntry) = .empty;
     try dir_stack.append(arena, .{
         .path = "",
         .parent_section = 0,
@@ -313,6 +354,13 @@ fn scanContentDirInner(
     }) catch |err| fatal.dir(content_dir_path, err);
 
     while (dir_stack.pop()) |dir_entry| {
+        defer if (builtin.optimize == .debug) {
+            std.mem.sort(DirStackEntry, dir_stack.items, {}, struct {
+                fn greaterThan(_: void, lhs: DirStackEntry, rhs: DirStackEntry) bool {
+                    return std.mem.order(u8, lhs.path, rhs.path) == .gt;
+                }
+            }.greaterThan);
+        };
         var dir = switch (dir_entry.path.len) {
             0 => content_dir,
             else => content_dir.openDir(io, dir_entry.path, .{ .iterate = true }) catch |err| {
@@ -1032,4 +1080,44 @@ test "pagination: isPruneCandidateProtected treats a recorded SPA output path as
     // A path that is neither an SPA output nor in Variant.urls is genuinely
     // unprotected.
     try testing.expect(!v.isPruneCandidateProtected(&build, &page, .plain_dir, 3, "blog/3/index.html"));
+}
+
+// Contract 1: all section/index allocations are freed, including injected OOMs.
+fn testPageIndexes(gpa: Allocator) !void {
+    var pages = [_]Page{
+        .{ .title = "Multi", .layout = "", .authors = &.{ "ada", "bea" }, .tags = &.{"old"} },
+        .{ .title = "None", .layout = "" },
+        .{ .title = "Draft", .layout = "", .authors = &.{"ada"}, .tags = &.{"old"} },
+        // Active parse failures have no initialized frontmatter to index.
+        .{ .title = "Invalid", .layout = "", .authors = undefined, .tags = undefined },
+    };
+    pages[0]._parse.status = .parsed;
+    pages[1]._parse.status = .parsed;
+    pages[2]._parse.status = .parsed;
+    pages[3]._parse.status = .empty;
+    pages[3]._parse.active = true;
+    pages[0]._parse.active = true;
+    pages[1]._parse.active = true;
+    pages[2]._parse.active = false;
+    var section: Section = .{ .content_sub_path = undefined, .parent_section = 0, .index = 0 };
+    defer section.deinit(gpa);
+    try section.pages.appendSlice(gpa, &.{ 0, 1, 2, 3 });
+    try section.indexPages(gpa, &pages);
+    try testing.expectEqualSlices(u32, &.{0}, section.pages_by_author.entries.get("ada").?.items);
+    try testing.expectEqualSlices(u32, &.{0}, section.pages_by_author.entries.get("bea").?.items);
+    try testing.expectEqualSlices(u32, &.{0}, section.pages_by_tag.entries.get("old").?.items);
+    try testing.expect(section.pages_by_author.entries.get("missing") == null);
+    try testing.expect(section.pages_by_tag.entries.get("missing") == null);
+    pages[0].authors = &.{"new-author"};
+    pages[0].tags = &.{"new-tag"};
+    try section.indexPages(gpa, &pages);
+    try testing.expect(section.pages_by_author.entries.get("ada") == null);
+    try testing.expect(section.pages_by_author.entries.get("bea") == null);
+    try testing.expect(section.pages_by_tag.entries.get("old") == null);
+    try testing.expectEqualSlices(u32, &.{0}, section.pages_by_author.entries.get("new-author").?.items);
+    try testing.expectEqualSlices(u32, &.{0}, section.pages_by_tag.entries.get("new-tag").?.items);
+}
+
+test "section author/tag indexes rebuild without stale entries and free every allocation" {
+    try testing.checkAllAllocationFailures(testing.allocator, testPageIndexes, .{});
 }

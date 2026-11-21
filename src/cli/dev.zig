@@ -621,6 +621,9 @@ pub fn dev(
     // release output (and no SSE channel exists to hot-swap through anyway).
     if (cmd.live_reload) environ_map.put(hot_islands_env, "1") catch fatal.oom();
 
+    // Propagates through custom build scripts as well as the default command.
+    environ_map.put(release_cli.development_env, "1") catch fatal.oom();
+
     // (1) Initial build, so the tree exists before zigbase boots.
     // Held for the process lifetime: `dev` is noreturn, so there is nothing to
     // free it back to (see `Argv`'s contract note).

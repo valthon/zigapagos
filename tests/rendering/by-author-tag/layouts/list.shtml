@@ -1,0 +1,8 @@
+<!DOCTYPE html>
+<html><head><title>Indexes</title></head><body>
+<ul id="author" :loop="$page.subpagesByAuthor('ada')"><li :text="$loop.it.title"></li></ul>
+<ul id="second" :loop="$page.subpagesByAuthor('bea')"><li :text="$loop.it.title"></li></ul>
+<ul id="tag" :loop="$page.subpagesByTag('topic')"><li :text="$loop.it.title"></li></ul>
+<ul id="noauthor" :loop="$page.subpagesByAuthor('missing')"><li :text="$loop.it.title"></li></ul>
+<ul id="notag" :loop="$page.subpagesByTag('missing')"><li :text="$loop.it.title"></li></ul>
+</body></html>

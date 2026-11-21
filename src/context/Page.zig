@@ -55,7 +55,7 @@ draft: bool = false,
 tags: []const []const u8 = &.{},
 aliases: []const []const u8 = &.{},
 alternatives: []const Alternative = &.{},
-skip_subdirs: bool = false,
+forbid_subsections: bool = false,
 translation_key: ?[]const u8 = null,
 custom: ziggy.Dynamic = .{ .kv = .empty },
 /// Opt-in pagination for a section index: the page pass renders this index
@@ -344,9 +344,11 @@ pub const FrontmatterAnalysisError = union(enum) {
     },
     pagination_size,
     pagination_not_section,
+    forbidden_subsection: []const u8,
 
     pub fn title(err: @This()) []const u8 {
         return switch (err) {
+            .forbidden_subsection => |message| message,
             .layout => "missing layout file",
             .alias => "invalid value in 'aliases'",
             .alternative => |alt| switch (alt.kind) {
@@ -363,6 +365,7 @@ pub const FrontmatterAnalysisError = union(enum) {
     // same enforcement reasoning as PageAnalysisError.code() above.
     pub fn code(err: @This()) diagcodes.Code {
         return switch (err) {
+            .forbidden_subsection => .ZP_FORBIDDEN_SUBSECTION,
             .layout => .ZP_MISSING_LAYOUT,
             .alias => .ZP_INVALID_ALIAS,
             .alternative => |alt| switch (alt.kind) {
@@ -378,6 +381,7 @@ pub const FrontmatterAnalysisError = union(enum) {
     pub fn location(err: @This(), src: [:0]const u8, ast: ziggy.Ast) ziggy.Tokenizer.Token.Loc {
         const field_name = switch (err) {
             .layout => "layout",
+            .forbidden_subsection => "title",
             .alias => "aliases",
             .alternative => "alternatives",
             .pagination_size, .pagination_not_section => "pagination",
@@ -969,11 +973,10 @@ pub const Fields = struct {
         \\
         \\Alternatives are a good way of implementing RSS feeds, for example.
     ;
-    pub const skip_subdirs =
-        \\Skips any other potential content present in the subdir of the page, 
-        \\as set in the SuperMD frontmatter.
-        \\
-        \\Can only be set to true on section pages (i.e. `index.smd` pages).
+    pub const forbid_subsections =
+        \\On a section index, forbids child section indexes (`foo/index.smd`).
+        \\Use `foo.smd` instead to preserve the URL while making it a leaf
+        \\visible to `$page.leaves()`. Defaults to false.
     ;
     pub const translation_key =
         \\Translation key used to map this page with corresponding localized variants, 
@@ -1520,6 +1523,64 @@ pub const Builtins = struct {
         }
     };
 
+    pub const leaves = struct {
+        pub const signature: Signature = .{
+            .params = &.{.{ .Opt = .Int }},
+            .ret = .{ .Many = .Page },
+        };
+        pub const docs_description =
+            \\Returns a flat list of active non-section pages in this section's
+            \\subtree, sorted by descending date. Section indexes, including
+            \\empty sections, are excluded. A non-section returns an empty list.
+            \\
+            \\Accepts an optional non-negative integer length limit. Use
+            \\`forbid_subsections` on terminal sections to require leaf pages.
+        ;
+        pub const examples =
+            \\<ul :loop="$page.leaves(10)"><li :text="$loop.it.title"></li></ul>
+        ;
+        /// Contract 1: frees scratch; only the returned values slice escapes.
+        /// Page pointers borrow the build's pages, as in subpages().
+        pub fn call(p: *const Page, gpa: Allocator, ctx: *const context.Root, args: []const Value) context.CallError!Value {
+            const bad_args: Value = .{ .err = "expected up to 1 non-negative integer argument" };
+            if (args.len > 1) return bad_args;
+            const limit: u64 = if (args.len == 0) std.math.maxInt(u64) else switch (args[0]) {
+                .int => |i| if (i.value < 0) return bad_args else @intCast(i.value),
+                else => return bad_args,
+            };
+            if (p._scan.subsection_id == 0 or limit == 0) return context.Array.Empty;
+            const v = &ctx._meta.build.variants[p._scan.variant_id];
+            var sections: std.ArrayList(u32) = .empty;
+            defer sections.deinit(gpa);
+            try sections.append(gpa, p._scan.subsection_id);
+            var pages: std.ArrayList(Value) = .empty;
+            defer pages.deinit(gpa);
+            var cursor: usize = 0;
+            while (cursor < sections.items.len) : (cursor += 1) {
+                const section = v.sections.items[sections.items[cursor]];
+                if (!section.active) continue;
+                for (section.pages.items) |pidx| {
+                    const child = &v.pages.items[pidx];
+                    if (!child._parse.active) continue;
+                    if (child._scan.subsection_id != 0) {
+                        try sections.append(gpa, child._scan.subsection_id);
+                    } else {
+                        try pages.append(gpa, .{ .page = child });
+                    }
+                }
+            }
+            std.mem.sort(Value, pages.items, {}, struct {
+                fn newer(_: void, lhs: Value, rhs: Value) bool {
+                    const a = lhs.page.date._inst.timestamp;
+                    const b = rhs.page.date._inst.timestamp;
+                    return if (a == b) lhs.page._scan.page_id < rhs.page._scan.page_id else a > b;
+                }
+            }.newer);
+            const result = try gpa.dupe(Value, pages.items[0..@intCast(@min(limit, pages.items.len))]);
+            return context.Array.init(gpa, Value, result);
+        }
+    };
+
     pub const subpages = struct {
         pub const signature: Signature = .{ .ret = .{ .Many = .Page } };
         pub const docs_description =
@@ -1623,6 +1684,160 @@ pub const Builtins = struct {
                     return std.mem.lessThan(u8, lhs.page.title, rhs.page.title);
                 }
             }.alphaLessThan);
+
+            return context.Array.init(gpa, Value, pages);
+        }
+    };
+
+    pub const subpagesByAuthor = struct {
+        pub const signature: Signature = .{
+            .params = &.{.String},
+            .ret = .{ .Many = .Page },
+        };
+        pub const docs_description =
+            \\Retrieve subpages of this section page that have in their
+            \\`authors` field the provided string. Returns an error when
+            \\called on a non-section page.
+            \\
+            \\Sections are defined by `index.smd` files, see the content
+            \\structure section in the official docs for more info.
+            \\
+            \\Search uses an index built once per build. Results are an array
+            \\in descending date order,
+            \\with reverse output-URL order for equal dates. Missing keys
+            \\return an empty array. Drafts are excluded unless enabled.
+            \\
+            \\The lookup covers the whole section, including on pagination
+            \\pages; it does not apply the current `subpages()` window.
+            \\
+            \\If you want to attach extra information to an author, use the
+            \\argument string as a key to a custom dictionary field or
+            \\another page. For example 'loris-cro' can be used so:
+            \\
+            \\ - `$page.custom.get('loris-cro').get('name')`
+            \\ - `$site.page('speakers', 'loris-cro').title`
+            \\
+            \\The latter case is a common technique for structuring sites
+            \\that collect talks, books, etc.
+        ;
+
+        pub const examples =
+            \\<div :loop="$site.page('talks').subpagesByAuthor('loris-cro')">
+            \\  <span :text="$loop.it.title"></span>
+            \\</div>
+        ;
+
+        /// Contract 1: only the returned Value slice escapes; pages borrow the build.
+        pub fn call(
+            p: *const Page,
+            gpa: Allocator,
+            ctx: *const context.Root,
+            args: []const Value,
+        ) context.CallError!Value {
+            const bad_args: Value = .{ .err = "expected 1 string argument" };
+
+            if (args.len != 1) return bad_args;
+            const author = switch (args[0]) {
+                .string => |s| s.value,
+                else => return bad_args,
+            };
+
+            const v = &ctx._meta.build.variants[p._scan.variant_id];
+            const subsection_id = p._scan.subsection_id;
+            if (subsection_id == 0) return Value.errFmt(gpa, "page '{f}' is not a section", .{
+                p._scan.url.fmt(&v.string_table, &v.path_table, "", false),
+            });
+
+            const s = v.sections.items[p._scan.subsection_id];
+
+            const entry = s.pages_by_author.entries.get(author) orelse {
+                return context.Array.Empty;
+            };
+
+            assert(entry.items.len != 0);
+
+            const pages = try gpa.alloc(Value, entry.items.len);
+
+            for (entry.items, pages) |pidx, *value| {
+                value.* = .{ .page = &v.pages.items[pidx] };
+            }
+
+            return context.Array.init(gpa, Value, pages);
+        }
+    };
+
+    pub const subpagesByTag = struct {
+        pub const signature: Signature = .{
+            .params = &.{.String},
+            .ret = .{ .Many = .Page },
+        };
+        pub const docs_description =
+            \\Retrieve subpages of this section page that have in their
+            \\`tags` field the provided string. Returns an error when
+            \\called on a non-section page.
+            \\
+            \\Sections are defined by `index.smd` files, see the content
+            \\structure section in the official docs for more info.
+            \\
+            \\Search uses an index built once per build. Results are an array
+            \\in descending date order,
+            \\with reverse output-URL order for equal dates. Missing keys
+            \\return an empty array. Drafts are excluded unless enabled.
+            \\
+            \\The lookup covers the whole section, including on pagination
+            \\pages; it does not apply the current `subpages()` window.
+            \\
+            \\If you want to attach extra information to a tag, use the
+            \\argument string as a key to a custom dictionary field or
+            \\another page. For example 'adventure' can be used so:
+            \\
+            \\  - `$page.custom.get('adventure').get('description')`
+            \\  - `$site.page('tags', 'adventure').description`
+            \\
+            \\The latter case is a common technique for structuring sites
+            \\that collect movies, books, etc.
+        ;
+
+        pub const examples =
+            \\<div :loop="$site.page('movies').subpagesByTag('adventure')">
+            \\  <span :text="$loop.it.title"></span>
+            \\</div>
+        ;
+
+        /// Contract 1: only the returned Value slice escapes; pages borrow the build.
+        pub fn call(
+            p: *const Page,
+            gpa: Allocator,
+            ctx: *const context.Root,
+            args: []const Value,
+        ) context.CallError!Value {
+            const bad_args: Value = .{ .err = "expected 1 string argument" };
+
+            if (args.len != 1) return bad_args;
+            const tag = switch (args[0]) {
+                .string => |s| s.value,
+                else => return bad_args,
+            };
+
+            const v = &ctx._meta.build.variants[p._scan.variant_id];
+            const subsection_id = p._scan.subsection_id;
+            if (subsection_id == 0) return Value.errFmt(gpa, "page '{f}' is not a section", .{
+                p._scan.url.fmt(&v.string_table, &v.path_table, "", false),
+            });
+
+            const s = v.sections.items[p._scan.subsection_id];
+
+            const entry = s.pages_by_tag.entries.get(tag) orelse {
+                return context.Array.Empty;
+            };
+
+            assert(entry.items.len != 0);
+
+            const pages = try gpa.alloc(Value, entry.items.len);
+
+            for (entry.items, pages) |pidx, *value| {
+                value.* = .{ .page = &v.pages.items[pidx] };
+            }
 
             return context.Array.init(gpa, Value, pages);
         }

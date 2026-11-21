@@ -1,0 +1,8 @@
+---
+.title = "en Empty",
+.layout = "post.shtml",
+.date = .date("2022-01-01T00:00:00"),
+.authors = [],
+.tags = [],
+.draft = false,
+---

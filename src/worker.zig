@@ -1522,6 +1522,7 @@ fn renderPageInner(
     };
 
     ctx.build.generated = .initNow(io);
+    ctx.build.development = build.development;
 
     const layout_path = switch (kind) {
         .main => page.layout,

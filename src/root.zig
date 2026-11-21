@@ -794,6 +794,7 @@ pub const SpaSpec = struct {
 };
 
 pub const Options = struct {
+    development: bool = false,
     build_assets: *const std.StringArrayHashMapUnmanaged(BuildAsset),
     base_dir_path: []const u8,
     mode: Mode,
@@ -1569,6 +1570,10 @@ pub fn run(
     for (build.variants) |*v| {
         for (v.sections.items[1..]) |*s| {
             s.sortPages(gpa, v, v.pages.items);
+            // Rebuilt from parsed frontmatter on EVERY build, including dev's
+            // incremental path. Per-variant IDs keep locales isolated; skipping
+            // inactive pages here excludes drafts before lookups ever run.
+            try s.indexPages(gpa, v.pages.items);
         }
     }
 
@@ -1764,6 +1769,30 @@ pub fn run(
                         }) catch unreachable;
 
                         ziggy_diag.path = path;
+                        var removed: ?ziggy.Tokenizer.Token.Loc.Selection = null;
+                        if (ziggy_diag.err.? == error.UnknownField and std.mem.eql(u8, ziggy_diag.meta.error_loc.slice(p._parse.full_src), ".skip_subdirs")) {
+                            removed = ziggy_diag.meta.error_loc.getSelection(p._parse.full_src);
+                        }
+                        if (removed) |sel| {
+                            const message = "'skip_subdirs' was removed because it had no effect; the nearest replacement is 'forbid_subsections' on a section index";
+                            if (diag.format == .json) {
+                                diag.emit(.{
+                                    .code = .ZP_REMOVED_SKIP_SUBDIRS,
+                                    .severity = .@"error",
+                                    .file = path,
+                                    .line = sel.start.line,
+                                    .col = sel.start.col,
+                                    .message = message,
+                                });
+                            } else {
+                                std.debug.print("{s}:{}:{}: error: {s}\n", .{ path, sel.start.line, sel.start.col, message });
+                            }
+                            if (build.mode == .memory) try build.mode.memory.errors.append(gpa, .{
+                                .ref = "",
+                                .msg = try gpa.print("{s}:{}:{}: error: {s}\n", .{ path, sel.start.line, sel.start.col, message }),
+                            });
+                            continue;
+                        }
                         if (diag.format == .json) {
                             var msg_buf: [4096]u8 = undefined;
                             diag.emit(.{
@@ -1805,6 +1834,28 @@ pub fn run(
                     var page_arena_state = p._parse.arena.promote(gpa);
                     defer p._parse.arena = page_arena_state.state;
                     const page_arena = page_arena_state.allocator();
+
+                    if (p._scan.subsection_id != 0 and p._scan.parent_section_id != 0) {
+                        const parent = &v.pages.items[v.sections.items[p._scan.parent_section_id].index];
+                        if (v.sections.items[p._scan.parent_section_id].active and parent._parse.status == .parsed and parent.forbid_subsections) {
+                            const file_path = try page_arena.print("{f}", .{p._scan.file.fmt(
+                                &v.string_table,
+                                &v.path_table,
+                                v.content_dir_path,
+                                "",
+                            )});
+                            const message = try page_arena.print(
+                                "the parent section forbids subsections; move this page to '{s}.smd' to preserve its URL (parent: '{f}')",
+                                .{ std.fs.path.dirname(file_path).?, parent._scan.file.fmt(
+                                    &v.string_table,
+                                    &v.path_table,
+                                    v.content_dir_path,
+                                    "",
+                                ) },
+                            );
+                            try p._analysis.frontmatter.append(page_arena, .{ .forbidden_subsection = message });
+                        }
+                    }
 
                     const layout_pn = PathName.get(&build.st, &build.pt, p.layout) orelse {
                         // We can use analysis because a page that has

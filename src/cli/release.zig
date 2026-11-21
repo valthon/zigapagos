@@ -11,6 +11,9 @@ const Summary = @import("../summary.zig").Summary;
 const diag = @import("../diag.zig");
 const Allocator = std.mem.Allocator;
 const BuildAsset = root.BuildAsset;
+/// Internal dev-loop marker; independent of fast refresh and SSE.
+pub const development_env = "ZIGAPAGOS_DEVELOPMENT";
+
 const RenderArena = @import("../islands/render_arena.zig").RenderArena;
 
 pub fn release(
@@ -163,6 +166,7 @@ fn releaseInner(
     var summary: Summary = .{};
     defer summary.deinit(gpa);
     const build = root.run(io, gpa, &cfg, .{
+        .development = if (environ_map.get(development_env)) |v| std.mem.eql(u8, v, "1") else false,
         .base_dir_path = base_dir_path,
         .build_assets = &cmd.build_assets,
         .drafts = cmd.drafts,

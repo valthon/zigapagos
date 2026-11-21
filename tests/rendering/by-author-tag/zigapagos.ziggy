@@ -1,0 +1,10 @@
+.site = .multilingual(.{
+    .host_url = "https://example.com",
+    .i18n_dir_path = "i18n",
+    .layouts_dir_path = "layouts",
+    .assets_dir_path = "assets",
+    .locales = [
+        .{ .code = "en", .name = "English", .site_title = "English", .content_dir_path = "content/en" },
+        .{ .code = "it", .name = "Italian", .site_title = "Italian", .content_dir_path = "content/it" },
+    ],
+})

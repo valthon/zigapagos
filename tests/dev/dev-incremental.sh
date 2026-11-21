@@ -75,6 +75,27 @@ cat > "$SRC/zigapagos.ziggy" <<'EOF'
 })
 EOF
 
+# Index a child through the root layout. Changing its frontmatter must refresh
+# BOTH old and new buckets in the served listing, not merely the child's HTML.
+cat > "$SRC/content/indexed.smd" <<'EOF'
+---
+.title = "Indexed child",
+.layout = "index.shtml",
+.authors = ["old-author"],
+.tags = ["old-tag"],
+---
+EOF
+cat > "$SRC/layouts/indexed.shtml" <<'EOF'
+<!DOCTYPE html>
+<html><head><title>Index</title></head><body>
+<p id="old-tag" :text="$page.subpagesByTag('old-tag').len"></p>
+<p id="new-tag" :text="$page.subpagesByTag('new-tag').len"></p>
+<p id="old-author" :text="$page.subpagesByAuthor('old-author').len"></p>
+<p id="new-author" :text="$page.subpagesByAuthor('new-author').len"></p>
+</body></html>
+EOF
+sed -i 's/index.shtml/indexed.shtml/' "$SRC/content/index.smd"
+
 REBUILD=("$ZIGAPAGOS" release "--output=$OUT" --force)
 
 launch_group() { # dir log cmd...
@@ -119,6 +140,18 @@ NCHANGED="$(join -t $'\t' "$WORK/before.txt" "$WORK/after.txt" | awk -F'\t' '$2 
 [[ "$NCHANGED" -gt 1 ]] \
   || fail "a full rebuild should re-emit more than the edited page, got $NCHANGED changed"
 echo "PASS: the full dev rebuild re-emitted the tree ($NCHANGED of $NPAGES pages)"
+
+# A metadata edit must invalidate old buckets and populate new ones in the
+# section output served by the real watch loop.
+serves "$ORIGIN" "" 'id="old-tag">1' || fail "initial tag bucket missing"
+serves "$ORIGIN" "" 'id="old-author">1' || fail "initial author bucket missing"
+sleep 1.1
+sed -i 's/old-tag/new-tag/; s/old-author/new-author/' "$SRC/content/indexed.smd"
+poll 60 serves "$ORIGIN" "" 'id="new-tag">1' || { cat "$LOG"; fail "changed tag never reached section listing"; }
+serves "$ORIGIN" "" 'id="old-tag">0' || fail "stale old tag in dev listing"
+serves "$ORIGIN" "" 'id="old-author">0' || fail "stale old author in dev listing"
+serves "$ORIGIN" "" 'id="new-author">1' || fail "new author missing in dev listing"
+echo "PASS: dev metadata edit refreshes old and new author/tag buckets"
 
 # --- (c) shared-input (layout) edit -> FULL rebuild --------------------------
 LINES_BEFORE="$(grep -c "change detected" "$LOG" || true)"

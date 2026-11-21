@@ -447,7 +447,7 @@ fn printReport(
         try w.print("{s} -> {s}", .{ alt.name, alt.output });
     }
     try w.print("]\n", .{});
-    try w.print("  .skip_subdirs = {}\n", .{page.skip_subdirs});
+    try w.print("  .forbid_subsections = {}\n", .{page.forbid_subsections});
     if (page.translation_key) |tk| {
         try w.print("  .translation_key = \"{s}\"\n", .{tk});
     } else {

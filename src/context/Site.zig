@@ -255,9 +255,23 @@ pub const Builtins = struct {
         }
     };
 
+    pub const index = struct {
+        pub const signature: Signature = .{ .ret = .Page };
+        pub const docs_description =
+            \\Returns the root index page, the same as `$site.page('')`.
+        ;
+        pub const examples =
+            \\<a href="$site.index().link()">Homepage</a>
+        ;
+        pub fn call(site: *const Site, gpa: Allocator, ctx: *const context.Root, args: []const Value) context.CallError!Value {
+            if (args.len != 0) return .{ .err = "expected 0 arguments" };
+            return page.call(site, gpa, ctx, &.{String.init("")});
+        }
+    };
+
     pub const page = struct {
         pub const signature: Signature = .{
-            .params = &.{.String},
+            .params = &.{ .String, .{ .Many = .String } },
             .ret = .Page,
         };
         pub const docs_description =
@@ -272,26 +286,37 @@ pub const Builtins = struct {
             \\ - content/foo/bar.smd
             \\ - content/foo/bar/index.smd
             \\
-            \\To reference the site homepage, pass an empty string.
+            \\To reference the site homepage, pass an empty string or use `$site.index()`.
+            \\
+            \\Multiple string arguments compose a path: `$site.page('foo', 'bar')`
+            \\is equivalent to `$site.page('foo/bar')`. Empty parts are ignored;
+            \\a trailing slash on a part is optional.
         ;
         pub const examples =
             \\<a href="$site.page('downloads').link()">Downloads</a>
         ;
+        /// Contract 1: frees the composed-path scratch. Only a formatted error
+        /// or a missing-page reference escapes; resolved pages are borrowed.
         pub fn call(
             site: *const Site,
             gpa: Allocator,
             ctx: *const context.Root,
             args: []const Value,
         ) context.CallError!Value {
-            const bad_arg: Value = .{
-                .err = "expected 1 string argument",
-            };
-            if (args.len != 1) return bad_arg;
-
-            const ref = switch (args[0]) {
-                .string => |s| s.value,
+            const bad_arg: Value = .{ .err = "expected 1 or more string arguments" };
+            if (args.len == 0) return bad_arg;
+            var path_buf: Writer.Allocating = .init(gpa);
+            defer path_buf.deinit();
+            for (args) |arg| switch (arg) {
+                .string => |s| {
+                    if (s.value.len == 0) continue;
+                    const part = if (std.mem.endsWith(u8, s.value, "/")) s.value[0 .. s.value.len - 1] else s.value;
+                    if (path_buf.written().len > 0) path_buf.writer.writeByte('/') catch return error.OutOfMemory;
+                    path_buf.writer.writeAll(part) catch return error.OutOfMemory;
+                },
                 else => return bad_arg,
             };
+            const ref = path_buf.written();
 
             if (root.validatePathMessage(ref, .{ .empty = true })) |msg| return .{
                 .err = msg,
@@ -312,7 +337,8 @@ pub const Builtins = struct {
                 // (a resource-kind mismatch is a real authoring mistake, not
                 // an unwritten page).
                 if (ctx._meta.build.allow_missing_pages) {
-                    return context.MissingPage.tolerate(ctx, site, ref);
+                    // The sentinel outlives our scratch path buffer.
+                    return context.MissingPage.tolerate(ctx, site, try gpa.dupe(u8, ref));
                 }
                 return Value.errFmt(gpa, "missing page '{s}'", .{ref});
             };
@@ -329,7 +355,8 @@ pub const Builtins = struct {
                 // component of `ref` resolved (e.g. a sibling asset already
                 // lives there) but no page claims it yet.
                 if (ctx._meta.build.allow_missing_pages) {
-                    return context.MissingPage.tolerate(ctx, site, ref);
+                    // The sentinel outlives our scratch path buffer.
+                    return context.MissingPage.tolerate(ctx, site, try gpa.dupe(u8, ref));
                 }
                 return Value.errFmt(gpa, "missing page '{s}'", .{ref});
             };

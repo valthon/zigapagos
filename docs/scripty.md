@@ -156,7 +156,15 @@ nested maps.
 <span :text="$site.data('site').get('owner').get('name')"></span>
 ```
 
-#### `Site.page(String) -> Page`
+#### `Site.index() -> Page`
+
+Returns the root index page, the same as `$site.page('')`.
+
+```superhtml
+<a href="$site.index().link()">Homepage</a>
+```
+
+#### `Site.page(String, [String...]) -> Page`
 
 Finds a page by path.
 
@@ -169,7 +177,11 @@ matched by Zigapagos with either:
  - content/foo/bar.smd
  - content/foo/bar/index.smd
 
-To reference the site homepage, pass an empty string.
+To reference the site homepage, pass an empty string or use `$site.index()`.
+
+Multiple string arguments compose a path: `$site.page('foo', 'bar')`
+is equivalent to `$site.page('foo/bar')`. Empty parts are ignored;
+a trailing slash on a part is optional.
 
 ```superhtml
 <a href="$site.page('downloads').link()">Downloads</a>
@@ -215,7 +227,7 @@ Fields:
 - `tags` : []String — Tags associated with the page, as set in the SuperMD frontmatter.
 - `aliases` : []String — Aliases of the current page, as set in the SuperMD frontmatter. Aliases can be used to make the same page available from different locations. Every entry in the list is an output location where the rendered page will be copied to. Entries are joined to the page's output directory; start an entry with `/` to place it relative to the site root (e.g. `"/404.html"` to override the site-wide 404 page).
 - `alternatives` : []Alternative — Alternative versions of the page, as set in the SuperMD frontmatter. Alternatives are a good way of implementing RSS feeds, for example.
-- `skip_subdirs` : Bool — Skips any other potential content present in the subdir of the page, as set in the SuperMD frontmatter. Can only be set to true on section pages (i.e. `index.smd` pages).
+- `forbid_subsections` : Bool — On a section index, forbids child section indexes (`foo/index.smd`). Use `foo.smd` instead to preserve the URL while making it a leaf visible to `$page.leaves()`. Defaults to false.
 - `translation_key` : ?String — Translation key used to map this page with corresponding localized variants, as set in the SuperMD frontmatter. See the docs on i18n for more info.
 - `custom` : Dynamic — A Ziggy map where you can define custom properties for the page, as set in the SuperMD frontmatter.
 - `pagination` : ?Pagination — Pagination settings of this section index, as set in the SuperMD frontmatter (null when not paginated). `.pagination = .{ .page_size = 10 }` makes the build render this index once per window of 10 active subpages. Use `$page.pagination?()` for the per-render state (current page, total pages, prev/next links).
@@ -320,6 +332,19 @@ the current page is an 'index.smd' page).
 $page.isSection()
 ```
 
+#### `Page.leaves(?Int) -> []Page`
+
+Returns a flat list of active non-section pages in this section's
+subtree, sorted by descending date. Section indexes, including
+empty sections, are excluded. A non-section returns an empty list.
+
+Accepts an optional non-negative integer length limit. Use
+`forbid_subsections` on terminal sections to require leaf pages.
+
+```superhtml
+<ul :loop="$page.leaves(10)"><li :text="$loop.it.title"></li></ul>
+```
+
 #### `Page.subpages() -> []Page`
 
 Returns a list of all the pages in this section. If the page is 
@@ -341,6 +366,72 @@ comparing their titles.
 
 ```superhtml
 <div :loop="$page.subpagesAlphabetic()">
+  <span :text="$loop.it.title"></span>
+</div>
+```
+
+#### `Page.subpagesByAuthor(String) -> []Page`
+
+Retrieve subpages of this section page that have in their
+`authors` field the provided string. Returns an error when
+called on a non-section page.
+
+Sections are defined by `index.smd` files, see the content
+structure section in the official docs for more info.
+
+Search uses an index built once per build. Results are an array
+in descending date order,
+with reverse output-URL order for equal dates. Missing keys
+return an empty array. Drafts are excluded unless enabled.
+
+The lookup covers the whole section, including on pagination
+pages; it does not apply the current `subpages()` window.
+
+If you want to attach extra information to an author, use the
+argument string as a key to a custom dictionary field or
+another page. For example 'loris-cro' can be used so:
+
+ - `$page.custom.get('loris-cro').get('name')`
+ - `$site.page('speakers', 'loris-cro').title`
+
+The latter case is a common technique for structuring sites
+that collect talks, books, etc.
+
+```superhtml
+<div :loop="$site.page('talks').subpagesByAuthor('loris-cro')">
+  <span :text="$loop.it.title"></span>
+</div>
+```
+
+#### `Page.subpagesByTag(String) -> []Page`
+
+Retrieve subpages of this section page that have in their
+`tags` field the provided string. Returns an error when
+called on a non-section page.
+
+Sections are defined by `index.smd` files, see the content
+structure section in the official docs for more info.
+
+Search uses an index built once per build. Results are an array
+in descending date order,
+with reverse output-URL order for equal dates. Missing keys
+return an empty array. Drafts are excluded unless enabled.
+
+The lookup covers the whole section, including on pagination
+pages; it does not apply the current `subpages()` window.
+
+If you want to attach extra information to a tag, use the
+argument string as a key to a custom dictionary field or
+another page. For example 'adventure' can be used so:
+
+  - `$page.custom.get('adventure').get('description')`
+  - `$site.page('tags', 'adventure').description`
+
+The latter case is a common technique for structuring sites
+that collect movies, books, etc.
+
+```superhtml
+<div :loop="$site.page('movies').subpagesByTag('adventure')">
   <span :text="$loop.it.title"></span>
 </div>
 ```
@@ -723,6 +814,7 @@ When inside of a git repository it also gives git-related metadata.
 Fields:
 
 - `generated` : DateTime — Returns the current date when the build is taking place. ># \[Note]\(`$block.attrs('note')`) >Using this function will not add a dependency on the current time >for the page, hence the name `generated`. > >To get the best results, use in conjunction with caching as otherwise >the page will be regenerated anew every single time.
+- `development` : Bool — True for renders performed by the dev loop, including rebuilds and `--no-live-reload` sessions. False for release, validate and explain.
 
 #### `Build.asset(String) -> Asset`
 

@@ -386,3 +386,9 @@ test "assets: inspect-output anchor" {
 test "init: shipped schemas anchor" {
     _ = @import("cli/init.zig");
 }
+
+// Variant's tests otherwise sit behind root.run, which test builds do not analyze.
+// The unfiltered test-init/test-spa suites execute the index ownership/OOM cases.
+test "section author/tag indexes anchor" {
+    _ = @import("Variant.zig");
+}

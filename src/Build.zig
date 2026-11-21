@@ -24,6 +24,7 @@ const log = std.log.scoped(.build);
 const cache_dir_basename = ".zigapagos-cache";
 
 cfg: *const root.Config,
+development: bool = false,
 build_assets: *const std.StringArrayHashMapUnmanaged(BuildAsset),
 any_prerendering_error: bool = false,
 any_rendering_error: std.atomic.Value(bool) = .{ .raw = false },
@@ -417,6 +418,7 @@ pub fn load(io: Io, gpa: Allocator, cfg: *const root.Config, opts: root.Options)
 
     return .{
         .cfg = cfg,
+        .development = opts.development,
         .build_assets = opts.build_assets,
         .base_dir = base_dir,
         .base_dir_path = opts.base_dir_path,

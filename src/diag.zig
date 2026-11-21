@@ -231,6 +231,10 @@ pub const Code = enum {
     ZP_FRONTMATTER_FRAMING,
     // emitted by: root.zig, frontmatter failed to parse as Ziggy
     ZP_FRONTMATTER_PARSE,
+    // emitted by: root.zig, removed skip_subdirs frontmatter field
+    ZP_REMOVED_SKIP_SUBDIRS,
+    // emitted by: context/Page.zig FrontmatterAnalysisError, forbidden child section
+    ZP_FORBIDDEN_SUBSECTION,
     // emitted by: context/Page.zig FrontmatterAnalysisError, missing/invalid layout
     ZP_MISSING_LAYOUT,
     // emitted by: context/Page.zig FrontmatterAnalysisError, invalid `aliases` entry
@@ -428,6 +432,23 @@ pub fn info(c: Code) Info {
             \\Each `alternatives` entry may set its own `layout`; when it does,
             \\that path must resolve to a real layout under `layouts_dir_path`,
             \\same as a page's own top-level `layout` field.
+            ,
+        },
+        .ZP_FORBIDDEN_SUBSECTION => .{
+            .summary = "a section index's parent forbids subsections",
+            .explanation =
+            \\The parent index sets `forbid_subsections = true`. Move the child
+            \\from `foo/index.smd` to `foo.smd`, as the diagnostic suggests, to
+            \\preserve its URL and make it visible to `$page.leaves()`.
+            ,
+        },
+        .ZP_REMOVED_SKIP_SUBDIRS => .{
+            .summary = "frontmatter uses the removed `skip_subdirs` field",
+            .explanation =
+            \\`skip_subdirs` had no effect and has been removed. Delete it from
+            \\frontmatter. The nearest replacement is `forbid_subsections` on
+            \\a section index: it requires child pages to use `foo.smd` rather
+            \\than `foo/index.smd`, so they are leaves instead of sections.
             ,
         },
         .ZP_INVALID_PAGINATION_SIZE => .{
