@@ -1271,123 +1271,29 @@ pub fn run(
         try build.scanSiteAssets(io, gpa, arena);
         _ = arena_state.reset(.retain_capacity);
 
-        for (build.cfg.getStaticAssets()) |path| {
-            // Glob form: a trailing `**` installs every asset under a prefix
-            // (paths are relative to `assets_dir_path`, matching the exact-match
-            // form). `**` = the whole assets tree (Astro's "copy public/"); `img/**`
-            // = everything under `assets/img/`. This saves enumerating each file.
-            if (std.mem.eql(u8, path, "**") or std.mem.endsWith(u8, path, "/**")) {
-                // Drop the trailing `**`, keeping the directory prefix (incl. its
-                // `/`): "img/**" -> "img/", "**" -> "" (matches all).
-                const prefix = path[0 .. path.len - 2];
-                var matched: usize = 0;
-                var glob_it = build.site_assets.iterator();
-                var name_buf: [std.fs.max_path_bytes]u8 = undefined;
-                while (glob_it.next()) |entry| {
-                    const asset_path = std.mem.print(&name_buf, "{f}", .{
-                        entry.key_ptr.fmt(&build.st, &build.pt, null, "/"),
-                    }) catch continue;
-                    if (prefix.len == 0 or std.mem.startsWith(u8, asset_path, prefix)) {
-                        if (build.cfg.getCspExtraSources().len > 0 and
-                            try isCspRootAsset(gpa, &build, entry.key_ptr.*) and
-                            !csp_static_collision_reported)
-                        {
-                            try reportCspStaticAssetCollision(gpa, &build, path);
-                            csp_static_collision_reported = true;
-                            static_assets_errors = true;
-                        }
-                        if (build.cfg.getSitemap() and
-                            isSitemapRootAsset(&build, entry.key_ptr.*) and
-                            !sitemap_static_collision_reported)
-                        {
-                            try reportSitemapStaticAssetCollision(gpa, &build, path);
-                            sitemap_static_collision_reported = true;
-                            static_assets_errors = true;
-                        }
-                        entry.value_ptr.raw = 1;
-                        matched += 1;
-                    }
-                }
-                if (matched == 0) {
-                    static_assets_errors = true;
-                    if (diag.format == .json) {
-                        var msg_buf: [1024]u8 = undefined;
-                        diag.emit(.{
-                            .code = .ZP_STATIC_ASSET_GLOB_EMPTY,
-                            .severity = .@"error",
-                            .message = diag.render(&msg_buf, "static asset glob '{s}' matched no assets", .{path}),
-                        });
-                    } else {
-                        std.debug.print("error: static asset glob '{s}' matched no assets\n", .{path});
-                    }
-                    // A `.memory` build CAN now see diag.format == .json:
-                    // `zigapagos validate` is a `.memory`-mode command and,
-                    // as of issue #131 item 1, accepts `--format=json` (only
-                    // `explain` still does not). This block stays
-                    // unconditional regardless -- it is not part of the
-                    // text/json split above -- because `build.mode.memory.
-                    // errors` is write-only: appended here, walked by
-                    // `Build.deinit`'s teardown, and never read by anything
-                    // that would print or emit it. Populating it in json mode
-                    // costs an allocation and nothing else.
-                    if (build.mode == .memory) {
-                        try build.mode.memory.errors.append(gpa, .{
-                            .ref = "",
-                            .msg = try gpa.print(
-                                "error: static asset glob '{s}' matched no assets\n",
-                                .{path},
-                            ),
-                        });
-                    }
-                }
-                continue;
+        const static_selection = try @import("static_assets.zig").expand(io, gpa, &build);
+        defer static_selection.deinit(gpa);
+        static_assets_errors = static_selection.errors;
+        var static_it = build.site_assets.iterator();
+        var static_idx: usize = 0;
+        while (static_it.next()) |entry| : (static_idx += 1) {
+            const owner = static_selection.owners[static_idx] orelse continue;
+            const path = build.cfg.getStaticAssets()[owner];
+            if (build.cfg.getCspExtraSources().len > 0 and
+                try isCspRootAsset(gpa, &build, entry.key_ptr.*) and
+                !csp_static_collision_reported)
+            {
+                try reportCspStaticAssetCollision(gpa, &build, path);
+                csp_static_collision_reported = true;
+                static_assets_errors = true;
             }
-
-            if (PathName.get(&build.st, &build.pt, path)) |pn| {
-                if (build.site_assets.getPtr(pn)) |rc| {
-                    if (build.cfg.getCspExtraSources().len > 0 and
-                        try isCspRootAsset(gpa, &build, pn) and
-                        !csp_static_collision_reported)
-                    {
-                        try reportCspStaticAssetCollision(gpa, &build, path);
-                        csp_static_collision_reported = true;
-                        static_assets_errors = true;
-                    }
-                    if (build.cfg.getSitemap() and
-                        isSitemapRootAsset(&build, pn) and
-                        !sitemap_static_collision_reported)
-                    {
-                        try reportSitemapStaticAssetCollision(gpa, &build, path);
-                        sitemap_static_collision_reported = true;
-                        static_assets_errors = true;
-                    }
-                    rc.raw = 1;
-                    continue;
-                }
-            }
-
-            static_assets_errors = true;
-            if (diag.format == .json) {
-                var msg_buf: [1024]u8 = undefined;
-                diag.emit(.{
-                    .code = .ZP_STATIC_ASSET_MISSING,
-                    .severity = .@"error",
-                    .message = diag.render(&msg_buf, "static asset '{s}' does not exist", .{path}),
-                });
-            } else {
-                std.debug.print("error: static asset '{s}' does not exist\n", .{
-                    path,
-                });
-            }
-
-            if (build.mode == .memory) {
-                try build.mode.memory.errors.append(gpa, .{
-                    .ref = "",
-                    .msg = try gpa.print(
-                        "error: static asset '{s}' does not exist\n",
-                        .{path},
-                    ),
-                });
+            if (build.cfg.getSitemap() and
+                isSitemapRootAsset(&build, entry.key_ptr.*) and
+                !sitemap_static_collision_reported)
+            {
+                try reportSitemapStaticAssetCollision(gpa, &build, path);
+                sitemap_static_collision_reported = true;
+                static_assets_errors = true;
             }
         }
 

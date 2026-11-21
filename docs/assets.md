@@ -82,12 +82,36 @@ The escape hatch for anything fetched by something *outside* the build, which
 therefore has no `.link()` to bump anything:
 
 ```ziggy
-.static_assets = ["favicon.ico", "CNAME", "robots.txt"],
+.static_assets = ["favicon.ico", "CNAME", "robots.txt", "fonts", "downloads/"],
 ```
+
+An entry names a file or directory relative to `assets_dir_path`. A directory
+installs every file in its subtree, including nested and hidden files, without
+requiring a template reference. A trailing `/` is optional for directories;
+an empty directory is valid and installs nothing. All selected files keep
+their original paths even with `asset_fingerprint = true`.
 
 An entry may be a `**` glob to take a whole subtree without listing it:
 `"**"` installs the entire assets directory, `"img/**"` everything under
 `assets/img/`. A glob that matches nothing is a build error.
+
+Selecting a file twice is a build error, including a file listed directly
+and through a directory, overlapping directories, or overlapping globs.
+`ZP_STATIC_ASSET_DUPLICATE` names the file and both entries.
+Missing paths (`ZP_STATIC_ASSET_MISSING`) and invalid paths
+(`ZP_STATIC_ASSET_INVALID`) also fail the build. Use relative paths without
+dot components, backslashes, empty components or NUL.
+Absolute paths and spellings escaping the assets directory are rejected. Drive-qualified
+spellings are rejected on Windows; `c:notes.txt` is a literal filename on POSIX.
+Selected file symlinks install their target contents even when the target lives
+outside the assets directory (including selections through `**`); broken links
+and targets that are not regular files are errors;
+directory symlinks are not traversed. Diagnostics support text and JSON and
+point at the selecting entry in `zigapagos.ziggy` when available.
+
+Directory selection also publishes private data files inside that subtree,
+even files read only through `.ziggy()` or `.bytes()`. Keep private build-time
+data outside directories listed in `static_assets`.
 
 Use it for files something else looks up at a fixed path. Do **not** use it for
 site-wide CSS or feeds — those should be `.link()`ed, so that removing the last
@@ -173,7 +197,7 @@ because the extension is load-bearing downstream: a web server picks the
 
 ### What is deliberately *not* fingerprinted
 
-- **`static_assets` entries.** They are installed unconditionally precisely
+- **`static_assets` entries, including files reached through directories or globs.** They are installed unconditionally precisely
   because something outside the build fetches them at a fixed path; hashing
   `favicon.ico` or `CNAME` would break exactly the thing they exist for.
 - **Build assets.** Their install path is yours to choose (`--install=` /

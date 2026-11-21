@@ -36,6 +36,18 @@ not, so a hardcoded link works locally and 404s in production.
 `.content_dir_path`, `.layouts_dir_path` and `.assets_dir_path` are relative to
 the project root.
 
+`.static_assets` is a list of strings naming files or directories under
+`assets_dir_path`, for example `.static_assets = ["favicon.ico", "fonts", "downloads/"],`.
+A directory includes every file in its subtree unconditionally, at its original
+path, including when fingerprinting is enabled. A trailing slash is optional;
+empty directories are valid. Existing `"**"` and `"img/**"` globs still work.
+Missing or invalid paths and files selected by more than one entry are build
+errors; duplicate diagnostics name both entries. Paths must remain inside the
+assets directory by their spelling. Selected file symlinks may target regular
+files outside it; their contents are copied. Directory symlinks are not
+traversed. All files in a selected directory are published, including private build-time data. See
+[assets](assets.md#static_assets) for validation and diagnostic details.
+
 `.deploy_target` selects which host configuration the build emits — `zigbase`,
 `nginx`, or `apache`. See [native SPAs](spa.md) for what each
 one generates.

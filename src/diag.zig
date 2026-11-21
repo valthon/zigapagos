@@ -217,10 +217,14 @@ pub fn emitFatal(comptime fmt: []const u8, args: anytype) void {
 /// is documented) -- the comment is what makes a dead/unreachable code
 /// visible in review. Never register a code this PR does not also emit.
 pub const Code = enum {
-    // emitted by: root.zig, static asset glob matched nothing
+    // emitted by: static_assets.zig, static asset glob matched nothing
     ZP_STATIC_ASSET_GLOB_EMPTY,
-    // emitted by: root.zig, a listed static asset does not exist
+    // emitted by: static_assets.zig, a listed static asset does not exist
     ZP_STATIC_ASSET_MISSING,
+    // emitted by: static_assets.zig, a file selected by two config entries
+    ZP_STATIC_ASSET_DUPLICATE,
+    // emitted by: static_assets.zig, an unsafe or unsupported static path
+    ZP_STATIC_ASSET_INVALID,
     // emitted by: root.zig, a static asset would overwrite generated output
     ZP_STATIC_ASSET_OUTPUT_COLLISION,
     // emitted by: root.zig, i18n ziggy file failed to parse
@@ -335,11 +339,29 @@ pub fn info(c: Code) Info {
         .ZP_STATIC_ASSET_MISSING => .{
             .summary = "a static asset named in zigapagos.ziggy does not exist",
             .explanation =
-            \\A `static_assets` entry names an exact path that must exist under
-            \\`assets_dir_path`. This one didn't resolve to any scanned asset.
+            \\A `static_assets` entry names a file or directory that must exist
+            \\under `assets_dir_path`. This path could not be found.
             \\
             \\Check the path for a typo (it's relative to `assets_dir_path`),
             \\and confirm the file wasn't renamed or moved.
+            ,
+        },
+        .ZP_STATIC_ASSET_DUPLICATE => .{
+            .summary = "two static asset entries select the same file",
+            .explanation =
+            \\Each file may be selected only once by `static_assets`, including
+            \\files reached through directories or globs. The message names
+            \\both entries and the shared file. Remove or narrow an entry.
+            ,
+        },
+        .ZP_STATIC_ASSET_INVALID => .{
+            .summary = "a static asset path is invalid or escapes the assets directory",
+            .explanation =
+            \\Use a relative file or directory path under `assets_dir_path`.
+            \\Empty paths, absolute or drive-qualified paths, dot components,
+            \\backslashes and NUL are invalid. Selected files must resolve
+            \\to regular files. File symlinks may target external regular files;
+            \\broken symlinks, directory symlinks and non-files are rejected.
             ,
         },
         .ZP_STATIC_ASSET_OUTPUT_COLLISION => .{
