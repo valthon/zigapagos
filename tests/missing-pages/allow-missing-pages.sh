@@ -47,13 +47,13 @@ fail() { echo "FAIL: $*"; exit 1; }
 
 zigapagos_config() {
   cat > "$1/zigapagos.ziggy" <<'EOF'
-Site {
+.site = .simple(.{
     .title = "Missing Pages Test",
     .host_url = "https://example.com",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "content",
-}
+})
 EOF
 }
 
@@ -62,8 +62,8 @@ page() {
   cat > "$1/content/$2.smd" <<EOF
 ---
 .title = "$3",
-.date = @date("2020-07-06T00:00:00"),
-.author = "Test",
+.date = .date("2020-07-06T00:00:00"),
+.authors = ["Test"],
 .layout = "base.shtml",
 .draft = false,
 ---

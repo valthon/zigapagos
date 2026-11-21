@@ -35,13 +35,13 @@ SITE="$WORK/site"; OUT="$WORK/out"
 mkdir -p "$SITE/content" "$SITE/layouts"
 
 cat > "$SITE/zigapagos.ziggy" <<'EOF'
-Site {
+.site = .simple(.{
     .title = "Empty page path hint test",
     .host_url = "https://example.com",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "content",
-}
+})
 EOF
 
 cat > "$SITE/layouts/index.shtml" <<'EOF'
@@ -51,8 +51,8 @@ EOF
 cat > "$SITE/content/index.smd" <<'EOF'
 ---
 .title = "Home",
-.date = @date("2020-07-06T00:00:00"),
-.author = "Sample Author",
+.date = .date("2020-07-06T00:00:00"),
+.authors = ["Sample Author"],
 .layout = "index.shtml",
 .draft = false,
 ---
@@ -100,8 +100,8 @@ cp "$SITE/layouts/index.shtml" "$ASSET_SITE/layouts/index.shtml"
 cat > "$ASSET_SITE/content/index.smd" <<'EOF'
 ---
 .title = "Home",
-.date = @date("2020-07-06T00:00:00"),
-.author = "Sample Author",
+.date = .date("2020-07-06T00:00:00"),
+.authors = ["Sample Author"],
 .layout = "index.shtml",
 .draft = false,
 ---

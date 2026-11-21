@@ -55,16 +55,16 @@ LAYOUT='<!DOCTYPE html>
 
 FRONTMATTER_HOME='---
 .title = "Home",
-.date = @date("2020-07-06T00:00:00"),
-.author = "Test",
+.date = .date("2020-07-06T00:00:00"),
+.authors = ["Test"],
 .layout = "index.shtml",
 .draft = false,
 ---'
 
 FRONTMATTER_OTHER='---
 .title = "Other",
-.date = @date("2020-07-06T00:00:00"),
-.author = "Test",
+.date = .date("2020-07-06T00:00:00"),
+.authors = ["Test"],
 .layout = "index.shtml",
 .draft = false,
 ---'
@@ -73,14 +73,14 @@ FRONTMATTER_OTHER='---
 ON="$WORK/on"; ON_OUT="$WORK/on-out"
 mkdir -p "$ON/content" "$ON/layouts"
 cat > "$ON/zigapagos.ziggy" <<'EOF'
-Site {
+.site = .simple(.{
     .title = "Auto Heading Ids (on)",
     .host_url = "https://example.com",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "content",
     .auto_heading_ids = true,
-}
+})
 EOF
 printf '%s' "$LAYOUT" > "$ON/layouts/index.shtml"
 
@@ -153,13 +153,13 @@ echo "PASS: flag ON — duplicates, em dash, explicit override, both link kinds 
 OFF="$WORK/off"; OFF_OUT="$WORK/off-out"
 mkdir -p "$OFF/content" "$OFF/layouts"
 cat > "$OFF/zigapagos.ziggy" <<'EOF'
-Site {
+.site = .simple(.{
     .title = "Auto Heading Ids (off)",
     .host_url = "https://example.com",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "content",
-}
+})
 EOF
 printf '%s' "$LAYOUT" > "$OFF/layouts/index.shtml"
 

@@ -124,7 +124,7 @@ sees the next `.` where it wanted `,`.
 error's own expected-set says so: after a value the parser will also take the
 closing `---`. A trailing comma on the last field is the house style here and is
 always accepted, so "comma after every field" is the rule that never bites.
-Strings are double-quoted; dates are `@date("2020-01-01T00:00:00")`; booleans
+Strings are double-quoted; dates are `.date("2020-01-01T00:00:00")`; booleans
 are bare `true`/`false`.
 
 Code: `ZP_FRONTMATTER_PARSE`.
@@ -158,7 +158,10 @@ Codes: `ZP_MISSING_SITE_ASSET`, `ZP_MISSING_PAGE_ASSET`,
 content/index.smd:9:1: warning: unknown code-fence language 'jsonc'; emitting the block unhighlighted (did you mean 'json'?)
 ```
 
-**Cause.** The fence's info string is not a registered syntax.
+**Cause.** The fence's info string is not a registered syntax. `console` is
+accepted for shell sessions in both fenced blocks and the code directive.
+A compiler built with `-Dhighlight=false` accepts every language name without
+this warning.
 
 **This is a warning, not an error** — the block is emitted unhighlighted and the
 build succeeds. `zigapagos languages` prints the registered list, and a

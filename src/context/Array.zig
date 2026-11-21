@@ -67,6 +67,70 @@ pub const Fields = struct {
 };
 
 pub const Builtins = struct {
+    pub const join = struct {
+        pub const signature: Signature = .{
+            .params = &.{.String},
+            .ret = .String,
+        };
+
+        pub const docs_description =
+            \\Joins all items into a string, using the provided argument
+            \\as separator.
+            \\
+            \\The array must contain only strings or numbers.
+        ;
+
+        pub const examples =
+            \\<meta name="keywords" content="$page.tags.join(', ')">
+        ;
+
+        /// Contract 1: frees writer scratch; only the result string escapes.
+        pub fn call(
+            arr: Array,
+            gpa: Allocator,
+            _: *const context.Root,
+            args: []const Value,
+        ) context.CallError!Value {
+            const bad_arg: Value = .{ .err = "expected 1 string argument" };
+            if (args.len != 1) return bad_arg;
+
+            const sep = switch (args[0]) {
+                .string => |s| s.value,
+                else => return bad_arg,
+            };
+
+            var aw: std.Io.Writer.Allocating = .init(gpa);
+            defer aw.deinit();
+
+            const w = &aw.writer;
+
+            for (arr._items, 0..) |e, idx| {
+                switch (e) {
+                    .string => |s| {
+                        w.print("{s}", .{s.value}) catch return error.OutOfMemory;
+                    },
+                    .int => |x| {
+                        w.print("{}", .{x.value}) catch return error.OutOfMemory;
+                    },
+                    .float => |x| {
+                        w.print("{}", .{x.f}) catch return error.OutOfMemory;
+                    },
+                    else => return Value.errFmt(
+                        gpa,
+                        "element at index {} is not a string nor a number",
+                        .{idx},
+                    ),
+                }
+
+                if (idx < arr._items.len - 1) {
+                    w.writeAll(sep) catch return error.OutOfMemory;
+                }
+            }
+
+            return context.String.init(try aw.toOwnedSlice());
+        }
+    };
+
     pub const toJson = struct {
         pub const signature: Signature = .{
             .ret = .String,
@@ -79,7 +143,7 @@ pub const Builtins = struct {
             \\`$site.data(...)`). The island's `Props` field — e.g.
             \\`[]const Item` — is parsed from that JSON, so the whole list
             \\arrives at once. The dynamic-attribute analogue of an inline
-            \\`:props='{ .items = [ ... ] }'` literal.
+            \\`:props='.{ .items = [ ... ] }'` literal.
         ;
         pub const examples =
             \\<island src="Faq.zig" prop-items="$page.custom.get('faq').toJson()"></island>
@@ -214,7 +278,7 @@ pub const Builtins = struct {
     pub const @"first?" = struct {
         pub const signature: Signature = .{
             .params = &.{},
-            .ret = .{ .Many = .any },
+            .ret = .{ .Opt = .any },
         };
         pub const docs_description =
             \\Returns the the first value of the array or null if the array is empty. 
@@ -240,7 +304,7 @@ pub const Builtins = struct {
     pub const @"last?" = struct {
         pub const signature: Signature = .{
             .params = &.{},
-            .ret = .{ .Many = .any },
+            .ret = .{ .Opt = .any },
         };
         pub const docs_description =
             \\Returns the the last value of the array or null if the array is empty. 

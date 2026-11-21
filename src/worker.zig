@@ -9,7 +9,7 @@ const superhtml = @import("superhtml");
 const scripty = @import("scripty");
 const ziggy = @import("ziggy");
 const tracy = @import("tracy");
-const syntax = @import("syntax");
+const options = @import("options");
 const languages = @import("languages.zig");
 const root = @import("root.zig");
 const fatal = @import("fatal.zig");
@@ -64,6 +64,7 @@ pub const Job = union(enum) {
         page: *Page,
         drafts: bool,
         auto_heading_ids: bool,
+        auto_target_blank: bool = true,
     },
     page_parse: struct {
         progress: std.Progress.Node,
@@ -71,6 +72,7 @@ pub const Job = union(enum) {
         variant: *const Variant,
         page: *Page,
         auto_heading_ids: bool,
+        auto_target_blank: bool = true,
     },
     page_analyze: struct {
         progress: std.Progress.Node,
@@ -215,6 +217,7 @@ inline fn runOneJob(
             ap.page,
             ap.drafts,
             ap.auto_heading_ids,
+            ap.auto_target_blank,
         ),
         .page_parse => |pp| pp.page.parse(
             io,
@@ -224,6 +227,7 @@ inline fn runOneJob(
             pp.variant,
             pp.drafts,
             pp.auto_heading_ids,
+            pp.auto_target_blank,
         ),
         .page_render => |pr| renderPage(
             io,
@@ -669,7 +673,7 @@ fn analyzeContent(
                 directive.kind.code.src = .{ .url = snippet };
             },
 
-            // Link, Image, Video directives
+            // Link, Image, Video and Audio directives
             inline else => |*val| {
                 switch (val.src.?) {
                     .url => continue :outer,
@@ -943,7 +947,28 @@ fn analyzeContent(
                                 },
                             });
                             continue :outer;
-                        } else variant.pages.items[hint.id];
+                        } else &variant.pages.items[hint.id];
+
+                        // Scan-time URLs also name empty pages and suppressed
+                        // descendants. Treat these as missing before reading
+                        // frontmatter or the (possibly uninitialized) AST.
+                        if (!other_page._parse.active or other_page._parse.status != .parsed) {
+                            if (b.allow_missing_pages) {
+                                const ref = p.ref;
+                                const url = try missingPageUrl(page_arena, b, variant_id, .{ .resolved = path }, ref);
+                                try errors.append(page_arena, .{
+                                    .node = n,
+                                    .kind = .{ .missing_page_tolerated = .{ .ref = ref, .url = url } },
+                                });
+                                val.src = .{ .url = url };
+                            } else {
+                                try errors.append(page_arena, .{
+                                    .node = n,
+                                    .kind = .{ .unknown_page = .{ .ref = p.ref } },
+                                });
+                            }
+                            continue :outer;
+                        }
 
                         p.resolved = .{
                             .page_id = hint.id,
@@ -1518,6 +1543,7 @@ fn renderPageInner(
     };
 
     ctx.build.generated = .initNow(io);
+    ctx.build.development = build.development;
 
     const layout_path = switch (kind) {
         .main => page.layout,
@@ -2029,11 +2055,15 @@ fn renderPageInner(
 
 // Null language evaluates to true for convenience.
 pub fn languageExists(language: ?[]const u8) bool {
+    if (!options.enable_treesitter) return true;
     const lang = language orelse return true;
 
     if (std.mem.eql(u8, lang, "=html")) return true;
     if (std.mem.eql(u8, lang, "=mathtex")) return true;
 
+    if (std.mem.eql(u8, lang, "console")) return true;
+
+    const syntax = @import("syntax");
     if (syntax.FileType.get_by_name_static(lang) == null) {
         var buf: [1024]u8 = undefined;
         const filename = std.mem.print(

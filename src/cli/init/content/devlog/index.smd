@@ -1,7 +1,7 @@
 ---
 .title = "Devlog Archive",
 .layout = "devlog-archive.shtml",
-.alternatives = [{
+.alternatives = [.{
     .name = "rss",
     .layout = "devlog.xml",
     .output = "index.xml",

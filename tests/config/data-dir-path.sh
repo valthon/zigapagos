@@ -40,13 +40,13 @@ new_site() {
   mkdir -p "$site"
   cp -r tests/rendering/simple/content tests/rendering/simple/layouts "$site/"
   if [[ -n "$data_path" ]]; then
-    # Insert the field before the closing brace of the Site literal.
+    # Insert the field before the closing site union value.
     python3 - "$site/zigapagos.ziggy" "tests/rendering/simple/zigapagos.ziggy" "$data_path" <<'PY'
 import sys
 dst, src, val = sys.argv[1], sys.argv[2], sys.argv[3]
 text = open(src).read().rstrip()
-assert text.endswith("}"), "fixture zigapagos.ziggy is not a brace-terminated literal"
-open(dst, "w").write(text[:-1] + '    .data_dir_path = "%s",\n}\n' % val)
+assert text.endswith("})"), "fixture zigapagos.ziggy is not a brace-terminated literal"
+open(dst, "w").write(text[:-2] + '    .data_dir_path = "%s",\n})\n' % val)
 PY
   else
     cp tests/rendering/simple/zigapagos.ziggy "$site/"
@@ -84,7 +84,7 @@ done
 SITE_OK="$WORK/ok"
 new_site "$SITE_OK" "data"
 mkdir -p "$SITE_OK/data"
-printf '{\n    .greeting = "hello-from-data",\n}\n' > "$SITE_OK/data/main.ziggy"
+printf '.{\n    .greeting = "hello-from-data",\n}\n' > "$SITE_OK/data/main.ziggy"
 RC="$(release "ok" "$SITE_OK")"
 [[ "$RC" -eq 0 ]] || {
   echo "--- output ---"; sed -n '1,20p' "$WORK/ok.log"

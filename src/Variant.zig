@@ -9,7 +9,6 @@ const log = std.log.scoped(.variant);
 
 const builtin = @import("builtin");
 const ziggy = @import("ziggy");
-const FrontParser = ziggy.frontmatter.Parser(Page);
 const tracy = @import("tracy");
 const fatal = @import("fatal.zig");
 const worker = @import("worker.zig");
@@ -46,7 +45,7 @@ sectionless_dirs: std.ArrayListUnmanaged(SectionlessDir),
 
 i18n: context.Map.ZiggyMap,
 i18n_src: [:0]const u8,
-i18n_diag: ziggy.Diagnostic,
+i18n_diag: @import("ziggy_diagnostic.zig"),
 i18n_arena: std.heap.ArenaAllocator.State,
 
 const Collision = struct {
@@ -127,14 +126,56 @@ pub const LocationHint = struct {
     };
 };
 
+/// Owns lists of page IDs in section date order. Keys borrow page frontmatter.
+pub const PageIndex = struct {
+    entries: std.StringHashMapUnmanaged(std.ArrayList(u32)) = .empty,
+
+    /// Contract 2: allocations belong to this index; caller must deinit it.
+    fn append(idx: *PageIndex, gpa: Allocator, key: []const u8, id: u32) error{OutOfMemory}!void {
+        const entry = try idx.entries.getOrPut(gpa, key);
+        if (!entry.found_existing) entry.value_ptr.* = .empty;
+        try entry.value_ptr.append(gpa, id);
+    }
+
+    /// Contract 2 teardown: frees owned maps/lists; keys remain owned by pages.
+    pub fn deinit(idx: PageIndex, gpa: Allocator) void {
+        var entries = idx.entries;
+        var it = entries.valueIterator();
+        while (it.next()) |list| list.deinit(gpa);
+        entries.deinit(gpa);
+    }
+};
+
 pub const Section = struct {
+    // Inactivity applies to the entire subtree: no sorting, page lists,
+    // pagination, counts or author/tag indexes, even through a direct lookup.
     active: bool = true,
     content_sub_path: Path,
     parent_section: u32, // index into sections, 0 = no parent section
     index: u32, // index into pages
     pages: std.ArrayListUnmanaged(u32) = .empty, // indices into pages
 
+    pages_by_author: PageIndex = .{},
+    pages_by_tag: PageIndex = .{},
+
+    /// Contract 2: section owns the index maps/lists until deinit (also on error).
+    /// Keys borrow parsed frontmatter; rebuild after parse, before any rendering.
+    pub fn indexPages(s: *Section, gpa: Allocator, pages: []const Page) error{OutOfMemory}!void {
+        s.pages_by_author.deinit(gpa);
+        s.pages_by_tag.deinit(gpa);
+        s.pages_by_author = .{};
+        s.pages_by_tag = .{};
+        for (s.pages.items) |id| {
+            const page = &pages[id];
+            if (!page._parse.active or page._parse.status != .parsed) continue;
+            for (page.authors) |key| try s.pages_by_author.append(gpa, key, id);
+            for (page.tags) |key| try s.pages_by_tag.append(gpa, key, id);
+        }
+    }
+
     pub fn deinit(s: *const Section, gpa: Allocator) void {
+        s.pages_by_author.deinit(gpa);
+        s.pages_by_tag.deinit(gpa);
         {
             var p = s.pages;
             p.deinit(gpa);
@@ -149,12 +190,17 @@ pub const Section = struct {
         index: *Page,
         drafts: bool,
         auto_heading_ids: bool,
+        auto_target_blank: bool,
     ) void {
         const zone = tracy.trace(@src());
         defer zone.end();
 
-        index.parse(io, gpa, worker.cmark, null, variant, drafts, auto_heading_ids);
-        s.active = index._parse.active;
+        index.parse(io, gpa, worker.cmark, null, variant, drafts, auto_heading_ids, auto_target_blank);
+        // A valid draft root can be a structural container without emitting
+        // its own page (the Rails migrator uses this for retained/blocked /).
+        // Empty roots and inactive non-root sections still suppress subtrees.
+        s.active = index._parse.active or
+            (index._scan.parent_section_id == 0 and index._parse.status == .parsed and index.draft);
     }
 
     pub fn sortPages(
@@ -163,6 +209,8 @@ pub const Section = struct {
         v: *Variant,
         pages: []Page,
     ) void {
+        if (!s.active) return;
+
         // Precompute each page's output URL exactly once into a scratch arena
         // (O(n) formats), then sort with a stable O(n log n) block sort. The
         // previous implementation was an O(n²) insertion sort whose date-tie
@@ -293,11 +341,12 @@ fn scanContentDirInner(
     var collisions: std.ArrayListUnmanaged(Collision) = .empty;
     var sectionless_dirs: std.ArrayListUnmanaged(SectionlessDir) = .empty;
 
-    var dir_stack: std.ArrayListUnmanaged(struct {
+    const DirStackEntry = struct {
         path: []const u8,
         parent_section: u32, // index into sections
         page_assets_owner: u32, // index into pages
-    }) = .empty;
+    };
+    var dir_stack: std.ArrayListUnmanaged(DirStackEntry) = .empty;
     try dir_stack.append(arena, .{
         .path = "",
         .parent_section = 0,
@@ -313,6 +362,13 @@ fn scanContentDirInner(
     }) catch |err| fatal.dir(content_dir_path, err);
 
     while (dir_stack.pop()) |dir_entry| {
+        defer if (builtin.optimize == .debug) {
+            std.mem.sort(DirStackEntry, dir_stack.items, {}, struct {
+                fn greaterThan(_: void, lhs: DirStackEntry, rhs: DirStackEntry) bool {
+                    return std.mem.order(u8, lhs.path, rhs.path) == .gt;
+                }
+            }.greaterThan);
+        };
         var dir = switch (dir_entry.path.len) {
             0 => content_dir,
             else => content_dir.openDir(io, dir_entry.path, .{ .iterate = true }) catch |err| {
@@ -391,17 +447,7 @@ fn scanContentDirInner(
             });
 
             const index_page = try pages.addOne(gpa);
-            index_page._parse.active = false;
-            // Pages are carved from undefined ArrayList memory, so field
-            // defaults never run; initialize every field `Page.deinit` frees to
-            // its empty state so deinit can always run over an unparsed
-            // placeholder — `_render` (AUD-004) and `_parse.arena`, whose free is
-            // unconditional. A later `parse()` overwrites `_parse` wholesale, so
-            // the empty arena is harmless if this page is parsed.
-            index_page._parse.arena = .{};
-            index_page._render = .{};
-            index_page._pagination = null;
-            index_page._scan = .{
+            index_page.* = Page.initScanned(.{
                 .file = .{
                     .path = content_sub_path,
                     .name = index_smd,
@@ -411,10 +457,7 @@ fn scanContentDirInner(
                 .subsection_id = current_section,
                 .parent_section_id = dir_entry.parent_section,
                 .variant_id = variant_id,
-            };
-            if (builtin.optimize == .debug) {
-                index_page._debug = .{ .stage = .init(.scanned) };
-            }
+            });
 
             const pn: PathName = .{ .path = content_sub_path, .name = index_html };
             const lh: LocationHint = .{ .id = page_id, .kind = .page_main };
@@ -525,14 +568,7 @@ fn scanContentDirInner(
             );
 
             sp.* = @intCast(idx);
-            p._parse.active = false;
-            // See the index_page note above: initialize the fields `Page.deinit`
-            // frees — `_render` (AUD-004) and `_parse.arena` — so deinit is safe
-            // over an unparsed placeholder.
-            p._parse.arena = .{};
-            p._render = .{};
-            p._pagination = null;
-            p._scan = .{
+            p.* = Page.initScanned(.{
                 .file = .{
                     .path = content_sub_path,
                     .name = f,
@@ -542,12 +578,9 @@ fn scanContentDirInner(
                 .subsection_id = 0,
                 .parent_section_id = current_section,
                 .variant_id = variant_id,
-            };
-            if (builtin.optimize == .debug) {
-                p._debug = .{ .stage = .init(.scanned) };
-            }
+            });
 
-            log.debug("'{s}/{s}' -> [{d}] -> [{d}]", .{
+            log.debug("'{s}/{s}' -> [{any}] -> [{any}]", .{
                 dir_entry.path,
                 f.slice(&string_table),
                 page_url,
@@ -614,9 +647,9 @@ fn scanContentDirInner(
         dir_names.clearRetainingCapacity();
     }
 
-    var i18n: context.Map.ZiggyMap = .{};
+    var i18n: context.Map.ZiggyMap = .empty;
     var i18n_src: [:0]const u8 = "";
-    var i18n_diag: ziggy.Diagnostic = .{ .path = null };
+    var i18n_diag: @import("ziggy_diagnostic.zig") = .{};
     var i18n_arena = std.heap.ArenaAllocator.init(gpa);
     // Present when in a multilingual site
     if (multilingual) |ml| {
@@ -634,18 +667,10 @@ fn scanContentDirInner(
         ) catch |err| fatal.file(name, err);
 
         i18n_diag.path = name;
-        i18n = ziggy.parseLeaky(
-            context.Map.ZiggyMap,
-            i18n_arena.allocator(),
-            i18n_src,
-            .{ .diagnostic = &i18n_diag },
-        ) catch |err| switch (err) {
-            error.OpenFrontmatter, error.MissingFrontmatter => unreachable,
-            error.Overflow, error.OutOfMemory => return error.OutOfMemory,
-            error.Syntax => .{
-                // We will detect later that an error happened by looking
-                // at the diagnostic struct.
-            },
+        i18n = ziggy.deserializeLeaky(context.Map.ZiggyMap, i18n_arena.allocator(), i18n_src, &i18n_diag.meta, .{}) catch |err| blk: {
+            if (err == error.OutOfMemory) return error.OutOfMemory;
+            i18n_diag.err = err;
+            break :blk .empty;
         };
     }
 
@@ -1040,4 +1065,44 @@ test "pagination: isPruneCandidateProtected treats a recorded SPA output path as
     // A path that is neither an SPA output nor in Variant.urls is genuinely
     // unprotected.
     try testing.expect(!v.isPruneCandidateProtected(&build, &page, .plain_dir, 3, "blog/3/index.html"));
+}
+
+// Contract 1: all section/index allocations are freed, including injected OOMs.
+fn testPageIndexes(gpa: Allocator) !void {
+    var pages = [_]Page{
+        .{ .title = "Multi", .layout = "", .authors = &.{ "ada", "bea" }, .tags = &.{"old"} },
+        .{ .title = "None", .layout = "" },
+        .{ .title = "Draft", .layout = "", .authors = &.{"ada"}, .tags = &.{"old"} },
+        // Active parse failures have no initialized frontmatter to index.
+        .{ .title = "Invalid", .layout = "", .authors = undefined, .tags = undefined },
+    };
+    pages[0]._parse.status = .parsed;
+    pages[1]._parse.status = .parsed;
+    pages[2]._parse.status = .parsed;
+    pages[3]._parse.status = .empty;
+    pages[3]._parse.active = true;
+    pages[0]._parse.active = true;
+    pages[1]._parse.active = true;
+    pages[2]._parse.active = false;
+    var section: Section = .{ .content_sub_path = undefined, .parent_section = 0, .index = 0 };
+    defer section.deinit(gpa);
+    try section.pages.appendSlice(gpa, &.{ 0, 1, 2, 3 });
+    try section.indexPages(gpa, &pages);
+    try testing.expectEqualSlices(u32, &.{0}, section.pages_by_author.entries.get("ada").?.items);
+    try testing.expectEqualSlices(u32, &.{0}, section.pages_by_author.entries.get("bea").?.items);
+    try testing.expectEqualSlices(u32, &.{0}, section.pages_by_tag.entries.get("old").?.items);
+    try testing.expect(section.pages_by_author.entries.get("missing") == null);
+    try testing.expect(section.pages_by_tag.entries.get("missing") == null);
+    pages[0].authors = &.{"new-author"};
+    pages[0].tags = &.{"new-tag"};
+    try section.indexPages(gpa, &pages);
+    try testing.expect(section.pages_by_author.entries.get("ada") == null);
+    try testing.expect(section.pages_by_author.entries.get("bea") == null);
+    try testing.expect(section.pages_by_tag.entries.get("old") == null);
+    try testing.expectEqualSlices(u32, &.{0}, section.pages_by_author.entries.get("new-author").?.items);
+    try testing.expectEqualSlices(u32, &.{0}, section.pages_by_tag.entries.get("new-tag").?.items);
+}
+
+test "section author/tag indexes rebuild without stale entries and free every allocation" {
+    try testing.checkAllAllocationFailures(testing.allocator, testPageIndexes, .{});
 }

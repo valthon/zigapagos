@@ -2,7 +2,7 @@
 .title = "Quick start",
 .description = "Install Zigapagos, generate a site, and see it rebuild as you edit.",
 .layout = "docs.shtml",
-.custom = { .slug = "quick-start" },
+.custom = { "slug" : "quick-start" },
 ---
 
 ## Choose your starting point

@@ -1,0 +1,2 @@
+<!DOCTYPE html>
+<html><head><title :text="$page.title"></title></head><body><div :text="$page.title"></div></body></html>

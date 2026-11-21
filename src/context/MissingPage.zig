@@ -27,7 +27,7 @@ site: *const context.Site,
 /// The literal `ref` argument to the `$site.page(ref)` call that produced
 /// this value. Borrowed -- safely, unlike `Warnings.seen`'s dedup key (see
 /// that field's doc comment): `ref` can be a template-source literal OR a
-/// string computed at render time (e.g. `$site.page($page.author.lower())`,
+/// string computed at render time (e.g. `$site.page($page.authors.join(' ').lower())`,
 /// which `context/String.zig`'s `lower` allocates from the VM's `gpa`, the
 /// per-render-job arena -- see `worker.zig`'s `SuperVM.init(arena.a, ...)`).
 /// Either way this `MissingPage` value and its `ref` are consumed within the

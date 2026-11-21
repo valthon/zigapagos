@@ -8,21 +8,21 @@
 // `assets_prefix_path` is set because an empty one hides the separator half of
 // the defect: with no prefix the joined host url happens to end where the
 // asset name begins.
-Multilingual {
+.site = .multilingual(.{
     .host_url = "https://example.com",
     .i18n_dir_path = "i18n",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "assets",
     .assets_prefix_path = "static",
     .locales = [
-        {
+        .{
             .code = "en-US",
             .name = "English",
             .site_title = "Abs Link Multi",
             .content_dir_path = "content/en-US",
             .output_prefix_override = "",
         },
-        {
+        .{
             .code = "it-IT",
             .name = "Italiano",
             .site_title = "Abs Link Multi",
@@ -35,7 +35,7 @@ Multilingual {
         // across variants whenever the two hosts differ. An `absLink()` that
         // also printed it unconditionally emitted the host twice
         // (`https://de.example.comhttps://de.example.com/de-DE/…`).
-        {
+        .{
             .code = "de-DE",
             .name = "Deutsch",
             .site_title = "Abs Link Multi",
@@ -56,7 +56,7 @@ Multilingual {
         // the repo covers this, and it is the cell most likely to regress
         // silently if anyone ever "tidies" that pointer compare into a
         // `mem.eql`.
-        {
+        .{
             .code = "fr-FR",
             .name = "Français",
             .site_title = "Abs Link Multi",
@@ -64,4 +64,4 @@ Multilingual {
             .host_url_override = "https://de.example.com",
         },
     ],
-}
+})

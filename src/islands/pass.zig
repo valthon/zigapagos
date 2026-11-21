@@ -585,7 +585,7 @@ fn expandMarkdownSlots(
 /// Props-quoting contract: `src` and other simple attributes use double-quote
 /// delimiters (`attr="value"`). The `:props` attribute uses SINGLE-quote
 /// delimiters (`:props='...'`) so that inner double-quotes in Ziggy struct
-/// literals (e.g. `{ .label = "hi" }`) do not terminate the attribute early.
+/// literals (e.g. `.{ .label = "hi" }`) do not terminate the attribute early.
 ///
 /// Lifetime: `result.instances` and all their string fields are arena-owned and
 /// live as long as the `arena` passed in. They are independent of the input
@@ -1318,7 +1318,7 @@ const IslandExtent = struct {
 /// slice of `html`.
 fn islandExtent(html: []const u8, tok: IslandStart) ?IslandExtent {
     // Quote-aware, so a `>` inside a quoted attribute value like
-    // `:props='{ .x = "a > b" }'` doesn't end the tag early.
+    // `:props='.{ .x = "a > b" }'` doesn't end the tag early.
     const open_end = tagEnd(html, tok.start) orelse return null;
     if (open_end > 0 and html[open_end - 1] == '/') {
         return .{ .open_end = open_end, .inner = "", .end = open_end + 1 };
@@ -2013,7 +2013,7 @@ test "process replaces an island with SSR markup + props script" {
     // Props use single-quote delimiters so inner double-quotes are safe.
     const input =
         "<main><island src=\"components/Counter.island.tsx\" client:load " ++
-        ":props='{ .start = 2, .label = \"hi\" }'></island></main>";
+        ":props='.{ .start = 2, .label = \"hi\" }'></island></main>";
 
     var stub: StubRenderer = .{};
     const result = try process(gpa, arena, input, "/", &stub, .{});
@@ -2055,7 +2055,7 @@ test "quote-aware tag scan: > inside :props value does not truncate the tag" {
     // The label contains > and < which would trip a naive indexOfScalar('>') scan.
     const input =
         "<main><island src=\"components/Counter.zig\" client:load " ++
-        ":props='{ .start = 1, .label = \"a > b < c\" }'></island></main>";
+        ":props='.{ .start = 1, .label = \"a > b < c\" }'></island></main>";
 
     var stub: StubRenderer = .{};
     const result = try process(gpa, arena, input, "/", &stub, .{});
@@ -2112,7 +2112,7 @@ test "default slot: slots_json forwarded to renderer; data-z-slots script emitte
     const arena = RenderArena.from(&arena_state);
 
     const input =
-        "<island src=\"components/Card.zig\" client:load :props='{ .title = \"Hi\" }'>" ++
+        "<island src=\"components/Card.zig\" client:load :props='.{ .title = \"Hi\" }'>" ++
         "<p>slotted body</p></island>";
 
     var stub: StubRenderer = .{};
@@ -2164,8 +2164,8 @@ test "nested island in slot content: both rewritten; nested id appears inside ou
 
     // A Counter nested inside a Card's default slot.
     const input =
-        "<main><island src=\"components/Card.zig\" client:load :props='{ .title = \"Outer\" }'>" ++
-        "<island src=\"components/Counter.zig\" client:load :props='{ .start = 7, .label = \"n\" }'></island>" ++
+        "<main><island src=\"components/Card.zig\" client:load :props='.{ .title = \"Outer\" }'>" ++
+        "<island src=\"components/Counter.zig\" client:load :props='.{ .start = 7, .label = \"n\" }'></island>" ++
         "</island></main>";
 
     var stub: StubRenderer = .{};
@@ -2481,7 +2481,7 @@ test "leaf island: no data-z-slots script emitted (byte-identical regression gua
     const arena = RenderArena.from(&arena_state);
 
     const input =
-        "<island src=\"components/Counter.zig\" client:load :props='{ .start = 0, .label = \"x\" }'></island>";
+        "<island src=\"components/Counter.zig\" client:load :props='.{ .start = 0, .label = \"x\" }'></island>";
 
     var stub: StubRenderer = .{};
     const result = try process(gpa, arena, input, "/", &stub, .{});
@@ -2500,10 +2500,10 @@ test "island following a nested island gets the next id (counter shared through 
     const arena = RenderArena.from(&arena_state);
 
     const input =
-        "<island src=\"components/Card.zig\" client:load :props='{ .title = \"O\" }'>" ++
-        "<island src=\"components/Counter.zig\" client:load :props='{ .start = 1, .label = \"a\" }'></island>" ++
+        "<island src=\"components/Card.zig\" client:load :props='.{ .title = \"O\" }'>" ++
+        "<island src=\"components/Counter.zig\" client:load :props='.{ .start = 1, .label = \"a\" }'></island>" ++
         "</island>" ++
-        "<island src=\"components/Counter.zig\" client:load :props='{ .start = 2, .label = \"b\" }'></island>";
+        "<island src=\"components/Counter.zig\" client:load :props='.{ .start = 2, .label = \"b\" }'></island>";
 
     var stub: StubRenderer = .{};
     const result = try process(gpa, arena, input, "/", &stub, .{});
@@ -2523,7 +2523,7 @@ test "client:media emits data-z-media with the query" {
 
     const input =
         "<island src=\"components/Counter.zig\" client:media=\"(min-width: 600px)\" " ++
-        ":props='{ .start = 0, .label = \"x\" }'></island>";
+        ":props='.{ .start = 0, .label = \"x\" }'></island>";
 
     var stub: StubRenderer = .{};
     const result = try process(gpa, arena, input, "/", &stub, .{});
@@ -2544,7 +2544,7 @@ test "dynamic props: prop-NAME attrs override :props and are coerced to field ty
 
     const input =
         "<island src=\"components/Counter.zig\" client:load " ++
-        ":props='{ .start = 0, .label = \"base\" }' prop-label=\"Hello\" prop-start=\"3\"></island>";
+        ":props='.{ .start = 0, .label = \"base\" }' prop-label=\"Hello\" prop-start=\"3\"></island>";
 
     var stub: StubRenderer = .{};
     const result = try process(gpa, arena, input, "/", &stub, .{});
@@ -2626,7 +2626,7 @@ test "client:only is not server-rendered (empty placeholder) but keeps props" {
 
     const input =
         "<island src=\"components/Counter.zig\" client:only " ++
-        ":props='{ .start = 9, .label = \"y\" }'></island>";
+        ":props='.{ .start = 9, .label = \"y\" }'></island>";
 
     var stub: StubRenderer = .{};
     const result = try process(gpa, arena, input, "/", &stub, .{});
@@ -2831,7 +2831,7 @@ test "self-closing island renders correctly" {
 
     const input =
         "<header></header>" ++
-        "<island src=\"components/Counter.zig\" client:load :props='{ .start = 3, .label = \"x\" }' />" ++
+        "<island src=\"components/Counter.zig\" client:load :props='.{ .start = 3, .label = \"x\" }' />" ++
         "<footer></footer>";
 
     var stub: StubRenderer = .{};
@@ -2860,7 +2860,7 @@ test "process with url_prefix rewrites runtime + island module URLs" {
     const input =
         "<html><head><title>t</title></head><body>" ++
         "<island src=\"components/Counter.island.tsx\" client:load " ++
-        ":props='{ .start = 2, .label = \"hi\" }'></island>" ++
+        ":props='.{ .start = 2, .label = \"hi\" }'></island>" ++
         "</body></html>";
 
     var stub: StubRenderer = .{};
@@ -2882,7 +2882,7 @@ test "process with empty url_prefix is byte-identical to legacy output" {
     const input =
         "<html><head><title>t</title></head><body>" ++
         "<island src=\"components/Counter.island.tsx\" client:load " ++
-        ":props='{ .start = 2, .label = \"hi\" }'></island>" ++
+        ":props='.{ .start = 2, .label = \"hi\" }'></island>" ++
         "</body></html>";
 
     var stub: StubRenderer = .{};
@@ -2903,7 +2903,7 @@ test "process with url_prefix trailing/leading slashes normalizes to the same ou
     const input =
         "<html><head><title>t</title></head><body>" ++
         "<island src=\"components/Counter.island.tsx\" client:load " ++
-        ":props='{ .start = 2, .label = \"hi\" }'></island>" ++
+        ":props='.{ .start = 2, .label = \"hi\" }'></island>" ++
         "</body></html>";
 
     // "zigapagos/" (trailing slash, as validatePath permits) must produce
@@ -3013,9 +3013,9 @@ test "attribute extraction is boundary-aware (AUD-005): prop-src, quoted client:
     // `client:` appears only inside a single-quoted :props value — it must NOT be
     // read as a directive. With no real directive present, clientDirective is null.
     {
-        const tag = "<island src=\"components/A.island.tsx\" :props='{ .url = \"http://client:8080\" }'>";
+        const tag = "<island src=\"components/A.island.tsx\" :props='.{ .url = \"http://client:8080\" }'>";
         try std.testing.expect(clientDirective(tag) == null);
-        try std.testing.expectEqualStrings("{ .url = \"http://client:8080\" }", attrSingle(tag, ":props").?);
+        try std.testing.expectEqualStrings(".{ .url = \"http://client:8080\" }", attrSingle(tag, ":props").?);
     }
 
     // Phantom-directive / never-hydrate case: a prop value containing `client:`
@@ -3235,9 +3235,9 @@ test "skipping a comment or raw-text region still processes the islands around i
 
     const input =
         "<main><!-- <island src=\"components/Old.island.tsx\" client:load /> -->" ++
-        "<island src=\"components/Counter.island.tsx\" client:load :props='{ .start = 1, .label = \"a\" }'></island>" ++
+        "<island src=\"components/Counter.island.tsx\" client:load :props='.{ .start = 1, .label = \"a\" }'></island>" ++
         "<script>\"<island src=\\\"components/Fake.island.tsx\\\" client:load />\"</script>" ++
-        "<island src=\"components/Counter.island.tsx\" client:load :props='{ .start = 2, .label = \"b\" }'></island>" ++
+        "<island src=\"components/Counter.island.tsx\" client:load :props='.{ .start = 2, .label = \"b\" }'></island>" ++
         "</main>";
 
     var stub: StubRenderer = .{};
@@ -3475,7 +3475,7 @@ test "a <z-island> is rewritten exactly like <island>: SSR markup + props script
 
     const input =
         "<p>before</p><z-island src=\"components/Counter.island.tsx\" client:load " ++
-        ":props='{ .start = 2, .label = \"hi\" }'></z-island><p>after</p>";
+        ":props='.{ .start = 2, .label = \"hi\" }'></z-island><p>after</p>";
 
     var stub: StubRenderer = .{};
     const result = try process(gpa, arena, input, "/", &stub, .{});
@@ -3502,7 +3502,7 @@ test "a self-closing <z-island /> is rewritten correctly" {
 
     const input =
         "<header></header>" ++
-        "<z-island src=\"components/Counter.zig\" client:load :props='{ .start = 3, .label = \"x\" }' />" ++
+        "<z-island src=\"components/Counter.zig\" client:load :props='.{ .start = 3, .label = \"x\" }' />" ++
         "<footer></footer>";
 
     var stub: StubRenderer = .{};
@@ -3565,8 +3565,8 @@ test "nested per-spelling depth: <z-island> nested inside <island>'s slot is rew
     // close must not be confused by the inner <z-island>/</z-island> pair, and
     // vice versa were the nesting reversed (covered by the next test).
     const input =
-        "<main><island src=\"components/Card.zig\" client:load :props='{ .title = \"Outer\" }'>" ++
-        "<z-island src=\"components/Counter.zig\" client:load :props='{ .start = 7, .label = \"n\" }'></z-island>" ++
+        "<main><island src=\"components/Card.zig\" client:load :props='.{ .title = \"Outer\" }'>" ++
+        "<z-island src=\"components/Counter.zig\" client:load :props='.{ .start = 7, .label = \"n\" }'></z-island>" ++
         "</island></main>";
 
     var stub: StubRenderer = .{};
@@ -3604,8 +3604,8 @@ test "nested per-spelling depth: <island> nested inside <z-island>'s slot is rew
     // spelling, nested is the layout spelling. Proves the depth counting is
     // symmetric, not accidentally biased toward one spelling.
     const input =
-        "<main><z-island src=\"components/Card.zig\" client:load :props='{ .title = \"Outer\" }'>" ++
-        "<island src=\"components/Counter.zig\" client:load :props='{ .start = 7, .label = \"n\" }'></island>" ++
+        "<main><z-island src=\"components/Card.zig\" client:load :props='.{ .title = \"Outer\" }'>" ++
+        "<island src=\"components/Counter.zig\" client:load :props='.{ .start = 7, .label = \"n\" }'></island>" ++
         "</z-island></main>";
 
     var stub: StubRenderer = .{};
@@ -3633,10 +3633,10 @@ test "a <z-island> nested in a same-spelling <z-island>'s slot still counts dept
     const arena = RenderArena.from(&arena_state);
 
     const input =
-        "<z-island src=\"components/Card.zig\" client:load :props='{ .title = \"O\" }'>" ++
-        "<z-island src=\"components/Counter.zig\" client:load :props='{ .start = 1, .label = \"a\" }'></z-island>" ++
+        "<z-island src=\"components/Card.zig\" client:load :props='.{ .title = \"O\" }'>" ++
+        "<z-island src=\"components/Counter.zig\" client:load :props='.{ .start = 1, .label = \"a\" }'></z-island>" ++
         "</z-island>" ++
-        "<z-island src=\"components/Counter.zig\" client:load :props='{ .start = 2, .label = \"b\" }'></z-island>";
+        "<z-island src=\"components/Counter.zig\" client:load :props='.{ .start = 2, .label = \"b\" }'></z-island>";
 
     var stub: StubRenderer = .{};
     const result = try process(gpa, arena, input, "/", &stub, .{});

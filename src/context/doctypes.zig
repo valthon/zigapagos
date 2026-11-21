@@ -37,6 +37,7 @@ pub const ScriptyParam = union(enum) {
     Footnote,
     Iterator,
     Array,
+    Union,
     String,
     Int,
     Float,
@@ -99,6 +100,7 @@ pub const ScriptyParam = union(enum) {
             context.Map, context.Map.ZiggyMap => .{ .Map = .any },
             context.Map.KV => .KV,
             context.Array => .Array,
+            context.Union => .Union,
             context.Iterator => .Iterator,
             ?*context.Iterator => .{ .Opt = .Iterator },
             []const context.Page.Alternative => .{ .Many = .Alternative },
@@ -109,7 +111,7 @@ pub const ScriptyParam = union(enum) {
             []const []const u8 => .{ .Many = .String },
             bool => .Bool,
             usize => .Int,
-            ziggy.dynamic.Value => .any,
+            ziggy.Dynamic => .any,
             context.Value => .any,
             else => @compileError("TODO: add support for " ++ @typeName(t)),
         };
@@ -123,12 +125,12 @@ pub const ScriptyParam = union(enum) {
             inline .Many => |m| switch (m) {
                 inline else => {
                     const dots = if (is_fn_param) "..." else "";
-                    return "[" ++ @tagName(m) ++ dots ++ "]";
+                    return if (is_fn_param) "[" ++ @tagName(m) ++ dots ++ "]" else "[]" ++ @tagName(m);
                 },
             },
             .Opt => |o| switch (o) {
                 .Many => |om| switch (om) {
-                    inline else => |omm| return "?[" ++ @tagName(omm) ++ "]",
+                    inline else => |omm| return "?[]" ++ @tagName(omm),
                 },
                 inline else => return "?" ++ @tagName(o),
             },
@@ -143,8 +145,11 @@ pub const ScriptyParam = union(enum) {
             inline .Many => |m| switch (m) {
                 inline else => {
                     const dots = if (is_fn_param) "..." else "";
+                    if (is_fn_param) return std.fmt.comptimePrint(
+                        \\[[{0t}]($link.ref("{0t}"))...]
+                    , .{m});
                     return std.fmt.comptimePrint(
-                        \\[[{0t}]($link.ref("{0t}")){1s}]{2s}
+                        \\\[\][{0t}]($link.ref("{0t}")){1s}{2s}
                     , .{
                         m, dots,
                         if (is_fn_param or m == .any) "" else
@@ -155,7 +160,7 @@ pub const ScriptyParam = union(enum) {
             inline .Opt => |o| switch (o) {
                 inline .Many => |om| switch (om) {
                     inline else => |omm| return comptime std.fmt.comptimePrint(
-                        \\?[[{0t}]($link.ref("{0t}"))]
+                        \\?\[\][{0t}]($link.ref("{0t}"))
                     , .{omm}),
                 },
                 inline else => return comptime std.fmt.comptimePrint(

@@ -24,7 +24,7 @@
 // `.field =`) or YAML (Bun.YAML; the gray-matter ecosystem default, so
 // existing .md content dirs work without conversion). The ziggy parser below
 // covers the frontmatter SUBSET of ziggy — strings (incl. `\\` multiline
-// lines), numbers, bools, null, `@tag("…")` (yields the string argument),
+// lines), numbers, bools, null, `.date("…")` / `.unix(…)` (yields the string argument),
 // arrays, structs and quoted-key maps — and loud-fails with file/offset
 // context on anything else.
 import { readFileSync, writeFileSync, renameSync } from "node:fs";
@@ -138,18 +138,23 @@ class ZiggyParser {
     if (c === '"') return this.quotedString();
     if (this.src.startsWith("\\\\", this.i)) return this.multilineString();
     if (c === "[") return this.array();
-    if (c === "{") return this.structOrMap();
-    if (c === "@") {
-      // @tag("...") — e.g. @date("2024-01-01T00:00:00") — yields the string.
+    if (c === "{") return this.structOrMap(false);
+    if (this.src.startsWith(".{", this.i)) {
       this.i++;
-      this.ident();
+      return this.structOrMap(true);
+    }
+    if (c === ".") {
+      this.i++;
+      const tag = this.ident();
       this.skipWs();
+      if (this.peek() !== "(") return tag;
       this.eat("(");
-      this.skipWs();
-      const s = this.quotedString();
+      const value = this.value();
       this.skipWs();
       this.eat(")");
-      return s;
+      if (tag === "date" && typeof value === "string") return value;
+      if (tag === "unix" && typeof value === "number" && Number.isSafeInteger(value)) return value;
+      this.fail("expected .date(string) or .unix(integer)");
     }
     const num = /^[+-]?(?:0[xX][0-9a-fA-F_]+|\d[\d_]*(?:\.[\d_]+)?(?:[eE][+-]?\d+)?)/.exec(this.src.slice(this.i));
     if (num) {
@@ -180,20 +185,20 @@ class ZiggyParser {
     }
   }
 
-  /** `{ .field = v, ... }` (struct) or `{ "key": v, ... }` (map). */
-  private structOrMap(): Record<string, unknown> {
+  /** `.{ .field = v, ... }` (struct) or `{ "key": v, ... }` (map). */
+  private structOrMap(isStruct: boolean): Record<string, unknown> {
     this.eat("{");
     const out: Record<string, unknown> = {};
     for (;;) {
       this.skipWs();
       if (this.peek() === "}") { this.i++; return out; }
-      if (this.peek() === ".") {
+      if (isStruct && this.peek() === ".") {
         this.i++;
         const name = this.ident();
         this.skipWs();
         this.eat("=");
         out[name] = this.value();
-      } else if (this.peek() === '"') {
+      } else if (!isStruct && this.peek() === '"') {
         const key = this.quotedString();
         this.skipWs();
         this.eat(":");
@@ -208,6 +213,14 @@ class ZiggyParser {
 
   /** Top-level frontmatter: a brace-less struct body (`.field = value,`*). */
   topLevel(): Record<string, unknown> {
+    this.skipWs();
+    if (this.src.startsWith(".{", this.i)) {
+      this.i++;
+      const out = this.structOrMap(true);
+      this.skipWs();
+      if (this.i !== this.src.length) this.fail("unexpected trailing content");
+      return out;
+    }
     const out: Record<string, unknown> = {};
     for (;;) {
       this.skipWs();
@@ -225,6 +238,9 @@ class ZiggyParser {
 
 /** Parse a ziggy frontmatter body (the text BETWEEN the `---` fences). */
 export function parseZiggyFrontmatter(src: string, file: string): Record<string, unknown> {
+  if (/[\x00-\x08\x0b-\x1f\x7f]/.test(src)) {
+    throw new Error(`${file}: Ziggy 0.3.0 rejects control characters; run python3 scripts/upgrade-ziggy.py . for CRLF files`);
+  }
   return new ZiggyParser(src, file).topLevel();
 }
 
@@ -264,7 +280,7 @@ export function parseFrontmatter(src: string, file: string): Record<string, unkn
   // Ziggy iff the full `.ident =` field shape follows (the ident charset is
   // pinned to ZiggyParser.ident()) — a bare leading dot is NOT enough: YAML
   // keys may start with one (`.meta: value`) and must route to the YAML side.
-  if (i >= src.length || /^\.[A-Za-z_][A-Za-z0-9_]*\s*=/.test(src.slice(i)))
+  if (i >= src.length || src.startsWith(".{", i) || /^\.[A-Za-z_][A-Za-z0-9_]*\s*=/.test(src.slice(i)))
     return parseZiggyFrontmatter(src, file);
   return parseYamlFrontmatter(src, file);
 }

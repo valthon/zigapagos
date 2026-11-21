@@ -20,7 +20,7 @@ export interface ZiggyRaw {
   readonly raw: string;
 }
 
-/** An unquoted Ziggy expression, e.g. `ziggyRaw('@date("2026-07-27T00:00:00")')`. */
+/** An unquoted Ziggy expression, e.g. `ziggyRaw('.date("2026-07-27T00:00:00")')`. */
 export function ziggyRaw(src: string): ZiggyRaw {
   return { raw: src };
 }
@@ -41,7 +41,7 @@ function isZiggyRaw(v: ZiggyValue): v is ZiggyRaw {
 }
 
 /** Render a single Ziggy value: string -> quoted+escaped, number/boolean ->
- * literal, ZiggyRaw -> verbatim, nested object -> inline `{ .k = v, .k = v }`
+ * literal, ZiggyRaw -> verbatim, nested object -> inline `{ "k": v }` dictionaries
  * (empty object -> `{}`). No array support — no caller of this module needs
  * one; a project that does extends this function. */
 function renderZiggyValue(v: ZiggyValue): string {
@@ -50,7 +50,7 @@ function renderZiggyValue(v: ZiggyValue): string {
   if (typeof v === "number" || typeof v === "boolean") return String(v);
   const keys = Object.keys(v);
   if (keys.length === 0) return "{}";
-  const fields = keys.map((k) => `.${k} = ${renderZiggyValue(v[k])}`).join(", ");
+  const fields = keys.map((k) => `${JSON.stringify(k)}: ${renderZiggyValue(v[k])}`).join(", ");
   return `{ ${fields} }`;
 }
 

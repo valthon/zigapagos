@@ -44,7 +44,7 @@ while IFS= read -r f; do SMDS+=("$f"); done < <(find "$WORK/content" -name '*.sm
 (( ${#SMDS[@]} >= 9 )) || fail "expected at least 9 scaffolded .smd files, found ${#SMDS[@]}"
 
 # 1. Fields with defaults are not scaffolded at all.
-#    `.author` is read by no init layout; `.draft = false` restates the default.
+#    `.authors` is read by no init layout; `.draft = false` restates the default.
 for f in "${SMDS[@]}"; do
   rel="${f#"$WORK"/}"
   ! grep -q '^\.author' "$f" || fail "$rel scaffolds .author, which no init layout reads and which defaults to \"\""

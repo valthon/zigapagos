@@ -14,7 +14,7 @@ const Bool = context.Bool;
 
 value: ZiggyMap,
 
-pub const ZiggyMap = ziggy.dynamic.Map(ziggy.dynamic.Value);
+pub const ZiggyMap = ziggy.Dictionary(ziggy.Dynamic);
 
 pub const docs_description =
     \\A map that can hold any value, used to represent the `custom` field 
@@ -252,7 +252,7 @@ pub const Builtins = struct {
 
 pub const KV = struct {
     key: []const u8,
-    value: ziggy.dynamic.Value,
+    value: ziggy.Dynamic,
 
     pub const Dot = true;
     pub const docs_description = "A key-value pair.";

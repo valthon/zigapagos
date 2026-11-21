@@ -40,10 +40,7 @@ pub fn upstream(
         .tracy = tracy,
     }).module("superhtml");
 
-    const ziggy = b.dependency("ziggy", .{
-        .target = target,
-        .optimize = optimize,
-    }).module("ziggy");
+    const ziggy = ziggyModule(b, target, optimize);
 
     const supermd = b.dependency("supermd", .{
         .target = target,
@@ -52,7 +49,8 @@ pub fn upstream(
     }).module("supermd");
     supermd.addImport("scripty", scripty);
     supermd.addImport("superhtml", superhtml);
-    // SuperMD owns its newer Ziggy API; our config module keeps Ziggy old.
+    // Share one Ziggy module: Zig rejects duplicate module roots.
+    supermd.addImport("ziggy", ziggy);
 
     const zeit = b.dependency("zeit", .{
         .target = target,
@@ -82,4 +80,14 @@ pub fn macos(b: *std.Build, module: *std.Build.Module, target: std.Build.Resolve
     tr.mod.addLibraryPath(frameworks.path("lib"));
     tr.mod.linkFramework("CoreServices", .{});
     module.addImport("c", tr.mod);
+}
+
+/// Share the compatibility module across every user of a dependency instance.
+pub fn ziggyModule(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.lang.Optimize) *std.Build.Module {
+    const upstream_mod = b.dependency("ziggy", .{ .target = target, .optimize = optimize }).module("ziggy");
+    const name = b.fmt("ziggy-compat-{x}", .{@intFromPtr(upstream_mod)});
+    if (b.modules.get(name)) |existing| return existing;
+    const module = b.addModule(name, .{ .root_source_file = b.path("src/ziggy_compat.zig") });
+    module.addImport("upstream", upstream_mod);
+    return module;
 }

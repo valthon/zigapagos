@@ -14,17 +14,17 @@ sets the field gets byte-identical output to today, same as
 ## Config
 
 ```ziggy
-Site {
+.site = .simple(.{
     .title = "…",
     .host_url = "https://example.com",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "assets",
     .image_optimize = {},
-}
+})
 ```
 
-A bare `.image_optimize = {}` opts into the defaults below; any field may be
+A bare `.image_optimize = .{}` opts into the defaults below; any field may be
 overridden.
 
 | field | default | meaning |

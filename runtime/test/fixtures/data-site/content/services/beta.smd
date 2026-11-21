@@ -2,7 +2,7 @@
 .title = "Beta Service",
 .price = 7.5,
 .featured = false,
-.extra = { .note = "nested", .codes = [1, 2, 3] },
+.extra = .{ .note = "nested", .codes = [1, 2, 3] },
 ---
 
 Beta body.

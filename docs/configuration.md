@@ -10,7 +10,7 @@ and SPAs to compile.
 ## zigapagos.ziggy
 
 ```ziggy
-Site {
+.site = .simple(.{
     .title = "My Site",
     .host_url = "https://example.com",
     .url_path_prefix = "",
@@ -19,7 +19,7 @@ Site {
     .assets_dir_path = "assets",
     .deploy_target = "zigbase",
     .sitemap = true,
-}
+})
 ```
 
 `.title` is available in every layout as `$site.title`.
@@ -36,11 +36,23 @@ not, so a hardcoded link works locally and 404s in production.
 `.content_dir_path`, `.layouts_dir_path` and `.assets_dir_path` are relative to
 the project root.
 
+`.static_assets` is a list of strings naming files or directories under
+`assets_dir_path`, for example `.static_assets = ["favicon.ico", "fonts", "downloads/"],`.
+A directory includes every file in its subtree unconditionally, at its original
+path, including when fingerprinting is enabled. A trailing slash is optional;
+empty directories are valid. Existing `"**"` and `"img/**"` globs still work.
+Missing or invalid paths and files selected by more than one entry are build
+errors; duplicate diagnostics name both entries. Paths must remain inside the
+assets directory by their spelling. Selected file symlinks may target regular
+files outside it; their contents are copied. Directory symlinks are not
+traversed. All files in a selected directory are published, including private build-time data. See
+[assets](assets.md#static_assets) for validation and diagnostic details.
+
 `.deploy_target` selects which host configuration the build emits — `zigbase`,
 `nginx`, or `apache`. See [native SPAs](spa.md) for what each
 one generates.
 
-`.image_optimize = {}` turns on build-time image optimization: WebP variants of
+`.image_optimize = .{}` turns on build-time image optimization: WebP variants of
 every content image at configured widths, emitted as a `<picture>` with a full
 `srcset`/`sizes` and the untouched original as the fallback, with opt-in AVIF
 via an external encoder you supply. Off by default (`null`).
@@ -70,7 +82,7 @@ site-root `sitemap.xml` is a build error while the sitemap is enabled, since
 either would otherwise silently collide with it.
 
 `sitemap` is a `Site`-only field — a multilingual `zigapagos.ziggy`
-(`Multilingual { ... }`) has no field of this name, so setting it there is a
+(`.site = .multilingual(.{ ... })`) has no field of this name, so setting it there is a
 config-parse-time "unknown field" error, not a silent no-op. Composing one
 crawler-facing URL set across per-locale hosts/prefixes is a bigger design
 than this feature covers yet.
@@ -88,13 +100,13 @@ Each entry has a string `directive` and an array of string `sources`:
 
 ```ziggy
 .csp_extra_sources = [
-    { .directive = "frame-src", .sources = ["https://www.google.com/recaptcha/"] },
-    { .directive = "connect-src", .sources = ["https://api.example.com"] },
+    .{ .directive = "frame-src", .sources = ["https://www.google.com/recaptcha/"] },
+    .{ .directive = "connect-src", .sources = ["https://api.example.com"] },
 ],
 ```
 
 Supported directives: `default-src`, `script-src`, `frame-src`, `connect-src`,
-`img-src`, `style-src`, `style-src-elem`, `style-src-attr`, `font-src`, `object-src`,
+`img-src`, `media-src`, `style-src`, `style-src-elem`, `style-src-attr`, `font-src`, `object-src`,
 and `base-uri`. Unknown directives fail config validation with the field name.
 Sources must be individual CSP source expressions: host sources (optionally a
 scheme, wildcard subdomain, port and path), scheme sources such as `data:` or
@@ -188,3 +200,27 @@ Build failures write the output tree in place, so a failure partway through
 leaves a partially updated site. The pass order limits the damage — SPA
 validation runs before any page is written — but it is not atomicity. Build to a
 staging directory if you are deploying by syncing the output tree.
+
+## Ziggy 0.3 and editor schemas
+
+The top level is `.site = .simple(.{ ... })` or
+`.site = .multilingual(.{ ... })`; locale entries use `.{ ... }`. There is no
+version field. See the [upgrade guide](migration/ziggy-0.3.md) for the idempotent
+converter and CRLF handling. Run `zigapagos install-schemas` for Ziggy LSP files;
+`init` includes them.
+
+Both site types accept `.custom = { "brand": "Example" }`, available as
+`$site.custom.get('brand')`. `.supermd = .{ .auto_target_blank = false }`
+disables the default new tab behavior for external Markdown links. Omit it
+(or set true) to retain the existing behavior. Heading baselines are unchanged.
+
+The build's `schema-check` step checks the actual config document and page types
+against the shipped schemas; `zig build`, `zig build check` and `zig build test`
+include it. It checks field names and value types, including nested records.
+A slice may be required by the runtime even though the editor schema allows its
+omission (`locales` and CSP `sources`); the schema language cannot express that
+requirement. Sample-document validation remains a separate check.
+
+Dictionary keys decode string escapes in native data, custom fields, i18n and
+island props, matching `@z/site-data`. For example `{ "a\n": 1 }` has a newline
+in its key. Distinct spellings of the same decoded key are duplicate errors.

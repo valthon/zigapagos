@@ -405,7 +405,7 @@ cat > "$WORK/about.expected" <<'SMD'
 .title = "About",
 .layout = "pages/about.shtml",
 .custom = {
-    .rails = {
+    "rails": .{
         .route = "GET /about",
         .controller = "pages",
         .action = "about",
@@ -590,9 +590,9 @@ grep -qF -- "--spa='spa/posts.spa.tsx|/posts'" "$WORK/out2/build.sh" || fail "bu
 [[ -f "$WORK/out2/lib/zb.ts" ]] || fail "a bound island needs the client library"
 grep -qF 'authCollection: "users"' "$WORK/out2/lib/zb.ts" \
   || fail "lib/zb.ts must name the auth collection the journey was answered with"
-grep -qF '<island src="components/AuthForm.island.tsx" client:load :props='"'"'{ .mode = "signin" }'"'"'></island>' "$WORK/out2/layouts/sessions/new.shtml" \
+grep -qF '<island src="components/AuthForm.island.tsx" client:load :props='"'"'.{ .mode = "signin" }'"'"'></island>' "$WORK/out2/layouts/sessions/new.shtml" \
   || fail "sessions/new must mount the AuthForm in signin mode"
-grep -qF '<island src="components/AuthForm.island.tsx" client:load :props='"'"'{ .mode = "signup" }'"'"'></island>' "$WORK/out2/layouts/registrations/new.shtml" \
+grep -qF '<island src="components/AuthForm.island.tsx" client:load :props='"'"'.{ .mode = "signup" }'"'"'></island>' "$WORK/out2/layouts/registrations/new.shtml" \
   || fail "registrations/new must mount the AuthForm in signup mode"
 # Ruling S6 / #181: the `full_messages.each do |m|` block local was the one
 # region convert.zig could not map and could not be asked about. The island
@@ -629,9 +629,9 @@ done
 
 widgets2="$WORK/out2/layouts/pages/widgets.shtml"
 grep -qF '<island src="components/stimulus/reveal.island.tsx" client:load><div data-controller="reveal"' "$widgets2" || fail "widgets must mount the reveal island around its controller element"
-grep -qF '<island src="components/TurboFrame.island.tsx" client:load :props='"'"'{ .id = "latest", .src = "/posts" }'"'"'><p>Loading latest…</p></island>' "$widgets2" || fail "widgets must mount the fetching Turbo frame"
+grep -qF '<island src="components/TurboFrame.island.tsx" client:load :props='"'"'.{ .id = "latest", .src = "/posts" }'"'"'><p>Loading latest…</p></island>' "$widgets2" || fail "widgets must mount the fetching Turbo frame"
 grep -qF '<turbo-frame id="static"><p>Just markup</p></turbo-frame>' "$widgets2" || fail "the source-less Turbo frame must stay inline"
-grep -qF '<island src="components/Chart.island.tsx" client:load :props='"'"'{ .points = 3, .series = "a" }'"'"'></island>' "$widgets2" || fail "the React root must mount with sorted literal props"
+grep -qF '<island src="components/Chart.island.tsx" client:load :props='"'"'.{ .points = 3, .series = "a" }'"'"'></island>' "$widgets2" || fail "the React root must mount with sorted literal props"
 grep -q 'data-turbo-action' "$widgets2" && fail "Turbo Drive attributes must not survive run 2"
 grep -qF '<island src="components/data/posts_index.island.tsx" client:load></island>' "$WORK/out2/layouts/posts/index.shtml" || fail "the posts index must be replaced by its data island"
 stream2="$WORK/out2/layouts/pages/stream.shtml"

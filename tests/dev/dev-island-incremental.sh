@@ -71,13 +71,13 @@ SRC="$WORK/site"; OUT="$WORK/out"; DATA="$WORK/data"
 mkdir -p "$SRC/content" "$SRC/layouts" "$SRC/assets" "$SRC/components"
 : > "$SRC/assets/.keep"
 cat > "$SRC/zigapagos.ziggy" <<'EOF'
-Site {
+.site = .simple(.{
     .title = "Island Incremental Dev Test",
     .host_url = "https://example.com",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "assets",
-}
+})
 EOF
 cat > "$SRC/layouts/plain.shtml" <<'EOF'
 <!DOCTYPE html>
@@ -110,8 +110,8 @@ page() { # path title layout
   cat > "$1" <<EOF
 ---
 .title = "$2",
-.date = @date("2020-07-06T00:00:00"),
-.author = "Test",
+.date = .date("2020-07-06T00:00:00"),
+.authors = ["Test"],
 .layout = "$3",
 .draft = false,
 ---

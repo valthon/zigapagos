@@ -237,7 +237,7 @@ The view body goes into the `.shtml`, not the `.smd`, because SuperMD forbids
 raw HTML. The `.smd` carries `.title` (from `content_for :title`, `provide`, a
 `<title>`, or the first `<h1>`, in that order), `.description` from a
 `<meta name="description">` if present, `.layout`, and
-`.custom.rails = { .route = "GET /about", .controller, .action, .source }` so
+`.custom.rails = .{ .route = "GET /about", .controller, .action, .source }` so
 `$page.custom` can be inspected from a layout and the provenance survives
 edits. Rails URLs map to content paths: `/` → `content/index.smd`, `/about` →
 `content/about/index.smd`, `/admin/users` → `content/admin/users/index.smd`

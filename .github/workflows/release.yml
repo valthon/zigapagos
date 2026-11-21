@@ -103,8 +103,15 @@ jobs:
         run: |
           # Retry only dependency resolution. Compilation below runs once, so a
           # deterministic source error fails immediately rather than rebuilding.
+          # Plain `--fetch` leaves lazy dependencies to be fetched by the build
+          # step, outside this retry. Only the macOS targets need one (the
+          # frameworks package), and they build on macOS runners, so fetch
+          # everything there and keep the Linux jobs independent of that
+          # package's host.
+          mode=needed
+          if [ "$RUNNER_OS" = "macOS" ]; then mode=all; fi
           for attempt in 1 2 3; do
-            if zig build --fetch; then
+            if zig build "--fetch=$mode"; then
               break
             fi
             if [ "$attempt" -eq 3 ]; then

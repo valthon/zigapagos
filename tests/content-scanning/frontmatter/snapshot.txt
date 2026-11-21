@@ -19,10 +19,10 @@
 |                                               |
 *-----------------------------------------------*
 
-content/wrong-syntax.smd:18:5:
-    .layout = "foo.html",
-        ^
-unexpected '.', expected: ',' or '}'
+content/wrong-syntax.smd:17:15 missing token: ',' after field value
+|   .output = "good/url/though.html"
+|             ^^^^^^^^^^^^^^^^^^^^^^
+
 
 
 content/index.smd:5:11: error: missing layout file

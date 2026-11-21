@@ -349,3 +349,133 @@ test "validate: parse recognizes --format=json (and defaults to text)" {
     defer cmd_default.deinit(gpa);
     try std.testing.expectEqual(diag.Format.text, cmd_default.format);
 }
+
+test "validate: empty parse preserves scan metadata before sorting" {
+    try expectFailedPageMetadata(std.testing.allocator, "");
+}
+
+test "validate: missing frontmatter preserves scan metadata before sorting" {
+    try expectFailedPageMetadata(std.testing.allocator, "missing frontmatter\n");
+}
+
+test "validate: Ziggy failure preserves scan metadata before sorting" {
+    try expectFailedPageMetadata(std.testing.allocator, "---\n.title = [,\n---\n");
+}
+
+test "validate: partial Ziggy failure preserves scan metadata" {
+    try expectFailedPageMetadata(std.testing.allocator, "---\n.title = \"changed\",\n.layout = \"changed\",\n.date = .unix(123),\n.authors = [\"changed\"],\n.tags = [\"changed\"],\n.unknown = true,\n---\n");
+}
+
+// Self-freeing test helper: all files, intern tables and page storage are freed.
+fn expectFailedPageMetadata(gpa: Allocator, src: []const u8) !void {
+    const Page = @import("../context/Page.zig");
+    const Variant = @import("../Variant.zig");
+    const PathTable = @import("../PathTable.zig");
+    const StringTable = @import("../StringTable.zig");
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var st: StringTable = .empty;
+    defer st.deinit(gpa);
+    _ = try st.intern(gpa, "");
+    var pt: PathTable = .empty;
+    defer pt.deinit(gpa);
+    const file = try pt.internPathWithName(gpa, &st, null, "broken.smd");
+    // Only the directory and intern tables are used before a framing or Ziggy
+    // failure. No Markdown parser is needed on these early-return paths.
+    var variant: Variant = undefined;
+    variant.content_dir = tmp.dir;
+    variant.string_table = st;
+    variant.path_table = pt;
+    try tmp.dir.writeFile(io, .{ .sub_path = "broken.smd", .data = src });
+    var p = Page.initScanned(.{ .file = file, .url = file.path, .page_id = 1, .subsection_id = 0, .parent_section_id = 1, .variant_id = 0 });
+    p.parse(io, gpa, undefined, null, &variant, false, false, false);
+    defer p.deinit(gpa);
+    try std.testing.expectEqual(0, p.date._inst.timestamp);
+    const defaults: Page = .{ .title = "", .layout = "" };
+    inline for (@typeInfo(Page).@"struct".field_names) |name| {
+        if (comptime !std.mem.startsWith(u8, name, "_"))
+            try std.testing.expect(std.meta.eql(@field(defaults, name), @field(p, name)));
+    }
+    try std.testing.expectEqual(file, p._scan.file);
+    if (src.len == 0) {
+        try std.testing.expect(!p._parse.active);
+        try std.testing.expectEqual(0, p._parse.fm.offset);
+        try std.testing.expectEqual(0, p._parse.fm.lines);
+    }
+    if (std.mem.indexOf(u8, src, ".unknown") != null) {
+        try std.testing.expect(p._parse.status == .ziggy);
+        try std.testing.expectEqual(error.UnknownField, p._parse.status.ziggy.err.?);
+    }
+}
+
+test "validate: every scan placeholder has safe metadata before parsing" {
+    const Variant = @import("../Variant.zig");
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "index.smd", .data = "" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "leaf.smd", .data = "" });
+    try tmp.dir.createDirPath(io, "empty");
+    try tmp.dir.writeFile(io, .{ .sub_path = "empty/index.smd", .data = "" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "empty/a.smd", .data = "unparsed child A" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "empty/b.smd", .data = "unparsed child B" });
+    // Scanner scratch fits in a caller buffer; the returned variant's graph
+    // stays on the testing allocator so its ownership is still leak-checked.
+    var scratch: [8192]u8 = undefined;
+    var fba: std.heap.FixedBufferAllocator = .init(&scratch);
+    var variant: Variant = undefined;
+    variant.scanContentDir(io, gpa, fba.allocator(), tmp.dir, ".", 0, null, "");
+    defer variant.deinit(io, gpa);
+    try std.testing.expectEqual(5, variant.pages.items.len);
+    for (variant.pages.items) |p| {
+        // A direct timestamp assertion makes the undefined read observable:
+        // DebugAllocator poisons uninitialized scan memory with 0xaa.
+        try std.testing.expectEqual(0, p.date._inst.timestamp);
+        const defaults: @import("../context/Page.zig") = .{ .title = "", .layout = "" };
+        inline for (@typeInfo(@import("../context/Page.zig")).@"struct".field_names) |name| {
+            if (comptime !std.mem.startsWith(u8, name, "_"))
+                try std.testing.expect(std.meta.eql(@field(defaults, name), @field(p, name)));
+        }
+        try std.testing.expect(!p._parse.active);
+        try std.testing.expect(p._parse.status == .unparsed);
+        try std.testing.expectEqual(0, p._parse.full_src.len);
+        try std.testing.expectEqual(0, p._parse.fm.offset);
+        try std.testing.expectEqual(0, p._parse.fm.lines);
+        try std.testing.expectEqual(0, p._analysis.frontmatter.items.len);
+        try std.testing.expectEqual(0, p._analysis.page.items.len);
+        try std.testing.expectEqual(0, p._render.out.len);
+        try std.testing.expect(p._pagination == null);
+    }
+}
+
+test "validate: an inactive section is not sorted" {
+    const Variant = @import("../Variant.zig");
+    const DateTime = @import("../context/DateTime.zig");
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    for ([_][]const u8{ "index.smd", "a.smd", "b.smd" }) |path|
+        try tmp.dir.writeFile(io, .{ .sub_path = path, .data = "" });
+    var scratch: [8192]u8 = undefined;
+    var fba: std.heap.FixedBufferAllocator = .init(&scratch);
+    var variant: Variant = undefined;
+    variant.scanContentDir(io, gpa, fba.allocator(), tmp.dir, ".", 0, null, "");
+    defer variant.deinit(io, gpa);
+    for (variant.pages.items) |*p| p.date = DateTime.epoch;
+    const section = &variant.sections.items[1];
+    section.active = false;
+    // Arrange the reverse of the active sorter’s URL tie-break order, so
+    // invoking it is observable without relying on undefined timestamps.
+    std.mem.sort(u32, section.pages.items, {}, struct {
+        fn less(_: void, a: u32, b: u32) bool {
+            return a < b;
+        }
+    }.less);
+    const before = try gpa.dupe(u32, section.pages.items);
+    defer gpa.free(before);
+    section.sortPages(gpa, &variant, variant.pages.items);
+    try std.testing.expectEqualSlices(u32, before, section.pages.items);
+}

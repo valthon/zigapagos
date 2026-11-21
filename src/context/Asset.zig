@@ -484,10 +484,11 @@ pub const Builtins = struct {
             if (args.len != 0) return .{ .err = "expected 0 arguments" };
 
             var buf: [std.fs.max_path_bytes]u8 = undefined;
+            var path: []const u8 = undefined;
             const data = switch (asset._meta.kind) {
                 .page => |variant_id| blk: {
                     const v = &ctx._meta.build.variants[variant_id];
-                    const path = std.mem.print(&buf, "{f}", .{
+                    path = std.mem.print(&buf, "{f}", .{
                         asset._meta.url.fmt(
                             &v.string_table,
                             &v.path_table,
@@ -509,7 +510,7 @@ pub const Builtins = struct {
                 },
                 .site => blk: {
                     markSiteRead(ctx, asset._meta.url);
-                    const path = std.mem.print(&buf, "{f}", .{
+                    path = std.mem.print(&buf, "{f}", .{
                         asset._meta.url.fmt(
                             &ctx._meta.build.st,
                             &ctx._meta.build.pt,
@@ -533,6 +534,7 @@ pub const Builtins = struct {
                     const ba = ctx._meta.build.build_assets.getPtr(
                         asset._meta.ref,
                     ).?;
+                    path = ba.input_path;
                     break :blk ctx._meta.build.base_dir.readFileAllocOptions(
                         ctx._meta.io,
                         ba.input_path,
@@ -548,15 +550,21 @@ pub const Builtins = struct {
 
             log.debug("parsing ziggy file: '{s}'", .{data});
 
-            var diag: _ziggy.Diagnostic = .{ .path = asset._meta.ref };
-            const parsed = _ziggy.parseLeaky(_ziggy.dynamic.Value, gpa, data, .{
-                .diagnostic = &diag,
-                .copy_strings = .to_unescape,
-            }) catch {
+            const prefix = switch (asset._meta.kind) {
+                .page => |vid| ctx._meta.build.variants[vid].content_dir_path,
+                .site => ctx._meta.build.cfg.getAssetsDirPath(),
+                .build => "",
+            };
+            const full_path = try std.fs.path.join(gpa, &.{ prefix, path });
+            defer gpa.free(full_path);
+            var diag: @import("../ziggy_diagnostic.zig") = .{ .path = full_path };
+            const parsed = _ziggy.deserializeLeaky(_ziggy.Dynamic, gpa, data, &diag.meta, .{}) catch |err| {
+                if (err == error.OutOfMemory) return error.OutOfMemory;
+                diag.err = err;
                 return Value.errFmt(
                     gpa,
-                    "Error while parsing Ziggy file: {}",
-                    .{diag},
+                    "Error while parsing Ziggy file: {f}",
+                    .{diag.fmt(gpa, data)},
                 );
             };
 

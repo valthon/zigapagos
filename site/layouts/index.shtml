@@ -152,11 +152,11 @@ public/
     <p class="eyebrow">Islands in 30 seconds</p>
     <h2>Write a component. Say when it should wake up.</h2>
     <div class="grid-2">
-      <island src="components/CodeTabs.island.tsx" client:visible :props='{
+      <island src="components/CodeTabs.island.tsx" client:visible :props='.{
         .tabs = [
-          { .label = "Counter.island.tsx", .code = "import { useState } from \"@z/runtime\";\n\nexport interface Props { start?: number }\n\nexport default function Counter({ start = 0 }: Props) {\n  const [n, setN] = useState(start);\n  return <button onClick={() => setN(n + 1)}>Clicked {n} times</button>;\n}\n" },
-          { .label = "index.shtml", .code = "<island src=\"components/Counter.island.tsx\"\n        client:visible\n        prop-start=\"0\"></island>\n" },
-          { .label = "what ships", .code = "<!-- import map, once per page -->\n<script type=\"importmap\">{\"imports\":{\"@z/runtime\":\"/zigapagos/zigapagos-runtime.js\", …}}</script>\n\n<!-- server-rendered into the HTML -->\n<div data-z-island id=\"z-island-0\" data-z-src=\"components/Counter.island.tsx\"\n     data-z-client=\"visible\" data-z-module=\"/zigapagos/islands/Counter.island.js\">\n  <button>Clicked 0 times</button>\n</div>\n<script type=\"application/json\" data-z-props=\"z-island-0\">{\"start\":0}</script>\n\n<!-- plus one shared runtime, once per page -->\n<script type=\"module\" src=\"/zigapagos/zigapagos-runtime.js\"></script>\n" }
+          .{ .label = "Counter.island.tsx", .code = "import { useState } from \"@z/runtime\";\n\nexport interface Props { start?: number }\n\nexport default function Counter({ start = 0 }: Props) {\n  const [n, setN] = useState(start);\n  return <button onClick={() => setN(n + 1)}>Clicked {n} times</button>;\n}\n" },
+          .{ .label = "index.shtml", .code = "<island src=\"components/Counter.island.tsx\"\n        client:visible\n        prop-start=\"0\"></island>\n" },
+          .{ .label = "what ships", .code = "<!-- import map, once per page -->\n<script type=\"importmap\">{\"imports\":{\"@z/runtime\":\"/zigapagos/zigapagos-runtime.js\", …}}</script>\n\n<!-- server-rendered into the HTML -->\n<div data-z-island id=\"z-island-0\" data-z-src=\"components/Counter.island.tsx\"\n     data-z-client=\"visible\" data-z-module=\"/zigapagos/islands/Counter.island.js\">\n  <button>Clicked 0 times</button>\n</div>\n<script type=\"application/json\" data-z-props=\"z-island-0\">{\"start\":0}</script>\n\n<!-- plus one shared runtime, once per page -->\n<script type=\"module\" src=\"/zigapagos/zigapagos-runtime.js\"></script>\n" }
         ] }'></island>
       <div>
         <p>

@@ -1,7 +1,7 @@
 ---
 .title = "Homepage",
-.date = @date("2020-07-06T00:00:00"),
-.author = "Sample Author",
+.date = .date("2020-07-06T00:00:00"),
+.authors = ["Sample Author"],
 .layout = "index.shtml",
 .aliases = [
     "index.html",
@@ -10,7 +10,7 @@
     "README.html",
     "another_index.html",
 ],
-.alternatives = [{
+.alternatives = [.{
     .name = "readme",
     .output = "nested/path/page/README.html",
     .layout = "",

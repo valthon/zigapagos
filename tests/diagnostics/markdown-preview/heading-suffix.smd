@@ -1,0 +1,5 @@
+---
+.title = "Bounds",
+.layout = "index.shtml",
+---
+# [Title]($section.id("intro")) suffix

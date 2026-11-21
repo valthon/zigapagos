@@ -197,3 +197,8 @@ initErrorRelay({ endpoint: "/api/client-errors", sampleRate: 0.5 });
 
 Use `initObservability` instead when you want structured/source-mapped frames, a
 custom adapter, dedup, or perf capture. Use one or the other, not both.
+
+Ziggy config and frontmatter errors identify old syntax and carriage returns
+with the repair command `python3 scripts/upgrade-ziggy.py .`; see the
+[Ziggy upgrade guide](migration/ziggy-0.3.md). Config failures use `ZP_FATAL`
+in JSON mode and frontmatter failures retain `ZP_FRONTMATTER_PARSE`.

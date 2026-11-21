@@ -47,13 +47,13 @@ SITE="$WORK/site"
 mkdir -p "$SITE/content/docs" "$SITE/layouts/templates"
 
 cat >"$SITE/zigapagos.ziggy" <<'EOF'
-Site {
+.site = .simple(.{
     .title = "Merged Streams Fixture",
     .host_url = "https://example.com",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "content",
-}
+})
 EOF
 
 cat >"$SITE/layouts/templates/base.shtml" <<'EOF'

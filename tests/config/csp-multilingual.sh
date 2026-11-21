@@ -10,13 +10,13 @@ with tempfile.TemporaryDirectory() as tmp:
     fixture = repo/'tests/rendering/multi'
     for name in ['content', 'layouts', 'assets', 'i18n']:
         shutil.copytree(fixture/name, work/name)
-    base = (fixture/'zigapagos.ziggy').read_text().rstrip()[:-1]
+    base = (fixture/'zigapagos.ziggy').read_text().rstrip()[:-2]
     asset = work/'assets/csp-sources.json'
     asset.write_text('multilingual user asset\n')
-    extras = '\n.csp_extra_sources = [{ .directive = "img-src", .sources = ["data:"] }],\n'
+    extras = '\n.csp_extra_sources = [.{ .directive = "img-src", .sources = ["data:"] }],\n'
     def release(prefix, selection, declarations):
         config = base.replace('.assets_prefix_path = "static"', '.assets_prefix_path = ' + json.dumps(prefix))
-        (work/'zigapagos.ziggy').write_text(config + '\n.static_assets = [' + json.dumps(selection) + '],\n' + declarations + '}')
+        (work/'zigapagos.ziggy').write_text(config + '\n.static_assets = [' + json.dumps(selection) + '],\n' + declarations + '})')
         return subprocess.run([str(repo/'zig-out/bin/zigapagos'), 'release', '--force'], cwd=work, env=os.environ | {'ZIGAPAGOS_RUNTIME_DIR': str(repo/'runtime')}, capture_output=True, text=True)
     for selection in ['csp-sources.json', '**']:
         for prefix in ['static', './static/', '.']:

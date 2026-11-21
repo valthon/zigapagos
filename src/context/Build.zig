@@ -14,6 +14,7 @@ pub const Dot = true;
 pub const PassByRef = true;
 
 generated: context.DateTime,
+development: bool = false,
 _git_data_path: []const u8,
 _git: context.Git,
 
@@ -34,6 +35,10 @@ pub const docs_description =
 ;
 
 pub const Fields = struct {
+    pub const development =
+        \\True for renders performed by the dev loop, including rebuilds and
+        \\`--no-live-reload` sessions. False for release, validate and explain.
+    ;
     pub const generated =
         \\Returns the current date when the build is taking place.
         \\

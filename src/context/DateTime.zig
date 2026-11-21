@@ -13,6 +13,9 @@ const String = context.String;
 const Bool = context.Bool;
 
 _inst: zeit.Instant,
+// Deserialization retains invalid dates at the epoch so sorting is safe;
+// the page diagnostic pass reports the original error at this source span.
+_invalid: ?struct { message: []const u8, loc: ziggy.Tokenizer.Token.Loc } = null,
 
 pub fn init(iso8601: []const u8) !DateTime {
     const date = try zeit.Time.fromISO8601(iso8601);
@@ -398,71 +401,24 @@ pub const Builtins = struct {
         }
     };
 };
-pub const ziggy_options = struct {
-    //     pub fn stringify(
-    //         value: DateTime,
-    //         opts: ziggy.serializer.StringifyOptions,
-    //         indent_level: usize,
-    //         depth: usize,
-    //         writer: anytype,
-    //     ) !void {
-    //         _ = opts;
-    //         _ = indent_level;
-    //         _ = depth;
-    //         std.debug.panic("still used!", .{});
-
-    //         try writer.print("@date(\"{}\")", .{std.zig.fmtEscapes(value._string_repr)});
-    //     }
-
-    pub fn parse(
-        p: *ziggy.Parser,
-        first_tok: ziggy.Tokenizer.Token,
-    ) !DateTime {
-        try p.mustAny(first_tok, &.{ .string, .at });
-        const src = switch (first_tok.tag) {
-            .string => first_tok.loc.unquote(p.code) orelse {
-                return p.addError(.{
-                    .syntax = .{
-                        .name = first_tok.tag.lexeme(),
-                        .sel = first_tok.loc.getSelection(p.code),
-                    },
-                });
-            },
-            .at => blk: {
-                const ident = try p.nextMust(.identifier);
-                if (!std.mem.eql(u8, ident.loc.src(p.code), "date")) {
-                    return p.addError(.{
-                        .syntax = .{
-                            .name = "@date",
-                            .sel = ident.loc.getSelection(p.code),
-                        },
-                    });
-                }
-                _ = try p.nextMust(.lp);
-                const str = try p.nextMust(.string);
-                _ = try p.nextMust(.rp);
-                break :blk str.loc.unquote(p.code) orelse {
-                    return p.addError(.{
-                        .syntax = .{
-                            .name = first_tok.tag.lexeme(),
-                            .sel = first_tok.loc.getSelection(p.code),
-                        },
-                    });
-                };
-            },
-            else => unreachable,
-        };
-
-        return DateTime.init(src) catch {
-            return p.addError(.{
-                .syntax = .{
-                    .name = first_tok.tag.lexeme(),
-                    .sel = first_tok.loc.getSelection(p.code),
-                },
-            });
-        };
-    }
+// The same representation drives parsing and schema agreement. Advertising
+// `any` here would hide changes to the Date schema's tags or payload types.
+const ZiggyDate = union(enum) { date: []const u8, unix: i64 };
+pub const ziggy_options: ziggy.Options(DateTime) = .{
+    .deserialize = deserialize,
+    .roles = .{ .container = .{ .@"union" = ZiggyDate } },
 };
+
+fn deserialize(d: *const ziggy.Deserializer, first: ziggy.Tokenizer.Token, top_lvl: bool) ziggy.Deserializer.Error!DateTime {
+    const raw = try d.deserializeOne(ZiggyDate, first, top_lvl);
+    return switch (raw) {
+        .date => |src| DateTime.init(src) catch |err| return .{
+            ._inst = epoch._inst,
+            ._invalid = .{ .message = @errorName(err), .loc = .{ .start = first.loc.start, .end = d.tokenizer.idx } },
+        },
+        .unix => |timestamp| DateTime.initUnix(timestamp) catch return d.unexpected(first),
+    };
+}
 
 pub fn lessThan(self: DateTime, rhs: DateTime) bool {
     return self._inst.timestamp < rhs._inst.timestamp;

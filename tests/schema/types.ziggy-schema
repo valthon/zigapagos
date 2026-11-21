@@ -1,0 +1,24 @@
+$ = Record
+struct Record {
+    required: int,
+    choice: Choice,
+    members: Members,
+    ratio: float,
+    optional: ?int,
+    defaulted: ?bool,
+    nested: Nested,
+    list: []int,
+    dictionary: {:}int,
+}
+struct Nested {
+    label: bytes,
+}
+union Choice {
+    payload: int,
+    empty,
+    nullable: ?int,
+}
+union Members {
+    first,
+    second,
+}

@@ -152,7 +152,7 @@ pub const Builtins = struct {
             \\
         ;
         pub const examples =
-            \\$page.author.eql("Loris Cro")
+            \\$page.authors.join(' ').eql("Loris Cro")
         ;
         pub fn call(
             str: String,
@@ -481,7 +481,7 @@ pub const Builtins = struct {
             \\
         ;
         pub const examples =
-            \\$page.author.splitN(" ", 1)
+            \\$page.authors.join(' ').splitN(" ", 1)
         ;
         pub fn call(
             str: String,

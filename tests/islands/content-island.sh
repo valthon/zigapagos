@@ -21,7 +21,7 @@
 #       page, component source, and expression in the diagnostic.
 #   (4) NEGATIVE PIN: the identical page, but with the fence's `<z-island>`
 #       swapped for the plain `<island>` spelling, FAILS the build with
-#       superhtml's `invalid_html_tag_name` diagnostic, attributed to the
+#       superhtml's "not a valid html element" diagnostic, attributed to the
 #       `.smd` file. This is what documents *why* the hyphen is mandatory,
 #       and it will fail loudly (not silently pass) if a future supermd/
 #       superhtml sync relaxes or renames that validation.
@@ -70,13 +70,13 @@ write_site() {
   ln -s "$REPO/runtime/node_modules" "$dir/node_modules"
   : > "$dir/assets/.keep"
   cat > "$dir/zigapagos.ziggy" <<'EOF'
-Site {
+.site = .simple(.{
     .title = "Content Island Test",
     .host_url = "https://example.com",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "assets",
-}
+})
 EOF
   cat > "$dir/tsconfig.json" <<'EOF'
 {
@@ -128,8 +128,8 @@ EOF
     cat <<'EOF'
 ---
 .title = "Home",
-.date = @date("2020-07-06T00:00:00"),
-.author = "Test",
+.date = .date("2020-07-06T00:00:00"),
+.authors = ["Test"],
 .layout = "plain.shtml",
 .draft = false,
 ---
@@ -154,7 +154,7 @@ release() { # SITE OUT
 SITE_POS="$WORK/pos"; OUT_POS="$WORK/out-pos"
 write_site "$SITE_POS" '```=html
 <z-island src="components/Counter.island.tsx" client:load scripty:props
-          :props='"'"'{ .start = 5 }'"'"'
+          :props='"'"'.{ .start = 5 }'"'"'
           prop-page_title="$page.title" prop-site_title="$site.title"></z-island>
 ```'
 release "$SITE_POS" "$OUT_POS" >"$WORK/pos.log" 2>&1 \
@@ -182,7 +182,7 @@ echo "PASS: a <z-island> inside an =html fence evaluates page/site props, typech
 SITE_LITERAL="$WORK/literal"; OUT_LITERAL="$WORK/out-literal"
 write_site "$SITE_LITERAL" '```=html
 <z-island src="components/Counter.island.tsx" client:load
-          :props='"'"'{ .start = 5, .site_title = "static" }'"'"'
+          :props='"'"'.{ .start = 5, .site_title = "static" }'"'"'
           prop-page_title="$page.title"></z-island>
 ```'
 release "$SITE_LITERAL" "$OUT_LITERAL" >"$WORK/literal.log" 2>&1 \
@@ -195,7 +195,7 @@ echo "PASS: an unmarked content-island prop keeps its dollar-prefixed value lite
 SITE_EXPR="$WORK/expr"; OUT_EXPR="$WORK/out-expr"
 write_site "$SITE_EXPR" '```=html
 <z-island src="components/Counter.island.tsx" client:load scripty:props
-          :props='"'"'{ .start = 5 }'"'"'
+          :props='"'"'.{ .start = 5 }'"'"'
           prop-page_title="$page.not_a_field" prop-site_title="$site.title"></z-island>
 ```'
 set +e
@@ -212,7 +212,7 @@ echo "PASS: an invalid marked Scripty prop fails with page, component, and expre
 # --- (4) negative pin: plain <island> in the SAME fence fails validation ----
 SITE_NEG="$WORK/neg"; OUT_NEG="$WORK/out-neg"
 write_site "$SITE_NEG" '```=html
-<island src="components/Counter.island.tsx" client:load scripty:props :props='"'"'{ .start = 5 }'"'"'
+<island src="components/Counter.island.tsx" client:load scripty:props :props='"'"'.{ .start = 5 }'"'"'
         prop-page_title="$page.title" prop-site_title="$site.title"></island>
 ```'
 set +e
@@ -227,13 +227,13 @@ set -e
 # Assert on the actual superhtml diagnostic, not just a non-zero exit: this is
 # what pins WHY the hyphen matters and would catch a supermd/superhtml sync
 # that changes how unhyphenated custom elements are handled.
-grep -q 'invalid_html_tag_name' "$WORK/neg.log" \
+grep -q 'not a valid html element' "$WORK/neg.log" \
   || { echo "--- build output ---"; sed -n '1,40p' "$WORK/neg.log"
-       fail "the build failed but not with superhtml's invalid_html_tag_name diagnostic (some other error?)"; }
-grep -qE 'content/index\.smd:[0-9]+:[0-9]+: \[invalid_html_tag_name\]' "$WORK/neg.log" \
+       fail "the build failed without superhtml's readable invalid-element diagnostic"; }
+grep -qE 'content/index\.smd:[0-9]+:[0-9]+: \[html\] error: not a valid html element' "$WORK/neg.log" \
   || { echo "--- build output ---"; sed -n '1,40p' "$WORK/neg.log"
        fail "the diagnostic is not attributed to a .smd line (supermd's line-mapping regressed)"; }
-echo "PASS: a plain <island> inside an =html fence fails with superhtml's invalid_html_tag_name, attributed to the .smd line"
+echo "PASS: a plain <island> inside an =html fence fails with a readable invalid-element diagnostic, attributed to the .smd line"
 
 # --- (5) control: same fixture, no fence at all -> builds clean -------------
 SITE_CTRL="$WORK/ctrl"; OUT_CTRL="$WORK/out-ctrl"
@@ -247,7 +247,7 @@ echo "PASS: the same fixture with the fence removed builds clean (control)"
 SITE_SLOTS="$WORK/slots"; OUT_SLOTS="$WORK/out-slots"
 write_site "$SITE_SLOTS" '```=html
 <z-island src="components/Tabs.island.tsx" client:load
-          :props='"'"'{ .label = "Setup" }'"'"'
+          :props='"'"'.{ .label = "Setup" }'"'"'
           markdown-slot="intro"
           markdown-slot-admin="admin-steps"
           markdown-slot-terminal="terminal-steps"></z-island>
@@ -315,7 +315,7 @@ echo "PASS: named island slots receive native rendered Markdown and highlighted 
 SITE_MISSING="$WORK/missing-slot"; OUT_MISSING="$WORK/out-missing-slot"
 write_site "$SITE_MISSING" '```=html
 <z-island src="components/Tabs.island.tsx" client:load
-          :props='"'"'{ .label = "Setup" }'"'"'
+          :props='"'"'.{ .label = "Setup" }'"'"'
           markdown-slot-admin="does-not-exist"></z-island>
 ```'
 set +e

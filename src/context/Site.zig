@@ -21,6 +21,7 @@ const Signature = @import("doctypes.zig").Signature;
 
 host_url: []const u8,
 title: []const u8,
+custom: context.Map.ZiggyMap = .empty,
 _meta: struct {
     variant_id: u32,
     kind: union(enum) {
@@ -40,6 +41,7 @@ pub const docs_description =
 pub const Dot = true;
 pub const PassByRef = true;
 pub const Fields = struct {
+    pub const custom = "Site-wide custom Ziggy dictionary.";
     pub const host_url =
         \\The host URL, as defined in your `zigapagos.ziggy`.
     ;
@@ -253,9 +255,23 @@ pub const Builtins = struct {
         }
     };
 
+    pub const index = struct {
+        pub const signature: Signature = .{ .ret = .Page };
+        pub const docs_description =
+            \\Returns the root index page, the same as `$site.page('')`.
+        ;
+        pub const examples =
+            \\<a href="$site.index().link()">Homepage</a>
+        ;
+        pub fn call(site: *const Site, gpa: Allocator, ctx: *const context.Root, args: []const Value) context.CallError!Value {
+            if (args.len != 0) return .{ .err = "expected 0 arguments" };
+            return page.call(site, gpa, ctx, &.{String.init("")});
+        }
+    };
+
     pub const page = struct {
         pub const signature: Signature = .{
-            .params = &.{.String},
+            .params = &.{ .String, .{ .Many = .String } },
             .ret = .Page,
         };
         pub const docs_description =
@@ -270,26 +286,37 @@ pub const Builtins = struct {
             \\ - content/foo/bar.smd
             \\ - content/foo/bar/index.smd
             \\
-            \\To reference the site homepage, pass an empty string.
+            \\To reference the site homepage, pass an empty string or use `$site.index()`.
+            \\
+            \\Multiple string arguments compose a path: `$site.page('foo', 'bar')`
+            \\is equivalent to `$site.page('foo/bar')`. Empty parts are ignored;
+            \\a trailing slash on a part is optional.
         ;
         pub const examples =
             \\<a href="$site.page('downloads').link()">Downloads</a>
         ;
+        /// Contract 1: frees the composed-path scratch. Only a formatted error
+        /// or a missing-page reference escapes; resolved pages are borrowed.
         pub fn call(
             site: *const Site,
             gpa: Allocator,
             ctx: *const context.Root,
             args: []const Value,
         ) context.CallError!Value {
-            const bad_arg: Value = .{
-                .err = "expected 1 string argument",
-            };
-            if (args.len != 1) return bad_arg;
-
-            const ref = switch (args[0]) {
-                .string => |s| s.value,
+            const bad_arg: Value = .{ .err = "expected 1 or more string arguments" };
+            if (args.len == 0) return bad_arg;
+            var path_buf: Writer.Allocating = .init(gpa);
+            defer path_buf.deinit();
+            for (args) |arg| switch (arg) {
+                .string => |s| {
+                    if (s.value.len == 0) continue;
+                    const part = if (std.mem.endsWith(u8, s.value, "/")) s.value[0 .. s.value.len - 1] else s.value;
+                    if (path_buf.written().len > 0) path_buf.writer.writeByte('/') catch return error.OutOfMemory;
+                    path_buf.writer.writeAll(part) catch return error.OutOfMemory;
+                },
                 else => return bad_arg,
             };
+            const ref = path_buf.written();
 
             if (root.validatePathMessage(ref, .{ .empty = true })) |msg| return .{
                 .err = msg,
@@ -310,7 +337,8 @@ pub const Builtins = struct {
                 // (a resource-kind mismatch is a real authoring mistake, not
                 // an unwritten page).
                 if (ctx._meta.build.allow_missing_pages) {
-                    return context.MissingPage.tolerate(ctx, site, ref);
+                    // The sentinel outlives our scratch path buffer.
+                    return context.MissingPage.tolerate(ctx, site, try gpa.dupe(u8, ref));
                 }
                 return Value.errFmt(gpa, "missing page '{s}'", .{ref});
             };
@@ -327,7 +355,8 @@ pub const Builtins = struct {
                 // component of `ref` resolved (e.g. a sibling asset already
                 // lives there) but no page claims it yet.
                 if (ctx._meta.build.allow_missing_pages) {
-                    return context.MissingPage.tolerate(ctx, site, ref);
+                    // The sentinel outlives our scratch path buffer.
+                    return context.MissingPage.tolerate(ctx, site, try gpa.dupe(u8, ref));
                 }
                 return Value.errFmt(gpa, "missing page '{s}'", .{ref});
             };
@@ -341,7 +370,19 @@ pub const Builtins = struct {
                 ),
             }
 
-            return .{ .page = &variant.pages.items[hint.id] };
+            const target = &variant.pages.items[hint.id];
+            // A parsed draft root remains addressable as a section container.
+            // Other inactive targets have no published page to hand templates.
+            const container = target._scan.subsection_id;
+            if (target._parse.status != .parsed or
+                (!target._parse.active and (container == 0 or !variant.sections.items[container].active)))
+            {
+                if (ctx._meta.build.allow_missing_pages) {
+                    return context.MissingPage.tolerate(ctx, site, try gpa.dupe(u8, ref));
+                }
+                return Value.errFmt(gpa, "missing page '{s}' (inactive)", .{ref});
+            }
+            return .{ .page = target };
         }
     };
 
@@ -372,17 +413,26 @@ pub const Builtins = struct {
             const v = &ctx._meta.build.variants[site._meta.variant_id];
 
             if (args.len == 0) {
-                const page_list = try gpa.alloc(Value, v.pages.items.len);
+                var count: usize = 0;
+                for (v.pages.items) |p| {
+                    if (p._parse.active and p._parse.status == .parsed) count += 1;
+                }
+                const page_list = try gpa.alloc(Value, count);
                 errdefer gpa.free(page_list);
 
                 var idx: usize = 0;
                 if (v.root_index) |rid| {
-                    page_list[0] = .{ .page = &v.pages.items[rid] };
-                    idx += 1;
+                    const p = &v.pages.items[rid];
+                    if (p._parse.active and p._parse.status == .parsed) {
+                        page_list[idx] = .{ .page = p };
+                        idx += 1;
+                    }
                 }
                 for (v.sections.items[1..]) |*s| {
                     for (s.pages.items) |pid| {
-                        page_list[idx] = .{ .page = &v.pages.items[pid] };
+                        const p = &v.pages.items[pid];
+                        if (!p._parse.active or p._parse.status != .parsed) continue;
+                        page_list[idx] = .{ .page = p };
                         idx += 1;
                     }
                 }
@@ -425,9 +475,9 @@ pub const Builtins = struct {
                 }
 
                 p.* = .{ .page = &v.pages.items[hint.id] };
-                if (!p.page._parse.active) return Value.errFmt(
+                if (!p.page._parse.active or p.page._parse.status != .parsed) return Value.errFmt(
                     gpa,
-                    "page '{s}' is a draft",
+                    "page '{s}' is inactive",
                     .{ref},
                 );
             }

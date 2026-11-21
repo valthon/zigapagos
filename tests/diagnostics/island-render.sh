@@ -21,13 +21,13 @@ mkdir -p "$WORK/content" "$WORK/layouts" "$WORK/components"
 # regression. `rm -rf "$WORK"` removes the link, not the target.
 ln -s "$REPO/runtime/node_modules" "$WORK/node_modules"
 cat > "$WORK/zigapagos.ziggy" <<'EOF'
-Site {
+.site = .simple(.{
     .title = "Island diagnostics",
     .host_url = "https://example.com",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "components",
-}
+})
 EOF
 cat > "$WORK/layouts/index.shtml" <<'EOF'
 <!DOCTYPE html>
@@ -48,7 +48,7 @@ page() {
   cat > "$WORK/content/$name.smd" <<'EOF'
 ---
 .title = "Test",
-.date = @date("2020-07-06T00:00:00"),
+.date = .date("2020-07-06T00:00:00"),
 .layout = "index.shtml",
 ---
 EOF

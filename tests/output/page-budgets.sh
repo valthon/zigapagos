@@ -116,7 +116,7 @@ with tempfile.TemporaryDirectory() as work:
     p = subprocess.run([binary,'init','--minimal'], cwd=built, capture_output=True, text=True)
     assert p.returncode == 0, p.stderr
     config = built / 'zigapagos.ziggy'
-    config.write_text(config.read_text().replace('Site {', 'Site {\n    .url_path_prefix = "project",'), encoding="utf-8", newline="\n")
+    config.write_text(config.read_text().replace('.site = .simple(.{', '.site = .simple(.{\n    .url_path_prefix = "project",'), encoding="utf-8", newline="\n")
     p = subprocess.run([binary,'release'], cwd=built, capture_output=True, text=True)
     assert p.returncode == 0, p.stderr
     actual,_ = run('--page=index.html', '--max-page-js-bytes=0', '--max-page-css-bytes='+str((built/'assets/style.css').stat().st_size), target=built/'public')

@@ -8,13 +8,13 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/content" "$WORK/layouts"
 cat > "$WORK/zigapagos.ziggy" <<'EOF'
-Site {
+.site = .simple(.{
     .title = "Render diagnostics",
     .host_url = "https://example.com",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "content",
-}
+})
 EOF
 cat > "$WORK/layouts/index.shtml" <<'EOF'
 <!DOCTYPE html>
@@ -27,7 +27,7 @@ for name in index $(seq 1 24); do
   cat > "$WORK/content/$name.smd" <<'EOF'
 ---
 .title = "Test",
-.date = @date("2020-07-06T00:00:00"),
+.date = .date("2020-07-06T00:00:00"),
 .layout = "index.shtml",
 ---
 Hello.

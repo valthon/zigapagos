@@ -2576,7 +2576,7 @@ const target_layout =
 const target_placeholder =
     \\---
     \\.title = "Migration placeholder",
-    \\.date = @date("1970-01-01T00:00:00"),
+    \\.date = .date("1970-01-01T00:00:00"),
     \\.layout = "index.shtml",
     \\.draft = false,
     \\---
@@ -2787,13 +2787,13 @@ fn emitTargetConfig(gpa: Allocator, metadata: TargetMetadata, with_assets: bool)
     } else gpa.dupe(u8, "") catch fatal.oom();
     defer gpa.free(prefix_line);
     return gpa.print(
-        \\Site {{
+        \\.site = .simple(.{{
         \\    .title = "{s}",
         \\    .host_url = "{s}",
         \\    .content_dir_path = "content",
         \\    .layouts_dir_path = "layouts",
         \\    .assets_dir_path = "assets",
-        \\{s}{s}{s}}}
+        \\{s}{s}{s}}})
         \\
     , .{ title, host, prefix_line, if (with_assets) "    .static_assets = [\"**\"],\n" else "", if (metadata.auto_heading_ids) "    .auto_heading_ids = true,\n" else "" }) catch fatal.oom();
 }
@@ -3054,7 +3054,7 @@ pub fn buildReport(gpa: Allocator, dir_path: []const u8, entries: []const Entry,
     const scaffold_target = if (assembled_target) |target|
         gpa.print("- [x] Minimal target scaffold assembled in `{s}` by `--target`.\n", .{target}) catch fatal.oom()
     else
-        gpa.dupe(u8, "- [ ] `zigapagos.ziggy` (begins with `Site {`), `content/`, `layouts/`, `assets/`, `components/`, `build.sh`\n") catch fatal.oom();
+        gpa.dupe(u8, "- [ ] `zigapagos.ziggy` (begins with `.site = .simple(.{`), `content/`, `layouts/`, `assets/`, `components/`, `build.sh`\n") catch fatal.oom();
     defer gpa.free(scaffold_target);
 
     w.print(
@@ -3790,7 +3790,7 @@ test "paginate: scan flags a paginated route and buildReport prescribes the conv
     try std.testing.expect(std.mem.indexOf(
         u8,
         report,
-        ".pagination = { .page_size = 4, .url_style = \"plain_dir\" }",
+        ".pagination = .{ .page_size = 4, .url_style = .plain_dir }",
     ) != null);
     try std.testing.expect(std.mem.indexOf(u8, report, "content/blog/index.smd") != null);
 }

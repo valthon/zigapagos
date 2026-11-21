@@ -2,7 +2,7 @@
 .title = "Documentation",
 .description = "HTML, CSS, TSX, fast production builds, and static deployment. Frontend workflows, optional ZigBase pairing, and reference.",
 .layout = "docs-index.shtml",
-.custom = { .slug = "index" },
+.custom = { "slug" : "index" },
 ---
 
 Start with [Building applications]($link.page("docs/building-apps")) to choose a frontend-only or ZigBase-paired workflow. Read the [feature backlog]($link.page("docs/roadmap")) for planned work.

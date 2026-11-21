@@ -15,6 +15,35 @@ PATH`) are mentioned only where they differ.
 For a running host, [deployment checks](deployment-checks.md) compare served
 frontend bytes and generated headers with the release tree.
 
+## Audio embeds
+
+Use the audio directive like an image or video source:
+
+```markdown
+[Recording caption]($audio.siteAsset('talk.mp3').loop(true).muted(true))
+[]($audio.asset('local.wav'))
+[]($audio.url('https://media.example.com/talk.mp3').hide_controls(true))
+[]($audio.buildAsset('recording'))
+```
+
+`loop`, `autoplay`, `muted` and `hide_controls` take booleans. Controls are
+visible by default. The shared `id`, `attrs` (CSS classes) and `title`
+functions apply to the `audio` element. A caption wraps it in `figure` with a `figcaption`. URLs and
+metadata are HTML-escaped. Site assets use the same refcounts, missing-asset
+diagnostics and fingerprints as images/video; page and build assets keep their
+existing install names. See the [audio reference](scripty.md#audio) for the
+source functions.
+
+Import maps remain JavaScript-only. Local audio is permitted by the generated
+CSP's `default-src 'self'`. For remote audio, declare its origin in
+[`csp_extra_sources`](configuration.md#csp_extra_sources) under `media-src`;
+the emitters preserve the effective default sources and add the declared ones.
+The deployment checker probes installed MP3, WAV, Ogg, M4A, AAC and FLAC files
+for bytes, cache headers and audio content types. The host configs rely on the
+server's MIME database, so enable its audio mappings. `doctor` checks emitted
+local source URLs; `inspect-output` continues measuring HTML/CSS/JS bytes and
+does not include media in those totals.
+
 ## Production CSS minification
 
 Run `zigapagos release --css-minify` to minify referenced and explicitly static
@@ -82,12 +111,36 @@ The escape hatch for anything fetched by something *outside* the build, which
 therefore has no `.link()` to bump anything:
 
 ```ziggy
-.static_assets = ["favicon.ico", "CNAME", "robots.txt"],
+.static_assets = ["favicon.ico", "CNAME", "robots.txt", "fonts", "downloads/"],
 ```
+
+An entry names a file or directory relative to `assets_dir_path`. A directory
+installs every file in its subtree, including nested and hidden files, without
+requiring a template reference. A trailing `/` is optional for directories;
+an empty directory is valid and installs nothing. All selected files keep
+their original paths even with `asset_fingerprint = true`.
 
 An entry may be a `**` glob to take a whole subtree without listing it:
 `"**"` installs the entire assets directory, `"img/**"` everything under
 `assets/img/`. A glob that matches nothing is a build error.
+
+Selecting a file twice is a build error, including a file listed directly
+and through a directory, overlapping directories, or overlapping globs.
+`ZP_STATIC_ASSET_DUPLICATE` names the file and both entries.
+Missing paths (`ZP_STATIC_ASSET_MISSING`) and invalid paths
+(`ZP_STATIC_ASSET_INVALID`) also fail the build. Use relative paths without
+dot components, backslashes, empty components or NUL.
+Absolute paths and spellings escaping the assets directory are rejected. Drive-qualified
+spellings are rejected on Windows; `c:notes.txt` is a literal filename on POSIX.
+Selected file symlinks install their target contents even when the target lives
+outside the assets directory (including selections through `**`); broken links
+and targets that are not regular files are errors;
+directory symlinks are not traversed. Diagnostics support text and JSON and
+point at the selecting entry in `zigapagos.ziggy` when available.
+
+Directory selection also publishes private data files inside that subtree,
+even files read only through `.ziggy()` or `.bytes()`. Keep private build-time
+data outside directories listed in `static_assets`.
 
 Use it for files something else looks up at a fixed path. Do **not** use it for
 site-wide CSS or feeds — those should be `.link()`ed, so that removing the last
@@ -142,14 +195,14 @@ returning visitor last week's stylesheet against today's HTML.
 Turn on fingerprinting (issue #53) and the content hash goes into the filename:
 
 ```ziggy
-Site {
+.site = .simple(.{
     .title = "…",
     .host_url = "https://example.com",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "assets",
     .asset_fingerprint = true,
-}
+})
 ```
 
 ```
@@ -173,7 +226,7 @@ because the extension is load-bearing downstream: a web server picks the
 
 ### What is deliberately *not* fingerprinted
 
-- **`static_assets` entries.** They are installed unconditionally precisely
+- **`static_assets` entries, including files reached through directories or globs.** They are installed unconditionally precisely
   because something outside the build fetches them at a fixed path; hashing
   `favicon.ico` or `CNAME` would break exactly the thing they exist for.
 - **Build assets.** Their install path is yours to choose (`--install=` /

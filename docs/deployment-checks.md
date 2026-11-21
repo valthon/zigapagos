@@ -173,8 +173,8 @@ For example, add this field inside `Site`:
 
 ```ziggy
 .csp_extra_sources = [
-    { .directive = "script-src", .sources = ["https://js.sentry-cdn.com", "https://browser.sentry-cdn.com"] },
-    { .directive = "connect-src", .sources = ["https://o123.ingest.us.sentry.io"] },
+    .{ .directive = "script-src", .sources = ["https://js.sentry-cdn.com", "https://browser.sentry-cdn.com"] },
+    .{ .directive = "connect-src", .sources = ["https://o123.ingest.us.sentry.io"] },
 ],
 ```
 

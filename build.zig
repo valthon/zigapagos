@@ -38,6 +38,7 @@ pub fn build(b: *std.Build) !void {
 
     release.setup(b, cfg);
     const docgen_reference_exe = docgen.setup(b, cfg);
+    @import("build/doc_examples.zig").setup(b, cfg);
 
     const check = exe.addCheckStep(b, zigapagos_exe);
     // The Scripty reference generator walks src/context/* with @typeInfo, so a
@@ -61,5 +62,7 @@ pub fn build(b: *std.Build) !void {
     // there too, not the next e2e run.
     check.dependOn(&rails_schema_exes.manifest_validate.step);
 
+    const schemas = @import("build/schema.zig").setup(b, check);
     try snapshot.setup(b, cfg.target, zigapagos_exe);
+    b.top_level_steps.get("test").?.step.dependOn(schemas);
 }

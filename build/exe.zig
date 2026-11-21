@@ -21,7 +21,6 @@ pub const ZigapagosExeConfig = struct {
 pub fn addZigapagosExe(zb: *std.Build, cfg: ZigapagosExeConfig) *std.Build.Step.Compile {
     const target = cfg.target;
     const optimize = cfg.optimize;
-    const mode = .{ .target = target, .optimize = optimize };
 
     const zigapagos_exe = zb.addExecutable(.{
         .name = "zigapagos",
@@ -58,13 +57,6 @@ pub fn addZigapagosExe(zb: *std.Build, cfg: ZigapagosExeConfig) *std.Build.Step.
 
     const up = deps.upstream(zb, target, optimize, cfg.enable_tracy);
 
-    const syntax = zb.dependency("flow_syntax", .{
-        .target = target,
-        .optimize = optimize,
-    });
-    const ts = syntax.builder.dependency("tree_sitter", mode);
-    const treez = ts.module("treez");
-
     const mime = zb.dependency("mime", .{
         .target = target,
         .optimize = optimize,
@@ -90,8 +82,12 @@ pub fn addZigapagosExe(zb: *std.Build, cfg: ZigapagosExeConfig) *std.Build.Step.
     zigapagos_exe.root_module.addImport("supermd", up.supermd);
     zigapagos_exe.root_module.addImport("superhtml", up.superhtml);
     zigapagos_exe.root_module.addImport("zeit", up.zeit);
-    zigapagos_exe.root_module.addImport("syntax", syntax.module("syntax"));
-    zigapagos_exe.root_module.addImport("treez", treez);
+    if (cfg.highlight) {
+        const syntax = zb.dependency("flow_syntax", .{ .target = target, .optimize = optimize });
+        const ts = syntax.builder.dependency("tree_sitter", .{ .target = target, .optimize = optimize });
+        zigapagos_exe.root_module.addImport("syntax", syntax.module("syntax"));
+        zigapagos_exe.root_module.addImport("treez", ts.module("treez"));
+    }
     zigapagos_exe.root_module.addImport("options", options);
     zigapagos_exe.root_module.addImport("tracy", tracy.module("tracy"));
     zigapagos_exe.root_module.addImport("mime", mime.module("mime"));

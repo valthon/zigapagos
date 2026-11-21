@@ -3,8 +3,8 @@
 ## Zig 0.17.1 migration — 2026-11-20
 
 The compiler port landed separately from the pending upstream tag sync. ZigBase
-is pinned to v0.14.0, the first release built on Zig 0.17.1. Ziggy stays on the
-`old` API at 189d1d5e; SuperMD retains its own transitive Ziggy main module.
+is pinned to v0.14.0, the first release built on Zig 0.17.1. Ziggy is pinned to 0.3.0 at 7fc62a53; config, frontmatter and SuperMD share
+the same module and new document syntax.
 The selected Zig package pins below now describe this port. Earlier npm audit
 results retain their original dates and measurements.
 
@@ -188,7 +188,7 @@ development heads are not automatically compatible with released Zig.
 | SuperHTML | `b00f3d25e7e8` | 0.7.1; Zig 0.17-compatible |
 | Zeit | `ed64c36035fe` | Zig 0.17-compatible upstream pin |
 | Flow Syntax | `641e1942c997` | Main branch; Zig 0.17-compatible |
-| Ziggy | `189d1d5e862e` | Old API; library tests pass on 0.17.1 |
+| Ziggy | `7fc62a537ba3` | 0.3.0; shared config/frontmatter/SuperMD module |
 | SuperMD | `d294f18f05b9` | Required API adaptations only |
 | translate-c | `cfac21f3199b` | Official `zig-0.17.x` package |
 | libwebp | 1.6.0 | Current stable release tag |

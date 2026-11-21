@@ -1,0 +1,8 @@
+---
+.title = "en New",
+.layout = "post.shtml",
+.date = .date("2025-01-01T00:00:00"),
+.authors = ["ada", "bea"],
+.tags = ["topic"],
+.draft = false,
+---

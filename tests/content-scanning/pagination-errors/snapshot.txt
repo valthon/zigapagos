@@ -20,12 +20,12 @@
 *-----------------------------------------------*
 
 content/post.smd:4:15: error: pagination page_size must be at least 1
-|    .pagination = { .page_size = 0 },
-|                  ^^^^^^^^^^^^^^^^^^
+|    .pagination = .{ .page_size = 0 },
+|                  ^^^^^^^^^^^^^^^^^^^
 
 content/post.smd:4:15: error: 'pagination' is only valid on a section index page
-|    .pagination = { .page_size = 0 },
-|                  ^^^^^^^^^^^^^^^^^^
+|    .pagination = .{ .page_size = 0 },
+|                  ^^^^^^^^^^^^^^^^^^^
 
 ----------------------------
        -- VARIANT --

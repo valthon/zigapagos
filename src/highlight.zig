@@ -4,8 +4,6 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const Writer = std.Io.Writer;
 const options = @import("options");
-const syntax = @import("syntax");
-const treez = @import("treez");
 const tracy = @import("tracy");
 const HtmlSafe = @import("superhtml").HtmlSafe;
 
@@ -22,11 +20,11 @@ pub const DotsToUnderscores = struct {
     }
 };
 
-var query_cache: syntax.QueryCache = .{
+var query_cache: if (options.enable_treesitter) @import("syntax").QueryCache else void = if (options.enable_treesitter) .{
     .io = undefined,
     .allocator = @import("main.zig").gpa,
     .mutex = .init,
-};
+} else {};
 
 const ClassSet = struct {
     classes: std.StringHashMap(void),
@@ -103,18 +101,23 @@ pub fn highlightCode(
     lang_name: []const u8,
     code: []const u8,
     w: *Writer,
-) !void {
+) error{ OutOfMemory, WriteFailed, NoLanguage, Unknown }!void {
     const zone = tracy.traceNamed(@src(), "highlightCode");
     defer zone.end();
     tracy.messageCopy(lang_name);
 
-    // Horrible hack
-    query_cache.io = io;
+    if (std.mem.eql(u8, lang_name, "console")) return runConsole(w, code);
 
     if (!options.enable_treesitter) {
         try w.print("{f}", .{HtmlSafe{ .bytes = code }});
         return;
     }
+
+    const syntax = @import("syntax");
+    const treez = @import("treez");
+
+    // The query cache is only present in builds with syntax highlighting.
+    query_cache.io = io;
 
     const lang = blk: {
         const query_zone = tracy.traceNamed(@src(), "syntax");
@@ -124,11 +127,12 @@ pub fn highlightCode(
             arena,
             lang_name,
             &query_cache,
-        ) catch {
+        ) catch |err| {
+            if (err == error.OutOfMemory) return error.OutOfMemory;
             const syntax_fallback_zone = tracy.traceNamed(@src(), "syntax fallback");
             defer syntax_fallback_zone.end();
             const fake_filename = try arena.print("file.{s}", .{lang_name});
-            break :blk try syntax.create_guess_file_type_static(arena, "", fake_filename, &query_cache);
+            break :blk syntax.create_guess_file_type_static(arena, "", fake_filename, &query_cache) catch |guess_err| return if (guess_err == error.OutOfMemory) error.OutOfMemory else error.NoLanguage;
         };
     };
 
@@ -204,5 +208,35 @@ pub fn highlightCode(
     if (current_pos < code.len) {
         try current_classes.getClasses(arena, &class_list);
         try printSpan(arena, w, code, current_pos, code.len, class_list.items);
+    }
+}
+
+// Contract 3: writes to the caller buffer; allocates nothing.
+pub fn runConsole(w: *Writer, source: []const u8) Writer.Error!void {
+    var it = std.mem.splitScalar(u8, source, '\n');
+    while (it.next()) |line| {
+        const prompt_end: ?usize = end: {
+            if (line.len == 0) break :end null;
+            switch (line[0]) {
+                else => break :end null,
+                '$', '#' => break :end 1,
+                '[' => {},
+            }
+            const i = std.mem.findScalar(u8, line, ']') orelse break :end null;
+            if (i == line.len - 1) break :end null;
+            break :end switch (line[i + 1]) {
+                '$', '#' => i + 2,
+                else => null,
+            };
+        };
+        if (prompt_end) |index| {
+            try w.print("<span class=\"prompt\">{f}</span> <span class=\"command\">{f}</span>", .{
+                @as(HtmlSafe, .{ .bytes = line[0..index] }),
+                @as(HtmlSafe, .{ .bytes = std.mem.trim(u8, line[index..], &std.ascii.whitespace) }),
+            });
+        } else {
+            try w.print("{f}", .{@as(HtmlSafe, .{ .bytes = line })});
+        }
+        if (it.index != null) try w.writeByte('\n');
     }
 }

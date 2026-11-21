@@ -98,23 +98,23 @@ LAYOUT='<!DOCTYPE html>
 scaffold() {
   mkdir -p "$WORK/site/content" "$WORK/site/layouts" "$WORK/site/assets/art"
   cat > "$WORK/site/zigapagos.ziggy" <<EOF
-Site {
+.site = .simple(.{
     .title = "ImageOptimize e2e",
     .host_url = "https://example.com",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "assets",
-    .image_optimize = {
+    .image_optimize = .{
         .widths = [200, 400, 100000],
     },
-}
+})
 EOF
   printf '%s' "$LAYOUT" > "$WORK/site/layouts/index.shtml"
   cat > "$WORK/site/content/index.smd" <<'EOF'
 ---
 .title = "Home",
-.date = @date("2020-07-06T00:00:00"),
-.author = "Test",
+.date = .date("2020-07-06T00:00:00"),
+.authors = ["Test"],
 .layout = "index.shtml",
 .draft = false,
 ---
@@ -203,7 +203,7 @@ echo "PASS: (5) rebuild of unchanged input hit the cache (mtime unchanged)"
 # site is configured today (the field defaults to null / off). The block now
 # spans multiple lines (`.widths = [...]`), so the deletion is a range, not
 # a single-line match.
-sed -i.bak '/\.image_optimize = {/,/},/d' "$WORK/site/zigapagos.ziggy" && rm -f "$WORK/site/zigapagos.ziggy.bak"
+sed -i.bak '/\.image_optimize = \.{/,/},/d' "$WORK/site/zigapagos.ziggy" && rm -f "$WORK/site/zigapagos.ziggy.bak"
 grep -q 'image_optimize' "$WORK/site/zigapagos.ziggy" && fail "image_optimize block survived the OFF-control edit"
 OUT_OFF="$WORK/out-off"
 build "$OUT_OFF" "$WORK/build-off.log"
@@ -235,24 +235,24 @@ scaffold_avif() {
   local dir="$1" avif_bin="$2"
   mkdir -p "$dir/content" "$dir/layouts" "$dir/assets"
   cat > "$dir/zigapagos.ziggy" <<EOF
-Site {
+.site = .simple(.{
     .title = "ImageOptimize AVIF e2e",
     .host_url = "https://example.com",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "assets",
-    .image_optimize = {
+    .image_optimize = .{
         .widths = [200, 400, 100000],
         .avif_encoder = "$avif_bin",
     },
-}
+})
 EOF
   printf '%s' "$LAYOUT" > "$dir/layouts/index.shtml"
   cat > "$dir/content/index.smd" <<'EOF'
 ---
 .title = "Home",
-.date = @date("2020-07-06T00:00:00"),
-.author = "Test",
+.date = .date("2020-07-06T00:00:00"),
+.authors = ["Test"],
 .layout = "index.shtml",
 .draft = false,
 ---
@@ -367,23 +367,23 @@ echo "PASS: (8b) an encoder that exits 0 without writing output is diagnosed as 
 SITE_BIG="$WORK/site-big"
 mkdir -p "$SITE_BIG/content" "$SITE_BIG/layouts" "$SITE_BIG/assets"
 cat > "$SITE_BIG/zigapagos.ziggy" <<EOF
-Site {
+.site = .simple(.{
     .title = "ImageOptimize oversized e2e",
     .host_url = "https://example.com",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "assets",
-    .image_optimize = {
+    .image_optimize = .{
         .widths = [200, 400],
     },
-}
+})
 EOF
 printf '%s' "$LAYOUT" > "$SITE_BIG/layouts/index.shtml"
 cat > "$SITE_BIG/content/index.smd" <<'EOF'
 ---
 .title = "Home",
-.date = @date("2020-07-06T00:00:00"),
-.author = "Test",
+.date = .date("2020-07-06T00:00:00"),
+.authors = ["Test"],
 .layout = "index.shtml",
 .draft = false,
 ---
@@ -432,23 +432,23 @@ echo "PASS: (9) oversized source (20000x4) is silent passthrough (plain <img>, n
 SITE_SPACE="$WORK/site-space"
 mkdir -p "$SITE_SPACE/content" "$SITE_SPACE/layouts" "$SITE_SPACE/assets"
 cat > "$SITE_SPACE/zigapagos.ziggy" <<EOF
-Site {
+.site = .simple(.{
     .title = "ImageOptimize space e2e",
     .host_url = "https://example.com",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "assets",
-    .image_optimize = {
+    .image_optimize = .{
         .widths = [200, 400],
     },
-}
+})
 EOF
 printf '%s' "$LAYOUT" > "$SITE_SPACE/layouts/index.shtml"
 cat > "$SITE_SPACE/content/index.smd" <<'EOF'
 ---
 .title = "Home",
-.date = @date("2020-07-06T00:00:00"),
-.author = "Test",
+.date = .date("2020-07-06T00:00:00"),
+.authors = ["Test"],
 .layout = "index.shtml",
 .draft = false,
 ---
@@ -477,23 +477,23 @@ SITE_WIDE_LIST="$WORK/site-wide-list"
 mkdir -p "$SITE_WIDE_LIST/content" "$SITE_WIDE_LIST/layouts" "$SITE_WIDE_LIST/assets"
 WIDTHS_65=$(python3 -c 'print(", ".join(str(100 + i) for i in range(65)))')
 cat > "$SITE_WIDE_LIST/zigapagos.ziggy" <<EOF
-Site {
+.site = .simple(.{
     .title = "ImageOptimize widths-cap e2e",
     .host_url = "https://example.com",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "assets",
-    .image_optimize = {
+    .image_optimize = .{
         .widths = [$WIDTHS_65],
     },
-}
+})
 EOF
 printf '%s' "$LAYOUT" > "$SITE_WIDE_LIST/layouts/index.shtml"
 cat > "$SITE_WIDE_LIST/content/index.smd" <<'EOF'
 ---
 .title = "Home",
-.date = @date("2020-07-06T00:00:00"),
-.author = "Test",
+.date = .date("2020-07-06T00:00:00"),
+.authors = ["Test"],
 .layout = "index.shtml",
 .draft = false,
 ---

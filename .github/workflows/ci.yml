@@ -407,6 +407,14 @@ jobs:
       - name: Snapshot tests (zig build test)
         run: zig build test
 
+      # This check re-runs `zig build test` to prove the gate leaves the git
+      # index alone. Here the snapshot suite is already compiled by the step
+      # above; in the shell e2e job, which has only the prebuilt binary, it
+      # compiled the suite again (138s and 195s in two runs measured
+      # 2026-11-21). That job therefore lists it in SHARDED_OUT.
+      - name: Snapshot gate leaves the index alone (tests/meta/snapshot-index.sh)
+        run: bash tests/meta/snapshot-index.sh
+
       # Single-threaded guard: the single-threaded-only code paths are comptime-pruned
       # from the default build, so compile them explicitly. `check` compiles the
       # exe AND every unit-test binary (test decls are only analyzed in a test
@@ -414,6 +422,12 @@ jobs:
       # test-only code, e.g. a test calling std.Thread.spawn) without running
       # anything, so no bun/network is needed; the dep objects are already warm
       # from the build above.
+      - name: Check highlighting-disabled build (exe + all test binaries)
+        run: |
+          zig build check -Dhighlight=false
+          zig build -Dhighlight=false --prefix zig-out/no-highlight
+          ZIGAPAGOS_BIN="$PWD/zig-out/no-highlight/bin/zigapagos" bash tests/rendering/highlight-off.sh --highlight-off
+
       - name: Check single-threaded build (exe + all test binaries)
         run: zig build check -Dsingle-threaded
 
@@ -1169,19 +1183,27 @@ jobs:
   e2e-rest:
     needs: build-binary
     name: Shell e2e — everything else
-    # Longest successful run measured: 132s. A hang here sits for 15-45min.
-    timeout-minutes: 8
+    # Measured 2026-11-21: 333s on main (105 scripts, 254s of script time).
+    # With the upstream v0.14.1 sync the glob holds 126 scripts and a run of
+    # 124 of them took 706s (678s of script time, on a cold Zig cache), 195s
+    # of it in tests/meta/snapshot-index.sh, which now runs in the build job
+    # instead. That leaves about 510s for 123 scripts, so the old 8-minute
+    # limit no longer fits; fifteen minutes does, and still ends a hang, which
+    # otherwise sits for 15-45min.
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     env:
       ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
       # No shared ZIG_LOCAL_CACHE_DIR — see e2e-astro-importer for the
       # measurement that says it buys nothing.
-      # Scripts that have a DEDICATED job above. Kept as an exclusion list
+      # Scripts that another job runs: the first two have a DEDICATED job above,
+      # and tests/meta/snapshot-index.sh is a step of the build job, where the
+      # snapshot suite it needs is already compiled. Kept as an exclusion list
       # rather than an inclusion list so the glob below stays self-maintaining:
       # forget to list a newly added script and it still runs here. The only way
-      # to lose coverage is to delete or rename one of these two, which the
+      # to lose coverage is to delete or rename one of these, which the
       # existence check in the step below catches.
-      SHARDED_OUT: tests/init/from-astro.sh tests/dev/dev.sh
+      SHARDED_OUT: tests/init/from-astro.sh tests/dev/dev.sh tests/meta/snapshot-index.sh
     steps:
       - uses: actions/checkout@v7
         with:

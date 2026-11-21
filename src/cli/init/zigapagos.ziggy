@@ -1,4 +1,4 @@
-Site {
+.site = .simple(.{
     .title = "Welcome to Zigapagos!",
     // Placeholder -- every layout's canonical link and og:url are built from
     // this via $page.absLink() (issue #151), so change it to your real
@@ -13,4 +13,4 @@ Site {
     // Host targeted by the SPA release-time prerender + host-config emitter.
     // One of "zigbase" (default), "nginx", "apache".
     .deploy_target = "zigbase",
-}
+})

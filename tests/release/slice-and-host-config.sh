@@ -59,13 +59,13 @@ mkdir -p "$SITE/content" "$SITE/layouts" "$SITE/assets" "$SITE/components" "$SIT
 : > "$SITE/assets/.keep"
 
 cat > "$SITE/zigapagos.ziggy" <<'EOF'
-Site {
+.site = .simple(.{
     .title = "CLI Emit Test",
     .host_url = "https://example.com",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "assets",
-}
+})
 EOF
 
 # jsxImportSource drives bun's JSX transform to `@z/runtime/jsx-runtime`, which
@@ -111,8 +111,8 @@ cat > "$SITE/layouts/page.shtml" <<EOF
   </head>
   <body>
     <div :html="\$page.content()"></div>
-    <island src="components/Counter.island.tsx" client:load :props='{ .start = 1 }'></island>
-    <island src="components/Ticker.island.tsx" client:load :props='{ .start = 2 }'></island>
+    <island src="components/Counter.island.tsx" client:load :props='.{ .start = 1 }'></island>
+    <island src="components/Ticker.island.tsx" client:load :props='.{ .start = 2 }'></island>
   </body>
 </html>
 EOF
@@ -120,8 +120,8 @@ EOF
 cat > "$SITE/content/index.smd" <<'EOF'
 ---
 .title = "P",
-.date = @date("2020-07-06T00:00:00"),
-.author = "Test",
+.date = .date("2020-07-06T00:00:00"),
+.authors = ["Test"],
 .layout = "page.shtml",
 .draft = false,
 ---

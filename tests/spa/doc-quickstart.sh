@@ -70,7 +70,7 @@ awk '
   infence && /^```$/ { exit }
   infence { print }
 ' "$DOC" > "$SITE/zigapagos.ziggy"
-grep -q '^Site {' "$SITE/zigapagos.ziggy" \
+grep -q '^.site = .simple(.{' "$SITE/zigapagos.ziggy" \
   || fail "Deploy Targets must include a complete typed Site config"
 mkdir -p "$SITE/assets"
 ln -s "$REPO/runtime" "$SITE/node_modules/@z/runtime"

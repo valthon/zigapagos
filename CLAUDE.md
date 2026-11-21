@@ -18,7 +18,7 @@ SHA read from Git metadata (`unknown` without `.git`). `-Dcommit=<sha>` override
 it for CI/release. `zigapagos version` prints ZigBase's version/commit/build/target/Zig
 format. Release CI's `scripts/assert-version.sh` check enforces tag versus zon.
 Configure caching is nevertheless defeated by `findProgram` calls in
-SuperHTML b00f3d25 and SuperMD's transitive Ziggy main 7fc62a53 until fixed upstream.
+SuperHTML b00f3d25 and the shared Ziggy 0.3.0 module at 7fc62a53 until fixed upstream.
 
 **Do not add a repo-level `.tool-versions`.** `mise.toml` is the single source of truth and mise
 reads it directly; a second file beside it is a version pin that can silently drift.
@@ -51,9 +51,10 @@ zig build                      # → zig-out/bin/zigapagos
 zig build test                 # SNAPSHOT tests only — see below
 zig build check                # compile exe + all test binaries, run nothing
 zig build check -Dsingle-threaded   # required guard, see below
+zig build check -Dhighlight=false   # no syntax/tree-sitter imports or language warnings
 zig build api-check            # fail if contract/generated drifted from the schema
 cd runtime && bun install --frozen-lockfile   # ONCE per fresh worktree
-cd runtime && bun test         # TypeScript suite (750 tests)
+cd runtime && bun test         # TypeScript suite (847 tests)
 cd runtime && bun test src/router   # one file — filter is a PATH substring
 bash scripts/check-allocator-contracts.sh   # allocator-contract gate (see NO_SLOP.md §2.2a)
 bash scripts/check-allocator-contracts.test.sh   # the gate's own self-tests
@@ -92,7 +93,7 @@ there. A runtime `return error.SkipZigTest` does **not** help — Zig analyses t
 body regardless of runtime control flow — so prune the branch at comptime:
 `if (comptime !builtin.single_threaded) …`.
 
-**Shell e2e.** CI runs every `tests/*/*.sh` (currently 82). They are hermetic; `tests/dev/*`
+**Shell e2e.** CI runs every `tests/*/*.sh` (currently 126). They are hermetic; `tests/dev/*`
 boot real servers via a stub-zigbase binary and need `bun` on `PATH`. A new `tests/<area>/` is
 picked up by the glob automatically. `tests/branding.sh`, `tests/branding.test.sh` and
 `tests/confidentiality.sh` sit at `tests/` top level on purpose — they are cheap gates CI runs
@@ -104,8 +105,7 @@ block. A reason is required, an unbalanced block fails, and a marker that exempt
 as stale — so it is an exemption you have to justify, not a mute button.
 
 **A fresh git worktree needs `bun install` in `runtime/` before anything bun-dependent.** Without
-it `bun test` reports every file as failing (`0 pass / 54 fail`, an `ENOENT resolving 'typescript'`
-per file) and `examples/tsx-site/build.sh` dies in the SPA-runtime step — both look like code
+it `bun test` reports module-resolution failures (`ENOENT resolving 'typescript'`) and `examples/tsx-site/build.sh` dies in the SPA-runtime step — both look like code
 breakage and are neither.
 
 **Formatting is gated, with no exceptions.** The whole first-party tree is `zig fmt`-clean and CI
@@ -126,7 +126,8 @@ canonical formatter's call, so take it rather than fighting it.
 ## Architecture
 
 A permanent fork of [Zine](https://zine-ssg.io) (fork point `ca8f3e5`, upstream `496e42d`
-v0.11.2) that adds islands architecture and native SPAs. Upstream files are kept close to
+v0.11.2; hand-synced through upstream v0.14.1 `6cacc90b` — `docs/ROADMAP.md` "Fork policy" lists
+what was deliberately not adopted) that adds islands architecture and native SPAs. Upstream files are kept close to
 upstream where that costs nothing, because a release-tag sync is read by hand — but that is a
 mild preference, not a rule. **Fix the file that is actually wrong, inherited or not.** What is
 forbidden is paying daily complexity to avoid an inherited file: never add a generator, shim,
@@ -239,3 +240,14 @@ turned out to be contract-1 helpers whose tests simply shouldn't have been arena
   Match that density.
 - Regression tests must be verified to **fail without the fix** — that is the only way to know
   they pin anything.
+
+## Ziggy documents
+
+Ziggy 0.3.0 (7fc62a53) parses config, frontmatter, data and island props.
+`zigapagos.ziggy` uses `.site = .simple(.{ ... })` or `.multilingual(.{ ... })`;
+there is no version field. Use `.authors = ["Name"]`, `.date("...")` or
+`.unix(seconds)`, `.{ ... }` structs and `{ "key": value }` dictionaries.
+The site's `supermd.auto_target_blank` defaults to true. Shipped editor schemas
+live only in `src/schemas/`; `install-schemas` writes their site copies and
+`init` creates them. Upgrade existing sites with `scripts/upgrade-ziggy.py`;
+see `docs/migration/ziggy-0.3.md`. Keep skill migration references synchronized.

@@ -1,7 +1,7 @@
 ---
 .title = "parsing errors",
-.date = @date("2020-07-06T00:00:00"),
-.author = "Sample Author",
+.date = .date("2020-07-06T00:00:00"),
+.authors = ["Sample Author"],
 .layout = "index.shtml",
 .draft = false,
 --- 
@@ -37,4 +37,21 @@
 []($link.page('a//foo/.')) //wrong 8/9
 
 []($link.page('a//foo/..')) //wrong 9/9
+
+# Invalid sections
+## []($section)
+
+
+> []($section.id('foo'))
+>
+>
+
+# Alt
+[]($link.page("foo") "arst")
+
+# Expr in image syntax
+![]($link)
+
+# Empty expression
+[arst]()
 

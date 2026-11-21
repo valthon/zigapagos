@@ -1,0 +1,5 @@
+---
+.title = "Index",
+.layout = "list.shtml",
+.pagination = .{ .page_size = 2 },
+---

@@ -47,17 +47,17 @@ including Astro-aware layout wiring and smoke tests, continue to use
 
 ```
 // astro.config.mjs                         // zigapagos.ziggy
-export default defineConfig({               Site {
+export default defineConfig({               .site = .simple(.{
   site: "https://example.com",                  .title = "My Site",
-  // ...                                          .host_url = "https://example.com",
-});                                              .content_dir_path = "content",
-                                                 .layouts_dir_path = "layouts",
-                                                 .assets_dir_path = "assets",
-                                                 .static_assets = ["**"],
-                                             }
+  // ...                                        .host_url = "https://example.com",
+});                                             .content_dir_path = "content",
+                                                .layouts_dir_path = "layouts",
+                                                .assets_dir_path = "assets",
+                                                .static_assets = ["**"],
+                                            })
 ```
 
-`zigapagos.ziggy` **must** begin with `Site {` (the typed root). Site title has no Astro
+`zigapagos.ziggy` **must** begin with `.site = .simple(.{` (the typed root). Site title has no Astro
 config equivalent (Astro takes it per-page) — set it here as the default.
 
 **`static_assets` — don't skip this, or your CSS/images will 404.** Unlike Astro,
@@ -104,7 +104,7 @@ Both are file-based and 1:1:
 | `src/pages/about.astro` → `/about` | `content/about.smd` → `/about/` | |
 | `src/pages/blog/index.astro` | `content/blog/index.smd` (a section index) | |
 | `src/pages/blog/[slug].astro` (dynamic) | one `content/blog/<slug>.smd` per entry | Zigapagos has no dynamic-route params; generate one `.smd` per item, or use a section + page assets — or use a `.spa.tsx` dynamic route with `staticPaths` (§13). |
-| `src/pages/blog/[page].astro` / `[...page].astro` + `paginate()` | `.pagination = { .page_size = N }` on `content/blog/index.smd` | Native pagination (§11). Delete the route file; the section index renders once per window. |
+| `src/pages/blog/[page].astro` / `[...page].astro` + `paginate()` | `.pagination = .{ .page_size = N }` on `content/blog/index.smd` | Native pagination (§11). Delete the route file; the section index renders once per window. |
 
 ## 4. Pages & frontmatter
 
@@ -113,8 +113,8 @@ Astro page frontmatter (JS) → SuperMD Ziggy frontmatter:
 ```
 ---                                         ---
 // src/pages/post.astro                     .title = "My Post",
-const title = "My Post";                     .date = @date("2024-01-01T00:00:00"),
-const pubDate = new Date("2024-01-01");      .author = "Jane",
+const title = "My Post";                     .date = .date("2024-01-01T00:00:00"),
+const pubDate = new Date("2024-01-01");      .authors = ["Jane"],
 ---                                          .layout = "post.shtml",
 <Layout title={title}>…</Layout>             ---
                                             Body content in Markdown (SuperMD).
@@ -122,10 +122,10 @@ const pubDate = new Date("2024-01-01");      .author = "Jane",
 
 - `.layout` is **mandatory** and names a file in `layouts/`. `.title` is also
   required.
-- **`.author` and `.date` are optional** (default: `""` and the Unix epoch). A
-  marketing/landing/contact page can omit both — `$page.author` is then `""` and
+- **`.authors` and `.date` are optional** (default: `[]` and the Unix epoch). A
+  marketing/landing/contact page can omit both — `$page.authors` is then `[]` and
   `$page.date` is `1970-01-01`. Only `.title` and `.layout` are required by the
-  default schema. (Earlier versions required `.author`/`.date`, which surfaced as
+  default schema. (Earlier versions required `.authors`/`.date`, which surfaced as
   `missing field: 'author'`.)
 - **Custom fields don't need a schema change.** Anything site-specific goes under
   `.custom = { … }` (a free-form, always-optional bag) and is read as `$page.custom`
@@ -134,15 +134,14 @@ const pubDate = new Date("2024-01-01");      .author = "Jane",
   (the `Page` type), not by a per-site config file. A field is optional iff it has a
   default; a field with no default and no value in a page's frontmatter is reported
   as `missing field: '<name>'` at build time. The shipped default requires only
-  `.title` and `.layout`; everything else (`author`, `date`, `description`, `tags`,
+  `.title` and `.layout`; everything else (`authors`, `date`, `description`, `tags`,
   `aliases`, …) is optional.
-- **`frontmatter.ziggy-schema` is the *editor* schema**, not a runtime override.
-  It mirrors the compiled-in schema so the Ziggy LSP can validate/autocomplete your
-  `.smd` frontmatter in-editor; changing it does **not** change build-time
-  validation. Keep it in sync with the real schema. To actually add or re-require a
-  typed top-level field you change the compiled schema (`src/context/Page.zig`,
-  since Zigapagos is a fork) and mirror the change in `frontmatter.ziggy-schema` for
-  the editor. For per-page data, prefer `.custom` (above) — no rebuild needed.
+- **Editor schemas ship with the binary.** Run `zigapagos install-schemas`
+  after converting the site. It writes `.zigapagos.ziggy-schema` beside the
+  config and `.smd.ziggy-schema` in each content directory, from `src/schemas/`.
+  Changing these editor files does not change runtime validation. For typed
+  top-level fields change `src/context/Page.zig` and the shipped page schema;
+  for per-page data prefer `.custom` — no rebuild needed.
 - Astro's frontmatter is arbitrary JS; Zigapagos frontmatter is typed Ziggy. Put
   custom fields under `.custom = { … }` → read as `$page.custom` in the layout.
 - Page body: Astro JSX/Markdown → SuperMD Markdown (`.smd`).
@@ -363,7 +362,7 @@ worked examples.
 - Props are **dev-validated** against the exported `Props` interface at SSR time.
 
 ```html
-<!-- .custom = { .faq = [ { .q = "…", .a = "…" }, … ] } -->
+<!-- .custom = .{ .faq = [ .{ .q = "…", .a = "…" }, … ] } -->
 <island src="components/FAQList.island.tsx" client:visible
         prop-items="$page.custom.get('faq').toJson()"></island>
 ```
@@ -391,7 +390,7 @@ default slot (`children`).
 | MDX named Markdown children in `.smd` content | `markdown-slot-NAME="section-id"` plus a marked SuperMD section |
 
 ```html
-<island src="components/Panel.island.tsx" client:load :props='{ .title = "Panel" }'>
+<island src="components/Panel.island.tsx" client:load :props='.{ .title = "Panel" }'>
   <template slot="heading"><h2>Custom Heading</h2></template>
   <p>default body</p>
 </island>
@@ -506,13 +505,13 @@ See `examples/tsx-site/` for a complete working project (`build.sh`, `package.js
 |---|---|
 | `src/content/blog/*.md` + schema | `content/blog/*.smd` + section `index.smd` |
 | `getCollection("blog")` | `$page.subpages()` from the section index |
-| collection `schema` (zod) | Ziggy frontmatter (typed) + `frontmatter.ziggy-schema` |
+| collection `schema` (zod) | Ziggy frontmatter (typed) + `zigapagos install-schemas` |
 
 ### Pagination (`paginate()` → `.pagination`)
 
 | Astro | Zigapagos |
 |---|---|
-| `paginate(posts, { pageSize: 10 })` | `.pagination = { .page_size = 10 }` on the section's `index.smd` |
+| `paginate(posts, { pageSize: 10 })` | `.pagination = .{ .page_size = 10 }` on the section's `index.smd` |
 | `page.data` | `$page.subpages()` (windowed automatically on a paginated render) |
 | `page.currentPage` | `$page.pagination?()` → `.current` |
 | `page.lastPage` | `.total` |
@@ -563,8 +562,8 @@ project's `data/` directory and read it from any layout with **`$site.data('<nam
 
 ```ziggy
 // data/site.ziggy
-{
-    .owner = { .name = "Jane Runner", .email = "jane@example.com" },
+.{
+    .owner = .{ .name = "Jane Runner", .email = "jane@example.com" },
     .hours = "Mon-Fri 9-5",
     .nav = ["Home", "Services", "Contact"],
 }
@@ -629,7 +628,7 @@ Full reference: [docs/spa.md](https://github.com/valthon/zigapagos/blob/main/doc
 
 | Astro | Zigapagos | Notes |
 |---|---|---|
-| `import { Image } from "astro:assets"` + `<Image src={img} widths={[...]} />` | `.image_optimize = {}` on `Site`/`MultilingualSite` + `[]($image.asset('...'))` (or `.siteAsset(...)`) | Opt-in per site, not per import — every eligible `$image` directive gets variants once the config block is present. |
+| `import { Image } from "astro:assets"` + `<Image src={img} widths={[...]} />` | `.image_optimize = .{}` on `Site`/`MultilingualSite` + `[]($image.asset('...'))` (or `.siteAsset(...)`) | Opt-in per site, not per import — every eligible `$image` directive gets variants once the config block is present. |
 | `widths={[400, 800, 1200]}` (per `<Image>`) | `.image_optimize.widths = [400, 800, 1200]` (site-wide) | **Site-wide, not per-image.** Astro's `widths` is a prop on each `<Image>`; Zigapagos has one configured width list for the whole site. A per-image override does not exist yet (see [Gaps](#gaps-not-yet-supported)). |
 | Astro upscales if you ask for a width larger than the source | filtered out, **never upscaled** | A configured width above the source's intrinsic width is silently dropped from that image's `srcset`; if none survive, one variant is generated at the source's own intrinsic width. |
 | `<Picture formats={["avif", "webp"]}>` | `.image_optimize.avif_encoder = "avifenc"` (or a path) | AVIF is opt-in against an **external encoder binary** you provide — Zigapagos never vendors or downloads one. Unset `avif_encoder` (the default) emits WebP only. WebP itself needs no toggle; it is always produced for an eligible source once `image_optimize` is on. |
@@ -737,17 +736,17 @@ For a Sentry loader plus reCAPTCHA integration:
 
 ```ziggy
 .csp_extra_sources = [
-    { .directive = "script-src", .sources = [
+    .{ .directive = "script-src", .sources = [
         "https://js.sentry-cdn.com",
         "https://browser.sentry-cdn.com",
         "https://www.google.com/recaptcha/",
         "https://www.gstatic.com/recaptcha/",
     ] },
-    { .directive = "frame-src", .sources = [
+    .{ .directive = "frame-src", .sources = [
         "https://www.google.com/recaptcha/",
         "https://recaptcha.google.com/recaptcha/",
     ] },
-    { .directive = "connect-src", .sources = [
+    .{ .directive = "connect-src", .sources = [
         "https://o123.ingest.us.sentry.io",
         "https://www.google.com/recaptcha/",
     ] },
@@ -767,3 +766,8 @@ hashes and first-party access. Do not manually append origins only to a deployed
 header: the checker compares the full generated policy, including declarations,
 and rejects a different policy. Verify the migrated monitoring and form flows in
 a browser as well as running the static deployment checks.
+
+For an existing Zigapagos site, follow the [Ziggy 0.3 upgrade guide](https://github.com/valthon/zigapagos/blob/main/docs/migration/ziggy-0.3.md).
+
+After generating a target, run `zigapagos install-schemas` from its root to
+refresh the Ziggy LSP schemas. `init`, including `init --from-astro`, emits them.

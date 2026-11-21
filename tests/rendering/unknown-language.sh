@@ -38,8 +38,8 @@ cp tests/rendering/simple/zigapagos.ziggy "$SITE/"
 cat > "$SITE/content/jsonc-test.smd" <<'EOF'
 ---
 .title = "Unknown language",
-.date = @date("2020-07-06T00:00:00"),
-.author = "Sample Author",
+.date = .date("2020-07-06T00:00:00"),
+.authors = ["Sample Author"],
 .layout = "index.shtml",
 .draft = false,
 ---

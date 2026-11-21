@@ -32,7 +32,7 @@ function inventory(dir: string): { digest: string; files: number; bytes: number 
 try {
   for (const kind of ["content", "islands", "spa"]) {
     const site = join(root, kind), output = join(site, "public"), calls = join(site, "bun-calls.txt");
-    write(join(site, "zigapagos.ziggy"), 'Site { .title = "Benchmark", .host_url = "https://example.com", .content_dir_path = "content", .layouts_dir_path = "layouts", .assets_dir_path = "assets", }');
+    write(join(site, "zigapagos.ziggy"), '.site = .simple(.{ .title = "Benchmark", .host_url = "https://example.com", .content_dir_path = "content", .layouts_dir_path = "layouts", .assets_dir_path = "assets", })');
     write(join(site, "tsconfig.json"), JSON.stringify({ compilerOptions: { jsx: "react-jsx", jsxImportSource: "@z/runtime", moduleResolution: "bundler" } }));
     write(join(site, "assets/style.css"), 'body { font-family: sans-serif; color: #333333; }');
     let islands = "";

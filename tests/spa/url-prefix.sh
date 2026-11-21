@@ -61,7 +61,7 @@ new_site() {
   cp -r tests/rendering/simple/content tests/rendering/simple/layouts "$dir/"
   cp tests/rendering/simple/zigapagos.ziggy "$dir/"
   if [[ "$mode" == "prefixed" ]]; then
-    printf '    .url_path_prefix = "myproj",\n}\n' > "$WORK/.ziggy-tail"
+    printf '    .url_path_prefix = "myproj",\n})\n' > "$WORK/.ziggy-tail"
     sed -i.bak '$d' "$dir/zigapagos.ziggy"        # drop the fixture's closing "}"
     cat "$WORK/.ziggy-tail" >> "$dir/zigapagos.ziggy"
     rm -f "$dir/zigapagos.ziggy.bak"

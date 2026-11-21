@@ -22,9 +22,9 @@ const DATA_SITE = resolve(import.meta.dir, "fixtures/data-site");
 
 // --- ziggy frontmatter parser (subset) ------------------------------------
 
-test("parseZiggyFrontmatter: strings, numbers, bools, @date, arrays", () => {
+test("parseZiggyFrontmatter: strings, numbers, bools, .date, arrays", () => {
   const fm = parseZiggyFrontmatter(
-    `.title = "Hi \\"there\\"",\n.count = 3,\n.ratio = 1.5,\n.neg = -2,\n.on = true,\n.off = false,\n.d = @date("2024-01-01T00:00:00"),\n.tags = ["a", "b"],\n`,
+    `.title = "Hi \\"there\\"",\n.count = 3,\n.ratio = 1.5,\n.neg = -2,\n.on = true,\n.off = false,\n.d = .date("2024-01-01T00:00:00"),\n.tags = ["a", "b"],\n`,
     "test.smd",
   );
   expect(fm).toEqual({
@@ -41,7 +41,7 @@ test("parseZiggyFrontmatter: strings, numbers, bools, @date, arrays", () => {
 
 test("parseZiggyFrontmatter: nested structs, maps, null, trailing commas optional", () => {
   const fm = parseZiggyFrontmatter(
-    `.extra = { .note = "n", .codes = [1, 2] },\n.map = { "k v": 9 },\n.nothing = null\n`,
+    `.extra = .{ .note = "n", .codes = [1, 2] },\n.map = { "k v": 9 },\n.nothing = null\n`,
     "test.smd",
   );
   expect(fm).toEqual({ extra: { note: "n", codes: [1, 2] }, map: { "k v": 9 }, nothing: null });
@@ -284,4 +284,26 @@ test("lint: @z/site-data is importable iff the config declares a data map", () =
   const without: ZRuntimeConfig = { islandImports: { firstParty: [], npmCompat: [] } };
   expect(buildAllow(withData).some((re) => re.test("@z/site-data"))).toBe(true);
   expect(buildAllow(without).some((re) => re.test("@z/site-data"))).toBe(false);
+});
+
+
+test("Ziggy 0.3: unix dates, authors, dotted records and control rejection", () => {
+  expect(parseZiggyFrontmatter('.authors = ["Jane", "Joe"], .date = .unix(0), .style = .plain_dir, .custom = { "k": .{ .v = true } },', "new.smd"))
+    .toEqual({ authors: ["Jane", "Joe"], date: 0, style: "plain_dir", custom: { k: { v: true } } });
+  expect(() => parseZiggyFrontmatter('.title = "T",\r\n', "crlf.smd")).toThrow(/upgrade-ziggy/);
+  expect(() => parseZiggyFrontmatter('.x = { .old = 1 },', "old.smd")).toThrow(/old.smd/);
+});
+
+test("Ziggy 0.3: explicit root struct frontmatter", () => {
+  expect(parseZiggyFrontmatter('.{ .title = "T", .authors = [] }', "record.smd")).toEqual({ title: "T", authors: [] });
+});
+
+test("escaped dictionary keys share the native/island parity fixture", () => {
+  const path = resolve(import.meta.dir, "../../tests/ziggy/escaped-keys.ziggy");
+  const keys = readFileSync(path, "utf8");
+  expect(parseZiggyFrontmatter(`.keys = ${keys}`, path).keys).toEqual({
+    "a\n": 1,
+    "tab\tkey": { 'quote"': 2, "slash\\n": 3 },
+    a: 4,
+  });
 });

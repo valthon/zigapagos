@@ -1,0 +1,8 @@
+---
+.title = "it Z",
+.layout = "post.shtml",
+.date = .date("2024-01-01T00:00:00"),
+.authors = ["ada"],
+.tags = ["topic"],
+.draft = false,
+---

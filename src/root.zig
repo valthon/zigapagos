@@ -37,7 +37,11 @@ pub var progress: std.Progress.Node = undefined;
 
 pub const CspExtraSources = @import("csp.zig").ExtraSources;
 
+pub const SuperMD = struct { auto_target_blank: bool = true };
+
 pub const Site = struct {
+    custom: context.Map.ZiggyMap = .empty,
+    supermd: SuperMD = .{},
     /// Title of the website
     title: []const u8,
     /// URL where the website will be hosted.
@@ -180,6 +184,8 @@ pub const Site = struct {
 };
 
 pub const MultilingualSite = struct {
+    custom: context.Map.ZiggyMap = .empty,
+    supermd: SuperMD = .{},
     /// URL where the website will be hosted.
     /// It must not contain a path other than '/'.
     host_url: []const u8,
@@ -310,6 +316,19 @@ pub const Config = union(enum) {
     Multilingual: MultilingualSite,
     Site: Site,
 
+    pub const Document = struct {
+        site: union(enum) { simple: Site, multilingual: MultilingualSite },
+    };
+    pub const ziggy_options: ziggy.Options(Config) = .{ .deserialize = deserialize, .roles = .any };
+
+    fn deserialize(d: *const ziggy.Deserializer, first: ziggy.Tokenizer.Token, top_lvl: bool) ziggy.Deserializer.Error!Config {
+        const doc = try d.deserializeOne(Document, first, top_lvl);
+        return switch (doc.site) {
+            .simple => |site| .{ .Site = site },
+            .multilingual => |site| .{ .Multilingual = site },
+        };
+    }
+
     const config_file_basename = "zigapagos.ziggy";
 
     /// Returns the cfg and the the directory where the config file was
@@ -364,19 +383,18 @@ pub const Config = union(enum) {
             // this file), to avoid shadowing it -- this is a config-load
             // fatal, out of scope for this PR's code conversion (see
             // docs/diagnostics.md's scope section); it still reaches
-            // `fatal.msg`, which handles the JSON branch on its own.
-            var cfg_diag: ziggy.Diagnostic = .{ .path = joined_path };
-            const cfg = ziggy.parseLeaky(Config, arena, data, .{
-                .diagnostic = &cfg_diag,
-                .copy_strings = .to_unescape,
-            }) catch {
-                fatal.msg(
+            // `fatal.usageError`, which handles the JSON branch without a debug panic.
+            var cfg_diag: @import("ziggy_diagnostic.zig") = .{ .path = joined_path };
+            const cfg = ziggy.deserializeLeaky(Config, arena, data, &cfg_diag.meta, .{}) catch |err| {
+                if (err == error.OutOfMemory) return error.OutOfMemory;
+                cfg_diag.err = err;
+                fatal.usageError(
                     \\Error while loading the Zigapagos config file:
                     \\
                     \\{f}
                     \\
                     \\
-                , .{cfg_diag.fmt(data)});
+                , .{cfg_diag.fmt(arena, data)});
             };
 
             cfg.validate();
@@ -776,6 +794,7 @@ pub const SpaSpec = struct {
 };
 
 pub const Options = struct {
+    development: bool = false,
     build_assets: *const std.StringArrayHashMapUnmanaged(BuildAsset),
     base_dir_path: []const u8,
     mode: Mode,
@@ -1252,123 +1271,29 @@ pub fn run(
         try build.scanSiteAssets(io, gpa, arena);
         _ = arena_state.reset(.retain_capacity);
 
-        for (build.cfg.getStaticAssets()) |path| {
-            // Glob form: a trailing `**` installs every asset under a prefix
-            // (paths are relative to `assets_dir_path`, matching the exact-match
-            // form). `**` = the whole assets tree (Astro's "copy public/"); `img/**`
-            // = everything under `assets/img/`. This saves enumerating each file.
-            if (std.mem.eql(u8, path, "**") or std.mem.endsWith(u8, path, "/**")) {
-                // Drop the trailing `**`, keeping the directory prefix (incl. its
-                // `/`): "img/**" -> "img/", "**" -> "" (matches all).
-                const prefix = path[0 .. path.len - 2];
-                var matched: usize = 0;
-                var glob_it = build.site_assets.iterator();
-                var name_buf: [std.fs.max_path_bytes]u8 = undefined;
-                while (glob_it.next()) |entry| {
-                    const asset_path = std.mem.print(&name_buf, "{f}", .{
-                        entry.key_ptr.fmt(&build.st, &build.pt, null, "/"),
-                    }) catch continue;
-                    if (prefix.len == 0 or std.mem.startsWith(u8, asset_path, prefix)) {
-                        if (build.cfg.getCspExtraSources().len > 0 and
-                            try isCspRootAsset(gpa, &build, entry.key_ptr.*) and
-                            !csp_static_collision_reported)
-                        {
-                            try reportCspStaticAssetCollision(gpa, &build, path);
-                            csp_static_collision_reported = true;
-                            static_assets_errors = true;
-                        }
-                        if (build.cfg.getSitemap() and
-                            isSitemapRootAsset(&build, entry.key_ptr.*) and
-                            !sitemap_static_collision_reported)
-                        {
-                            try reportSitemapStaticAssetCollision(gpa, &build, path);
-                            sitemap_static_collision_reported = true;
-                            static_assets_errors = true;
-                        }
-                        entry.value_ptr.raw = 1;
-                        matched += 1;
-                    }
-                }
-                if (matched == 0) {
-                    static_assets_errors = true;
-                    if (diag.format == .json) {
-                        var msg_buf: [1024]u8 = undefined;
-                        diag.emit(.{
-                            .code = .ZP_STATIC_ASSET_GLOB_EMPTY,
-                            .severity = .@"error",
-                            .message = diag.render(&msg_buf, "static asset glob '{s}' matched no assets", .{path}),
-                        });
-                    } else {
-                        std.debug.print("error: static asset glob '{s}' matched no assets\n", .{path});
-                    }
-                    // A `.memory` build CAN now see diag.format == .json:
-                    // `zigapagos validate` is a `.memory`-mode command and,
-                    // as of issue #131 item 1, accepts `--format=json` (only
-                    // `explain` still does not). This block stays
-                    // unconditional regardless -- it is not part of the
-                    // text/json split above -- because `build.mode.memory.
-                    // errors` is write-only: appended here, walked by
-                    // `Build.deinit`'s teardown, and never read by anything
-                    // that would print or emit it. Populating it in json mode
-                    // costs an allocation and nothing else.
-                    if (build.mode == .memory) {
-                        try build.mode.memory.errors.append(gpa, .{
-                            .ref = "",
-                            .msg = try gpa.print(
-                                "error: static asset glob '{s}' matched no assets\n",
-                                .{path},
-                            ),
-                        });
-                    }
-                }
-                continue;
+        const static_selection = try @import("static_assets.zig").expand(io, gpa, &build);
+        defer static_selection.deinit(gpa);
+        static_assets_errors = static_selection.errors;
+        var static_it = build.site_assets.iterator();
+        var static_idx: usize = 0;
+        while (static_it.next()) |entry| : (static_idx += 1) {
+            const owner = static_selection.owners[static_idx] orelse continue;
+            const path = build.cfg.getStaticAssets()[owner];
+            if (build.cfg.getCspExtraSources().len > 0 and
+                try isCspRootAsset(gpa, &build, entry.key_ptr.*) and
+                !csp_static_collision_reported)
+            {
+                try reportCspStaticAssetCollision(gpa, &build, path);
+                csp_static_collision_reported = true;
+                static_assets_errors = true;
             }
-
-            if (PathName.get(&build.st, &build.pt, path)) |pn| {
-                if (build.site_assets.getPtr(pn)) |rc| {
-                    if (build.cfg.getCspExtraSources().len > 0 and
-                        try isCspRootAsset(gpa, &build, pn) and
-                        !csp_static_collision_reported)
-                    {
-                        try reportCspStaticAssetCollision(gpa, &build, path);
-                        csp_static_collision_reported = true;
-                        static_assets_errors = true;
-                    }
-                    if (build.cfg.getSitemap() and
-                        isSitemapRootAsset(&build, pn) and
-                        !sitemap_static_collision_reported)
-                    {
-                        try reportSitemapStaticAssetCollision(gpa, &build, path);
-                        sitemap_static_collision_reported = true;
-                        static_assets_errors = true;
-                    }
-                    rc.raw = 1;
-                    continue;
-                }
-            }
-
-            static_assets_errors = true;
-            if (diag.format == .json) {
-                var msg_buf: [1024]u8 = undefined;
-                diag.emit(.{
-                    .code = .ZP_STATIC_ASSET_MISSING,
-                    .severity = .@"error",
-                    .message = diag.render(&msg_buf, "static asset '{s}' does not exist", .{path}),
-                });
-            } else {
-                std.debug.print("error: static asset '{s}' does not exist\n", .{
-                    path,
-                });
-            }
-
-            if (build.mode == .memory) {
-                try build.mode.memory.errors.append(gpa, .{
-                    .ref = "",
-                    .msg = try gpa.print(
-                        "error: static asset '{s}' does not exist\n",
-                        .{path},
-                    ),
-                });
+            if (build.cfg.getSitemap() and
+                isSitemapRootAsset(&build, entry.key_ptr.*) and
+                !sitemap_static_collision_reported)
+            {
+                try reportSitemapStaticAssetCollision(gpa, &build, path);
+                sitemap_static_collision_reported = true;
+                static_assets_errors = true;
             }
         }
 
@@ -1405,7 +1330,7 @@ pub fn run(
         const tracy_frame = tracy.namedFrame("activate sections");
         defer tracy_frame.end();
         for (build.variants) |*v| {
-            if (v.i18n_diag.errors.items.len > 0) {
+            if (v.i18n_diag.err != null) {
                 i18n_errors = true;
 
                 var buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -1421,17 +1346,17 @@ pub fn run(
                         .code = .ZP_I18N_PARSE,
                         .severity = .@"error",
                         .file = path,
-                        .message = diag.render(&msg_buf, "{f}", .{v.i18n_diag.fmt(v.i18n_src)}),
+                        .message = diag.render(&msg_buf, "{f}", .{v.i18n_diag.fmt(arena, v.i18n_src)}),
                     });
                 } else {
-                    std.debug.print("{f}\n\n", .{v.i18n_diag.fmt(v.i18n_src)});
+                    std.debug.print("{f}\n\n", .{v.i18n_diag.fmt(arena, v.i18n_src)});
                 }
                 if (build.mode == .memory) {
                     try build.mode.memory.errors.append(gpa, .{
                         .ref = "",
                         .msg = try gpa.print(
                             "{f}\n\n",
-                            .{v.i18n_diag.fmt(v.i18n_src)},
+                            .{v.i18n_diag.fmt(arena, v.i18n_src)},
                         ),
                     });
                 }
@@ -1442,6 +1367,10 @@ pub fn run(
                 any_content = true;
                 worker.addJob(io, .{
                     .section_activate = .{
+                        .auto_target_blank = switch (build.cfg.*) {
+                            .Site => |site| site.supermd.auto_target_blank,
+                            .Multilingual => |site| site.supermd.auto_target_blank,
+                        },
                         .variant = v,
                         .section = s,
                         .page = &v.pages.items[s.index],
@@ -1478,7 +1407,13 @@ pub fn run(
                     idx, s.parent_section, parent.active,
                 });
 
-                if (!parent.active) s.active = false;
+                if (!parent.active) {
+                    s.active = false;
+                    // Section indexes were parsed concurrently before ancestor
+                    // inactivity was known. Keep their page flags consistent so
+                    // direct lookups and all active-page indexes exclude them.
+                    v.pages.items[s.index]._parse.active = false;
+                }
                 if (!s.active) continue;
 
                 pages_to_parse += s.pages.items.len;
@@ -1490,6 +1425,10 @@ pub fn run(
                     if (p._scan.file.name == index_smd) continue; // already parsed
                     worker.addJob(io, .{
                         .page_parse = .{
+                            .auto_target_blank = switch (build.cfg.*) {
+                                .Site => |site| site.supermd.auto_target_blank,
+                                .Multilingual => |site| site.supermd.auto_target_blank,
+                            },
                             .progress = progress_parse,
                             .drafts = options.drafts,
                             .variant = v,
@@ -1508,6 +1447,7 @@ pub fn run(
                 try sites.putNoClobber(gpa, "", .{
                     .host_url = s.host_url,
                     .title = s.title,
+                    .custom = s.custom,
                     ._meta = .{
                         .variant_id = 0,
                         .kind = .{ .simple = s.url_path_prefix },
@@ -1519,6 +1459,7 @@ pub fn run(
                 for (ml.locales, 0..) |loc, idx| sites.putAssumeCapacityNoClobber(loc.code, .{
                     .host_url = loc.host_url_override orelse ml.host_url,
                     .title = loc.site_title,
+                    .custom = ml.custom,
                     ._meta = .{
                         .variant_id = @intCast(idx),
                         .kind = .{
@@ -1541,6 +1482,10 @@ pub fn run(
     for (build.variants) |*v| {
         for (v.sections.items[1..]) |*s| {
             s.sortPages(gpa, v, v.pages.items);
+            // Rebuilt from parsed frontmatter on EVERY build, including dev's
+            // incremental path. Per-variant IDs keep locales isolated; skipping
+            // inactive pages here excludes drafts before lookups ever run.
+            try s.indexPages(gpa, v.pages.items);
         }
     }
 
@@ -1553,6 +1498,7 @@ pub fn run(
     // under .plain_dir) aborts the build like any other collision.
     for (build.variants) |*v| {
         for (v.sections.items[1..]) |*s| {
+            if (!s.active) continue;
             const index_page = &v.pages.items[s.index];
             if (!index_page._parse.active) continue;
             if (index_page._parse.status != .parsed) continue;
@@ -1615,11 +1561,13 @@ pub fn run(
         defer tracy_frame.end();
         for (build.variants, 0..) |*v, vidx| {
             for (v.pages.items) |*p| {
-                if (!p._parse.active) continue;
+                if (!p._parse.active and p._parse.status != .empty) continue;
 
                 // First we need to check the frontmatter as the ast will be valid
                 // only if the frontmatter has been correctly identifed as well.
                 switch (p._parse.status) {
+                    .unparsed => unreachable, // scan placeholders are inactive
+
                     .empty => {
                         // Page is empty, print warning and skip it
                         if (diag.format == .json) {
@@ -1736,23 +1684,47 @@ pub fn run(
                         }) catch unreachable;
 
                         ziggy_diag.path = path;
+                        var removed: ?ziggy.Tokenizer.Token.Loc.Selection = null;
+                        if (ziggy_diag.err.? == error.UnknownField and std.mem.eql(u8, ziggy_diag.meta.error_loc.slice(p._parse.full_src), ".skip_subdirs")) {
+                            removed = ziggy_diag.meta.error_loc.getSelection(p._parse.full_src);
+                        }
+                        if (removed) |sel| {
+                            const message = "'skip_subdirs' was removed because it had no effect; the nearest replacement is 'forbid_subsections' on a section index";
+                            if (diag.format == .json) {
+                                diag.emit(.{
+                                    .code = .ZP_REMOVED_SKIP_SUBDIRS,
+                                    .severity = .@"error",
+                                    .file = path,
+                                    .line = sel.start.line,
+                                    .col = sel.start.col,
+                                    .message = message,
+                                });
+                            } else {
+                                std.debug.print("{s}:{}:{}: error: {s}\n", .{ path, sel.start.line, sel.start.col, message });
+                            }
+                            if (build.mode == .memory) try build.mode.memory.errors.append(gpa, .{
+                                .ref = "",
+                                .msg = try gpa.print("{s}:{}:{}: error: {s}\n", .{ path, sel.start.line, sel.start.col, message }),
+                            });
+                            continue;
+                        }
                         if (diag.format == .json) {
                             var msg_buf: [4096]u8 = undefined;
                             diag.emit(.{
                                 .code = .ZP_FRONTMATTER_PARSE,
                                 .severity = .@"error",
                                 .file = path,
-                                .message = diag.render(&msg_buf, "{f}", .{ziggy_diag.fmt(p._parse.full_src)}),
+                                .message = diag.render(&msg_buf, "{f}", .{ziggy_diag.fmt(arena, p._parse.full_src)}),
                             });
                         } else {
-                            std.debug.print("{f}\n\n", .{ziggy_diag.fmt(p._parse.full_src)});
+                            std.debug.print("{f}\n\n", .{ziggy_diag.fmt(arena, p._parse.full_src)});
                         }
                         if (build.mode == .memory) {
                             try build.mode.memory.errors.append(gpa, .{
                                 .ref = "",
                                 .msg = try gpa.print(
                                     "{f}\n\n",
-                                    .{ziggy_diag.fmt(p._parse.full_src)},
+                                    .{ziggy_diag.fmt(arena, p._parse.full_src)},
                                 ),
                             });
                         }
@@ -1760,6 +1732,29 @@ pub fn run(
                     },
 
                     .parsed => {},
+                }
+
+                if (p.date._invalid) |invalid| {
+                    parse_errors = true;
+                    const path = try gpa.print("{f}", .{p._scan.file.fmt(&v.string_table, &v.path_table, v.content_dir_path, "")});
+                    defer gpa.free(path);
+                    const sel = invalid.loc.getSelection(p._parse.full_src);
+                    const message = try gpa.print("unable to parse date: {s}", .{invalid.message});
+                    defer gpa.free(message);
+                    const rendered = try gpa.print("{s}:{}:{}: error: {s}\n{f}\n", .{
+                        path,                                                           sel.start.line, sel.start.col, message,
+                        ziggy.Deserializer.linePreview(p._parse.full_src, invalid.loc),
+                    });
+                    defer gpa.free(rendered);
+                    if (diag.format == .json) {
+                        diag.emit(.{ .code = .ZP_INVALID_DATE, .severity = .@"error", .file = path, .line = sel.start.line, .col = sel.start.col, .message = message });
+                    } else std.debug.print("{s}", .{rendered});
+                    if (build.mode == .memory) {
+                        const owned = try gpa.dupe(u8, rendered);
+                        errdefer gpa.free(owned);
+                        try build.mode.memory.errors.append(gpa, .{ .ref = "", .msg = owned });
+                    }
+                    continue;
                 }
 
                 // Validate the layout field and reference count so that we
@@ -1777,6 +1772,28 @@ pub fn run(
                     var page_arena_state = p._parse.arena.promote(gpa);
                     defer p._parse.arena = page_arena_state.state;
                     const page_arena = page_arena_state.allocator();
+
+                    if (p._scan.subsection_id != 0 and p._scan.parent_section_id != 0) {
+                        const parent = &v.pages.items[v.sections.items[p._scan.parent_section_id].index];
+                        if (v.sections.items[p._scan.parent_section_id].active and parent._parse.status == .parsed and parent.forbid_subsections) {
+                            const file_path = try page_arena.print("{f}", .{p._scan.file.fmt(
+                                &v.string_table,
+                                &v.path_table,
+                                v.content_dir_path,
+                                "",
+                            )});
+                            const message = try page_arena.print(
+                                "the parent section forbids subsections; move this page to '{s}.smd' to preserve its URL (parent: '{f}')",
+                                .{ std.fs.path.dirname(file_path).?, parent._scan.file.fmt(
+                                    &v.string_table,
+                                    &v.path_table,
+                                    v.content_dir_path,
+                                    "",
+                                ) },
+                            );
+                            try p._analysis.frontmatter.append(page_arena, .{ .forbidden_subsection = message });
+                        }
+                    }
 
                     const layout_pn = PathName.get(&build.st, &build.pt, p.layout) orelse {
                         // We can use analysis because a page that has
@@ -1906,14 +1923,10 @@ pub fn run(
                 }
 
                 const full_src = p._parse.full_src;
-                const ast = ziggy.Ast.init(
-                    arena,
-                    full_src,
-                    false,
-                    true,
-                    true,
-                    null,
-                ) catch fatal.oom();
+                // Parsing already validated this fence; retain its offset when
+                // reconstructing locations for analysis errors.
+                const ziggy_start = std.mem.indexOf(u8, full_src, "---").? + 3;
+                const ast = ziggy.Ast.init(arena, full_src, .{ .delimiter = .{ .dashes = @intCast(ziggy_start) } }) catch fatal.oom();
 
                 for (fm_errors.items) |err| {
                     const loc = err.location(full_src, ast);
@@ -4334,193 +4347,34 @@ fn printSuperMdErrorsInner(
         defer gpa.free(path);
         const rendered = try gpa.print("{f}\n", .{err.fmt(fm_lines, md_src, path)});
         defer gpa.free(rendered);
-        try emitSuperMdDiagnostic(gpa, build, path, err.heading.range(), fm_lines, rendered);
+        var range = err.heading.range();
+        const preview = diag.MarkdownPreview.init(md_src, range, true);
+        range.start = .{ .row = @intCast(preview.row), .col = @intCast(preview.col) };
+        try emitSuperMdDiagnostic(gpa, build, path, range, fm_lines, rendered);
     }
 
+    const path = try gpa.print("{f}", .{
+        file.fmt(&v.string_table, &v.path_table, v.content_dir_path, ""),
+    });
+    defer gpa.free(path);
     for (ast.errors) |err| {
-        switch (err.kind) {
-            .heading_skip, .inline_html, .invalid_ref, .heading_link_sibling => {
-                // Use SuperMD's own wording and source previews for its dialect
-                // rules, including notes about the previous heading/inner link.
-                const path = try gpa.print("{f}", .{
-                    file.fmt(&v.string_table, &v.path_table, v.content_dir_path, ""),
-                });
-                defer gpa.free(path);
-                const rendered = try gpa.print("{f}\n", .{
-                    err.fmt(@intCast(fm_lines), md_src, path),
-                });
-                defer gpa.free(rendered);
-                try emitSuperMdDiagnostic(gpa, build, path, err.main, fm_lines, rendered);
-                continue;
-            },
-            else => {},
-        }
-        const range = err.main;
-        const line = blk: {
-            var it = std.mem.splitScalar(u8, md_src, '\n');
-            for (1..range.start.row) |_| _ = it.next();
-            break :blk it.next().?;
+        const MarkdownDiagnostic = @import("markdown_diagnostic.zig");
+        const formatter: MarkdownDiagnostic = .{
+            .err = err,
+            .src = md_src,
+            .path = path,
+            .fm_lines = fm_lines,
+            .html_src = MarkdownDiagnostic.htmlSource(ast, err),
         };
-
-        var buf: [1024]u8 = undefined;
-        const excerpt = diag.markdownExcerpt(
-            &buf,
-            line,
-            range.start.col,
-            if (range.start.row == range.end.row) range.end.col else null,
-            err.kind == .scripty,
-        );
-        const line_trim = excerpt.line;
-        const highlight = excerpt.highlight;
-
-        const msg = switch (err.kind) {
-            .scripty => |s| s.err,
-            else => "",
-        };
-
-        // std.debug.print("fm: {}\nerr: {s}\nrange start: {any}\nrange end: {any}", .{
-        //     fm_offset,
-        //     @tagName(err.kind),
-        //     err.main.start,
-        //     err.main.end,
-        // });
-
-        // Saturating subtraction because of a bug related to html comments
-        // in markdown.
-        // const lines = range.end.row -| range.start.row;
-        // const lines_fmt = if (lines == 0) "" else try arena.print(
-        //     "(+{} lines)",
-        //     .{lines},
-        // );
-
-        const tag_name = switch (err.kind) {
-            .html => |h| switch (h.tag) {
-                inline else => |_, t| @tagName(t),
-            },
-            else => @tagName(err.kind),
-        };
-        // issue #32: SuperMD's `pathValidationError` rejects an empty path with
-        // the bare message "path is empty". That fires on `$link.page('')`, which
-        // looks like it should work because `$site.page('')` does (base.shtml's
-        // nav uses it for the home link) -- but the right builtin for "link to
-        // the site's home page" is `$link.site()`, which supermd's own `page`
-        // builtin DESCRIPTION already names, just never in the error itself.
-        // supermd is an external dependency pinned in build.zig.zon (fork policy:
-        // upstream syncs at release tags only), so this hint can't be added at
-        // the source -- this printing path is the legitimate in-repo enrichment
-        // point instead. Matching the exact upstream string is deliberate and
-        // degrades gracefully: if a release-tag sync rewords "path is empty" the
-        // hint just stops firing, and tests/rendering/empty-page-path-hint.sh
-        // (which asserts on it) goes red at sync time rather than silently
-        // drifting. The `.page(` substring check on the source line is what
-        // keeps this off `$image.asset('')` and friends, where "link to the site
-        // homepage" would be actively wrong -- `sub('')`/`sibling('')` are
-        // deliberately NOT hinted for the same reason (see issue #32 scope cut).
-        const empty_page_path_hint = err.kind == .scripty and
-            std.mem.eql(u8, msg, "path is empty") and
-            std.mem.indexOf(u8, line_trim, ".page(") != null;
-
-        // The JSON `help` value mirrors whichever note text mode would have
-        // printed as the second `std.debug.print` block below -- computed
-        // once here so both branches (and the `.memory` block further down)
-        // read from a single source instead of re-deriving it.
-        var help_buf: [256]u8 = undefined;
-        const help_text: ?[]const u8 = switch (err.kind) {
-            .duplicate_id => |dup| diag.render(&help_buf, "original was defined on line {}", .{fm_lines + dup.original.range().start.row}),
-            else => if (empty_page_path_hint)
-                "to link to the site homepage, use $link.site()"
-            else
-                null,
-        };
-
-        if (diag.format == .json) {
-            var path_buf: [std.fs.max_path_bytes]u8 = undefined;
-            var msg_buf: [1024]u8 = undefined;
-            diag.emit(.{
-                .code = .ZP_SUPERMD,
-                .severity = .@"error",
-                .file = diag.render(&path_buf, "{f}", .{file.fmt(&v.string_table, &v.path_table, v.content_dir_path, "")}),
-                .line = fm_lines + range.start.row,
-                .col = excerpt.col,
-                .message = diag.render(&msg_buf, "[{s}] {s}", .{ tag_name, msg }),
-                .help = help_text,
-            });
-        } else {
-            std.debug.print(
-                \\{f}:{}:{}: [{s}] {s}
-                \\|    {s}
-                \\|    {s}
-                \\
-            , .{
-                file.fmt(&v.string_table, &v.path_table, v.content_dir_path, ""),
-                fm_lines + range.start.row,
-                excerpt.col,
-                tag_name,
-                msg,
-                line_trim,
-                highlight,
-            });
-
-            switch (err.kind) {
-                .duplicate_id => |dup| {
-                    std.debug.print(
-                        \\|   note: original was defined on line {}
-                        \\
-                        \\
-                    , .{fm_lines + dup.original.range().start.row});
-                },
-                else => if (empty_page_path_hint) {
-                    std.debug.print(
-                        \\|   note: to link to the site homepage, use $link.site()
-                        \\
-                        \\
-                    , .{});
-                } else {
-                    std.debug.print("\n", .{});
-                },
-            }
-        }
-
-        if (build.mode == .memory) {
-            // Unlike the `.duplicate_id` note above (a pre-existing gap this
-            // change isn't retrofitting), the empty-page-path hint is added to
-            // BOTH output paths, so a memory build's error list carries it too.
-            //
-            // `note_segment` is one of two comptime string literals -- the hint
-            // text is fixed (unlike NoteLine's dynamic PageAnalysisError notes
-            // above), so a plain conditional is enough to collapse this to ONE
-            // allocPrint instead of branching into two near-identical ones. It
-            // carries its own trailing "\n" so the format string's final blank
-            // line reproduces the same "note line + blank separator" shape either
-            // way (see the analogous NoteLine reasoning above).
-            const note_segment: []const u8 = if (empty_page_path_hint)
-                "|   note: to link to the site homepage, use $link.site()\n"
-            else
-                "";
-            // Contract 1 (self-freeing, NO_SLOP §2.2a): `memory_msg` is the only
-            // allocation and it escapes as-is into build.mode.memory.errors, which
-            // owns it from here on.
-            const memory_msg = try gpa.print(
-                \\{f}:{}:{}: [{s}] {s}
-                \\|    {s}
-                \\|    {s}
-                \\{s}
-                \\
-            , .{
-                file.fmt(&v.string_table, &v.path_table, v.content_dir_path, ""),
-                fm_lines + range.start.row,
-                excerpt.col,
-                tag_name,
-                msg,
-                line_trim,
-                highlight,
-                note_segment,
-            });
-            try build.mode.memory.errors.append(gpa, .{
-                .ref = "",
-                .msg = memory_msg,
-            });
-        }
+        const homepage_hint = err.kind == .scripty and
+            std.mem.eql(u8, err.kind.scripty.err, "path is empty") and
+            std.mem.indexOf(u8, formatter.preview().code, ".page(") != null;
+        const rendered = try gpa.print("{f}{s}\n", .{
+            formatter,
+            if (homepage_hint) "|   note: to link to the site homepage, use $link.site()\n" else "",
+        });
+        defer gpa.free(rendered);
+        try emitSuperMdDiagnostic(gpa, build, path, formatter.range(), fm_lines, rendered);
     }
 }
 
@@ -4684,21 +4538,24 @@ fn emitSuperMdDiagnostic(
     rendered: []const u8,
 ) Allocator.Error!void {
     if (diag.format == .json) {
-        // The formatter's first line is path:line:col: error: message.
+        // The first line starts with path:line:col:, followed by an optional
+        // kind tag and error marker. The remaining lines retain related spans.
         // Keep JSON's structured location and upstream message separate.
-        const prefix = try gpa.print("{s}:{}:{}: error: ", .{
+        const prefix = try gpa.print("{s}:{}:{}: ", .{
             path, fm_lines + range.start.row, range.start.col,
         });
         defer gpa.free(prefix);
         const message = rendered[prefix.len..];
         const end = std.mem.indexOfScalar(u8, message, '\n') orelse message.len;
+        const headline = message[0..end];
         diag.emit(.{
             .code = .ZP_SUPERMD,
             .severity = .@"error",
             .file = path,
             .line = fm_lines + range.start.row,
             .col = range.start.col,
-            .message = message[0..end],
+            .message = if (std.mem.startsWith(u8, headline, "error: ")) headline["error: ".len..] else headline,
+            .help = if (end < message.len) std.mem.trim(u8, message[end..], "\n") else null,
         });
     } else {
         std.debug.print("{s}", .{rendered});
@@ -4708,4 +4565,35 @@ fn emitSuperMdDiagnostic(
         errdefer gpa.free(owned);
         try build.mode.memory.errors.append(gpa, .{ .ref = "", .msg = owned });
     }
+}
+
+test "validate: duplicate ID memory diagnostic includes the original definition" {
+    const gpa = std.testing.allocator;
+    const src = "[original]($text.id(\"same\"))\n\n[duplicate]($text.id(\"same\"))\n";
+    supermd.c.cmark_gfm_core_extensions_ensure_registered();
+    const cmark = supermd.Ast.CmarkParser.default();
+    defer supermd.c.cmark_parser_free(cmark.parser);
+    const ast = try supermd.Ast.init(gpa, src, cmark, .{});
+    defer ast.deinit(gpa);
+    var st: StringTable = .empty;
+    defer st.deinit(gpa);
+    _ = try st.intern(gpa, "");
+    var pt: PathTable = .empty;
+    defer pt.deinit(gpa);
+    const file = try pt.internPathWithName(gpa, &st, null, "index.smd");
+    var variant: Variant = undefined;
+    variant.string_table = st;
+    variant.path_table = pt;
+    variant.content_dir_path = "content";
+    var build: Build = undefined;
+    build.mode = .{ .memory = .{} };
+    defer {
+        for (build.mode.memory.errors.items) |err| gpa.free(err.msg);
+        build.mode.memory.errors.deinit(gpa);
+    }
+    try printSuperMdErrorsInner(gpa, gpa, &build, &variant, file, &ast, &.{}, src, 4);
+    try std.testing.expectEqual(1, build.mode.memory.errors.items.len);
+    const message = build.mode.memory.errors.items[0].msg;
+    try std.testing.expect(std.mem.indexOf(u8, message, "first definition was on line 5 col 1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, message, "[original]") != null);
 }

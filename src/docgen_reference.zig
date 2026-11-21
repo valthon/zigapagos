@@ -217,6 +217,21 @@ fn writeTypeDoc(w: *Writer, comptime t: TypeDoc, comptime flavor: Flavor) !void 
     try writeDescription(w, t.description);
     try w.writeAll("\n\n");
 
+    if (comptime flavor == .smd and std.mem.eql(u8, t.name, "code")) {
+        try w.writeAll(
+            \\Use `console` for shell sessions, in a fenced block (` ```console `)
+            \\or with `$code.language('console')`. Lines beginning with `$`, `#`,
+            \\or a bracketed prompt followed by `$` or `#` emit `prompt` and
+            \\`command` spans. Other lines remain output text; all are HTML-escaped.
+            \\Style these classes in your code stylesheet.
+            \\Building the compiler with `-Dhighlight=false` omits syntax/tree-sitter
+            \\dependencies and accepts every language name without warnings. Ordinary
+            \\code is escaped plaintext; console formatting remains available.
+            \\
+            \\
+        );
+    }
+
     if (t.fields.len > 0) {
         try w.writeAll("Fields:\n\n");
         inline for (t.fields) |f| {
@@ -461,9 +476,6 @@ fn analyzeDirectiveKinds() []const TypeDoc {
     var out: [info.field_names.len]TypeDoc = undefined;
     var n: usize = 0;
     inline for (info.field_names, info.field_types) |name, T| {
-        // The dependency knows audio; this compiler port does not adopt its
-        // renderer. Only publish directives the fork actually supports.
-        if (comptime std.mem.eql(u8, name, "audio")) continue;
         out[n] = analyzeType(T, name);
         n += 1;
     }
@@ -583,9 +595,10 @@ fn descriptionOf(comptime T: type) []const u8 {
 /// mapping keeps the change on our side of the line instead.
 fn fieldTypeName(comptime T: type) []const u8 {
     return switch (T) {
+        @import("context/Map.zig").ZiggyMap => "Map",
         []const u8 => "String",
         ?[]const u8 => "?String",
-        []const []const u8 => "[String]",
+        []const []const u8 => "[]String",
         bool => "Bool",
         usize, i64 => "Int",
         f64 => "Float",
@@ -594,7 +607,7 @@ fn fieldTypeName(comptime T: type) []const u8 {
             .pointer => |ptr| if (ptr.size == .one)
                 fieldTypeName(ptr.child)
             else
-                "[" ++ fieldTypeName(ptr.child) ++ "]",
+                "[]" ++ fieldTypeName(ptr.child),
             else => shortTypeName(T),
         },
     };

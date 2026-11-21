@@ -61,8 +61,8 @@ LAYOUT='<!DOCTYPE html>
 
 CONTENT='---
 .title = "Home",
-.date = @date("2020-07-06T00:00:00"),
-.author = "Test",
+.date = .date("2020-07-06T00:00:00"),
+.authors = ["Test"],
 .layout = "index.shtml",
 .draft = false,
 ---
@@ -77,14 +77,14 @@ scaffold() {
   for s in "$@"; do statics="$statics\"$s\", "; done
   mkdir -p "$dir/content" "$dir/layouts"
   {
-    echo 'Site {'
+    echo '.site = .simple(.{'
     echo '    .title = "Pruned",'
     echo '    .host_url = "https://example.com",'
     echo '    .content_dir_path = "content",'
     echo '    .layouts_dir_path = "layouts",'
     echo "    .assets_dir_path = \"$assets_dir\","
     echo "    .static_assets = [$statics],"
-    echo '}'
+    echo '})'
   } > "$dir/zigapagos.ziggy"
   printf '%s' "$LAYOUT" > "$dir/layouts/index.shtml"
   printf '%s' "$CONTENT" > "$dir/content/index.smd"
@@ -181,13 +181,13 @@ echo "PASS: a .keep placeholder is not reported"
 D="$WORK/d"; D_OUT="$WORK/d-out"
 mkdir -p "$D/content" "$D/layouts"
 cat > "$D/zigapagos.ziggy" <<'EOF'
-Site {
+.site = .simple(.{
     .title = "Pruned (aliased dirs)",
     .host_url = "https://example.com",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "content",
-}
+})
 EOF
 printf '%s' '<!DOCTYPE html><html><head><meta charset="UTF-8"><title :text="$site.title"></title></head><body><h1 :text="$page.title"></h1></body></html>' \
   > "$D/layouts/index.shtml"
@@ -270,8 +270,8 @@ EOF
 cat > "$F/content/broken.smd" <<'EOF'
 ---
 .title = "Broken",
-.date = @date("2020-07-06T00:00:00"),
-.author = "Test",
+.date = .date("2020-07-06T00:00:00"),
+.authors = ["Test"],
 .layout = "broken.shtml",
 .draft = false,
 ---

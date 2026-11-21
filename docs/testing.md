@@ -170,3 +170,89 @@ CI on every pull request:
 For behaviour that only exists in a browser — that an island really hydrates,
 that an SPA navigation is really soft — a static assertion cannot help, and
 `site/test/*_playwright.py` drives a real one instead.
+
+## Snapshot index behavior
+
+`zig build test` compares generated snapshots with the index using
+`git diff --exit-code`. New files receive only intent-to-add entries so they are
+included in the diff; their contents are never staged, and existing staged
+changes are preserved. Review and stage snapshot updates explicitly.
+
+## Schema agreement regression matrix
+
+Run `zig build test-schema` (also exercised by
+`tests/schema/structural-agreement.sh` in the batch gate). It compiles the actual
+checker against fixture types, then runs twelve matching schemas and 104 incompatible
+schema mutations. Matching inputs must exit 0; incompatible inputs must exit 1.
+A crash does not count as a rejection. Mutations use temporary schema copies and
+never edit the production types or schemas.
+
+The structural inventory below records the checker before the first structural
+follow-up. Before this matrix existed, only adding fields to the real Site and Page types had been
+manually mutation-checked; the remaining classes had no permanent regression
+coverage. All rows now have permanent tests in
+`tests/schema/structural_agreement.py`.
+
+| Disagreement | Before the follow-up | Regression coverage now |
+| --- | --- | --- |
+| Field present on only one side | Rejected in both directions | Remove a required field; add a schema-only field; repeat inside a nested record |
+| Skipped Zig field exposed by the schema | Incorrectly accepted | Add the fixture's skipped `hidden` field to the schema |
+| Optional versus required | Rejected in both directions for scalar fields and union payloads | Change required/optional scalars and union payloads in both directions; require optional lists, dictionaries and nested records |
+| Union case payload present on only one side | A missing schema payload was incorrectly accepted; the reverse was rejected | Remove a payload from a payload-bearing case; add one to a payloadless case |
+| Union case present on only one side | Rejected in both directions | Remove a case; add a schema-only case |
+| Enum member sets or a schema enum case with a payload | Rejected | Remove/add members; add a payload to a schema member |
+| List/dictionary element type or container kind | Rejected for ordinary containers; a slice matched against a named container crashed | Change element scalar/container types; exchange lists, dictionaries, scalars and named containers |
+| Optional builtin/custom containers | A valid optional builtin list was rejected, so mutations sharing that baseline could not independently establish coverage | A matching optional-container baseline plus seven independent mutations check builtin/custom list and dictionary elements, requiredness and nested shape |
+| Nested struct shape or struct/union/enum kind | Rejected in both directions | Add/remove nested fields, change their types, exchange struct/union/enum kinds and remove a named type |
+| Real Page date adapter metadata | The adapter advertised `any`, hiding six mismatches in its union/scalar shape, payload kinds and case set | Mutate the real Page schema; metadata now uses the same tagged-union representation as the existing date parser |
+| Real config schema | Fields/scalars rejected; missing `simple` payload accepted | Mutate `Config.Document`'s real schema as well as the fixture schema |
+| Scalar kind | Rejected | Exercise all twelve ordered mismatches among `int`, `bool`, `bytes` and `float` |
+
+In that initial 63-negative/four-positive matrix, 46 negative cases already produced ordinary rejections from
+the original checker with a valid baseline. Nine exposed false acceptances
+(including the real config and date schemas) and one exposed a crash. Seven
+further negatives now have an independently valid optional-container baseline.
+All four matching schemas pass after the fixes, including the production config
+and page schemas. The date parser's accepted spellings and conveniences remain
+the same; only its schema metadata is more precise.
+
+The earlier compatibility decisions remain: schemas cannot express required
+slices, so required runtime slices are accepted; a non-optional field with a
+runtime default may match an optional schema field. Explicit Ziggy custom
+`roles` remain authoritative for custom deserializers. The positive baselines
+pin the default and required-slice policies alongside the negative cases.
+
+### Complete schema grammar and root coverage
+
+The checker now requires an explicit `types.Document` entry point and starts at
+`$ = …`, rather than validating exported type names as independent roots. Every
+parsed AST node must be reached by a comparison; every type-expression token
+must be consumed. Successful checks cannot leave declarations or expressions
+unvisited. The current matrix has 104 negative mutations and twelve positive
+baselines, including the reported config roots `$ = bytes` and `$ = Simple`.
+
+| Construct | Handling and regression |
+| --- | --- |
+| Document root `$ = …` | Compare with `Document` using the same expression walker as fields. Mutate to scalars, optional/list/dictionary wrappers, another struct, a union, an enum, `any`, unknown names, missing/duplicate roots and trailing tokens. Positive non-named roots prove that this is a real comparison. |
+| Struct declarations | Compare field sets, nested shape, skipped fields and defaults. A declaration is checked only when reached from the root. Add/remove/change fields and insert an unused nested declaration after its last field. |
+| Union declarations | Compare case sets and payload presence/types in both directions, including the real config `simple` case. |
+| Enum declarations | Ziggy 0.3 spells enums as payloadless `union` declarations. Compare the exact member set and reject payloads. A literal `enum` declaration is unknown syntax and fails with `schema not checked`. |
+| Optional `?` | Compare the optional child, preserving the existing non-optional/default-field compatibility. Optional document roots have no implicit field default. Mutate optional fields, payloads and roots to required forms and vice versa. |
+| List `[]` | Compare the builtin slice or declared custom-slice element type recursively. Byte slices are `bytes`, not integer lists. Mutate elements, collection kinds and byte strings; matching optional-list roots pass. |
+| Dictionary `{:}` | Compare the declared dictionary element type recursively and keep field-default checks. Matching dictionary roots pass; element/kind mutations fail. |
+| `any` | Require explicit unrestricted Dynamic metadata at the leaf. Concrete types cannot match `any`, and Dynamic cannot silently match typed scalar or named leaves. Mutate the actual Page custom field to integer, bytes, bool, float and named leaves. |
+| `bytes`, `int`, `float`, `bool` | Compare scalar kinds; `bytes` requires a byte slice. All twelve ordered scalar-kind mismatches and root/string/list mutations reject. |
+| Type references | Resolve in the correct lexical scope and recursively compare the referenced declaration. Unknown names reject; a matching declaration elsewhere cannot rescue an incompatible root. |
+| Unreferenced declarations | Reject with `schema construct not checked`, including top-level structs, unions, enums and nested declarations. Tests require the coverage-specific diagnostic, not a parsing error. |
+| Unknown declarations, invalid or unparsed input | Tokenize the whole file, reject NULs that could hide a suffix, reject parser/reference errors and require complete expression consumption. Mutate unknown declaration syntax, trailing lines and expressions, duplicate roots and hidden declarations. |
+| Comments and whitespace | Parsed as grammar trivia; they do not represent additional data constraints. Invalid trivia is a token/parser error, not an ignored line. |
+
+Dynamic's existing wrapping policy is deliberately explicit: dictionary/list
+wrappers ending in `any` remain compatible, including nested combinations. Each
+wrapper token is consumed and its leaf checked. This permits schema-imposed
+container shape for unrestricted Dynamic; it does **not** claim exact wrapper
+shape agreement, since Dynamic metadata supplies none. Narrower scalar or named
+leaves fail with `schema construct not checked`. Five matching Dynamic root
+expressions pin this policy without making the shipped, optional Page custom
+field required. Other custom deserializers must supply checked representation
+metadata; their implementation fields are not substituted silently.

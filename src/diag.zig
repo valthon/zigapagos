@@ -64,6 +64,45 @@ pub fn markdownExcerpt(
     return .{ .line = trimmed, .col = col, .highlight = buf[0 .. spaces + count] };
 }
 
+/// Caller-buffer preview: borrows the source and bounds untrusted parser
+/// ranges, including container-relative columns and missing/truncated lines.
+/// Generic over the parser's range so the core diagnostic module needs no
+/// Markdown dependency. The returned preview borrows src and allocates nothing.
+pub const MarkdownPreview = struct {
+    row: usize,
+    col: usize,
+    code: []const u8,
+    spaces: usize,
+    carets: usize,
+
+    pub fn init(src: []const u8, range: anytype, inclusive_end: bool) MarkdownPreview {
+        var lines = std.mem.splitScalar(u8, src, '\n');
+        var line = lines.next().?; // Even an empty source contains one line.
+        var row: usize = 1;
+        while (row < @max(1, range.start.row)) {
+            line = lines.next() orelse break;
+            row += 1;
+        }
+        const left = std.mem.trimStart(u8, line, &std.ascii.whitespace);
+        const code = std.mem.trimEnd(u8, left, &std.ascii.whitespace);
+        const indent = line.len - left.len;
+        const col = std.math.clamp(@as(usize, range.start.col), @min(indent + 1, @max(line.len, 1)), @max(line.len, 1));
+        const start = @min(col - 1 -| indent, code.len -| 1);
+        const end = if (range.start.row == range.end.row)
+            @min((@as(usize, range.end.col) -| 1 -| indent) +| @intFromBool(inclusive_end), code.len)
+        else
+            code.len;
+        const spaces: usize = @min(start, 1023);
+        return .{ .row = row, .col = col, .code = code, .spaces = spaces, .carets = @min(@max(end -| start, 1), 1024 - spaces) };
+    }
+
+    pub fn format(p: MarkdownPreview, w: *Writer) Writer.Error!void {
+        try w.print("|    {s}\n|    ", .{p.code});
+        try w.splatByteAll(' ', p.spaces);
+        try w.splatByteAll('^', p.carets);
+    }
+};
+
 test "diag: markdown excerpts bound malformed foreign columns" {
     var buf: [32]u8 = undefined;
     const zero = markdownExcerpt(&buf, "http://e:x", 0, 10, true);
@@ -217,10 +256,14 @@ pub fn emitFatal(comptime fmt: []const u8, args: anytype) void {
 /// is documented) -- the comment is what makes a dead/unreachable code
 /// visible in review. Never register a code this PR does not also emit.
 pub const Code = enum {
-    // emitted by: root.zig, static asset glob matched nothing
+    // emitted by: static_assets.zig, static asset glob matched nothing
     ZP_STATIC_ASSET_GLOB_EMPTY,
-    // emitted by: root.zig, a listed static asset does not exist
+    // emitted by: static_assets.zig, a listed static asset does not exist
     ZP_STATIC_ASSET_MISSING,
+    // emitted by: static_assets.zig, a file selected by two config entries
+    ZP_STATIC_ASSET_DUPLICATE,
+    // emitted by: static_assets.zig, an unsafe or unsupported static path
+    ZP_STATIC_ASSET_INVALID,
     // emitted by: root.zig, a static asset would overwrite generated output
     ZP_STATIC_ASSET_OUTPUT_COLLISION,
     // emitted by: root.zig, i18n ziggy file failed to parse
@@ -231,6 +274,12 @@ pub const Code = enum {
     ZP_FRONTMATTER_FRAMING,
     // emitted by: root.zig, frontmatter failed to parse as Ziggy
     ZP_FRONTMATTER_PARSE,
+    // emitted by: root.zig, date deserialization retained a parser error
+    ZP_INVALID_DATE,
+    // emitted by: root.zig, removed skip_subdirs frontmatter field
+    ZP_REMOVED_SKIP_SUBDIRS,
+    // emitted by: context/Page.zig FrontmatterAnalysisError, forbidden child section
+    ZP_FORBIDDEN_SUBSECTION,
     // emitted by: context/Page.zig FrontmatterAnalysisError, missing/invalid layout
     ZP_MISSING_LAYOUT,
     // emitted by: context/Page.zig FrontmatterAnalysisError, invalid `aliases` entry
@@ -331,11 +380,29 @@ pub fn info(c: Code) Info {
         .ZP_STATIC_ASSET_MISSING => .{
             .summary = "a static asset named in zigapagos.ziggy does not exist",
             .explanation =
-            \\A `static_assets` entry names an exact path that must exist under
-            \\`assets_dir_path`. This one didn't resolve to any scanned asset.
+            \\A `static_assets` entry names a file or directory that must exist
+            \\under `assets_dir_path`. This path could not be found.
             \\
             \\Check the path for a typo (it's relative to `assets_dir_path`),
             \\and confirm the file wasn't renamed or moved.
+            ,
+        },
+        .ZP_STATIC_ASSET_DUPLICATE => .{
+            .summary = "two static asset entries select the same file",
+            .explanation =
+            \\Each file may be selected only once by `static_assets`, including
+            \\files reached through directories or globs. The message names
+            \\both entries and the shared file. Remove or narrow an entry.
+            ,
+        },
+        .ZP_STATIC_ASSET_INVALID => .{
+            .summary = "a static asset path is invalid or escapes the assets directory",
+            .explanation =
+            \\Use a relative file or directory path under `assets_dir_path`.
+            \\Empty paths, absolute or drive-qualified paths, dot components,
+            \\backslashes and NUL are invalid. Selected files must resolve
+            \\to regular files. File symlinks may target external regular files;
+            \\broken symlinks, directory symlinks and non-files are rejected.
             ,
         },
         .ZP_STATIC_ASSET_OUTPUT_COLLISION => .{
@@ -379,6 +446,10 @@ pub fn info(c: Code) Info {
             \\Check that the file starts with `---` on its own line and that a
             \\second `---` on its own line closes the frontmatter block.
             ,
+        },
+        .ZP_INVALID_DATE => .{
+            .summary = "a frontmatter date is invalid",
+            .explanation = "Use .date(\"YYYY-MM-DDTHH:MM:SS\") with a valid ISO 8601 date, or .unix(seconds). The diagnostic preserves the date parser error and source location.",
         },
         .ZP_FRONTMATTER_PARSE => .{
             .summary = "a content file's frontmatter is not valid Ziggy",
@@ -428,6 +499,23 @@ pub fn info(c: Code) Info {
             \\Each `alternatives` entry may set its own `layout`; when it does,
             \\that path must resolve to a real layout under `layouts_dir_path`,
             \\same as a page's own top-level `layout` field.
+            ,
+        },
+        .ZP_FORBIDDEN_SUBSECTION => .{
+            .summary = "a section index's parent forbids subsections",
+            .explanation =
+            \\The parent index sets `forbid_subsections = true`. Move the child
+            \\from `foo/index.smd` to `foo.smd`, as the diagnostic suggests, to
+            \\preserve its URL and make it visible to `$page.leaves()`.
+            ,
+        },
+        .ZP_REMOVED_SKIP_SUBDIRS => .{
+            .summary = "frontmatter uses the removed `skip_subdirs` field",
+            .explanation =
+            \\`skip_subdirs` had no effect and has been removed. Delete it from
+            \\frontmatter. The nearest replacement is `forbid_subsections` on
+            \\a section index: it requires child pages to use `foo.smd` rather
+            \\than `foo/index.smd`, so they are leaves instead of sections.
             ,
         },
         .ZP_INVALID_PAGINATION_SIZE => .{

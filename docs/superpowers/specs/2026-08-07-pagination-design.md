@@ -85,7 +85,7 @@ Each variant needs an arm in the exhaustive `code()`, an `info()` entry in
 `docs/build-errors.md`, `tests/meta/build-errors-doc.sh` requires them to
 remain literal substrings of the emitting source.
 
-`frontmatter.ziggy-schema` (editor-only, ungated) gains the `Pagination`
+`src/schemas/page.ziggy-schema` (shipped editor schema; install with `zigapagos install-schemas`) gains the `Pagination`
 struct. While in there, fix its known drift: `translation_key` is missing and
 its `Alternative` declares a `title: ?bytes` that does not exist (the real
 struct has a required `name`).

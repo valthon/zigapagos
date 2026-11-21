@@ -449,13 +449,13 @@ pub fn emitZigapagosZiggy(gpa: Allocator, title: []const u8, host_url: []const u
     defer gpa.free(safe_host);
 
     return gpa.print(
-        \\Site {{
+        \\.site = .simple(.{{
         \\    .title = "{s}",
         \\    .host_url = "{s}",
         \\    .content_dir_path = "content",
         \\    .layouts_dir_path = "layouts",
         \\    .assets_dir_path = "assets",
-        \\}}
+        \\}})
         \\
     , .{ safe_title, safe_host }) catch fatal.oom();
 }
@@ -467,7 +467,7 @@ pub fn emitZigapagosZiggy(gpa: Allocator, title: []const u8, host_url: []const u
 /// Emit a `content/<name>.smd` stub.
 ///
 /// Frontmatter fields follow the golden `examples/tsx-site/content/index.smd`:
-///   `.title`, `.date = @date("1970-01-01T00:00:00")` (placeholder), `.layout`,
+///   `.title`, `.date = .date("1970-01-01T00:00:00")` (placeholder), `.layout`,
 ///   `.draft = false`.
 /// The body is plain SuperMD text — SuperMD forbids raw HTML (`html_is_forbidden`),
 /// so we must NOT embed the original Astro markup in an HTML comment.
@@ -485,7 +485,7 @@ pub fn emitContentStub(gpa: Allocator, name: []const u8, orig_astro_markup: []co
     return gpa.print(
         \\---
         \\.title = "{s}",
-        \\.date = @date("1970-01-01T00:00:00"),
+        \\.date = .date("1970-01-01T00:00:00"),
         \\.layout = "index.shtml",
         \\.draft = false,
         \\---
@@ -497,7 +497,7 @@ pub fn emitContentStub(gpa: Allocator, name: []const u8, orig_astro_markup: []co
 
 /// A section-index stub for a detected Astro paginate() route — the same
 /// stub emitContentStub writes, plus the .pagination line. Both Astro
-/// filename forms map to .url_style = "plain_dir" (the rest form is exact
+/// filename forms map to .url_style = .plain_dir (the rest form is exact
 /// URL parity; the numbered form differs only at page 1, which Zigapagos
 /// always puts at the section URL — MIGRATION.md carries the aliases note
 /// via detect.paginateNote).
@@ -513,10 +513,10 @@ pub fn emitSectionIndexStub(
     return gpa.print(
         \\---
         \\.title = "{s}",
-        \\.date = @date("1970-01-01T00:00:00"),
+        \\.date = .date("1970-01-01T00:00:00"),
         \\.layout = "index.shtml",
         \\.draft = false,
-        \\.pagination = {{ .page_size = {d}, .url_style = "plain_dir" }},
+        \\.pagination = .{{ .page_size = {d}, .url_style = .plain_dir }},
         \\---
         \\
         \\TODO: port the paginated listing from the original Astro route
@@ -845,6 +845,8 @@ pub fn run(io: Io, gpa: Allocator, args: []const []const u8) bool {
     trackOutcome(&written, writeFile(io, out_dir, ".gitignore", emitGitignore(), o.force));
     trackOutcome(&written, writeFile(io, out_dir, "build.sh", emitBuildSh(a, effective_islands), o.force));
     trackOutcome(&written, writeFile(io, out_dir, "zigapagos.ziggy", emitZigapagosZiggy(a, title, host_url), o.force));
+    trackOutcome(&written, writeFile(io, out_dir, ".zigapagos.ziggy-schema", @embedFile("../schemas/zigapagos.ziggy-schema"), o.force));
+    trackOutcome(&written, writeFile(io, out_dir, "content/.smd.ziggy-schema", @embedFile("../schemas/page.ziggy-schema"), o.force));
     trackOutcome(&written, writeFile(io, out_dir, "assets/.gitkeep", "", o.force));
     trackOutcome(&written, writeFile(io, out_dir, "test/ssr.sh", emitSsrSh(), o.force));
     trackOutcome(&written, writeFile(io, out_dir, "test/hydrate.sh", emitHydrateSh(), o.force));
@@ -1097,7 +1099,7 @@ test "paginate: emitSectionIndexStub carries the pagination frontmatter" {
     };
     const out = emitSectionIndexStub(std.testing.allocator, "blog", spec);
     defer std.testing.allocator.free(out);
-    try std.testing.expect(std.mem.indexOf(u8, out, ".pagination = { .page_size = 4, .url_style = \"plain_dir\" },") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, ".pagination = .{ .page_size = 4, .url_style = .plain_dir },") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, ".layout = \"index.shtml\",") != null);
     try std.testing.expect(std.mem.startsWith(u8, out, "---\n"));
 }

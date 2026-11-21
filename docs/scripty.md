@@ -98,6 +98,7 @@ Fields:
 
 - `host_url` : String — The host URL, as defined in your `zigapagos.ziggy`.
 - `title` : String — The website title, as defined in your `zigapagos.ziggy`.
+- `custom` : Map — Site-wide custom Ziggy dictionary.
 
 #### `Site.localeCode() -> String`
 
@@ -155,7 +156,15 @@ nested maps.
 <span :text="$site.data('site').get('owner').get('name')"></span>
 ```
 
-#### `Site.page(String) -> Page`
+#### `Site.index() -> Page`
+
+Returns the root index page, the same as `$site.page('')`.
+
+```superhtml
+<a href="$site.index().link()">Homepage</a>
+```
+
+#### `Site.page(String, [String...]) -> Page`
 
 Finds a page by path.
 
@@ -168,13 +177,17 @@ matched by Zigapagos with either:
  - content/foo/bar.smd
  - content/foo/bar/index.smd
 
-To reference the site homepage, pass an empty string.
+To reference the site homepage, pass an empty string or use `$site.index()`.
+
+Multiple string arguments compose a path: `$site.page('foo', 'bar')`
+is equivalent to `$site.page('foo/bar')`. Empty parts are ignored;
+a trailing slash on a part is optional.
 
 ```superhtml
 <a href="$site.page('downloads').link()">Downloads</a>
 ```
 
-#### `Site.pages([String...]) -> [Page]`
+#### `Site.pages([String...]) -> []Page`
 
 Same as `page`, but accepts a variable number of page references and 
 loops over them in the provided order. All pages must exist.
@@ -207,17 +220,17 @@ Fields:
 
 - `title` : String — Title of the page, as set in the SuperMD frontmatter.
 - `description` : String — Description of the page, as set in the SuperMD frontmatter.
-- `author` : String — Author of the page, as set in the SuperMD frontmatter.
+- `authors` : []String — Authors of the page (an empty list when omitted), as set in the SuperMD frontmatter.
 - `date` : DateTime — Publication date of the page, as set in the SuperMD frontmatter. Used to provide default ordering of pages.
 - `layout` : String — SuperHTML layout used to render the page, as set in the SuperMD frontmatter.
 - `draft` : Bool — When set to true the page will not be rendered in release mode, as set in the SuperMD frontmatter.
-- `tags` : [String] — Tags associated with the page, as set in the SuperMD frontmatter.
-- `aliases` : [String] — Aliases of the current page, as set in the SuperMD frontmatter. Aliases can be used to make the same page available from different locations. Every entry in the list is an output location where the rendered page will be copied to. Entries are joined to the page's output directory; start an entry with `/` to place it relative to the site root (e.g. `"/404.html"` to override the site-wide 404 page).
-- `alternatives` : [Alternative] — Alternative versions of the page, as set in the SuperMD frontmatter. Alternatives are a good way of implementing RSS feeds, for example.
-- `skip_subdirs` : Bool — Skips any other potential content present in the subdir of the page, as set in the SuperMD frontmatter. Can only be set to true on section pages (i.e. `index.smd` pages).
+- `tags` : []String — Tags associated with the page, as set in the SuperMD frontmatter.
+- `aliases` : []String — Aliases of the current page, as set in the SuperMD frontmatter. Aliases can be used to make the same page available from different locations. Every entry in the list is an output location where the rendered page will be copied to. Entries are joined to the page's output directory; start an entry with `/` to place it relative to the site root (e.g. `"/404.html"` to override the site-wide 404 page).
+- `alternatives` : []Alternative — Alternative versions of the page, as set in the SuperMD frontmatter. Alternatives are a good way of implementing RSS feeds, for example.
+- `forbid_subsections` : Bool — On a section index, forbids child section indexes (`foo/index.smd`). Use `foo.smd` instead to preserve the URL while making it a leaf visible to `$page.leaves()`. Defaults to false.
 - `translation_key` : ?String — Translation key used to map this page with corresponding localized variants, as set in the SuperMD frontmatter. See the docs on i18n for more info.
-- `custom` : Value — A Ziggy map where you can define custom properties for the page, as set in the SuperMD frontmatter.
-- `pagination` : ?Pagination — Pagination settings of this section index, as set in the SuperMD frontmatter (null when not paginated). `.pagination = { .page_size = 10 }` makes the build render this index once per window of 10 active subpages. Use `$page.pagination?()` for the per-render state (current page, total pages, prev/next links).
+- `custom` : Dynamic — A Ziggy map where you can define custom properties for the page, as set in the SuperMD frontmatter.
+- `pagination` : ?Pagination — Pagination settings of this section index, as set in the SuperMD frontmatter (null when not paginated). `.pagination = .{ .page_size = 10 }` makes the build render this index once per window of 10 active subpages. Use `$page.pagination?()` for the per-render state (current page, total pages, prev/next links).
 
 #### `Page.isCurrent() -> Bool`
 
@@ -279,7 +292,7 @@ To be used in conjunction with an `if` attribute.
 </div>
 ```
 
-#### `Page.locales() -> [Page]`
+#### `Page.locales() -> []Page`
 
 Returns the list of localized variants of the current page.
 
@@ -319,7 +332,20 @@ the current page is an 'index.smd' page).
 $page.isSection()
 ```
 
-#### `Page.subpages() -> [Page]`
+#### `Page.leaves(?Int) -> []Page`
+
+Returns a flat list of active non-section pages in this section's
+subtree, sorted by descending date. Section indexes, including
+empty sections, are excluded. A non-section returns an empty list.
+
+Accepts an optional non-negative integer length limit. Use
+`forbid_subsections` on terminal sections to require leaf pages.
+
+```superhtml
+<ul :loop="$page.leaves(10)"><li :text="$loop.it.title"></li></ul>
+```
+
+#### `Page.subpages() -> []Page`
 
 Returns a list of all the pages in this section. If the page is 
 not a section, returns an empty list.
@@ -333,13 +359,79 @@ structure section in the official docs for more info.
 </div>
 ```
 
-#### `Page.subpagesAlphabetic() -> [Page]`
+#### `Page.subpagesAlphabetic() -> []Page`
 
 Same as `subpages`, but returns the pages in alphabetic order by
 comparing their titles. 
 
 ```superhtml
 <div :loop="$page.subpagesAlphabetic()">
+  <span :text="$loop.it.title"></span>
+</div>
+```
+
+#### `Page.subpagesByAuthor(String) -> []Page`
+
+Retrieve subpages of this section page that have in their
+`authors` field the provided string. Returns an error when
+called on a non-section page.
+
+Sections are defined by `index.smd` files, see the content
+structure section in the official docs for more info.
+
+Search uses an index built once per build. Results are an array
+in descending date order,
+with reverse output-URL order for equal dates. Missing keys
+return an empty array. Drafts are excluded unless enabled.
+
+The lookup covers the whole section, including on pagination
+pages; it does not apply the current `subpages()` window.
+
+If you want to attach extra information to an author, use the
+argument string as a key to a custom dictionary field or
+another page. For example 'loris-cro' can be used so:
+
+ - `$page.custom.get('loris-cro').get('name')`
+ - `$site.page('speakers', 'loris-cro').title`
+
+The latter case is a common technique for structuring sites
+that collect talks, books, etc.
+
+```superhtml
+<div :loop="$site.page('talks').subpagesByAuthor('loris-cro')">
+  <span :text="$loop.it.title"></span>
+</div>
+```
+
+#### `Page.subpagesByTag(String) -> []Page`
+
+Retrieve subpages of this section page that have in their
+`tags` field the provided string. Returns an error when
+called on a non-section page.
+
+Sections are defined by `index.smd` files, see the content
+structure section in the official docs for more info.
+
+Search uses an index built once per build. Results are an array
+in descending date order,
+with reverse output-URL order for equal dates. Missing keys
+return an empty array. Drafts are excluded unless enabled.
+
+The lookup covers the whole section, including on pagination
+pages; it does not apply the current `subpages()` window.
+
+If you want to attach extra information to a tag, use the
+argument string as a key to a custom dictionary field or
+another page. For example 'adventure' can be used so:
+
+  - `$page.custom.get('adventure').get('description')`
+  - `$site.page('tags', 'adventure').description`
+
+The latter case is a common technique for structuring sites
+that collect movies, books, etc.
+
+```superhtml
+<div :loop="$site.page('movies').subpagesByTag('adventure')">
   <span :text="$loop.it.title"></span>
 </div>
 ```
@@ -498,7 +590,7 @@ Returns true if the page contains a content-section with the given id
 </div>
 ```
 
-#### `Page.contentSections() -> [ContentSection]`
+#### `Page.contentSections() -> []ContentSection`
 
 Returns a list of sections for the current page.
 
@@ -510,7 +602,7 @@ null id.
 <div :html="$page.contentSections()"></div>
 ```
 
-#### `Page.footnotes?() -> ?[Footnote]`
+#### `Page.footnotes?() -> ?[]Footnote`
 
 Returns a list of footnotes for the current page, if any exist.
 
@@ -704,7 +796,7 @@ A footnote from a page.
 Fields:
 
 - `def_id` : String — The ID for the footnote definition.
-- `ref_ids` : [String] — The IDs of the footnote's references, to be used for creating backlinks.
+- `ref_ids` : []String — The IDs of the footnote's references, to be used for creating backlinks.
 
 #### `Footnote.html() -> String`
 
@@ -722,6 +814,7 @@ When inside of a git repository it also gives git-related metadata.
 Fields:
 
 - `generated` : DateTime — Returns the current date when the build is taking place. ># \[Note]\(`$block.attrs('note')`) >Using this function will not add a dependency on the current time >for the page, hence the name `generated`. > >To get the best results, use in conjunction with caching as otherwise >the page will be regenerated anew every single time.
+- `development` : Bool — True for renders performed by the dev loop, including rebuilds and `--no-live-reload` sessions. False for release, validate and explain.
 
 #### `Build.asset(String) -> Asset`
 
@@ -932,7 +1025,7 @@ Returns true if the map contains the provided key.
 <div :if="$page.custom.has('myValue')">Yep!</div>
 ```
 
-#### `Map.iterate() -> [KV]`
+#### `Map.iterate() -> []KV`
 
 Iterates over key-value pairs of a Ziggy map.
 
@@ -940,13 +1033,54 @@ Iterates over key-value pairs of a Ziggy map.
 $page.custom.iterate()
 ```
 
-#### `Map.iterPattern(String) -> [KV]`
+#### `Map.iterPattern(String) -> []KV`
 
 Iterates over key-value pairs of a Ziggy map where the key
 matches the given pattern.
 
 ```superhtml
 $page.custom.iterPattern("user-")
+```
+
+### Union
+
+A tagged union.
+
+Supports retrieving the active tag and tentatively accessing the
+active case (see `case?`). In situations where you know statically
+which is going to be the active case, use normal path syntax to
+access the value.
+
+When you don't know for sure the active case:
+   `$myunion.case?('foo')`
+
+When you do know statically:
+   `$myunion.foo`
+
+Tagged unions can represent custom application data. For example page
+dates are expressed as tagged unions in the frontmatter but they have
+a dedicated type when accessed through Scripty. That said, tagged
+union support is important to be able to navigate all possible Ziggy
+Document values.
+
+#### `Union.tag() -> String`
+
+Returns the current active tag of this union.
+
+
+```superhtml
+$page.custom.get('myunion').tag()
+```
+
+#### `Union.case?(String) -> ?any`
+
+Checks if the active union case matches the one provided as argument
+and on success returns the value, otherwise returns null.
+
+To be used in conjunction with `:if` attributes.
+
+```superhtml
+<ctx :if="$page.custom.get('myunion').case?('foo')"></ctx>
 ```
 
 ### Optional
@@ -999,7 +1133,7 @@ Returns true if the receiver equals the provided string.
 
 
 ```superhtml
-$page.author.eql("Loris Cro")
+$page.authors.join(' ').eql("Loris Cro")
 ```
 
 #### `String.basename() -> String`
@@ -1087,7 +1221,7 @@ Indices start from 0.
 
 
 ```superhtml
-$page.author.splitN(" ", 1)
+$page.authors.join(' ').splitN(" ", 1)
 ```
 
 #### `String.lower() -> String`
@@ -1337,6 +1471,17 @@ Fields:
 - `len` : Int — The length of the array.
 - `empty` : Bool — True when len is 0.
 
+#### `Array.join(String) -> String`
+
+Joins all items into a string, using the provided argument
+as separator.
+
+The array must contain only strings or numbers.
+
+```superhtml
+<meta name="keywords" content="$page.tags.join(', ')">
+```
+
 #### `Array.toJson() -> String`
 
 Serializes the array to a JSON string.
@@ -1346,13 +1491,13 @@ Use it to pass a collection into a typed island prop:
 `$site.data(...)`). The island's `Props` field — e.g.
 `[]const Item` — is parsed from that JSON, so the whole list
 arrives at once. The dynamic-attribute analogue of an inline
-`:props='{ .items = [ ... ] }'` literal.
+`:props='.{ .items = [ ... ] }'` literal.
 
 ```superhtml
 <island src="Faq.zig" prop-items="$page.custom.get('faq').toJson()"></island>
 ```
 
-#### `Array.slice(Int, ?Int) -> [any]`
+#### `Array.slice(Int, ?Int) -> []any`
 
 Slices an array from the first value (inclusive) to the
 second value (exclusive).
@@ -1375,7 +1520,7 @@ Returns the value at the provided index.
 $page.tags.at(0)
 ```
 
-#### `Array.first?() -> [any]`
+#### `Array.first?() -> ?any`
 
 Returns the the first value of the array or null if the array is empty. 
 
@@ -1383,7 +1528,7 @@ Returns the the first value of the array or null if the array is empty.
 $page.tags.first?()
 ```
 
-#### `Array.last?() -> [any]`
+#### `Array.last?() -> ?any`
 
 Returns the the last value of the array or null if the array is empty. 
 
@@ -1398,7 +1543,7 @@ A key-value pair.
 Fields:
 
 - `key` : String — The key string.
-- `value` : Value — The corresponding value.
+- `value` : Dynamic — The corresponding value.
 
 ## Content directives
 
@@ -1645,6 +1790,52 @@ Sets the source location of this directive to a site asset.
 
 Sets the source location of this directive to a build asset.
 
+### `$audio`
+
+An embedded audio file.
+
+Any text placed between `[]` will be used as a caption for the audio
+file.
+
+Example:
+```markdown
+[This is the caption]($audio.asset('foo.wav'))
+```
+
+#### `$audio.loop(Bool) -> anydirective`
+
+If true, the audio file will seek back to the start upon reaching
+the end.
+
+#### `$audio.muted(Bool) -> anydirective`
+
+If true, the audio file will be silenced at start.
+
+#### `$audio.autoplay(Bool) -> anydirective`
+
+If true, the audio file will start playing automatically.
+
+#### `$audio.hide_controls(Bool) -> anydirective`
+
+If true, the audio file will hide its controls (e.g. play/pause,
+volume).
+
+#### `$audio.url(str) -> anydirective`
+
+Sets the source location of this directive to an external URL.
+
+#### `$audio.asset(str) -> anydirective`
+
+Sets the source location of this directive to a page asset.
+
+#### `$audio.siteAsset(str) -> anydirective`
+
+Sets the source location of this directive to a site asset.
+
+#### `$audio.buildAsset(str) -> anydirective`
+
+Sets the source location of this directive to a build asset.
+
 ### `$link`
 
 A link.
@@ -1755,6 +1946,15 @@ Example:
 ```markdown
 [This is the caption]($code.asset('foo.zig'))
 ```
+
+Use `console` for shell sessions, in a fenced block (` ```console `)
+or with `$code.language('console')`. Lines beginning with `$`, `#`,
+or a bracketed prompt followed by `$` or `#` emit `prompt` and
+`command` spans. Other lines remain output text; all are HTML-escaped.
+Style these classes in your code stylesheet.
+Building the compiler with `-Dhighlight=false` omits syntax/tree-sitter
+dependencies and accepts every language name without warnings. Ordinary
+code is escaped plaintext; console formatting remains available.
 
 #### `$code.asset(str) -> anydirective`
 

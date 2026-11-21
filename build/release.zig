@@ -18,13 +18,14 @@ pub fn setup(b: *std.Build, cfg: config.Config) void {
     );
 
     const release = b.step("release", "Create release builds of Zigapagos");
-    addTargets(b, release, cfg.commit, only);
+    addTargets(b, release, cfg.commit, cfg.highlight, only);
 }
 
 fn addTargets(
     b: *std.Build,
     release_step: *std.Build.Step,
     commit: []const u8,
+    highlight: bool,
     /// `-Drelease-target`: build a single triple instead of the whole matrix,
     /// so the release workflow can give each target its own runner.
     only: ?[]const u8,
@@ -79,18 +80,6 @@ fn addTargets(
         const tracy = b.dependency("tracy", .{ .enable = false });
         const up = deps.upstream(b, target, optimize, false);
 
-        const syntax = b.dependency("flow_syntax", .{
-            .target = target,
-            .optimize = optimize,
-        });
-
-        const ts = syntax.builder.dependency("tree_sitter", .{
-            .target = target,
-            .optimize = optimize,
-        });
-
-        const treez = ts.module("treez");
-
         const mime = b.dependency("mime", .{
             .target = target,
             .optimize = optimize,
@@ -99,7 +88,7 @@ fn addTargets(
         const options = blk: {
             const options = b.addOptions();
             options.addOption(bool, "tsan", false);
-            options.addOption(bool, "enable_treesitter", true);
+            options.addOption(bool, "enable_treesitter", highlight);
             options.addOption([]const u8, "version", @import("../build.zig.zon").version);
             options.addOption([]const u8, "commit", commit);
             options.contents.appendSlice(b.allocator, "pub const log_scope_levels: []const @import(\"std\").log.ScopeLevel = &.{};\n") catch @panic("OOM");
@@ -121,8 +110,12 @@ fn addTargets(
         zigapagos_exe_release.root_module.addImport("supermd", up.supermd);
         zigapagos_exe_release.root_module.addImport("superhtml", up.superhtml);
         zigapagos_exe_release.root_module.addImport("zeit", up.zeit);
-        zigapagos_exe_release.root_module.addImport("syntax", syntax.module("syntax"));
-        zigapagos_exe_release.root_module.addImport("treez", treez);
+        if (highlight) {
+            const syntax = b.dependency("flow_syntax", .{ .target = target, .optimize = optimize });
+            const ts = syntax.builder.dependency("tree_sitter", .{ .target = target, .optimize = optimize });
+            zigapagos_exe_release.root_module.addImport("syntax", syntax.module("syntax"));
+            zigapagos_exe_release.root_module.addImport("treez", ts.module("treez"));
+        }
         zigapagos_exe_release.root_module.addImport("tracy", tracy.module("tracy"));
         zigapagos_exe_release.root_module.addImport("mime", mime.module("mime"));
         exe.addWuffsImports(b, zigapagos_exe_release.root_module, target, optimize);

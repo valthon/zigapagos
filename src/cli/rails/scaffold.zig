@@ -1950,7 +1950,7 @@ fn bindJourneyTemplate(
             formHasConfirmation(tpl.nodes, n);
         const mode = if (signup) "signup" else "signin";
         const props = try acc.keep(gpa, try gpa.print(
-            "{{ .mode = \"{s}\" }}",
+            ".{{ .mode = \"{s}\" }}",
             .{mode},
         ));
         try acc.all.append(gpa, .{
@@ -2324,7 +2324,7 @@ fn componentProps(gpa: Allocator, attrs: []const fragments.Attr) Allocator.Error
     }.lessThan);
     var out: std.ArrayListUnmanaged(u8) = .empty;
     errdefer out.deinit(gpa);
-    try out.appendSlice(gpa, "{");
+    try out.appendSlice(gpa, ".{");
     var count: usize = 0;
     for (sorted) |attr| {
         if (attr.kind == .null) continue;
@@ -2356,7 +2356,7 @@ fn frameProps(gpa: Allocator, route_list: []const route_mod.Route, node: fragmen
     }
     var out: std.ArrayListUnmanaged(u8) = .empty;
     errdefer out.deinit(gpa);
-    try out.appendSlice(gpa, "{ .id = \"");
+    try out.appendSlice(gpa, ".{ .id = \"");
     try appendJsEscaped(gpa, &out, node.name orelse "");
     try out.appendSlice(gpa, "\", .src = \"");
     try appendJsEscaped(gpa, &out, url orelse "");
@@ -2394,7 +2394,7 @@ fn dataBlockParam(code: []const u8) ?[]const u8 {
 fn realtimeProps(gpa: Allocator, stream: []const u8, action: []const u8, target: []const u8) Allocator.Error![]u8 {
     var out: std.ArrayListUnmanaged(u8) = .empty;
     errdefer out.deinit(gpa);
-    try out.appendSlice(gpa, "{ .stream = \"");
+    try out.appendSlice(gpa, ".{ .stream = \"");
     try appendZiggyEscaped(gpa, &out, stream);
     try out.appendSlice(gpa, "\", .action = \"");
     try appendZiggyEscaped(gpa, &out, action);
@@ -5344,7 +5344,7 @@ fn emitContentPage(ctx: *Ctx, r: route_mod.Route, v: View, view_path: []const u8
 
     // Provenance, so `$page.custom.rails` can be inspected from a layout and
     // the mapping survives hand edits to either side (spec).
-    try out.appendSlice(gpa, ".custom = {\n    .rails = {\n        .route = \"");
+    try out.appendSlice(gpa, ".custom = {\n    \"rails\": .{\n        .route = \"");
     try appendZiggyEscaped(gpa, &out, r.verb);
     try out.append(gpa, ' ');
     try appendZiggyEscaped(gpa, &out, r.path);
@@ -5855,7 +5855,7 @@ fn writeClientLib(ctx: *Ctx, auth_collection: ?[]const u8, with_realtime: bool) 
 const root_placeholder =
     \\---
     \\.title = "Migration placeholder",
-    \\.date = @date("1970-01-01T00:00:00"),
+    \\.date = .date("1970-01-01T00:00:00"),
     \\.layout = "migration-placeholder.shtml",
     \\.draft = true,
     \\---
@@ -6082,13 +6082,13 @@ fn emitConfig(gpa: Allocator, app_name: []const u8, with_assets: bool) Allocator
     defer title.deinit(gpa);
     try appendZiggyEscaped(gpa, &title, app_name);
     return gpa.print(
-        \\Site {{
+        \\.site = .simple(.{{
         \\    .title = "{s}",
         \\    .host_url = "https://example.com",
         \\    .content_dir_path = "content",
         \\    .layouts_dir_path = "layouts",
         \\    .assets_dir_path = "assets",
-        \\{s}}}
+        \\{s}}})
         \\
     , .{ title.items, if (with_assets) "    .static_assets = [\"**\"],\n" else "" });
 }
@@ -6495,7 +6495,7 @@ test "write: a static content route becomes a layout, a view and a content page"
         \\.title = "About us",
         \\.layout = "pages/about.shtml",
         \\.custom = {
-        \\    .rails = {
+        \\    "rails": .{
         \\        .route = "GET /about",
         \\        .controller = "pages",
         \\        .action = "about",
@@ -12493,7 +12493,7 @@ test "write: the journey's two views mount ONE AuthForm, told apart by a prop" {
     try testing.expect(std.mem.indexOf(
         u8,
         signin,
-        "<island src=\"" ++ auth_form_island_path ++ "\" client:load :props='{ .mode = \"signin\" }'></island>",
+        "<island src=\"" ++ auth_form_island_path ++ "\" client:load :props='.{ .mode = \"signin\" }'></island>",
     ) != null);
 
     const signup = try readTarget(gpa, &j.tmp, "layouts/registrations/new.shtml");
@@ -12501,7 +12501,7 @@ test "write: the journey's two views mount ONE AuthForm, told apart by a prop" {
     try testing.expect(std.mem.indexOf(
         u8,
         signup,
-        "<island src=\"" ++ auth_form_island_path ++ "\" client:load :props='{ .mode = \"signup\" }'></island>",
+        "<island src=\"" ++ auth_form_island_path ++ "\" client:load :props='.{ .mode = \"signup\" }'></island>",
     ) != null);
     // The error summary above the form is the island's job now, and the `|m|`
     // loop local inside it never becomes an id-less `rails:unmapped`.
@@ -13461,7 +13461,7 @@ test "write: a password_confirmation field makes a form sign-up under any contro
 
     const view = try readTarget(gpa, &tmp, "layouts/accounts/new.shtml");
     defer gpa.free(view);
-    try testing.expect(std.mem.indexOf(u8, view, ":props='{ .mode = \"signup\" }'") != null);
+    try testing.expect(std.mem.indexOf(u8, view, ":props='.{ .mode = \"signup\" }'") != null);
 }
 
 test "write: an unanswered current_user region scaffolds no AuthStatus" {
@@ -13824,8 +13824,8 @@ test "write: the auth scaffolds and two colliding form stems each get their own 
     defer gpa.free(signin);
     const signup = try readTarget(gpa, &tmp, "layouts/registrations/new.shtml");
     defer gpa.free(signup);
-    try testing.expect(std.mem.indexOf(u8, signin, "\" client:load :props='{ .mode = \"signin\" }'") != null);
-    try testing.expect(std.mem.indexOf(u8, signup, "\" client:load :props='{ .mode = \"signup\" }'") != null);
+    try testing.expect(std.mem.indexOf(u8, signin, "\" client:load :props='.{ .mode = \"signin\" }'") != null);
+    try testing.expect(std.mem.indexOf(u8, signup, "\" client:load :props='.{ .mode = \"signup\" }'") != null);
     try testing.expect(std.mem.indexOf(u8, signin, auth_form_island_path) != null);
     try testing.expect(std.mem.indexOf(u8, signup, auth_form_island_path) != null);
 }
@@ -15251,7 +15251,7 @@ test "realtime props keep topic and target distinct and clean every allocation f
     const gpa = testing.allocator;
     const props = try realtimeProps(gpa, "posts", "append", "post_list");
     defer gpa.free(props);
-    try testing.expectEqualStrings("{ .stream = \"posts\", .action = \"append\", .target = \"post_list\" }", props);
+    try testing.expectEqualStrings(".{ .stream = \"posts\", .action = \"append\", .target = \"post_list\" }", props);
 
     var fail_index: usize = 0;
     while (fail_index < 20) : (fail_index += 1) {

@@ -140,7 +140,7 @@ order, title, description.
 The generator:
 
 - emits **Ziggy** frontmatter with title, description, layout, and
-  `.custom = { .group = …, .order = … }`;
+  `.custom = .{ .group = …, .order = … }`;
 - strips the canonical file's "also published on the site" banner blockquote;
 - rewrites relative `.md` link *targets* (never link text) to site routes when
   the target is published, falling back to a GitHub blob/tree URL with a

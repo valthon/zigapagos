@@ -73,13 +73,13 @@ assert_no_cli_error() { # $1 = tag -- (H1)
 V1="$WORK/v1"
 mkdir -p "$V1/content" "$V1/layouts"
 cat >"$V1/zigapagos.ziggy" <<'EOF'
-Site {
+.site = .simple(.{
     .title = "V1",
     .host_url = "https://example.com",
     .content_dir_path = "content",
     .layouts_dir_path = "layouts",
     .assets_dir_path = "content",
-}
+})
 EOF
 cat >"$V1/layouts/index.shtml" <<'EOF'
 <!DOCTYPE html><html><body :html="$page.content()"></body></html>

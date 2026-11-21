@@ -14,15 +14,15 @@
 
     <island src="components/Hero.island.tsx" client:load prop-headline="$page.title"></island>
 
-    <island src="components/Flagged.island.tsx" client:load :props='{ .label = "hi" }'></island>
+    <island src="components/Flagged.island.tsx" client:load :props='.{ .label = "hi" }'></island>
 
-    <island src="components/Panel.island.tsx" client:load :props='{ .title = "Panel" }'>
+    <island src="components/Panel.island.tsx" client:load :props='.{ .title = "Panel" }'>
       <template slot="heading"><h2>Custom Heading</h2></template>
       <p>default body</p>
       <island src="components/Hero.island.tsx" client:load prop-headline="Nested"></island>
     </island>
 
-    <island src="components/Widget.island.tsx" client:load :props='{ .label = "Clicks" }'></island>
+    <island src="components/Widget.island.tsx" client:load :props='.{ .label = "Clicks" }'></island>
 
     <div :html="$page.content()"></div>
   </body>

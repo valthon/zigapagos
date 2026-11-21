@@ -322,10 +322,7 @@ fn addTest(
     const target = module.resolved_target.?;
     const optimize = module.optimize.?;
     if (imports.ziggy) {
-        const ziggy = b.dependency("ziggy", .{
-            .target = target,
-            .optimize = optimize,
-        }).module("ziggy");
+        const ziggy = deps.ziggyModule(b, target, optimize);
         module.addImport("ziggy", ziggy);
     }
     if (imports.supermd) {

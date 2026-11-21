@@ -2,7 +2,7 @@
 .title = "Tutorial",
 .description = "Build a small documentation site with a section, a shared layout, and two islands.",
 .layout = "docs.shtml",
-.custom = { .slug = "tutorial" },
+.custom = { "slug" : "tutorial" },
 ---
 
 This builds a small documentation site: a homepage, a guides section that lists
@@ -65,8 +65,8 @@ A directory becomes a section when it has an `index.smd`. Create
 ```
 ---
 .title = "Guides",
-.date = @date("2026-07-27T00:00:00"),
-.author = "You",
+.date = .date("2026-07-27T00:00:00"),
+.authors = ["You"],
 .layout = "guides.shtml",
 .draft = false,
 ---
@@ -95,7 +95,7 @@ text, rebuild, and it appears in the list. Nothing registers it — being in the
 directory is the registration.
 
 The same loop paginates. When the section outgrows one page, add
-`.pagination = { .page_size = 10 }` to the fields in `index.smd` and the build
+`.pagination = .{ .page_size = 10 }` to the fields in `index.smd` and the build
 renders the index once per window of ten subpages — `$page.subpages()` returns
 only the current window on those renders, so the layout above needs no edit.
 `$page.pagination?()` returns a `Paginator` with prev/next and numbered-page
@@ -133,7 +133,7 @@ Use it with `client:load` — hydrate as soon as the page's JavaScript runs:
 
 ```html
 <island src="components/Filter.island.tsx" client:load
-        :props='{ .items = ["deploying", "islands", "assets"] }'></island>
+        :props='.{ .items = ["deploying", "islands", "assets"] }'></island>
 ```
 
 ## 5. An island that can wait

@@ -1,5 +1,5 @@
-{
-    .owner = {
+.{
+    .owner = .{
         .name = "Jane Runner",
         .email = "jane@example.com",
     },

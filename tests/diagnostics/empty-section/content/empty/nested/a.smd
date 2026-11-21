@@ -1,0 +1,8 @@
+---
+.title = "Hidden nested A",
+.layout = "leaf.shtml",
+.date = .unix(600),
+.authors = ["hidden-author"],
+.tags = ["hidden-tag"],
+---
+Body.

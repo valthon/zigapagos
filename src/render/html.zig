@@ -465,7 +465,40 @@ fn renderDirective(
     const node = ev.node;
     const directive = node.getDirective() orelse return renderLink(ev, ctx, w);
     switch (directive.kind) {
-        .audio => return error.UnsupportedAudioDirective,
+        .audio => |snd| switch (ev.dir) {
+            .enter => {
+                const caption = node.firstChild();
+                if (caption != null) try w.writeAll("<figure>");
+                try w.writeAll("<audio");
+                if (directive.id) |id| try w.print(" id=\"{f}\"", .{HtmlSafe{ .bytes = id }});
+                if (directive.attrs) |attrs| {
+                    try w.writeAll(" class=\"");
+                    for (attrs) |attr| try w.print("{f} ", .{HtmlSafe{ .bytes = attr }});
+                    try w.writeAll("\"");
+                }
+                if (directive.title) |t| try w.print(" title=\"{f}\"", .{HtmlSafe{ .bytes = t }});
+                if (snd.loop) |val| if (val) try w.writeAll(" loop");
+                if (snd.autoplay) |val| if (val) try w.writeAll(" autoplay");
+                if (snd.muted) |val| if (val) try w.writeAll(" muted");
+                if (snd.hide_controls == null or !snd.hide_controls.?) {
+                    try w.writeAll(" controls");
+                }
+                try w.writeAll(">\n<source src=\"");
+                // Escape the resolved URL, including local filenames and prefixes.
+                var url: Writer.Allocating = .init(gpa);
+                defer url.deinit();
+                try printUrl(ctx, page, snd.src.?, &url.writer);
+                try w.print("{f}", .{HtmlSafe{ .bytes = url.written() }});
+                try w.writeAll("\">\n</audio>");
+                if (caption != null) try w.writeAll("\n<figcaption>");
+            },
+            .exit => {
+                const caption = node.firstChild();
+                if (caption != null) {
+                    try w.writeAll("</figcaption></figure>");
+                }
+            },
+        },
         .section, .block, .heading => {},
         .mathtex => |katek| switch (ev.dir) {
             .enter => {
