@@ -62,5 +62,7 @@ pub fn build(b: *std.Build) !void {
     // there too, not the next e2e run.
     check.dependOn(&rails_schema_exes.manifest_validate.step);
 
+    const schemas = @import("build/schema.zig").setup(b, check);
     try snapshot.setup(b, cfg.target, zigapagos_exe);
+    b.top_level_steps.get("test").?.step.dependOn(schemas);
 }

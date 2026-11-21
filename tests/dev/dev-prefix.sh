@@ -57,7 +57,7 @@ poll() { # deadline_secs cmd...
 }
 
 # --- build zigapagos ---------------------------------------------------------
-ZIGAPAGOS="$REPO/zig-out/bin/zigapagos"
+ZIGAPAGOS="${ZIGAPAGOS_BIN:-$REPO/zig-out/bin/zigapagos}"
 if [[ ! -x "$ZIGAPAGOS" ]]; then
   echo "building zigapagos (zig-out/bin/zigapagos missing)..."
   ( cd "$REPO" && mise exec -- zig build ) || fail "zig build failed"
@@ -146,7 +146,15 @@ origin_from_log() { grep -o 'serving at http://[0-9.]*:[0-9]*' "$1" | head -1 | 
 http_code() { curl -s -o /dev/null -w '%{http_code}' "$1"; }
 
 LOG="$WORK/dev.log"
-DEV_PID="$(launch_group "$SRC" "$LOG" "$ZIGAPAGOS" dev --site="$OUT" --port=0 --data-dir="$DATA" --watch-dir=components -- "${REBUILD[@]}")"
+PREFIX_ARGS=()
+case "${PREFIX_OVERRIDE_MODE:-}" in
+  equals) PREFIX_ARGS=(--url-path-prefix=docs/v2) ;;
+  separate) PREFIX_ARGS=(--url-path-prefix docs/v2) ;;
+esac
+if [[ ${#PREFIX_ARGS[@]} -gt 0 ]]; then
+  sed -i 's/"docs\/v2"/"configured"/' "$SRC/zigapagos.ziggy"
+fi
+DEV_PID="$(launch_group "$SRC" "$LOG" "$ZIGAPAGOS" dev "${PREFIX_ARGS[@]}" --site="$OUT" --port=0 --data-dir="$DATA" --watch-dir=components -- "${REBUILD[@]}")"
 poll 60 grep -q 'dev: ready' "$LOG" || { cat "$LOG"; fail "dev never became ready"; }
 ORIGIN="$(origin_from_log "$LOG")"
 [[ -n "$ORIGIN" ]] || { cat "$LOG"; fail "no origin parsed from the ready line"; }
@@ -197,7 +205,10 @@ echo "PASS: (c) GET / 404s by design; GET /docs/v2/ serves the built page"
 # with url_path_prefix "docs/v2" the module lives at /docs/v2/islands/<stem>.js.
 curl -sf "$ORIGIN/docs/v2/islands/Counter.island.js" | grep -q 'BUNDLE-V1' \
   || { cat "$LOG"; fail "island module URL /docs/v2/islands/Counter.island.js did not resolve"; }
-echo "PASS: (d) island module URL resolves under the staged prefix root"
+grep -q 'data-z-module="/docs/v2/islands/Counter.island.js"' "$OUT/index.html" \
+  || fail "built island URL did not use the session prefix"
+grep -q '__zigapagos' "$OUT/index.html" || fail "reload snippet missing"
+echo "PASS: (d) built island URL and served module share the prefix"
 
 # --- (e) a content edit refreshes the STAGED copy, not just site_abs ----------
 sleep 1.1

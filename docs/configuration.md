@@ -213,3 +213,14 @@ Both site types accept `.custom = { "brand": "Example" }`, available as
 `$site.custom.get('brand')`. `.supermd = .{ .auto_target_blank = false }`
 disables the default new tab behavior for external Markdown links. Omit it
 (or set true) to retain the existing behavior. Heading baselines are unchanged.
+
+The build's `schema-check` step checks the actual config document and page types
+against the shipped schemas; `zig build`, `zig build check` and `zig build test`
+include it. It checks field names and value types, including nested records.
+A slice may be required by the runtime even though the editor schema allows its
+omission (`locales` and CSP `sources`); the schema language cannot express that
+requirement. Sample-document validation remains a separate check.
+
+Dictionary keys decode string escapes in native data, custom fields, i18n and
+island props, matching `@z/site-data`. For example `{ "a\n": 1 }` has a newline
+in its key. Distinct spellings of the same decoded key are duplicate errors.

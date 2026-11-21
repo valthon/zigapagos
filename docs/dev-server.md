@@ -74,6 +74,15 @@ refresh rather than attempting to replay a possibly incomplete island delta.
 
 ## Sites with a `url_path_prefix`
 
+Override the configured prefix for one session with
+`zigapagos dev --url-path-prefix docs/v2` or
+`zigapagos dev --url-path-prefix=docs/v2`. An empty value clears it. The override
+applies to simple sites, follows the same normalized relative-path rules as the
+config field, and reaches every rebuild (including custom build scripts), the
+served root, readiness URL and island reload URLs. It does not edit the config.
+Custom scripts inherit `ZIGAPAGOS_URL_PATH_PREFIX`; scripts invoking
+`zigapagos release` apply it automatically.
+
 A site with `url_path_prefix` set in `zigapagos.ziggy` (the documented setup
 for a GitHub Pages *project* site, served from `https://user.github.io/repo/`
 rather than the domain root — this repo's own `site/zigapagos.ziggy` uses it)

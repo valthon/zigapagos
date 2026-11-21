@@ -101,7 +101,10 @@ fn releaseInner(
     // a client bundle would buy them nothing.
     const cli_spas: []root.SpaSpec = if (rt_defaults != null) cmd.spas else &.{};
 
-    const cfg, const base_dir_path = root.Config.load(io, gpa);
+    const loaded = root.Config.load(io, gpa);
+    var cfg = loaded[0];
+    const base_dir_path = loaded[1];
+    if (environ_map.get(url_path_prefix_env)) |prefix| applyUrlPathPrefix(&cfg, prefix);
 
     // Client bundles for every `--island=` and every CLI-built SPA, staged and
     // registered as build assets before `root.run` reaches its install phase —
@@ -1808,4 +1811,17 @@ test "parse CSS minification opt-in resolves bundled driver and Bun without app 
     applyDefaults(&custom, defaults);
     try std.testing.expect(!custom.css_minify);
     try std.testing.expectEqualStrings("custom.ts", custom.css_minify_driver.?);
+}
+
+/// Session override inherited by default rebuilds and custom build scripts.
+pub const url_path_prefix_env = "ZIGAPAGOS_URL_PATH_PREFIX";
+
+/// Caller-buffer: validate the session prefix and mutate only the in-memory config.
+pub fn applyUrlPathPrefix(cfg: *root.Config, prefix: []const u8) void {
+    if (root.validatePathMessage(prefix, .{ .empty = true })) |message|
+        fatal.usageError("error: --url-path-prefix '{s}': {s}\n", .{ prefix, message });
+    switch (cfg.*) {
+        .Site => |*site| site.url_path_prefix = prefix,
+        .Multilingual => fatal.usageError("error: --url-path-prefix requires a simple site\n", .{}),
+    }
 }

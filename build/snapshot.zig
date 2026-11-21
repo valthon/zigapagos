@@ -1,7 +1,7 @@
 //! The `test` step: snapshot testing. Each fixture directory under `tests/` is
 //! rendered, its stderr captured into `snapshot.txt` (and, for the rendering
 //! suites, its output tree into `snapshot/`), then the whole of `tests/` is
-//! staged and diffed — a non-empty diff fails the step.
+//! diffed against the index — a non-empty diff fails the step.
 
 const std = @import("std");
 
@@ -24,17 +24,15 @@ pub fn setup(
     const diff = b.addSystemCommand(&.{
         "git",
         "diff",
-        "--cached",
         "--exit-code",
     });
     diff.addDirectoryArg2(b.path("tests"), .{});
     diff.setName("git diff tests/");
     test_step.dependOn(&diff.step);
 
-    // We need to stage all of tests/ in order for untracked files to show up in
-    // the diff. It's also not a bad automatism since it avoids the problem of
-    // forgetting to stage new snapshot files.
-    const git_add = b.addSystemCommand(&.{ "git", "add" });
+    // Intent-to-add exposes new snapshots to the working-tree diff without
+    // staging their contents or removing existing index entries.
+    const git_add = b.addSystemCommand(&.{ "git", "add", "--intent-to-add", "--ignore-removal" });
     git_add.addDirectoryArg2(b.path("tests/"), .{});
     git_add.setName("git add tests/");
     diff.step.dependOn(&git_add.step);

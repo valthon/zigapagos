@@ -1,0 +1,10 @@
+$ = Containers
+struct Containers {
+    list: ?[]int,
+    dictionary: ?{:}int,
+    custom_list: ?[]int,
+    nested: ?Nested,
+}
+struct Nested {
+    label: bytes,
+}

@@ -120,6 +120,8 @@ pub const Command = struct {
     /// prefix-aware default" once `zigapagos.ziggy` is loaded, without
     /// changing that default or breaking the test.
     ready_path_explicit: bool,
+    /// Session override; null uses the config, empty clears its prefix.
+    url_path_prefix: ?[]const u8,
     /// Readiness budget in milliseconds (`--timeout-ms=`, default 120s).
     timeout_ms: u32,
     /// Listen host (`--host=`, default 127.0.0.1). Must be an IP literal —
@@ -169,6 +171,7 @@ pub const Command = struct {
         var zigbase_args: std.ArrayListUnmanaged([]const u8) = .empty;
         var ready_path: []const u8 = "/";
         var ready_path_explicit = false;
+        var url_path_prefix: ?[]const u8 = null;
         var timeout_ms: u32 = 120_000;
         var host: []const u8 = "127.0.0.1";
         var port: u16 = 1990;
@@ -193,6 +196,12 @@ pub const Command = struct {
                     "error: --site must not be empty\n",
                     .{},
                 );
+            } else if (std.mem.startsWith(u8, arg, "--url-path-prefix=")) {
+                url_path_prefix = arg["--url-path-prefix=".len..];
+            } else if (std.mem.eql(u8, arg, "--url-path-prefix")) {
+                idx += 1;
+                if (idx == args.len) fatal.usageError("error: --url-path-prefix requires a value\n", .{});
+                url_path_prefix = args[idx];
             } else if (std.mem.startsWith(u8, arg, "--data-dir=")) {
                 data_dir = arg["--data-dir=".len..];
                 if (data_dir.len == 0) fatal.usageError(
@@ -297,6 +306,7 @@ pub const Command = struct {
             .zigbase_args = owned_zigbase_args,
             .ready_path = ready_path,
             .ready_path_explicit = ready_path_explicit,
+            .url_path_prefix = url_path_prefix,
             .timeout_ms = timeout_ms,
             .host = host,
             .port = port,
@@ -316,7 +326,7 @@ pub const Command = struct {
         "                     [--no-download] [--zigbase-arg=ARG]...\n" ++
         "                     [--host=IP] [--port=N] [--ready-path=/…]\n" ++
         "                     [--timeout-ms=N] [--debounce=MS]\n" ++
-        "                     [--no-live-reload] [--reload-port=N]\n" ++
+        "                     [--no-live-reload] [--reload-port=N] [--url-path-prefix=PATH]\n" ++
         "                     [--background] [--force] [--ignore-lock]\n" ++
         "                     [--watch-dir=DIR]... [-- REBUILD-CMD [ARGS...]]\n" ++
         "\n" ++
@@ -427,7 +437,9 @@ pub fn dev(
     // Input discovery: assets, layouts, content and i18n + per-locale content,
     // anchored at the site root — plus the island/SPA source dirs, either given
     // as --watch-dir or discovered below.
-    const cfg, const base_dir_path = root.Config.load(io, gpa);
+    const loaded = root.Config.load(io, gpa);
+    var cfg = loaded[0];
+    const base_dir_path = loaded[1];
     var dirs_to_watch: std.ArrayListUnmanaged([:0]const u8) = .empty;
 
     // Incremental rebuild classification. The watcher itself
@@ -535,7 +547,11 @@ pub fn dev(
     // symlink can't stand in for the staged copy). Nested beside the
     // (persistent) zigbase data dir so it shares that dir's lifecycle;
     // `stageServedRoot` is a no-op when the prefix is "".
-    const url_path_prefix = cfg.getUrlPathPrefix();
+    const url_path_prefix = cmd.url_path_prefix orelse cfg.getUrlPathPrefix();
+    if (cmd.url_path_prefix) |prefix| {
+        release_cli.applyUrlPathPrefix(&cfg, prefix);
+        environ_map.put(release_cli.url_path_prefix_env, prefix) catch fatal.oom();
+    }
     const staging_root_abs = std.fs.path.join(gpa, &.{ data_dir_abs, ".served-root" }) catch fatal.oom();
     // Readiness probe path + banner URL: default to "/<prefix>/" so both
     // land on a page the staged root actually serves, unless the caller
@@ -2478,4 +2494,20 @@ test "dev rebuild: a stale capture file is never replayed when the capture canno
     defer if (result.error_tail) |t| gpa.free(t);
     try std.testing.expect(!result.ok);
     try std.testing.expect(result.error_tail == null);
+}
+
+test "dev parse: prefix override accepts both spellings and an empty prefix" {
+    const gpa = std.testing.allocator;
+    const absent = try Command.parse(gpa, &.{});
+    defer absent.deinit(gpa);
+    try std.testing.expectEqual(null, absent.url_path_prefix);
+    const equals = try Command.parse(gpa, &.{"--url-path-prefix=docs/v2"});
+    defer equals.deinit(gpa);
+    try std.testing.expectEqualStrings("docs/v2", equals.url_path_prefix.?);
+    const separate = try Command.parse(gpa, &.{ "--url-path-prefix", "docs/v2" });
+    defer separate.deinit(gpa);
+    try std.testing.expectEqualStrings("docs/v2", separate.url_path_prefix.?);
+    const empty = try Command.parse(gpa, &.{"--url-path-prefix="});
+    defer empty.deinit(gpa);
+    try std.testing.expectEqualStrings("", empty.url_path_prefix.?);
 }
