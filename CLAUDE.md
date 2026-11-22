@@ -140,8 +140,9 @@ canonical formatter's call, so take it rather than fighting it.
 ## Architecture
 
 A permanent fork of [Zine](https://zine-ssg.io) (fork point `ca8f3e5`, upstream `496e42d`
-v0.11.2; hand-synced through upstream v0.14.1 `6cacc90b` — `docs/ROADMAP.md` "Fork policy" lists
-what was deliberately not adopted) that adds islands architecture and native SPAs. Upstream files are kept close to
+v0.11.2; hand-synced through upstream v0.14.1 `6cacc90b`, tagged `upstream-zine-sync-2026-11-21` —
+`docs/ROADMAP.md` "Fork policy" lists what was deliberately not adopted and how sync tags work)
+that adds islands architecture and native SPAs. Upstream files are kept close to
 upstream where that costs nothing, because a release-tag sync is read by hand — but that is a
 mild preference, not a rule. **Fix the file that is actually wrong, inherited or not.** What is
 forbidden is paying daily complexity to avoid an inherited file: never add a generator, shim,
