@@ -3,11 +3,9 @@
 #   scripts/assert-version.sh         tag <-> build.zig.zon version
 #   scripts/extract-release-notes.sh  CHANGELOG.md section -> release body
 #
-# Both are exit-code gates that run exactly once per release — on a tag push,
-# where a false PASS publishes a wrong release and a false FAIL is only noticed
-# by whoever is tagging. They are never exercised by an ordinary CI run, so
-# without these tests their failure paths would first be executed for real
-# during a release. That is the same reasoning as
+# Both are exit-code gates in the release workflow, including its smoke runs.
+# A false PASS on a tag publishes a wrong release; these fixtures exercise the
+# failure paths before tagging. That is the same reasoning as
 # scripts/check-allocator-contracts.test.sh.
 #
 # WHY IT LIVES HERE AND NOT IN scripts/: CI discovers `tests/*/*.sh` by glob, so
@@ -131,6 +129,11 @@ expect ok "assert-version: package .version wins over a dependency's" \
 expect fail "assert-version: a dependency's .version is not accepted" \
   "$d/scripts/assert-version.sh" 9.9.9
 
+# A head pipeline can SIGPIPE its producer on a large manifest under pipefail.
+awk 'BEGIN { for (i = 0; i < 10000; i++) print ".version = \"9.9.9\"," }' >> "$d/build.zig.zon"
+expect ok "assert-version: many dependency versions do not break the first match" \
+  "$d/scripts/assert-version.sh" 1.2.3
+
 # A .zon with no .version at all must fail loudly rather than compare "" == "".
 d="$(fixture zon-missing)"
 printf '.{ .name = .zigapagos }\n' >"$d/build.zig.zon"
@@ -229,6 +232,11 @@ cat >"$d/CHANGELOG.md" <<'MD'
 MD
 expect fail "extract: an empty section fails" "$d/scripts/extract-release-notes.sh" 0.3.0
 contains "extract: says the section is empty" "is empty"
+
+printf '## [0.3.0]\n\n \t\r\v\f\n\n' > "$d/CHANGELOG.md"
+expect fail "extract: an all-whitespace section fails" "$d/scripts/extract-release-notes.sh" --check 0.3.0
+contains "extract: whitespace-only section keeps the empty diagnostic" \
+  "::error::the '## [0.3.0]' section in CHANGELOG.md is empty"
 
 # A missing CHANGELOG.md must be a clear error, not an empty body.
 d="$(fixture changelog-absent)"

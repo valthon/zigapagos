@@ -27,6 +27,8 @@ on:
       - 'build.zig.zon'
       - 'scripts/assert-version.sh'
       - 'scripts/extract-release-notes.sh'
+      # A changelog-only edit can remove or empty the manifest version's section.
+      - 'CHANGELOG.md'
       # The npm packages are cut from this workflow's own archives, so a change to
       # either side belongs on the same smoke path. tests/npm/ is here rather than
       # only in ci.yml because the version of it that matters runs against the real
@@ -46,6 +48,9 @@ concurrency:
 
 jobs:
   build:
+    # Five measured runs took 532–1317s; allow just over twice the slowest
+    # build for cold caches/runner variance, while bounding a stalled job.
+    timeout-minutes: 45
     # One runner per target. This used to be a single ubuntu job cross-compiling
     # the whole matrix, which is fine for Zig itself but has three costs: a
     # macOS-only breakage cannot be distinguished from a Linux one in the log,
@@ -88,13 +93,17 @@ jobs:
         with:
           fetch-depth: 0
 
-      # This is the release tag-versus-manifest guard, before compilation.
-      # The configure phase never reads tags or launches Git.
+      # Exercise the same pre-toolchain scripts on every native runner before
+      # tagging too. Smoke runs validate the manifest's already-assembled notes.
       - name: Check tag against build.zig.zon and CHANGELOG.md
-        if: github.event_name == 'push'
+        timeout-minutes: 1
         run: |
-          scripts/assert-version.sh "$GITHUB_REF_NAME"
-          scripts/extract-release-notes.sh --check "$GITHUB_REF_NAME"
+          version="$GITHUB_REF_NAME"
+          if [ "$GITHUB_EVENT_NAME" != push ]; then
+            version="$(scripts/assert-version.sh --print)"
+          fi
+          scripts/assert-version.sh "$version"
+          scripts/extract-release-notes.sh --check "$version"
 
       - name: Setup toolchain (zig + bun via mise)
         uses: jdx/mise-action@v5

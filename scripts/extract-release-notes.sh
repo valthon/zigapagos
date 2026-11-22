@@ -80,7 +80,10 @@ notes="$(
 # with no body at all, so reject it here rather than discovering it on the
 # release page.
 notes="$(printf '%s\n' "$notes" | sed -e '/./,$!d')"
-if [ -z "${notes//[[:space:]]/}" ]; then
+# Bash 3.2's global character-class substitution becomes prohibitively slow on
+# long release sections. Scan once in awk, draining stdin even after a match so
+# printf cannot get SIGPIPE under pipefail.
+if ! printf '%s\n' "$notes" | awk '/[^[:space:]]/ { nonblank = 1 } END { exit !nonblank }'; then
   echo "::error::the '## [$version]' section in $changelog is empty" >&2
   exit 1
 fi

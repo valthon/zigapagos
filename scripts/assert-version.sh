@@ -11,12 +11,20 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# `.version = "x.y.z"` in build.zig.zon. `head -1` guards against a future
+# `.version = "x.y.z"` in build.zig.zon. Taking the first match guards against a future
 # dependency block growing its own `.version` field: the package's own version
 # is declared before `.dependencies`, so the first match is the right one.
 zon_version() {
   local v
-  v="$(grep -oE '\.version = "[^"]+"' build.zig.zon | head -1 | cut -d'"' -f2)"
+  # Stop at the first match without an early-closing pipeline: many dependency
+  # versions could otherwise SIGPIPE grep and fail the script under pipefail.
+  v="$(awk 'match($0, /\.version = "[^"]+"/) {
+    v = substr($0, RSTART, RLENGTH)
+    sub(/^[^"]*"/, "", v)
+    sub(/"$/, "", v)
+    print v
+    exit
+  }' build.zig.zon)"
   if [ -z "$v" ]; then
     echo "::error::could not parse .version from build.zig.zon" >&2
     exit 1
