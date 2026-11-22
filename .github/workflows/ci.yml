@@ -28,9 +28,9 @@ permissions:
 #
 # So the job is split along that measured seam, not an aesthetic one: the two
 # multi-minute e2e scripts each get their own runner, the remaining ten share a
-# third, and the build/unit surface stops waiting behind them. Nothing is gained
-# by splitting further: with the consumer build API retired, no job in this
-# workflow compiles zigapagos more than once.
+# third, and the build/unit surface stops waiting behind them. The later split
+# below uses the 2026-11-21 measurements: compile guards start independently
+# and the remaining shell scripts share two runners.
 #
 # Every gate the monolith ran still runs, exactly once per run; each job below
 # notes which steps it inherited.
@@ -79,11 +79,11 @@ jobs:
           bash scripts/check-allocator-contracts.sh
 
   # The compiler-facing surface: formatting, the snapshot diff, the
-  # single-threaded compile guard, all twenty Zig unit-test steps, the Bun
-  # suite, and the API contract-drift gate. This is the only matrixed job —
-  # everything below it is Linux-only, exactly as it was in the monolith.
-  # Compile the generator ONCE per platform, and write the cache every other
-  # job reads.
+  # all twenty Zig unit-test steps, the Bun
+  # suite, and the API contract-drift gate. Compiler jobs retain the OS matrix;
+  # consumer jobs are Linux-only, exactly as they were in the monolith.
+  # Compile the reusable generator ONCE per platform, and write the cache
+  # consumers read. Independent compile guards restore prior-run objects.
   #
   # Before this job existed, all four Zig jobs compiled the same tree
   # independently. The cache they shared was saved immediately after
@@ -93,7 +93,7 @@ jobs:
   # languages, plus a ~58s ReleaseFast link, repeated per job. For comparison
   # the site's own build work (Bun bundles + host config) is 0.69s.
   #
-  # Everything downstream `needs:` this job purely for the cache it leaves
+  # Binary consumers `needs:` this job for the artifact and cache it leaves
   # behind. Zig's cache is content-addressed, so a consumer does not need the
   # exact key: a fallback hit on the `zig-build-<os>-<ver>-` prefix still reuses
   # every object whose inputs are unchanged, which for a typical src/ edit is
@@ -251,6 +251,99 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
+  # Start at push time beside build-binary: these checks need no artifact.
+  # Measured checks: Windows 130s + single-threaded 45s + highlight-off 17s
+  # = 192s (2026-11-21). Projection with the old 70s fetch: ~262s plus setup
+  # and variant runtime assertions. Cost: they no longer reuse build-test's
+  # warm objects; a cold cache may require extra compilation on this runner.
+  compile-checks:
+    name: Compile checks (${{ matrix.os }})
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: >-
+          ${{ github.event_name == 'pull_request'
+              && fromJSON('["ubuntu-latest"]')
+              || fromJSON('["ubuntu-latest", "macos-latest"]') }}
+    runs-on: ${{ matrix.os }}
+    env:
+      ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup toolchain (mise — zig 0.17.1 + bun 1.4.4)
+        uses: jdx/mise-action@v5
+        with:
+          cache: true
+
+      # Same shim pinning as build-test; variant runtime assertions use their
+      # own binaries and require no downloaded artifact or runtime node_modules.
+      - name: Pin tool versions globally (shims must resolve outside the repo)
+        run: mise use -g zig@0.17.1 bun@1.4.4
+
+      - name: Get Zig version
+        id: zig-version
+        run: echo "version=$(zig version)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Zig cache (compiled objects, then packages)
+        id: zig-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ github.workspace }}/.zig-global-cache
+          key: zig-build-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-${{ hashFiles('build.zig', 'build.zig.zon', 'build/**', 'src/**') }}
+          restore-keys: |
+            zig-build-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-
+            zig-pkg-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-
+
+      - name: Fetch dependencies (with retries)
+        run: |
+          for i in 1 2 3; do
+            if zig build --fetch=all; then
+              exit 0
+            fi
+            echo "::warning::zig build --fetch=all attempt $i failed; retrying in 20s..."
+            sleep 20
+          done
+          echo "::error::all dependency fetch attempts failed"
+          exit 1
+
+      # Single-threaded guard: the single-threaded-only code paths are comptime-pruned
+      # from the default build, so compile them explicitly. `check` compiles the
+      # exe AND every unit-test binary (test decls are only analyzed in a test
+      # compilation — an exe-only check would miss single-threaded rot in
+      # test-only code, e.g. a test calling std.Thread.spawn) without running
+      # anything. The runtime assertions below build their own variant binaries;
+      # neither consumes build-binary's artifact.
+      - name: Check highlighting-disabled build (exe + all test binaries)
+        run: |
+          zig build check -Dhighlight=false
+          zig build -Dhighlight=false --prefix zig-out/no-highlight
+          ZIGAPAGOS_BIN="$PWD/zig-out/no-highlight/bin/zigapagos" bash tests/rendering/highlight-off.sh --highlight-off
+
+      - name: Check single-threaded build (exe + all test binaries)
+        run: zig build check -Dsingle-threaded
+
+      - name: Cross-compile Windows
+        if: runner.os == 'Linux'
+        run: zig build check -Dtarget=x86_64-windows
+
+      # Measured 94s in the shell shard on 2026-11-22 (e1d95cb1).
+      # `check` above already compiles the six host schema fixture checkers.
+      # Even adding all 94s projects this job's end from 428s to 522s after
+      # push, below dev-loop's 664s. build-test would end at 657 + 94 = 751s.
+      - name: Structural schema agreement mutations
+        if: runner.os == 'Linux'
+        run: bash tests/schema/structural-agreement.sh
+
+      # Execute DebugAllocator cleanup too: compile-only checks cannot catch an
+      # arena suballocation accidentally freed through the backing allocator.
+      - name: Site-data ownership with single-threaded Debug allocator
+        run: |
+          zig build -Dsingle-threaded --prefix zig-out/single-threaded
+          ZIGAPAGOS_BIN="$PWD/zig-out/single-threaded/bin/zigapagos" bash tests/rendering/site-data-ownership.sh
+
+
   build-test:
     needs: build-binary
     name: Build + unit tests (${{ matrix.os }})
@@ -261,7 +354,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Windows cross-compiles on ubuntu below. A native windows-latest
+        # Windows cross-compiles in compile-checks. A native windows-latest
         # runner is a separate validation step (docs/ROADMAP.md).
         os: >-
           ${{ github.event_name == 'pull_request'
@@ -415,32 +508,12 @@ jobs:
       - name: Snapshot gate leaves the index alone (tests/meta/snapshot-index.sh)
         run: bash tests/meta/snapshot-index.sh
 
-      # Single-threaded guard: the single-threaded-only code paths are comptime-pruned
-      # from the default build, so compile them explicitly. `check` compiles the
-      # exe AND every unit-test binary (test decls are only analyzed in a test
-      # compilation — an exe-only check would miss single-threaded rot in
-      # test-only code, e.g. a test calling std.Thread.spawn) without running
-      # anything, so no bun/network is needed; the dep objects are already warm
-      # from the build above.
-      - name: Check highlighting-disabled build (exe + all test binaries)
-        run: |
-          zig build check -Dhighlight=false
-          zig build -Dhighlight=false --prefix zig-out/no-highlight
-          ZIGAPAGOS_BIN="$PWD/zig-out/no-highlight/bin/zigapagos" bash tests/rendering/highlight-off.sh --highlight-off
-
-      - name: Check single-threaded build (exe + all test binaries)
-        run: zig build check -Dsingle-threaded
-
-      - name: Cross-compile Windows
+      # Measured 93s in e2e-rest (2026-11-21), where docs-reference caused a
+      # compile. Reuse this compiling job instead. Projection: 468 - 192 + 93
+      # = 369s here, ending at 361 + 369 = 730s even without any cache savings.
+      - name: Scripty reference drift and coverage
         if: runner.os == 'Linux'
-        run: zig build check -Dtarget=x86_64-windows
-
-      # Execute DebugAllocator cleanup too: compile-only checks cannot catch an
-      # arena suballocation accidentally freed through the backing allocator.
-      - name: Site-data ownership with single-threaded Debug allocator
-        run: |
-          zig build -Dsingle-threaded --prefix zig-out/single-threaded
-          ZIGAPAGOS_BIN="$PWD/zig-out/single-threaded/bin/zigapagos" bash tests/rendering/site-data-ownership.sh
+        run: bash tests/meta/scripty-reference.sh
 
       # --- Full test surface (issue AUD-019) ---
       # The fork's differentiating surface — the island pass, SPA prerender, the
@@ -1062,15 +1135,12 @@ jobs:
         working-directory: runtime
         run: bun install --frozen-lockfile
 
-      # Runs BEFORE dev.sh, and `continue-on-error` so dev.sh still runs and both
-      # verdicts land in one run. This is the same build dev shells out for on
+      # Runs BEFORE dev.sh. This is the same build dev shells out for on
       # the zero-config leg, with dev removed: if it crashes here the fault is in
       # `release`, and if it passes while dev.sh fails the fault is in how dev
-      # spawns or supervises the child. The script also lives in the e2e-rest
-      # shard, but that job has been wedging on this repo for hours at a time,
-      # and this answer is needed from a job that reliably finishes.
+      # spawns or supervises the child. This job owns the script; e2e-rest
+      # excludes it so it runs exactly once and its failure gates CI here.
       - name: tests/release/zero-config-release.sh (probe — see #108 SIGILL)
-        continue-on-error: true
         run: |
           script=tests/release/zero-config-release.sh
           if [[ ! -f "$script" ]]; then
@@ -1177,20 +1247,24 @@ jobs:
             exit 1
           fi
 
-  # The other ten scripts: ~49s of the old 16m06s between them. Discovered by
-  # glob and filtered by exclusion, so a script added under tests/<area>/
-  # tomorrow runs here with no edit to this file.
+  # Self-maintaining remainder: deterministic weighted shards, with each new
+  # tests/<area>/*.sh assigned once without a workflow edit.
   e2e-rest:
     needs: build-binary
-    name: Shell e2e — everything else
-    # Measured 2026-11-21: 333s on main (105 scripts, 254s of script time).
-    # With the upstream v0.14.1 sync the glob holds 126 scripts and a run of
-    # 124 of them took 706s (678s of script time, on a cold Zig cache), 195s
-    # of it in tests/meta/snapshot-index.sh, which now runs in the build job
-    # instead. That leaves about 510s for 123 scripts, so the old 8-minute
-    # limit no longer fits; fifteen minutes does, and still ends a hang, which
-    # otherwise sits for 15-45min.
-    timeout-minutes: 15
+    name: Shell e2e — everything else (${{ matrix.shard }}/2)
+    # Measured 2026-11-22 (e1d95cb1): 162 + 320 = 482s script time.
+    # Move 94s schema compilation to compile-checks and deduplicate the dev-loop
+    # probe. Weighted remainder is ~386s, ~193s per shard. Projection using
+    # observed overheads 181 - 162 = 19s and 437 - 320 = 117s: ~212s / ~310s
+    # job durations, ending ~620s / ~718s after push (start ~408s). The second
+    # overhead may shrink without schema compilation; do not assume it will.
+    # Eight minutes leaves
+    # headroom for imbalance, new scripts and slow setup, while bounding hangs.
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     runs-on: ubuntu-latest
     env:
       ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
@@ -1198,12 +1272,15 @@ jobs:
       # measurement that says it buys nothing.
       # Scripts that another job runs: the first two have a DEDICATED job above,
       # and tests/meta/snapshot-index.sh is a step of the build job, where the
-      # snapshot suite it needs is already compiled. Kept as an exclusion list
+      # snapshot suite it needs is already compiled. scripty-reference also
+      # runs in build-test so docs-reference compiles there. Schema mutations
+      # reuse compile-checks; the release probe runs in dev-loop. Kept as an exclusion list
       # rather than an inclusion list so the glob below stays self-maintaining:
       # forget to list a newly added script and it still runs here. The only way
       # to lose coverage is to delete or rename one of these, which the
       # existence check in the step below catches.
-      SHARDED_OUT: tests/init/from-astro.sh tests/dev/dev.sh tests/meta/snapshot-index.sh
+      SHARDED_OUT: tests/init/from-astro.sh tests/dev/dev.sh tests/meta/snapshot-index.sh tests/meta/scripty-reference.sh tests/schema/structural-agreement.sh tests/release/zero-config-release.sh
+      E2E_SHARD: ${{ matrix.shard }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -1276,39 +1353,17 @@ jobs:
 
       - name: Shell e2e — config, init, islands, rendering, serve, spa (hermetic)
         run: |
-          shopt -s nullglob
-          discovered=(tests/*/*.sh)
-          if [[ ${#discovered[@]} -eq 0 ]]; then
-            echo "::error::no tests/*/*.sh found — the glob or the layout changed"
-            exit 1
-          fi
-
-          # A renamed or deleted dedicated script must not silently vanish from
-          # the suite. Its own job would fail — but only while it is still named
-          # there — so assert the two lists agree from this side as well.
-          for sharded in $SHARDED_OUT; do
-            if [[ ! -f "$sharded" ]]; then
-              echo "::error::$sharded is listed as sharded-out but does not exist — update this list and its dedicated job together"
-              exit 1
-            fi
-          done
-
-          scripts=()
-          for script in "${discovered[@]}"; do
-            case " $SHARDED_OUT " in
-              *" $script "*) continue ;;
-            esac
-            scripts+=("$script")
-          done
-          if [[ ${#scripts[@]} -eq 0 ]]; then
-            echo "::error::every discovered script was excluded — the shard split is wrong"
-            exit 1
-          fi
+          # The selector validates discovery, exclusions and BOTH nonempty
+          # partitions on each runner. Capture first so a selector failure cannot
+          # be hidden by process substitution / mapfile's exit status.
+          selected=$(python3 .github/scripts/e2e-rest-shards.py "$E2E_SHARD")
+          mapfile -t scripts <<< "$selected"
 
           echo "running ${#scripts[@]} shell e2e script(s)"
           failed=()
           for script in "${scripts[@]}"; do
             echo "::group::$script"
+            started=$SECONDS
             if bash "$script"; then
               echo "::endgroup::"
             else
@@ -1317,6 +1372,7 @@ jobs:
               echo "::error file=$script::$script failed (exit $rc)"
               failed+=("$script")
             fi
+            python3 .github/scripts/e2e-rest-shards.py --duration "$script" "$((SECONDS - started))"
           done
           if [[ ${#failed[@]} -gt 0 ]]; then
             echo "::error::${#failed[@]} script(s) failed: ${failed[*]}"
