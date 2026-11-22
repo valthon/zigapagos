@@ -93,9 +93,23 @@ there. A runtime `return error.SkipZigTest` does **not** help — Zig analyses t
 body regardless of runtime control flow — so prune the branch at comptime:
 `if (comptime !builtin.single_threaded) …`.
 
-**Shell e2e.** CI runs every `tests/*/*.sh` (currently 126). They are hermetic; `tests/dev/*`
+**Shell e2e.** CI runs every `tests/*/*.sh`. They are hermetic; `tests/dev/*`
 boot real servers via a stub-zigbase binary and need `bun` on `PATH`. A new `tests/<area>/` is
-picked up by the glob automatically. `tests/branding.sh`, `tests/branding.test.sh` and
+picked up by the glob automatically. The `e2e-rest` matrix partitions the remainder
+with `.github/scripts/e2e-rest-shards.py`: deterministic weighted assignment using
+measured outliers and the long-tail mean. Both runners validate exclusions and
+nonempty partitions. Each runner times every script and warns when a script without
+an explicit weight takes at least 7 seconds (the smallest measured outlier). A warning
+allows the first push to supply a CI measurement without failing otherwise passing tests.
+Contributors seeing it must add the script's observed CI seconds to `MEASURED_SECONDS`
+in `.github/scripts/e2e-rest-shards.py` and run `bash tests/meta/e2e-rest-shards.sh`;
+new scripts below 7 seconds need no entry. Keep the measurement assertions in that
+self-test in sync when refreshing existing weights. `tests/meta/snapshot-index.sh` and
+`tests/meta/scripty-reference.sh` run in `build-test` to reuse compilation; the
+schema mutations (`tests/schema/structural-agreement.sh`), single-threaded and
+highlight-off variant assertions run in `compile-checks`. The release zero-config
+probe runs only in `e2e-dev-loop`. These scripts are excluded from the shards.
+`tests/branding.sh`, `tests/branding.test.sh` and
 `tests/confidentiality.sh` sit at `tests/` top level on purpose — they are cheap gates CI runs
 early, outside that glob, and are therefore named explicitly in `ci.yml`'s `gates` job.
 

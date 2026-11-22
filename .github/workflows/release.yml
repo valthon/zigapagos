@@ -79,6 +79,8 @@ jobs:
             runner: macos-latest
             archive: aarch64-macos.zip
     runs-on: ${{ matrix.runner }}
+    env:
+      ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
     steps:
       # Keep release history available for changelog tooling.
       - name: Checkout
@@ -97,6 +99,21 @@ jobs:
       - name: Setup toolchain (zig + bun via mise)
         uses: jdx/mise-action@v5
 
+
+      - name: Get Zig version
+        id: zig-version
+        run: echo "version=$(zig version)" >> "$GITHUB_OUTPUT"
+
+      # Like ci.yml, key packages by OS, Zig version and manifests; use a
+      # release-only namespace and restore/save ONLY p/, so no compiled objects
+      # enter release builds. Exact manifest key only, with no fallback:
+      # tags changing build.zig.zon must fetch their own content-addressed inputs.
+      - name: Restore Zig package cache
+        id: zig-packages
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ github.workspace }}/.zig-global-cache/p
+          key: zig-release-pkg-${{ runner.os }}-${{ steps.zig-version.outputs.version }}-${{ hashFiles('**/build.zig.zon') }}
 
       - name: Fetch dependencies
         shell: bash
@@ -120,6 +137,16 @@ jobs:
             fi
             sleep $((attempt * 10))
           done
+
+      # Save before compilation, including on a first release-only manifest.
+      # Another target may win the immutable-key reservation.
+      - name: Save Zig package cache
+        if: steps.zig-packages.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ github.workspace }}/.zig-global-cache/p
+          key: ${{ steps.zig-packages.outputs.cache-primary-key }}
 
       - name: Build ${{ matrix.target }}
         run: zig build release -Drelease-target=${{ matrix.target }} -Dcommit=${{ github.sha }}
