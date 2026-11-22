@@ -220,9 +220,18 @@ Policy:
 - **Sync at upstream release tags only** — never track upstream main/nightly.
   Each sync is a deliberate merge with its own branch, test pass, and review.
 - **Synced through upstream v0.14.1** (`6cacc90b`), by hand: every non-merge
-  upstream commit from the fork point (v0.11.2) to that tag was read against
-  this tree and its behaviour ported into our code, not merged as a patch. The
-  next sync starts from v0.14.1.
+  upstream commit from the fork point (v0.11.2) to that release was read
+  against this tree and its behaviour ported into our code, not merged as a
+  patch. The next sync starts from there.
+- **Each sync is recorded by a tag on the upstream commit it reached**,
+  `upstream-zine-sync-YYYY-MM-DD`, because a hand sync leaves no merge commit: <!-- branding-ok: the tag is named for the upstream project it tracks -->
+  `main`'s ancestry does not contain that commit. The newest such tag is the
+  current sync point (`upstream-zine-sync-2026-11-21` today, beside <!-- branding-ok: the tag is named for the upstream project it tracks -->
+  `fork-point-zine-v0-11-2`), and what is still unprocessed is <!-- branding-ok: the tag is named for the upstream release it marks -->
+  `git log <newest sync tag>..upstream/main`. A sync ends by pushing its tag.
+  The upstream project's own release tags are not kept in this repository or
+  in clones of it (fetch `upstream` without tags), since they collide with
+  ours; refer to an upstream release by its commit.
 - **Deliberately not adopted from that range**, so the next sync does not
   re-litigate them:
   - the site-versus-binary version check and its config field — the config's
