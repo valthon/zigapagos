@@ -17,6 +17,11 @@ services. Keep that integration deliberate and independently buildable. Migratio
 remains a supported entry path, with Astro as its reference; adapter breadth is
 secondary to the quality of the resulting application.
 
+Released baseline: **0.6.0**, built with Zig 0.17.1 and paired with ZigBase
+0.14.0 for dev/e2e. Existing sites need the
+[Ziggy 0.3.0 upgrade](migration/ziggy-0.3.md), including schema installation.
+Completed items below ship in 0.6.0 or earlier.
+
 Unchecked work below is planned or partial, not a delivery commitment. The
 subsystem references describe current behavior: [islands](islands.md),
 [SPAs](spa.md), [assets](assets.md), and [cross-tier codegen](cross-tier-codegen.md).

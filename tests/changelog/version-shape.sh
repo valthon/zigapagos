@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 fail() { echo "FAIL: $*" >&2; exit 1; }
 preamble="$(awk 'NR > 1 && /^## / { exit } { print }' CHANGELOG.md)"
-for required in 'zigapagos 0.5.0' 'commit:      e1d7033abcde' 'build:       fast' \
+for required in "zigapagos $(bash scripts/assert-version.sh --print)" 'commit:      e1d7033abcde' 'build:       fast' \
                 'target:      x86_64-linux-musl' 'zig:         0.17.1' \
                 '-Dcommit=<sha>' 'unknown' 'version+commit'; do
   grep -qF -- "$required" <<< "$preamble" || fail "missing documentation: $required"

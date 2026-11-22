@@ -16,6 +16,15 @@ system. Work directly or with an agent; the same APIs and local tools support bo
 The [application guide]($link.page("docs/building-apps")) covers styling,
 frontend-only deployment, and optional ZigBase pairing.
 
+## Upgrading to 0.6.0
+
+Source builds use Zig 0.17.1; dev/e2e uses ZigBase 0.14.0. Every existing site
+needs the Ziggy 0.3.0 config and frontmatter upgrade. From a Zigapagos checkout,
+run `python3 scripts/upgrade-ziggy.py <site>`, then run
+`zigapagos install-schemas` in the site. Finish the manual steps in the
+[migration guide](https://github.com/valthon/zigapagos/blob/main/docs/migration/ziggy-0.3.md) and review the
+[changelog]($link.page("docs/changelog")) before building.
+
 ## The three inputs
 
 A Zigapagos project has three kinds of source file, and each is handled by a

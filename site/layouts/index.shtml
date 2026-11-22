@@ -3,7 +3,7 @@
 <main id="main">
 
   <section id="s-hero" class="hero wrap">
-    <p class="kicker">zigapagos</p>
+    <p class="kicker">zigapagos 0.6.0</p>
     <h1>Rich interfaces.<br>Simple output.</h1>
     <p class="lede">
       Build with HTML, CSS, and TSX. Zigapagos turns pages, interactive components,

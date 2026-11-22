@@ -21,7 +21,7 @@ Two things to know before reading it:
   scheme as ZigBase, independently of release tags:
 
   ```text
-  zigapagos 0.5.0
+  zigapagos 0.6.0
   commit:      e1d7033abcde
   build:       fast
   target:      x86_64-linux-musl
@@ -46,6 +46,263 @@ into a new version section at release time. That is the whole point: two pull
 requests each adding their own fragment merge cleanly, whereas two pull requests
 each appending a bullet to this block collide on the same lines. To see what is
 queued for the next release, read `changelog.d/`.
+
+## [0.6.0] - 2026-11-22
+
+**Toolchain and upgrade requirements**
+
+- Building zigapagos now requires Zig 0.17.1. Dependency pins and authored source
+  use its APIs; Wuffs and macOS headers are translated at build time.
+- The prebuilt ZigBase pin is v0.14.0 (built with Zig 0.17.1).
+
+**Breaking upgrades from 0.5.0**
+
+- **Pre-1.0 breaking changes — Ziggy 0.3.0:** configs now use `.site = .simple(.{ ... })` or `.multilingual(.{ ... })`; run `python3 scripts/upgrade-ziggy.py <site>`, then run `zigapagos install-schemas` in that site. See [the migration guide](docs/migration/ziggy-0.3.md) for the manual steps the converter leaves. The config keeps its name and existing fork settings. No version field is required.
+- **Pre-1.0 breaking change:** frontmatter dates use `.date("...")` or `.unix(seconds)`, records use `.{ ... }`, pagination styles use enum literals such as `.plain_dir`, and dictionaries use `{ "key": value }`. Run the converter for config/data/frontmatter, then update inline Ziggy in templates, scripts and body examples manually.
+- **Pre-1.0 breaking change:** `.author` becomes optional `.authors = ["Name"]`. Run the converter and change templates to `$page.authors.join(', ')` or an authors loop. Omitted authors default to `[]`; omitted dates still default to the epoch.
+- **Pre-1.0 breaking change:** Ziggy rejects carriage returns and most control bytes. The converter changes config/data and frontmatter CRLF to LF, preserving all body bytes. Remove other invalid controls manually.
+- **Pre-1.0 breaking change:** the root editor schema is replaced by the binary's shipped schemas. Run `zigapagos install-schemas` after upgrading; `init` creates them. Scripty array types are now written `[]String`; builtin signatures are unchanged except that `Array.first?()` and `Array.last?()` now correctly declare optional returns (`?any`), matching their existing runtime results.
+- **Pre-1.0 breaking change:** removed the ineffective `skip_subdirs` frontmatter field and template property. Delete it from frontmatter; use `forbid_subsections = true` on terminal section indexes when child pages should be leaves. Remaining uses fail with a migration diagnostic.
+- **Pre-1.0 breaking change:** overlapping `static_assets` entries now fail builds.
+  Remove repeated files or narrow overlapping directories and globs. Paths that
+  escape the assets directory lexically are rejected. Broken symlinks, directory symlinks and non-files are rejected.
+- **Pre-1.0 breaking change:** an empty section index now suppresses its descendants. To publish those pages,
+  give the section's `index.smd` valid `title` and `layout` frontmatter.
+- **Pre-1.0 breaking change:** invalid dates now report `ZP_INVALID_DATE` instead of `ZP_FRONTMATTER_PARSE`.
+  Update tooling that matches the diagnostic code.
+- **Pre-1.0 breaking change:** duplicate Ziggy dictionary keys now fail, including differently escaped spellings of the same decoded key. Choose one value per decoded key and remove duplicates manually.
+- **Pre-1.0 breaking change:** `zigapagos version` now prints the manifest version
+  and separate commit/build/target/Zig metadata, matching ZigBase for consistency
+  and clarity. Tag-derived stamps are retired; migration manifests carry
+  `version+commit`. CI/release can inject the commit with `-Dcommit=<sha>`. Update consumers of the old version stamp to read the version and commit separately.
+- **Pre-1.0 breaking change:** adopt SuperMD's dialect with one deliberate
+  relaxation for the title-in-frontmatter idiom every existing page uses:
+  (a) keep accepting `##` (or `###`, etc) at the top of a document. If the first
+  header is not level 1, the level of that header is considered the new baseline,
+  so we still enforce no skipping levels and also never allow a H1 in a doc that
+  starts with an H2; (b) inline HTML is forbidden — use `=html` fences for HTML
+  output or code spans for literal tags; (c) `[x](#)` is rejected — supply a real
+  anchor target; (d) all text in a `$section`/`$block` heading must be inside its
+  link. Raw HTML blocks remain forbidden as well.
+- Island props checking now fails builds by default. Use `--island-props-check=warn|off` explicitly to relax it.
+- Components without a `client:*` directive render server-only; deferred island modules are fetched when their trigger fires. Add an explicit `client:*` directive to components that need browser hydration.
+- Remove `SuspenseList` from `@z/runtime/compat` and the shared browser bundle,
+  matching its removal in Preact 11. Callers must remove those imports; ordinary
+  `Suspense` remains available.
+
+### Added
+
+- `init --app` scaffolds a browser-local task application with plain CSS,
+  client-side navigation, accessible form validation, and loading/empty/error
+  states. Generated project commands handle explicit local runtime linkage;
+  fresh-install, type, release, and Chrome checks cover the scaffold. Browser
+  storage is clearly documented as a demo rather than shared server persistence.
+- Audio directives with captions, playback attributes, local/build/remote sources and fingerprinted site assets. CSP extra sources accept `media-src`; deployment checks and Rails parity recognize audio content types.
+- `console` highlighting for fenced blocks and code directives, with escaped prompt, command and output text.
+- `dev wait` waits for pending watcher changes and rebuilds, with a timeout and build-result exit status. `dev logs --json` exposes versioned NDJSON build events for foreground and background sessions.
+- `zigapagos release --css-minify` uses the bundled runtime to minify site CSS in one Bun process, preserving independent stylesheet output, external imports and URLs, asset paths, and legacy custom minifier drivers. The canonical site build scripts now use this mode.
+- `$page.subpagesByAuthor(name)` and `$page.subpagesByTag(tag)` return indexed arrays of a section's active subpages in descending date order. Lookups are local to the section's language variant, return an empty array for missing keys, and cover the whole section on pagination pages.
+- Generic Ziggy union values in Scripty support field access, `tag()` and `case?()` in custom fields, data and assets; date and Unix timestamp conveniences remain.
+- Dev sessions accept `--url-path-prefix VALUE` and `--url-path-prefix=VALUE`, including custom rebuilds and live reload.
+- `inspect-output --page=PATH` reports direct local JS/CSS resource bytes and
+  inline script/style body bytes for one emitted HTML file. Optional
+  `--max-page-js-bytes` and `--max-page-css-bytes` fail on regressions or
+  incomplete direct-reference coverage. URL prefixes, normalized path aliases,
+  unresolved/external resources, and byte-metric boundaries are explicit;
+  aggregate inventory and budgets keep their existing meaning.
+- `zigapagos doctor` checks document-relative `href` and `src` URLs in emitted
+  HTML, including nested pages, local assets, query/fragment suffixes, and
+  deployment prefixes. Missing files remain warnings, escalated by `--strict`.
+- Structured island-render diagnostics in `--format=json`: stable codes distinguish SSR failures, content-island Scripty prop errors, missing sidecars and other island-pass failures. Records retain content-page attribution and full component/route/error details.
+- `zigapagos init --minimal` starts with one content page, a semantic HTML
+  layout, and plain CSS. Its production output contains no JavaScript or demo
+  assets. It keeps generated agent instructions and the build-output gitignore;
+  plain `init` continues to generate the full content-site example.
+- A real nginx and Chrome release rehearsal for root and subpath hosting:
+  generated headers, dynamic SPA deep links, hydration, lazy navigation, ETag
+  revalidation, and an explicit retained-chunk release transition. A dedicated
+  CI job runs it without a frontend toolchain in the deployed server.
+- `zigapagos inspect-output [DIR]` inventories emitted HTML/CSS/JS raw bytes,
+  reports page script, island-module, and module-preload references, and accepts
+  exact aggregate byte budgets with deterministic text or NDJSON reports.
+  Inline script markup, external resources, unresolved references, and lazy
+  chunks have explicit measurement boundaries. Site CI now exercises aggregate
+  budgets alongside its separate directly referenced landing-page JS gate.
+- `Link` passes a caller's `ref` to its anchor element. Object refs, callback
+  refs, and callback refs that return a cleanup are all supported.
+- Rails structural Stimulus ports support nested controllers, standard keyboard filters, global event targets, and native listener options. The generated helper scopes targets/actions to their controller and removes global listeners on teardown. Controller method bodies still require manual porting.
+- `$page.leaves([limit])` lists active non-section pages across a section's subtree in descending date order. `forbid_subsections` on a section index requires child pages to use `foo.smd` instead of `foo/index.smd`; violations include a positioned diagnostic and a suggested move that preserves the URL.
+- `$site.index()` returns the root index page. `$site.page()` accepts multiple string path parts.
+- `Array.join(separator)` joins strings and numbers, including empty arrays.
+- `$build.development` identifies renders performed by the dev loop, including rebuilds and sessions without live reload.
+- SPA shells accept `spa.lang`, a `spa.viewport` override and ordered `{ meta: { ... } }` head entries, including media-qualified theme colors for installable apps (#243).
+- `static_assets` accepts directories: every file in their subtree installs
+  unconditionally at its stable path. Text and JSON diagnostics point at config
+  entries for missing or invalid paths and name both selections of a duplicate.
+- Developer-side static deployment checker compares a served release with local HTML/CSS/JS, generated CSP/cache headers, and sampled SPA deep links. Includes root/subpath HTTP fixtures and explicit failures for stale bytes, wrong fallbacks, redirects, timeouts, and header mismatches; production hosts need no frontend toolchain.
+- A runnable styling example compares plain CSS, externally compiled Tailwind,
+  and a reusable Preact component. Release and Chrome checks verify styles,
+  CSS imports, font/image assets, keyboard interaction, and script-free static
+  routes; the guide documents asset handling and the component boundary.
+- Site `.custom` dictionaries are available as `$site.custom`. `.supermd.auto_target_blank` controls external Markdown links and defaults to true, preserving rendered output. See `docs/migration/ziggy-0.3.md` for the complete upgrade procedure.
+- A checkout-only route-loading report for emitted HTML: static JS/CSS dependency closures, initial versus lazy-only candidate files, scoped import maps, and per-file gzip/Brotli estimates. Unknown edges remain visible and can fail an opt-in strict check. Existing `inspect-output` measurements and installed CLI behavior are unchanged.
+
+### Changed
+
+- Update preact-render-to-string to 6.8.2, Bun and Bun types to 1.4.4, Ruby to 4.0.9, Node types to 26.6.6, and Undici types to 8.9.0. Declare the Node types minimum explicitly for fresh consumer installs. Refresh all four consumer lockfiles, including ws 8.21.3 and compatible transitive updates; update the installer and npm toolchain expectation, and use mise-action v5. TypeScript 6.0.3 remains required by the runtime compiler API. The npm dependency audit is documented in `docs/dependency-audit.md`.
+- Refresh Scripty, SuperHTML, Ziggy, Zeit, Flow Syntax, and the macOS framework
+  SDK pins. Zig 0.17.1 is required after the compiler port; keep TypeScript
+  6.0.3 for compiler compatibility;
+  see `docs/dependency-audit.md` for the checked versions and deferred updates.
+- Lead marketing and application guidance with rich interfaces, familiar web languages, fast production builds, and simple static output. Preserve styling freedom, direct and agent workflows, and optional ZigBase pairing; prioritize output integrity, build efficiency, and deployment in the roadmap.
+- Upgrade the shared runtime to Preact 11.2.0. The React compatibility bridge now
+  exports `use` and `useEffectEvent`; `use(promise)` cannot be prerendered, so
+  during SSR use it only with a context. Router subscriptions, pending guards,
+  lazy route loads, viewport prefetch observers, and reload-state listeners
+  retain synchronous unmount protection despite Preact 11's deferred
+  passive-effect cleanup.
+- Function components now receive `ref` in props, so a component that spreads its
+  props onto an element, such as `function Field(props) { return <input {...props} />; }`,
+  puts a caller's ref on that element rather than on the component.
+- The compatibility bridge's `version` changes from `18.3.1` to `19.0.0`, which
+  changes the branch taken by npm React libraries that detect the version.
+- Concrete `staticPaths` pages render actual route content and params. Generic dynamic routes can use a neutral shell without a custom skeleton; lazy routes still require one and guards remain fail-closed.
+- Pass a validated current-release source graph from SPA client bundling to the isolated runtime slicer instead of running a second discovery build when its complete config identity can be established. Unsupported config forms safely rediscover. Preserve standalone slicing and safe fallback behavior; add repeatable content/islands/SPA release benchmarks with output parity checks and raw samples.
+- The tree cross-compiles for x86_64-windows; native Windows CI and release
+  archives remain separate work. The POSIX dev daemon/control plane is unchanged.
+- Dependency updates change Rust syntax-highlighting classes and correct
+  SuperHTML diagnostic coordinates.
+- Dev and e2e keep their managed ZigBase child in the foreground even when
+  agent detection or an inherited preference requests background serving.
+
+### Removed
+
+- The Codeberg-outage escape hatch `scripts/rescue-codeberg.sh` and the release
+  workflow's translate-c mirror warm-up (#121): the ziglang/translate-c GitHub
+  archive is archived and does not carry the `zig-0.17.x` commits the pins now
+  use, so the warm-up could only fail. Dependency fetches still retry.
+
+### Fixed
+
+- Relative page aliases no longer read freed path components when the path table grows, preventing intermittent build panics or incorrect output URLs. Aliases and alternative outputs now share reservation-safe prefix handling.
+- `-Dhighlight=false` omits syntax/tree-sitter imports and the query cache, and accepts every language name without warnings.
+- SPA navigation honors reduced-motion preferences. Development deep links get ZigBase fallback markers even with nginx/apache production targets.
+- Conditional layout outlets no longer trigger premature missing-outlet warnings; missing outlets are diagnosed on layout exit.
+- Host cache rules cover shared split chunks and their sourcemaps, while stable entry bundles/maps continue to revalidate.
+- Bundle caches and host inventories stay under the discovered site root when invoked from a child directory.
+- Build summaries include the host configuration and sitemap written after the core rendering pass, excluding preserved files that this build did not emit.
+- Summary report files also work when invoking a clean project build from a child directory.
+- Initialize complete page placeholders during scanning and suppress inactive section subtrees in sorting, page lists, counts and pagination; preserve a draft root as an unpublished container for active child pages.
+- Reject inactive page lookups and link targets before reading content; `--allow-missing-pages` keeps its missing-page behavior. Locale and site-wide lists omit inactive pages.
+- Handle translation keys on unpublished root containers even when no active counterpart supplies an index entry.
+- Enforce `forbid_subsections` on active section containers, including a parsed draft root.
+- Exclude empty content files from page lists, counts and pagination while preserving their warnings; initialize failed parses before section sorting.
+- Bound Markdown diagnostic previews for nested containers, blank lines, truncated sources and related definitions; preserve the correct parent name in HTML nesting errors.
+- Preserve readable Markdown and embedded HTML errors, duplicate-definition excerpts, asset paths and invalid-date positions across diagnostics.
+- Honour site-declared `csp_extra_sources` in every emitted host policy and deployment checks, retaining generated inline hashes. Validate declarations before output writes and document Sentry/reCAPTCHA migration examples (#265).
+- `csp_extra_sources` declarations stay additive: a fetch directive they create inherits the extended `default-src` instead of narrowing it to `'self'` (#265).
+- Releases no longer delete or overwrite a user asset named `csp-sources.json`. Generated metadata is marked, a real collision at the installed path is reported before anything is written, and multilingual `assets_prefix_path` is taken into account. Release records which file is the site's own in `.zigapagos-csp-ownership.json` (keep it with the output), so the deploy checker and later emitter runs honour that decision. Bare-array metadata written by main builds since #269 is migrated (#265).
+- `zigapagos release` run from a subdirectory without `--output` writes and cleans CSP metadata in the project's `public/`, while an explicit `--output` stays relative to the working directory (#265).
+- Native Ziggy dictionary keys decode escapes consistently with `@z/site-data`, including island prop names; decoded duplicate keys remain errors.
+- Keep SSR runtime imports and hooks on the renderer's Preact instance when Bun materializes a separate local `file:` runtime package. Preserve site-specific resolve aliases.
+- Dev browsers recover missed updates after a dropped live-reload connection or a server restart at the same address. SSE cursors distinguish a stale page from a current one; catch-up uses a full refresh so multiple missed changes are not reduced to the latest island delta. Chrome regression coverage exercises failure/repair, successive HTML/CSS edits, reconnect stability, restart and server teardown. Root configuration changes still require restarting dev; failed builds do not promise a preserved output snapshot.
+- Invalid bare autolinks now produce diagnostics without column arithmetic panics, with carets clamped to the source line (#257).
+- Markdown diagnostics use the file's line numbers regardless of blank lines after front matter (#256, part 2).
+- Reconcile layout hydration, client import policy, runtime slicing, and first-paint behavior throughout the island and SPA references. Build the published tutorial and check contributor commands against CI to prevent the original documentation defects from returning.
+- Doctor normalizes URL paths before stripping a deployment prefix and refuses
+  symlink-backed targets, preventing files outside the deployment from making
+  broken links appear valid. Documents using `<base href>` report incomplete
+  audit coverage and exit nonzero instead of checking against the wrong base.
+- Emit the final table-of-contents list-item closing tag explicitly. Browsers
+  already accept its omission; static HTML parsers can now inspect the complete
+  outline without reporting a missing end tag. Empty outlines stay empty.
+- `$link.ref` can target automatically generated heading IDs without hiding genuinely missing references.
+- Props checks use the runtime's installed compiler, support sites without a tsconfig, and run without Node.
+- Default-on checking also applies to the native build API. Project TypeScript JSX, module and target options retain precedence over fallback defaults.
+- An island render that failed without the sidecar describing it — a protocol desync, a malformed response, a subprocess that died mid-render — reported an empty message and discarded the error name. It now carries the Zig error name in both text and JSON mode.
+- The missing-sidecar message named only `<island>`, though the `<z-island>` content-page alias reaches the same check.
+- Migration detection reads framework names only from package dependency keys, ignoring keywords, scripts, and values. Malformed package JSON declares no dependencies and failed detection explains that behavior (#259).
+- Hugo migration recognizes `config/_default/{hugo,config}.{toml,yaml,yml,json}` without a root config (#252, part 2).
+- Migration recognizes Hugo front-matter openers with trailing blanks and Hexo fence-less scalar YAML metadata, preserving titles, dates, and unpublished posts, including the YAML 1.2 spellings `False`/`FALSE` and `True`/`TRUE` for `draft` and `published`. Eleventy language-tagged front matter is preserved for review and forced to draft instead of leaking code and private content into published pages (#251, #252 part 1, #258).
+- `migrate --target` enables automatic heading ids for Hugo, Jekyll, Eleventy, and Hexo sources so migrated heading links can resolve. Slug differences may still require link edits (#253).
+- Migration worklists name unconverted Hugo, Jekyll, and Eleventy content outside conventional roots and Next.js/Gatsby/Nuxt content-layer Markdown/MDX, with explicit reasons and sorted paths. A repeat run never lists its own report, including a custom `--output` inside the source tree, while unrelated source files named `MIGRATION.md` stay listed (#254, #261).
+- Nuxt inventory includes Nuxt 4 `app/pages`, `app/layouts`, `app/components`, and root, `src/`, and `app/` application entry files (#260).
+- Quote nginx cache-map regex tokens, including fingerprint quantifiers. The
+  generated `cache.nginx.conf` now passes nginx configuration parsing instead
+  of failing with `unexpected "{"`.
+- Viewport prefetch ignores intersection notifications delivered after a Link
+  unmounts or its observation has already triggered a prefetch, and prefetches
+  against the current route table after the Router's `routes` change.
+- A lazy route chunk that fails after its Router has unmounted or navigated away
+  no longer leaves the route stuck on its skeleton on the next visit.
+- Rails layout forms and controls, including layout-rendered partials, now participate in explicit backend bindings.
+- Rails migration recovers correct columns for ERB blocks closed with `end if` or `end unless`, tolerates invalid fragment positions, and gives routes answerable findings when templates cannot be analysed, including dynamic SPA routes whose view or layout is unreadable. Fragments without a unique source position are identified by a fingerprint of their complete source span (including postfix conditions, later branches and block bodies) and an occurrence index, so a saved decision or binding never moves to a different helper after an unrelated insertion and becomes stale when its own source changes (#262).
+- Generated Rails targets include a draft root placeholder when needed, so a retained or blocked root never publishes it, and normalize self-closing HTML void elements in views and layouts, even after a literal `<`, while leaving raw-text and escapable-raw-text contents and foreign CDATA verbatim and matching complete tag names, so zero-edit releases build (#263).
+- Debug builds scan content directories in deterministic path order.
+- Release cleanup now frees site data through its owning arena. Sites with
+  `.ziggy` data no longer crash with an invalid free in single-threaded Debug
+  builds. CI executes a real site-data release with the Debug allocator, in
+  addition to the existing single-threaded compile checks.
+- SPA client bundles exclude `staticPaths` and its exclusively used module bindings. Unsupported spread route definitions fail with an actionable error.
+- Generic shell hydration synchronizes the requested URL before running redirects, guards, or route chunk loads.
+- Pruning preserves exported helpers and dependencies of retained client initializers. Aliases sharing a destination still trigger authorization and lazy loading once after synchronization; reusable fallback shells do not preload an unrelated root chunk.
+- Client bundling enforces the configured import policy for islands, SPAs, and local transitive application modules. Rails migration targets declare their generated SDK imports.
+- Unchanged application sources keep Bun's native loader, including JSX in `.js` files. Build-only source transforms persist across bundler processes and invalidate when their source or toolchain changes.
+- Shell path snapshots are consumed after initial hydration so later Router mounts use the live URL.
+- Source-transform cache writes evict oldest entries above 128 entries or 32 MiB without adding work to cache hits. Missing compiler metadata bypasses caching, preserving the actionable runtime dependency diagnostic.
+- Cache read, write and cleanup failures preserve successfully transformed code; actual compiler and route errors still fail the build.
+- Accept empty dynamic structs in custom values, data, i18n, asset `.ziggy()` and island props, retaining the struct/dictionary distinction. Report missing opening frontmatter delimiters by filename and exit nonzero from the converter.
+- The upgrade tool wraps legacy quoted frontmatter dates in `.date(...)` and preserves body bytes on repeated runs. Unconverted string dates receive upgrade instructions. Complete documentation configs and frontmatter are parser/schema checked, and non-Ziggy examples retain their original language syntax.
+- Preserve comments and their terminating newlines throughout conversion, including between legacy identifier/tag tokens. A generated boundary sweep covers 389 variants across six representative documents, plus six parser-checked baselines.
+- POSIX asset filenames such as `c:notes.txt` are accepted.
+- Generated `csp.zigbase.txt` and `cache.zigbase.txt` point custom ZigBase builds at `.static_headers` (valthon/zigbase#470), with a ready-to-paste CSP entry instead of the unsupported `.headers` key. Stock `zigbase serve` still needs the Nginx reverse-proxy recipe with the release hashes (#244).
+- Compat `ReCAPTCHA` clears solved tokens on widget errors, supports `onErrored` and `onExpired`, and passes size, theme and tabindex to Google when supplied. `useRecaptcha` clears tokens on expiry and error too. Handlers (`onChange`, `onExpired`, `onErrored`) stay current after parent rerenders with the same `siteKey`, including additions or removals after mount. Migration guidance describes supported props and remaining limitations (#264).
+- Align guides, migration references, website examples, test instructions, and support policy with 0.6.0. Packaged Astro skill references regenerate from canonical docs with working links.
+- Migration documentation qualifies generated-project validity for HTML blocks. With the new SuperMD dialect, both raw HTML blocks and inline HTML need manual review; use supported directives or `=html` fences for HTML output.
+
+### Security
+
+- Update Happy DOM and its global registrator to 21.0.4, fixing the ESM compiler injection in GHSA-834v-8h66-3h79. Refresh all four consumer lockfiles.
+
+### Known limitations
+
+- Route recovery is static AST analysis and does not boot Rails. Dynamic route
+  generation, engine mounts, external route files, arbitrary helpers, dynamic
+  layouts, Haml/Slim, and runtime-generated assets are reported for manual
+  handling rather than guessed. Only the configured default i18n locale is
+  resolved.
+- Stimulus conversion is structural rather than Ruby-to-JavaScript method transpilation. Unsupported action descriptors, raw-text action elements, React `require()` or dynamic imports, and Vue roots require manual work. A Turbo Frame with a `src` still needs that same-origin endpoint proxied until the migrated site serves equivalent fragment HTML; realtime islands dispatch record facts rather than rendering Rails partials as DOM.
+- A generated Rails target uses `https://example.com` as its `host_url` until the operator supplies the deployment host.
+- Parity runners verify observable presentation and API behavior; they do not
+  move authorization into browser code. ZigBase collection and consumer rules
+  remain the enforcement boundary.
+- A view transition captures the immediate route flip rather than the settled page. Guard and lazy-route resolution can therefore finish after the transition. SPA navigation now honors `prefers-reduced-motion`; cross-document transitions remain controlled by the site's CSS.
+- **No native Windows runner or release archives.** The tree cross-compiles for x86_64-windows on Zig 0.17.1, but the POSIX dev daemon/control plane remains unavailable there. Use WSL2 for the shipped workflow.
+- **FreeBSD and NetBSD are unsupported targets.** Neither has release archives or a native watcher selection in this fork; FreeBSD 15 inotify does not close those gaps.
+- **The emitted host config is only a file until you deploy it.** Serving the
+  generated CSP and caching policy, and updating them after a rebuild, remains
+  the host's responsibility. `style-src-attr` still permits `'unsafe-inline'`
+  for framework-authored inline style attributes.
+- **A per-locale `host_url_override` cannot be exercised locally.** `dev`
+  serves one built tree on one origin, so a multi-host locale set must be
+  verified after deployment.
+- **Prebuilt binaries cover four Unix targets**: `x86_64-linux-musl`,
+  `aarch64-linux-musl`, `x86_64-macos`, and `aarch64-macos`. Other hosts need a
+  source build where supported.
+- **AVIF needs an encoder you already have.** Zigapagos never vendors or
+  downloads an AV1 encoder; without `image_optimize.avif_encoder`, image
+  optimization emits WebP and the original only.
+- Pre-1.0: APIs may change between minor versions.
+- Root configuration changes require restarting `dev`; failed builds do not promise a preserved output snapshot.
+- The aarch64 self-hosted Zig 0.17.1 backend needs more than 32 GB for the Debug props-test binary; aarch64 Debug test builds select LLVM as a workaround (#279).
+
+### Internal
+
+- All eight previously uncalled SPA browser helpers are wired into the nightly/manual browser matrix; the stale CI debt inventory now reflects the existing PR-time site assertions.
+- Builds check config and page type agreement with the shipped schemas. Snapshot tests detect untracked files without staging their contents.
+- The Ziggy 0.3 migration guide enumerates converter limitations and their manual upgrade steps.
+- Schema agreement rejects payload presence and skipped-field mismatches, reports slice/container mismatches without crashing, and checks optional builtin containers correctly. The date adapter declares its actual tagged-union shape. A permanent matrix covers structural mismatches in both directions, including production config and page schemas.
+- Schema checks bind `$` to the actual document type, reject unreferenced declarations and unparsed input, and consume every expression token. The grammar matrix now covers 104 negative mutations and twelve matching baselines, with explicit Dynamic-to-`any` wrapping rules.
 
 ## [0.5.0] - 2026-09-01
 
@@ -1489,7 +1746,8 @@ what is new from what the port changed and removed.
 - Pre-1.0: APIs may change between minor versions. **Only the most recent
   release is supported** — there are no backports.
 
-[Unreleased]: https://github.com/valthon/zigapagos/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/valthon/zigapagos/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/valthon/zigapagos/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/valthon/zigapagos/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/valthon/zigapagos/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/valthon/zigapagos/compare/v0.2.0...v0.3.0
