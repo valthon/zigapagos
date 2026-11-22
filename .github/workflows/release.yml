@@ -98,6 +98,16 @@ jobs:
 
       - name: Setup toolchain (zig + bun via mise)
         uses: jdx/mise-action@v5
+        with:
+          # Only the tools this job uses. mise.toml also pins Ruby for the
+          # Rails suites, and with no install arguments the action installs
+          # it too. On the macOS x86_64 runner Ruby is compiled from source:
+          # 414s of a 1248s build job when the action's cache misses
+          # (measured 2026-11-21). It missed on this pull request's first
+          # run: the workflow runs on pull requests, tags and manual
+          # dispatch, never on a push to the default branch, so it leaves no
+          # default-branch cache for a new pull request to read.
+          install_args: zig bun
 
 
       - name: Get Zig version
@@ -211,6 +221,16 @@ jobs:
 
       - name: Setup toolchain (zig + bun via mise)
         uses: jdx/mise-action@v5
+        with:
+          # Only the tools this job uses. mise.toml also pins Ruby for the
+          # Rails suites, and with no install arguments the action installs
+          # it too. On the macOS x86_64 runner Ruby is compiled from source:
+          # 414s of a 1248s build job when the action's cache misses
+          # (measured 2026-11-21). It missed on this pull request's first
+          # run: the workflow runs on pull requests, tags and manual
+          # dispatch, never on a push to the default branch, so it leaves no
+          # default-branch cache for a new pull request to read.
+          install_args: zig bun
 
       - name: Pack the runtime asset
         run: bash scripts/pack-runtime.sh dist
