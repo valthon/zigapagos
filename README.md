@@ -90,8 +90,8 @@ map. Omit the directive for server-only HTML with no island JavaScript.
   `@z/runtime` islands, Markdown/Ziggy frontmatter, fixed-URL assets, and the
   supported Rails ERB presentation subset.
   The scaffold is valid when converted content has no HTML blocks; preserved
-  HTML blocks are a validation-visible review item, forbidden by SuperMD by
-  design. Inline HTML passes through.
+  HTML blocks and inline HTML require manual review under SuperMD; use
+  supported directives or `=html` fences for HTML output.
   Rails migrations add versioned discovery and handoff manifests, durable
   operator decisions, ZigBase backend bindings, and generated parity runners;
   unsupported or uncertain behavior remains explicit instead of being guessed.
@@ -110,9 +110,10 @@ map. Omit the directive for server-only HTML with no island JavaScript.
   release tree with the stock ZigBase binary (same-origin API and admin UI, not
   a proxy shim), and live-reloads the browser over SSE. Islands hot-swap with
   their `useState` intact. `dev --background` detaches the loop —
-  `dev stop|status|logs` manage it afterward, and a build-aware
+  `dev stop|status|logs|wait` manage it afterward, and a build-aware
   `GET /_zigapagos/status` lets a script poll for its own edit to land — and
-  `dev` backgrounds itself automatically in a recognized AI-agent environment.
+  `dev` can background itself in a recognized AI-agent environment. Managed
+  ZigBase children stay in the foreground for the dev/e2e lifecycle.
 - **Deployable host config** — a release with islands or SPAs also writes a
   hash-strict Content-Security-Policy (CSP3 `style-src-elem` /
   `style-src-attr` split) and a site-wide `Cache-Control` policy beside the
@@ -200,6 +201,13 @@ an import map, and the shared runtime script. Everything else is ordinary static
 generation.
 
 ## Status
+
+**0.6.0** uses Zig 0.17.1 for source builds and ZigBase 0.14.0 for dev/e2e.
+Existing sites must upgrade their Ziggy config and frontmatter: run
+`python3 scripts/upgrade-ziggy.py <site>` from this checkout, then
+`zigapagos install-schemas` in the site. Finish the
+[manual migration steps](docs/migration/ziggy-0.3.md) and review the
+[breaking-change checklist](CHANGELOG.md#060---2026-11-22) before building.
 
 Zigapagos is pre-1.0: APIs may change between minor versions. Only the most
 recent release is supported — see

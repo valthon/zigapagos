@@ -76,12 +76,12 @@ zig build test-islands test-props test-migrate test-sidecar test-init \
 
 **Trap 2: a fresh clone or git worktree needs `bun install` in `runtime/` before
 anything Bun-dependent.** Without it `bun test` reports every file as failing
-(`0 pass / 54 fail`, one `ENOENT resolving 'typescript'` per file) and an
+(including `ENOENT resolving 'typescript'`) and an
 `examples/tsx-site` build dies in the SPA-runtime step. Both look like code
 breakage and are neither.
 
 ```sh
-cd runtime && bun test              # complete TypeScript suite
+cd runtime && bun test              # complete TypeScript suite (847 tests / 66 files)
 cd runtime && bun test src/router   # one file — the filter is a PATH substring
 ```
 

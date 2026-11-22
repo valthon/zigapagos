@@ -93,7 +93,7 @@ there. A runtime `return error.SkipZigTest` does **not** help — Zig analyses t
 body regardless of runtime control flow — so prune the branch at comptime:
 `if (comptime !builtin.single_threaded) …`.
 
-**Shell e2e.** CI runs every `tests/*/*.sh`. They are hermetic; `tests/dev/*`
+**Shell e2e.** CI runs every `tests/*/*.sh` (127 scripts). They are hermetic; `tests/dev/*`
 boot real servers via a stub-zigbase binary and need `bun` on `PATH`. A new `tests/<area>/` is
 picked up by the glob automatically. The `e2e-rest` matrix partitions the remainder
 with `.github/scripts/e2e-rest-shards.py`: deterministic weighted assignment using
