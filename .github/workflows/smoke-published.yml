@@ -192,7 +192,7 @@ jobs:
       ARCHIVE: ${{ matrix.archive }}
     steps:
       - name: Checkout tag history for provenance verification
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
