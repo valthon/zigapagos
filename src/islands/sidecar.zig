@@ -482,7 +482,7 @@ pub const RenderError = struct {
 /// JSON parsing owns the map and strings through the parser's arena.
 pub const HeadEntry = struct {
     tag: enum { link, meta } = .link,
-    map: std.StringArrayHashMapUnmanaged([]const u8) = .empty,
+    map: std.array_hash_map.String([]const u8) = .empty,
 
     pub fn jsonParse(alloc: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !HeadEntry {
         const value = try std.json.innerParse(std.json.Value, alloc, source, options);

@@ -32,7 +32,7 @@ fn debugInner(
     worker.start(io);
     defer if (builtin.optimize == .debug) worker.stopWaitAndDeinit(io);
 
-    // build_assets: *const std.StringArrayHashMapUnmanaged(BuildAsset) = .empty;
+    // build_assets: *const std.array_hash_map.String(BuildAsset) = .empty;
     const build = root.run(io, gpa, &cfg, .{
         .base_dir_path = base_dir_path,
         .build_assets = &.empty,
@@ -152,7 +152,7 @@ fn debugInner(
 }
 
 pub const Command = struct {
-    build_assets: std.StringArrayHashMapUnmanaged(BuildAsset),
+    build_assets: std.array_hash_map.String(BuildAsset),
     drafts: bool,
     ids: bool,
 
@@ -162,7 +162,7 @@ pub const Command = struct {
     }
 
     pub fn parse(gpa: Allocator, args: []const []const u8) !Command {
-        var build_assets: std.StringArrayHashMapUnmanaged(BuildAsset) = .empty;
+        var build_assets: std.array_hash_map.String(BuildAsset) = .empty;
         errdefer build_assets.deinit(gpa);
         var drafts = false;
         var ids = false;

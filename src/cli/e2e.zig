@@ -99,7 +99,7 @@ pub const Command = struct {
         var data_dir: ?[]const u8 = null;
         var zigbase_path: ?[]const u8 = null;
         var download_zigbase = false;
-        var zigbase_args: std.ArrayListUnmanaged([]const u8) = .empty;
+        var zigbase_args: std.ArrayList([]const u8) = .empty;
         var url_prefix: []const u8 = "";
         var ready_path: []const u8 = "/";
         var ready_path_explicit = false;
@@ -244,7 +244,7 @@ pub fn e2e(
         try defaultReadyPath(gpa, cmd.url_prefix);
 
     // (3) Boot `zigbase serve` over the site tree.
-    var zb_argv: std.ArrayListUnmanaged([]const u8) = .empty;
+    var zb_argv: std.ArrayList([]const u8) = .empty;
     try zb_argv.append(gpa, located.path);
     for (cmd.zigbase_args) |template| try zb_argv.append(
         gpa,

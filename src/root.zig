@@ -795,7 +795,7 @@ pub const SpaSpec = struct {
 
 pub const Options = struct {
     development: bool = false,
-    build_assets: *const std.StringArrayHashMapUnmanaged(BuildAsset),
+    build_assets: *const std.array_hash_map.String(BuildAsset),
     base_dir_path: []const u8,
     mode: Mode,
     drafts: bool,
@@ -1392,7 +1392,7 @@ pub fn run(
     // deactivation downward to avoid processing unreachable sections.
     var pages_to_parse: usize = 0;
     var progress_parse = progress.start("Parse pages", 0);
-    var sites: std.StringArrayHashMapUnmanaged(context.Site) = .empty;
+    var sites: std.array_hash_map.String(context.Site) = .empty;
     {
         const tracy_frame = tracy.namedFrame("parse pages");
         defer tracy_frame.end();
@@ -2654,7 +2654,7 @@ pub fn run(
         // attribute is never set and the asset/href silently breaks. Only a clean
         // html tree is scanned.
         if (template.html_ast.errors.len == 0) {
-            var bads: std.ArrayListUnmanaged(Template.BadDirectiveAttr) = .empty;
+            var bads: std.ArrayList(Template.BadDirectiveAttr) = .empty;
             defer bads.deinit(gpa);
             try template.lintDirectiveAttrs(gpa, &bads);
             if (bads.items.len > 0) {
@@ -2725,7 +2725,7 @@ pub fn run(
         // -- on a broken one `close.start == 0` also means "unclosed element",
         // which SuperHTML already reports as `missing end tag`.
         if (template.html_ast.errors.len == 0) {
-            var inert: std.ArrayListUnmanaged(Template.InertDirective) = .empty;
+            var inert: std.ArrayList(Template.InertDirective) = .empty;
             defer inert.deinit(gpa);
             try template.lintInertDirectives(gpa, &inert);
             if (inert.items.len > 0) {
@@ -3988,7 +3988,7 @@ fn reportPrunedSiteAssets(gpa: Allocator, build: *const Build) void {
 
     if (assetsDirIsContentDir(build.cfg)) return;
 
-    var pruned: std.ArrayListUnmanaged([]const u8) = .empty;
+    var pruned: std.ArrayList([]const u8) = .empty;
     defer {
         for (pruned.items) |s| gpa.free(s);
         pruned.deinit(gpa);
@@ -4247,7 +4247,7 @@ fn installMinifiedCss(
 }
 
 test "assets: shouldMinifyCss gates on extension + release flags" {
-    const empty_assets: std.StringArrayHashMapUnmanaged(BuildAsset) = .empty;
+    const empty_assets: std.array_hash_map.String(BuildAsset) = .empty;
     const base: Options = .{
         .build_assets = &empty_assets,
         .base_dir_path = ".",

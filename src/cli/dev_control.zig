@@ -863,7 +863,7 @@ fn fetchBodyWithTimeout(io: Io, gpa: Allocator, address: Io.net.IpAddress, path:
     // dev control. This escape hatch is POSIX-only (our current host targets);
     // Windows daemon control remains unavailable. The
     // connect-timeout limitation above is separate from this read deadline.
-    var all: std.ArrayListUnmanaged(u8) = .empty;
+    var all: std.ArrayList(u8) = .empty;
     defer all.deinit(gpa);
     while (all.items.len < 64 * 1024) {
         const remaining = deadline - Io.Clock.awake.now(io).toMilliseconds();
@@ -1133,7 +1133,7 @@ pub fn sweepOrphan(io: Io, gpa: Allocator, data_dir_abs: []const u8) void {
 /// belonging to the rebuild command, not to `dev` itself). Contract 1: caller
 /// frees the slice (the strings are borrowed from raw_args).
 fn filterBackgroundArgs(gpa: Allocator, raw_args: []const []const u8) error{OutOfMemory}![]const []const u8 {
-    var out: std.ArrayListUnmanaged([]const u8) = .empty;
+    var out: std.ArrayList([]const u8) = .empty;
     errdefer out.deinit(gpa);
     var past_separator = false;
     for (raw_args) |arg| {
@@ -1263,7 +1263,7 @@ pub fn background(
         .{ log_path, @errorName(err) },
     );
 
-    var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+    var argv: std.ArrayList([]const u8) = .empty;
     const self_z = std.process.executablePathAlloc(io, gpa) catch |err| fatal.msg(
         "error: dev: this executable's own path is unavailable ({s})\n",
         .{@errorName(err)},

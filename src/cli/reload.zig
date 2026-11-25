@@ -580,7 +580,7 @@ fn injectFile(io: Io, gpa: Allocator, dir: Io.Dir, name: []const u8, port: u16, 
 /// with each module URL JSON-quoted (only `"`/`\` need escaping — module URLs
 /// are `/islands/NAME.js`-shaped, no control chars). gpa-owned; caller frees.
 fn buildIslandPayload(gpa: Allocator, modules: []const []const u8) Allocator.Error![]u8 {
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
     try out.appendSlice(gpa, "{\"kind\":\"island\",\"modules\":[");
     for (modules, 0..) |m, i| {

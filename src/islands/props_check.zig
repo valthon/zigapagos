@@ -67,14 +67,14 @@ pub fn generateProgram(
     std.debug.assert(abs_srcs.len == checks.len);
 
     // Unique abs_src -> alias index.
-    var alias_of: std.StringArrayHashMapUnmanaged(usize) = .empty;
+    var alias_of: std.array_hash_map.String(usize) = .empty;
     // Unique "abs_src\x00props_json" -> already-emitted (so dedup const lines).
     var seen_pair: std.StringHashMapUnmanaged(void) = .empty;
 
-    var imports: std.ArrayListUnmanaged(u8) = .empty;
-    var body: std.ArrayListUnmanaged(u8) = .empty;
+    var imports: std.ArrayList(u8) = .empty;
+    var body: std.ArrayList(u8) = .empty;
     // Each emitted const remembers which `checks` index it represents.
-    var const_check_idx: std.ArrayListUnmanaged(usize) = .empty;
+    var const_check_idx: std.ArrayList(usize) = .empty;
 
     for (abs_srcs, checks, 0..) |abs, chk, idx| {
         const gop = try alias_of.getOrPut(arena.a, abs);
@@ -93,7 +93,7 @@ pub fn generateProgram(
     }
 
     // Layout: imports block, blank line, then one const per line. Track lines.
-    var source: std.ArrayListUnmanaged(u8) = .empty;
+    var source: std.ArrayList(u8) = .empty;
     try source.appendSlice(arena.a, imports.items);
     try source.append(arena.a, '\n');
     const body_first_line = std.mem.count(u8, source.items, "\n") + 1; // 1-based line of first const
@@ -147,7 +147,7 @@ pub fn parseDiagnostics(
     stdout: []const u8,
     program_basename: []const u8,
 ) ![]const Diag {
-    var diags: std.ArrayListUnmanaged(Diag) = .empty;
+    var diags: std.ArrayList(Diag) = .empty;
     const prefix = try arena.a.print("{s}(", .{program_basename});
     var it = std.mem.splitScalar(u8, stdout, '\n');
     while (it.next()) |line| {
@@ -204,8 +204,8 @@ pub fn run(io: Io, gpa: std.mem.Allocator, checks: []const PropsCheck, opts: Run
 
     // Resolve each src to absolute; cache per-src "has exported Props".
     var props_ok: std.StringHashMapUnmanaged(bool) = .empty;
-    var abs_srcs: std.ArrayListUnmanaged([]const u8) = .empty;
-    var kept: std.ArrayListUnmanaged(PropsCheck) = .empty;
+    var abs_srcs: std.ArrayList([]const u8) = .empty;
+    var kept: std.ArrayList(PropsCheck) = .empty;
     var skipped: usize = 0;
 
     for (checks) |chk| {

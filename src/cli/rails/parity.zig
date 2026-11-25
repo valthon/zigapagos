@@ -97,7 +97,7 @@ fn findTemplate(list: []const fragments.Template, path: []const u8) ?fragments.T
     return null;
 }
 
-fn appendUniqueOwned(gpa: Allocator, list: *std.ArrayListUnmanaged([]const u8), value: []const u8) Allocator.Error!void {
+fn appendUniqueOwned(gpa: Allocator, list: *std.ArrayList([]const u8), value: []const u8) Allocator.Error!void {
     for (list.items) |have| if (std.mem.eql(u8, have, value)) return;
     const copy = try gpa.dupe(u8, value);
     errdefer gpa.free(copy);
@@ -195,7 +195,7 @@ fn factIsWritten(discovery: *const rails.Discovery, template: fragments.Template
 }
 
 fn presentationFor(gpa: Allocator, discovery: *const rails.Discovery, route_index: usize) Allocator.Error!Presentation {
-    var links: std.ArrayListUnmanaged([]const u8) = .empty;
+    var links: std.ArrayList([]const u8) = .empty;
     errdefer {
         for (links.items) |link| gpa.free(link);
         links.deinit(gpa);
@@ -211,7 +211,7 @@ fn presentationFor(gpa: Allocator, discovery: *const rails.Discovery, route_inde
             title_src = literalTitle(view) orelse h1_src;
         };
 
-        var paths: std.ArrayListUnmanaged([]const u8) = .empty;
+        var paths: std.ArrayList([]const u8) = .empty;
         defer paths.deinit(gpa);
         try paths.appendSlice(gpa, rt.templates);
         if (rt.layout) |layout| try paths.append(gpa, layout);
@@ -334,7 +334,7 @@ fn fieldsForEndpoint(gpa: Allocator, discovery: *const rails.Discovery, operatio
     const end = blockEnd(template.nodes, start) orelse template.nodes.len;
 
     const Temp = struct { name: []const u8, helper: []const u8, required: bool };
-    var temp: std.ArrayListUnmanaged(Temp) = .empty;
+    var temp: std.ArrayList(Temp) = .empty;
     defer temp.deinit(gpa);
     for (template.nodes[start + 1 .. end]) |node| {
         if (node.text != null or node.kind != .form_field) continue;
@@ -429,7 +429,7 @@ fn pageForEndpoint(discovery: *const rails.Discovery, result: scaffold.Result, o
     return page;
 }
 
-fn appendAuth(gpa: Allocator, entries: *std.ArrayListUnmanaged(handoff.ParityEntry), discovery: *const rails.Discovery, scaffold_result: scaffold.Result) Allocator.Error!void {
+fn appendAuth(gpa: Allocator, entries: *std.ArrayList(handoff.ParityEntry), discovery: *const rails.Discovery, scaffold_result: scaffold.Result) Allocator.Error!void {
     var collection: ?[]const u8 = null;
     for (discovery.findings) |finding| {
         if (!std.mem.eql(u8, finding.code, findings.code_auth_journey)) continue;
@@ -477,7 +477,7 @@ fn appendAuth(gpa: Allocator, entries: *std.ArrayListUnmanaged(handoff.ParityEnt
 /// Contract 2 (owned-result): every row and nested string is owned; release
 /// with `free`. On error no allocation escapes.
 pub fn build(gpa: Allocator, discovery: *const rails.Discovery, scaffold_result: scaffold.Result, backend_doc: ?backend.Document) Allocator.Error!Result {
-    var entries: std.ArrayListUnmanaged(handoff.ParityEntry) = .empty;
+    var entries: std.ArrayList(handoff.ParityEntry) = .empty;
     errdefer {
         for (entries.items) |entry| freeEntry(gpa, entry);
         entries.deinit(gpa);

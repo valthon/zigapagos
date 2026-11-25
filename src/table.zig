@@ -1,7 +1,7 @@
 const std = @import("std");
 const mem = std.mem;
 const assert = std.debug.assert;
-const ArrayList = std.ArrayListUnmanaged;
+const ArrayList = std.ArrayList;
 const Allocator = std.mem.Allocator;
 
 pub const StringTable = Table(u8, u32);
@@ -125,7 +125,7 @@ pub fn Table(E: type, Size: type) type {
         }
 
         pub fn ArrayHashMap(V: type) type {
-            return std.AutoArrayHashMapUnmanaged(Element, V);
+            return std.array_hash_map.Auto(Element, V);
         }
 
         pub fn HashMap(V: type) type {

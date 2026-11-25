@@ -168,7 +168,7 @@ pub const Command = struct {
         var data_dir: []const u8 = default_data_dir;
         var zigbase_path: ?[]const u8 = null;
         var no_download = false;
-        var zigbase_args: std.ArrayListUnmanaged([]const u8) = .empty;
+        var zigbase_args: std.ArrayList([]const u8) = .empty;
         var ready_path: []const u8 = "/";
         var ready_path_explicit = false;
         var url_path_prefix: ?[]const u8 = null;
@@ -178,7 +178,7 @@ pub const Command = struct {
         var debounce: u16 = 25;
         var live_reload = true;
         var reload_port: u16 = 0;
-        var watch_dirs: std.ArrayListUnmanaged([]const u8) = .empty;
+        var watch_dirs: std.ArrayList([]const u8) = .empty;
         var rebuild_argv: ?[]const []const u8 = null;
         var background = false;
         var force = false;
@@ -440,7 +440,7 @@ pub fn dev(
     const loaded = root.Config.load(io, gpa);
     var cfg = loaded[0];
     const base_dir_path = loaded[1];
-    var dirs_to_watch: std.ArrayListUnmanaged([:0]const u8) = .empty;
+    var dirs_to_watch: std.ArrayList([:0]const u8) = .empty;
 
     // Incremental rebuild classification. The watcher itself
     // only signals "something changed"; on each signal we re-derive WHICH files
@@ -458,9 +458,9 @@ pub fn dev(
     // A change fully localizable to content pages and/or manifest-known island
     // sources is the incremental fast path; everything else falls back to the
     // rebuild.
-    var content_roots: std.ArrayListUnmanaged(ContentRoot) = .empty;
-    var other_roots: std.ArrayListUnmanaged([]const u8) = .empty;
-    var island_roots: std.ArrayListUnmanaged(ContentRoot) = .empty;
+    var content_roots: std.ArrayList(ContentRoot) = .empty;
+    var other_roots: std.ArrayList([]const u8) = .empty;
+    var island_roots: std.ArrayList(ContentRoot) = .empty;
     try appendOtherRoot(gpa, &other_roots, base_dir_path, cfg.getAssetsDirPath());
     try appendOtherRoot(gpa, &other_roots, base_dir_path, cfg.getLayoutsDirPath());
     try appendWatchDir(gpa, &dirs_to_watch, base_dir_path, cfg.getAssetsDirPath());
@@ -759,7 +759,7 @@ pub fn dev(
     );
 
     // (4) Boot `zigbase serve` over the release tree.
-    var zb_argv: std.ArrayListUnmanaged([]const u8) = .empty;
+    var zb_argv: std.ArrayList([]const u8) = .empty;
     try zb_argv.append(gpa, located.path);
     for (cmd.zigbase_args) |template| try zb_argv.append(
         gpa,
@@ -1140,7 +1140,7 @@ fn freeIncremental(gpa: Allocator, inc: Incremental) void {
 /// Records `base/rel` (deduplicated) as a page-content root.
 fn appendContentRoot(
     gpa: Allocator,
-    roots: *std.ArrayListUnmanaged(ContentRoot),
+    roots: *std.ArrayList(ContentRoot),
     base_dir_path: []const u8,
     rel: []const u8,
 ) error{OutOfMemory}!void {
@@ -1156,7 +1156,7 @@ fn appendContentRoot(
 /// full rebuild" root (layouts, assets, i18n, island/SPA source dirs).
 fn appendOtherRoot(
     gpa: Allocator,
-    roots: *std.ArrayListUnmanaged([]const u8),
+    roots: *std.ArrayList([]const u8),
     base_dir_path: []const u8,
     rel: []const u8,
 ) error{OutOfMemory}!void {
@@ -1227,7 +1227,7 @@ fn classifyChange(
     // filter; helpers and SPA sources land here too) as a base-relative
     // '/'-separated path — the same string space as the manifest's island keys
     // (both are website-root-relative).
-    var island_files: std.ArrayListUnmanaged([]const u8) = .empty;
+    var island_files: std.ArrayList([]const u8) = .empty;
     defer {
         for (island_files.items) |p| gpa.free(p);
         island_files.deinit(gpa);
@@ -1271,14 +1271,14 @@ fn classifyChange(
     }
 
     // Deduplicating page set (an edited page may ALSO mount an edited island).
-    var pages: std.StringArrayHashMapUnmanaged(void) = .empty;
+    var pages: std.array_hash_map.String(void) = .empty;
 
     // AUD-035: the per-file mounting-page counts, parallel to
     // `island_files.items`. Collected during resolution but NOT logged until
     // this call commits to `.incremental` below — a resolution the content-file
     // walk (or the empty-set check) later discards must leave no "island source
     // X -> N mounting page(s)" line claiming an incremental rebuild happened.
-    var mount_counts: std.ArrayListUnmanaged(usize) = .empty;
+    var mount_counts: std.ArrayList(usize) = .empty;
     defer mount_counts.deinit(gpa);
 
     if (island_files.items.len > 0) {
@@ -1347,7 +1347,7 @@ fn classifyChange(
     // never matches and the hot-swap silently falls back to a full reload.
     const island_modules: []const []const u8 = blk: {
         if (island_files.items.len == 0) break :blk &.{};
-        var mods: std.ArrayListUnmanaged([]const u8) = .empty;
+        var mods: std.ArrayList([]const u8) = .empty;
         for (island_files.items) |cf| mods.append(
             gpa,
             islandModuleUrl(gpa, url_path_prefix, moduleStem(cf)),
@@ -1535,7 +1535,7 @@ fn anyStemReferenced(text: []const u8, changed_files: []const []const u8) bool {
 }
 
 /// Frees a partially-built page set (keys + storage) on a `.full` bail-out.
-fn freePageSet(gpa: Allocator, pages: *std.StringArrayHashMapUnmanaged(void)) void {
+fn freePageSet(gpa: Allocator, pages: *std.array_hash_map.String(void)) void {
     for (pages.keys()) |k| gpa.free(k);
     pages.deinit(gpa);
 }
@@ -1556,8 +1556,8 @@ fn resolveIslandPages(
     gpa: Allocator,
     manifest_path: []const u8,
     changed_files: []const []const u8,
-    pages: *std.StringArrayHashMapUnmanaged(void),
-    mount_counts: *std.ArrayListUnmanaged(usize),
+    pages: *std.array_hash_map.String(void),
+    mount_counts: *std.ArrayList(usize),
 ) bool {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
@@ -1595,7 +1595,7 @@ fn islandPagesFromManifest(
     gpa: Allocator,
     parsed: *const islands_manifest.Json,
     changed_files: []const []const u8,
-    pages: *std.StringArrayHashMapUnmanaged(void),
+    pages: *std.array_hash_map.String(void),
 ) error{OutOfMemory}!bool {
     for (changed_files) |cf| {
         const mounts = parsed.islands.map.get(cf) orelse return false;
@@ -1673,7 +1673,7 @@ fn defaultRebuildArgv(
     gpa: Allocator,
     site: []const u8,
 ) error{OutOfMemory}!Argv {
-    var items: std.ArrayListUnmanaged([]const u8) = .empty;
+    var items: std.ArrayList([]const u8) = .empty;
     errdefer {
         for (items.items) |it| gpa.free(it);
         items.deinit(gpa);
@@ -1722,7 +1722,7 @@ fn discoverWatchDirs(
     gpa: Allocator,
     base_dir_path: []const u8,
 ) error{OutOfMemory}![]const []const u8 {
-    var dirs: std.ArrayListUnmanaged([]const u8) = .empty;
+    var dirs: std.ArrayList([]const u8) = .empty;
     errdefer {
         for (dirs.items) |d| gpa.free(d);
         dirs.deinit(gpa);
@@ -1752,7 +1752,7 @@ fn discoverWatchDirs(
 /// because the macOS watcher needs sentinel paths.
 fn appendWatchDir(
     gpa: Allocator,
-    dirs: *std.ArrayListUnmanaged([:0]const u8),
+    dirs: *std.ArrayList([:0]const u8),
     base_dir_path: []const u8,
     dir: []const u8,
 ) error{OutOfMemory}!void {
@@ -2069,7 +2069,7 @@ test "dev relPagePath joins with '/' and matches the render pass's source format
 
 test "dev appendContentRoot / appendOtherRoot deduplicate" {
     const gpa = std.testing.allocator;
-    var croots: std.ArrayListUnmanaged(ContentRoot) = .empty;
+    var croots: std.ArrayList(ContentRoot) = .empty;
     defer {
         for (croots.items) |r| gpa.free(r.abs);
         croots.deinit(gpa);
@@ -2080,7 +2080,7 @@ test "dev appendContentRoot / appendOtherRoot deduplicate" {
     try std.testing.expectEqualStrings("/site/content", croots.items[0].abs);
     try std.testing.expectEqualStrings("content", croots.items[0].rel);
 
-    var oroots: std.ArrayListUnmanaged([]const u8) = .empty;
+    var oroots: std.ArrayList([]const u8) = .empty;
     defer {
         for (oroots.items) |r| gpa.free(r);
         oroots.deinit(gpa);
@@ -2105,7 +2105,7 @@ test "dev island manifest: changed island resolves to its mounting pages (dedupe
         \\  "components/Hero.island.tsx":["content/b.smd","content/c.smd"]}}
     );
 
-    var pages: std.StringArrayHashMapUnmanaged(void) = .empty;
+    var pages: std.array_hash_map.String(void) = .empty;
     defer freePageSet(gpa, &pages);
     const ok = try islandPagesFromManifest(gpa, &parsed, &.{
         "components/Counter.island.tsx",
@@ -2129,7 +2129,7 @@ test "dev island manifest: unknown changed file forces a full rebuild" {
         \\{"version":1,"islands":{"components/Counter.island.tsx":["content/a.smd"]}}
     );
 
-    var pages: std.StringArrayHashMapUnmanaged(void) = .empty;
+    var pages: std.array_hash_map.String(void) = .empty;
     defer freePageSet(gpa, &pages);
     // A helper module (or a brand-new island) is not a manifest key: the whole
     // change set is unresolvable, even though the first file IS known.
@@ -2234,16 +2234,16 @@ test "dev isNewer treats an mtime-preserving write as changed via ctime (AUD-017
 
 test "dev freeIncremental releases pages and island modules" {
     const gpa = std.testing.allocator;
-    var pages: std.ArrayListUnmanaged([]const u8) = .empty;
+    var pages: std.ArrayList([]const u8) = .empty;
     try pages.append(gpa, try gpa.dupe(u8, "content/a.md"));
-    var mods: std.ArrayListUnmanaged([]const u8) = .empty;
+    var mods: std.ArrayList([]const u8) = .empty;
     try mods.append(gpa, try gpa.dupe(u8, "/islands/A.js"));
     freeIncremental(gpa, .{
         .pages = try pages.toOwnedSlice(gpa),
         .island_modules = try mods.toOwnedSlice(gpa),
     });
     // The default (static empty) island_modules slice must also be safe.
-    var only_pages: std.ArrayListUnmanaged([]const u8) = .empty;
+    var only_pages: std.ArrayList([]const u8) = .empty;
     try only_pages.append(gpa, try gpa.dupe(u8, "content/b.md"));
     freeIncremental(gpa, .{ .pages = try only_pages.toOwnedSlice(gpa) });
 }

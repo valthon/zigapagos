@@ -986,7 +986,7 @@ fn fingerprintedHref(
 /// Returns a mutable pointer so the caller can rc the asset: build assets
 /// only install when referenced, and a `spa.head` href IS a reference.
 fn findBuildAssetByInstallPath(
-    build_assets: *const std.StringArrayHashMapUnmanaged(root.BuildAsset),
+    build_assets: *const std.array_hash_map.String(root.BuildAsset),
     rel_path: []const u8,
 ) ?*root.BuildAsset {
     for (build_assets.values()) |*ba| {
@@ -2281,7 +2281,7 @@ test "spaHeadWarningAsset picks the lexicographically smallest .css path, determ
 test "spa findBuildAssetByInstallPath matches install paths leading-slash-insensitively" {
     const gpa = std.testing.allocator;
 
-    var map: std.StringArrayHashMapUnmanaged(root.BuildAsset) = .empty;
+    var map: std.array_hash_map.String(root.BuildAsset) = .empty;
     defer map.deinit(gpa); // keys and paths are borrowed literals; only the table allocates
     try map.put(gpa, "runtime", .{
         .input_path = "zig-out/zigapagos-runtime.js",

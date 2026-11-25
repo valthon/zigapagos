@@ -742,7 +742,7 @@ pub fn freeI18nErrors(gpa: Allocator, list: []I18nError) void {
 fn decodeResponse(
     gpa: Allocator,
     line: []const u8,
-    blocker_list: *std.ArrayListUnmanaged(blockers.Blocker),
+    blocker_list: *std.ArrayList(blockers.Blocker),
 ) Allocator.Error!Result {
     var parsed = std.json.parseFromSlice(WireResponse, gpa, line, .{ .ignore_unknown_fields = true }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
@@ -833,7 +833,7 @@ pub fn discoverTemplates(
     gpa: Allocator,
     root_path: []const u8,
     paths: []const []const u8,
-    blocker_list: *std.ArrayListUnmanaged(blockers.Blocker),
+    blocker_list: *std.ArrayList(blockers.Blocker),
     environ_map: *const std.process.Environ.Map,
 ) Allocator.Error!Result {
     const before = blocker_list.items.len;
@@ -865,7 +865,7 @@ fn queryTemplates(
     gpa: Allocator,
     root_path: []const u8,
     paths: []const []const u8,
-    blocker_list: *std.ArrayListUnmanaged(blockers.Blocker),
+    blocker_list: *std.ArrayList(blockers.Blocker),
     environ_map: *const std.process.Environ.Map,
 ) Allocator.Error!Result {
     // Every degradation branch below returns this literally -- Ruby/the
@@ -994,7 +994,7 @@ fn queryTemplates(
 
 test "decodeResponse: a node stream decodes with kinds, positions, args and attrs; unknown kind degrades" {
     const gpa = std.testing.allocator;
-    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.freeList(gpa, &list);
     const line =
         \\{"ok":true,"locale":"en","templates":[
@@ -1037,7 +1037,7 @@ test "decodeResponse: a node stream decodes with kinds, positions, args and attr
 // and go unnoticed.
 test "decodeResponse: a nil arg and a nil attr value each decode to an empty string, keeping arity" {
     const gpa = std.testing.allocator;
-    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.freeList(gpa, &list);
     const line =
         \\{"ok":true,"locale":null,"templates":[{"path":"a.html.erb","nodes":[
@@ -1063,7 +1063,7 @@ test "decodeResponse: a nil arg and a nil attr value each decode to an empty str
 
 test "decodeResponse: a text run is null-kinded and keeps its position in the stream" {
     const gpa = std.testing.allocator;
-    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.freeList(gpa, &list);
     const line =
         \\{"ok":true,"templates":[{"path":"a.html.erb","nodes":[
@@ -1089,7 +1089,7 @@ test "decodeResponse: a text run is null-kinded and keeps its position in the st
 
 test "decodeResponse preserves one template per requested path in wire order" {
     const gpa = std.testing.allocator;
-    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.freeList(gpa, &list);
     const line =
         \\{"ok":true,"templates":[
@@ -1110,7 +1110,7 @@ test "decodeResponse preserves one template per requested path in wire order" {
 
 test "decodeResponse: presentation facts are owned and old payloads default empty" {
     const gpa = std.testing.allocator;
-    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.freeList(gpa, &list);
     const line =
         \\{"ok":true,"templates":[{"path":"a.html.erb","nodes":[],"parity_h1":"About","parity_h1_node":3,"parity_links":["/","/posts"],"parity_link_nodes":[1,4]}]}
@@ -1132,7 +1132,7 @@ test "decodeResponse: presentation facts are owned and old payloads default empt
 
 test "decodeResponse: ok:false and a malformed line each become ONE RAILS_TEMPLATES_UNAVAILABLE blocker" {
     const gpa = std.testing.allocator;
-    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.freeList(gpa, &list);
     const a = try decodeResponse(gpa, "{\"ok\":false,\"error\":\"boom\",\"ruby\":{\"available\":true}}", &list);
     defer freeResult(gpa, a);
@@ -1154,7 +1154,7 @@ test "decodeResponse: ok:false and a malformed line each become ONE RAILS_TEMPLA
 // empty for a response that is entirely per-entry failures.
 test "decodeResponse: per-entry error/unreadable entries append NO blockers" {
     const gpa = std.testing.allocator;
-    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.freeList(gpa, &list);
     const line =
         \\{"ok":true,"templates":[
@@ -1198,7 +1198,7 @@ test "decodeResponse: OOM at any point leaves no leak" {
     while (fail_index < 64) : (fail_index += 1) {
         var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
         const gpa = failing.allocator();
-        var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+        var list: std.ArrayList(blockers.Blocker) = .empty;
         defer blockers.freeList(gpa, &list);
         const r = decodeResponse(gpa, line, &list) catch |err| {
             try std.testing.expectEqual(error.OutOfMemory, err);
@@ -1225,7 +1225,7 @@ test "decodeResponse: OOM at any point leaves no leak" {
 // actually caused them.
 test "decodeResponse: i18n_errors decode as data, without becoming blockers" {
     const gpa = std.testing.allocator;
-    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.freeList(gpa, &list);
     const line =
         \\{"ok":true,"locale":"en","templates":[{"path":"a.html.erb","nodes":[]}],
@@ -1246,7 +1246,7 @@ test "decodeResponse: i18n_errors decode as data, without becoming blockers" {
 
 test "decodeResponse: an absent or empty i18n_errors decodes as an empty slice" {
     const gpa = std.testing.allocator;
-    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.freeList(gpa, &list);
     const d = try decodeResponse(gpa, "{\"ok\":true,\"templates\":[],\"ruby\":{\"available\":true}}", &list);
     defer freeResult(gpa, d);
@@ -1268,7 +1268,7 @@ test "decodeResponse: an absent or empty i18n_errors decodes as an empty slice" 
 // `points: 3` into the string `"3"` and fails the target's typecheck.
 test "decodeResponse: element nodes, typed attr triples and a close-tag block_end" {
     const gpa = std.testing.allocator;
-    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.freeList(gpa, &list);
     const line =
         \\{"ok":true,"templates":[{"path":"a.html.erb","nodes":[
@@ -1326,7 +1326,7 @@ test "decodeResponse: element nodes, typed attr triples and a close-tag block_en
 // separately -- so the defaults are the contract, not an accident.
 test "decodeResponse: a pre-Stage-4 payload decodes exactly as before" {
     const gpa = std.testing.allocator;
-    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.freeList(gpa, &list);
     const line =
         \\{"ok":true,"templates":[{"path":"a.html.erb","nodes":[
@@ -1375,7 +1375,7 @@ test "kindFromWire covers every enum tag and falls back to unknown" {
 
 test "discoverTemplates: an empty path list never spawns and appends nothing" {
     const gpa = std.testing.allocator;
-    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.freeList(gpa, &list);
     var env: std.process.Environ.Map = .init(gpa);
     defer env.deinit();
@@ -1394,7 +1394,7 @@ test "discoverTemplates: a non-empty path list with no ZIGAPAGOS_RUNTIME_DIR deg
     // The mirror image of the test above: proves the early return is keyed
     // on `paths.len`, not on this function simply never doing anything.
     const gpa = std.testing.allocator;
-    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.freeList(gpa, &list);
     var env: std.process.Environ.Map = .init(gpa);
     defer env.deinit();
@@ -1411,7 +1411,7 @@ test "discoverTemplates: a non-empty path list with no ZIGAPAGOS_RUNTIME_DIR deg
 
 test "discoverTemplates: ZIGAPAGOS_RUBY pointing at a nonexistent binary yields RAILS_TEMPLATES_UNAVAILABLE" {
     const gpa = std.testing.allocator;
-    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.freeList(gpa, &list);
     var env: std.process.Environ.Map = .init(gpa);
     defer env.deinit();
@@ -1449,7 +1449,7 @@ test "discoverTemplates spawns the real Ruby sidecar and recovers a node stream"
     var app_dir = Io.Dir.cwd().openDir(io, "tests/migrate/rails-sample", .{}) catch return error.SkipZigTest;
     app_dir.close(io);
 
-    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.freeList(gpa, &list);
 
     const r = try discoverTemplates(io, gpa, "tests/migrate/rails-sample", &.{"app/views/posts/index.html.erb"}, &list, &env);
@@ -1488,7 +1488,7 @@ test "discoverTemplates spawns the real Ruby sidecar and recovers a node stream"
 // owns, pointed at a runtime dir that does not exist.
 test "discoverTemplates: an unresolvable sidecar script reports a machine-stable path, attempted path in detail" {
     const gpa = std.testing.allocator;
-    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.freeList(gpa, &list);
     var env: std.process.Environ.Map = .init(gpa);
     defer env.deinit();
@@ -1512,7 +1512,7 @@ test "discoverTemplates: an unresolvable sidecar script reports a machine-stable
 
 test "decodeResponse: invalid positions degrade only their own fragment" {
     const gpa = std.testing.allocator;
-    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.freeList(gpa, &list);
     const result = try decodeResponse(gpa,
         \\{ "ok": true, "templates": [{"path":"a.erb","nodes":[{"t":"code","kind":"unknown","line":1,"col":-2},{"t":"code","kind":"unknown","line":1,"col":0},{"t":"code","kind":"literal","line":2,"col":5},{"t":"code","line":-1,"col":3}]}] }
@@ -1535,7 +1535,7 @@ test "invalid positions retain independent finding and decision identities withi
     const convert = @import("convert.zig");
     const decisions = @import("decisions.zig");
     const gpa = std.testing.allocator;
-    var blockers_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blockers_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.freeList(gpa, &blockers_list);
     const result = try decodeResponse(gpa,
         \\{"ok":true,"templates":[{"path":"app/views/pages/show.html.erb","nodes":[{"t":"code","kind":"unknown","output":true,"code":"foo(1)","line":1,"col":-2},{"t":"code","kind":"unknown","output":true,"code":"bar(2)","line":2,"col":-2}]}]}
@@ -1551,7 +1551,7 @@ test "invalid positions retain independent finding and decision identities withi
         \\{{"schema":"zigapagos.rails-decisions/1","decisions":[{{"id":"{s}","choice":"retain","rationale":"keep first"}},{{"id":"{s}","choice":"blocked","rationale":"block second"}}]}}
     , .{ fs[0].id, fs[1].id });
     defer gpa.free(json);
-    var problems: std.ArrayListUnmanaged(decisions.Problem) = .empty;
+    var problems: std.ArrayList(decisions.Problem) = .empty;
     defer decisions.freeProblems(gpa, &problems);
     const parsed = try decisions.parse(gpa, json, fs, &.{}, &problems);
     defer decisions.free(gpa, parsed);
@@ -1608,7 +1608,7 @@ test "shared valid coordinates retain distinct control and helper identities" {
     const findings = @import("findings.zig");
     const convert = @import("convert.zig");
     const gpa = std.testing.allocator;
-    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.freeList(gpa, &list);
     const result = try decodeResponse(gpa,
         \\{"ok":true,"templates":[{"path":"app/views/pages/show.html.erb","nodes":[{"t":"code","kind":"control","name":"if","code":"foo(1) do","line":1,"col":5},{"t":"code","kind":"unknown","output":true,"code":"foo(1)","line":1,"col":5}]}]}
@@ -1631,7 +1631,7 @@ test "shared valid coordinates retain distinct control and helper identities" {
 
 test "fingerprint occurrences distinguish duplicates and preserve unique positions" {
     const gpa = std.testing.allocator;
-    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.freeList(gpa, &list);
     const result = try decodeResponse(gpa,
         \\{"ok":true,"templates":[{"path":"a.erb","nodes":[{"t":"code","kind":"unknown","code":"foo(1)"},{"t":"code","kind":"unknown","code":"other(2)"},{"t":"code","kind":"unknown","code":"foo(1)"},{"t":"code","kind":"unknown","code":"foo(1)","line":4,"col":5},{"t":"code","kind":"unknown","code":"foo(1)","line":7,"col":3},{"t":"code","kind":"unknown","code":"bar(2)","line":7,"col":3}]}]}
@@ -1651,7 +1651,7 @@ test "fingerprint occurrences distinguish duplicates and preserve unique positio
 
 test "fingerprint includes the decoded complete Ruby source span" {
     const gpa = std.testing.allocator;
-    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.freeList(gpa, &list);
     const result = try decodeResponse(gpa,
         \\{"ok":true,"templates":[{"path":"a.erb","nodes":[{"t":"code","kind":"control","code":"foo do","identity_source":"foo do; end if ok"},{"t":"code","kind":"control","code":"foo do","identity_source":"foo do; end if changed"}]}]}

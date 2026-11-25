@@ -318,7 +318,7 @@ pub const turbo_stream_issue: usize = 189;
 /// mapping reversible: a decoder can undo `%2E` -> `.` and then
 /// `%25` -> `%` and land exactly back on `part`.
 pub fn escapePart(gpa: Allocator, part: []const u8) Allocator.Error![]u8 {
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
     for (part) |c| {
         switch (c) {
@@ -712,7 +712,7 @@ fn routeNameUnknown(route_names: []const []const u8, name: []const u8) bool {
 /// half-built entry.
 fn appendFinding(
     gpa: Allocator,
-    list: *std.ArrayListUnmanaged(Finding),
+    list: *std.ArrayList(Finding),
     code: []const u8,
     severity: Severity,
     path: []const u8,
@@ -753,7 +753,7 @@ fn appendFinding(
 /// propagating.
 fn appendRouteFinding(
     gpa: Allocator,
-    list: *std.ArrayListUnmanaged(Finding),
+    list: *std.ArrayList(Finding),
     code: []const u8,
     severity: Severity,
     line: u64,
@@ -846,7 +846,7 @@ const journey_controllers = [_][]const u8{ "sessions", "registrations" };
 fn templateHasPasswordForm(gpa: Allocator, tpl: fragments.Template) Allocator.Error!bool {
     // Every open block gets a frame, not just forms: a `<% if %>` inside a
     // form must not pop the form's own frame when its `end` arrives.
-    var frames: std.ArrayListUnmanaged(bool) = .empty;
+    var frames: std.ArrayList(bool) = .empty;
     defer frames.deinit(gpa);
     var forms: usize = 0;
     for (tpl.nodes) |node| {
@@ -923,7 +923,7 @@ fn detectJourney(gpa: Allocator, in: DeriveInput) Allocator.Error!Journey {
     // `route[]` below -- fix round 1 (I-2) took away its power to suppress
     // anything on its own, because a password partial that no journey route
     // reaches has a real, answerable backend question of its own.
-    var password_views: std.ArrayListUnmanaged([]const u8) = .empty;
+    var password_views: std.ArrayList([]const u8) = .empty;
     defer password_views.deinit(gpa);
     for (in.templates) |tpl| {
         if (try templateHasPasswordForm(gpa, tpl)) try password_views.append(gpa, tpl.path);
@@ -947,7 +947,7 @@ fn detectJourney(gpa: Allocator, in: DeriveInput) Allocator.Error!Journey {
     // appears on is still covered -- the journey's `island` answer scaffolds
     // the `AuthForm` that region becomes wherever it is rendered. The other
     // direction would leave the sign-in form asked about twice.
-    var views: std.ArrayListUnmanaged([]const u8) = .empty;
+    var views: std.ArrayList([]const u8) = .empty;
     errdefer views.deinit(gpa);
     for (route, 0..) |j, i| {
         if (!j) continue;
@@ -1036,7 +1036,7 @@ pub fn journeyRouteFlags(
     route_views: []const ?[]const u8,
     templates: []const fragments.Template,
 ) Allocator.Error![]bool {
-    var password_views: std.ArrayListUnmanaged([]const u8) = .empty;
+    var password_views: std.ArrayList([]const u8) = .empty;
     defer password_views.deinit(gpa);
     for (templates) |tpl| {
         if (try templateHasPasswordForm(gpa, tpl)) try password_views.append(gpa, tpl.path);
@@ -1064,7 +1064,7 @@ pub fn journeyRouteFlags(
 /// scratch, so there is nothing to free on the error path either.
 fn appendUnseen(
     gpa: Allocator,
-    list: *std.ArrayListUnmanaged([]const u8),
+    list: *std.ArrayList([]const u8),
     path: []const u8,
 ) Allocator.Error!void {
     for (list.items) |v| {
@@ -1237,12 +1237,12 @@ const authGuardFor = controllers.authGuardFor;
 /// `list` escapes.
 fn deriveRouteFindings(
     gpa: Allocator,
-    list: *std.ArrayListUnmanaged(Finding),
+    list: *std.ArrayList(Finding),
     in: DeriveInput,
     row: RouteRow,
     journey: Journey,
 ) Allocator.Error!void {
-    var hits: std.ArrayListUnmanaged(RouteHit) = .empty;
+    var hits: std.ArrayList(RouteHit) = .empty;
     defer {
         for (hits.items) |h| {
             gpa.free(h.id);
@@ -1373,7 +1373,7 @@ fn deriveRouteFindings(
             (!group_by_verb or sameBackendGroup(hits.items[j], hits.items[i]))) j += 1;
         const head = hits.items[i];
 
-        var message: std.ArrayListUnmanaged(u8) = .empty;
+        var message: std.ArrayList(u8) = .empty;
         defer message.deinit(gpa);
         // A prefix that names a specific route -- the guard's controller, the
         // winner of a content-path collision -- can only speak for the
@@ -1440,11 +1440,11 @@ fn journeyRoute(journey: Journey, i: usize) bool {
 /// Contract 2 (owned-result), inherited from `derive`.
 fn deriveAuthJourney(
     gpa: Allocator,
-    list: *std.ArrayListUnmanaged(Finding),
+    list: *std.ArrayList(Finding),
     in: DeriveInput,
     journey: Journey,
 ) Allocator.Error!void {
-    var hits: std.ArrayListUnmanaged(RouteHit) = .empty;
+    var hits: std.ArrayList(RouteHit) = .empty;
     defer {
         for (hits.items) |h| gpa.free(h.id);
         hits.deinit(gpa);
@@ -1458,7 +1458,7 @@ fn deriveAuthJourney(
     if (hits.items.len == 0) return;
     std.mem.sort(RouteHit, hits.items, {}, routeHitLessThan);
 
-    var message: std.ArrayListUnmanaged(u8) = .empty;
+    var message: std.ArrayList(u8) = .empty;
     defer message.deinit(gpa);
     try message.appendSlice(gpa, "auth journey: ");
     for (hits.items, 0..) |h, k| {
@@ -1703,7 +1703,7 @@ pub fn linkTargetRoute(route_list: []const routes.Route, node: fragments.Node, v
 /// Contract 2 (owned-result), inherited from `derive`.
 fn deriveMutationLink(
     gpa: Allocator,
-    list: *std.ArrayListUnmanaged(Finding),
+    list: *std.ArrayList(Finding),
     in: DeriveInput,
     path: []const u8,
     node: fragments.Node,
@@ -1736,7 +1736,7 @@ fn deriveMutationLink(
     const loc = try nodeLoc(gpa, node);
     defer gpa.free(loc);
 
-    var summary: std.ArrayListUnmanaged(u8) = .empty;
+    var summary: std.ArrayList(u8) = .empty;
     defer summary.deinit(gpa);
     try summary.appendSlice(gpa, "link performs a mutation: ");
     try summary.appendSlice(gpa, if (std.mem.startsWith(u8, node.code, "button_to")) "button_to" else "link_to");
@@ -1796,7 +1796,7 @@ fn nestedStimulus(nodes: []const fragments.Node, index: usize) ?fragments.Node {
 
 /// Contract 1 (self-freeing): only the reconstructed extent bytes escape.
 fn extentBytes(gpa: Allocator, nodes: []const fragments.Node, start: usize, end: usize) Allocator.Error![]u8 {
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
     for (nodes[start .. end + 1]) |node| {
         if (node.text) |text| try out.appendSlice(gpa, text) else try out.appendSlice(gpa, node.code);
@@ -1820,7 +1820,7 @@ fn stringLessThan(_: void, a: []const u8, b: []const u8) bool {
 
 /// Contract 2 (owned-result), inherited from the caller's output list:
 /// formatting scratch is freed before return and only appended bytes remain.
-fn appendFmt(gpa: Allocator, out: *std.ArrayListUnmanaged(u8), comptime fmt: []const u8, args: anytype) Allocator.Error!void {
+fn appendFmt(gpa: Allocator, out: *std.ArrayList(u8), comptime fmt: []const u8, args: anytype) Allocator.Error!void {
     const text = try gpa.print(fmt, args);
     defer gpa.free(text);
     try out.appendSlice(gpa, text);
@@ -1835,7 +1835,7 @@ fn stimulusMessage(
     index: usize,
 ) Allocator.Error!struct { message: []u8, portable: bool } {
     const node = nodes[index];
-    var message: std.ArrayListUnmanaged(u8) = .empty;
+    var message: std.ArrayList(u8) = .empty;
     errdefer message.deinit(gpa);
     try appendFmt(gpa, &message, "stimulus `{s}` on <{s}>", .{ node.name orelse "", node.value orelse "element" });
     if (node.missing or elementEnd(nodes, index) == null) {
@@ -1851,12 +1851,12 @@ fn stimulusMessage(
 
     var identifiers = std.mem.tokenizeAny(u8, node.name orelse "", " \t\r\n");
     var source_path: ?[]const u8 = null;
-    var action_labels: std.ArrayListUnmanaged([]u8) = .empty;
+    var action_labels: std.ArrayList([]u8) = .empty;
     defer {
         for (action_labels.items) |label| gpa.free(label);
         action_labels.deinit(gpa);
     }
-    var targets: std.ArrayListUnmanaged([]const u8) = .empty;
+    var targets: std.ArrayList([]const u8) = .empty;
     defer targets.deinit(gpa);
     while (identifiers.next()) |identifier| {
         const controller = (try port.stimulusSource(gpa, identifier, in.js_sources)) orelse {
@@ -1923,7 +1923,7 @@ fn frameUrl(gpa: Allocator, in: DeriveInput, node: fragments.Node) Allocator.Err
     const stem = node.value orelse return null;
     for (in.route_params) |route| {
         if (!std.mem.eql(u8, route.name, stem)) continue;
-        var out: std.ArrayListUnmanaged(u8) = .empty;
+        var out: std.ArrayList(u8) = .empty;
         errdefer out.deinit(gpa);
         var arg: usize = 0;
         var segments = std.mem.splitScalar(u8, route.path, '/');
@@ -1978,7 +1978,7 @@ fn componentSource(in: DeriveInput, name: []const u8) ?port.JsSource {
 fn relativeImportSource(gpa: Allocator, in: DeriveInput, importer: []const u8, spec: []const u8) Allocator.Error!?port.JsSource {
     if (!std.mem.startsWith(u8, spec, "./") and !std.mem.startsWith(u8, spec, "../")) return null;
     const dir = std.fs.path.dirname(importer) orelse return null;
-    var parts: std.ArrayListUnmanaged([]const u8) = .empty;
+    var parts: std.ArrayList([]const u8) = .empty;
     defer parts.deinit(gpa);
     var base_it = std.mem.splitScalar(u8, dir, '/');
     while (base_it.next()) |part| if (part.len > 0) try parts.append(gpa, part);
@@ -2007,7 +2007,7 @@ fn relativeImportSource(gpa: Allocator, in: DeriveInput, importer: []const u8, s
 /// Contract 1 (self-freeing): returns an owned refusal message, or null when
 /// the root and every source in its copied closure are bundleable.
 fn componentProblem(gpa: Allocator, in: DeriveInput, root: port.JsSource) Allocator.Error!?[]u8 {
-    var queue: std.ArrayListUnmanaged(port.JsSource) = .empty;
+    var queue: std.ArrayList(port.JsSource) = .empty;
     defer queue.deinit(gpa);
     try queue.append(gpa, root);
     var i: usize = 0;
@@ -2049,7 +2049,7 @@ fn collectionMatches(stem: []const u8, collection: []const u8) bool {
 /// released here and only bytes appended to the finding message survive.
 fn deriveIvar(
     gpa: Allocator,
-    list: *std.ArrayListUnmanaged(Finding),
+    list: *std.ArrayList(Finding),
     in: DeriveInput,
     path: []const u8,
     nodes: []const fragments.Node,
@@ -2059,7 +2059,7 @@ fn deriveIvar(
     const loc = try nodeLoc(gpa, node);
     defer gpa.free(loc);
     const name = node.name orelse "";
-    var message: std.ArrayListUnmanaged(u8) = .empty;
+    var message: std.ArrayList(u8) = .empty;
     defer message.deinit(gpa);
     try appendFmt(gpa, &message, "request-time state `{s}`", .{name});
 
@@ -2092,7 +2092,7 @@ fn deriveIvar(
 
     if (in.backend) |doc| {
         const stem = std.mem.trim(u8, name, "@");
-        var collections: std.ArrayListUnmanaged([]const u8) = .empty;
+        var collections: std.ArrayList([]const u8) = .empty;
         defer collections.deinit(gpa);
         for (doc.operations) |operation| {
             const collection = operation.collection orelse continue;
@@ -2132,7 +2132,7 @@ fn deriveIvar(
 /// Contract 2 (owned-result), inherited from `derive`.
 fn deriveNode(
     gpa: Allocator,
-    list: *std.ArrayListUnmanaged(Finding),
+    list: *std.ArrayList(Finding),
     in: DeriveInput,
     path: []const u8,
     node: fragments.Node,
@@ -2418,7 +2418,7 @@ fn deriveNode(
             if (journey_view) return;
             const loc = try nodeLoc(gpa, node);
             defer gpa.free(loc);
-            var summary: std.ArrayListUnmanaged(u8) = .empty;
+            var summary: std.ArrayList(u8) = .empty;
             defer summary.deinit(gpa);
             try summary.appendSlice(gpa, "form submits to a Rails action: ");
             // A `form` node's `name` is the MODEL's param key (`post` from
@@ -2534,10 +2534,10 @@ fn deriveNode(
                 try appendFinding(gpa, list, code_component_props_dynamic, .warn, path, node.line, loc, message, &choices_retain_blocked);
                 return;
             }
-            var message: std.ArrayListUnmanaged(u8) = .empty;
+            var message: std.ArrayList(u8) = .empty;
             defer message.deinit(gpa);
             try appendFmt(gpa, &message, "React root `{s}` props {{", .{name});
-            var prop_names: std.ArrayListUnmanaged([]const u8) = .empty;
+            var prop_names: std.ArrayList([]const u8) = .empty;
             defer prop_names.deinit(gpa);
             for (node.attrs) |attr| try prop_names.append(gpa, attr.key);
             std.mem.sort([]const u8, prop_names.items, {}, stringLessThan);
@@ -2587,9 +2587,9 @@ fn templateByPath(templates: []const fragments.Template, path: []const u8) ?frag
 /// here and every appended finding is owned by `derive`'s result list.
 const ContextFailureWalker = struct {
     gpa: Allocator,
-    list: *std.ArrayListUnmanaged(Finding),
+    list: *std.ArrayList(Finding),
     templates: []const fragments.Template,
-    stack: std.ArrayListUnmanaged([]const u8) = .empty,
+    stack: std.ArrayList([]const u8) = .empty,
 
     fn deinit(w: *ContextFailureWalker) void {
         w.stack.deinit(w.gpa);
@@ -2632,7 +2632,7 @@ const ContextFailureWalker = struct {
     }
 
     fn walk(w: *ContextFailureWalker, path: []const u8, nodes: []const fragments.Node, locals: []const fragments.Attr, initial_answerable_depth: usize) Allocator.Error!void {
-        var frames: std.ArrayListUnmanaged(bool) = .empty;
+        var frames: std.ArrayList(bool) = .empty;
         defer frames.deinit(w.gpa);
         var answerable_depth = initial_answerable_depth;
 
@@ -2675,7 +2675,7 @@ const ContextFailureWalker = struct {
 
 /// Contract 2 (owned-result), inherited from `derive` through
 /// `ContextFailureWalker` above.
-fn deriveContextFailures(gpa: Allocator, list: *std.ArrayListUnmanaged(Finding), templates: []const fragments.Template) Allocator.Error!void {
+fn deriveContextFailures(gpa: Allocator, list: *std.ArrayList(Finding), templates: []const fragments.Template) Allocator.Error!void {
     var walker: ContextFailureWalker = .{ .gpa = gpa, .list = list, .templates = templates };
     defer walker.deinit();
     for (templates) |tpl| {
@@ -2703,7 +2703,7 @@ fn deriveContextFailures(gpa: Allocator, list: *std.ArrayListUnmanaged(Finding),
 /// `FailingAllocator` wrapping it in tests -- reclaims it, same as any
 /// other still-live allocation an aborted function leaves behind).
 pub fn derive(gpa: Allocator, in: DeriveInput) Allocator.Error![]Finding {
-    var list: std.ArrayListUnmanaged(Finding) = .empty;
+    var list: std.ArrayList(Finding) = .empty;
     errdefer {
         for (list.items) |f| freeOne(gpa, f);
         list.deinit(gpa);
@@ -2726,7 +2726,7 @@ pub fn derive(gpa: Allocator, in: DeriveInput) Allocator.Error![]Finding {
     // suppressed by it -- correct, since that field is not lexically inside
     // anything, and `convert.zig`'s own region nesting reads the stream the
     // same way (both go through `convert.opensBlock`).
-    var frames: std.ArrayListUnmanaged(bool) = .empty;
+    var frames: std.ArrayList(bool) = .empty;
     defer frames.deinit(gpa);
 
     for (in.templates) |tpl| {
@@ -2818,10 +2818,10 @@ pub fn derive(gpa: Allocator, in: DeriveInput) Allocator.Error![]Finding {
     try deriveContextFailures(gpa, &list, in.templates);
 
     if (in.js_entry) |entry| {
-        var message: std.ArrayListUnmanaged(u8) = .empty;
+        var message: std.ArrayList(u8) = .empty;
         defer message.deinit(gpa);
         try appendFmt(gpa, &message, "JS entry {s} was not inspected; imports: ", .{entry});
-        var specs: std.ArrayListUnmanaged([]const u8) = .empty;
+        var specs: std.ArrayList([]const u8) = .empty;
         defer specs.deinit(gpa);
         if (sourceByPath(in.js_sources, entry)) |source| {
             const imports = try port.reactImports(gpa, source.bytes);

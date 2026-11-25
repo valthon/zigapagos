@@ -54,7 +54,7 @@ fn isKnownDirective(name: []const u8) bool {
 pub fn lintDirectiveAttrs(
     t: *const Template,
     gpa: Allocator,
-    out: *std.ArrayListUnmanaged(BadDirectiveAttr),
+    out: *std.ArrayList(BadDirectiveAttr),
 ) Allocator.Error!void {
     for (t.html_ast.nodes) |node| {
         if (!node.kind.isElement()) continue;
@@ -120,7 +120,7 @@ pub const InertDirective = struct {
 pub fn lintInertDirectives(
     t: *const Template,
     gpa: Allocator,
-    out: *std.ArrayListUnmanaged(InertDirective),
+    out: *std.ArrayList(InertDirective),
 ) Allocator.Error!void {
     for (t.html_ast.nodes) |node| {
         if (!node.kind.isElement()) continue;
@@ -274,7 +274,7 @@ test "lintInertDirectives flags :else on an element and on <ctx>" {
     defer html_ast.deinit(gpa);
 
     const t: Template = .{ .src = src, .html_ast = html_ast, .layout = true };
-    var out: std.ArrayListUnmanaged(InertDirective) = .empty;
+    var out: std.ArrayList(InertDirective) = .empty;
     defer out.deinit(gpa);
     try t.lintInertDirectives(gpa, &out);
 
@@ -294,7 +294,7 @@ test "lintInertDirectives flags :if on a void element" {
     defer html_ast.deinit(gpa);
 
     const t: Template = .{ .src = src, .html_ast = html_ast, .layout = true };
-    var out: std.ArrayListUnmanaged(InertDirective) = .empty;
+    var out: std.ArrayList(InertDirective) = .empty;
     defer out.deinit(gpa);
     try t.lintInertDirectives(gpa, &out);
 
@@ -317,7 +317,7 @@ test "lintInertDirectives flags :loop on a void element" {
     defer html_ast.deinit(gpa);
 
     const t: Template = .{ .src = src, .html_ast = html_ast, .layout = true };
-    var out: std.ArrayListUnmanaged(InertDirective) = .empty;
+    var out: std.ArrayList(InertDirective) = .empty;
     defer out.deinit(gpa);
     try t.lintInertDirectives(gpa, &out);
 
@@ -346,7 +346,7 @@ test "lintInertDirectives flags :if on an XML self-closing element" {
     defer html_ast.deinit(gpa);
 
     const t: Template = .{ .src = src, .html_ast = html_ast, .layout = true };
-    var out: std.ArrayListUnmanaged(InertDirective) = .empty;
+    var out: std.ArrayList(InertDirective) = .empty;
     defer out.deinit(gpa);
     try t.lintInertDirectives(gpa, &out);
 
@@ -373,7 +373,7 @@ test "lintInertDirectives ignores :if and :loop on a closed element" {
     defer html_ast.deinit(gpa);
 
     const t: Template = .{ .src = src, .html_ast = html_ast, .layout = true };
-    var out: std.ArrayListUnmanaged(InertDirective) = .empty;
+    var out: std.ArrayList(InertDirective) = .empty;
     defer out.deinit(gpa);
     try t.lintInertDirectives(gpa, &out);
 
@@ -394,7 +394,7 @@ test "lintInertDirectives ignores <extend> and <super>" {
     defer html_ast.deinit(gpa);
 
     const t: Template = .{ .src = src, .html_ast = html_ast, .layout = true };
-    var out: std.ArrayListUnmanaged(InertDirective) = .empty;
+    var out: std.ArrayList(InertDirective) = .empty;
     defer out.deinit(gpa);
     try t.lintInertDirectives(gpa, &out);
 

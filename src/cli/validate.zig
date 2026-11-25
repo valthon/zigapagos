@@ -130,7 +130,7 @@ pub fn validate(
 }
 
 pub const Command = struct {
-    build_assets: std.StringArrayHashMapUnmanaged(BuildAsset),
+    build_assets: std.array_hash_map.String(BuildAsset),
     drafts: bool,
     allow_missing_pages: bool,
     format: diag.Format,
@@ -144,7 +144,7 @@ pub const Command = struct {
     }
 
     pub fn parse(gpa: Allocator, args: []const []const u8) !Command {
-        var build_assets: std.StringArrayHashMapUnmanaged(BuildAsset) = .empty;
+        var build_assets: std.array_hash_map.String(BuildAsset) = .empty;
         errdefer build_assets.deinit(gpa);
         var drafts = false;
         var allow_missing_pages = false;

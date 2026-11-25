@@ -5,7 +5,7 @@ const mem = std.mem;
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
-string_bytes: std.ArrayListUnmanaged(u8),
+string_bytes: std.ArrayList(u8),
 string_map: String.Map,
 
 pub const empty: StringTable = .{
@@ -59,7 +59,7 @@ pub fn intern(
 }
 
 pub fn ArrayHashMap(T: type) type {
-    return std.AutoArrayHashMapUnmanaged(String, T);
+    return std.array_hash_map.Auto(String, T);
 }
 
 pub fn HashMap(T: type) type {

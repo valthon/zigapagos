@@ -981,7 +981,7 @@ fn stripSigil(name: []const u8) []const u8 {
 ///
 /// Contract 1 (self-freeing): the returned line is the only allocation.
 fn oneLine(gpa: Allocator, code: []const u8) Allocator.Error![]u8 {
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
     var space = false;
     for (code) |ch| {
@@ -1031,7 +1031,7 @@ pub fn findingIdFor(finding_list: []const findings.Finding, path: []const u8, no
 
 // ---- the walk ------------------------------------------------------------
 
-const List = std.ArrayListUnmanaged(u8);
+const List = std.ArrayList(u8);
 
 /// One open block. `close` is the static markup the `block_end` appends
 /// (`</div>` for a `content_for` block, nothing for a finding region, whose
@@ -1063,34 +1063,34 @@ const Converter = struct {
     /// A view's named blocks, keyed by id. Each `Block` is heap-allocated so
     /// `sink` can point at one across an append to this list -- growing an
     /// `ArrayList` of by-value `List`s would dangle that pointer.
-    blocks: std.ArrayListUnmanaged(*Block) = .empty,
+    blocks: std.ArrayList(*Block) = .empty,
     /// LAYOUT only: the block ids the converted layout declares, minus the
     /// two that are always synthesised (`head`, `main`). Borrowed from the
     /// node that named them.
-    named_yields: std.ArrayListUnmanaged([]const u8) = .empty,
+    named_yields: std.ArrayList([]const u8) = .empty,
     /// LAYOUT only: a bare `yield` was converted in place, so the `id="main"`
     /// block already exists and `finishLayout` must not synthesise a second.
     saw_bare_yield: bool = false,
     /// Borrowed ids; duped only when the owned `Output` is assembled.
-    ids: std.ArrayListUnmanaged([]const u8) = .empty,
+    ids: std.ArrayList([]const u8) = .empty,
     /// Borrowed ids an island answered (#167 Stage 3), same lifetime rule as
     /// `ids`.
-    bound: std.ArrayListUnmanaged([]const u8) = .empty,
+    bound: std.ArrayList([]const u8) = .empty,
     /// The subset of `bound` that was answered by an ENCLOSING region's
     /// binding (#167 Stage 3, ruling S3-R6). Borrowed both ways, same
     /// lifetime rule as `ids`; handed to `Output.enclosed` as-is.
-    enclosed: std.ArrayListUnmanaged(Enclosure) = .empty,
+    enclosed: std.ArrayList(Enclosure) = .empty,
     /// One per bound region hit, in source order. `fields` is owned by the
     /// list element and handed to `Output`; `original` likewise.
-    islands: std.ArrayListUnmanaged(IslandSpec) = .empty,
+    islands: std.ArrayList(IslandSpec) = .empty,
     /// Owned notes.
-    dropped: std.ArrayListUnmanaged([]const u8) = .empty,
+    dropped: std.ArrayList([]const u8) = .empty,
     /// Partial paths currently being inlined -- the cycle guard.
-    stack: std.ArrayListUnmanaged([]const u8) = .empty,
+    stack: std.ArrayList([]const u8) = .empty,
     /// Active Stimulus `drop` extent and templates that already reported a
     /// Turbo Drive attribute removal.
     drop_identifiers: []const []const u8 = &.{},
-    turbo_noted_paths: std.ArrayListUnmanaged([]const u8) = .empty,
+    turbo_noted_paths: std.ArrayList([]const u8) = .empty,
     /// Nesting depth of finding regions; only depth 0 emits a marker.
     finding_depth: usize = 0,
     /// Finding regions in scope that have a real id. Unlike
@@ -1521,8 +1521,8 @@ const Converter = struct {
         c: *Converter,
         path: []const u8,
         nodes: []const fragments.Node,
-    ) Allocator.Error!std.ArrayListUnmanaged(Absorbed) {
-        var out: std.ArrayListUnmanaged(Absorbed) = .empty;
+    ) Allocator.Error!std.ArrayList(Absorbed) {
+        var out: std.ArrayList(Absorbed) = .empty;
         errdefer out.deinit(c.gpa);
         if (c.ctx.bindings.len == 0) return out;
         for (nodes, 0..) |n, fi| {
@@ -1592,7 +1592,7 @@ const Converter = struct {
             }
         }
 
-        var fields: std.ArrayListUnmanaged(Field) = .empty;
+        var fields: std.ArrayList(Field) = .empty;
         errdefer fields.deinit(c.gpa);
         var submit_label: []const u8 = "Save";
         for (region) |m| {
@@ -1663,7 +1663,7 @@ const Converter = struct {
         nodes: []const fragments.Node,
         locals: []const fragments.Attr,
     ) Allocator.Error!void {
-        var frames: std.ArrayListUnmanaged(Frame) = .empty;
+        var frames: std.ArrayList(Frame) = .empty;
         defer frames.deinit(c.gpa);
 
         // Named for what it holds, not for the flag: `Binding.absorbed` a few
@@ -2424,7 +2424,7 @@ fn lessThanString(_: void, a: []const u8, b: []const u8) bool {
 /// every string already duped is freed before propagating.
 fn finalizeBorrowed(gpa: Allocator, items: [][]const u8) Allocator.Error![][]const u8 {
     std.mem.sort([]const u8, items, {}, lessThanString);
-    var out: std.ArrayListUnmanaged([]const u8) = .empty;
+    var out: std.ArrayList([]const u8) = .empty;
     errdefer {
         for (out.items) |s| gpa.free(s);
         out.deinit(gpa);
@@ -2446,7 +2446,7 @@ fn finalizeBorrowed(gpa: Allocator, items: [][]const u8) Allocator.Error![][]con
 /// duplicates it drops, and hands the buffer over as the result.
 ///
 /// Contract 2 (owned-result), inherited from `convert`.
-fn finalizeOwned(gpa: Allocator, list: *std.ArrayListUnmanaged([]const u8)) Allocator.Error![][]const u8 {
+fn finalizeOwned(gpa: Allocator, list: *std.ArrayList([]const u8)) Allocator.Error![][]const u8 {
     std.mem.sort([]const u8, list.items, {}, lessThanString);
     var write: usize = 0;
     for (list.items, 0..) |s, idx| {
@@ -2594,7 +2594,7 @@ pub fn convert(gpa: Allocator, ctx: Context, tpl: fragments.Template, kind: Kind
     var out: List = .empty;
     errdefer out.deinit(gpa);
 
-    var block_id_list: std.ArrayListUnmanaged([]const u8) = .empty;
+    var block_id_list: std.ArrayList([]const u8) = .empty;
     defer block_id_list.deinit(gpa);
 
     if (kind == .view and ctx.layout_stem != null) {
@@ -3701,7 +3701,7 @@ fn convertPair(
 
 /// Every `id="…"` a template declares a block or a `<super>` under, in order
 /// of appearance -- the interface the two halves must agree on.
-fn idsIn(gpa: std.mem.Allocator, bytes: []const u8, out: *std.ArrayListUnmanaged([]const u8)) !void {
+fn idsIn(gpa: std.mem.Allocator, bytes: []const u8, out: *std.ArrayList([]const u8)) !void {
     var at: usize = 0;
     while (std.mem.findPos(u8, bytes, at, "id=\"")) |idx| {
         const start = idx + 4;
@@ -3748,10 +3748,10 @@ test "convert: ruling S7 -- layout and view agree on head/main whichever side de
         // Exactly one `<super>` per declared id in the layout, and exactly
         // one block per declared id in the view.
         try std.testing.expectEqual(@as(usize, 2), std.mem.count(u8, pair.layout.bytes, "<super>"));
-        var layout_ids: std.ArrayListUnmanaged([]const u8) = .empty;
+        var layout_ids: std.ArrayList([]const u8) = .empty;
         defer layout_ids.deinit(gpa);
         try idsIn(gpa, pair.layout.bytes, &layout_ids);
-        var view_ids: std.ArrayListUnmanaged([]const u8) = .empty;
+        var view_ids: std.ArrayList([]const u8) = .empty;
         defer view_ids.deinit(gpa);
         try idsIn(gpa, pair.view.bytes, &view_ids);
         try std.testing.expectEqual(layout_ids.items.len, view_ids.items.len);

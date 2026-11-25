@@ -14,14 +14,14 @@ debouncer: *Debouncer,
 
 notify_fd: std.posix.fd_t,
 /// active watch entries
-watch_fds: std.AutoHashMapUnmanaged(std.posix.fd_t, WatchEntry) = .{},
+watch_fds: std.AutoHashMapUnmanaged(std.posix.fd_t, WatchEntry) = .empty,
 /// direct descendant tracker
 children_fds: std.AutoHashMapUnmanaged(
     std.posix.fd_t,
     std.ArrayList(std.posix.fd_t),
 ) = .{},
 /// inotify cookie tracker for move events
-cookie_fds: std.AutoHashMapUnmanaged(u32, std.posix.fd_t) = .{},
+cookie_fds: std.AutoHashMapUnmanaged(u32, std.posix.fd_t) = .empty,
 
 const WatchEntry = struct {
     dir_path: []const u8,

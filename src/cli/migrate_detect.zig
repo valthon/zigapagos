@@ -295,7 +295,7 @@ pub fn findPropsSpan(src: []const u8) ?[]const u8 {
 /// contain `;`/newlines, so we split on top-level separators only
 /// (brace/paren/angle-depth aware).
 fn parsePropsBlock(gpa: Allocator, block: []const u8) ![]PropField {
-    var fields: std.ArrayListUnmanaged(PropField) = .empty;
+    var fields: std.ArrayList(PropField) = .empty;
     errdefer {
         for (fields.items) |field| {
             gpa.free(field.name);
@@ -399,7 +399,7 @@ fn parseDestructuring(gpa: Allocator, src: []const u8) ![]PropField {
     const ob = open orelse return &.{};
     const cb = std.mem.findScalarPos(u8, src, ob, '}') orelse return &.{};
     const inner = src[ob + 1 .. cb];
-    var fields: std.ArrayListUnmanaged(PropField) = .empty;
+    var fields: std.ArrayList(PropField) = .empty;
     errdefer {
         for (fields.items) |field| gpa.free(field.name);
         fields.deinit(gpa);
@@ -478,7 +478,7 @@ fn parseQuotedAt(src: []const u8, pos: usize) ?struct { text: []const u8, end: u
 /// Only the outer stmt array and each per-statement `names` sub-array are
 /// heap-allocated. Free with `freeImports`.
 pub fn extractImports(gpa: Allocator, src: []const u8) ![]ImportStmt {
-    var stmts: std.ArrayListUnmanaged(ImportStmt) = .empty;
+    var stmts: std.ArrayList(ImportStmt) = .empty;
     errdefer {
         for (stmts.items) |stmt| gpa.free(stmt.names);
         stmts.deinit(gpa);
@@ -543,7 +543,7 @@ pub fn extractImports(gpa: Allocator, src: []const u8) ![]ImportStmt {
             // advance past closing paren if present
             while (i < src.len and (src[i] == ' ' or src[i] == '\t')) : (i += 1) {}
             if (i < src.len and src[i] == ')') i += 1;
-            var dyn_names: std.ArrayListUnmanaged([]const u8) = .empty;
+            var dyn_names: std.ArrayList([]const u8) = .empty;
             try stmts.append(gpa, .{
                 .specifier = pq.text,
                 .names = try dyn_names.toOwnedSlice(gpa),
@@ -557,7 +557,7 @@ pub fn extractImports(gpa: Allocator, src: []const u8) ![]ImportStmt {
                 i += 1;
                 continue;
             };
-            var side_names: std.ArrayListUnmanaged([]const u8) = .empty;
+            var side_names: std.ArrayList([]const u8) = .empty;
             try stmts.append(gpa, .{
                 .specifier = pq.text,
                 .names = try side_names.toOwnedSlice(gpa),
@@ -633,7 +633,7 @@ pub fn extractImports(gpa: Allocator, src: []const u8) ![]ImportStmt {
         i = pq.end + 1;
 
         // Parse named identifiers from the brace content (if any).
-        var names: std.ArrayListUnmanaged([]const u8) = .empty;
+        var names: std.ArrayList([]const u8) = .empty;
         errdefer names.deinit(gpa);
         if (brace_content) |bc| {
             var it = std.mem.splitScalar(u8, bc, ',');
@@ -795,10 +795,10 @@ const forbidden_shim = [_]struct { spec: []const u8, target: []const u8 }{
 /// module import to `migrate_tests`), which is deliberately not made here.
 pub fn analyze(gpa: Allocator, component: []const u8, src: []const u8) !PortReport {
     const imps = try extractImports(gpa, src);
-    var hooks: std.ArrayListUnmanaged(HookFinding) = .empty;
-    var host_needs_out: std.ArrayListUnmanaged(HostNeed) = .empty;
-    var imports_out: std.ArrayListUnmanaged(ImportFinding) = .empty;
-    var shared_out: std.ArrayListUnmanaged(SharedMap) = .empty;
+    var hooks: std.ArrayList(HookFinding) = .empty;
+    var host_needs_out: std.ArrayList(HostNeed) = .empty;
+    var imports_out: std.ArrayList(ImportFinding) = .empty;
+    var shared_out: std.ArrayList(SharedMap) = .empty;
 
     for (imps) |im| {
         const cls = classifyImport(im.specifier);

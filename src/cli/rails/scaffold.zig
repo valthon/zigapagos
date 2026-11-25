@@ -653,22 +653,22 @@ pub fn writeParityRunners(
 /// Everything `write` accumulates, in one place so a failure anywhere can
 /// release all of it through one `deinit`.
 const Acc = struct {
-    routes: std.ArrayListUnmanaged(RouteOutcome) = .empty,
-    assets: std.ArrayListUnmanaged(AssetOutcome) = .empty,
-    redirects: std.ArrayListUnmanaged(Redirect) = .empty,
-    spa_files: std.ArrayListUnmanaged([]const u8) = .empty,
+    routes: std.ArrayList(RouteOutcome) = .empty,
+    assets: std.ArrayList(AssetOutcome) = .empty,
+    redirects: std.ArrayList(Redirect) = .empty,
+    spa_files: std.ArrayList([]const u8) = .empty,
     /// #167 Stage 3: every `.island.tsx` actually WRITTEN, in write order.
     /// `build.sh` needs one `--island=` per entry and `package.json` needs
     /// `@zigbase/client` exactly when it is non-empty -- both keyed on the
     /// file being on disk rather than on a binding merely existing, because a
     /// binding on a route ruling S20 settled produces no file (see
     /// `materializeView`).
-    island_files: std.ArrayListUnmanaged([]const u8) = .empty,
+    island_files: std.ArrayList([]const u8) = .empty,
     /// The finding id of every island in `island_files`, in the same write
     /// order -- the key `materializeView`'s write-once skip compares on. Ids
     /// are BORROWED from `Discovery.findings`, which outlives `write`, so
     /// only the list itself is an allocation.
-    island_ids: std.ArrayListUnmanaged([]const u8) = .empty,
+    island_ids: std.ArrayList([]const u8) = .empty,
     spa_uses_client: bool = false,
 
     fn deinit(self: *Acc, gpa: Allocator) void {
@@ -809,7 +809,7 @@ fn run(ctx: *Ctx, acc: *Acc) WriteError!void {
     defer layouts.deinit(ctx.gpa);
     var views: ViewCache = .{};
     defer views.deinit(ctx.gpa);
-    var spa_routes: std.ArrayListUnmanaged(SpaRoute) = .empty;
+    var spa_routes: std.ArrayList(SpaRoute) = .empty;
     defer {
         for (spa_routes.items) |s| {
             ctx.gpa.free(s.segment);
@@ -964,7 +964,7 @@ const Layout = struct {
 };
 
 const LayoutCache = struct {
-    items: std.ArrayListUnmanaged(Layout) = .empty,
+    items: std.ArrayList(Layout) = .empty,
 
     fn deinit(self: *LayoutCache, gpa: Allocator) void {
         for (self.items.items) |l| freeLayout(gpa, l);
@@ -1061,7 +1061,7 @@ const View = struct {
 const IslandFile = struct { path: []const u8, bytes: []const u8, finding_id: []const u8 };
 
 const ViewCache = struct {
-    items: std.ArrayListUnmanaged(View) = .empty,
+    items: std.ArrayList(View) = .empty,
 
     fn deinit(self: *ViewCache, gpa: Allocator) void {
         for (self.items.items) |v| freeView(gpa, v);
@@ -1168,8 +1168,8 @@ fn orderOptional(a: ?[]const u8, b: ?[]const u8) std.math.Order {
 /// on the success path.
 const Outcome = struct {
     status: Status = .open,
-    artifacts: std.ArrayListUnmanaged([]const u8) = .empty,
-    open_ids: std.ArrayListUnmanaged([]const u8) = .empty,
+    artifacts: std.ArrayList([]const u8) = .empty,
+    open_ids: std.ArrayList([]const u8) = .empty,
     decision_id: ?[]const u8 = null,
     /// Everything worth telling the operator about this route, joined with
     /// `"; "`. Two KINDS of thing land here and they must not be confused:
@@ -1319,13 +1319,13 @@ const InteractionPath = struct { identifier: []const u8, path: []const u8 };
 
 /// Mutable state `buildBindings` and its helpers append into.
 const BindingAcc = struct {
-    all: std.ArrayListUnmanaged(convert.Binding) = .empty,
-    owned: std.ArrayListUnmanaged([]const u8) = .empty,
+    all: std.ArrayList(convert.Binding) = .empty,
+    owned: std.ArrayList([]const u8) = .empty,
     endpoints: []?EndpointRef,
-    identifier_slices: std.ArrayListUnmanaged([]const []const u8) = .empty,
-    stimulus_paths: std.ArrayListUnmanaged(InteractionPath) = .empty,
-    component_paths: std.ArrayListUnmanaged(InteractionPath) = .empty,
-    alias_slices: std.ArrayListUnmanaged([]const port.Alias) = .empty,
+    identifier_slices: std.ArrayList([]const []const u8) = .empty,
+    stimulus_paths: std.ArrayList(InteractionPath) = .empty,
+    component_paths: std.ArrayList(InteractionPath) = .empty,
+    alias_slices: std.ArrayList([]const port.Alias) = .empty,
 
     fn deinit(self: *BindingAcc, gpa: Allocator) void {
         self.all.deinit(gpa);
@@ -1385,7 +1385,7 @@ const BindingAcc = struct {
 
     fn componentPath(self: *BindingAcc, gpa: Allocator, name: []const u8) Allocator.Error![]const u8 {
         for (self.component_paths.items) |item| if (std.mem.eql(u8, item.identifier, name)) return item.path;
-        var reserved: std.ArrayListUnmanaged([]const u8) = .empty;
+        var reserved: std.ArrayList([]const u8) = .empty;
         defer reserved.deinit(gpa);
         try reserved.appendSlice(gpa, &.{ "components/AuthForm.island.tsx", "components/AuthStatus.island.tsx", turbo_frame_island_path });
         for (self.stimulus_paths.items) |item| try reserved.append(gpa, item.path);
@@ -1445,7 +1445,7 @@ fn resolveChoice(
 ///
 /// Contract 1 (self-freeing): the returned path is the only allocation.
 fn islandPath(gpa: Allocator, view_path: []const u8, ordinal: usize) Allocator.Error![]u8 {
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
     try out.appendSlice(gpa, "components/forms/");
     for (resolve.viewStem(view_path)) |ch| try out.append(gpa, if (ch == '/') '_' else ch);
@@ -1760,7 +1760,7 @@ fn isAuthStatusName(name: ?[]const u8) bool {
 ///
 /// Contract 1 (self-freeing): the returned name is the only allocation.
 fn authBaseName(gpa: Allocator, collection: []const u8) Allocator.Error![]u8 {
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
     var upper = true;
     for (collection) |ch| {
@@ -1923,7 +1923,7 @@ fn bindJourneyTemplate(
     j: JourneyScaffold,
     controller: []const u8,
     view: []const u8,
-    seen: *std.ArrayListUnmanaged([]const u8),
+    seen: *std.ArrayList([]const u8),
 ) Allocator.Error!void {
     const gpa = ctx.gpa;
     const d = ctx.in.discovery;
@@ -2019,7 +2019,7 @@ fn bindAuthStatus(
     ctx: *Ctx,
     acc: *BindingAcc,
     j: JourneyScaffold,
-    origins: *std.ArrayListUnmanaged(StatusOrigin),
+    origins: *std.ArrayList(StatusOrigin),
 ) Allocator.Error!void {
     const gpa = ctx.gpa;
     const d = ctx.in.discovery;
@@ -2037,7 +2037,7 @@ fn bindAuthStatus(
         // are needed: this walk visits nodes in order, so a region reached at
         // `ni` is inside an earlier region exactly when some recorded end is
         // still ahead of it.
-        var open_ends: std.ArrayListUnmanaged(usize) = .empty;
+        var open_ends: std.ArrayList(usize) = .empty;
         defer open_ends.deinit(gpa);
         for (tpl.nodes, 0..) |n, ni| {
             if (n.text != null or n.kind != .request_state) continue;
@@ -2159,7 +2159,7 @@ fn buildBindings(ctx: *Ctx) Allocator.Error!Bindings {
     // Every TEMPLATE is bound at most once, not every view: a `_form`
     // partial two views render carries ONE finding, so binding it twice would
     // produce two islands for one answer and two names for one region.
-    var seen: std.ArrayListUnmanaged([]const u8) = .empty;
+    var seen: std.ArrayList([]const u8) = .empty;
     defer seen.deinit(gpa);
 
     // #167 Stage 3 Task 5, BEFORE the ordinary pass and with a `seen` set of
@@ -2181,9 +2181,9 @@ fn buildBindings(ctx: *Ctx) Allocator.Error!Bindings {
     // that had been answered. The two passes cannot collide, because this one
     // binds only nodes with NO finding at them and the other only nodes with
     // an answered one.
-    var journey_seen: std.ArrayListUnmanaged([]const u8) = .empty;
+    var journey_seen: std.ArrayList([]const u8) = .empty;
     defer journey_seen.deinit(gpa);
-    var origins: std.ArrayListUnmanaged(StatusOrigin) = .empty;
+    var origins: std.ArrayList(StatusOrigin) = .empty;
     errdefer origins.deinit(gpa);
     const journey = try journeyScaffold(ctx, &acc);
     if (journey) |j| {
@@ -2285,7 +2285,7 @@ fn attrEquals(attrs: []const fragments.Attr, key: []const u8, value: []const u8)
 }
 
 fn flattenedInteractionPath(gpa: Allocator, prefix: []const u8, name: []const u8, ordinal: usize) Allocator.Error![]u8 {
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
     try out.appendSlice(gpa, prefix);
     var previous_separator = false;
@@ -2322,7 +2322,7 @@ fn componentProps(gpa: Allocator, attrs: []const fragments.Attr) Allocator.Error
             return std.mem.order(u8, a.key, b.key) == .lt;
         }
     }.lessThan);
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
     try out.appendSlice(gpa, ".{");
     var count: usize = 0;
@@ -2354,7 +2354,7 @@ fn frameProps(gpa: Allocator, route_list: []const route_mod.Route, node: fragmen
         const stem = node.value orelse "";
         url = try resolve.routeUrl(gpa, route_list, stem, node.args);
     }
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
     try out.appendSlice(gpa, ".{ .id = \"");
     try appendJsEscaped(gpa, &out, node.name orelse "");
@@ -2367,7 +2367,7 @@ fn frameProps(gpa: Allocator, route_list: []const route_mod.Route, node: fragmen
 fn dataIslandPath(gpa: Allocator, built: []const convert.Binding, view_path: []const u8) Allocator.Error![]u8 {
     var ordinal: usize = 1;
     while (true) : (ordinal += 1) {
-        var out: std.ArrayListUnmanaged(u8) = .empty;
+        var out: std.ArrayList(u8) = .empty;
         errdefer out.deinit(gpa);
         try out.appendSlice(gpa, "components/data/");
         for (resolve.viewStem(view_path)) |ch| try out.append(gpa, if (ch == '/') '_' else ch);
@@ -2392,7 +2392,7 @@ fn dataBlockParam(code: []const u8) ?[]const u8 {
 /// 1 (self-freeing): scratch lives in `out`; the returned slice is the only
 /// allocation and escapes to the caller.
 fn realtimeProps(gpa: Allocator, stream: []const u8, action: []const u8, target: []const u8) Allocator.Error![]u8 {
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
     try out.appendSlice(gpa, ".{ .stream = \"");
     try appendZiggyEscaped(gpa, &out, stream);
@@ -2416,7 +2416,7 @@ fn bindTemplate(
     acc: *BindingAcc,
     route_index: usize,
     view: []const u8,
-    seen: *std.ArrayListUnmanaged([]const u8),
+    seen: *std.ArrayList([]const u8),
 ) Allocator.Error!void {
     const gpa = ctx.gpa;
     const d = ctx.in.discovery;
@@ -2446,7 +2446,7 @@ fn bindTemplate(
                 const id = convert.findingIdFor(d.findings, view, n) orelse continue;
                 const dec = decisions.lookup(ctx.in.decisions, id) orelse continue;
                 if (n.kind == .stimulus and (std.mem.eql(u8, dec.choice, "island") or std.mem.eql(u8, dec.choice, "drop"))) {
-                    var names: std.ArrayListUnmanaged([]const u8) = .empty;
+                    var names: std.ArrayList([]const u8) = .empty;
                     defer names.deinit(gpa);
                     var it = std.mem.tokenizeAny(u8, n.name orelse "", " \t\r\n");
                     while (it.next()) |name| try names.append(gpa, name);
@@ -2643,7 +2643,7 @@ fn writeRoutes(
     acc: *Acc,
     layouts: *LayoutCache,
     views: *ViewCache,
-    spa_routes: *std.ArrayListUnmanaged(SpaRoute),
+    spa_routes: *std.ArrayList(SpaRoute),
 ) WriteError!void {
     const gpa = ctx.gpa;
     const d = ctx.in.discovery;
@@ -2653,7 +2653,7 @@ fn writeRoutes(
     for (order, 0..) |*slot, i| slot.* = i;
     std.mem.sort(usize, order, d.routes, routeLessThan);
 
-    var claims: std.ArrayListUnmanaged(ContentClaim) = .empty;
+    var claims: std.ArrayList(ContentClaim) = .empty;
     defer {
         for (claims.items) |c| {
             gpa.free(c.path);
@@ -2699,11 +2699,11 @@ fn routeOutcome(
     acc: *Acc,
     layouts: *LayoutCache,
     views: *ViewCache,
-    spa_routes: *std.ArrayListUnmanaged(SpaRoute),
+    spa_routes: *std.ArrayList(SpaRoute),
     route_index: usize,
     out: *Outcome,
     outcome_index: usize,
-    claims: *std.ArrayListUnmanaged(ContentClaim),
+    claims: *std.ArrayList(ContentClaim),
 ) WriteError!void {
     const gpa = ctx.gpa;
     const d = ctx.in.discovery;
@@ -2920,7 +2920,7 @@ fn attachBackendEndpointIfDerived(ctx: *Ctx, out: *Outcome, r: route_mod.Route) 
 fn dynamicRoute(
     ctx: *Ctx,
     out: *Outcome,
-    spa_routes: *std.ArrayListUnmanaged(SpaRoute),
+    spa_routes: *std.ArrayList(SpaRoute),
     route_index: usize,
     outcome_index: usize,
     r: route_mod.Route,
@@ -3142,7 +3142,7 @@ fn applyAcknowledgements(
     enclosed: []const convert.Enclosure,
 ) WriteError!void {
     const gpa = ctx.gpa;
-    var answers: std.ArrayListUnmanaged(decisions.Decision) = .empty;
+    var answers: std.ArrayList(decisions.Decision) = .empty;
     defer answers.deinit(gpa);
     // Collected in full BEFORE the first one is applied, because callers pass
     // `out.open_ids.items` as `ids` and `Outcome.settle` frees the entries it
@@ -3662,7 +3662,7 @@ fn contentRoute(
     // ones included: a binding is not an acknowledgement, and a `retain` on
     // the error summary a bound form absorbed still says this page stays on
     // Rails. Reading only `open_ids` let the island silently outrank it.
-    var answerable: std.ArrayListUnmanaged([]const u8) = .empty;
+    var answerable: std.ArrayList([]const u8) = .empty;
     defer {
         for (answerable.items) |x| gpa.free(x);
         answerable.deinit(gpa);
@@ -3672,7 +3672,7 @@ fn contentRoute(
     // 4's to build (see `applyAcknowledgement`). The layout's are in it since
     // Task 5: the `current_user` region an `AuthStatus` island answers usually
     // lives in a partial the LAYOUT renders.
-    var bound_here: std.ArrayListUnmanaged([]const u8) = .empty;
+    var bound_here: std.ArrayList([]const u8) = .empty;
     defer {
         for (bound_here.items) |x| gpa.free(x);
         bound_here.deinit(gpa);
@@ -3685,7 +3685,7 @@ fn contentRoute(
     // nothing but the array, and a duplicate could only arise from a view and
     // its layout converting one shared partial -- in which case both entries
     // say the same thing and the lookup below stops at the first.
-    var enclosed_here: std.ArrayListUnmanaged(convert.Enclosure) = .empty;
+    var enclosed_here: std.ArrayList(convert.Enclosure) = .empty;
     defer enclosed_here.deinit(gpa);
     try enclosed_here.appendSlice(gpa, v.enclosed);
     if (layout_index) |li| try enclosed_here.appendSlice(gpa, layouts.items.items[li].enclosed);
@@ -3932,7 +3932,7 @@ fn collectTemplateFindings(ctx: *Ctx, out: *Outcome, path: []const u8) WriteErro
 /// Contract 2 (owned-result), inherited: grows the caller's list, and the
 /// copy it appends is owned by whoever owns that list. On failure nothing is
 /// added and nothing is leaked.
-fn appendOwned(gpa: Allocator, list: *std.ArrayListUnmanaged([]const u8), value: []const u8) Allocator.Error!void {
+fn appendOwned(gpa: Allocator, list: *std.ArrayList([]const u8), value: []const u8) Allocator.Error!void {
     const copy = try gpa.dupe(u8, value);
     errdefer gpa.free(copy);
     try list.append(gpa, copy);
@@ -3942,7 +3942,7 @@ fn appendOwned(gpa: Allocator, list: *std.ArrayListUnmanaged([]const u8), value:
 ///
 /// Contract 2 (owned-result), inherited: grows the caller's list; the string
 /// appended is a copy that list then owns.
-fn appendOwnedUnique(gpa: Allocator, list: *std.ArrayListUnmanaged([]const u8), value: []const u8) Allocator.Error!void {
+fn appendOwnedUnique(gpa: Allocator, list: *std.ArrayList([]const u8), value: []const u8) Allocator.Error!void {
     for (list.items) |have| {
         if (std.mem.eql(u8, have, value)) return;
     }
@@ -3953,7 +3953,7 @@ fn appendOwnedUnique(gpa: Allocator, list: *std.ArrayListUnmanaged([]const u8), 
 ///
 /// Contract 2 (owned-result), inherited: grows the caller's list; every
 /// string appended is a copy that list then owns.
-fn appendUnique(gpa: Allocator, list: *std.ArrayListUnmanaged([]const u8), items: []const []const u8) Allocator.Error!void {
+fn appendUnique(gpa: Allocator, list: *std.ArrayList([]const u8), items: []const []const u8) Allocator.Error!void {
     for (items) |s| try appendOwnedUnique(gpa, list, s);
 }
 
@@ -3996,7 +3996,7 @@ fn templateHasImportmap(tpl: fragments.Template) bool {
 }
 
 fn dupeStringsWith(gpa: Allocator, values: []const []const u8, extra: ?[]const u8) Allocator.Error![][]const u8 {
-    var out: std.ArrayListUnmanaged([]const u8) = .empty;
+    var out: std.ArrayList([]const u8) = .empty;
     errdefer {
         for (out.items) |item| gpa.free(item);
         out.deinit(gpa);
@@ -4190,7 +4190,7 @@ fn emitIslands(
     specs: []const convert.IslandSpec,
 ) Allocator.Error![]IslandFile {
     const gpa = ctx.gpa;
-    var out: std.ArrayListUnmanaged(IslandFile) = .empty;
+    var out: std.ArrayList(IslandFile) = .empty;
     errdefer {
         for (out.items) |f| {
             gpa.free(f.path);
@@ -4267,7 +4267,7 @@ fn islandIdentity(ctx: *Ctx, spec: convert.IslandSpec) []const u8 {
 }
 
 fn stimulusMounts(gpa: Allocator, ctx: *Ctx, identifier: []const u8) Allocator.Error![]StatusOrigin {
-    var out: std.ArrayListUnmanaged(StatusOrigin) = .empty;
+    var out: std.ArrayList(StatusOrigin) = .empty;
     errdefer out.deinit(gpa);
     for (ctx.in.discovery.fragments) |tpl| for (tpl.nodes) |node| {
         if (node.text != null or node.kind != .stimulus) continue;
@@ -4293,7 +4293,7 @@ fn stimulusMounts(gpa: Allocator, ctx: *Ctx, identifier: []const u8) Allocator.E
 }
 
 fn stimulusDescriptors(gpa: Allocator, ctx: *Ctx, identifier: []const u8) Allocator.Error![]port.Descriptor {
-    var out: std.ArrayListUnmanaged(port.Descriptor) = .empty;
+    var out: std.ArrayList(port.Descriptor) = .empty;
     errdefer out.deinit(gpa);
     for (ctx.in.discovery.fragments) |tpl| {
         for (tpl.nodes, 0..) |node, i| {
@@ -4305,7 +4305,7 @@ fn stimulusDescriptors(gpa: Allocator, ctx: *Ctx, identifier: []const u8) Alloca
                 break;
             };
             if (!found) continue;
-            var extent: std.ArrayListUnmanaged(u8) = .empty;
+            var extent: std.ArrayList(u8) = .empty;
             defer extent.deinit(gpa);
             const end = convert.matchingEnd(tpl.nodes, i) orelse i;
             for (tpl.nodes[i .. end + 1]) |part| try extent.appendSlice(gpa, part.text orelse part.code);
@@ -4324,7 +4324,7 @@ fn emitStimulusIsland(
     mounts: []const StatusOrigin,
 ) Allocator.Error![]u8 {
     _ = descriptors;
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
     try out.print(gpa, "// Ported STRUCTURALLY from {s} -- targets, values,\n// classes and action bindings are wired; the method bodies are quoted below and NOT translated.\n// Behavioural parity is not claimed. Mounted at: ", .{controller.path});
     for (mounts, 0..) |mount, i| {
@@ -4431,7 +4431,7 @@ fn emitDataIsland(gpa: Allocator, spec: convert.IslandSpec) Allocator.Error![]u8
     const collection = spec.binding.collection orelse "";
     const name = try islandComponentName(gpa, spec.island);
     defer gpa.free(name);
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
     try out.print(gpa,
         \\// Generated by `zigapagos migrate --from rails` from {s}:{d}.
@@ -4515,7 +4515,7 @@ fn emitComponentIslandFor(ctx: *Ctx, spec: convert.IslandSpec) Allocator.Error![
     defer gpa.free(copied);
     const import_path = if (std.mem.startsWith(u8, copied, "components/")) copied["components/".len..] else copied;
 
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
     try out.print(gpa, "// Generated by `zigapagos migrate --from rails` from {s}:{d}.\n// Replaces: {s}\n// The component is {s}, copied unchanged to {s};\n// its `react` imports resolve to the shared runtime through z-runtime.config.json (docs/migration/react-spa-bridge.md).\nimport {s} from \"./{s}\";\n\nexport interface Props {{", .{ spec.source, spec.line, spec.original, source.path, copied, name, import_path });
     const attrs = try gpa.dupe(fragments.Attr, node.attrs);
@@ -4550,15 +4550,15 @@ fn emitComponentIslandFor(ctx: *Ctx, spec: convert.IslandSpec) Allocator.Error![
 ///
 /// Contract 1 (self-freeing): the returned bytes are the only allocation.
 fn emitAuthForm(gpa: Allocator, j: JourneyScaffold) Allocator.Error![]u8 {
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
-    var c: std.ArrayListUnmanaged(u8) = .empty;
+    var c: std.ArrayList(u8) = .empty;
     defer c.deinit(gpa);
     try appendJsEscaped(gpa, &c, j.collection);
-    var signin: std.ArrayListUnmanaged(u8) = .empty;
+    var signin: std.ArrayList(u8) = .empty;
     defer signin.deinit(gpa);
     try appendJsEscaped(gpa, &signin, j.signin_redirect);
-    var signup: std.ArrayListUnmanaged(u8) = .empty;
+    var signup: std.ArrayList(u8) = .empty;
     defer signup.deinit(gpa);
     try appendJsEscaped(gpa, &signup, j.signup_redirect);
 
@@ -4644,9 +4644,9 @@ fn emitAuthStatus(
     j: JourneyScaffold,
     origins: []const StatusOrigin,
 ) Allocator.Error![]u8 {
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
-    var c: std.ArrayListUnmanaged(u8) = .empty;
+    var c: std.ArrayList(u8) = .empty;
     defer c.deinit(gpa);
     try appendJsEscaped(gpa, &c, j.collection);
 
@@ -4731,7 +4731,7 @@ fn islandComponentName(gpa: Allocator, island: []const u8) Allocator.Error![]u8 
     var stem = std.fs.path.basename(island);
     const suffix = ".island.tsx";
     if (std.mem.endsWith(u8, stem, suffix)) stem = stem[0 .. stem.len - suffix.len];
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
     try appendPascal(gpa, &out, stem);
     // `appendPascal` drops a leading digit and every separator, so a stem of
@@ -4746,7 +4746,7 @@ fn islandComponentName(gpa: Allocator, island: []const u8) Allocator.Error![]u8 
 /// converted form is a real field, not an association Rails is hiding).
 ///
 /// Contract 2 (owned-result), inherited: grows the caller's buffer.
-fn appendHumanized(gpa: Allocator, out: *std.ArrayListUnmanaged(u8), name: []const u8) Allocator.Error!void {
+fn appendHumanized(gpa: Allocator, out: *std.ArrayList(u8), name: []const u8) Allocator.Error!void {
     for (name, 0..) |ch, i| {
         if (ch == '_') {
             try out.append(gpa, ' ');
@@ -4815,7 +4815,7 @@ fn emitIsland(gpa: Allocator, spec: convert.IslandSpec) Allocator.Error![]u8 {
     const name = try islandComponentName(gpa, spec.island);
     defer gpa.free(name);
 
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
 
     try out.print(gpa,
@@ -4950,7 +4950,7 @@ fn emitClickIsland(
     const name = try islandComponentName(gpa, spec.island);
     defer gpa.free(name);
 
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
 
     try out.print(gpa,
@@ -5006,7 +5006,7 @@ fn emitClickIsland(
     switch (shape) {
         .create => try emitCollectionCall(gpa, &out, b.collection.?, "create({})"),
         .update, .delete_ => {
-            var call: std.ArrayListUnmanaged(u8) = .empty;
+            var call: std.ArrayList(u8) = .empty;
             defer call.deinit(gpa);
             try call.appendSlice(gpa, if (shape == .update) "update(\"" else "delete(\"");
             try appendJsEscaped(gpa, &call, click.record_id.?);
@@ -5072,7 +5072,7 @@ fn emitClickIsland(
 ///
 /// Contract 2 (owned-result), inherited from the island emitters: grows the
 /// caller's buffer and allocates nothing else.
-fn emitErrorList(gpa: Allocator, out: *std.ArrayListUnmanaged(u8), indent: []const u8) Allocator.Error!void {
+fn emitErrorList(gpa: Allocator, out: *std.ArrayList(u8), indent: []const u8) Allocator.Error!void {
     const lines = [_][]const u8{
         "<ul class=\"errors\">",
         "  {Object.entries(errors).map(([f, e]) => (",
@@ -5095,7 +5095,7 @@ fn emitErrorList(gpa: Allocator, out: *std.ArrayListUnmanaged(u8), indent: []con
 /// buffer and allocates nothing else.
 fn emitCollectionCall(
     gpa: Allocator,
-    out: *std.ArrayListUnmanaged(u8),
+    out: *std.ArrayList(u8),
     collection: []const u8,
     call: []const u8,
 ) Allocator.Error!void {
@@ -5111,7 +5111,7 @@ fn emitCollectionCall(
 ///
 /// Contract 2 (owned-result), inherited from `emitIsland`: grows the caller's
 /// buffer and allocates nothing else.
-fn emitField(gpa: Allocator, out: *std.ArrayListUnmanaged(u8), f: convert.Field) Allocator.Error!void {
+fn emitField(gpa: Allocator, out: *std.ArrayList(u8), f: convert.Field) Allocator.Error!void {
     if (std.mem.eql(u8, f.helper, "label")) {
         try out.appendSlice(gpa, "      <label htmlFor=\"");
         try appendJsEscaped(gpa, out, f.name);
@@ -5276,7 +5276,7 @@ fn writeIslandFiles(ctx: *Ctx, acc: *Acc, list: []const IslandFile) WriteError!v
 /// fresh allocations the caller owns; release with `freeStrings`. On failure
 /// the partial copy is released here and nothing escapes.
 fn dupeStrings(gpa: Allocator, list: []const []const u8) Allocator.Error![][]const u8 {
-    var out: std.ArrayListUnmanaged([]const u8) = .empty;
+    var out: std.ArrayList([]const u8) = .empty;
     errdefer {
         for (out.items) |s| gpa.free(s);
         out.deinit(gpa);
@@ -5313,7 +5313,7 @@ fn firstUnmappedKind(gpa: Allocator, bytes: []const u8) Allocator.Error!?[]const
 /// the only escaping allocation.
 fn emitContentPage(ctx: *Ctx, r: route_mod.Route, v: View, view_path: []const u8) Allocator.Error![]u8 {
     const gpa = ctx.gpa;
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
 
     try out.appendSlice(gpa, "---\n");
@@ -5367,7 +5367,7 @@ fn emitContentPage(ctx: *Ctx, r: route_mod.Route, v: View, view_path: []const u8
 ///
 /// Contract 2 (owned-result), inherited: grows the caller's buffer and
 /// allocates nothing else.
-fn appendZiggyEscaped(gpa: Allocator, out: *std.ArrayListUnmanaged(u8), value: []const u8) Allocator.Error!void {
+fn appendZiggyEscaped(gpa: Allocator, out: *std.ArrayList(u8), value: []const u8) Allocator.Error!void {
     for (value) |c| switch (c) {
         '"' => try out.appendSlice(gpa, "\\\""),
         '\\' => try out.appendSlice(gpa, "\\\\"),
@@ -5463,7 +5463,7 @@ fn emitSpa(ctx: *Ctx, segment: []const u8, list: []const SpaRoute, group: []cons
     const gpa = ctx.gpa;
     const routes_all = ctx.in.discovery.routes;
 
-    var names: std.ArrayListUnmanaged([]const u8) = .empty;
+    var names: std.ArrayList([]const u8) = .empty;
     defer {
         for (names.items) |n| gpa.free(n);
         names.deinit(gpa);
@@ -5474,10 +5474,10 @@ fn emitSpa(ctx: *Ctx, segment: []const u8, list: []const SpaRoute, group: []cons
         try names.append(gpa, name);
     }
 
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
 
-    var heads: std.ArrayListUnmanaged([]const u8) = .empty;
+    var heads: std.ArrayList([]const u8) = .empty;
     defer {
         for (heads.items) |head| gpa.free(head);
         heads.deinit(gpa);
@@ -5618,7 +5618,7 @@ fn spaRoutePath(route_path: []const u8, segment: []const u8) []const u8 {
 ///
 /// Contract 1 (self-freeing): the returned name is the only allocation.
 fn componentName(gpa: Allocator, r: route_mod.Route, taken: []const []const u8) Allocator.Error![]u8 {
-    var base: std.ArrayListUnmanaged(u8) = .empty;
+    var base: std.ArrayList(u8) = .empty;
     defer base.deinit(gpa);
     if (r.controller) |c| {
         try appendPascal(gpa, &base, c);
@@ -5653,7 +5653,7 @@ fn contains(list: []const []const u8, needle: []const u8) bool {
 ///
 /// Contract 2 (owned-result), inherited: grows the caller's buffer and
 /// allocates nothing else.
-fn appendPascal(gpa: Allocator, out: *std.ArrayListUnmanaged(u8), value: []const u8) Allocator.Error!void {
+fn appendPascal(gpa: Allocator, out: *std.ArrayList(u8), value: []const u8) Allocator.Error!void {
     var start_of_word = true;
     for (value) |c| {
         if (!std.ascii.isAlphanumeric(c)) {
@@ -5675,7 +5675,7 @@ fn appendPascal(gpa: Allocator, out: *std.ArrayListUnmanaged(u8), value: []const
 ///
 /// Contract 2 (owned-result), inherited: grows the caller's buffer and
 /// allocates nothing else.
-fn appendJsEscaped(gpa: Allocator, out: *std.ArrayListUnmanaged(u8), value: []const u8) Allocator.Error!void {
+fn appendJsEscaped(gpa: Allocator, out: *std.ArrayList(u8), value: []const u8) Allocator.Error!void {
     for (value) |c| switch (c) {
         '"' => try out.appendSlice(gpa, "\\\""),
         '\\' => try out.appendSlice(gpa, "\\\\"),
@@ -5936,7 +5936,7 @@ fn writeProjectFiles(ctx: *Ctx, acc: *Acc) WriteError!void {
 
     const component_sources = try collectComponentSources(gpa, ctx, acc.island_files.items);
     defer gpa.free(component_sources);
-    var npm_compat: std.ArrayListUnmanaged([]const u8) = .empty;
+    var npm_compat: std.ArrayList([]const u8) = .empty;
     defer npm_compat.deinit(gpa);
     for (component_sources) |source| {
         const target_path = try copiedComponentPath(gpa, source.path);
@@ -5967,7 +5967,7 @@ fn writeProjectFiles(ctx: *Ctx, acc: *Acc) WriteError!void {
     }
 }
 
-fn appendBorrowedUnique(gpa: Allocator, list: *std.ArrayListUnmanaged([]const u8), value: []const u8) Allocator.Error!void {
+fn appendBorrowedUnique(gpa: Allocator, list: *std.ArrayList([]const u8), value: []const u8) Allocator.Error!void {
     if (!contains(list.items, value)) try list.append(gpa, value);
 }
 
@@ -5983,7 +5983,7 @@ fn sourceByPath(sources: []const port.JsSource, path: []const u8) ?port.JsSource
 
 fn relativeJsSource(gpa: Allocator, sources: []const port.JsSource, importer: []const u8, spec: []const u8) Allocator.Error!?port.JsSource {
     const dir = std.fs.path.dirname(importer) orelse return null;
-    var parts: std.ArrayListUnmanaged([]const u8) = .empty;
+    var parts: std.ArrayList([]const u8) = .empty;
     defer parts.deinit(gpa);
     var base_it = std.mem.splitScalar(u8, dir, '/');
     while (base_it.next()) |part| if (part.len > 0) try parts.append(gpa, part);
@@ -6006,7 +6006,7 @@ fn relativeJsSource(gpa: Allocator, sources: []const port.JsSource, importer: []
 }
 
 fn collectComponentSources(gpa: Allocator, ctx: *Ctx, written: []const []const u8) Allocator.Error![]port.JsSource {
-    var queue: std.ArrayListUnmanaged(port.JsSource) = .empty;
+    var queue: std.ArrayList(port.JsSource) = .empty;
     errdefer queue.deinit(gpa);
     for (ctx.in.discovery.fragments) |tpl| for (tpl.nodes) |node| {
         if (node.text != null or node.kind != .component_root) continue;
@@ -6046,7 +6046,7 @@ fn collectComponentSources(gpa: Allocator, ctx: *Ctx, written: []const []const u
 }
 
 fn emitReactBridgeConfig(gpa: Allocator, compat: []const []const u8, with_client: bool) Allocator.Error![]u8 {
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
     try out.appendSlice(gpa, "{\"islandImports\":{\"firstParty\":[");
     if (with_client) try out.appendSlice(gpa, "\"@zigbase/client\"");
@@ -6078,7 +6078,7 @@ fn runtimePath(in: Input) ?[]const u8 {
 ///
 /// Contract 1 (self-freeing).
 fn emitConfig(gpa: Allocator, app_name: []const u8, with_assets: bool) Allocator.Error![]u8 {
-    var title: std.ArrayListUnmanaged(u8) = .empty;
+    var title: std.ArrayList(u8) = .empty;
     defer title.deinit(gpa);
     try appendZiggyEscaped(gpa, &title, app_name);
     return gpa.print(
@@ -6113,7 +6113,7 @@ fn emitBuildSh(
     spa_files: []const []const u8,
     island_files: []const []const u8,
 ) Allocator.Error![]u8 {
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
     try out.appendSlice(gpa,
         \\#!/usr/bin/env bash
@@ -6175,7 +6175,7 @@ fn emitPackage(
     runtime_path: ?[]const u8,
     with_client: bool,
 ) Allocator.Error![]u8 {
-    var name: std.ArrayListUnmanaged(u8) = .empty;
+    var name: std.ArrayList(u8) = .empty;
     defer name.deinit(gpa);
     for (app_name) |c| {
         try name.append(gpa, if (std.ascii.isAlphanumeric(c)) std.ascii.toLower(c) else '_');
@@ -6218,7 +6218,7 @@ fn emitPackageCompat(
     if (compat.len == 0) return gpa.dupe(u8, base);
     const marker = " }\n}\n";
     const at = std.mem.findLast(u8, base, marker) orelse return gpa.dupe(u8, base);
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
     try out.appendSlice(gpa, base[0..at]);
     for (compat) |name| {
@@ -7718,7 +7718,7 @@ fn treeDigest(gpa: Allocator, tmp: *std.testing.TmpDir) ![]u8 {
     var dir = try tmp.dir.openDir(std.testing.io, "out", .{ .iterate = true });
     defer dir.close(std.testing.io);
 
-    var paths: std.ArrayListUnmanaged([]const u8) = .empty;
+    var paths: std.ArrayList([]const u8) = .empty;
     defer {
         for (paths.items) |p| gpa.free(p);
         paths.deinit(gpa);
@@ -7731,7 +7731,7 @@ fn treeDigest(gpa: Allocator, tmp: *std.testing.TmpDir) ![]u8 {
     }
     std.mem.sort([]const u8, paths.items, {}, lessThanStr);
 
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
     for (paths.items) |p| {
         try out.appendSlice(gpa, p);
@@ -9236,7 +9236,7 @@ fn runBound(gpa: Allocator, opts: BoundOpts) !BoundRun {
     }
     try testing.expect(form_id.len > 0);
 
-    var problems: std.ArrayListUnmanaged(decisions.Problem) = .empty;
+    var problems: std.ArrayList(decisions.Problem) = .empty;
     defer decisions.freeProblems(gpa, &problems);
     const answers = if (opts.choice) |c| try gpa.print(
         \\{{"schema":"zigapagos.rails-decisions/1","decisions":[
@@ -9672,7 +9672,7 @@ test "write: a bound route answered retain writes no page and no island (ruling 
     }
     try testing.expect(form_id.len > 0 and errors_id.len > 0);
 
-    var problems: std.ArrayListUnmanaged(decisions.Problem) = .empty;
+    var problems: std.ArrayList(decisions.Problem) = .empty;
     defer decisions.freeProblems(gpa, &problems);
     const answers = try gpa.print(
         \\{{"schema":"zigapagos.rails-decisions/1","decisions":[
@@ -12368,7 +12368,7 @@ fn runJourney(gpa: Allocator, opts: JourneyOpts) !JourneyRun {
         all_findings = shadowed[0 .. finding_list.len + 1];
     }
 
-    var body: std.ArrayListUnmanaged(u8) = .empty;
+    var body: std.ArrayList(u8) = .empty;
     defer body.deinit(gpa);
     try body.appendSlice(gpa, "{\"schema\":\"zigapagos.rails-decisions/1\",\"decisions\":[");
     var first = true;
@@ -12429,7 +12429,7 @@ fn runJourney(gpa: Allocator, opts: JourneyOpts) !JourneyRun {
     }
     try body.appendSlice(gpa, "]}");
 
-    var problems: std.ArrayListUnmanaged(decisions.Problem) = .empty;
+    var problems: std.ArrayList(decisions.Problem) = .empty;
     defer decisions.freeProblems(gpa, &problems);
     const parsed = try decisions.parse(gpa, body.items, all_findings, &.{}, &problems);
     errdefer decisions.free(gpa, parsed);
@@ -13259,7 +13259,7 @@ fn runDeepJourney(gpa: Allocator, deep_choice: ?[]const u8) !JourneyRun {
     // Without it the test would pass for the wrong reason.
     try testing.expect(deep_id.len > 0);
 
-    var body: std.ArrayListUnmanaged(u8) = .empty;
+    var body: std.ArrayList(u8) = .empty;
     defer body.deinit(gpa);
     try body.print(
         gpa,
@@ -13276,7 +13276,7 @@ fn runDeepJourney(gpa: Allocator, deep_choice: ?[]const u8) !JourneyRun {
     }
     try body.appendSlice(gpa, "]}");
 
-    var problems: std.ArrayListUnmanaged(decisions.Problem) = .empty;
+    var problems: std.ArrayList(decisions.Problem) = .empty;
     defer decisions.freeProblems(gpa, &problems);
     const parsed = try decisions.parse(gpa, body.items, finding_list, &.{}, &problems);
     errdefer decisions.free(gpa, parsed);
@@ -15354,7 +15354,7 @@ test "write: unavailable templates give every affected route an answerable findi
     const gpa = testing.allocator;
     var env: std.process.Environ.Map = .init(gpa);
     defer env.deinit();
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.freeList(gpa, &blocker_list);
     var paths = [_][]const u8{ "app/views/pages/show.html.erb", "app/views/pages/about.html.erb" };
     const recovered = try fragments.discoverTemplates(testing.io, gpa, ".", &paths, &blocker_list, &env);

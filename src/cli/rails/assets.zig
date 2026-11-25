@@ -466,7 +466,7 @@ fn resolveViaManifest(
     nested_key: ?[]const u8,
     manifest: ?std.json.Value,
     manifest_unusable_reason: ?[]const u8,
-    blocker_list: *std.ArrayListUnmanaged(blockers.Blocker),
+    blocker_list: *std.ArrayList(blockers.Blocker),
 ) Allocator.Error!Asset {
     if (manifest) |mv| {
         if (manifestLookup(mv, nested_key, e_path)) |digested| {
@@ -503,7 +503,7 @@ fn buildAsset(
     detection: PipelineDetection,
     manifest: ?std.json.Value,
     manifest_unusable_reason: ?[]const u8,
-    blocker_list: *std.ArrayListUnmanaged(blockers.Blocker),
+    blocker_list: *std.ArrayList(blockers.Blocker),
 ) Allocator.Error!Asset {
     const source = try gpa.dupe(u8, e.path);
     errdefer gpa.free(source);
@@ -606,7 +606,7 @@ pub fn scan(
     root: Io.Dir,
     entries: []const inventory.Entry,
     gemfile: ?[]const u8,
-    blocker_list: *std.ArrayListUnmanaged(blockers.Blocker),
+    blocker_list: *std.ArrayList(blockers.Blocker),
 ) Allocator.Error![]Asset {
     return scanWithLock(io, gpa, root, entries, gemfile, null, blocker_list);
 }
@@ -637,9 +637,9 @@ pub fn scanWithLock(
     entries: []const inventory.Entry,
     gemfile: ?[]const u8,
     gemfile_lock: ?[]const u8,
-    blocker_list: *std.ArrayListUnmanaged(blockers.Blocker),
+    blocker_list: *std.ArrayList(blockers.Blocker),
 ) Allocator.Error![]Asset {
-    var list: std.ArrayListUnmanaged(Asset) = .empty;
+    var list: std.ArrayList(Asset) = .empty;
     errdefer {
         for (list.items) |a| freeAsset(gpa, a);
         list.deinit(gpa);
@@ -689,7 +689,7 @@ fn testScanWithLock(
 ) !TestScanResult {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     const items = try scanWithLock(io, gpa, tmp_dir, entries, gemfile, gemfile_lock, &blocker_list);
     return .{ .assets = items, .blockers = try blocker_list.toOwnedSlice(gpa) };
 }
@@ -1287,7 +1287,7 @@ test "scan: an OOM at any point (including inside findSprocketsManifestPath) lea
         var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
         const gpa = failing.allocator();
 
-        var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+        var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
         defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
         if (scan(io, gpa, tmp.dir, &entries, "gem \"sprockets-rails\"\n", &blocker_list)) |result| {

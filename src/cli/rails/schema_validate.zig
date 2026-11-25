@@ -60,12 +60,12 @@ const Allocator = std.mem.Allocator;
 /// (`/assets/2/pipeline`) across the recursion below; passed in empty by
 /// callers, since the root instance has no name of its own.
 pub fn validate(gpa: Allocator, schema: std.json.Value, instance: std.json.Value) Allocator.Error![]const []const u8 {
-    var errors: std.ArrayListUnmanaged([]const u8) = .empty;
+    var errors: std.ArrayList([]const u8) = .empty;
     errdefer {
         for (errors.items) |e| gpa.free(e);
         errors.deinit(gpa);
     }
-    var path: std.ArrayListUnmanaged(u8) = .empty;
+    var path: std.ArrayList(u8) = .empty;
     defer path.deinit(gpa);
 
     try validateNode(gpa, schema, instance, &path, &errors);
@@ -88,7 +88,7 @@ pub fn freeErrors(gpa: Allocator, errs: []const []const u8) void {
 /// own account.
 fn addError(
     gpa: Allocator,
-    errors: *std.ArrayListUnmanaged([]const u8),
+    errors: *std.ArrayList([]const u8),
     path: []const u8,
     comptime fmt: []const u8,
     args: anytype,
@@ -108,8 +108,8 @@ fn validateNode(
     gpa: Allocator,
     schema: std.json.Value,
     instance: std.json.Value,
-    path: *std.ArrayListUnmanaged(u8),
-    errors: *std.ArrayListUnmanaged([]const u8),
+    path: *std.ArrayList(u8),
+    errors: *std.ArrayList([]const u8),
 ) Allocator.Error!void {
     const s = schema.object;
 

@@ -300,7 +300,7 @@ pub fn checkIslands(gpa: Allocator, islands: []const migrate.Entry) IslandCheckE
 ///
 /// OOM calls `fatal.oom()` (noreturn) — the function never returns an error.
 pub fn emitBuildSh(gpa: Allocator, islands: []const migrate.Entry) []const u8 {
-    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    var buf: std.ArrayList(u8) = .empty;
 
     buf.appendSlice(gpa,
         \\#!/usr/bin/env bash
@@ -541,7 +541,7 @@ pub fn emitSectionIndexStub(
 /// OOM calls `fatal.oom()` (noreturn).
 pub fn emitLayoutStub(gpa: Allocator, name: []const u8, islands: []const migrate.Entry) []const u8 {
     _ = name; // reserved for future multi-layout support
-    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    var buf: std.ArrayList(u8) = .empty;
 
     buf.appendSlice(gpa,
         \\<!DOCTYPE html>
@@ -753,7 +753,7 @@ pub fn run(io: Io, gpa: Allocator, args: []const []const u8) bool {
     defer migrate.freeScanResult(gpa, &res);
 
     // Collect the island subset.
-    var islands: std.ArrayListUnmanaged(migrate.Entry) = .empty;
+    var islands: std.ArrayList(migrate.Entry) = .empty;
     defer islands.deinit(gpa);
     for (res.entries) |e| {
         if (e.is_island) islands.append(gpa, e) catch fatal.oom();

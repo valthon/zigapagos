@@ -242,7 +242,7 @@ pub const ScanResult = struct {
 /// Run the two-pass Astro scan over `root` and return the results.
 /// `entries` and `island_names` are gpa-owned; call `freeScanResult` when done.
 pub fn scan(io: Io, gpa: Allocator, root: Io.Dir) ScanResult {
-    var entries: std.ArrayListUnmanaged(Entry) = .empty;
+    var entries: std.ArrayList(Entry) = .empty;
     var island_names: std.StringHashMapUnmanaged(void) = .empty;
 
     // Pass 1: collect entries + the client:* usage set.
@@ -423,7 +423,7 @@ fn scanTopLevelFiles(
     gpa: Allocator,
     base: Io.Dir,
     kind: Kind,
-    out: *std.ArrayListUnmanaged(Entry),
+    out: *std.ArrayList(Entry),
     island_names: *std.StringHashMapUnmanaged(void),
 ) void {
     var dir = base.openDir(io, ".", .{ .iterate = true }) catch return;
@@ -471,7 +471,7 @@ fn nextAppRouteModule(path: []const u8) bool {
 }
 
 fn scanOther(io: Io, gpa: Allocator, root: Io.Dir, source: Source, report_path: ?[]const u8) ScanResult {
-    var entries: std.ArrayListUnmanaged(Entry) = .empty;
+    var entries: std.ArrayList(Entry) = .empty;
     var names: std.StringHashMapUnmanaged(void) = .empty;
 
     switch (source) {
@@ -641,7 +641,7 @@ fn scanOther(io: Io, gpa: Allocator, root: Io.Dir, source: Source, report_path: 
 /// all traversal scratch is freed here. This is a conservative inventory, not
 /// a framework config evaluator: retain possible custom-root/collection pages
 /// without turning them into conversion candidates. Never follow symlinks.
-fn scanUnhandledContent(io: Io, gpa: Allocator, root: Io.Dir, rel: []const u8, source: Source, out: *std.ArrayListUnmanaged(Entry), inventoried: *std.StringHashMapUnmanaged(void)) void {
+fn scanUnhandledContent(io: Io, gpa: Allocator, root: Io.Dir, rel: []const u8, source: Source, out: *std.ArrayList(Entry), inventoried: *std.StringHashMapUnmanaged(void)) void {
     var dir = root.openDir(io, rel, .{ .iterate = true }) catch |err| fatal.dir(rel, err);
     defer dir.close(io);
     var it = dir.iterateAssumeFirstIteration();
@@ -1392,7 +1392,7 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
         else
             rails_decisions_basename;
 
-        var decision_problems: std.ArrayListUnmanaged(rails.decisions.Problem) = .empty;
+        var decision_problems: std.ArrayList(rails.decisions.Problem) = .empty;
         defer rails.decisions.freeProblems(gpa, &decision_problems);
         // Resolve the source once, up front. The report titles itself by the
         // source's basename and the scaffold names the site by it, and `.`
@@ -1799,7 +1799,7 @@ fn scanDir(
     base: Io.Dir,
     rel: []const u8,
     kind: Kind,
-    out: *std.ArrayListUnmanaged(Entry),
+    out: *std.ArrayList(Entry),
     island_names: *std.StringHashMapUnmanaged(void),
 ) void {
     var dir = base.openDir(io, rel, .{ .iterate = true }) catch return;
@@ -1830,7 +1830,7 @@ fn scanFile(
     base: Io.Dir,
     path: []const u8,
     kind: Kind,
-    out: *std.ArrayListUnmanaged(Entry),
+    out: *std.ArrayList(Entry),
     island_names: *std.StringHashMapUnmanaged(void),
 ) void {
     // An unreadable source still belongs in the worklist (the porter has to
@@ -1916,7 +1916,7 @@ const OutLine = struct {
 fn processImportLine(
     gpa: Allocator,
     line: []const u8,
-    flagged: *std.ArrayListUnmanaged([]const u8),
+    flagged: *std.ArrayList([]const u8),
 ) ?OutLine {
     const verbatim: OutLine = .{ .text = line, .owned = false };
     const trimmed = std.mem.trimStart(u8, line, " \t");
@@ -2011,7 +2011,7 @@ fn writeIslandSkeleton(
             .{astro_src_rel},
         ) catch |err| fatal.file(out_path, err);
 
-        var flagged: std.ArrayListUnmanaged([]const u8) = .empty;
+        var flagged: std.ArrayList([]const u8) = .empty;
         defer {
             for (flagged.items) |spec| gpa.free(spec);
             flagged.deinit(gpa);

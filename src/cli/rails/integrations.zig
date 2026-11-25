@@ -44,7 +44,7 @@ pub fn dependencyVersions(gpa: Allocator, package_json: []const u8) Allocator.Er
     };
     defer parsed.deinit();
 
-    var list: std.ArrayListUnmanaged(NpmDep) = .empty;
+    var list: std.ArrayList(NpmDep) = .empty;
     errdefer {
         for (list.items) |dep| {
             gpa.free(dep.name);
@@ -105,7 +105,7 @@ fn testScan(gemfile: ?[]const u8, package_json: ?[]const u8) ![]Integration {
 /// `Gemfile.lock` content (the gem-sourced `version` path).
 fn testScanWithLock(gemfile: ?[]const u8, package_json: ?[]const u8, gemfile_lock: ?[]const u8) ![]Integration {
     const gpa = std.testing.allocator;
-    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, list.toOwnedSlice(gpa) catch unreachable);
     const items = try scan(gpa, gemfile, package_json, gemfile_lock, &list);
     try std.testing.expectEqual(@as(usize, 0), list.items.len);
@@ -207,7 +207,7 @@ test "malformed package.json emits a blocker, not a silent zero integrations" {
     // P4: a malformed package.json must not silently mean "no
     // integrations" -- the inventory otherwise looks confidently empty.
     const gpa = std.testing.allocator;
-    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, list.toOwnedSlice(gpa) catch unreachable);
 
     const items = try scan(gpa, null, "{not valid json", null, &list);
@@ -454,9 +454,9 @@ pub fn scan(
     gemfile: ?[]const u8,
     package_json: ?[]const u8,
     gemfile_lock: ?[]const u8,
-    blocker_list: *std.ArrayListUnmanaged(blockers.Blocker),
+    blocker_list: *std.ArrayList(blockers.Blocker),
 ) Allocator.Error![]Integration {
-    var list: std.ArrayListUnmanaged(Integration) = .empty;
+    var list: std.ArrayList(Integration) = .empty;
     errdefer {
         for (list.items) |i| {
             gpa.free(i.evidence);

@@ -28,7 +28,7 @@ const max_stored_block = 65535;
 /// freed before returning; the one escaping allocation is the returned PNG
 /// byte slice, freed by the caller.
 pub fn write(gpa: Allocator, w: u32, h: u32, rgba: []const u8) error{OutOfMemory}![]u8 {
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
     try out.appendSlice(gpa, &signature);
 
@@ -58,7 +58,7 @@ pub fn write(gpa: Allocator, w: u32, h: u32, rgba: []const u8) error{OutOfMemory
         dst += stride;
     }
 
-    var idat: std.ArrayListUnmanaged(u8) = .empty;
+    var idat: std.ArrayList(u8) = .empty;
     defer idat.deinit(gpa);
     try idat.appendSlice(gpa, &.{ 0x78, 0x01 }); // zlib header: deflate, default window, no dict
 
@@ -91,7 +91,7 @@ pub fn write(gpa: Allocator, w: u32, h: u32, rgba: []const u8) error{OutOfMemory
 
 fn writeChunk(
     gpa: Allocator,
-    out: *std.ArrayListUnmanaged(u8),
+    out: *std.ArrayList(u8),
     chunk_type: *const [4]u8,
     data: []const u8,
 ) error{OutOfMemory}!void {

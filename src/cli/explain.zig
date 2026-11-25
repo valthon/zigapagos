@@ -507,7 +507,7 @@ fn printReport(
         var has_main = false;
         var alias_count: usize = 0;
         var pagination_count: usize = 0;
-        var alt_names: std.ArrayListUnmanaged([]const u8) = .empty;
+        var alt_names: std.ArrayList([]const u8) = .empty;
         defer alt_names.deinit(alloc);
         var it2 = v.urls.iterator();
         while (it2.next()) |kv| {
@@ -615,7 +615,7 @@ const StubRenderer = struct {
 
 pub const Command = struct {
     route: []const u8,
-    build_assets: std.StringArrayHashMapUnmanaged(BuildAsset),
+    build_assets: std.array_hash_map.String(BuildAsset),
     drafts: bool,
     allow_missing_pages: bool,
 
@@ -626,7 +626,7 @@ pub const Command = struct {
     }
 
     pub fn parse(gpa: Allocator, args: []const []const u8) !Command {
-        var build_assets: std.StringArrayHashMapUnmanaged(BuildAsset) = .empty;
+        var build_assets: std.array_hash_map.String(BuildAsset) = .empty;
         errdefer build_assets.deinit(gpa);
         var drafts = false;
         var allow_missing_pages = false;

@@ -9,7 +9,7 @@ const builtin = @import("builtin");
 const StringTable = @import("StringTable.zig");
 const String = StringTable.String;
 
-path_components: std.ArrayListUnmanaged(String),
+path_components: std.ArrayList(String),
 path_map: Path.Map,
 
 pub const empty: PathTable = .{
@@ -307,7 +307,7 @@ pub fn internExtend(
 }
 
 pub fn ArrayHashMap(T: type) type {
-    return std.AutoArrayHashMapUnmanaged(Path, T);
+    return std.array_hash_map.Auto(Path, T);
 }
 
 pub fn HashMap(T: type) type {
@@ -377,7 +377,7 @@ pub const Path = enum(u32) {
     //     // extra path component to add at the end
     //     name: ?StringTable.String,
     // ) usize {
-    //     var out = std.ArrayListUnmanaged(u8).initBuffer(buf);
+    //     var out = std.ArrayList(u8).initBuffer(buf);
     //     const components = index.slice(pt);
     //     for (components) |c| {
     //         const bytes = c.slice(st);

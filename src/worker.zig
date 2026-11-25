@@ -83,7 +83,7 @@ pub const Job = union(enum) {
     page_render: struct {
         progress: std.Progress.Node,
         build: *Build,
-        sites: *const std.StringArrayHashMapUnmanaged(context.Site),
+        sites: *const std.array_hash_map.String(context.Site),
         page: *Page,
         kind: RenderJobKind,
     },
@@ -1455,7 +1455,7 @@ fn renderPage(
     arena: RenderArena,
     progress: std.Progress.Node,
     build: *Build,
-    sites: *const std.StringArrayHashMapUnmanaged(context.Site),
+    sites: *const std.array_hash_map.String(context.Site),
     page: *Page,
     kind: RenderJobKind,
 ) void {
@@ -1472,7 +1472,7 @@ fn renderPageInner(
     arena: RenderArena,
     progress: std.Progress.Node,
     build: *Build,
-    sites: *const std.StringArrayHashMapUnmanaged(context.Site),
+    sites: *const std.array_hash_map.String(context.Site),
     page: *Page,
     kind: RenderJobKind,
 ) !void {
@@ -1764,11 +1764,11 @@ fn renderPageInner(
                 .disk => .fail,
                 .memory => .placeholder,
             };
-        var render_errors: std.ArrayListUnmanaged(islands.RenderErrorReport) = .empty;
+        var render_errors: std.ArrayList(islands.RenderErrorReport) = .empty;
         // Reports are logged synchronously below; the list backing (gpa) is freed
         // here — the string fields it points at are arena-owned (per-page arena).
         defer render_errors.deinit(gpa);
-        var content_prop_eval_errors: std.ArrayListUnmanaged(islands.ContentPropEvalErrorReport) = .empty;
+        var content_prop_eval_errors: std.ArrayList(islands.ContentPropEvalErrorReport) = .empty;
         defer content_prop_eval_errors.deinit(gpa);
         var content_prop_eval_ctx: ContentPropEvalContext = .{ .root = &ctx };
         const result = islands.process(gpa, arena, raw, island_pathname, sc, .{

@@ -246,12 +246,12 @@ pub fn parse(gpa: Allocator, bytes: []const u8, file_label: []const u8) ParseErr
 
     const paths = objectField(root, "paths") orelse return error.NoPaths;
 
-    var ops: std.ArrayListUnmanaged(Operation) = .empty;
+    var ops: std.ArrayList(Operation) = .empty;
     errdefer {
         for (ops.items) |op| freeOperation(gpa, op);
         ops.deinit(gpa);
     }
-    var auth: std.ArrayListUnmanaged([]const u8) = .empty;
+    var auth: std.ArrayList([]const u8) = .empty;
     errdefer {
         for (auth.items) |name| gpa.free(name);
         auth.deinit(gpa);
@@ -400,7 +400,7 @@ pub fn free(gpa: Allocator, doc: Document) void {
 /// and the resource's own collection operations come first because the
 /// standard `resources :posts` mapping is the answer nine times in ten.
 pub fn choicesFor(gpa: Allocator, doc: ?Document, verb: []const u8, resource: ?[]const u8) Allocator.Error![][]const u8 {
-    var out: std.ArrayListUnmanaged([]const u8) = .empty;
+    var out: std.ArrayList([]const u8) = .empty;
     errdefer out.deinit(gpa);
 
     if (doc) |d| {

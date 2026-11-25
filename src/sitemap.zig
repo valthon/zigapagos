@@ -59,7 +59,7 @@ pub const filename = "sitemap.xml";
 /// the XML buffer and freed -- nothing escapes this function but the file
 /// it writes to `out_dir`.
 pub fn write(io: Io, gpa: Allocator, build: *const Build, out_dir: Io.Dir) !void {
-    var urls: std.ArrayListUnmanaged([]const u8) = .empty;
+    var urls: std.ArrayList([]const u8) = .empty;
     defer {
         for (urls.items) |u| gpa.free(u);
         urls.deinit(gpa);

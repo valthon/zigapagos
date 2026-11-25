@@ -46,7 +46,7 @@ pub fn doctor(io: Io, gpa: Allocator, args: []const []const u8) bool {
 
     // Collect every `.html` path first (rather than auditing during the
     // walk) so the report order can be sorted — see below.
-    var paths: std.ArrayListUnmanaged([]const u8) = .empty;
+    var paths: std.ArrayList([]const u8) = .empty;
     defer {
         for (paths.items) |p| gpa.free(p);
         paths.deinit(gpa);

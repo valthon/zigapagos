@@ -367,7 +367,7 @@ fn boundedEvidence(rest: []const u8) []const u8 {
 /// caller only cares about a `render` call that references PARTIAL content,
 /// which is the only thing this scanner's evidence bundle affects.
 pub fn scanRenders(gpa: Allocator, src: []const u8) Allocator.Error![]RenderTarget {
-    var out: std.ArrayListUnmanaged(RenderTarget) = .empty;
+    var out: std.ArrayList(RenderTarget) = .empty;
     errdefer out.deinit(gpa);
 
     var i: usize = 0;

@@ -831,8 +831,8 @@ fn frozenSection(comptime header: []const u8) []const u8 {
 /// elements are NOT owned -- they are slices into the comptime `@embedFile`
 /// data, which outlives every caller, so freeing the list frees everything
 /// this allocated. `errdefer` covers the partial list on an append failure.
-fn frozenLines(section: []const u8, gpa: Allocator) !std.ArrayListUnmanaged([]const u8) {
-    var list: std.ArrayListUnmanaged([]const u8) = .empty;
+fn frozenLines(section: []const u8, gpa: Allocator) !std.ArrayList([]const u8) {
+    var list: std.ArrayList([]const u8) = .empty;
     errdefer list.deinit(gpa);
     var it = std.mem.splitScalar(u8, section, '\n');
     while (it.next()) |raw| {

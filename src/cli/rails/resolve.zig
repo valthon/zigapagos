@@ -782,15 +782,15 @@ pub fn contentClaims(
 
     // `path` is owned by this list; `route` is the index that claimed it.
     const Claim = struct { path: []const u8, route: usize };
-    var claims: std.ArrayListUnmanaged(Claim) = .empty;
+    var claims: std.ArrayList(Claim) = .empty;
     defer {
         for (claims.items) |c| gpa.free(c.path);
         claims.deinit(gpa);
     }
 
-    var collisions: std.ArrayListUnmanaged(ContentCollision) = .empty;
+    var collisions: std.ArrayList(ContentCollision) = .empty;
     errdefer collisions.deinit(gpa);
-    var unsupported: std.ArrayListUnmanaged(usize) = .empty;
+    var unsupported: std.ArrayList(usize) = .empty;
     errdefer unsupported.deinit(gpa);
 
     for (order) |i| {

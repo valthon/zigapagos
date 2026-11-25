@@ -165,13 +165,13 @@ pub const ProcessOptions = struct {
     /// for BOTH policies — so the caller surfaces the JS message + stack (at
     /// .err, with page context) instead of pass.zig logging directly. Appended
     /// with `gpa`; string fields are owned by the `arena` passed to `process`.
-    render_errors: ?*std.ArrayListUnmanaged(RenderErrorReport) = null,
+    render_errors: ?*std.ArrayList(RenderErrorReport) = null,
     /// Evaluates `prop-NAME="$expr"` attributes only on islands carrying the
     /// explicit `scripty:props` marker. Null preserves verbatim content-fence
     /// behavior and is the default for non-page-renderer callers and tests.
     content_prop_evaluator: ?ContentPropEvaluator = null,
     /// Optional caller-owned sink for failed marked expressions.
-    content_prop_eval_errors: ?*std.ArrayListUnmanaged(ContentPropEvalErrorReport) = null,
+    content_prop_eval_errors: ?*std.ArrayList(ContentPropEvalErrorReport) = null,
     /// The per-site SLICED islands runtime URL (`/islands/_runtime.js`), or null
     /// when this build produced no slice — which is also the default, so every
     /// existing caller keeps the shared runtime byte-identically. Un-prefixed:
@@ -240,7 +240,7 @@ pub fn speculationRulesTag(alloc: std.mem.Allocator, url_prefix: []const u8) ![]
 /// nothing else is held past the call.
 pub fn injectBeforeHeadEnd(alloc: std.mem.Allocator, html: []const u8, tag: []const u8) !?[]u8 {
     const idx = std.mem.find(u8, html, "</head>") orelse return null;
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(alloc);
     try out.ensureTotalCapacityPrecise(alloc, html.len + tag.len);
     out.appendSliceAssumeCapacity(html[0..idx]);
@@ -331,7 +331,7 @@ fn preloadLinks(alloc: std.mem.Allocator, instances: []const IslandInstance, run
     if (instances.len == 0) return "";
     var seen: std.StringHashMapUnmanaged(void) = .empty;
     defer seen.deinit(alloc);
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(alloc);
     // Fast path: the shared runtime with no prefix is the precomputed constant
     // (byte-identical to the pre-`ProcessOptions` output).
@@ -369,7 +369,7 @@ pub const Result = struct {
 /// stack goes to the build log; the placeholder stays compact. Returns gpa-owned
 /// HTML (freed by the caller like a normal SSR result).
 fn renderErrorPlaceholder(gpa: std.mem.Allocator, src: []const u8, rerr: sidecar.RenderError) ![]u8 {
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
     try out.appendSlice(gpa, "<div data-z-island-error role=\"alert\" style=\"" ++
         "border:2px solid #c00;background:#fff5f5;color:#900;" ++
@@ -385,7 +385,7 @@ fn renderErrorPlaceholder(gpa: std.mem.Allocator, src: []const u8, rerr: sidecar
 /// Append `s` to `out` with the HTML-special chars escaped, so a JS error
 /// message (untrusted-ish, may contain `<`/`>`/`&`/`"`) can't break out of the
 /// placeholder markup.
-fn appendHtmlEscaped(gpa: std.mem.Allocator, out: *std.ArrayListUnmanaged(u8), s: []const u8) !void {
+fn appendHtmlEscaped(gpa: std.mem.Allocator, out: *std.ArrayList(u8), s: []const u8) !void {
     for (s) |c| switch (c) {
         '&' => try out.appendSlice(gpa, "&amp;"),
         '<' => try out.appendSlice(gpa, "&lt;"),
@@ -434,9 +434,9 @@ fn extractMarkdownSlotSources(
         .sources = &.{},
     };
 
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
-    var sources: std.ArrayListUnmanaged(MarkdownSlotSource) = .empty;
+    var sources: std.ArrayList(MarkdownSlotSource) = .empty;
     errdefer sources.deinit(gpa);
 
     var cursor: usize = 0;
@@ -513,7 +513,7 @@ fn expandMarkdownSlots(
     src: []const u8,
     sources: []MarkdownSlotSource,
 ) !?[]u8 {
-    var refs: std.ArrayListUnmanaged(Attr) = .empty;
+    var refs: std.ArrayList(Attr) = .empty;
     defer refs.deinit(gpa);
     var attrs = AttrIterator.init(tag_text);
     while (attrs.next()) |attr| {
@@ -538,7 +538,7 @@ fn expandMarkdownSlots(
     }
     if (refs.items.len == 0) return null;
 
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
     try out.appendSlice(gpa, raw_slot_html);
     for (refs.items) |ref| {
@@ -610,7 +610,7 @@ pub fn process(
     renderer: anytype,
     opts: ProcessOptions,
 ) !Result {
-    var instances: std.ArrayListUnmanaged(IslandInstance) = .empty;
+    var instances: std.ArrayList(IslandInstance) = .empty;
     // instances items are arena-owned; the slice itself is too
     errdefer instances.deinit(arena.a);
 
@@ -670,7 +670,7 @@ pub fn process(
             } else false;
             const runtime_url_raw = if (use_sliced) opts.sliced_runtime_url.? else shared_runtime_url;
 
-            var injected: std.ArrayListUnmanaged(u8) = .empty;
+            var injected: std.ArrayList(u8) = .empty;
             errdefer injected.deinit(gpa);
             try injected.appendSlice(gpa, body[0..head_end]);
             // The import map must be emitted before ANY modulepreload: per the
@@ -735,13 +735,13 @@ fn rewrite(
     html: []const u8,
     renderer: anytype,
     page_url: []const u8,
-    instances: *std.ArrayListUnmanaged(IslandInstance),
+    instances: *std.ArrayList(IslandInstance),
     counter: *usize,
     url_prefix: []const u8,
     on_render_error: OnRenderError,
-    render_errors: ?*std.ArrayListUnmanaged(RenderErrorReport),
+    render_errors: ?*std.ArrayList(RenderErrorReport),
     content_prop_evaluator: ?ContentPropEvaluator,
-    content_prop_eval_errors: ?*std.ArrayListUnmanaged(ContentPropEvalErrorReport),
+    content_prop_eval_errors: ?*std.ArrayList(ContentPropEvalErrorReport),
     markdown_slot_sources: []MarkdownSlotSource,
 ) anyerror![]u8 {
     // anyerror: this function is recursive (slot content is re-processed), which
@@ -791,7 +791,7 @@ fn rewrite(
     else
         try prefixed(arena.a, url_prefix, page_url);
 
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
 
     var i: usize = 0;
@@ -948,7 +948,7 @@ fn rewrite(
             // overwhelmingly common case — the slot slice passes through
             // untouched and this whole block allocates nothing.
             if (!found) break :blk slots;
-            var kept: std.ArrayListUnmanaged(Slot) = .empty;
+            var kept: std.ArrayList(Slot) = .empty;
             for (slots) |s| {
                 if (std.mem.eql(u8, s.name, fallback_slot_name)) continue;
                 try kept.append(arena.a, s);
@@ -1374,7 +1374,7 @@ fn containsName(names: []const []const u8, needle: []const u8) bool {
 /// per-pair frees would be bookkeeping only (2), and they die with the page
 /// render (3).
 fn collectDynProps(arena: RenderArena, tag_text: []const u8) ![]const props.Pair {
-    var pairs: std.ArrayListUnmanaged(props.Pair) = .empty;
+    var pairs: std.ArrayList(props.Pair) = .empty;
     const marker = " prop-";
     var i: usize = 0;
     while (std.mem.findPos(u8, tag_text, i, marker)) |p| {
@@ -1415,9 +1415,9 @@ fn evaluateContentProps(
     src: []const u8,
     pairs: []const props.Pair,
     evaluator: ContentPropEvaluator,
-    errors: ?*std.ArrayListUnmanaged(ContentPropEvalErrorReport),
+    errors: ?*std.ArrayList(ContentPropEvalErrorReport),
 ) ![]const props.Pair {
-    var evaluated: std.ArrayListUnmanaged(props.Pair) = .empty;
+    var evaluated: std.ArrayList(props.Pair) = .empty;
     errdefer evaluated.deinit(arena.a);
     for (pairs) |pair| {
         if (!std.mem.startsWith(u8, pair.value, "$")) {
@@ -1465,7 +1465,7 @@ fn htmlUnescapeAttr(alloc: std.mem.Allocator, s: []const u8) ![]const u8 {
     };
 
     // Unescaping only shrinks, so the input length is a sufficient capacity.
-    var out: std.ArrayListUnmanaged(u8) = try .initCapacity(alloc, s.len);
+    var out: std.ArrayList(u8) = try .initCapacity(alloc, s.len);
     errdefer out.deinit(alloc);
     var i: usize = 0;
     outer: while (i < s.len) {
@@ -1633,8 +1633,8 @@ fn findFallbackSlots(inner: []const u8) FallbackSlots {
 /// `inner` — so which of the returned slices is owned is not visible to the
 /// caller and it cannot free them (1, 2). They die with the page render (3).
 fn collectSlots(arena: RenderArena, inner: []const u8) ![]const Slot {
-    var slots: std.ArrayListUnmanaged(Slot) = .empty;
-    var default_buf: std.ArrayListUnmanaged(u8) = .empty;
+    var slots: std.ArrayList(Slot) = .empty;
+    var default_buf: std.ArrayList(u8) = .empty;
     const marker = "<template slot=\"";
 
     var i: usize = 0;
@@ -2594,7 +2594,7 @@ test "failed content prop expressions are reported" {
 
     const input = [_]props.Pair{.{ .name = "title", .value = "$page.missing" }};
     var calls: usize = 0;
-    var reports: std.ArrayListUnmanaged(ContentPropEvalErrorReport) = .empty;
+    var reports: std.ArrayList(ContentPropEvalErrorReport) = .empty;
     defer {
         for (reports.items) |report| {
             gpa.free(report.src);
@@ -2996,7 +2996,7 @@ test "rewrite fails loudly on an unknown client directive" {
     const arena = RenderArena.from(&arena_state);
 
     var stub = StubRenderer{};
-    var instances: std.ArrayListUnmanaged(IslandInstance) = .empty;
+    var instances: std.ArrayList(IslandInstance) = .empty;
     var counter: usize = 0;
     const html = "<island src=\"components/A.island.tsx\" client:visable></island>";
     try std.testing.expectError(error.UnknownClientDirective, rewrite(gpa, arena, html, &stub, "/", &instances, &counter, "", .fail, null, null, null, &.{}));
@@ -3373,7 +3373,7 @@ test "on_render_error=.fail propagates a render error and records the structured
 
     const input = "<main><island src=\"components/Widget.island.tsx\" client:load :props='{}'></island></main>";
     var er: ErroringRenderer = .{};
-    var reports: std.ArrayListUnmanaged(RenderErrorReport) = .empty;
+    var reports: std.ArrayList(RenderErrorReport) = .empty;
     defer reports.deinit(gpa);
     // .fail is the default; be explicit here. The error surfaces to the caller,
     // and the sink captured the failing island's src/route/message/stack first
@@ -3414,7 +3414,7 @@ test "a render error the sidecar never described still records the error name" {
 
     const input = "<main><island src=\"components/Widget.island.tsx\" client:load :props='{}'></island></main>";
     var dr: DesyncingRenderer = .{};
-    var reports: std.ArrayListUnmanaged(RenderErrorReport) = .empty;
+    var reports: std.ArrayList(RenderErrorReport) = .empty;
     defer reports.deinit(gpa);
     try std.testing.expectError(error.SidecarDesync, process(gpa, arena, input, "/booking/", &dr, .{
         .on_render_error = .fail,
@@ -3438,7 +3438,7 @@ test "on_render_error=.placeholder emits a visible placeholder, records the erro
 
     const input = "<main><island src=\"components/Widget.island.tsx\" client:load :props='{}'></island></main>";
     var er: ErroringRenderer = .{};
-    var reports: std.ArrayListUnmanaged(RenderErrorReport) = .empty;
+    var reports: std.ArrayList(RenderErrorReport) = .empty;
     defer reports.deinit(gpa);
     const result = try process(gpa, arena, input, "/", &er, .{
         .on_render_error = .placeholder,

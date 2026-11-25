@@ -868,7 +868,7 @@ fn decodeResponse(
     gpa: Allocator,
     line: []const u8,
     src_path: []const u8,
-    blocker_list: *std.ArrayListUnmanaged(blockers.Blocker),
+    blocker_list: *std.ArrayList(blockers.Blocker),
 ) Allocator.Error!Decoded {
     var parsed = std.json.parseFromSlice(WireResponse, gpa, line, .{ .ignore_unknown_fields = true }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
@@ -1107,7 +1107,7 @@ pub fn discoverControllers(
     gpa: Allocator,
     root: Io.Dir,
     root_path: []const u8,
-    blocker_list: *std.ArrayListUnmanaged(blockers.Blocker),
+    blocker_list: *std.ArrayList(blockers.Blocker),
     environ_map: *const std.process.Environ.Map,
 ) Allocator.Error!Result {
     // Every degradation branch below returns this literally -- Ruby/the
@@ -1257,7 +1257,7 @@ test "a sidecar response decodes into actions, preserving redirect/json flags" {
         \\"unresolved":[],
         \\"ruby":{"available":true,"version":"3.3.6"}}
     ;
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const res = try decodeResponse(std.testing.allocator, line, "app/controllers", &blocker_list);
@@ -1352,7 +1352,7 @@ test "decodeResponse: an OOM at any point in a multi-row decode leaves no leak" 
         if (fail_index > 1000) return error.SweepNeverReachedSuccess;
 
         var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
-        var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+        var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
         defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
         if (decodeResponse(failing.allocator(), line, "app/controllers", &blocker_list)) |decoded| {
@@ -1377,7 +1377,7 @@ test "an ok:false response becomes one RAILS_CONTROLLERS_UNAVAILABLE blocker and
     const line =
         \\{"ok":false,"error":"boom: NoMethodError"}
     ;
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const res = try decodeResponse(std.testing.allocator, line, "app/controllers", &blocker_list);
@@ -1392,7 +1392,7 @@ test "an ok:false response becomes one RAILS_CONTROLLERS_UNAVAILABLE blocker and
 
 test "a malformed response line becomes one RAILS_CONTROLLERS_UNAVAILABLE blocker and zero actions" {
     const line = "not json";
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const res = try decodeResponse(std.testing.allocator, line, "app/controllers", &blocker_list);
@@ -1408,7 +1408,7 @@ test "an unrecognized unresolved code is not dropped: it folds into detail under
     const line =
         \\{"ok":true,"actions":[],"unresolved":[{"code":"RAILS_CONTROLLER_FUTURE_THING","detail":"whatever","line":3}]}
     ;
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const res = try decodeResponse(std.testing.allocator, line, "app/controllers", &blocker_list);
@@ -1426,7 +1426,7 @@ test "a recognized unresolved code (RAILS_CONTROLLER_PARSE_ERROR) becomes a bloc
     const line =
         \\{"ok":true,"actions":[],"unresolved":[{"code":"RAILS_CONTROLLER_PARSE_ERROR","detail":"bad.rb: syntax error","line":7}]}
     ;
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const res = try decodeResponse(std.testing.allocator, line, "app/controllers", &blocker_list);
@@ -1456,7 +1456,7 @@ test "unresolved entries at different wire lines decode to different blocker.lin
         \\{"code":"RAILS_CONTROLLER_UNREADABLE","path":"c.rb","detail":"no line at all"}
         \\]}
     ;
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const res = try decodeResponse(std.testing.allocator, line, "app/controllers", &blocker_list);
@@ -1483,7 +1483,7 @@ test "B1: an unresolved entry's own `path` becomes the blocker's `path`, not the
         \\{"code":"RAILS_CONTROLLER_PARSE_ERROR","path":"app/controllers/posts_controller.rb","detail":"unexpected 'end'","line":3}
         \\]}
     ;
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const res = try decodeResponse(std.testing.allocator, line, "app/controllers", &blocker_list);
@@ -1499,7 +1499,7 @@ test "an unresolved entry with no `path` (older sidecar shape) falls back to the
     const line =
         \\{"ok":true,"actions":[],"unresolved":[{"code":"RAILS_CONTROLLER_PARSE_ERROR","detail":"bad.rb: syntax error","line":7}]}
     ;
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const res = try decodeResponse(std.testing.allocator, line, "app/controllers", &blocker_list);
@@ -1515,7 +1515,7 @@ test "B2: RAILS_CONTROLLER_UNREADABLE is a recognized code, distinct from RAILS_
         \\{"code":"RAILS_CONTROLLER_UNREADABLE","path":"app/controllers/broken_controller.rb","detail":"Errno::EACCES: Permission denied","line":1}
         \\]}
     ;
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const res = try decodeResponse(std.testing.allocator, line, "app/controllers", &blocker_list);
@@ -1532,7 +1532,7 @@ test "B2: RAILS_CONTROLLER_UNREADABLE is a recognized code, distinct from RAILS_
 
 test "decodeResponse: layouts[] decodes literal, disabled and dynamic shapes; absent layouts is empty" {
     const gpa = std.testing.allocator;
-    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.freeList(gpa, &list);
     const line =
         \\{"ok":true,"actions":[],"layouts":[
@@ -1574,7 +1574,7 @@ fn freeDecoded(gpa: Allocator, d: Decoded) void {
 
 test "decodeResponse: redirects[] and before_actions[] decode into owned copies" {
     const gpa = std.testing.allocator;
-    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.freeList(gpa, &list);
     const line =
         \\{"ok":true,"actions":[
@@ -1633,7 +1633,7 @@ test "decodeResponse: a sidecar that predates the two new fields decodes them em
     // into the same shape every consumer reads -- an empty list, never a
     // decode error and never a missing field.
     const gpa = std.testing.allocator;
-    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.freeList(gpa, &list);
     const line =
         \\{"ok":true,"actions":[
@@ -1727,7 +1727,7 @@ test "decodeResponse: the two-file app -- a filter on ApplicationController guar
     // attribute it and the page shipped silently public. The wire fixture is
     // exactly what `analyze.rb` answers for a two-file app.
     const gpa = std.testing.allocator;
-    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.freeList(gpa, &list);
     const line =
         \\{"ok":true,"actions":[
@@ -1927,7 +1927,7 @@ test "guardsFor: a skip declared ABOVE the filter it names does not suppress it"
 test "decodeResponse: a literal-string redirect decodes as `path`, distinct from a stem and from dynamic" {
     // Fix round 1, I-3.
     const gpa = std.testing.allocator;
-    var list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.freeList(gpa, &list);
     const line =
         \\{"ok":true,"actions":[
@@ -2054,7 +2054,7 @@ test "find matches on (controller, action) pair, not either alone" {
         \\{"controller":"comments","action":"index","only_redirect":false,"renders_json":true,"line":9}],
         \\"unresolved":[]}
     ;
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const res = try decodeResponse(std.testing.allocator, line, "app/controllers", &blocker_list);
@@ -2096,7 +2096,7 @@ test "discoverControllers spawns the real Ruby sidecar and recovers PostsControl
     var app_dir = Io.Dir.cwd().openDir(io, "tests/migrate/rails-sample", .{}) catch return error.SkipZigTest;
     defer app_dir.close(io);
 
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const result = try discoverControllers(io, gpa, app_dir, "tests/migrate/rails-sample", &blocker_list, &env_map);
@@ -2135,7 +2135,7 @@ test "discoverControllers: no app/controllers/ appends RAILS_CONTROLLERS_MISSING
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     // No env vars matter for this path -- `discoverControllers` returns
@@ -2186,7 +2186,7 @@ test "discoverControllers: app/controllers/ present but unreadable yields RAILS_
         controllers_dir.close(io);
     }
 
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     var env_map: std.process.Environ.Map = .init(gpa);
@@ -2222,7 +2222,7 @@ test "discoverControllers: ZIGAPAGOS_RUBY pointing at a nonexistent binary yield
     var app_dir = Io.Dir.cwd().openDir(io, "tests/migrate/rails-sample", .{}) catch return error.SkipZigTest;
     defer app_dir.close(io);
 
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const result = try discoverControllers(io, gpa, app_dir, "tests/migrate/rails-sample", &blocker_list, &env_map);
@@ -2259,7 +2259,7 @@ test "discoverControllers: ZIGAPAGOS_RUNTIME_DIR with no sidecar/rails/analyze.r
     var app_dir = Io.Dir.cwd().openDir(io, "tests/migrate/rails-sample", .{}) catch return error.SkipZigTest;
     defer app_dir.close(io);
 
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const result = try discoverControllers(io, gpa, app_dir, "tests/migrate/rails-sample", &blocker_list, &env_map);

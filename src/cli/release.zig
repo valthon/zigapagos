@@ -352,7 +352,7 @@ fn missingSpaClientAsset(
 }
 
 fn hasBuildAssetInstallPath(
-    assets: *const std.StringArrayHashMapUnmanaged(BuildAsset),
+    assets: *const std.array_hash_map.String(BuildAsset),
     wanted: []const u8,
 ) bool {
     for (assets.values()) |asset| {
@@ -389,7 +389,7 @@ fn validateSpaClientAssets(gpa: Allocator, cmd: *Command) void {
 }
 
 fn markBuildAssetReferencedByInstallPath(
-    assets: *std.StringArrayHashMapUnmanaged(BuildAsset),
+    assets: *std.array_hash_map.String(BuildAsset),
     wanted: []const u8,
 ) void {
     for (assets.values()) |*asset| {
@@ -440,7 +440,7 @@ fn parseChangedFiles(
     environ_map: *const std.process.Environ.Map,
 ) []const []const u8 {
     const raw = environ_map.get(changed_files_env) orelse return &.{};
-    var list: std.ArrayListUnmanaged([]const u8) = .empty;
+    var list: std.ArrayList([]const u8) = .empty;
     var it = std.mem.splitScalar(u8, raw, '\n');
     while (it.next()) |line| {
         const trimmed = std.mem.trim(u8, line, " \t\r");
@@ -452,7 +452,7 @@ fn parseChangedFiles(
 
 pub const Command = struct {
     output_dir_path: ?[]const u8,
-    build_assets: std.StringArrayHashMapUnmanaged(BuildAsset),
+    build_assets: std.array_hash_map.String(BuildAsset),
     drafts: bool,
     force: bool,
     bun_path: ?[]const u8,
@@ -530,14 +530,14 @@ pub const Command = struct {
 
     pub fn parse(gpa: Allocator, args: []const []const u8) !Command {
         var output_dir_path: ?[]const u8 = null;
-        var build_assets: std.StringArrayHashMapUnmanaged(BuildAsset) = .empty;
+        var build_assets: std.array_hash_map.String(BuildAsset) = .empty;
         errdefer build_assets.deinit(gpa);
         var drafts = false;
         var force = false;
         var bun_path: ?[]const u8 = null;
         var island_sidecar: ?[]const u8 = null;
         var island_src_dir: ?[]const u8 = null;
-        var islands: std.ArrayListUnmanaged([]const u8) = .empty;
+        var islands: std.ArrayList([]const u8) = .empty;
         errdefer islands.deinit(gpa);
         var island_runtime_entry: ?[]const u8 = null;
         var island_bundle_driver: ?[]const u8 = null;
@@ -545,7 +545,7 @@ pub const Command = struct {
         var css_minify = false;
         var island_props_check: @import("../islands/props_check.zig").Mode = .err;
         var islands_slice: ?[]const u8 = null;
-        var spas: std.ArrayListUnmanaged(root.SpaSpec) = .empty;
+        var spas: std.ArrayList(root.SpaSpec) = .empty;
         errdefer spas.deinit(gpa);
         var spa_not_found: ?[]const u8 = null;
         var allow_missing_pages = false;
@@ -942,7 +942,7 @@ pub fn discoverEntries(
     src_dir: []const u8,
     suffix: []const u8,
 ) Allocator.Error![]const []const u8 {
-    var found: std.ArrayListUnmanaged([]const u8) = .empty;
+    var found: std.ArrayList([]const u8) = .empty;
     errdefer {
         for (found.items) |p| gpa.free(p);
         found.deinit(gpa);
@@ -1168,7 +1168,7 @@ fn bundleSharedRuntime(
     const rt_out = try std.fs.path.join(gpa, &.{ cache_abs, "zigapagos-runtime.js" });
     const rt_dep = try std.fs.path.join(gpa, &.{ cache_abs, "zigapagos-runtime.d" });
     const rt_map = try gpa.print("{s}.map", .{rt_out});
-    var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+    var argv: std.ArrayList([]const u8) = .empty;
     try argv.appendSlice(gpa, &.{
         driver,
         try gpa.print("--entry={s}", .{runtime_entry}),
@@ -1221,12 +1221,12 @@ fn bundleIslands(
 ) ![]const []const u8 {
     const gpa = arena.a;
     const driver = cmd.island_bundle_driver.?; // checked by bundleSharedRuntime
-    var built = try std.ArrayListUnmanaged([]const u8).initCapacity(gpa, cmd.islands.len);
+    var built = try std.ArrayList([]const u8).initCapacity(gpa, cmd.islands.len);
     for (cmd.islands) |src| {
         const name = bundleName(src);
         const out = try gpa.print("{s}/{s}.js", .{ cache_abs, name });
         const dep = try gpa.print("{s}/{s}.d", .{ cache_abs, name });
-        var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+        var argv: std.ArrayList([]const u8) = .empty;
         try argv.appendSlice(gpa, &.{
             driver,
             try gpa.print("--entry={s}", .{src}),
@@ -1307,7 +1307,7 @@ fn sliceIslandsRuntime(
     const outdir = try gpa.print("{s}/islands-rt", .{cache_abs});
     const manifest = try gpa.print("{s}/islands-slice.json", .{cache_abs});
 
-    var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+    var argv: std.ArrayList([]const u8) = .empty;
     try argv.append(gpa, rt.islands_runtime_driver);
     for (bundles) |b| try argv.append(gpa, try gpa.print("--bundle={s}", .{b}));
     try argv.appendSlice(gpa, &.{
@@ -1367,7 +1367,7 @@ fn bundleSpas(
         const outdir = try gpa.print("{s}/spa-{s}", .{ cache_abs, name });
         const chunks_json = try gpa.print("{s}/{s}-chunks.json", .{ cache_abs, name });
         const capture_json = try gpa.print("{s}/{s}-sources.json", .{ cache_abs, name });
-        var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+        var argv: std.ArrayList([]const u8) = .empty;
         try argv.appendSlice(gpa, &.{
             rt.spa_bundle_driver,
             try gpa.print("--source-cache-dir={s}/client-source", .{std.fs.path.dirname(cache_abs).?}),
@@ -1397,7 +1397,7 @@ fn bundleSpas(
         // normal, which is why the empty directory is not an error here.
         const rt_outdir = try gpa.print("{s}/spa-rt-{s}", .{ cache_abs, name });
         const slice_json = try gpa.print("{s}/{s}-slice.json", .{ cache_abs, name });
-        var rt_argv: std.ArrayListUnmanaged([]const u8) = .empty;
+        var rt_argv: std.ArrayList([]const u8) = .empty;
         try rt_argv.appendSlice(gpa, &.{
             rt.spa_runtime_driver,
             try gpa.print("--source-capture={s}", .{capture_json}),

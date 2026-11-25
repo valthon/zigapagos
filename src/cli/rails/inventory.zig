@@ -196,8 +196,8 @@ pub const WalkResult = struct {
 /// byte-deterministic. `error.OutOfMemory` always propagates as an error and
 /// never becomes a blocker.
 pub fn walk(io: Io, gpa: Allocator, root: Io.Dir) Allocator.Error!WalkResult {
-    var list: std.ArrayListUnmanaged(Entry) = .empty;
-    var blocker_list: std.ArrayListUnmanaged(Blocker) = .empty;
+    var list: std.ArrayList(Entry) = .empty;
+    var blocker_list: std.ArrayList(Blocker) = .empty;
     errdefer {
         for (list.items) |e| gpa.free(e.path);
         list.deinit(gpa);
@@ -344,7 +344,7 @@ pub fn unsupportedEngineLabel(e: Entry) ?[]const u8 {
 pub fn appendUnsupportedEngineBlockers(
     gpa: Allocator,
     entries: []const Entry,
-    blocker_list: *std.ArrayListUnmanaged(Blocker),
+    blocker_list: *std.ArrayList(Blocker),
 ) Allocator.Error!void {
     for (entries) |e| {
         const label = unsupportedEngineLabel(e) orelse continue;
@@ -566,7 +566,7 @@ test "appendUnsupportedEngineBlockers flags Haml and Slim template kinds but not
         .{ .path = "public/download.slim", .kind = .asset, .engine = .slim },
         .{ .path = "app/helpers/legacy_helper.slim", .kind = .helper, .engine = .slim },
     };
-    var list: std.ArrayListUnmanaged(Blocker) = .empty;
+    var list: std.ArrayList(Blocker) = .empty;
     defer blockers.free(gpa, list.toOwnedSlice(gpa) catch unreachable);
 
     try appendUnsupportedEngineBlockers(gpa, &entries, &list);
