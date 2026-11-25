@@ -183,8 +183,8 @@ pub fn init(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *cons
 
     for ([_][]const File{ &files, if (cmd.app) &app_files else if (cmd.minimal) &minimal_files else &sample_files }) |group| {
         for (group) |file| {
-            const dirname = std.fs.path.dirnamePosix(file.path);
-            const basename = std.fs.path.basenamePosix(file.path);
+            const dirname = std.Io.Dir.path.dirnamePosix(file.path);
+            const basename = std.Io.Dir.path.basenamePosix(file.path);
 
             const base_dir = if (dirname) |dn|
                 Io.Dir.cwd().createDirPathOpen(io, dn, .{}) catch |err| fatal.dir(dn, err)
@@ -341,7 +341,7 @@ fn appPackage(io: Io, gpa: Allocator, explicit_path: ?[]const u8, env_path: ?[]c
     defer gpa.free(cwd);
     const absolute = Io.Dir.cwd().realPathFileAlloc(io, runtime, gpa) catch |err| fatal.dir(runtime, err);
     defer gpa.free(absolute);
-    const relative = std.fs.path.relative(gpa, cwd, null, cwd, absolute) catch fatal.oom();
+    const relative = std.Io.Dir.path.relativeAlloc(gpa, cwd, null, cwd, absolute) catch fatal.oom();
     defer gpa.free(relative);
     const chosen = explicit_path orelse relative;
     const dependency = gpa.print("file:{s}", .{chosen}) catch fatal.oom();

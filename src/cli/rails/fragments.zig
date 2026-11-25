@@ -888,7 +888,7 @@ fn queryTemplates(
         return none;
     }
 
-    const script_path = try std.fs.path.join(gpa, &.{ runtime_dir, "sidecar", "rails", "analyze.rb" });
+    const script_path = try std.Io.Dir.path.join(gpa, &.{ runtime_dir, "sidecar", "rails", "analyze.rb" });
     defer gpa.free(script_path);
 
     var script_abs_buf: [Io.Dir.max_path_bytes]u8 = undefined;

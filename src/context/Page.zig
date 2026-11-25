@@ -490,12 +490,12 @@ fn parseInner(
     const zone = tracy.trace(@src());
     defer zone.end();
 
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     // const path_bytes = buf[0..p._scan.path.bytesSlice(
     //     &variant.string_table,
     //     &variant.path_table,
     //     &buf,
-    //     std.fs.path.sep,
+    //     std.Io.Dir.path.sep,
     //     p._scan.name,
     // )];
 
@@ -1275,7 +1275,7 @@ pub const Builtins = struct {
 
             const v = &ctx._meta.build.variants[p._scan.variant_id];
 
-            var buf: [std.fs.max_path_bytes]u8 = undefined;
+            var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
             const page_url = std.mem.print(&buf, "{f}", .{
                 p._scan.url.fmt(
                     &v.string_table,
@@ -1368,7 +1368,7 @@ pub const Builtins = struct {
             const index_html: StringTable.String = @fromBackingInt(@intCast(11));
             const v = &ctx._meta.build.variants[p._scan.variant_id];
 
-            var buf: [std.fs.max_path_bytes]u8 = undefined;
+            var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
             const page_url = std.mem.print(&buf, "{f}", .{
                 p._scan.url.fmt(
                     &v.string_table,
@@ -1431,7 +1431,7 @@ pub const Builtins = struct {
 
             const v = &ctx._meta.build.variants[p._scan.variant_id];
 
-            var buf: [std.fs.max_path_bytes]u8 = undefined;
+            var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
             const page_url = std.mem.print(&buf, "{f}", .{
                 p._scan.url.fmt(
                     &v.string_table,

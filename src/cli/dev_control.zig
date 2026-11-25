@@ -731,7 +731,7 @@ fn scanDataDirArg(args: []const []const u8) []const u8 {
 fn resolveDataDir(io: Io, gpa: Allocator, args: []const []const u8) []const u8 {
     const data_dir = scanDataDirArg(args);
     _, const base_dir_path = root.Config.load(io, gpa);
-    return std.fs.path.resolve(gpa, &.{ base_dir_path, data_dir }) catch fatal.oom();
+    return std.Io.Dir.path.resolveAlloc(gpa, &.{ base_dir_path, data_dir }) catch fatal.oom();
 }
 
 /// Safe field access into a parsed `std.json.Value`: each returns the typed
@@ -1257,7 +1257,7 @@ pub fn background(
         }
     }
 
-    const log_path = std.fs.path.join(gpa, &.{ data_dir_abs, log_name }) catch fatal.oom();
+    const log_path = std.Io.Dir.path.join(gpa, &.{ data_dir_abs, log_name }) catch fatal.oom();
     const log_file = Io.Dir.cwd().createFile(io, log_path, .{ .truncate = true }) catch |err| fatal.msg(
         "error: dev: unable to open the log file '{s}': {s}\n",
         .{ log_path, @errorName(err) },
@@ -1373,7 +1373,7 @@ fn logsVerb(io: Io, gpa: Allocator, args: []const []const u8) error{OutOfMemory}
         .{},
     );
 
-    const log_path = std.fs.path.join(gpa, &.{ data_dir_abs, if (json) "dev.ndjson" else log_name }) catch fatal.oom();
+    const log_path = std.Io.Dir.path.join(gpa, &.{ data_dir_abs, if (json) "dev.ndjson" else log_name }) catch fatal.oom();
     const contents = Io.Dir.cwd().readFileAlloc(io, log_path, gpa, .limited(16 * 1024 * 1024)) catch |err| {
         if (err == error.StreamTooLong) {
             fatal.msg(

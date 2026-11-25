@@ -428,7 +428,7 @@ pub fn prerenderAll(
             // stylesheet for this SPA to be missing.
             var css_paths: std.ArrayList([]const u8) = .empty;
             var asset_it = build.site_assets.iterator();
-            var asset_name_buf: [std.fs.max_path_bytes]u8 = undefined;
+            var asset_name_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
             while (asset_it.next()) |asset_entry| {
                 const asset_path = std.mem.print(&asset_name_buf, "{f}", .{
                     asset_entry.key_ptr.fmt(&build.st, &build.pt, null, "/"),
@@ -1194,10 +1194,10 @@ fn recordSitemapUrl(build: *Build, gpa: std.mem.Allocator, url: []const u8) !voi
 }
 
 fn writeFile(io: std.Io, out_dir: std.Io.Dir, rel_path: []const u8, contents: []const u8) !void {
-    if (std.fs.path.dirname(rel_path)) |d| {
+    if (std.Io.Dir.path.dirname(rel_path)) |d| {
         var dir = try out_dir.createDirPathOpen(io, d, .{});
         defer dir.close(io);
-        var f = try dir.createFile(io, std.fs.path.basename(rel_path), .{});
+        var f = try dir.createFile(io, std.Io.Dir.path.basename(rel_path), .{});
         defer f.close(io);
         var fw = f.writer(io, &.{});
         try fw.interface.writeAll(contents);
@@ -1214,7 +1214,7 @@ fn writeFile(io: std.Io, out_dir: std.Io.Dir, rel_path: []const u8, contents: []
 /// the final extension. `pub` so callers outside this file derive the
 /// `/spa/<name>.js` bundle name identically.
 pub fn spaName(src: []const u8) []const u8 {
-    const base = std.fs.path.basename(src);
+    const base = std.Io.Dir.path.basename(src);
     if (std.mem.endsWith(u8, base, ".spa.tsx")) {
         return base[0 .. base.len - ".spa.tsx".len];
     }

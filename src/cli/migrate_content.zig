@@ -16,12 +16,12 @@ pub const Rendered = struct {
 };
 
 fn fallbackTitle(source_path: []const u8) []const u8 {
-    var name = std.fs.path.basename(source_path);
+    var name = std.Io.Dir.path.basename(source_path);
     if (std.mem.findScalarLast(u8, name, '.')) |dot| name = name[0..dot];
     if (name.len > 11 and name[4] == '-' and name[7] == '-' and name[10] == '-') name = name[11..];
     if (std.mem.eql(u8, name, "_index") or std.mem.eql(u8, name, "index")) {
-        const parent = std.fs.path.dirname(source_path) orelse return "Home";
-        const parent_name = std.fs.path.basename(parent);
+        const parent = std.Io.Dir.path.dirname(source_path) orelse return "Home";
+        const parent_name = std.Io.Dir.path.basename(parent);
         if (parent_name.len > 0 and !std.mem.eql(u8, parent_name, "content")) return parent_name;
         return "Home";
     }

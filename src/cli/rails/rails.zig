@@ -906,7 +906,7 @@ fn hasJsSource(sources: []const port.JsSource, path: []const u8) bool {
 /// app/javascript is refused rather than normalized into another app tree.
 fn relativeJsPath(gpa: Allocator, importer: []const u8, spec: []const u8) Allocator.Error!?[]u8 {
     if (!std.mem.startsWith(u8, spec, "./") and !std.mem.startsWith(u8, spec, "../")) return null;
-    const dir = std.fs.path.dirname(importer) orelse return null;
+    const dir = std.Io.Dir.path.dirname(importer) orelse return null;
     var parts: std.ArrayList([]const u8) = .empty;
     defer parts.deinit(gpa);
     var base_it = std.mem.splitScalar(u8, dir, '/');
@@ -1764,7 +1764,7 @@ fn controllerEvidenceAvailable(controller_blockers: []const blockers.Blocker) bo
 /// allocating: `controller` may itself contain a `/` (a namespaced
 /// controller's PATH key, e.g. `admin/users`, which is what
 /// `discoverControllers` keys `ActionInfo.controller` on), so this is a
-/// plain prefix/segment check, not a `std.fs.path.join` + compare. The
+/// plain prefix/segment check, not a `std.Io.Dir.path.join` + compare. The
 /// trailing `.` check on `after_action` guards against `action` being a
 /// prefix of a longer sibling action's basename (e.g. action "show" must
 /// not match a file named "shower.html.erb"). Contract 3 (caller-buffer):
@@ -1837,7 +1837,7 @@ fn templateDirOf(path: []const u8) []const u8 {
 /// `app/views/layouts/posts.html.erb`, `name == "admin/users"` matches
 /// `app/views/layouts/admin/users.html.erb`. Mirrors `matchesRouteView`'s
 /// segment-check style (plain prefix + trailing-dot check, not a
-/// `std.fs.path.join` + compare) for the identical reason: `name` may
+/// `std.Io.Dir.path.join` + compare) for the identical reason: `name` may
 /// itself contain '/' (a namespaced controller's path key). Contract 3
 /// (caller-buffer): allocates nothing.
 fn matchesLayoutName(path: []const u8, name: []const u8) bool {
@@ -3266,7 +3266,7 @@ test "classifyRoutes degradation: no controllers recovered, view present -> unre
 // --- A1: transitive template scanning (layout + partials) ------------------
 
 fn writeTemplate(tmp: std.testing.TmpDir, io: Io, sub_path: []const u8, data: []const u8) !void {
-    const dir_path = std.fs.path.dirname(sub_path) orelse ".";
+    const dir_path = std.Io.Dir.path.dirname(sub_path) orelse ".";
     var d = try tmp.dir.createDirPathOpen(io, dir_path, .{});
     d.close(io);
     try tmp.dir.writeFile(io, .{ .sub_path = sub_path, .data = data });

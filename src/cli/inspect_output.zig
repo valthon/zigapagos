@@ -123,7 +123,7 @@ fn run(io: Io, gpa: Allocator, cmd: Command) !bool {
             const path = try gpa.dupe(u8, entry.path);
             errdefer gpa.free(path);
             // Canonical report paths use URL separators on every host.
-            for (path) |*c| if (std.fs.path.sep == '\\' and c.* == '\\') {
+            for (path) |*c| if (std.Io.Dir.path.sep == '\\' and c.* == '\\') {
                 c.* = '/';
             };
             try files.append(gpa, .{ .path = path, .kind = kind });
@@ -212,7 +212,7 @@ fn run(io: Io, gpa: Allocator, cmd: Command) !bool {
 }
 
 fn fileKind(path: []const u8) ?Kind {
-    const ext = std.fs.path.extension(path);
+    const ext = std.Io.Dir.path.extension(path);
     if (std.ascii.eqlIgnoreCase(ext, ".html") or std.ascii.eqlIgnoreCase(ext, ".htm")) return .html;
     if (std.ascii.eqlIgnoreCase(ext, ".css")) return .css;
     for ([_][]const u8{ ".js", ".mjs", ".cjs" }) |js| if (std.ascii.eqlIgnoreCase(ext, js)) return .js;

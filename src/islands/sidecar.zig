@@ -125,8 +125,8 @@ pub const Sidecar = struct {
     /// its own CWD. `src` may already be absolute, in which case it is
     /// returned unchanged. Uses the CWD snapshotted at `spawn` — no syscall.
     fn absSrc(self: *const Sidecar, arena: RenderArena, src: []const u8) ![]const u8 {
-        if (std.fs.path.isAbsolute(src)) return src;
-        return try std.fs.path.resolve(arena.a, &.{ self.cwd_buf[0..self.cwd_len], src });
+        if (std.Io.Dir.path.isAbsolute(src)) return src;
+        return try std.Io.Dir.path.resolveAlloc(arena.a, &.{ self.cwd_buf[0..self.cwd_len], src });
     }
 
     /// Write `bytes` to the child's stdin and flush. Callers hold `mutex`.
@@ -947,7 +947,7 @@ test "sidecar weaves slots into Panel island HTML" {
 
     // Resolve Panel fixture to absolute path the same way existing tests resolve Counter.
     const cwd_str = try std.process.currentPathAlloc(io, arena.a);
-    const panel_abs = try std.fs.path.resolve(arena.a, &.{ cwd_str, "runtime/test/fixtures/Panel.island.tsx" });
+    const panel_abs = try std.Io.Dir.path.resolveAlloc(arena.a, &.{ cwd_str, "runtime/test/fixtures/Panel.island.tsx" });
 
     const html = try sidecar.render(
         arena,

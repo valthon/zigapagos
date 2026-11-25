@@ -57,8 +57,8 @@ fn debugInner(
 
         std.mem.sort(Section, variant.sections.items[1..], variant, struct {
             pub fn lessThan(v: *Variant, lhs: Section, rhs: Section) bool {
-                var bl: [std.fs.max_path_bytes]u8 = undefined;
-                var br: [std.fs.max_path_bytes]u8 = undefined;
+                var bl: [std.Io.Dir.max_path_bytes]u8 = undefined;
+                var br: [std.Io.Dir.max_path_bytes]u8 = undefined;
                 return std.mem.order(
                     u8,
                     std.mem.print(&bl, "{f}", .{

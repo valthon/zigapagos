@@ -156,7 +156,7 @@ fn resource(io: Io, gpa: Allocator, root: Io.Dir, w: *Io.Writer, format: diag.Fo
         try emitResource(w, format, page, reference_kind, url, null, null, "base_href_unsupported");
         return;
     }
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const normalized = resolve(&buf, page, prefix, url) catch |err| {
         state.complete = false;
         state.unresolved += 1;
@@ -212,11 +212,11 @@ fn resolve(buf: []u8, page: []const u8, prefix: []const u8, raw: []const u8) Res
     if (std.mem.findAny(u8, path, "?#")) |i| path = path[0..i];
     if (path.len > 0 and !paths.isLocalLink(path)) return error.NonlocalUrl;
     if (std.mem.findAny(u8, path, "\\&") != null) return error.UnsupportedUrlEncoding;
-    var decoded_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var decoded_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const decoded = try paths.percentDecode(&decoded_buf, path);
     for (decoded) |c| if (c < ' ' or c == '\\' or c == 127) return error.UnsupportedUrlEncoding;
     if (std.mem.count(u8, decoded, "/") != std.mem.count(u8, path, "/")) return error.UnsupportedUrlEncoding;
-    var normalized_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var normalized_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const normalized = if (path.len == 0)
         try paths.localUrlPath(&normalized_buf, "index.html", prefix, page)
     else

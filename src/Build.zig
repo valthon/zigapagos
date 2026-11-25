@@ -582,7 +582,7 @@ pub fn scanSiteAssets(
                     try b.site_asset_reads.putNoClobber(gpa, pn, .init(0));
                 },
                 .directory => {
-                    const path_bytes = try std.fs.path.join(arena, &.{
+                    const path_bytes = try std.Io.Dir.path.join(arena, &.{
                         dir_entry,
                         entry.name,
                     });

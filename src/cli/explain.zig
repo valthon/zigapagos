@@ -270,7 +270,7 @@ fn routeCandidates(scratch: []u8, route: []const u8, out: *[2]Candidate) usize {
     out[0] = .{ .path = route, .ends_with_slash = false };
     // A route that already names a file (".html", ".xml", ".svg") is taken at
     // face value: retrying it as a directory would be nonsense.
-    if (std.fs.path.extension(route).len != 0) return 1;
+    if (std.Io.Dir.path.extension(route).len != 0) return 1;
 
     const p = std.mem.print(scratch, "{s}/index.html", .{route}) catch unreachable;
     out[1] = .{ .path = p, .ends_with_slash = true };

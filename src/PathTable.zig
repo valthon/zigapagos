@@ -54,13 +54,13 @@ pub const PathName = packed struct {
             assert(pt.get(&.{}) == empty_path);
         }
 
-        const base = std.fs.path.dirnamePosix(src) orelse {
+        const base = std.Io.Dir.path.dirnamePosix(src) orelse {
             const name = st.get(src) orelse return null;
             return .{ .path = empty_path, .name = name };
         };
 
         const path = pt.getPathNoName(st, &.{}, base) orelse return null;
-        const name = st.get(std.fs.path.basenamePosix(src[base.len..])) orelse return null;
+        const name = st.get(std.Io.Dir.path.basenamePosix(src[base.len..])) orelse return null;
         return .{ .path = path, .name = name };
     }
 
@@ -205,7 +205,7 @@ pub fn internPath(
 ) !Path {
     assert(string_table.string_bytes.items.len > 0); // string_table must contain a zero elem
     assert(string_table.string_bytes.items[0] == 0); // the zero elem must be the empty string
-    var it = std.mem.tokenizeScalar(u8, path, std.fs.path.sep);
+    var it = std.mem.tokenizeScalar(u8, path, std.Io.Dir.path.sep);
     const component_count = blk: {
         var count: u32 = 0;
         while (it.next() != null) count += 1;

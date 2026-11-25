@@ -292,7 +292,7 @@ fn analyzePageInner(
     }
 
     const v = &build.variants[variant_id];
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const page_path = std.mem.print(&buf, "{f}", .{
         page._scan.file.fmt(
             &v.string_table,
@@ -367,10 +367,10 @@ pub fn validOutputPath(path: []const u8) bool {
     if (path.len == 0) return false;
     for (path) |c| if (!std.ascii.isAscii(c)) return false;
     if (std.mem.findScalar(u8, path, '\\') != null) return false;
-    if (std.fs.path.extension(path).len == 0) return false;
+    if (std.Io.Dir.path.extension(path).len == 0) return false;
     if (std.mem.findScalar(
         u8,
-        std.fs.path.dirnamePosix(path) orelse "",
+        std.Io.Dir.path.dirnamePosix(path) orelse "",
         '.',
     ) != null) return false;
     return true;
@@ -1105,9 +1105,9 @@ fn analyzeContent(
                     .site_asset => |*sa| { //ref
                         assert(std.mem.findScalar(u8, sa.ref, '\\') == null);
 
-                        const dirname = std.fs.path.dirnamePosix(sa.ref) orelse "";
+                        const dirname = std.Io.Dir.path.dirnamePosix(sa.ref) orelse "";
                         if (b.pt.getPathNoName(&b.st, &.{}, dirname)) |path| {
-                            const basename = std.fs.path.basenamePosix(sa.ref);
+                            const basename = std.Io.Dir.path.basenamePosix(sa.ref);
                             if (b.st.get(basename)) |name| {
                                 const pn: PathName = .{
                                     .path = path,
@@ -1482,7 +1482,7 @@ fn renderPageInner(
     const variant_id = page._scan.variant_id;
     const variant = &build.variants[variant_id];
 
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const page_path = std.mem.print(&buf, "{f}", .{
         page._scan.file.fmt(
             &variant.string_table,
@@ -1884,7 +1884,7 @@ fn renderPageInner(
             // '/'-separated, content-dir-prefixed source path — the exact
             // string the incremental changed-files set matches on (see
             // root.zig's render loop).
-            var src_buf: [std.fs.max_path_bytes]u8 = undefined;
+            var src_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
             const page_src_path = std.mem.print(&src_buf, "{f}", .{
                 page._scan.file.fmt(
                     &variant.string_table,
@@ -1975,7 +1975,7 @@ fn renderPageInner(
                     for (page.aliases) |a| {
                         const out_path = try suffixedOutputPath(arena.a, build.cfg, variant, page, a);
 
-                        if (std.fs.path.dirnamePosix(out_path)) |path| {
+                        if (std.Io.Dir.path.dirnamePosix(out_path)) |path| {
                             disk.output_dir.createDirPath(
                                 io,
                                 path,
@@ -2019,7 +2019,7 @@ fn renderPageInner(
                     const raw_path = page.alternatives[idx].output;
                     const out_path = try suffixedOutputPath(arena.a, build.cfg, variant, page, raw_path);
 
-                    if (std.fs.path.dirnamePosix(out_path)) |path| {
+                    if (std.Io.Dir.path.dirnamePosix(out_path)) |path| {
                         disk.output_dir.createDirPath(
                             io,
                             path,
@@ -2036,7 +2036,7 @@ fn renderPageInner(
                 .pagination => |n| blk: {
                     const style = page.pagination.?.url_style;
                     const out_path = try paginationOutputPath(arena.a, build.cfg, variant, page, style, n);
-                    if (std.fs.path.dirnamePosix(out_path)) |path| {
+                    if (std.Io.Dir.path.dirnamePosix(out_path)) |path| {
                         disk.output_dir.createDirPath(io, path) catch |err| fatal.dir(path, err);
                     }
                     break :blk disk.output_dir.createFile(io, out_path, .{}) catch |err| fatal.file(out_path, err);

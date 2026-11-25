@@ -209,7 +209,7 @@ pub fn run(io: Io, gpa: std.mem.Allocator, checks: []const PropsCheck, opts: Run
     var skipped: usize = 0;
 
     for (checks) |chk| {
-        const abs = try std.fs.path.resolve(arena.a, &.{ root_abs, chk.src });
+        const abs = try std.Io.Dir.path.resolveAlloc(arena.a, &.{ root_abs, chk.src });
         const gop = try props_ok.getOrPut(arena.a, abs);
         if (!gop.found_existing) {
             const source = std.Io.Dir.cwd().readFileAlloc(io, abs, arena.a, .limited(1 << 20)) catch |err| switch (err) {
@@ -233,21 +233,21 @@ pub fn run(io: Io, gpa: std.mem.Allocator, checks: []const PropsCheck, opts: Run
 
     // Write program + tsconfig under <root>/.zigapagos-cache/props-check/.
     const tmp_rel = ".zigapagos-cache/props-check";
-    const tmp_dir_abs = try std.fs.path.join(arena.a, &.{ root_abs, tmp_rel });
+    const tmp_dir_abs = try std.Io.Dir.path.join(arena.a, &.{ root_abs, tmp_rel });
     try std.Io.Dir.cwd().createDirPath(io, tmp_dir_abs);
 
     const program_basename = "__island_props_check.tsx";
     // tsc outputs paths relative to its cwd (website_root), so the prefix in its
     // output will be "<tmp_rel>/<program_basename>", not just the basename.
-    const program_rel = try std.fs.path.join(arena.a, &.{ tmp_rel, program_basename });
-    const program_abs = try std.fs.path.join(arena.a, &.{ tmp_dir_abs, program_basename });
-    const tsconfig_abs = try std.fs.path.join(arena.a, &.{ tmp_dir_abs, "tsconfig.props-check.json" });
-    var base_tsconfig_abs = try std.fs.path.join(arena.a, &.{ root_abs, "tsconfig.json" });
+    const program_rel = try std.Io.Dir.path.join(arena.a, &.{ tmp_rel, program_basename });
+    const program_abs = try std.Io.Dir.path.join(arena.a, &.{ tmp_dir_abs, program_basename });
+    const tsconfig_abs = try std.Io.Dir.path.join(arena.a, &.{ tmp_dir_abs, "tsconfig.props-check.json" });
+    var base_tsconfig_abs = try std.Io.Dir.path.join(arena.a, &.{ root_abs, "tsconfig.json" });
     std.Io.Dir.cwd().access(io, base_tsconfig_abs, .{}) catch |err| switch (err) {
         error.FileNotFound => {
             // Sites without a tsconfig still get props validation; never add
             // a project configuration file as a side effect of building.
-            base_tsconfig_abs = try std.fs.path.join(arena.a, &.{ tmp_dir_abs, "base.json" });
+            base_tsconfig_abs = try std.Io.Dir.path.join(arena.a, &.{ tmp_dir_abs, "base.json" });
             try writeFileAbs(io, base_tsconfig_abs,
                 \\{"compilerOptions":{"jsx":"preserve","moduleResolution":"bundler","target":"esnext","module":"esnext"}}
             );
@@ -343,8 +343,8 @@ pub fn run(io: Io, gpa: std.mem.Allocator, checks: []const PropsCheck, opts: Run
 }
 
 fn writeFileAbs(io: Io, abs_path: []const u8, bytes: []const u8) !void {
-    const dir = std.fs.path.dirname(abs_path) orelse "/";
-    const base = std.fs.path.basename(abs_path);
+    const dir = std.Io.Dir.path.dirname(abs_path) orelse "/";
+    const base = std.Io.Dir.path.basename(abs_path);
     var d = try std.Io.Dir.cwd().openDir(io, dir, .{});
     defer d.close(io);
     var f = try d.createFile(io, base, .{});

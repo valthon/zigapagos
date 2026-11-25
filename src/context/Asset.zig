@@ -254,7 +254,7 @@ pub const Builtins = struct {
             _ = gpa;
             if (args.len != 0) return .{ .err = "expected 0 arguments" };
 
-            var buf: [std.fs.max_path_bytes]u8 = undefined;
+            var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
             switch (asset._meta.kind) {
                 .page => |variant_id| {
                     const v = &ctx._meta.build.variants[variant_id];
@@ -320,7 +320,7 @@ pub const Builtins = struct {
         ) context.CallError!Value {
             if (args.len != 0) return .{ .err = "expected 0 arguments" };
 
-            var buf: [std.fs.max_path_bytes]u8 = undefined;
+            var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
             switch (asset._meta.kind) {
                 .page => |variant_id| {
                     const v = &ctx._meta.build.variants[variant_id];
@@ -396,7 +396,7 @@ pub const Builtins = struct {
         ) context.CallError!Value {
             if (args.len != 0) return .{ .err = "expected 0 arguments" };
 
-            var buf: [std.fs.max_path_bytes]u8 = undefined;
+            var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
             const data = switch (asset._meta.kind) {
                 .page => |variant_id| blk: {
                     const v = &ctx._meta.build.variants[variant_id];
@@ -483,7 +483,7 @@ pub const Builtins = struct {
         ) context.CallError!Value {
             if (args.len != 0) return .{ .err = "expected 0 arguments" };
 
-            var buf: [std.fs.max_path_bytes]u8 = undefined;
+            var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
             var path: []const u8 = undefined;
             const data = switch (asset._meta.kind) {
                 .page => |variant_id| blk: {
@@ -555,7 +555,7 @@ pub const Builtins = struct {
                 .site => ctx._meta.build.cfg.getAssetsDirPath(),
                 .build => "",
             };
-            const full_path = try std.fs.path.join(gpa, &.{ prefix, path });
+            const full_path = try std.Io.Dir.path.join(gpa, &.{ prefix, path });
             defer gpa.free(full_path);
             var diag: @import("../ziggy_diagnostic.zig") = .{ .path = full_path };
             const parsed = _ziggy.deserializeLeaky(_ziggy.Dynamic, gpa, data, &diag.meta, .{}) catch |err| {

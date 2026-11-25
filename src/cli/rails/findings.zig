@@ -1977,7 +1977,7 @@ fn componentSource(in: DeriveInput, name: []const u8) ?port.JsSource {
 /// the returned source is borrowed from `in.js_sources`.
 fn relativeImportSource(gpa: Allocator, in: DeriveInput, importer: []const u8, spec: []const u8) Allocator.Error!?port.JsSource {
     if (!std.mem.startsWith(u8, spec, "./") and !std.mem.startsWith(u8, spec, "../")) return null;
-    const dir = std.fs.path.dirname(importer) orelse return null;
+    const dir = std.Io.Dir.path.dirname(importer) orelse return null;
     var parts: std.ArrayList([]const u8) = .empty;
     defer parts.deinit(gpa);
     var base_it = std.mem.splitScalar(u8, dir, '/');
@@ -2015,13 +2015,13 @@ fn componentProblem(gpa: Allocator, in: DeriveInput, root: port.JsSource) Alloca
         const source = queue.items[i];
         const imports = try port.reactImports(gpa, source.bytes);
         defer gpa.free(imports.list);
-        if (imports.unsupported) |why| return try gpa.print("port cannot follow {s}: {s}", .{ std.fs.path.basename(source.path), why });
+        if (imports.unsupported) |why| return try gpa.print("port cannot follow {s}: {s}", .{ std.Io.Dir.path.basename(source.path), why });
         for (imports.list) |imp| {
             if (!imp.relative) {
                 if (port.isBridgeResolved(imp.spec) or npmHas(in.npm_dependencies, imp.spec)) continue;
-                return try gpa.print("import \"{s}\" from {s} has no version in package.json", .{ imp.spec, std.fs.path.basename(source.path) });
+                return try gpa.print("import \"{s}\" from {s} has no version in package.json", .{ imp.spec, std.Io.Dir.path.basename(source.path) });
             }
-            const child = (try relativeImportSource(gpa, in, source.path, imp.spec)) orelse return try gpa.print("import \"{s}\" from {s} cannot be bundled", .{ imp.spec, std.fs.path.basename(source.path) });
+            const child = (try relativeImportSource(gpa, in, source.path, imp.spec)) orelse return try gpa.print("import \"{s}\" from {s} cannot be bundled", .{ imp.spec, std.Io.Dir.path.basename(source.path) });
             var seen = false;
             for (queue.items) |queued| {
                 if (std.mem.eql(u8, queued.path, child.path)) seen = true;

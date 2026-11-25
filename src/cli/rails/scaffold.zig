@@ -614,9 +614,9 @@ fn writeRunnerFile(
     last_error_path: *?[]const u8,
     last_error: *?anyerror,
 ) WriteError!void {
-    const full = try std.fs.path.join(gpa, &.{ target, relative });
+    const full = try std.Io.Dir.path.join(gpa, &.{ target, relative });
     defer gpa.free(full);
-    if (std.fs.path.dirname(full)) |parent| Io.Dir.cwd().createDirPath(io, parent) catch |err| {
+    if (std.Io.Dir.path.dirname(full)) |parent| Io.Dir.cwd().createDirPath(io, parent) catch |err| {
         if (last_error_path.* == null) last_error_path.* = gpa.dupe(u8, parent) catch null;
         last_error.* = err;
         return error.TargetWrite;
@@ -746,9 +746,9 @@ const Ctx = struct {
     /// Exclusive-create `<target>/<relative>`, parents included. See the
     /// module doc for why exclusive.
     fn writeFile(self: *Ctx, relative: []const u8, bytes: []const u8) WriteError!void {
-        const full = try std.fs.path.join(self.gpa, &.{ self.in.target, relative });
+        const full = try std.Io.Dir.path.join(self.gpa, &.{ self.in.target, relative });
         defer self.gpa.free(full);
-        if (std.fs.path.dirname(full)) |parent| {
+        if (std.Io.Dir.path.dirname(full)) |parent| {
             Io.Dir.cwd().createDirPath(self.io, parent) catch |err|
                 return self.fail(.target, parent, err);
         }
@@ -868,7 +868,7 @@ fn writeAssets(ctx: *Ctx, acc: *Acc) WriteError!void {
 
         const rel = try resolve.assetTargetPath(gpa, a.source);
         defer gpa.free(rel);
-        const dest = try std.fs.path.join(gpa, &.{ "assets", rel });
+        const dest = try std.Io.Dir.path.join(gpa, &.{ "assets", rel });
         defer gpa.free(dest);
 
         // 64 MiB: larger than any web asset this converter has a use for,
@@ -4728,7 +4728,7 @@ fn emitAuthStatus(
 ///
 /// Contract 1 (self-freeing): the returned identifier is the only allocation.
 fn islandComponentName(gpa: Allocator, island: []const u8) Allocator.Error![]u8 {
-    var stem = std.fs.path.basename(island);
+    var stem = std.Io.Dir.path.basename(island);
     const suffix = ".island.tsx";
     if (std.mem.endsWith(u8, stem, suffix)) stem = stem[0 .. stem.len - suffix.len];
     var out: std.ArrayList(u8) = .empty;
@@ -5982,7 +5982,7 @@ fn sourceByPath(sources: []const port.JsSource, path: []const u8) ?port.JsSource
 }
 
 fn relativeJsSource(gpa: Allocator, sources: []const port.JsSource, importer: []const u8, spec: []const u8) Allocator.Error!?port.JsSource {
-    const dir = std.fs.path.dirname(importer) orelse return null;
+    const dir = std.Io.Dir.path.dirname(importer) orelse return null;
     var parts: std.ArrayList([]const u8) = .empty;
     defer parts.deinit(gpa);
     var base_it = std.mem.splitScalar(u8, dir, '/');

@@ -94,7 +94,7 @@ pub fn parseArgs(args: []const []const u8) Options {
 }
 
 fn defaultOut(gpa: Allocator, astro_dir: []const u8) []const u8 {
-    const base = std.fs.path.basename(astro_dir);
+    const base = std.Io.Dir.path.basename(astro_dir);
     return gpa.print("./{s}-tsx", .{base}) catch fatal.oom();
 }
 
@@ -120,8 +120,8 @@ pub fn writeFile(
     bytes: []const u8,
     force: bool,
 ) WriteOutcome {
-    const dirname = std.fs.path.dirnamePosix(rel);
-    const basename_str = std.fs.path.basenamePosix(rel);
+    const dirname = std.Io.Dir.path.dirnamePosix(rel);
+    const basename_str = std.Io.Dir.path.basenamePosix(rel);
 
     // Create (and open) any intermediate directories relative to out_dir.
     const base_dir = if (dirname) |dn|
@@ -234,7 +234,7 @@ pub fn emitGitignore() []const u8 {
 ///
 /// Example: `"My-Site"` → `"my_site"`, `"astro-blog-tsx"` → `"astro_blog_tsx"`.
 pub fn projectName(gpa: Allocator, out_dir_path: []const u8) []const u8 {
-    const base = std.fs.path.basename(out_dir_path);
+    const base = std.Io.Dir.path.basename(out_dir_path);
     if (base.len == 0) return gpa.dupe(u8, "site") catch fatal.oom();
     const result = gpa.alloc(u8, base.len) catch fatal.oom();
     for (base, 0..) |c, i| {
@@ -833,7 +833,7 @@ pub fn run(io: Io, gpa: Allocator, args: []const []const u8) bool {
 
     // Resolve scaffold parameters: Options > parse > fallback.
     const host_url: []const u8 = o.host_url orelse parseAstroSite(config_src) orelse "https://example.com";
-    const title: []const u8 = o.site_title orelse parseJsonName(pkg_src) orelse std.fs.path.basename(out_path);
+    const title: []const u8 = o.site_title orelse parseJsonName(pkg_src) orelse std.Io.Dir.path.basename(out_path);
     const runtime_path: []const u8 = o.runtime_path orelse "TODO-SET-RUNTIME-PATH";
     const name: []const u8 = projectName(a, out_path);
 
@@ -866,7 +866,7 @@ pub fn run(io: Io, gpa: Allocator, args: []const []const u8) bool {
 
     // Scaffold island TSX stubs into <out>/components (unless --no-islands).
     if (!o.no_islands) {
-        const components_path = std.fs.path.join(a, &.{ out_path, "components" }) catch fatal.oom();
+        const components_path = std.Io.Dir.path.join(a, &.{ out_path, "components" }) catch fatal.oom();
         // Honor --force: overwrite existing island .tsx in place, matching the
         // documented --force semantics for every other scaffolded file.
         migrate.scaffoldIslands(io, gpa, astro_root, components_path, res.entries, o.force);

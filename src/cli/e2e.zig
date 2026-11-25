@@ -233,7 +233,7 @@ pub fn e2e(
     // so it shares its lifecycle (deleted with it when the data dir is the
     // per-run temp dir; reused across restarts otherwise) -- a no-op when
     // cmd.url_prefix is "" (see stageServedRoot's doc comment).
-    const staging_root = std.fs.path.join(gpa, &.{ data_dir, ".served-root" }) catch fatal.oom();
+    const staging_root = std.Io.Dir.path.join(gpa, &.{ data_dir, ".served-root" }) catch fatal.oom();
     const served_root = stageServedRoot(io, gpa, staging_root, cmd.url_prefix, cmd.site) catch |err| fatal.msg(
         "error: e2e: unable to stage the served root: {s}\n",
         .{@errorName(err)},
@@ -446,7 +446,7 @@ fn makeFreshTempDataDir(
     const hex = std.fmt.bytesToHex(rand_bytes, .lower);
     const name = try gpa.print("zigapagos-e2e-{s}", .{hex});
     defer gpa.free(name);
-    const path = try std.fs.path.join(gpa, &.{ tmp_root, name });
+    const path = try std.Io.Dir.path.join(gpa, &.{ tmp_root, name });
     Io.Dir.cwd().createDirPath(io, path) catch |err| fatal.msg(
         "error: e2e: unable to create the temp data dir '{s}': {s}\n",
         .{ path, @errorName(err) },
@@ -531,7 +531,7 @@ pub fn stageServedRoot(
     errdefer Io.Dir.cwd().deleteTree(io, next_root_abs) catch {};
     try Io.Dir.cwd().deleteTree(io, previous_root_abs);
 
-    const prefix_dir_abs = try std.fs.path.join(gpa, &.{ next_root_abs, trimmed });
+    const prefix_dir_abs = try std.Io.Dir.path.join(gpa, &.{ next_root_abs, trimmed });
     defer gpa.free(prefix_dir_abs);
     try Io.Dir.cwd().createDirPath(io, prefix_dir_abs);
 
@@ -599,13 +599,13 @@ test "e2e stageServedRoot first use swaps complete trees and preserves the last 
 
     const root_abs = try tmp.dir.realPathFileAlloc(io, ".", gpa);
     defer gpa.free(root_abs);
-    const site_abs = try std.fs.path.join(gpa, &.{ root_abs, "site" });
+    const site_abs = try std.Io.Dir.path.join(gpa, &.{ root_abs, "site" });
     defer gpa.free(site_abs);
-    const missing_site_abs = try std.fs.path.join(gpa, &.{ root_abs, "missing-site" });
+    const missing_site_abs = try std.Io.Dir.path.join(gpa, &.{ root_abs, "missing-site" });
     defer gpa.free(missing_site_abs);
-    const staging_abs = try std.fs.path.join(gpa, &.{ root_abs, ".served-root" });
+    const staging_abs = try std.Io.Dir.path.join(gpa, &.{ root_abs, ".served-root" });
     defer gpa.free(staging_abs);
-    const staged_page_abs = try std.fs.path.join(gpa, &.{ staging_abs, "docs/v2/index.html" });
+    const staged_page_abs = try std.Io.Dir.path.join(gpa, &.{ staging_abs, "docs/v2/index.html" });
     defer gpa.free(staged_page_abs);
 
     var site = try tmp.dir.createDirPathOpen(io, "site", .{});

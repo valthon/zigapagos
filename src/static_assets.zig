@@ -28,7 +28,7 @@ pub fn expand(io: std.Io, gpa: Allocator, build: *Build) Allocator.Error!Selecti
     @memset(result.owners, null);
     if (entries.len == 0) return result;
 
-    const config_path = try std.fs.path.join(gpa, &.{ build.base_dir_path, "zigapagos.ziggy" });
+    const config_path = try std.Io.Dir.path.join(gpa, &.{ build.base_dir_path, "zigapagos.ziggy" });
     defer gpa.free(config_path);
     const source = build.base_dir.readFileAllocOptions(io, "zigapagos.ziggy", gpa, .limited(1024 * 1024), .of(u8), 0) catch |err| switch (err) {
         // Library callers may supply a Config without a source file.
@@ -93,7 +93,7 @@ pub fn expand(io: std.Io, gpa: Allocator, build: *Build) Allocator.Error!Selecti
         };
         const end = if (directory) build.site_assets.count() else start + 1;
         var matched: usize = 0;
-        var name_buf: [std.fs.max_path_bytes]u8 = undefined;
+        var name_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
         for (build.site_assets.keys()[start..end], build.site_assets.values()[start..end], start..) |key, *rc, asset_idx| {
             const name = std.mem.print(&name_buf, "{f}", .{key.fmt(&build.st, &build.pt, null, "/")}) catch {
                 try reporter.emit(entry_idx, .ZP_STATIC_ASSET_INVALID, "asset path exceeds the filesystem path limit while expanding '{s}'", .{entry});

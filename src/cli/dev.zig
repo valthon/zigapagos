@@ -475,7 +475,7 @@ pub fn dev(
     // accessibility pre-check below fatals on an unwatchable dir — so appending it
     // unconditionally would break `dev` for every site without a data dir.
     {
-        const data_abs = std.fs.path.join(gpa, &.{ base_dir_path, cfg.getDataDirPath() }) catch fatal.oom();
+        const data_abs = std.Io.Dir.path.join(gpa, &.{ base_dir_path, cfg.getDataDirPath() }) catch fatal.oom();
         defer gpa.free(data_abs);
         if (Io.Dir.cwd().access(io, data_abs, .{})) |_| {
             try appendOtherRoot(gpa, &other_roots, base_dir_path, cfg.getDataDirPath());
@@ -524,8 +524,8 @@ pub fn dev(
 
     // The served tree and the data dir must live OUTSIDE every watched dir,
     // or each rebuild / db write would retrigger the watcher forever.
-    const site_abs = std.fs.path.resolve(gpa, &.{ base_dir_path, cmd.site }) catch fatal.oom();
-    const data_dir_abs = std.fs.path.resolve(gpa, &.{ base_dir_path, cmd.data_dir }) catch fatal.oom();
+    const site_abs = std.Io.Dir.path.resolveAlloc(gpa, &.{ base_dir_path, cmd.site }) catch fatal.oom();
+    const data_dir_abs = std.Io.Dir.path.resolveAlloc(gpa, &.{ base_dir_path, cmd.data_dir }) catch fatal.oom();
     for (dirs_to_watch.items) |d| {
         if (pathIsInside(d, site_abs)) fatal.msg(
             "error: dev: the output tree '{s}' is inside the watched dir '{s}' — every rebuild would retrigger the watcher.\n" ++
@@ -552,7 +552,7 @@ pub fn dev(
         release_cli.applyUrlPathPrefix(&cfg, prefix);
         environ_map.put(release_cli.url_path_prefix_env, prefix) catch fatal.oom();
     }
-    const staging_root_abs = std.fs.path.join(gpa, &.{ data_dir_abs, ".served-root" }) catch fatal.oom();
+    const staging_root_abs = std.Io.Dir.path.join(gpa, &.{ data_dir_abs, ".served-root" }) catch fatal.oom();
     // Readiness probe path + banner URL: default to "/<prefix>/" so both
     // land on a page the staged root actually serves, unless the caller
     // overrode --ready-path= explicitly (see `Command.ready_path_explicit`'s
@@ -623,7 +623,7 @@ pub fn dev(
     // (unwatched) data dir. Set once for the whole session: EVERY disk build
     // (initial, full, incremental) refreshes it, and classifyChange reads it
     // to map island-source edits to the pages that mount them.
-    const island_manifest_path = std.fs.path.join(
+    const island_manifest_path = std.Io.Dir.path.join(
         gpa,
         &.{ data_dir_abs, "islands-manifest.json" },
     ) catch fatal.oom();
@@ -694,7 +694,7 @@ pub fn dev(
     const reload_server: *reload.Server = gpa.create(reload.Server) catch fatal.oom();
     reload_server.* = .init(io, gpa, reload_addr);
     if (!cmd.ignore_lock) {
-        const events_path = std.fs.path.join(gpa, &.{ data_dir_abs, "dev.ndjson" }) catch fatal.oom();
+        const events_path = std.Io.Dir.path.join(gpa, &.{ data_dir_abs, "dev.ndjson" }) catch fatal.oom();
         defer gpa.free(events_path);
         reload_server.events_file = Io.Dir.cwd().createFile(io, events_path, .{ .truncate = true }) catch |err|
             fatal.msg("error: dev: unable to open structured log: {s}\n", .{@errorName(err)});
@@ -852,7 +852,7 @@ pub fn dev(
     // Loop rebuilds capture stdout+stderr here instead of streaming, so the
     // status endpoint can carry a failure's tail; the initial build above
     // still streams (capture_path = null).
-    const capture_path = std.fs.path.join(gpa, &.{ data_dir_abs, "last-build.log" }) catch fatal.oom();
+    const capture_path = std.Io.Dir.path.join(gpa, &.{ data_dir_abs, "last-build.log" }) catch fatal.oom();
     var buf: [64]Event = undefined;
     var channel: Channel(Event) = .init(&buf);
     var debouncer: Debouncer = .{
@@ -1144,7 +1144,7 @@ fn appendContentRoot(
     base_dir_path: []const u8,
     rel: []const u8,
 ) error{OutOfMemory}!void {
-    const abs = try std.fs.path.join(gpa, &.{ base_dir_path, rel });
+    const abs = try std.Io.Dir.path.join(gpa, &.{ base_dir_path, rel });
     for (roots.items) |r| if (std.mem.eql(u8, r.abs, abs)) {
         gpa.free(abs);
         return;
@@ -1160,7 +1160,7 @@ fn appendOtherRoot(
     base_dir_path: []const u8,
     rel: []const u8,
 ) error{OutOfMemory}!void {
-    const abs = try std.fs.path.join(gpa, &.{ base_dir_path, rel });
+    const abs = try std.Io.Dir.path.join(gpa, &.{ base_dir_path, rel });
     for (roots.items) |r| if (std.mem.eql(u8, r, abs)) {
         gpa.free(abs);
         return;
@@ -1467,7 +1467,7 @@ fn islandModuleUrl(gpa: Allocator, url_prefix: []const u8, stem: []const u8) []c
 /// True for files the island/SPA bundler can import (the only files whose
 /// imports can pull a changed island entry into ANOTHER bundle).
 fn isScriptFile(path: []const u8) bool {
-    const ext = std.fs.path.extension(path);
+    const ext = std.Io.Dir.path.extension(path);
     const script_exts = [_][]const u8{
         ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts",
     };
@@ -1613,7 +1613,7 @@ fn islandPagesFromManifest(
 /// backslash separators in `entry_path` are normalized to '/'.
 fn relPagePath(gpa: Allocator, rel_prefix: []const u8, entry_path: []const u8) []const u8 {
     const out = gpa.print("{s}/{s}", .{ rel_prefix, entry_path }) catch fatal.oom();
-    if (std.fs.path.sep != '/') std.mem.replaceScalar(u8, out, std.fs.path.sep, '/');
+    if (std.Io.Dir.path.sep != '/') std.mem.replaceScalar(u8, out, std.Io.Dir.path.sep, '/');
     return out;
 }
 
@@ -1738,7 +1738,7 @@ fn discoverWatchDirs(
         for (entries) |e| {
             // `dirname` is null for a bare basename, i.e. an entry at the scan
             // root — the one case that must NOT be watched (see above).
-            const parent = std.fs.path.dirname(e) orelse continue;
+            const parent = std.Io.Dir.path.dirname(e) orelse continue;
             if (parent.len == 0 or std.mem.eql(u8, parent, ".")) continue;
             for (dirs.items) |d| {
                 if (std.mem.eql(u8, d, parent)) break;
@@ -1756,7 +1756,7 @@ fn appendWatchDir(
     base_dir_path: []const u8,
     dir: []const u8,
 ) error{OutOfMemory}!void {
-    const candidate = try std.fs.path.joinZ(gpa, &.{ base_dir_path, dir });
+    const candidate = try std.Io.Dir.path.joinZ(gpa, &.{ base_dir_path, dir });
     for (dirs.items) |d| if (std.mem.eql(u8, d, candidate)) {
         gpa.free(candidate);
         return;
@@ -1773,7 +1773,7 @@ fn pathIsInside(dir: []const u8, path: []const u8) bool {
     if (std.mem.eql(u8, dir, path)) return true;
     if (path.len <= dir.len) return false;
     if (!std.mem.startsWith(u8, path, dir)) return false;
-    return dir[dir.len - 1] == std.fs.path.sep or path[dir.len] == std.fs.path.sep;
+    return dir[dir.len - 1] == std.Io.Dir.path.sep or path[dir.len] == std.Io.Dir.path.sep;
 }
 
 pub const RebuildResult = struct { ok: bool, duration_ms: u64, error_tail: ?[]u8 = null };
@@ -2015,7 +2015,7 @@ test "dev rebuild default is this binary's own release into --site" {
     const argv = try defaultRebuildArgv(std.testing.io, gpa, "out/site");
     defer argv.deinit(gpa);
     try std.testing.expectEqual(@as(usize, 4), argv.items.len);
-    try std.testing.expect(std.fs.path.isAbsolute(argv.items[0]));
+    try std.testing.expect(std.Io.Dir.path.isAbsolute(argv.items[0]));
     try std.testing.expectEqualStrings("release", argv.items[1]);
     try std.testing.expectEqualStrings("--output=out/site", argv.items[2]);
     try std.testing.expectEqualStrings("--force", argv.items[3]);
@@ -2307,13 +2307,13 @@ test "dev SPA fallback failures do not terminate the session and can recover" {
         const io = std.testing.io;
         var tmp = std.testing.tmpDir(.{ .iterate = true });
         defer tmp.cleanup();
-        var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+        var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
         const abs = path_buf[0..try tmp.dir.realPath(io, &path_buf)];
         const quiet = try SilencedStderr.begin(io);
         defer quiet.end(io);
         // Opening a file as the output directory must report and return.
         try tmp.dir.writeFile(io, .{ .sub_path = "not-a-dir", .data = "" });
-        const bad_path = try std.fs.path.join(std.testing.allocator, &.{ abs, "not-a-dir" });
+        const bad_path = try std.Io.Dir.path.join(std.testing.allocator, &.{ abs, "not-a-dir" });
         defer std.testing.allocator.free(bad_path);
         prepareSpaFallbacks(io, bad_path);
         // A directory at .spa forces marker creation to fail, even as root.
@@ -2346,7 +2346,7 @@ test "dev dirHasChangeSince: a walk it cannot finish answers 'changed', not 'unc
         sub.close(io);
         try tmp.dir.writeFile(io, .{ .sub_path = "partials/nav.html", .data = "<nav/>" });
 
-        var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+        var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
         const abs = path_buf[0..try tmp.dir.realPath(io, &path_buf)];
 
         // Nothing in the tree is newer than this cutoff, so a COMPLETED walk
@@ -2416,7 +2416,7 @@ test "dev rebuild result carries duration and failure tail" {
     defer tmp.cleanup();
     const capture = try tmp.dir.realPathFileAlloc(io, ".", gpa);
     defer gpa.free(capture);
-    const capture_path = try std.fs.path.join(gpa, &.{ capture, "last-build.log" });
+    const capture_path = try std.Io.Dir.path.join(gpa, &.{ capture, "last-build.log" });
     defer gpa.free(capture_path);
 
     var environ: std.process.Environ.Map = .init(gpa);
@@ -2470,7 +2470,7 @@ test "dev rebuild: a stale capture file is never replayed when the capture canno
 
     const dir_abs = try capdir.realPathFileAlloc(io, ".", gpa);
     defer gpa.free(dir_abs);
-    const capture_path = try std.fs.path.join(gpa, &.{ dir_abs, "last-build.log" });
+    const capture_path = try std.Io.Dir.path.join(gpa, &.{ dir_abs, "last-build.log" });
     defer gpa.free(capture_path);
 
     // Verify the fixture actually reproduces the failure this test relies

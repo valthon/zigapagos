@@ -82,10 +82,10 @@ pub fn locate(
 
     // 2. PATH search for an executable `zigbase`.
     if (environ_map.get("PATH")) |path_env| {
-        var it = std.mem.splitScalar(u8, path_env, std.fs.path.delimiter);
+        var it = std.mem.splitScalar(u8, path_env, std.Io.Dir.path.delimiter);
         while (it.next()) |dir| {
             if (dir.len == 0) continue;
-            const candidate = try std.fs.path.join(gpa, &.{ dir, exe_name });
+            const candidate = try std.Io.Dir.path.join(gpa, &.{ dir, exe_name });
             if (isExecutable(io, candidate)) return .{ .path = candidate, .source = .path_env };
             gpa.free(candidate);
         }
@@ -116,16 +116,16 @@ pub fn cachedPath(
 ) error{OutOfMemory}!?[]const u8 {
     if (builtin.target.os.tag == .windows) {
         const root = environ_map.get("LOCALAPPDATA") orelse return null;
-        return try std.fs.path.join(gpa, &.{ root, "zigapagos", "zigbase", pinned_version, exe_name });
+        return try std.Io.Dir.path.join(gpa, &.{ root, "zigapagos", "zigbase", pinned_version, exe_name });
     }
     if (environ_map.get("XDG_CACHE_HOME")) |root| {
-        if (root.len > 0) return try std.fs.path.join(
+        if (root.len > 0) return try std.Io.Dir.path.join(
             gpa,
             &.{ root, "zigapagos", "zigbase", pinned_version, exe_name },
         );
     }
     const home = environ_map.get("HOME") orelse return null;
-    return try std.fs.path.join(gpa, &.{ home, ".cache", "zigapagos", "zigbase", pinned_version, exe_name });
+    return try std.Io.Dir.path.join(gpa, &.{ home, ".cache", "zigapagos", "zigbase", pinned_version, exe_name });
 }
 
 /// `zigbase-<ver-sans-v>-<target>.tar.gz`, or null on platforms with no
@@ -167,7 +167,7 @@ pub fn download(
             "or pass --zigbase=<path>\n",
         .{},
     );
-    const dir = std.fs.path.dirname(exe_path).?;
+    const dir = std.Io.Dir.path.dirname(exe_path).?;
     Io.Dir.cwd().createDirPath(io, dir) catch |err| fatal.msg(
         "error: unable to create the zigbase cache dir '{s}': {s}\n",
         .{ dir, @errorName(err) },
@@ -175,8 +175,8 @@ pub fn download(
 
     const url = try releaseUrl(gpa, asset);
     const sums_url = try releaseUrl(gpa, "SHA256SUMS");
-    const tar_path = try std.fs.path.join(gpa, &.{ dir, asset });
-    const sums_path = try std.fs.path.join(gpa, &.{ dir, "SHA256SUMS" });
+    const tar_path = try std.Io.Dir.path.join(gpa, &.{ dir, asset });
+    const sums_path = try std.Io.Dir.path.join(gpa, &.{ dir, "SHA256SUMS" });
 
     std.debug.print("e2e: downloading {s}\n", .{url});
     runStep(io, &.{ "curl", "-fSL", "--retry", "2", "-o", tar_path, url }, "download the zigbase release");

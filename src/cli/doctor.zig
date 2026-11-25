@@ -593,7 +593,7 @@ fn checkOneLink(
     var stripped = value;
     if (std.mem.findAny(u8, stripped, "#?")) |i| stripped = stripped[0..i];
 
-    var decode_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var decode_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const decoded = percentDecode(&decode_buf, stripped) catch |err| {
         try reportUnresolvable(ctx, doc, attr_name, original, err);
         return;
@@ -608,7 +608,7 @@ fn checkOneLink(
         return;
     }
 
-    var norm_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var norm_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const url_path = localUrlPath(&norm_buf, doc.path, ctx.url_prefix, decoded) catch |err| {
         try reportUnresolvable(ctx, doc, attr_name, original, err);
         return;
@@ -618,7 +618,7 @@ fn checkOneLink(
     var matched = true;
     var norm = url_path;
     if (ctx.url_prefix.len > 0) {
-        var rooted_buf: [std.fs.max_path_bytes]u8 = undefined;
+        var rooted_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
         const rooted = std.mem.print(&rooted_buf, "/{s}", .{url_path}) catch {
             try reportUnresolvable(ctx, doc, attr_name, original, error.TooLong);
             return;
@@ -641,7 +641,7 @@ fn checkOneLink(
         // form resolve" IS the `resolves(norm)` already computed above; no
         // second normalisation pass is needed.
         if (matched) return;
-        var suggest_buf: [std.fs.max_path_bytes]u8 = undefined;
+        var suggest_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
         const suggested = if (norm.len == 0)
             std.mem.print(&suggest_buf, "/{s}", .{ctx.url_prefix})
         else
@@ -690,7 +690,7 @@ pub fn isLocalLink(value: []const u8) bool {
 pub fn localUrlPath(buf: []u8, document: []const u8, prefix: []const u8, path: []const u8) NormalizeError![]const u8 {
     if (isRootRelative(path)) return normalizeLexical(buf, path[1..]);
     const directory = if (std.mem.findLastAny(u8, document, "/\\")) |i| document[0 .. i + 1] else "";
-    var joined_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var joined_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const joined = if (prefix.len == 0)
         std.mem.print(&joined_buf, "{s}{s}", .{ directory, path })
     else
@@ -736,7 +736,7 @@ fn reportUnresolvable(
             check,
             doc.path,
             "{s} '{s}' is too long for doctor to resolve (limits: {d} path segments, {d} bytes)",
-            .{ attr_name, original, max_path_segments, std.fs.max_path_bytes },
+            .{ attr_name, original, max_path_segments, std.Io.Dir.max_path_bytes },
         ),
     }
 }
@@ -766,13 +766,13 @@ fn resolves(ctx: *Ctx, norm: []const u8) bool {
     if (norm.len == 0) return isRegularFile(ctx, "index.html");
     if (isRegularFile(ctx, norm)) return true;
 
-    var buf1: [std.fs.max_path_bytes]u8 = undefined;
+    var buf1: [std.Io.Dir.max_path_bytes]u8 = undefined;
     if (std.mem.print(&buf1, "{s}/index.html", .{norm})) |p| {
         if (isRegularFile(ctx, p)) return true;
     } else |_| {}
 
     if (!std.mem.endsWith(u8, norm, ".html")) {
-        var buf2: [std.fs.max_path_bytes]u8 = undefined;
+        var buf2: [std.Io.Dir.max_path_bytes]u8 = undefined;
         if (std.mem.print(&buf2, "{s}.html", .{norm})) |p| {
             if (isRegularFile(ctx, p)) return true;
         } else |_| {}
@@ -801,7 +801,7 @@ const PercentDecodeError = error{
     /// A `%` not followed by two hex digits. The author's intended target is
     /// unknowable, and the URL is broken as written.
     MalformedEscape,
-    /// The decoded form does not fit `buf` (`std.fs.max_path_bytes`).
+    /// The decoded form does not fit `buf` (`std.Io.Dir.max_path_bytes`).
     TooLong,
 };
 

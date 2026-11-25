@@ -101,10 +101,10 @@ pub const sidecar_timeout_ms: i64 = 30_000;
 /// (`src/islands/sidecar.zig`) -- duplicated rather than imported, since
 /// that file sits outside `src/cli/rails/` and this package is std-only.
 pub fn resolveAbsRoot(io: Io, gpa: Allocator, root_path: []const u8) ![]const u8 {
-    if (std.fs.path.isAbsolute(root_path)) return try gpa.dupe(u8, root_path);
+    if (std.Io.Dir.path.isAbsolute(root_path)) return try gpa.dupe(u8, root_path);
     const cwd_str = try std.process.currentPathAlloc(io, gpa);
     defer gpa.free(cwd_str);
-    return try std.fs.path.resolve(gpa, &.{ cwd_str, root_path });
+    return try std.Io.Dir.path.resolveAlloc(gpa, &.{ cwd_str, root_path });
 }
 
 /// Runs on a dedicated thread for as long as the caller's blocking

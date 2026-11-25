@@ -563,7 +563,7 @@ fn scanContentDirInner(
                 content_sub_path,
                 try string_table.intern(
                     gpa,
-                    std.fs.path.stem(f.slice(&string_table)), // TODO: extensionless page names?
+                    std.Io.Dir.path.stem(f.slice(&string_table)), // TODO: extensionless page names?
                 ),
             );
 
@@ -629,7 +629,7 @@ fn scanContentDirInner(
         const dir_stack_old_len = dir_stack.items.len;
         try dir_stack.resize(arena, dir_stack_old_len + dir_names.items.len);
         for (dir_stack.items[dir_stack_old_len..], dir_names.items) |*d, f| {
-            const dir_path_bytes = try std.fs.path.join(arena, &.{
+            const dir_path_bytes = try std.Io.Dir.path.join(arena, &.{
                 dir_entry.path,
                 f.slice(&string_table),
             });
@@ -707,7 +707,7 @@ pub fn paginationPathName(
     style: context.Page.Pagination.UrlStyle,
     n: u32,
 ) !PathName {
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     switch (style) {
         .page_dir, .plain_dir => {
             const dir = std.mem.print(&buf, "{f}{s}{d}", .{
@@ -750,7 +750,7 @@ pub fn paginationPathNameLookup(
     style: context.Page.Pagination.UrlStyle,
     n: u32,
 ) ?PathName {
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     switch (style) {
         .page_dir, .plain_dir => {
             const full = std.mem.print(&buf, "{f}{s}{d}/index.html", .{
@@ -839,7 +839,7 @@ pub fn installAssets(
         if (hint.kind != .page_asset) continue;
         if (hint.kind.page_asset.raw == 0) continue;
 
-        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
         const install_path = std.mem.print(&buf, "{s}{s}{f}", .{
             v.output_path_prefix,
             if (v.output_path_prefix.len > 0) "/" else "",

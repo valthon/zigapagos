@@ -450,8 +450,8 @@ fn nextAppRouteModule(path: []const u8) bool {
     if (!std.mem.startsWith(u8, path, "app/") and
         !std.mem.startsWith(u8, path, "src/app/")) return false;
 
-    const basename = std.fs.path.basename(path);
-    const stem = std.fs.path.stem(basename);
+    const basename = std.Io.Dir.path.basename(path);
+    const stem = std.Io.Dir.path.stem(basename);
     for ([_][]const u8{
         "page",
         "route",
@@ -573,7 +573,7 @@ fn scanOther(io: Io, gpa: Allocator, root: Io.Dir, source: Source, report_path: 
 
     for (entries.items) |*entry| {
         if (source == .nextjs and entry.kind == .page) {
-            const basename = std.fs.path.basename(entry.path);
+            const basename = std.Io.Dir.path.basename(entry.path);
             if (std.mem.startsWith(u8, basename, "layout.") or
                 std.mem.startsWith(u8, basename, "_app.") or
                 std.mem.startsWith(u8, basename, "_document."))
@@ -660,7 +660,7 @@ fn scanUnhandledContent(io: Io, gpa: Allocator, root: Io.Dir, rel: []const u8, s
         const path = if (std.mem.eql(u8, rel, "."))
             gpa.dupe(u8, entry.name) catch fatal.oom()
         else
-            std.fs.path.join(gpa, &.{ rel, entry.name }) catch fatal.oom();
+            std.Io.Dir.path.join(gpa, &.{ rel, entry.name }) catch fatal.oom();
         defer gpa.free(path);
         if (entry.kind == .directory) {
             scanUnhandledContent(io, gpa, root, path, source, out, inventoried);
@@ -850,7 +850,7 @@ fn railsAppName(source_path: []const u8, target: []const u8) []const u8 {
 }
 
 fn usableBasename(path: []const u8) ?[]const u8 {
-    const b = std.fs.path.basename(path);
+    const b = std.Io.Dir.path.basename(path);
     if (b.len == 0) return null;
     if (std.mem.eql(u8, b, ".") or std.mem.eql(u8, b, "..")) return null;
     return b;
@@ -1061,7 +1061,7 @@ test "railsRootEvidence: an unreadable probe is not rendered as evidence" {
 
 /// Derives the manifest's sibling path from the report's own `out_path`
 /// (design spec, "The manifest": "written beside the report"). Strips
-/// `out_path`'s own extension via `std.fs.path.stem` (default `MIGRATION.md`
+/// `out_path`'s own extension via `std.Io.Dir.path.stem` (default `MIGRATION.md`
 /// -> `MIGRATION.manifest.json`) rather than a fixed sibling name: `tests/
 /// migrate/rails.sh` writes many differently-`-o`'d reports into the SAME
 /// directory across one run (`one.md`, `degraded.md`, `empty-routes.md`,
@@ -1076,11 +1076,11 @@ test "railsRootEvidence: an unreadable probe is not rendered as evidence" {
 /// returned path; the intermediate `name` formatting is freed before
 /// returning.
 fn railsManifestPath(gpa: Allocator, out_path: []const u8) []const u8 {
-    const dir = std.fs.path.dirname(out_path);
-    const stem = std.fs.path.stem(std.fs.path.basename(out_path));
+    const dir = std.Io.Dir.path.dirname(out_path);
+    const stem = std.Io.Dir.path.stem(std.Io.Dir.path.basename(out_path));
     const name = gpa.print("{s}.manifest.json", .{stem}) catch fatal.oom();
     defer gpa.free(name);
-    if (dir) |d| return std.fs.path.join(gpa, &.{ d, name }) catch fatal.oom();
+    if (dir) |d| return std.Io.Dir.path.join(gpa, &.{ d, name }) catch fatal.oom();
     return gpa.dupe(u8, name) catch fatal.oom();
 }
 
@@ -1097,7 +1097,7 @@ test "railsManifestPath: beside the report, extension replaced, directory preser
 
 test "railsManifestPath: two different -o STEMS in the same directory never collide" {
     // F7 (phase-2-review.md): the collision domain is the STEM
-    // (`std.fs.path.stem` strips the extension before this function ever
+    // (`std.Io.Dir.path.stem` strips the extension before this function ever
     // sees it), not the basename -- `-o a.md` and `-o a.txt` in the SAME
     // directory both produce `a.manifest.json` and DO collide. This test
     // (and its name) previously claimed "basenames", which is broader than
@@ -1359,7 +1359,7 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
         defer if (default_decisions_buf) |p| gpa.free(p);
         const effective_decisions_path: ?[]const u8 = if (decisions_path) |p| p else blk: {
             const target = target_dir orelse break :blk null;
-            const joined = std.fs.path.join(gpa, &.{ target, rails_decisions_basename }) catch fatal.oom();
+            const joined = std.Io.Dir.path.join(gpa, &.{ target, rails_decisions_basename }) catch fatal.oom();
             // Existence-gated, not read-gated: the FIRST run of every
             // migration has no answers file, and that is the normal state,
             // not a failure. An explicit --decisions is held to a higher
@@ -1388,7 +1388,7 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
         // the manifest. The basename still points at the right file, and the
         // stderr messages (which are not artifacts) print the full path.
         const decisions_label: []const u8 = if (effective_decisions_path) |p|
-            std.fs.path.basename(p)
+            std.Io.Dir.path.basename(p)
         else
             rails_decisions_basename;
 
@@ -1472,7 +1472,7 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
             }
             var target_root = Io.Dir.cwd().createDirPathOpen(io, target, .{}) catch |err| fatal.dir(target, err);
             target_root.close(io);
-            const joined = std.fs.path.join(gpa, &.{ target, "MIGRATION.md" }) catch fatal.oom();
+            const joined = std.Io.Dir.path.join(gpa, &.{ target, "MIGRATION.md" }) catch fatal.oom();
             target_out_path_buf = joined;
             break :blk joined;
         } else out_path;
@@ -1729,20 +1729,20 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
         if (target_dir != null) break :blk scanOther(io, gpa, root, source, null);
         // Resolve the parent through the filesystem before joining the basename:
         // lexically collapsing '..' first changes paths such as link/../report.md.
-        const report_parent = std.fs.path.dirname(out_path) orelse ".";
+        const report_parent = std.Io.Dir.path.dirname(out_path) orelse ".";
         const report_parent_abs = Io.Dir.cwd().realPathFileAlloc(io, report_parent, gpa) catch |err| switch (err) {
             error.FileNotFound => break :blk scanOther(io, gpa, root, source, null),
             error.OutOfMemory => fatal.oom(),
             else => fatal.dir(report_parent, err),
         };
         defer gpa.free(report_parent_abs);
-        const report_abs = std.fs.path.join(gpa, &.{ report_parent_abs, std.fs.path.basename(out_path) }) catch fatal.oom();
+        const report_abs = std.Io.Dir.path.join(gpa, &.{ report_parent_abs, std.Io.Dir.path.basename(out_path) }) catch fatal.oom();
         defer gpa.free(report_abs);
         const cwd_abs = Io.Dir.cwd().realPathFileAlloc(io, ".", gpa) catch |err| fatal.dir(".", err);
         defer gpa.free(cwd_abs);
         const source_abs = Io.Dir.cwd().realPathFileAlloc(io, dir_path, gpa) catch |err| fatal.dir(dir_path, err);
         defer gpa.free(source_abs);
-        const report_rel = std.fs.path.relative(gpa, cwd_abs, environ_map, source_abs, report_abs) catch fatal.oom();
+        const report_rel = std.Io.Dir.path.relativeAlloc(gpa, cwd_abs, environ_map, source_abs, report_abs) catch fatal.oom();
         defer gpa.free(report_rel);
         break :blk scanOther(io, gpa, root, source, report_rel);
     };
@@ -1808,7 +1808,7 @@ fn scanDir(
     var it = dir.iterateAssumeFirstIteration();
     while (it.next(io) catch null) |entry| {
         if (entry.name.len == 0 or entry.name[0] == '.') continue;
-        const child = std.fs.path.join(gpa, &.{ rel, entry.name }) catch fatal.oom();
+        const child = std.Io.Dir.path.join(gpa, &.{ rel, entry.name }) catch fatal.oom();
         switch (entry.kind) {
             // `scanFile` takes ownership of `child` (stored verbatim as
             // `Entry.path`, freed by `freeScanResult`). A directory has no
@@ -2178,7 +2178,7 @@ pub fn scaffoldIslands(io: Io, gpa: Allocator, astro_root: Io.Dir, scaffold_dir:
 
         const base_name = gpa.print("{s}.island.tsx", .{name}) catch fatal.oom();
         defer gpa.free(base_name);
-        const out_path = std.fs.path.join(gpa, &.{ scaffold_dir, base_name }) catch fatal.oom();
+        const out_path = std.Io.Dir.path.join(gpa, &.{ scaffold_dir, base_name }) catch fatal.oom();
         defer gpa.free(out_path);
 
         const out = openMigrationOutput(io, gpa, out_path, force);
@@ -2236,9 +2236,9 @@ fn convertOneContent(
     defer gpa.free(src);
     const rendered = content_convert.render(gpa, source, entry.path, src);
     defer gpa.free(rendered.bytes);
-    const out_path = std.fs.path.join(gpa, &.{ out_root, relative }) catch fatal.oom();
+    const out_path = std.Io.Dir.path.join(gpa, &.{ out_root, relative }) catch fatal.oom();
     defer gpa.free(out_path);
-    if (std.fs.path.dirname(out_path)) |parent| {
+    if (std.Io.Dir.path.dirname(out_path)) |parent| {
         var parent_dir = Io.Dir.cwd().createDirPathOpen(io, parent, .{}) catch |err|
             fatal.dir(parent, err);
         parent_dir.close(io);
@@ -2386,7 +2386,7 @@ fn hexoThemeSource(io: Io, gpa: Allocator, source_root: Io.Dir, theme: []const u
     var it = themes.iterateAssumeFirstIteration();
     while (it.next(io) catch return null) |entry| {
         if (entry.kind != .directory or !std.ascii.eqlIgnoreCase(entry.name, theme)) continue;
-        return std.fs.path.join(gpa, &.{ "themes", entry.name, "source" }) catch fatal.oom();
+        return std.Io.Dir.path.join(gpa, &.{ "themes", entry.name, "source" }) catch fatal.oom();
     }
     return null;
 }
@@ -2486,11 +2486,11 @@ fn copyAssetRoot(io: Io, gpa: Allocator, source_root: Io.Dir, out_root: []const 
         const relative = if (asset_root.target_prefix.len == 0)
             gpa.dupe(u8, entry.path) catch fatal.oom()
         else
-            std.fs.path.join(gpa, &.{ asset_root.target_prefix, entry.path }) catch fatal.oom();
+            std.Io.Dir.path.join(gpa, &.{ asset_root.target_prefix, entry.path }) catch fatal.oom();
         defer gpa.free(relative);
-        const out_path = std.fs.path.join(gpa, &.{ out_root, relative }) catch fatal.oom();
+        const out_path = std.Io.Dir.path.join(gpa, &.{ out_root, relative }) catch fatal.oom();
         defer gpa.free(out_path);
-        if (std.fs.path.dirname(out_path)) |parent| Io.Dir.cwd().createDirPath(io, parent) catch |err| fatal.dir(parent, err);
+        if (std.Io.Dir.path.dirname(out_path)) |parent| Io.Dir.cwd().createDirPath(io, parent) catch |err| fatal.dir(parent, err);
 
         const input = entry.dir.openFile(io, entry.basename, .{}) catch |err| fatal.file(entry.path, err);
         defer input.close(io);
@@ -2613,7 +2613,7 @@ const target_gitignore =
 fn pathIsInside(parent: []const u8, child: []const u8) bool {
     if (std.mem.eql(u8, parent, child)) return true;
     if (!std.mem.startsWith(u8, child, parent) or child.len <= parent.len) return false;
-    return std.fs.path.isSep(child[parent.len]);
+    return std.Io.Dir.path.isSep(child[parent.len]);
 }
 
 fn targetHasEntries(io: Io, path: []const u8) bool {
@@ -2678,19 +2678,19 @@ fn targetPathExists(io: Io, path: []const u8) bool {
 /// final directory exists. NO_SLOP.md section 2.2a contract 2 (owned-result):
 /// the returned slice is `gpa`-owned; all non-result scratch is freed here.
 fn canonicalTargetPath(io: Io, gpa: Allocator, cwd_abs: []const u8, target: []const u8) []const u8 {
-    const target_abs = std.fs.path.resolve(gpa, &.{ cwd_abs, target }) catch fatal.oom();
+    const target_abs = std.Io.Dir.path.resolveAlloc(gpa, &.{ cwd_abs, target }) catch fatal.oom();
     var ancestor: []const u8 = target_abs;
     while (true) {
         if (Io.Dir.cwd().realPathFileAlloc(io, ancestor, gpa)) |real_ancestor| {
             const suffix_with_sep = target_abs[ancestor.len..];
             var suffix_start: usize = 0;
-            while (suffix_start < suffix_with_sep.len and std.fs.path.isSep(suffix_with_sep[suffix_start])) suffix_start += 1;
+            while (suffix_start < suffix_with_sep.len and std.Io.Dir.path.isSep(suffix_with_sep[suffix_start])) suffix_start += 1;
             const suffix = suffix_with_sep[suffix_start..];
             if (suffix.len == 0) {
                 gpa.free(target_abs);
                 return real_ancestor;
             }
-            const result = std.fs.path.resolve(gpa, &.{ real_ancestor, suffix }) catch fatal.oom();
+            const result = std.Io.Dir.path.resolveAlloc(gpa, &.{ real_ancestor, suffix }) catch fatal.oom();
             gpa.free(real_ancestor);
             gpa.free(target_abs);
             return result;
@@ -2699,16 +2699,16 @@ fn canonicalTargetPath(io: Io, gpa: Allocator, cwd_abs: []const u8, target: []co
             error.OutOfMemory => fatal.oom(),
             else => fatal.file(ancestor, err),
         }
-        ancestor = std.fs.path.dirname(ancestor) orelse return target_abs;
+        ancestor = std.Io.Dir.path.dirname(ancestor) orelse return target_abs;
     }
 }
 
 /// NO_SLOP.md section 2.2a contract 1 (self-freeing): `full` is temporary and
 /// released before return; `bytes` remains caller-owned.
 fn writeTargetFile(io: Io, gpa: Allocator, target: []const u8, relative: []const u8, bytes: []const u8) void {
-    const full = std.fs.path.join(gpa, &.{ target, relative }) catch fatal.oom();
+    const full = std.Io.Dir.path.join(gpa, &.{ target, relative }) catch fatal.oom();
     defer gpa.free(full);
-    if (std.fs.path.dirname(full)) |parent| Io.Dir.cwd().createDirPath(io, parent) catch |err| fatal.dir(parent, err);
+    if (std.Io.Dir.path.dirname(full)) |parent| Io.Dir.cwd().createDirPath(io, parent) catch |err| fatal.dir(parent, err);
     const file = Io.Dir.cwd().createFile(io, full, .{ .exclusive = true }) catch |err| fatal.file(full, err);
     defer file.close(io);
     var writer = file.writer(io, &.{});
@@ -2716,7 +2716,7 @@ fn writeTargetFile(io: Io, gpa: Allocator, target: []const u8, relative: []const
 }
 
 fn targetProjectName(gpa: Allocator, target: []const u8) []const u8 {
-    const base = std.fs.path.basename(target);
+    const base = std.Io.Dir.path.basename(target);
     if (base.len == 0) return gpa.dupe(u8, "migrated_site") catch fatal.oom();
     const result = gpa.alloc(u8, base.len) catch fatal.oom();
     for (base, 0..) |c, i| result[i] = if (std.ascii.isAlphanumeric(c)) std.ascii.toLower(c) else '_';
@@ -2857,13 +2857,13 @@ fn assembleTarget(
     var target_root = Io.Dir.cwd().createDirPathOpen(io, target, .{}) catch |err| fatal.dir(target, err);
     target_root.close(io);
     for ([_][]const u8{ "assets", "components", "content", "layouts" }) |dir_name| {
-        const path = std.fs.path.join(a, &.{ target, dir_name }) catch fatal.oom();
+        const path = std.Io.Dir.path.join(a, &.{ target, dir_name }) catch fatal.oom();
         Io.Dir.cwd().createDirPath(io, path) catch |err| fatal.dir(path, err);
     }
 
-    const components = std.fs.path.join(a, &.{ target, "components" }) catch fatal.oom();
-    const content = std.fs.path.join(a, &.{ target, "content" }) catch fatal.oom();
-    const assets = std.fs.path.join(a, &.{ target, "assets" }) catch fatal.oom();
+    const components = std.Io.Dir.path.join(a, &.{ target, "components" }) catch fatal.oom();
+    const content = std.Io.Dir.path.join(a, &.{ target, "content" }) catch fatal.oom();
+    const assets = std.Io.Dir.path.join(a, &.{ target, "assets" }) catch fatal.oom();
     if (source.supportsScaffold()) scaffoldIslands(io, gpa, source_root, components, res.entries, false);
     const content_summary = if (source.contentSource()) |content_source|
         convertContentSummary(io, gpa, source_root, content, content_source, res.entries)
@@ -2875,7 +2875,7 @@ fn assembleTarget(
     for (res.entries) |entry| if (entry.is_island) {
         island_count += 1;
     };
-    const root_content = std.fs.path.join(a, &.{ content, "index.smd" }) catch fatal.oom();
+    const root_content = std.Io.Dir.path.join(a, &.{ content, "index.smd" }) catch fatal.oom();
     if (!targetPathExists(io, root_content)) writeTargetFile(io, gpa, target, "content/index.smd", target_placeholder);
     if (asset_summary.copied == 0) writeTargetFile(io, gpa, target, "assets/.gitkeep", "");
     writeTargetFile(io, gpa, target, "layouts/index.shtml", target_layout);
@@ -3512,13 +3512,13 @@ test "Hugo content conversion writes valid-looking non-clobbering output" {
     convertContent(testing_io, gpa, tmp.dir, out, .hugo, &entries);
     convertContent(testing_io, gpa, tmp.dir, out, .hugo, &entries);
 
-    const first_path = try std.fs.path.join(gpa, &.{ out, "blog/post.smd" });
+    const first_path = try std.Io.Dir.path.join(gpa, &.{ out, "blog/post.smd" });
     defer gpa.free(first_path);
     const first = try Io.Dir.cwd().readFileAlloc(testing_io, first_path, gpa, .limited(64 * 1024));
     defer gpa.free(first);
     try std.testing.expect(std.mem.find(u8, first, ".title = \"Post\"") != null);
     try std.testing.expect(std.mem.endsWith(u8, first, "# Preserved body\n"));
-    const versioned_path = try std.fs.path.join(gpa, &.{ out, "blog/post.smd.new" });
+    const versioned_path = try std.Io.Dir.path.join(gpa, &.{ out, "blog/post.smd.new" });
     defer gpa.free(versioned_path);
     const versioned = try Io.Dir.cwd().readFileAlloc(testing_io, versioned_path, gpa, .limited(64 * 1024));
     defer gpa.free(versioned);

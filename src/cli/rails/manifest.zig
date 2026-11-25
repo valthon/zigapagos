@@ -1083,7 +1083,7 @@ fn copyTree(io: std.Io, gpa: Allocator, src: std.Io.Dir, dst: std.Io.Dir) !void 
         if (entry.kind != .file) continue;
         const data = try src.readFileAlloc(io, entry.path, gpa, .limited(4 * 1024 * 1024));
         defer gpa.free(data);
-        if (std.fs.path.dirname(entry.path)) |parent| {
+        if (std.Io.Dir.path.dirname(entry.path)) |parent| {
             var d = try dst.createDirPathOpen(io, parent, .{});
             d.close(io);
         }

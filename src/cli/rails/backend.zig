@@ -324,7 +324,7 @@ pub fn parse(gpa: Allocator, bytes: []const u8, file_label: []const u8) ParseErr
         };
     };
 
-    const file = try gpa.dupe(u8, std.fs.path.basename(file_label));
+    const file = try gpa.dupe(u8, std.Io.Dir.path.basename(file_label));
     errdefer gpa.free(file);
     const version_owned = try gpa.dupe(u8, contract_version);
     errdefer gpa.free(version_owned);

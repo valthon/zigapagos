@@ -144,7 +144,7 @@ pub fn variantBasename(
     var hex: [hash_hex_len]u8 = undefined;
     _ = std.mem.print(&hex, "{x}", .{digest[0 .. hash_hex_len / 2]}) catch unreachable;
 
-    const ext = std.fs.path.extension(source_basename);
+    const ext = std.Io.Dir.path.extension(source_basename);
     const stem = source_basename[0 .. source_basename.len - ext.len];
     return gpa.print("{s}.{s}.{d}.{s}", .{
         stem, &hex, width, @tagName(codec),

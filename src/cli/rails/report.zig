@@ -661,7 +661,7 @@ pub fn build(gpa: Allocator, in: Input) Allocator.Error![]const u8 {
     // machine-specific, and MIGRATION.md is committed beside the target.
     // `migrate.zig` resolves the source before it reaches here, so `.` has
     // a name by this point (#178).
-    w.print("# Migrating {s} to Zigapagos\n\n", .{std.fs.path.basename(in.app_path)}) catch return error.OutOfMemory;
+    w.print("# Migrating {s} to Zigapagos\n\n", .{std.Io.Dir.path.basename(in.app_path)}) catch return error.OutOfMemory;
     w.writeAll(
         \\Rails source discovery. This worklist inventories the presentation
         \\layer and the recovered route graph. Discovery itself converts
