@@ -260,7 +260,7 @@ pub const Node = struct {
     /// Contract 3 (caller-buffer): shared finding/lookup identity. Unique
     /// positions retain their ids. Shared positions retain their coordinates
     /// plus H<fingerprint>N<occurrence>; positionless nodes omit coordinates.
-    pub fn identity(n: Node, buffer: []u8) std.fmt.BufPrintError![]u8 {
+    pub fn identity(n: Node, buffer: []u8) std.mem.PrintError![]u8 {
         if (n.stream_ordinal != 0) {
             const hex = std.fmt.bytesToHex(n.fingerprint(), .lower);
             if (n.line > 0 and n.col > 0) return std.mem.print(buffer, "L{d}C{d}H{s}N{d}", .{ n.line, n.col, hex, n.stream_ordinal });

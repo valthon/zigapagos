@@ -147,7 +147,7 @@ test "validate: every Markdown diagnostic bounds primary and related ranges" {
             // truncated input and EOF without a newline exercise every kind.
             for ([_][]const u8{ "", "\n", "    \n   ", "    > x", "x", "first\nlast" }) |src| {
                 const d: Diagnostic = .{ .err = .{ .kind = kind, .main = main }, .src = src, .path = "index.smd", .fm_lines = 4 };
-                const rendered = try std.fmt.allocPrint(gpa, "{f}", .{d});
+                const rendered = try gpa.print("{f}", .{d});
                 defer gpa.free(rendered);
                 try std.testing.expect(rendered.len < 4096);
                 const p = d.preview();
@@ -167,7 +167,7 @@ test "validate: every Markdown diagnostic bounds primary and related ranges" {
     try std.testing.expectEqual(1024, long.preview().spaces + long.preview().carets);
     const baseline: @import("context/Page.zig").HeadingBaselineError = .{ .heading = first, .first = first };
     for ([_][]const u8{ "", "    \n", "last" }) |src| {
-        const text = try std.fmt.allocPrint(gpa, "{f}", .{baseline.fmt(4, src, "index.smd")});
+        const text = try gpa.print("{f}", .{baseline.fmt(4, src, "index.smd")});
         defer gpa.free(text);
         try std.testing.expect(std.mem.find(u8, text, "first heading") != null);
     }
@@ -182,7 +182,7 @@ test "validate: every Markdown diagnostic bounds primary and related ranges" {
         .path = "index.smd",
         .fm_lines = 4,
     };
-    const rendered = try std.fmt.allocPrint(gpa, "{f}", .{nesting});
+    const rendered = try gpa.print("{f}", .{nesting});
     defer gpa.free(rendered);
     try std.testing.expect(std.mem.find(u8, rendered, "invalid nesting: bad nesting") != null);
     const no_previous: Diagnostic = .{
@@ -191,7 +191,7 @@ test "validate: every Markdown diagnostic bounds primary and related ranges" {
         .path = "index.smd",
         .fm_lines = 4,
     };
-    const heading = try std.fmt.allocPrint(gpa, "{f}", .{no_previous});
+    const heading = try gpa.print("{f}", .{no_previous});
     defer gpa.free(heading);
     try std.testing.expect(std.mem.find(u8, heading, "start at heading level 1") != null);
 }

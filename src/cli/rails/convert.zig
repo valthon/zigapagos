@@ -597,7 +597,7 @@ fn normalizeVoidElements(bytes: []u8) []u8 {
         }
         if (std.mem.startsWith(u8, bytes[read..], "<!--")) {
             const end = if (std.mem.find(u8, bytes[read + 4 ..], "-->")) |offset| read + 4 + offset + 3 else bytes.len;
-            std.mem.copyForwards(u8, bytes[written..][0 .. end - read], bytes[read..end]);
+            @memmove(bytes[written..][0 .. end - read], bytes[read..end]);
             written += end - read;
             read = end;
             continue;
@@ -606,7 +606,7 @@ fn normalizeVoidElements(bytes: []u8) []u8 {
         // end tags and comment openers. Raw text was consumed above first.
         if (foreign_depth > 0 and std.mem.startsWith(u8, bytes[read..], "<![CDATA[")) {
             const end = if (std.mem.find(u8, bytes[read + 9 ..], "]]>")) |offset| read + 9 + offset + 3 else bytes.len;
-            std.mem.copyForwards(u8, bytes[written..][0 .. end - read], bytes[read..end]);
+            @memmove(bytes[written..][0 .. end - read], bytes[read..end]);
             written += end - read;
             read = end;
             continue;
@@ -642,7 +642,7 @@ fn normalizeVoidElements(bytes: []u8) []u8 {
         }
         if (!closing and foreign_depth == 0) {
             if (std.ascii.eqlIgnoreCase(name, "plaintext")) {
-                std.mem.copyForwards(u8, bytes[written..][0 .. bytes.len - read], bytes[read..]);
+                @memmove(bytes[written..][0 .. bytes.len - read], bytes[read..]);
                 return bytes[0 .. written + bytes.len - read];
             }
             // HTML parsing's RAWTEXT, script-data and RCDATA elements.
@@ -654,7 +654,7 @@ fn normalizeVoidElements(bytes: []u8) []u8 {
         }
         const remove_slash = !closing and foreign_depth == 0 and is_void and self_closing;
         const kept_end = if (remove_slash) end - 2 else end;
-        std.mem.copyForwards(u8, bytes[written..][0 .. kept_end - read], bytes[read..kept_end]);
+        @memmove(bytes[written..][0 .. kept_end - read], bytes[read..kept_end]);
         written += kept_end - read;
         if (remove_slash) {
             bytes[written] = '>';
