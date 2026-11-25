@@ -163,10 +163,10 @@ test "resolveToJson: escapes </script> breakout in a string value" {
     defer arena_state.deinit();
     const arena = RenderArena.from(&arena_state);
     const json = try resolveToJson(arena, ".{ .label = \"</script><x>&\" }", &.{});
-    try std.testing.expect(std.mem.indexOf(u8, json, "</script>") == null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\\u003C") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\\u003E") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\\u0026") != null);
+    try std.testing.expect(std.mem.find(u8, json, "</script>") == null);
+    try std.testing.expect(std.mem.find(u8, json, "\\u003C") != null);
+    try std.testing.expect(std.mem.find(u8, json, "\\u003E") != null);
+    try std.testing.expect(std.mem.find(u8, json, "\\u0026") != null);
 }
 
 test "resolveToJson: malformed :props is a loud error" {

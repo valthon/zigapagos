@@ -334,7 +334,7 @@ fn isRegexPosition(src: []const u8, at: usize) bool {
     while (i > 0) {
         i -= 1;
         if (std.ascii.isWhitespace(src[i])) continue;
-        if (std.mem.indexOfScalar(u8, "=([{,:;!&|?+-*%^~<>", src[i]) != null) return true;
+        if (std.mem.findScalar(u8, "=([{,:;!&|?+-*%^~<>", src[i]) != null) return true;
         if (!isIdentChar(src[i])) return false;
         const end = i + 1;
         while (i > 0 and isIdentChar(src[i - 1])) i -= 1;
@@ -1009,7 +1009,7 @@ pub fn actionDescriptors(
         if (std.mem.startsWith(u8, text[i..], "<!--")) {
             // A commented-out element declares nothing, exactly as the
             // sidecar's own element scan (assumption B11) treats it.
-            i = if (std.mem.indexOfPos(u8, text, i + 4, "-->")) |e| e + 3 else text.len;
+            i = if (std.mem.findPos(u8, text, i + 4, "-->")) |e| e + 3 else text.len;
             continue;
         }
         if (text[i] != '<' or i + 1 >= text.len or !std.ascii.isAlphabetic(text[i + 1])) {
@@ -1044,7 +1044,7 @@ pub fn actionDescriptors(
                 if (k < text.len and (text[k] == '"' or text[k] == '\'')) {
                     const q = text[k];
                     const start = k + 1;
-                    const end = std.mem.indexOfScalarPos(u8, text, start, q) orelse text.len;
+                    const end = std.mem.findScalarPos(u8, text, start, q) orelse text.len;
                     value = text[start..end];
                     k = @min(end + 1, text.len);
                 } else {
@@ -1117,7 +1117,7 @@ fn isRawTextTag(tag: []const u8) bool {
 /// Contract 3 (caller-buffer): allocates nothing.
 fn rawTextEnd(text: []const u8, from: usize, tag: []const u8) usize {
     var i = from;
-    while (std.mem.indexOfScalarPos(u8, text, i, '<')) |lt| {
+    while (std.mem.findScalarPos(u8, text, i, '<')) |lt| {
         const name_at = lt + 2;
         if (lt + 1 < text.len and text[lt + 1] == '/' and
             name_at + tag.len <= text.len and
@@ -1125,7 +1125,7 @@ fn rawTextEnd(text: []const u8, from: usize, tag: []const u8) usize {
         {
             const after = name_at + tag.len;
             if (after == text.len or std.ascii.isWhitespace(text[after]) or text[after] == '>') {
-                const close = std.mem.indexOfScalarPos(u8, text, after, '>') orelse return text.len;
+                const close = std.mem.findScalarPos(u8, text, after, '>') orelse return text.len;
                 return close + 1;
             }
         }
@@ -1152,11 +1152,11 @@ fn parseDescriptor(
 ) ParsedDescriptor {
     var event = default_event;
     var rest = token;
-    if (std.mem.indexOf(u8, token, "->")) |arrow| {
+    if (std.mem.find(u8, token, "->")) |arrow| {
         event = token[0..arrow];
         rest = token[arrow + 2 ..];
     }
-    const hash = std.mem.indexOfScalar(u8, rest, '#') orelse return .bad;
+    const hash = std.mem.findScalar(u8, rest, '#') orelse return .bad;
     const who = rest[0..hash];
     const tail = rest[hash + 1 ..];
     if (who.len == 0 or tail.len == 0) return .bad;
@@ -1167,13 +1167,13 @@ fn parseDescriptor(
 
     if (event.len == 0) return .bad;
     var local_event = event;
-    if (std.mem.indexOfScalar(u8, local_event, '@')) |at| {
+    if (std.mem.findScalar(u8, local_event, '@')) |at| {
         const target = local_event[at + 1 ..];
         if (!std.mem.eql(u8, target, "window") and !std.mem.eql(u8, target, "document")) return .bad;
         local_event = local_event[0..at];
     }
     if (local_event.len == 0) return .bad;
-    if (std.mem.indexOfScalar(u8, local_event, '.')) |dot| {
+    if (std.mem.findScalar(u8, local_event, '.')) |dot| {
         const kind = local_event[0..dot];
         if (!std.mem.eql(u8, kind, "keydown") and !std.mem.eql(u8, kind, "keyup") and !std.mem.eql(u8, kind, "keypress")) return .bad;
         if (!validKeyFilter(local_event[dot + 1 ..])) return .bad;
@@ -1861,7 +1861,7 @@ const Ref = struct {
 fn aliasRef(aliases: []const Alias, code: []const u8) ?Ref {
     const c = std.mem.trim(u8, code, " \t\r\n");
     if (c.len == 0) return null;
-    const dot = std.mem.indexOfScalar(u8, c, '.');
+    const dot = std.mem.findScalar(u8, c, '.');
     const head = if (dot) |d| c[0..d] else c;
     var field: ?[]const u8 = null;
     var predicate = false;
@@ -1939,7 +1939,7 @@ fn routeFor(all: []const routes_mod.Route, stem: []const u8, arity: usize) ?rout
         var it = std.mem.splitScalar(u8, trimTrailingSlash(route.path), '/');
         while (it.next()) |seg| {
             if (seg.len == 0) continue;
-            if (std.mem.indexOfAny(u8, seg, "()") != null) bad = true;
+            if (std.mem.findAny(u8, seg, "()") != null) bad = true;
             if (isPlaceholder(seg)) placeholders += 1;
         }
         if (bad or placeholders != arity) continue;
@@ -2483,7 +2483,7 @@ test "stimulusSource: static outlets is unsupported" {
     const got = (try stimulusSource(gpa, "x", &sources)).?;
     defer freeController(gpa, got);
     try std.testing.expect(got.unsupported != null);
-    try std.testing.expect(std.mem.indexOf(u8, got.unsupported.?, "outlets") != null);
+    try std.testing.expect(std.mem.find(u8, got.unsupported.?, "outlets") != null);
 }
 
 test "stimulusSource: a getter is unsupported" {
@@ -2498,7 +2498,7 @@ test "stimulusSource: a getter is unsupported" {
     const got = (try stimulusSource(gpa, "x", &sources)).?;
     defer freeController(gpa, got);
     try std.testing.expect(got.unsupported != null);
-    try std.testing.expect(std.mem.indexOf(u8, got.unsupported.?, "ready") != null);
+    try std.testing.expect(std.mem.find(u8, got.unsupported.?, "ready") != null);
 }
 
 test "stimulusSource: a regex literal holding a brace is the documented lexical limit" {
@@ -2529,7 +2529,7 @@ test "stimulusSource: a quote-bearing regex refuses instead of hiding methods" {
     const got = (try stimulusSource(gpa, "x", &sources)).?;
     defer freeController(gpa, got);
     try std.testing.expect(got.unsupported != null);
-    try std.testing.expect(std.mem.indexOf(u8, got.unsupported.?, "regex") != null);
+    try std.testing.expect(std.mem.find(u8, got.unsupported.?, "regex") != null);
 }
 
 test "stimulusSource: every regex derail token refuses loudly" {
@@ -2547,7 +2547,7 @@ test "stimulusSource: every regex derail token refuses loudly" {
         const got = (try stimulusSource(gpa, "x", &sources)).?;
         defer freeController(gpa, got);
         try std.testing.expect(got.unsupported != null);
-        try std.testing.expect(std.mem.indexOf(u8, got.unsupported.?, "regex") != null);
+        try std.testing.expect(std.mem.find(u8, got.unsupported.?, "regex") != null);
     }
 }
 
@@ -2768,7 +2768,7 @@ test "recordBody: classify_link fallback names an unresolved link_to" {
         .layout_stem = null,
     }, "app/views/posts/_post.html.erb", &.{n}, &aliases);
     defer freeBody(gpa, b);
-    try std.testing.expect(std.mem.indexOf(u8, b.unportable.?.why, "this `link_to` names no route") != null);
+    try std.testing.expect(std.mem.find(u8, b.unportable.?.why, "this `link_to` names no route") != null);
 }
 
 test "recordBody: a splat route segment receives its dynamic argument" {
@@ -2978,7 +2978,7 @@ test "recordBody: a two-hop field chain stops at its own (line, col)" {
     try std.testing.expectEqual(fragments.Kind.local, b.unportable.?.kind);
     try std.testing.expectEqual(@as(u64, 3), b.unportable.?.line);
     try std.testing.expectEqual(@as(u64, 7), b.unportable.?.col);
-    try std.testing.expect(std.mem.indexOf(u8, b.unportable.?.why, "post.author.name") != null);
+    try std.testing.expect(std.mem.find(u8, b.unportable.?.why, "post.author.name") != null);
 }
 
 test "recordBody: request state is unportable" {
@@ -3124,12 +3124,12 @@ test "isStatementPosition: existing statement boundaries remain accepted" {
         "const value = 1\nimport A;",
     };
     for (sources) |source| {
-        const at = std.mem.lastIndexOf(u8, source, "import").?;
+        const at = std.mem.findLast(u8, source, "import").?;
         try std.testing.expect(isStatementPosition(source, at));
     }
 
     const unmatched = "*/ import A;";
-    try std.testing.expect(!isStatementPosition(unmatched, std.mem.indexOf(u8, unmatched, "import").?));
+    try std.testing.expect(!isStatementPosition(unmatched, std.mem.find(u8, unmatched, "import").?));
 }
 
 test "reactImports: a derailed regex refuses instead of hiding imports" {

@@ -125,8 +125,8 @@ pub const Sidecar = struct {
     /// its own CWD. `src` may already be absolute, in which case it is
     /// returned unchanged. Uses the CWD snapshotted at `spawn` — no syscall.
     fn absSrc(self: *const Sidecar, arena: RenderArena, src: []const u8) ![]const u8 {
-        if (std.fs.path.isAbsolute(src)) return src;
-        return try std.fs.path.resolve(arena.a, &.{ self.cwd_buf[0..self.cwd_len], src });
+        if (std.Io.Dir.path.isAbsolute(src)) return src;
+        return try std.Io.Dir.path.resolveAlloc(arena.a, &.{ self.cwd_buf[0..self.cwd_len], src });
     }
 
     /// Write `bytes` to the child's stdin and flush. Callers hold `mutex`.
@@ -482,7 +482,7 @@ pub const RenderError = struct {
 /// JSON parsing owns the map and strings through the parser's arena.
 pub const HeadEntry = struct {
     tag: enum { link, meta } = .link,
-    map: std.StringArrayHashMapUnmanaged([]const u8) = .empty,
+    map: std.array_hash_map.String([]const u8) = .empty,
 
     pub fn jsonParse(alloc: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !HeadEntry {
         const value = try std.json.innerParse(std.json.Value, alloc, source, options);
@@ -613,7 +613,7 @@ test "buildRenderRequest emits \"prefix\" only when url_prefix is non-empty" {
     const gpa = std.testing.allocator;
     const concrete = try Sidecar.buildRenderRequest(gpa, 1, "/abs/App.spa.tsx", "{}", "", "/club/42", "", true);
     defer gpa.free(concrete);
-    try std.testing.expect(std.mem.indexOf(u8, concrete, "\"prerender\":\"concrete\"") != null);
+    try std.testing.expect(std.mem.find(u8, concrete, "\"prerender\":\"concrete\"") != null);
 
     const with_prefix = try Sidecar.buildRenderRequest(gpa, 1, "/abs/App.island.tsx", "{}", "", "/myrepo/about", "/myrepo", false);
     defer gpa.free(with_prefix);
@@ -947,7 +947,7 @@ test "sidecar weaves slots into Panel island HTML" {
 
     // Resolve Panel fixture to absolute path the same way existing tests resolve Counter.
     const cwd_str = try std.process.currentPathAlloc(io, arena.a);
-    const panel_abs = try std.fs.path.resolve(arena.a, &.{ cwd_str, "runtime/test/fixtures/Panel.island.tsx" });
+    const panel_abs = try std.Io.Dir.path.resolveAlloc(arena.a, &.{ cwd_str, "runtime/test/fixtures/Panel.island.tsx" });
 
     const html = try sidecar.render(
         arena,
@@ -959,6 +959,6 @@ test "sidecar weaves slots into Panel island HTML" {
     );
 
     // The bun sidecar (Task 2) weaves slots into z-slot wrapper elements.
-    try std.testing.expect(std.mem.indexOf(u8, html, "<z-slot data-z-slot=\"heading\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, html, "<h2>Q</h2>") != null);
+    try std.testing.expect(std.mem.find(u8, html, "<z-slot data-z-slot=\"heading\"") != null);
+    try std.testing.expect(std.mem.find(u8, html, "<h2>Q</h2>") != null);
 }

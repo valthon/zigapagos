@@ -103,7 +103,7 @@ pub const Blocker = struct {
 /// append can fail, in reverse order of acquisition).
 pub fn append(
     gpa: Allocator,
-    list: *std.ArrayListUnmanaged(Blocker),
+    list: *std.ArrayList(Blocker),
     code: []const u8,
     path: []const u8,
     detail: []const u8,
@@ -138,7 +138,7 @@ pub fn append(
 /// exact values its original `append` call chose.
 pub fn appendCopy(
     gpa: Allocator,
-    list: *std.ArrayListUnmanaged(Blocker),
+    list: *std.ArrayList(Blocker),
     b: Blocker,
 ) Allocator.Error!void {
     return append(gpa, list, b.code, b.path, b.detail, b.integrity, b.severity, b.route_id, b.line);
@@ -148,7 +148,7 @@ pub fn appendCopy(
 /// `detail`, and (when non-null) `route_id` -- WITHOUT touching `items`
 /// itself. Shared by `free` (which also frees the backing slice) and
 /// `freeList` (which instead hands the backing array to
-/// `std.ArrayListUnmanaged.deinit`, which knows the array's real capacity;
+/// `std.ArrayList.deinit`, which knows the array's real capacity;
 /// `free`'s own `gpa.free(items)` assumes `items` IS the exact original
 /// allocation, which an in-progress list's `.items` is not guaranteed to
 /// be). Also what `inventory.zig`'s `walk` calls directly in its own
@@ -174,7 +174,7 @@ pub fn free(gpa: Allocator, items: []Blocker) void {
 }
 
 /// Contract 2 counterpart to `append`/`appendCopy`, operating on the
-/// in-progress `ArrayListUnmanaged` directly rather than a `toOwnedSlice`'d
+/// in-progress `ArrayList` directly rather than a `toOwnedSlice`'d
 /// result. Fix round 2 (phase-1-review.md finding 16 / phase-1-fixes.md
 /// section 3): `rails.zig`'s `discover` used to call `list.toOwnedSlice(gpa)
 /// catch unreachable` inside its own top-level `defer` to get a `[]Blocker`
@@ -184,7 +184,7 @@ pub fn free(gpa: Allocator, items: []Blocker) void {
 /// genuinely reachable error, not a proof of anything. This never
 /// allocates (`freeItems` only frees; `list.deinit` frees the list's own
 /// already-owned backing array), so it cannot fail.
-pub fn freeList(gpa: Allocator, list: *std.ArrayListUnmanaged(Blocker)) void {
+pub fn freeList(gpa: Allocator, list: *std.ArrayList(Blocker)) void {
     freeItems(gpa, list.items);
     list.deinit(gpa);
 }
@@ -263,7 +263,7 @@ fn expectBlockers(items: []const Blocker, want: []const Blocker) !void {
 
 test "append copies path and detail, leaves code pointing at the literal" {
     const gpa = std.testing.allocator;
-    var list: std.ArrayListUnmanaged(Blocker) = .empty;
+    var list: std.ArrayList(Blocker) = .empty;
     defer free(gpa, list.toOwnedSlice(gpa) catch unreachable);
 
     var path_buf = [_]u8{ 'a', '.', 'r', 'b' };
@@ -277,7 +277,7 @@ test "append copies path and detail, leaves code pointing at the literal" {
 
 test "append copies route_id, leaves it unaffected by mutating the caller's buffer" {
     const gpa = std.testing.allocator;
-    var list: std.ArrayListUnmanaged(Blocker) = .empty;
+    var list: std.ArrayList(Blocker) = .empty;
     defer free(gpa, list.toOwnedSlice(gpa) catch unreachable);
 
     var rid_buf = [_]u8{ 'r', '1' };
@@ -292,12 +292,12 @@ test "append copies route_id, leaves it unaffected by mutating the caller's buff
 
 test "appendCopy duplicates rather than aliasing the source blocker, including line" {
     const gpa = std.testing.allocator;
-    var src: std.ArrayListUnmanaged(Blocker) = .empty;
+    var src: std.ArrayList(Blocker) = .empty;
     try append(gpa, &src, "RAILS_INVENTORY_TRUNCATED", "app", "AccessDenied", true, .@"error", null, null);
     try append(gpa, &src, "RAILS_ROUTE_CONDITIONAL", "config/routes.rb", "conditional route", false, .warn, null, 42);
     const src_items = try src.toOwnedSlice(gpa);
 
-    var dst: std.ArrayListUnmanaged(Blocker) = .empty;
+    var dst: std.ArrayList(Blocker) = .empty;
     defer free(gpa, dst.toOwnedSlice(gpa) catch unreachable);
     try appendCopy(gpa, &dst, src_items[0]);
     try appendCopy(gpa, &dst, src_items[1]);
@@ -318,7 +318,7 @@ test "appendCopy duplicates rather than aliasing the source blocker, including l
 // severity, appended through the SAME `append` call in the SAME list.
 test "severity is per-code: an inventory-integrity code and a detected-finding code disagree" {
     const gpa = std.testing.allocator;
-    var list: std.ArrayListUnmanaged(Blocker) = .empty;
+    var list: std.ArrayList(Blocker) = .empty;
     defer free(gpa, list.toOwnedSlice(gpa) catch unreachable);
 
     try append(gpa, &list, "RAILS_INVENTORY_UNREADABLE", "public", "AccessDenied", true, .@"error", null, null);

@@ -130,7 +130,7 @@ fn addTargets(
             },
             .windows => {},
             .macos => {
-                if (b.lazyDependency("frameworks", .{
+                if (b.dependencyLazy("frameworks", .{
                     .target = target,
                     .optimize = optimize,
                 })) |frameworks| {
@@ -139,7 +139,7 @@ fn addTargets(
                     zigapagos_exe_release.root_module.addLibraryPath(frameworks.path("lib"));
                     zigapagos_exe_release.root_module.linkFramework("CoreServices", .{});
                     deps.macos(b, zigapagos_exe_release.root_module, target, optimize, frameworks);
-                }
+                } else |_| {}
             },
         }
 

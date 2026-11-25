@@ -139,7 +139,7 @@ fn deserializeDynamic(
 pub fn Dictionary(comptime T: type) type {
     return struct {
         container_kind: enum { @"struct", dict },
-        fields: std.StringArrayHashMapUnmanaged(T) = .empty,
+        fields: std.array_hash_map.String(T) = .empty,
 
         pub const empty: @This() = .{ .container_kind = .dict };
         pub const empty_struct: @This() = .{ .container_kind = .@"struct" };

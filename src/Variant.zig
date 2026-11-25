@@ -30,18 +30,18 @@ string_table: StringTable,
 /// Stores paths as slices of components (stored in string_table)
 path_table: PathTable,
 /// Section 0 is invalid, always start iterating from [1..].
-sections: std.ArrayListUnmanaged(Section),
+sections: std.ArrayList(Section),
 root_index: ?u32, // index into pages
-pages: std.ArrayListUnmanaged(Page),
+pages: std.ArrayList(Page),
 /// Output urls for pages, and assets.
 /// - Scan phase: adds pages and assets
 /// - Main thread after parse phase: adds aliases and alternatives
 urls: std.AutoHashMapUnmanaged(PathName, LocationHint),
 /// Overflowing LocationHints end up in here, populated alongside 'urls'.
-collisions: std.ArrayListUnmanaged(Collision),
+collisions: std.ArrayList(Collision),
 /// Content directories that hold pages but no index.smd, collected during the
 /// scan and reported (as warnings) from the main thread in root.zig.
-sectionless_dirs: std.ArrayListUnmanaged(SectionlessDir),
+sectionless_dirs: std.ArrayList(SectionlessDir),
 
 i18n: context.Map.ZiggyMap,
 i18n_src: [:0]const u8,
@@ -153,7 +153,7 @@ pub const Section = struct {
     content_sub_path: Path,
     parent_section: u32, // index into sections, 0 = no parent section
     index: u32, // index into pages
-    pages: std.ArrayListUnmanaged(u32) = .empty, // indices into pages
+    pages: std.ArrayList(u32) = .empty, // indices into pages
 
     pages_by_author: PageIndex = .{},
     pages_by_tag: PageIndex = .{},
@@ -333,20 +333,20 @@ fn scanContentDirInner(
     const index_html = try string_table.intern(gpa, "index.html");
     _ = try string_table.intern(gpa, "index.html");
 
-    var pages: std.ArrayListUnmanaged(Page) = .empty;
-    var sections: std.ArrayListUnmanaged(Section) = .empty;
+    var pages: std.ArrayList(Page) = .empty;
+    var sections: std.ArrayList(Section) = .empty;
     try sections.append(gpa, undefined); // section zero is invalid
 
     var urls: std.AutoHashMapUnmanaged(PathName, LocationHint) = .empty;
-    var collisions: std.ArrayListUnmanaged(Collision) = .empty;
-    var sectionless_dirs: std.ArrayListUnmanaged(SectionlessDir) = .empty;
+    var collisions: std.ArrayList(Collision) = .empty;
+    var sectionless_dirs: std.ArrayList(SectionlessDir) = .empty;
 
     const DirStackEntry = struct {
         path: []const u8,
         parent_section: u32, // index into sections
         page_assets_owner: u32, // index into pages
     };
-    var dir_stack: std.ArrayListUnmanaged(DirStackEntry) = .empty;
+    var dir_stack: std.ArrayList(DirStackEntry) = .empty;
     try dir_stack.append(arena, .{
         .path = "",
         .parent_section = 0,
@@ -354,9 +354,9 @@ fn scanContentDirInner(
     });
 
     var root_index: ?u32 = null;
-    var page_names: std.ArrayListUnmanaged(String) = .empty;
-    var asset_names: std.ArrayListUnmanaged(String) = .empty;
-    var dir_names: std.ArrayListUnmanaged(String) = .empty;
+    var page_names: std.ArrayList(String) = .empty;
+    var asset_names: std.ArrayList(String) = .empty;
+    var dir_names: std.ArrayList(String) = .empty;
     const content_dir = base_dir.openDir(io, content_dir_path, .{
         .iterate = true,
     }) catch |err| fatal.dir(content_dir_path, err);
@@ -563,7 +563,7 @@ fn scanContentDirInner(
                 content_sub_path,
                 try string_table.intern(
                     gpa,
-                    std.fs.path.stem(f.slice(&string_table)), // TODO: extensionless page names?
+                    std.Io.Dir.path.stem(f.slice(&string_table)), // TODO: extensionless page names?
                 ),
             );
 
@@ -629,7 +629,7 @@ fn scanContentDirInner(
         const dir_stack_old_len = dir_stack.items.len;
         try dir_stack.resize(arena, dir_stack_old_len + dir_names.items.len);
         for (dir_stack.items[dir_stack_old_len..], dir_names.items) |*d, f| {
-            const dir_path_bytes = try std.fs.path.join(arena, &.{
+            const dir_path_bytes = try std.Io.Dir.path.join(arena, &.{
                 dir_entry.path,
                 f.slice(&string_table),
             });
@@ -707,7 +707,7 @@ pub fn paginationPathName(
     style: context.Page.Pagination.UrlStyle,
     n: u32,
 ) !PathName {
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     switch (style) {
         .page_dir, .plain_dir => {
             const dir = std.mem.print(&buf, "{f}{s}{d}", .{
@@ -750,7 +750,7 @@ pub fn paginationPathNameLookup(
     style: context.Page.Pagination.UrlStyle,
     n: u32,
 ) ?PathName {
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     switch (style) {
         .page_dir, .plain_dir => {
             const full = std.mem.print(&buf, "{f}{s}{d}/index.html", .{
@@ -839,7 +839,7 @@ pub fn installAssets(
         if (hint.kind != .page_asset) continue;
         if (hint.kind.page_asset.raw == 0) continue;
 
-        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
         const install_path = std.mem.print(&buf, "{s}{s}{f}", .{
             v.output_path_prefix,
             if (v.output_path_prefix.len > 0) "/" else "",

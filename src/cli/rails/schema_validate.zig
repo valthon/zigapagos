@@ -60,12 +60,12 @@ const Allocator = std.mem.Allocator;
 /// (`/assets/2/pipeline`) across the recursion below; passed in empty by
 /// callers, since the root instance has no name of its own.
 pub fn validate(gpa: Allocator, schema: std.json.Value, instance: std.json.Value) Allocator.Error![]const []const u8 {
-    var errors: std.ArrayListUnmanaged([]const u8) = .empty;
+    var errors: std.ArrayList([]const u8) = .empty;
     errdefer {
         for (errors.items) |e| gpa.free(e);
         errors.deinit(gpa);
     }
-    var path: std.ArrayListUnmanaged(u8) = .empty;
+    var path: std.ArrayList(u8) = .empty;
     defer path.deinit(gpa);
 
     try validateNode(gpa, schema, instance, &path, &errors);
@@ -88,7 +88,7 @@ pub fn freeErrors(gpa: Allocator, errs: []const []const u8) void {
 /// own account.
 fn addError(
     gpa: Allocator,
-    errors: *std.ArrayListUnmanaged([]const u8),
+    errors: *std.ArrayList([]const u8),
     path: []const u8,
     comptime fmt: []const u8,
     args: anytype,
@@ -108,8 +108,8 @@ fn validateNode(
     gpa: Allocator,
     schema: std.json.Value,
     instance: std.json.Value,
-    path: *std.ArrayListUnmanaged(u8),
-    errors: *std.ArrayListUnmanaged([]const u8),
+    path: *std.ArrayList(u8),
+    errors: *std.ArrayList([]const u8),
 ) Allocator.Error!void {
     const s = schema.object;
 
@@ -407,7 +407,7 @@ test "validate: the REAL fixture manifest validates against the generated schema
 
     // Sanity that this test actually exercised the field F1 broke on, not
     // an accidentally-empty assets[] that would trivially pass too.
-    try testing.expect(std.mem.indexOf(u8, manifest_bytes, "\"pipeline\": null") != null);
+    try testing.expect(std.mem.find(u8, manifest_bytes, "\"pipeline\": null") != null);
 
     const errors = try validate(gpa, schema_parsed.value, instance_parsed.value);
     defer freeErrors(gpa, errors);
@@ -448,7 +448,7 @@ test "validate: catches a pre-fix nullable enum schema rejecting null (regressio
     const errors = try validate(gpa, schema_parsed.value, instance_parsed.value);
     defer freeErrors(gpa, errors);
     try testing.expectEqual(@as(usize, 1), errors.len);
-    try testing.expect(std.mem.indexOf(u8, errors[0], "enum") != null);
+    try testing.expect(std.mem.find(u8, errors[0], "enum") != null);
 }
 
 test "validate: an unknown property is rejected when additionalProperties is false" {
@@ -465,7 +465,7 @@ test "validate: an unknown property is rejected when additionalProperties is fal
     const errors = try validate(gpa, schema_parsed.value, instance_parsed.value);
     defer freeErrors(gpa, errors);
     try testing.expectEqual(@as(usize, 1), errors.len);
-    try testing.expect(std.mem.indexOf(u8, errors[0], "/b") != null);
+    try testing.expect(std.mem.find(u8, errors[0], "/b") != null);
 }
 
 test "validate: a missing required property is reported by name" {
@@ -482,7 +482,7 @@ test "validate: a missing required property is reported by name" {
     const errors = try validate(gpa, schema_parsed.value, instance_parsed.value);
     defer freeErrors(gpa, errors);
     try testing.expectEqual(@as(usize, 1), errors.len);
-    try testing.expect(std.mem.indexOf(u8, errors[0], "'a'") != null);
+    try testing.expect(std.mem.find(u8, errors[0], "'a'") != null);
 }
 
 test "validate: array items are checked by index, one error per bad element" {
@@ -499,6 +499,6 @@ test "validate: array items are checked by index, one error per bad element" {
     const errors = try validate(gpa, schema_parsed.value, instance_parsed.value);
     defer freeErrors(gpa, errors);
     try testing.expectEqual(@as(usize, 2), errors.len);
-    try testing.expect(std.mem.indexOf(u8, errors[0], "/1") != null);
-    try testing.expect(std.mem.indexOf(u8, errors[1], "/3") != null);
+    try testing.expect(std.mem.find(u8, errors[0], "/1") != null);
+    try testing.expect(std.mem.find(u8, errors[1], "/3") != null);
 }

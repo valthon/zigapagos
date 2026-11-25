@@ -891,8 +891,8 @@ test "build: findings[] is emitted last, sorted by findings.lessThan, with the w
     const out = try build(gpa, .{ .generator_version = "0.0.0-test", .root_evidence = &.{}, .discovery = &d });
     defer gpa.free(out);
 
-    const blockers_at = std.mem.indexOf(u8, out, "\"blockers\": [").?;
-    const findings_at = std.mem.indexOf(u8, out, "\"findings\": [").?;
+    const blockers_at = std.mem.find(u8, out, "\"blockers\": [").?;
+    const findings_at = std.mem.find(u8, out, "\"findings\": [").?;
     try testing.expect(findings_at > blockers_at);
 
     var parsed = try std.json.parseFromSlice(std.json.Value, gpa, out, .{});
@@ -919,11 +919,11 @@ test "build: findings[] is emitted last, sorted by findings.lessThan, with the w
     // the slice one byte past the FULL needle's length is what actually
     // keeps the last key inside `first_obj`.
     const requires_artifact_key = "\"requires_artifact\"";
-    const first_obj = out[findings_at .. std.mem.indexOfPos(u8, out, findings_at, requires_artifact_key).? + requires_artifact_key.len];
+    const first_obj = out[findings_at .. std.mem.findPos(u8, out, findings_at, requires_artifact_key).? + requires_artifact_key.len];
     const keys = [_][]const u8{ "\"id\"", "\"code\"", "\"severity\"", "\"source\"", "\"route_id\"", "\"message\"", "\"choices\"", requires_artifact_key };
     var last: usize = 0;
     for (keys) |k| {
-        const at = std.mem.indexOfPos(u8, first_obj, last, k).?;
+        const at = std.mem.findPos(u8, first_obj, last, k).?;
         try testing.expect(at >= last);
         last = at + k.len;
     }
@@ -1083,7 +1083,7 @@ fn copyTree(io: std.Io, gpa: Allocator, src: std.Io.Dir, dst: std.Io.Dir) !void 
         if (entry.kind != .file) continue;
         const data = try src.readFileAlloc(io, entry.path, gpa, .limited(4 * 1024 * 1024));
         defer gpa.free(data);
-        if (std.fs.path.dirname(entry.path)) |parent| {
+        if (std.Io.Dir.path.dirname(entry.path)) |parent| {
             var d = try dst.createDirPathOpen(io, parent, .{});
             d.close(io);
         }
@@ -1168,6 +1168,6 @@ test "build: two runs from differently-named directories produce byte-identical 
     try testing.expectEqualStrings(ma, mb);
     // Sanity that this test actually exercised the real fixture, not two
     // empty discoveries that would trivially compare equal.
-    try testing.expect(std.mem.indexOf(u8, ma, "\"routes\": [") != null);
+    try testing.expect(std.mem.find(u8, ma, "\"routes\": [") != null);
     try testing.expect(da.routes.len > 0);
 }

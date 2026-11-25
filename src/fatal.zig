@@ -181,8 +181,8 @@ test "help menu describes live reload (on by default) and its opt-out flags" {
     // Live reload is on by default (dev.zig: live_reload = true);
     // the top-level help must not tell users there is "No live reload", and
     // must list the two opt-out flags that dev.zig's own usage carries.
-    try std.testing.expect(std.mem.indexOf(u8, help_menu, "No live reload") == null);
-    try std.testing.expect(std.mem.indexOf(u8, help_menu, "live-reloads") != null);
-    try std.testing.expect(std.mem.indexOf(u8, help_menu, "--no-live-reload") != null);
-    try std.testing.expect(std.mem.indexOf(u8, help_menu, "--reload-port=N") != null);
+    try std.testing.expect(std.mem.find(u8, help_menu, "No live reload") == null);
+    try std.testing.expect(std.mem.find(u8, help_menu, "live-reloads") != null);
+    try std.testing.expect(std.mem.find(u8, help_menu, "--no-live-reload") != null);
+    try std.testing.expect(std.mem.find(u8, help_menu, "--reload-port=N") != null);
 }

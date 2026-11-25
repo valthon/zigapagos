@@ -69,7 +69,7 @@ pub const Builtins = struct {
                 else => return bad_arg,
             };
 
-            return Value.from(gpa, std.mem.indexOf(u8, str.value, needle) != null);
+            return Value.from(gpa, std.mem.find(u8, str.value, needle) != null);
         }
     };
 
@@ -189,7 +189,7 @@ pub const Builtins = struct {
         ) context.CallError!Value {
             if (args.len != 0) return .{ .err = "expected 0 arguments" };
 
-            return Value.from(gpa, std.fs.path.basename(str.value));
+            return Value.from(gpa, std.Io.Dir.path.basename(str.value));
         }
     };
     pub const suffix = struct {

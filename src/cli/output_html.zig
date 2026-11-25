@@ -14,7 +14,7 @@ pub fn attribute(node: superhtml.html.Ast.Node, source: []const u8, ast: superht
 // Classification only: a base href may change the origin of a local-looking URL.
 pub fn urlScope(raw: []const u8) []const u8 {
     const url = std.mem.trim(u8, raw, " \t\r\n\x0c");
-    if (std.mem.indexOfAny(u8, url, "\\&\t\r\n") != null) return "unclassified";
+    if (std.mem.findAny(u8, url, "\\&\t\r\n") != null) return "unclassified";
     if (std.mem.startsWith(u8, url, "//")) return "nonlocal_url";
     if (url.len == 0) return "local_url";
     if (std.ascii.isAlphabetic(url[0])) {

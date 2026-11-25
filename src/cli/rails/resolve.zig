@@ -72,7 +72,7 @@ fn isPlaceholder(segment: []const u8) bool {
 /// against. Refusing the route instead leaves the caller a finding to
 /// report.
 fn isUninterpretable(segment: []const u8) bool {
-    return std.mem.indexOfAny(u8, segment, "()") != null;
+    return std.mem.findAny(u8, segment, "()") != null;
 }
 
 /// Strips a route path's trailing slash so `/about/` and `/about` produce the
@@ -488,9 +488,9 @@ pub fn assetFor(items: []const assets.Asset, helper: []const u8, literal: []cons
     // The logical name minus its final extension, for the swapped
     // preprocessor forms. Only the BASENAME's dots count: a directory
     // component may contain one (`app/assets/images/v1.2/logo.png`).
-    const slash = std.mem.lastIndexOfScalar(u8, logical, '/');
+    const slash = std.mem.findScalarLast(u8, logical, '/');
     const base_start = if (slash) |s| s + 1 else 0;
-    const dot = std.mem.lastIndexOfScalar(u8, logical[base_start..], '.');
+    const dot = std.mem.findScalarLast(u8, logical[base_start..], '.');
     const stem = if (dot) |d| logical[0 .. base_start + d] else logical;
     // A rooted literal asks for a file as-is, so it gets no preprocessor
     // fallback: `/app.css` names `public/app.css` and never a `.scss` that
@@ -613,9 +613,9 @@ pub fn contentPath(gpa: Allocator, route_path: []const u8) Allocator.Error!?[]co
 /// extensions and `.last` would leave `about.html`. Contract 3
 /// (caller-buffer): returns a sub-slice of `path`.
 fn dropExtensions(path: []const u8) []const u8 {
-    const slash = std.mem.lastIndexOfScalar(u8, path, '/');
+    const slash = std.mem.findScalarLast(u8, path, '/');
     const base_start = if (slash) |s| s + 1 else 0;
-    const dot = std.mem.indexOfScalar(u8, path[base_start..], '.') orelse return path;
+    const dot = std.mem.findScalar(u8, path[base_start..], '.') orelse return path;
     return path[0 .. base_start + dot];
 }
 
@@ -782,15 +782,15 @@ pub fn contentClaims(
 
     // `path` is owned by this list; `route` is the index that claimed it.
     const Claim = struct { path: []const u8, route: usize };
-    var claims: std.ArrayListUnmanaged(Claim) = .empty;
+    var claims: std.ArrayList(Claim) = .empty;
     defer {
         for (claims.items) |c| gpa.free(c.path);
         claims.deinit(gpa);
     }
 
-    var collisions: std.ArrayListUnmanaged(ContentCollision) = .empty;
+    var collisions: std.ArrayList(ContentCollision) = .empty;
     errdefer collisions.deinit(gpa);
-    var unsupported: std.ArrayListUnmanaged(usize) = .empty;
+    var unsupported: std.ArrayList(usize) = .empty;
     errdefer unsupported.deinit(gpa);
 
     for (order) |i| {

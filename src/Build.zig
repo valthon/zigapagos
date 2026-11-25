@@ -25,7 +25,7 @@ const cache_dir_basename = ".zigapagos-cache";
 
 cfg: *const root.Config,
 development: bool = false,
-build_assets: *const std.StringArrayHashMapUnmanaged(BuildAsset),
+build_assets: *const std.array_hash_map.String(BuildAsset),
 any_prerendering_error: bool = false,
 any_rendering_error: std.atomic.Value(bool) = .{ .raw = false },
 
@@ -46,7 +46,7 @@ variants: []Variant = &.{},
 // it be made relative to where the layout lives (eg 'layouts/foo/templates',
 // 'layouts/bar/templates')?
 layouts_dir: Io.Dir,
-templates: Templates = .{},
+templates: Templates = .empty,
 site_assets_dir: Io.Dir,
 site_assets: Assets = .empty,
 /// How many times each site asset was CONSUMED AT BUILD TIME without being
@@ -91,7 +91,7 @@ tks: std.StringHashMapUnmanaged([]?*context.Page) = .empty,
 // Keyed by file basename (without the `.ziggy` extension); exposed to
 // layouts as `$site.data('<name>')`. Backed by `data_arena`.
 site_data: std.StringHashMapUnmanaged(context.Map.ZiggyMap) = .empty,
-data_arena: std.heap.ArenaAllocator.State = .{},
+data_arena: std.heap.ArenaAllocator.State = .init,
 mode: Mode,
 island_sidecar: ?islands.Sidecar = null,
 /// SPAs declared with `--spa=<src>|<base>`, set verbatim from
@@ -130,14 +130,14 @@ spa_out_paths: std.StringHashMapUnmanaged(void) = .empty,
 /// Unlike `spa_out_paths`, nothing else consumes this set, so it is
 /// collected only when `cfg.getSitemap()` is true -- a site with the
 /// sitemap off pays nothing. gpa-owned; freed in `deinit`.
-sitemap_urls: std.ArrayListUnmanaged([]const u8) = .empty,
+sitemap_urls: std.ArrayList([]const u8) = .empty,
 /// Build-time props-contract check. `island_props_checks` is
 /// appended to (mutex-guarded) during the render phase and consumed once after
 /// it, in root.run. gpa-owned dups; freed in deinit.
 island_props_check_mode: @import("islands/props_check.zig").Mode = .off,
 /// See `root.Options.island_sidecar_optional`. Read by worker.zig's renderPage.
 island_sidecar_optional: bool = false,
-island_props_checks: std.ArrayListUnmanaged(@import("islands/props_check.zig").PropsCheck) = .empty,
+island_props_checks: std.ArrayList(@import("islands/props_check.zig").PropsCheck) = .empty,
 island_props_checks_mutex: std.Io.Mutex = .init,
 /// Dev-only island-usage collection: (island src, page source
 /// path) pairs appended (mutex-guarded) during the render phase, consumed by
@@ -150,7 +150,7 @@ island_manifest_path: ?[]const u8 = null,
 /// there is no slice: every island page then loads the shared runtime,
 /// byte-identically to before. gpa-owned; freed in `deinit`.
 islands_slice: @import("islands/slice.zig").Manifest = .{},
-island_page_usage: std.ArrayListUnmanaged(@import("islands/manifest.zig").Use) = .empty,
+island_page_usage: std.ArrayList(@import("islands/manifest.zig").Use) = .empty,
 island_page_usage_mutex: std.Io.Mutex = .init,
 /// `--allow-missing-pages`, verbatim from `root.Options.allow_missing_pages`.
 /// See that field's doc comment for why the tolerance is uniform rather than
@@ -178,7 +178,7 @@ pub const Mode = union(enum) {
     memory: struct {
         // Errors that don't already have a natural storage location
         // (eg page errors are stored in the page itself)
-        errors: std.ArrayListUnmanaged(Error) = .empty,
+        errors: std.ArrayList(Error) = .empty,
     },
     disk: struct {
         output_dir: Io.Dir,
@@ -190,8 +190,8 @@ pub const Mode = union(enum) {
     };
 };
 
-pub const Assets = std.AutoArrayHashMapUnmanaged(PathName, std.atomic.Value(u32));
-pub const Templates = std.AutoArrayHashMapUnmanaged(PathName, Template);
+pub const Assets = std.array_hash_map.Auto(PathName, std.atomic.Value(u32));
+pub const Templates = std.array_hash_map.Auto(PathName, Template);
 
 pub fn deinit(b: *const Build, io: Io, gpa: Allocator) void {
     {
@@ -525,7 +525,7 @@ pub fn scanSiteAssets(
     const zone = tracy.trace(@src());
     defer zone.end();
 
-    var dir_stack: std.ArrayListUnmanaged([]const u8) = .empty;
+    var dir_stack: std.ArrayList([]const u8) = .empty;
     try dir_stack.append(arena, "");
 
     const empty_path: Path = @fromBackingInt(@intCast(0));
@@ -582,7 +582,7 @@ pub fn scanSiteAssets(
                     try b.site_asset_reads.putNoClobber(gpa, pn, .init(0));
                 },
                 .directory => {
-                    const path_bytes = try std.fs.path.join(arena, &.{
+                    const path_bytes = try std.Io.Dir.path.join(arena, &.{
                         dir_entry,
                         entry.name,
                     });
@@ -602,7 +602,7 @@ pub fn scanTemplates(b: *Build, io: Io, gpa: Allocator, arena: Allocator) !void 
     const layouts_dir_path = b.cfg.getLayoutsDirPath();
     log.debug("scanTemplates('{s}')", .{layouts_dir_path});
 
-    var dir_stack: std.ArrayListUnmanaged(struct {
+    var dir_stack: std.ArrayList(struct {
         p: Path,
         path: []const u8,
         templates: bool,

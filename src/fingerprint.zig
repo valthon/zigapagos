@@ -70,7 +70,7 @@ pub const Map = std.AutoHashMapUnmanaged(PathName, []const u8);
 /// The split is on the LAST dot, so `archive.tar.gz` → `archive.tar.<h>.gz`.
 ///
 /// A leading-dot name (`.htaccess`) is treated as all-stem, not as an empty
-/// stem with a `.htaccess` extension — `std.fs.path.extension` already has
+/// stem with a `.htaccess` extension — `std.Io.Dir.path.extension` already has
 /// that rule and this defers to it.
 ///
 /// Allocator contract: self-freeing (NO_SLOP §2.2a contract 1). One
@@ -148,7 +148,7 @@ fn nameFromDigest(
     var hex: [hash_len]u8 = undefined;
     _ = std.mem.print(&hex, "{x}", .{digest[0 .. hash_len / 2]}) catch unreachable;
 
-    const ext = std.fs.path.extension(basename);
+    const ext = std.Io.Dir.path.extension(basename);
     const stem = basename[0 .. basename.len - ext.len];
     return gpa.print("{s}.{s}{s}", .{ stem, &hex, ext });
 }
@@ -241,7 +241,7 @@ test "assets: fingerprint hashName handles multi-dot and extension-less names" {
     try std.testing.expect(std.mem.startsWith(u8, plain, "CNAME."));
     try std.testing.expectEqual(@as(usize, "CNAME".len + 1 + hash_len), plain.len);
 
-    // A dotfile is all stem (std.fs.path.extension's rule), so the hash lands
+    // A dotfile is all stem (std.Io.Dir.path.extension's rule), so the hash lands
     // at the end rather than turning `.htaccess` into `.<hash>.htaccess`.
     const dot = try hashName(gpa, ".htaccess", "x");
     defer gpa.free(dot);

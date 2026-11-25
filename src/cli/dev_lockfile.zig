@@ -151,7 +151,7 @@ pub const Lock = struct {
 /// is scratch, freed before return.
 pub fn acquire(io: Io, data_dir_abs: []const u8, gpa: Allocator) error{OutOfMemory}!?Lock {
     if (builtin.target.os.tag == .windows) return null; // no dev daemon on Windows (0.17 port)
-    const path = try std.fs.path.join(gpa, &.{ data_dir_abs, lock_name });
+    const path = try std.Io.Dir.path.join(gpa, &.{ data_dir_abs, lock_name });
     defer gpa.free(path);
     const f = Io.Dir.cwd().createFile(io, path, .{ .truncate = false }) catch return null;
     if (std.c.flock(f.handle, std.posix.LOCK.EX | std.posix.LOCK.NB) != 0) {
@@ -164,7 +164,7 @@ pub fn acquire(io: Io, data_dir_abs: []const u8, gpa: Allocator) error{OutOfMemo
 /// True when a live process holds the session flock. Contract 1.
 pub fn isLive(io: Io, gpa: Allocator, data_dir_abs: []const u8) bool {
     if (builtin.target.os.tag == .windows) return false;
-    const path = std.fs.path.join(gpa, &.{ data_dir_abs, lock_name }) catch return false;
+    const path = std.Io.Dir.path.join(gpa, &.{ data_dir_abs, lock_name }) catch return false;
     defer gpa.free(path);
     const f = Io.Dir.cwd().openFile(io, path, .{}) catch return false;
     defer f.close(io);
@@ -179,7 +179,7 @@ pub fn isLive(io: Io, gpa: Allocator, data_dir_abs: []const u8) bool {
 /// takes a plain Allocator on purpose — callers pass an ArenaAllocator they
 /// already own; nothing here frees.
 pub fn read(arena: Allocator, io: Io, data_dir_abs: []const u8) ?LockFile {
-    const path = std.fs.path.join(arena, &.{ data_dir_abs, data_name }) catch return null;
+    const path = std.Io.Dir.path.join(arena, &.{ data_dir_abs, data_name }) catch return null;
     const bytes = Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(64 * 1024)) catch return null;
     const lf = std.json.parseFromSliceLeaky(LockFile, arena, bytes, .{}) catch return null;
     if (lf.version != current_version) return null;
@@ -194,7 +194,7 @@ pub fn write(io: Io, gpa: Allocator, data_dir_abs: []const u8, lf: LockFile) !vo
     defer aw.deinit();
     try std.json.Stringify.value(lf, .{ .whitespace = .indent_2 }, &aw.writer);
 
-    const path = try std.fs.path.join(gpa, &.{ data_dir_abs, data_name });
+    const path = try std.Io.Dir.path.join(gpa, &.{ data_dir_abs, data_name });
     defer gpa.free(path);
     var af = try Io.Dir.cwd().createFileAtomic(io, path, .{ .replace = true });
     defer af.deinit(io);
@@ -216,7 +216,7 @@ pub fn write(io: Io, gpa: Allocator, data_dir_abs: []const u8, lf: LockFile) !vo
 /// already handles "file exists, nothing holds it" via `.truncate = false` +
 /// a fresh non-blocking flock.
 pub fn remove(io: Io, gpa: Allocator, data_dir_abs: []const u8) void {
-    const path = std.fs.path.join(gpa, &.{ data_dir_abs, data_name }) catch return;
+    const path = std.Io.Dir.path.join(gpa, &.{ data_dir_abs, data_name }) catch return;
     defer gpa.free(path);
     Io.Dir.cwd().deleteFile(io, path) catch {};
 }

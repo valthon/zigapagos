@@ -14,14 +14,14 @@ debouncer: *Debouncer,
 
 notify_fd: std.posix.fd_t,
 /// active watch entries
-watch_fds: std.AutoHashMapUnmanaged(std.posix.fd_t, WatchEntry) = .{},
+watch_fds: std.AutoHashMapUnmanaged(std.posix.fd_t, WatchEntry) = .empty,
 /// direct descendant tracker
 children_fds: std.AutoHashMapUnmanaged(
     std.posix.fd_t,
     std.ArrayList(std.posix.fd_t),
 ) = .{},
 /// inotify cookie tracker for move events
-cookie_fds: std.AutoHashMapUnmanaged(u32, std.posix.fd_t) = .{},
+cookie_fds: std.AutoHashMapUnmanaged(u32, std.posix.fd_t) = .empty,
 
 const WatchEntry = struct {
     dir_path: []const u8,
@@ -142,14 +142,14 @@ fn addTree(
     while (try it.next(watcher.io)) |entry| switch (entry.kind) {
         else => continue,
         .directory => {
-            const dir_path = try std.fs.path.join(gpa, &.{
+            const dir_path = try std.Io.Dir.path.join(gpa, &.{
                 root_dir_path,
                 entry.path,
             });
             defer gpa.free(dir_path);
             const dir_fd = try watcher.addDir(dir_path);
             const stored_path = watcher.watch_fds.get(dir_fd).?.dir_path;
-            const p_dir = std.fs.path.dirname(stored_path).?;
+            const p_dir = std.Io.Dir.path.dirname(stored_path).?;
             // `stored_path` keeps the spelling from the first root that
             // registered this directory. If this walk reached the same watch
             // through an alias, its parent belongs to that earlier walk and
@@ -190,7 +190,7 @@ fn addDir(
     errdefer inotify_rm_watch(watcher.notify_fd, watch_fd);
     const path_copy = try gpa.dupe(u8, dir_path);
     errdefer gpa.free(path_copy);
-    const name_copy = try gpa.dupe(u8, std.fs.path.basename(dir_path));
+    const name_copy = try gpa.dupe(u8, std.Io.Dir.path.basename(dir_path));
     errdefer gpa.free(name_copy);
     try watcher.watch_fds.put(gpa, watch_fd, .{
         .dir_path = path_copy,
@@ -258,7 +258,7 @@ fn moveDirEnd(
         try watcher.addChild(to_fd, moved_fd);
         return moved_fd;
     } else { // unknown cookie - move from the outside
-        const dir_path = try std.fs.path.join(gpa, &.{ parent.dir_path, name });
+        const dir_path = try std.Io.Dir.path.join(gpa, &.{ parent.dir_path, name });
         defer gpa.free(dir_path);
         const moved_fd = try watcher.addTree(dir_path);
         try watcher.addChild(to_fd, moved_fd);
@@ -274,7 +274,7 @@ fn updateDirPath(
 ) !void {
     const gpa = watcher.gpa;
     var data = watcher.watch_fds.getEntry(fd).?.value_ptr;
-    const dir_path = try std.fs.path.join(gpa, &.{ parent_dir, data.name });
+    const dir_path = try std.Io.Dir.path.join(gpa, &.{ parent_dir, data.name });
     gpa.free(data.dir_path);
     data.dir_path = dir_path;
 
@@ -396,7 +396,7 @@ pub fn listen(watcher: *LinuxWatcher) !void {
             if (Mask.is(event.mask, .IN_ISDIR)) {
                 if (Mask.is(event.mask, .IN_CREATE)) {
                     const dir_name = event.getName().?;
-                    const dir_path = try std.fs.path.join(gpa, &.{
+                    const dir_path = try std.Io.Dir.path.join(gpa, &.{
                         parent.dir_path,
                         dir_name,
                     });

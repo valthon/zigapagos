@@ -59,7 +59,7 @@ pub const filename = "sitemap.xml";
 /// the XML buffer and freed -- nothing escapes this function but the file
 /// it writes to `out_dir`.
 pub fn write(io: Io, gpa: Allocator, build: *const Build, out_dir: Io.Dir) !void {
-    var urls: std.ArrayListUnmanaged([]const u8) = .empty;
+    var urls: std.ArrayList([]const u8) = .empty;
     defer {
         for (urls.items) |u| gpa.free(u);
         urls.deinit(gpa);
@@ -220,7 +220,7 @@ test "sitemap: composeRawUrl trims a trailing-slash host_url instead of doubling
     try std.testing.expectEqualStrings("https://example.com/myprefix/app/", got);
     // Scoped past the scheme's own "//" -- this is the doubled-slash defect
     // shape specifically (host immediately followed by a second "/").
-    try std.testing.expect(std.mem.indexOf(u8, got, "example.com//") == null);
+    try std.testing.expect(std.mem.find(u8, got, "example.com//") == null);
 }
 
 test "sitemap: composePageUrl composes host_url + url_path_prefix + page path with no pagination tail at n=1" {

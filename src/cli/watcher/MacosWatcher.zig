@@ -126,7 +126,7 @@ pub fn macosCallback(
         const path = std.mem.span(p);
         log.debug("Changed: {s}\n", .{path});
 
-        // const basename = std.fs.path.basename(path);
+        // const basename = std.Io.Dir.path.basename(path);
         // var base_path = path[0 .. path.len - basename.len];
         // if (std.mem.endsWith(u8, base_path, "/"))
         //     base_path = base_path[0 .. base_path.len - 1];

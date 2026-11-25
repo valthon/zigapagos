@@ -158,7 +158,7 @@ pub fn parse(
     bytes: []const u8,
     finding_list: []const findings.Finding,
     auth_collections: []const []const u8,
-    problems: *std.ArrayListUnmanaged(Problem),
+    problems: *std.ArrayList(Problem),
 ) ParseError!Parsed {
     return parseWithCollections(gpa, bytes, finding_list, auth_collections, &.{}, problems);
 }
@@ -173,7 +173,7 @@ pub fn parseWithCollections(
     finding_list: []const findings.Finding,
     auth_collections: []const []const u8,
     collections: []const []const u8,
-    problems: *std.ArrayListUnmanaged(Problem),
+    problems: *std.ArrayList(Problem),
 ) ParseError!Parsed {
     // Two-stage on purpose: the `Value` tree from stage one is what stage
     // two's `error.UnknownField` gets interrogated against to name the bad
@@ -221,12 +221,12 @@ pub fn parseWithCollections(
 
     const wire = typed.value.decisions;
 
-    var live: std.ArrayListUnmanaged(Decision) = .empty;
+    var live: std.ArrayList(Decision) = .empty;
     errdefer {
         freeItems(gpa, live.items);
         live.deinit(gpa);
     }
-    var stale: std.ArrayListUnmanaged(Decision) = .empty;
+    var stale: std.ArrayList(Decision) = .empty;
     errdefer {
         freeItems(gpa, stale.items);
         stale.deinit(gpa);
@@ -338,7 +338,7 @@ pub fn parseWithCollections(
         // above: it is an operator answer that may well be revived by an
         // edit, so it should be well-formed even while it applies to
         // nothing.
-        const target: *std.ArrayListUnmanaged(Decision) = if (finding == null) &stale else &live;
+        const target: *std.ArrayList(Decision) = if (finding == null) &stale else &live;
         try target.append(gpa, owned);
     }
 
@@ -376,7 +376,7 @@ pub fn free(gpa: Allocator, parsed: Parsed) void {
 /// Contract 2 counterpart to the `problems` list `parse` fills: releases
 /// each `message`/`id` and the list's own buffer. Safe on a partially filled
 /// list, which is exactly what an `OutOfMemory` return leaves behind.
-pub fn freeProblems(gpa: Allocator, list: *std.ArrayListUnmanaged(Problem)) void {
+pub fn freeProblems(gpa: Allocator, list: *std.ArrayList(Problem)) void {
     for (list.items) |p| {
         gpa.free(p.message);
         if (p.id) |v| gpa.free(v);
@@ -421,7 +421,7 @@ fn dupDecision(gpa: Allocator, w: WireDecision) Allocator.Error!Decision {
 /// escape into `list` and are released by `freeProblems`.
 fn addProblem(
     gpa: Allocator,
-    list: *std.ArrayListUnmanaged(Problem),
+    list: *std.ArrayList(Problem),
     index: usize,
     id: ?[]const u8,
     comptime fmt: []const u8,
@@ -437,7 +437,7 @@ fn addProblem(
 /// Contract 1 (self-freeing): the joined buffer is the only allocation and
 /// it escapes to the caller.
 fn joinChoices(gpa: Allocator, choices: []const []const u8) Allocator.Error![]u8 {
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
     for (choices, 0..) |c, i| {
         if (i != 0) try out.appendSlice(gpa, ", ");
@@ -610,7 +610,7 @@ fn codedFixture(code: []const u8, id: []const u8, choices: []const []const u8, r
 }
 
 fn expectMessageContains(problem: Problem, needle: []const u8) !void {
-    std.testing.expect(std.mem.indexOf(u8, problem.message, needle) != null) catch |err| {
+    std.testing.expect(std.mem.find(u8, problem.message, needle) != null) catch |err| {
         std.debug.print("expected message to contain \"{s}\", got \"{s}\"\n", .{ needle, problem.message });
         return err;
     };
@@ -628,7 +628,7 @@ test "parse: a valid file round-trips every field; artifact is optional" {
         \\  {"id":"B","choice":"island","rationale":"needs client state","artifact":"components/Cart.island.tsx"}
         \\]}
     ;
-    var problems: std.ArrayListUnmanaged(Problem) = .empty;
+    var problems: std.ArrayList(Problem) = .empty;
     defer freeProblems(gpa, &problems);
 
     const parsed = try parse(gpa, bytes, &fs, &.{}, &problems);
@@ -658,7 +658,7 @@ test "lookup: finds a live decision by finding id and never a stale one" {
         \\  {"id":"GONE","choice":"blocked","rationale":"answered last run"}
         \\]}
     ;
-    var problems: std.ArrayListUnmanaged(Problem) = .empty;
+    var problems: std.ArrayList(Problem) = .empty;
     defer freeProblems(gpa, &problems);
 
     const parsed = try parse(gpa, bytes, &fs, &.{}, &problems);
@@ -680,7 +680,7 @@ test "parse: an id matching no finding is stale, not an error" {
         \\  {"id":"A","choice":"blocked","rationale":"still open"}
         \\]}
     ;
-    var problems: std.ArrayListUnmanaged(Problem) = .empty;
+    var problems: std.ArrayList(Problem) = .empty;
     defer freeProblems(gpa, &problems);
 
     const parsed = try parse(gpa, bytes, &fs, &.{}, &problems);
@@ -704,7 +704,7 @@ test "parse: a choice outside the finding's set is Invalid and the message lists
         \\  {"id":"A","choice":"spa","rationale":"wishful"}
         \\]}
     ;
-    var problems: std.ArrayListUnmanaged(Problem) = .empty;
+    var problems: std.ArrayList(Problem) = .empty;
     defer freeProblems(gpa, &problems);
 
     try std.testing.expectError(error.Invalid, parse(gpa, bytes, &fs, &.{}, &problems));
@@ -723,7 +723,7 @@ test "parse: a finding that requires an artifact rejects a decision without one"
         \\  {"id":"A","choice":"island","rationale":"needs state"}
         \\]}
     ;
-    var problems: std.ArrayListUnmanaged(Problem) = .empty;
+    var problems: std.ArrayList(Problem) = .empty;
     defer freeProblems(gpa, &problems);
 
     try std.testing.expectError(error.Invalid, parse(gpa, bytes, &fs, &.{}, &problems));
@@ -740,7 +740,7 @@ test "parse: an empty artifact string counts as absent" {
         \\  {"id":"A","choice":"island","rationale":"needs state","artifact":""}
         \\]}
     ;
-    var problems: std.ArrayListUnmanaged(Problem) = .empty;
+    var problems: std.ArrayList(Problem) = .empty;
     defer freeProblems(gpa, &problems);
 
     try std.testing.expectError(error.Invalid, parse(gpa, bytes, &fs, &.{}, &problems));
@@ -756,7 +756,7 @@ test "parse: a duplicate id is Invalid and names the id" {
         \\  {"id":"A","choice":"blocked","rationale":"second"}
         \\]}
     ;
-    var problems: std.ArrayListUnmanaged(Problem) = .empty;
+    var problems: std.ArrayList(Problem) = .empty;
     defer freeProblems(gpa, &problems);
 
     try std.testing.expectError(error.Invalid, parse(gpa, bytes, &fs, &.{}, &problems));
@@ -780,7 +780,7 @@ test "parse: an empty or whitespace-only rationale is Invalid" {
         \\  {"id":"B","choice":"retain","rationale":"   "}
         \\]}
     ;
-    var problems: std.ArrayListUnmanaged(Problem) = .empty;
+    var problems: std.ArrayList(Problem) = .empty;
     defer freeProblems(gpa, &problems);
 
     try std.testing.expectError(error.Invalid, parse(gpa, bytes, &fs, &.{}, &problems));
@@ -798,7 +798,7 @@ test "parse: a missing id names the entry by index, with no id to quote" {
         \\  {"choice":"retain","rationale":"which finding?"}
         \\]}
     ;
-    var problems: std.ArrayListUnmanaged(Problem) = .empty;
+    var problems: std.ArrayList(Problem) = .empty;
     defer freeProblems(gpa, &problems);
 
     try std.testing.expectError(error.Invalid, parse(gpa, bytes, &fs, &.{}, &problems));
@@ -821,7 +821,7 @@ test "parse: every offending entry gets its own problem, and valid siblings do n
         \\  {"id":"C","choice":"island","rationale":""}
         \\]}
     ;
-    var problems: std.ArrayListUnmanaged(Problem) = .empty;
+    var problems: std.ArrayList(Problem) = .empty;
     defer freeProblems(gpa, &problems);
 
     // One run must list EVERY offending entry: an operator re-running after
@@ -838,7 +838,7 @@ test "parse: every offending entry gets its own problem, and valid siblings do n
 test "parse: malformed JSON is InvalidJson" {
     const gpa = std.testing.allocator;
     const fs = [_]findings.Finding{fixture("A", &retain_blocked, false)};
-    var problems: std.ArrayListUnmanaged(Problem) = .empty;
+    var problems: std.ArrayList(Problem) = .empty;
     defer freeProblems(gpa, &problems);
 
     try std.testing.expectError(error.InvalidJson, parse(gpa, "{\"schema\": ", &fs, &.{}, &problems));
@@ -849,7 +849,7 @@ test "parse: malformed JSON is InvalidJson" {
 test "parse: a missing `decisions` key is InvalidJson, not an empty decision set" {
     const gpa = std.testing.allocator;
     const fs = [_]findings.Finding{fixture("A", &retain_blocked, false)};
-    var problems: std.ArrayListUnmanaged(Problem) = .empty;
+    var problems: std.ArrayList(Problem) = .empty;
     defer freeProblems(gpa, &problems);
 
     const bytes =
@@ -866,7 +866,7 @@ test "parse: a wrong or absent schema id is WrongSchema" {
     const wrong =
         \\{"schema":"zigapagos.rails-decisions/2","decisions":[]}
     ;
-    var problems: std.ArrayListUnmanaged(Problem) = .empty;
+    var problems: std.ArrayList(Problem) = .empty;
     defer freeProblems(gpa, &problems);
     try std.testing.expectError(error.WrongSchema, parse(gpa, wrong, &fs, &.{}, &problems));
     try expectMessageContains(problems.items[0], schema_id);
@@ -875,7 +875,7 @@ test "parse: a wrong or absent schema id is WrongSchema" {
     const absent =
         \\{"decisions":[]}
     ;
-    var problems2: std.ArrayListUnmanaged(Problem) = .empty;
+    var problems2: std.ArrayList(Problem) = .empty;
     defer freeProblems(gpa, &problems2);
     try std.testing.expectError(error.WrongSchema, parse(gpa, absent, &fs, &.{}, &problems2));
     try expectMessageContains(problems2.items[0], schema_id);
@@ -892,7 +892,7 @@ test "parse: an unrecognized key is Invalid and names the key" {
         \\  {"id":"A","choice":"retain","rationalle":"typo"}
         \\]}
     ;
-    var problems: std.ArrayListUnmanaged(Problem) = .empty;
+    var problems: std.ArrayList(Problem) = .empty;
     defer freeProblems(gpa, &problems);
     try std.testing.expectError(error.Invalid, parse(gpa, inner, &fs, &.{}, &problems));
     try std.testing.expectEqual(@as(usize, 1), problems.items.len);
@@ -903,7 +903,7 @@ test "parse: an unrecognized key is Invalid and names the key" {
     const outer =
         \\{"schema":"zigapagos.rails-decisions/1","desicions":[]}
     ;
-    var problems2: std.ArrayListUnmanaged(Problem) = .empty;
+    var problems2: std.ArrayList(Problem) = .empty;
     defer freeProblems(gpa, &problems2);
     try std.testing.expectError(error.Invalid, parse(gpa, outer, &fs, &.{}, &problems2));
     try expectMessageContains(problems2.items[0], "desicions");
@@ -912,7 +912,7 @@ test "parse: an unrecognized key is Invalid and names the key" {
 test "parse: an empty decision list is valid" {
     const gpa = std.testing.allocator;
     const fs = [_]findings.Finding{fixture("A", &retain_blocked, false)};
-    var problems: std.ArrayListUnmanaged(Problem) = .empty;
+    var problems: std.ArrayList(Problem) = .empty;
     defer freeProblems(gpa, &problems);
 
     const bytes =
@@ -945,7 +945,7 @@ test "parse under a FailingAllocator leaks nothing on any partial allocation" {
         if (fail_index > 1000) return error.SweepNeverReachedSuccess;
         var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
         const gpa = failing.allocator();
-        var problems: std.ArrayListUnmanaged(Problem) = .empty;
+        var problems: std.ArrayList(Problem) = .empty;
         // `problems` is caller-owned on every path, including the OOM one:
         // freeing it through the SAME failing allocator is what proves the
         // partial list is reclaimable rather than leaked.
@@ -1014,7 +1014,7 @@ test "parse under a FailingAllocator leaks nothing while REPORTING problems" {
         while (fail_index <= 1000) : (fail_index += 1) {
             var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
             const gpa = failing.allocator();
-            var problems: std.ArrayListUnmanaged(Problem) = .empty;
+            var problems: std.ArrayList(Problem) = .empty;
             // Released through the SAME failing allocator on every path --
             // the OOM one included, where the list is half-built. That is
             // what makes a missing `errdefer` inside `addProblem` show up
@@ -1058,7 +1058,7 @@ test "parse: custom:/<path> answers a RAILS_BACKEND_ENDPOINT finding, and only t
         \\  {"id":"F","choice":"custom:/api/contact","rationale":"a consumer route, not a collection"}
         \\]}
     ;
-    var problems: std.ArrayListUnmanaged(Problem) = .empty;
+    var problems: std.ArrayList(Problem) = .empty;
     defer freeProblems(gpa, &problems);
     const parsed = try parse(gpa, bytes, &fs, &.{}, &problems);
     defer free(gpa, parsed);
@@ -1072,7 +1072,7 @@ test "parse: custom:/<path> answers a RAILS_BACKEND_ENDPOINT finding, and only t
         \\  {"id":"S","choice":"custom:/api/contact","rationale":"wrong finding"}
         \\]}
     ;
-    var problems2: std.ArrayListUnmanaged(Problem) = .empty;
+    var problems2: std.ArrayList(Problem) = .empty;
     defer freeProblems(gpa, &problems2);
     try std.testing.expectError(error.Invalid, parse(gpa, other, &fs, &.{}, &problems2));
     try expectMessageContains(problems2.items[0], "is not offered for");
@@ -1107,7 +1107,7 @@ test "parse: a malformed custom: choice names the shape it must have" {
         "choice \"custom:/a'b\" must be custom:/<absolute path> with no whitespace or quotes",
     };
     for (cases, wanted) |bytes, want| {
-        var problems: std.ArrayListUnmanaged(Problem) = .empty;
+        var problems: std.ArrayList(Problem) = .empty;
         defer freeProblems(gpa, &problems);
         try std.testing.expectError(error.Invalid, parse(gpa, bytes, &fs, &.{}, &problems));
         try std.testing.expectEqual(@as(usize, 1), problems.items.len);
@@ -1125,7 +1125,7 @@ test "parse: requires_artifact demands an artifact only from a choice that produ
         \\  {"id":"J","choice":"retain","rationale":"the Rails app keeps the sign-in flow"}
         \\]}
     ;
-    var problems: std.ArrayListUnmanaged(Problem) = .empty;
+    var problems: std.ArrayList(Problem) = .empty;
     defer freeProblems(gpa, &problems);
     const parsed = try parse(gpa, ok, &fs, &.{}, &problems);
     defer free(gpa, parsed);
@@ -1137,7 +1137,7 @@ test "parse: requires_artifact demands an artifact only from a choice that produ
         \\  {"id":"J","choice":"island","rationale":"migrate it"}
         \\]}
     ;
-    var problems2: std.ArrayListUnmanaged(Problem) = .empty;
+    var problems2: std.ArrayList(Problem) = .empty;
     defer freeProblems(gpa, &problems2);
     try std.testing.expectError(error.Invalid, parse(gpa, bad, &fs, &.{}, &problems2));
     try std.testing.expectEqual(@as(usize, 1), problems2.items.len);
@@ -1159,7 +1159,7 @@ test "parse: an auth-journey artifact must be an auth collection the document ca
         \\  {"id":"J","choice":"island","rationale":"migrate it","artifact":"members"}
         \\]}
     ;
-    var problems: std.ArrayListUnmanaged(Problem) = .empty;
+    var problems: std.ArrayList(Problem) = .empty;
     defer freeProblems(gpa, &problems);
     try std.testing.expectError(error.Invalid, parse(gpa, bad, &fs, &users_collection, &problems));
     try std.testing.expectEqual(@as(usize, 1), problems.items.len);
@@ -1173,7 +1173,7 @@ test "parse: an auth-journey artifact must be an auth collection the document ca
         \\  {"id":"J","choice":"island","rationale":"migrate it","artifact":"users"}
         \\]}
     ;
-    var problems2: std.ArrayListUnmanaged(Problem) = .empty;
+    var problems2: std.ArrayList(Problem) = .empty;
     defer freeProblems(gpa, &problems2);
     const parsed = try parse(gpa, good, &fs, &users_collection, &problems2);
     defer free(gpa, parsed);
@@ -1189,7 +1189,7 @@ test "parse: a request-time island artifact must name a backend collection" {
         \\  {"id":"S","choice":"backend","rationale":"fetch it","artifact":"foo"}
         \\]}
     ;
-    var problems: std.ArrayListUnmanaged(Problem) = .empty;
+    var problems: std.ArrayList(Problem) = .empty;
     defer freeProblems(gpa, &problems);
     try std.testing.expectError(error.Invalid, parseWithCollections(gpa, bytes, &fs, &.{}, &collections, &problems));
     try std.testing.expectEqual(@as(usize, 1), problems.items.len);
@@ -1211,7 +1211,7 @@ test "parse: drop and inline are ordinary offered choices" {
         \\  {"id":"I","choice":"inline","rationale":"render it"}
         \\]}
     ;
-    var problems: std.ArrayListUnmanaged(Problem) = .empty;
+    var problems: std.ArrayList(Problem) = .empty;
     defer freeProblems(gpa, &problems);
     const parsed = try parse(gpa, bytes, &fs, &.{}, &problems);
     defer free(gpa, parsed);
@@ -1230,7 +1230,7 @@ test "parse: without a backend document an auth collection name is accepted verb
         \\  {"id":"J","choice":"island","rationale":"migrate it","artifact":"members"}
         \\]}
     ;
-    var problems: std.ArrayListUnmanaged(Problem) = .empty;
+    var problems: std.ArrayList(Problem) = .empty;
     defer freeProblems(gpa, &problems);
     const parsed = try parse(gpa, bytes, &fs, &.{}, &problems);
     defer free(gpa, parsed);
@@ -1254,7 +1254,7 @@ test "parse: the auth-collection rule is scoped to an island answer on the journ
         \\  {"id":"S","choice":"island","rationale":"state","artifact":"components/Cart.island.tsx"}
         \\]}
     ;
-    var problems: std.ArrayListUnmanaged(Problem) = .empty;
+    var problems: std.ArrayList(Problem) = .empty;
     defer freeProblems(gpa, &problems);
     const parsed = try parse(gpa, bytes, &fs, &users_collection, &problems);
     defer free(gpa, parsed);
@@ -1279,7 +1279,7 @@ test "parse: the Stage 3 rejections leak nothing under a FailingAllocator" {
     while (fail_index <= 1000) : (fail_index += 1) {
         var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
         const gpa = failing.allocator();
-        var problems: std.ArrayListUnmanaged(Problem) = .empty;
+        var problems: std.ArrayList(Problem) = .empty;
         defer freeProblems(gpa, &problems);
         if (parse(gpa, bytes, &fs, &users_collection, &problems)) |parsed| {
             free(gpa, parsed);

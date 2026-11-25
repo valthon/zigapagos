@@ -5,7 +5,7 @@ const mem = std.mem;
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
-string_bytes: std.ArrayListUnmanaged(u8),
+string_bytes: std.ArrayList(u8),
 string_map: String.Map,
 
 pub const empty: StringTable = .{
@@ -59,7 +59,7 @@ pub fn intern(
 }
 
 pub fn ArrayHashMap(T: type) type {
-    return std.AutoArrayHashMapUnmanaged(String, T);
+    return std.array_hash_map.Auto(String, T);
 }
 
 pub fn HashMap(T: type) type {
@@ -96,14 +96,14 @@ pub const String = enum(u32) {
         }
 
         pub fn hash(_: @This(), adapted_key: []const u8) u64 {
-            assert(mem.indexOfScalar(u8, adapted_key, 0) == null);
+            assert(mem.findScalar(u8, adapted_key, 0) == null);
             return std.hash_map.hashString(adapted_key);
         }
     };
 
     pub fn slice(index: String, st: *const StringTable) [:0]const u8 {
         const start_slice = st.string_bytes.items[@backingInt(index)..];
-        return start_slice[0..mem.indexOfScalar(u8, start_slice, 0).? :0];
+        return start_slice[0..mem.findScalar(u8, start_slice, 0).? :0];
     }
 };
 

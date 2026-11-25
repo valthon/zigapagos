@@ -1191,8 +1191,8 @@ test "build: two rows naming the same route are ordered by their endpoint, not b
     defer gpa.free(two);
     try testing.expectEqualStrings(one, two);
     // Sorted by `operation_id`, so `authWithPassword` comes first in both.
-    const at = std.mem.indexOf(u8, one, "authWithPassword").?;
-    const ct = std.mem.indexOf(u8, one, "createUsers").?;
+    const at = std.mem.find(u8, one, "authWithPassword").?;
+    const ct = std.mem.find(u8, one, "createUsers").?;
     try testing.expect(at < ct);
 }
 
@@ -1433,7 +1433,7 @@ test "build: two routes tying on (path, verb, controller, action) still sort det
     defer gpa.free(b);
     try testing.expectEqualStrings(a, b);
     // And the lower route_index wins, rather than input order.
-    try testing.expect(std.mem.indexOf(u8, a, "first").? < std.mem.indexOf(u8, a, "second").?);
+    try testing.expect(std.mem.find(u8, a, "first").? < std.mem.find(u8, a, "second").?);
 }
 
 test "build: two rows naming the SAME route are ordered by content, not by input position" {

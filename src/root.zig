@@ -349,7 +349,7 @@ pub const Config = union(enum) {
 
         var base_dir_path: []const u8 = cwd_path;
         while (true) {
-            const joined_path = try std.fs.path.join(arena, &.{
+            const joined_path = try std.Io.Dir.path.join(arena, &.{
                 base_dir_path, config_file_basename,
             });
 
@@ -362,7 +362,7 @@ pub const Config = union(enum) {
                 0,
             ) catch |err| switch (err) {
                 error.FileNotFound => {
-                    base_dir_path = std.fs.path.dirname(base_dir_path) orelse {
+                    base_dir_path = std.Io.Dir.path.dirname(base_dir_path) orelse {
                         std.debug.print(
                             \\error: unable to find a 'zigapagos.ziggy' config file in this directory or any of its parents
                             \\
@@ -795,7 +795,7 @@ pub const SpaSpec = struct {
 
 pub const Options = struct {
     development: bool = false,
-    build_assets: *const std.StringArrayHashMapUnmanaged(BuildAsset),
+    build_assets: *const std.array_hash_map.String(BuildAsset),
     base_dir_path: []const u8,
     mode: Mode,
     drafts: bool,
@@ -1007,12 +1007,12 @@ pub fn isRootAssetPath(gpa: Allocator, build: *const Build, asset: PathName, pat
         .Site => "",
         .Multilingual => |ml| ml.assets_prefix_path,
     };
-    var path_buf: [std.fs.max_path_bytes + 1 + fingerprint.hash_len]u8 = undefined;
+    var path_buf: [std.Io.Dir.max_path_bytes + 1 + fingerprint.hash_len]u8 = undefined;
     // Same destination formatter and bound as the site-asset install pass.
     const dest = std.mem.trimStart(u8, std.mem.print(&path_buf, "{f}", .{
         fingerprint.fmtUrl(asset, &build.st, &build.pt, &build.asset_fingerprints),
     }) catch unreachable, "/");
-    const installed = try std.fs.path.resolve(gpa, &.{ prefix, dest });
+    const installed = try std.Io.Dir.path.resolveAlloc(gpa, &.{ prefix, dest });
     defer gpa.free(installed);
     return std.mem.eql(u8, installed, path);
 }
@@ -1250,8 +1250,8 @@ pub fn run(
             const Ctx = struct {
                 b: *Build,
                 pub fn lessThan(ctx: @This(), lid: usize, rid: usize) bool {
-                    var lbuf: [std.fs.max_path_bytes]u8 = undefined;
-                    var rbuf: [std.fs.max_path_bytes]u8 = undefined;
+                    var lbuf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+                    var rbuf: [std.Io.Dir.max_path_bytes]u8 = undefined;
 
                     const keys = ctx.b.templates.entries.items(.key);
                     const lhs = std.mem.print(&lbuf, "{f}", .{
@@ -1333,7 +1333,7 @@ pub fn run(
             if (v.i18n_diag.err != null) {
                 i18n_errors = true;
 
-                var buf: [std.fs.max_path_bytes]u8 = undefined;
+                var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
                 const path = std.mem.print(&buf, "{f}", .{fmtJoin('/', &.{
                     build.cfg.Multilingual.i18n_dir_path,
                     v.i18n_diag.path.?,
@@ -1392,7 +1392,7 @@ pub fn run(
     // deactivation downward to avoid processing unreachable sections.
     var pages_to_parse: usize = 0;
     var progress_parse = progress.start("Parse pages", 0);
-    var sites: std.StringArrayHashMapUnmanaged(context.Site) = .empty;
+    var sites: std.array_hash_map.String(context.Site) = .empty;
     {
         const tracy_frame = tracy.namedFrame("parse pages");
         defer tracy_frame.end();
@@ -1571,7 +1571,7 @@ pub fn run(
                     .empty => {
                         // Page is empty, print warning and skip it
                         if (diag.format == .json) {
-                            var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+                            var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
                             diag.emit(.{
                                 .code = .ZP_EMPTY_PAGE,
                                 .severity = .warning,
@@ -1607,7 +1607,7 @@ pub fn run(
                         };
 
                         if (diag.format == .json) {
-                            var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+                            var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
                             diag.emit(.{
                                 .code = .ZP_FRONTMATTER_FRAMING,
                                 .severity = .@"error",
@@ -1673,7 +1673,7 @@ pub fn run(
                             parse_errors = true;
                         }
 
-                        var buf: [std.fs.max_path_bytes]u8 = undefined;
+                        var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
                         const path = std.mem.print(&buf, "{f}", .{
                             p._scan.file.fmt(
                                 &v.string_table,
@@ -1784,7 +1784,7 @@ pub fn run(
                             )});
                             const message = try page_arena.print(
                                 "the parent section forbids subsections; move this page to '{s}.smd' to preserve its URL (parent: '{f}')",
-                                .{ std.fs.path.dirname(file_path).?, parent._scan.file.fmt(
+                                .{ std.Io.Dir.path.dirname(file_path).?, parent._scan.file.fmt(
                                     &v.string_table,
                                     &v.path_table,
                                     v.content_dir_path,
@@ -1925,7 +1925,7 @@ pub fn run(
                 const full_src = p._parse.full_src;
                 // Parsing already validated this fence; retain its offset when
                 // reconstructing locations for analysis errors.
-                const ziggy_start = std.mem.indexOf(u8, full_src, "---").? + 3;
+                const ziggy_start = std.mem.find(u8, full_src, "---").? + 3;
                 const ast = ziggy.Ast.init(arena, full_src, .{ .delimiter = .{ .dashes = @intCast(ziggy_start) } }) catch fatal.oom();
 
                 for (fm_errors.items) |err| {
@@ -1951,7 +1951,7 @@ pub fn run(
                     } else "";
 
                     if (diag.format == .json) {
-                        var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+                        var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
                         diag.emit(.{
                             .code = err.code(),
                             .severity = .@"error",
@@ -2047,7 +2047,7 @@ pub fn run(
                     const severity_word = @tagName(err.severity());
                     const note_line: NoteLine = .{ .note = err.note() };
                     if (diag.format == .json) {
-                        var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+                        var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
                         var msg_buf: [2048]u8 = undefined;
                         diag.emit(.{
                             .code = err.code(),
@@ -2152,8 +2152,8 @@ pub fn run(
                         // the key instead of aborting the build. See AUD-011.
                         translation_key_errors = true;
                         if (diag.format == .json) {
-                            var path_buf: [std.fs.max_path_bytes]u8 = undefined;
-                            var prev_path_buf: [std.fs.max_path_bytes]u8 = undefined;
+                            var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+                            var prev_path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
                             var msg_buf: [2048]u8 = undefined;
                             diag.emit(.{
                                 .code = .ZP_DUPLICATE_TRANSLATION_KEY,
@@ -2241,7 +2241,7 @@ pub fn run(
                 //             .name = index_html,
                 //         };
 
-                //         const name_no_ext = std.fs.path.stem(name.slice(&v.string_table));
+                //         const name_no_ext = std.Io.Dir.path.stem(name.slice(&v.string_table));
                 //         break :blk .{
                 //             .path = try v.path_table.internExtend(
                 //                 gpa,
@@ -2279,11 +2279,11 @@ pub fn run(
                     // structural invariants the asserts below encode (and, on an
                     // empty string, read a[0] out of bounds). See AUD-002.
                     if (!worker.validOutputPath(a)) continue;
-                    assert(std.mem.indexOfScalar(u8, a, '\\') == null);
-                    assert(std.fs.path.extension(a).len > 0);
-                    assert(std.mem.indexOfScalar(
+                    assert(std.mem.findScalar(u8, a, '\\') == null);
+                    assert(std.Io.Dir.path.extension(a).len > 0);
+                    assert(std.mem.findScalar(
                         u8,
-                        std.fs.path.dirnamePosix(a) orelse "",
+                        std.Io.Dir.path.dirnamePosix(a) orelse "",
                         '.',
                     ) == null);
 
@@ -2330,7 +2330,7 @@ pub fn run(
                     //    main output and already dies in the collision
                     //    machinery above. Warning on it buys nothing.
                     if (a[0] != '/' and p._scan.url.slice(&v.path_table).len > 0) {
-                        const basename = std.fs.path.basenamePosix(a);
+                        const basename = std.Io.Dir.path.basenamePosix(a);
                         const is_site_wide_artifact =
                             std.mem.eql(u8, basename, "404.html") or
                             std.mem.eql(u8, basename, "robots.txt") or
@@ -2372,11 +2372,11 @@ pub fn run(
                     // output (already a frontmatter error) rather than asserting
                     // on user input. See AUD-002.
                     if (!worker.validOutputPath(alt.output)) continue;
-                    assert(std.mem.indexOfScalar(u8, alt.output, '\\') == null);
-                    assert(std.fs.path.extension(alt.output).len > 0);
-                    assert(std.mem.indexOfScalar(
+                    assert(std.mem.findScalar(u8, alt.output, '\\') == null);
+                    assert(std.Io.Dir.path.extension(alt.output).len > 0);
+                    assert(std.mem.findScalar(
                         u8,
-                        std.fs.path.dirnamePosix(alt.output) orelse "",
+                        std.Io.Dir.path.dirnamePosix(alt.output) orelse "",
                         '.',
                     ) == null);
 
@@ -2504,9 +2504,9 @@ pub fn run(
             }
             for (v.collisions.items) |c| {
                 if (diag.format == .json) {
-                    var url_buf: [std.fs.max_path_bytes]u8 = undefined;
-                    var a_buf: [std.fs.max_path_bytes]u8 = undefined;
-                    var b_buf: [std.fs.max_path_bytes]u8 = undefined;
+                    var url_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+                    var a_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+                    var b_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
                     var msg_buf: [2048]u8 = undefined;
                     diag.emit(.{
                         .code = .ZP_URL_COLLISION,
@@ -2654,7 +2654,7 @@ pub fn run(
         // attribute is never set and the asset/href silently breaks. Only a clean
         // html tree is scanned.
         if (template.html_ast.errors.len == 0) {
-            var bads: std.ArrayListUnmanaged(Template.BadDirectiveAttr) = .empty;
+            var bads: std.ArrayList(Template.BadDirectiveAttr) = .empty;
             defer bads.deinit(gpa);
             try template.lintDirectiveAttrs(gpa, &bads);
             if (bads.items.len > 0) {
@@ -2725,7 +2725,7 @@ pub fn run(
         // -- on a broken one `close.start == 0` also means "unclosed element",
         // which SuperHTML already reports as `missing end tag`.
         if (template.html_ast.errors.len == 0) {
-            var inert: std.ArrayListUnmanaged(Template.InertDirective) = .empty;
+            var inert: std.ArrayList(Template.InertDirective) = .empty;
             defer inert.deinit(gpa);
             try template.lintInertDirectives(gpa, &inert);
             if (inert.items.len > 0) {
@@ -2977,7 +2977,7 @@ pub fn run(
     {
         const tracy_frame = tracy.namedFrame("page rendering");
         defer tracy_frame.end();
-        var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+        var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
         for (build.variants) |*v| {
             for (v.pages.items) |*p| {
                 if (!p._parse.active) continue;
@@ -3234,7 +3234,7 @@ pub fn run(
         if (options.bun_path) |bun| if (options.island_src_dir) |root_dir| {
             const props_check = @import("islands/props_check.zig");
             const compiler_driver = if (options.island_sidecar) |sidecar_path|
-                try std.fs.path.resolve(gpa, &.{ std.fs.path.dirname(sidecar_path) orelse ".", "props-check.ts" })
+                try std.Io.Dir.path.resolveAlloc(gpa, &.{ std.Io.Dir.path.dirname(sidecar_path) orelse ".", "props-check.ts" })
             else
                 null;
             defer if (compiler_driver) |path| gpa.free(path);
@@ -3358,12 +3358,12 @@ pub fn run(
     {
         var css_batch: std.Io.Writer.Allocating = .init(gpa);
         defer css_batch.deinit();
-        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
         // Wider than `buf` by exactly what a fingerprint adds — `.` plus
         // `hash_len` hex digits — so that a source path which fits in `buf`
         // has a destination that provably fits here, and the `catch
         // unreachable` below stays as sound as the one above it.
-        var dest_buf: [std.fs.max_path_bytes + 1 + fingerprint.hash_len]u8 = undefined;
+        var dest_buf: [std.Io.Dir.max_path_bytes + 1 + fingerprint.hash_len]u8 = undefined;
         var site_it = build.site_assets.iterator();
         while (site_it.next()) |entry| {
             const key = entry.key_ptr.*;
@@ -3371,7 +3371,7 @@ pub fn run(
             //     &build.st,
             //     &build.pt,
             //     &buf,
-            //     std.fs.path.sep,
+            //     std.Io.Dir.path.sep,
             //     key.name,
             // )];
 
@@ -3408,11 +3408,11 @@ pub fn run(
                 // server (dev loop) always takes the verbatim copy below.
                 if (collect) |sm| try sm.add(gpa, .site_asset, dest);
                 if (shouldMinifyCss(path, options) and options.css_minify_batch) {
-                    var src_buf: [std.fs.max_path_bytes]u8 = undefined;
+                    var src_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
                     const src_n = build.site_assets_dir.realPathFile(io, path, &src_buf) catch |err| fatal.file(path, err);
-                    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+                    var dir_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
                     const dir_n = site_assets_install_dir.realPathFile(io, ".", &dir_buf) catch |err| fatal.file(dest, err);
-                    const dest_abs = try std.fs.path.join(gpa, &.{ dir_buf[0..dir_n], dest });
+                    const dest_abs = try std.Io.Dir.path.join(gpa, &.{ dir_buf[0..dir_n], dest });
                     defer gpa.free(dest_abs);
                     try std.json.Stringify.value(.{ .input = src_buf[0..src_n], .output = dest_abs }, .{}, &css_batch.writer);
                     try css_batch.writer.writeByte('\n');
@@ -3466,7 +3466,7 @@ pub fn run(
             while (url_it.next()) |entry| {
                 if (entry.value_ptr.kind != .page_asset) continue;
                 if (entry.value_ptr.kind.page_asset.raw == 0) continue;
-                var asset_buf: [std.fs.max_path_bytes]u8 = undefined;
+                var asset_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
                 const install_path = std.mem.print(&asset_buf, "{s}{s}{f}", .{
                     v.output_path_prefix,
                     if (v.output_path_prefix.len > 0) "/" else "",
@@ -3596,7 +3596,7 @@ fn planImageVariants(io: Io, gpa: Allocator, build: *Build, opts: ImageOptimize)
     else
         0;
 
-    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     for (refs) |ref| {
         p.completeOne();
         // Shared with derive.zig's `run` — see Build.resolveImageSourceRef's
@@ -3729,7 +3729,7 @@ fn computeAssetFingerprints(io: Io, gpa: Allocator, build: *Build) void {
     var p = progress.start("Fingerprint assets", build.site_assets.count());
     defer p.end();
 
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     var it = build.site_assets.iterator();
     while (it.next()) |entry| {
         p.completeOne();
@@ -3988,13 +3988,13 @@ fn reportPrunedSiteAssets(gpa: Allocator, build: *const Build) void {
 
     if (assetsDirIsContentDir(build.cfg)) return;
 
-    var pruned: std.ArrayListUnmanaged([]const u8) = .empty;
+    var pruned: std.ArrayList([]const u8) = .empty;
     defer {
         for (pruned.items) |s| gpa.free(s);
         pruned.deinit(gpa);
     }
 
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     var it = build.site_assets.iterator();
     while (it.next()) |entry| {
         if (entry.value_ptr.raw > 0) continue;
@@ -4205,17 +4205,17 @@ fn installMinifiedCss(
     driver: []const u8,
 ) void {
     // Absolute source path (the CSS file exists, so realPathFile resolves it).
-    var src_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var src_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const src_n = src_dir.realPathFile(io, src_rel, &src_buf) catch |err|
         fatal.file(src_rel, err);
     const src_abs = src_buf[0..src_n];
 
     // Absolute destination path: realpath the install dir (it exists) and join
     // the relative dest under it. Bun.write creates any missing parent dirs.
-    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var dir_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const dir_n = install_dir.realPathFile(io, ".", &dir_buf) catch |err|
         fatal.file(dest_rel, err);
-    const dest_abs = std.fs.path.join(gpa, &.{ dir_buf[0..dir_n], dest_rel }) catch
+    const dest_abs = std.Io.Dir.path.join(gpa, &.{ dir_buf[0..dir_n], dest_rel }) catch
         fatal.oom();
     defer gpa.free(dest_abs);
 
@@ -4247,7 +4247,7 @@ fn installMinifiedCss(
 }
 
 test "assets: shouldMinifyCss gates on extension + release flags" {
-    const empty_assets: std.StringArrayHashMapUnmanaged(BuildAsset) = .empty;
+    const empty_assets: std.array_hash_map.String(BuildAsset) = .empty;
     const base: Options = .{
         .build_assets = &empty_assets,
         .base_dir_path = ".",
@@ -4368,7 +4368,7 @@ fn printSuperMdErrorsInner(
         };
         const homepage_hint = err.kind == .scripty and
             std.mem.eql(u8, err.kind.scripty.err, "path is empty") and
-            std.mem.indexOf(u8, formatter.preview().code, ".page(") != null;
+            std.mem.find(u8, formatter.preview().code, ".page(") != null;
         const rendered = try gpa.print("{f}{s}\n", .{
             formatter,
             if (homepage_hint) "|   note: to link to the site homepage, use $link.site()\n" else "",
@@ -4514,7 +4514,7 @@ pub fn validatePath(
     if (path[0] == '/') return error.AbsolutePath;
 
     // Paths cannot contain Windows-style separators
-    if (std.mem.indexOfScalar(u8, path, '\\') != null) return error.Backslash;
+    if (std.mem.findScalar(u8, path, '\\') != null) return error.Backslash;
 
     // Path cannot contain any relative component (. or ..)
     var it = std.mem.splitScalar(u8, path, '/');
@@ -4546,7 +4546,7 @@ fn emitSuperMdDiagnostic(
         });
         defer gpa.free(prefix);
         const message = rendered[prefix.len..];
-        const end = std.mem.indexOfScalar(u8, message, '\n') orelse message.len;
+        const end = std.mem.findScalar(u8, message, '\n') orelse message.len;
         const headline = message[0..end];
         diag.emit(.{
             .code = .ZP_SUPERMD,
@@ -4594,6 +4594,6 @@ test "validate: duplicate ID memory diagnostic includes the original definition"
     try printSuperMdErrorsInner(gpa, gpa, &build, &variant, file, &ast, &.{}, src, 4);
     try std.testing.expectEqual(1, build.mode.memory.errors.items.len);
     const message = build.mode.memory.errors.items[0].msg;
-    try std.testing.expect(std.mem.indexOf(u8, message, "first definition was on line 5 col 1") != null);
-    try std.testing.expect(std.mem.indexOf(u8, message, "[original]") != null);
+    try std.testing.expect(std.mem.find(u8, message, "first definition was on line 5 col 1") != null);
+    try std.testing.expect(std.mem.find(u8, message, "[original]") != null);
 }

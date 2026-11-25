@@ -99,7 +99,7 @@ pub const Command = struct {
         var data_dir: ?[]const u8 = null;
         var zigbase_path: ?[]const u8 = null;
         var download_zigbase = false;
-        var zigbase_args: std.ArrayListUnmanaged([]const u8) = .empty;
+        var zigbase_args: std.ArrayList([]const u8) = .empty;
         var url_prefix: []const u8 = "";
         var ready_path: []const u8 = "/";
         var ready_path_explicit = false;
@@ -233,7 +233,7 @@ pub fn e2e(
     // so it shares its lifecycle (deleted with it when the data dir is the
     // per-run temp dir; reused across restarts otherwise) -- a no-op when
     // cmd.url_prefix is "" (see stageServedRoot's doc comment).
-    const staging_root = std.fs.path.join(gpa, &.{ data_dir, ".served-root" }) catch fatal.oom();
+    const staging_root = std.Io.Dir.path.join(gpa, &.{ data_dir, ".served-root" }) catch fatal.oom();
     const served_root = stageServedRoot(io, gpa, staging_root, cmd.url_prefix, cmd.site) catch |err| fatal.msg(
         "error: e2e: unable to stage the served root: {s}\n",
         .{@errorName(err)},
@@ -244,7 +244,7 @@ pub fn e2e(
         try defaultReadyPath(gpa, cmd.url_prefix);
 
     // (3) Boot `zigbase serve` over the site tree.
-    var zb_argv: std.ArrayListUnmanaged([]const u8) = .empty;
+    var zb_argv: std.ArrayList([]const u8) = .empty;
     try zb_argv.append(gpa, located.path);
     for (cmd.zigbase_args) |template| try zb_argv.append(
         gpa,
@@ -408,9 +408,9 @@ fn probeStatus(io: Io, address: Io.net.IpAddress, path: []const u8) !u16 {
 
 /// Parses the numeric code out of an HTTP status line ("HTTP/1.1 200 OK").
 fn parseStatusCode(line: []const u8) !u16 {
-    const sp1 = std.mem.indexOfScalar(u8, line, ' ') orelse return error.MalformedStatusLine;
+    const sp1 = std.mem.findScalar(u8, line, ' ') orelse return error.MalformedStatusLine;
     const rest = line[sp1 + 1 ..];
-    const sp2 = std.mem.indexOfScalar(u8, rest, ' ') orelse rest.len;
+    const sp2 = std.mem.findScalar(u8, rest, ' ') orelse rest.len;
     return std.fmt.parseInt(u16, rest[0..sp2], 10) catch error.MalformedStatusLine;
 }
 
@@ -446,7 +446,7 @@ fn makeFreshTempDataDir(
     const hex = std.fmt.bytesToHex(rand_bytes, .lower);
     const name = try gpa.print("zigapagos-e2e-{s}", .{hex});
     defer gpa.free(name);
-    const path = try std.fs.path.join(gpa, &.{ tmp_root, name });
+    const path = try std.Io.Dir.path.join(gpa, &.{ tmp_root, name });
     Io.Dir.cwd().createDirPath(io, path) catch |err| fatal.msg(
         "error: e2e: unable to create the temp data dir '{s}': {s}\n",
         .{ path, @errorName(err) },
@@ -531,7 +531,7 @@ pub fn stageServedRoot(
     errdefer Io.Dir.cwd().deleteTree(io, next_root_abs) catch {};
     try Io.Dir.cwd().deleteTree(io, previous_root_abs);
 
-    const prefix_dir_abs = try std.fs.path.join(gpa, &.{ next_root_abs, trimmed });
+    const prefix_dir_abs = try std.Io.Dir.path.join(gpa, &.{ next_root_abs, trimmed });
     defer gpa.free(prefix_dir_abs);
     try Io.Dir.cwd().createDirPath(io, prefix_dir_abs);
 
@@ -599,13 +599,13 @@ test "e2e stageServedRoot first use swaps complete trees and preserves the last 
 
     const root_abs = try tmp.dir.realPathFileAlloc(io, ".", gpa);
     defer gpa.free(root_abs);
-    const site_abs = try std.fs.path.join(gpa, &.{ root_abs, "site" });
+    const site_abs = try std.Io.Dir.path.join(gpa, &.{ root_abs, "site" });
     defer gpa.free(site_abs);
-    const missing_site_abs = try std.fs.path.join(gpa, &.{ root_abs, "missing-site" });
+    const missing_site_abs = try std.Io.Dir.path.join(gpa, &.{ root_abs, "missing-site" });
     defer gpa.free(missing_site_abs);
-    const staging_abs = try std.fs.path.join(gpa, &.{ root_abs, ".served-root" });
+    const staging_abs = try std.Io.Dir.path.join(gpa, &.{ root_abs, ".served-root" });
     defer gpa.free(staging_abs);
-    const staged_page_abs = try std.fs.path.join(gpa, &.{ staging_abs, "docs/v2/index.html" });
+    const staged_page_abs = try std.Io.Dir.path.join(gpa, &.{ staging_abs, "docs/v2/index.html" });
     defer gpa.free(staged_page_abs);
 
     var site = try tmp.dir.createDirPathOpen(io, "site", .{});
@@ -717,7 +717,7 @@ test "e2e default zigbase invocation matches the verified serve CLI" {
     // No template token smuggles an '=' value — the real parser would treat
     // the whole token as an (unknown) flag name and reject it.
     for (default_zigbase_args) |a| {
-        if (a[0] == '-') try std.testing.expect(std.mem.indexOfScalar(u8, a, '=') == null);
+        if (a[0] == '-') try std.testing.expect(std.mem.findScalar(u8, a, '=') == null);
     }
 }
 

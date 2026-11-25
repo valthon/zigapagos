@@ -15,14 +15,14 @@ pub fn validDirective(value: []const u8) bool {
 
 fn scheme(value: []const u8) bool {
     if (value.len == 0 or !std.ascii.isAlphabetic(value[0])) return false;
-    for (value[1..]) |c| if (!std.ascii.isAlphanumeric(c) and std.mem.indexOfScalar(u8, "+-.", c) == null) return false;
+    for (value[1..]) |c| if (!std.ascii.isAlphanumeric(c) and std.mem.findScalar(u8, "+-.", c) == null) return false;
     return true;
 }
 
 fn base64(value: []const u8) bool {
     const data = std.mem.trimEnd(u8, value, "=");
     if (data.len == 0 or value.len - data.len > 2) return false;
-    for (data) |c| if (!std.ascii.isAlphanumeric(c) and std.mem.indexOfScalar(u8, "+/-_", c) == null) return false;
+    for (data) |c| if (!std.ascii.isAlphanumeric(c) and std.mem.findScalar(u8, "+/-_", c) == null) return false;
     return true;
 }
 
@@ -38,13 +38,13 @@ pub fn validSource(value: []const u8) bool {
     }
     if (std.mem.endsWith(u8, value, ":") and scheme(value[0 .. value.len - 1])) return true;
     var host_path = value;
-    if (std.mem.indexOf(u8, value, "://")) |pos| {
+    if (std.mem.find(u8, value, "://")) |pos| {
         if (!scheme(value[0..pos])) return false;
         host_path = value[pos + 3 ..];
     }
-    const slash = std.mem.indexOfScalar(u8, host_path, '/') orelse host_path.len;
+    const slash = std.mem.findScalar(u8, host_path, '/') orelse host_path.len;
     var host = host_path[0..slash];
-    if (std.mem.indexOfScalar(u8, host, ':')) |colon| {
+    if (std.mem.findScalar(u8, host, ':')) |colon| {
         const port = host[colon + 1 ..];
         if (!std.mem.eql(u8, port, "*")) {
             if (port.len == 0) return false;
@@ -66,7 +66,7 @@ pub fn validSource(value: []const u8) bool {
         if (c == '%') {
             if (i + 2 >= host_path.len or !std.ascii.isHex(host_path[i + 1]) or !std.ascii.isHex(host_path[i + 2])) return false;
             i += 2;
-        } else if (!std.ascii.isAlphanumeric(c) and std.mem.indexOfScalar(u8, "/-._~!$&()*+,=:@", c) == null) return false;
+        } else if (!std.ascii.isAlphanumeric(c) and std.mem.findScalar(u8, "/-._~!$&()*+,=:@", c) == null) return false;
     }
     return true;
 }

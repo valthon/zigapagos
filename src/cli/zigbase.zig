@@ -82,10 +82,10 @@ pub fn locate(
 
     // 2. PATH search for an executable `zigbase`.
     if (environ_map.get("PATH")) |path_env| {
-        var it = std.mem.splitScalar(u8, path_env, std.fs.path.delimiter);
+        var it = std.mem.splitScalar(u8, path_env, std.Io.Dir.path.delimiter);
         while (it.next()) |dir| {
             if (dir.len == 0) continue;
-            const candidate = try std.fs.path.join(gpa, &.{ dir, exe_name });
+            const candidate = try std.Io.Dir.path.join(gpa, &.{ dir, exe_name });
             if (isExecutable(io, candidate)) return .{ .path = candidate, .source = .path_env };
             gpa.free(candidate);
         }
@@ -116,16 +116,16 @@ pub fn cachedPath(
 ) error{OutOfMemory}!?[]const u8 {
     if (builtin.target.os.tag == .windows) {
         const root = environ_map.get("LOCALAPPDATA") orelse return null;
-        return try std.fs.path.join(gpa, &.{ root, "zigapagos", "zigbase", pinned_version, exe_name });
+        return try std.Io.Dir.path.join(gpa, &.{ root, "zigapagos", "zigbase", pinned_version, exe_name });
     }
     if (environ_map.get("XDG_CACHE_HOME")) |root| {
-        if (root.len > 0) return try std.fs.path.join(
+        if (root.len > 0) return try std.Io.Dir.path.join(
             gpa,
             &.{ root, "zigapagos", "zigbase", pinned_version, exe_name },
         );
     }
     const home = environ_map.get("HOME") orelse return null;
-    return try std.fs.path.join(gpa, &.{ home, ".cache", "zigapagos", "zigbase", pinned_version, exe_name });
+    return try std.Io.Dir.path.join(gpa, &.{ home, ".cache", "zigapagos", "zigbase", pinned_version, exe_name });
 }
 
 /// `zigbase-<ver-sans-v>-<target>.tar.gz`, or null on platforms with no
@@ -167,7 +167,7 @@ pub fn download(
             "or pass --zigbase=<path>\n",
         .{},
     );
-    const dir = std.fs.path.dirname(exe_path).?;
+    const dir = std.Io.Dir.path.dirname(exe_path).?;
     Io.Dir.cwd().createDirPath(io, dir) catch |err| fatal.msg(
         "error: unable to create the zigbase cache dir '{s}': {s}\n",
         .{ dir, @errorName(err) },
@@ -175,8 +175,8 @@ pub fn download(
 
     const url = try releaseUrl(gpa, asset);
     const sums_url = try releaseUrl(gpa, "SHA256SUMS");
-    const tar_path = try std.fs.path.join(gpa, &.{ dir, asset });
-    const sums_path = try std.fs.path.join(gpa, &.{ dir, "SHA256SUMS" });
+    const tar_path = try std.Io.Dir.path.join(gpa, &.{ dir, asset });
+    const sums_path = try std.Io.Dir.path.join(gpa, &.{ dir, "SHA256SUMS" });
 
     std.debug.print("e2e: downloading {s}\n", .{url});
     runStep(io, &.{ "curl", "-fSL", "--retry", "2", "-o", tar_path, url }, "download the zigbase release");
@@ -314,15 +314,15 @@ test "e2e zigbase: empty environment yields null (and a message that still guide
     try std.testing.expect((try locate(std.testing.io, gpa, &env, null)) == null);
     const msg = try missingMessage(gpa, &env);
     defer gpa.free(msg);
-    try std.testing.expect(std.mem.indexOf(u8, msg, "zigbase binary not found") != null);
-    try std.testing.expect(std.mem.indexOf(u8, msg, pinned_version) != null);
+    try std.testing.expect(std.mem.find(u8, msg, "zigbase binary not found") != null);
+    try std.testing.expect(std.mem.find(u8, msg, pinned_version) != null);
     // Both escape hatches are named, because this one message is reached from
     // BOTH commands and their download policies are opposites: `dev` fetches by
     // default (so the reader got here via --no-download) while `e2e` fetches
     // only on --download-zigbase. Naming just one leaves half the readers with
     // advice that does not apply to the command they ran.
-    try std.testing.expect(std.mem.indexOf(u8, msg, "--download-zigbase") != null);
-    try std.testing.expect(std.mem.indexOf(u8, msg, "--no-download") != null);
+    try std.testing.expect(std.mem.find(u8, msg, "--download-zigbase") != null);
+    try std.testing.expect(std.mem.find(u8, msg, "--no-download") != null);
     // The npm route is a real answer to option 1, verified end to end: the
     // dependency's bin lands in node_modules/.bin, which `locate` scans, so `dev`
     // boots with no flag. It is named here because this message is where a user
@@ -338,13 +338,13 @@ test "e2e zigbase: empty environment yields null (and a message that still guide
     // guidance instead of the manifest. That the two agree right now is exactly
     // why the wording has to name the alias rather than the version.
     try std.testing.expect(
-        std.mem.indexOf(u8, msg, "npm i -D @zigbase/server@" ++ pinned_version[1..]) != null,
+        std.mem.find(u8, msg, "npm i -D @zigbase/server@" ++ pinned_version[1..]) != null,
     );
-    try std.testing.expect(std.mem.indexOf(u8, msg, "not the bare") != null);
+    try std.testing.expect(std.mem.find(u8, msg, "not the bare") != null);
     // ...along with the one condition that makes it fail: outside `npm run`/`npx`,
     // node_modules/.bin is not on PATH, and then the advice above looks broken.
-    try std.testing.expect(std.mem.indexOf(u8, msg, "node_modules/.bin") != null);
-    try std.testing.expect(std.mem.indexOf(u8, msg, "bare shell") != null);
+    try std.testing.expect(std.mem.find(u8, msg, "node_modules/.bin") != null);
+    try std.testing.expect(std.mem.find(u8, msg, "bare shell") != null);
 }
 
 test "e2e zigbase: cachedPath honors XDG_CACHE_HOME, then HOME/.cache" {

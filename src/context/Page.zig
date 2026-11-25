@@ -490,12 +490,12 @@ fn parseInner(
     const zone = tracy.trace(@src());
     defer zone.end();
 
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     // const path_bytes = buf[0..p._scan.path.bytesSlice(
     //     &variant.string_table,
     //     &variant.path_table,
     //     &buf,
-    //     std.fs.path.sep,
+    //     std.Io.Dir.path.sep,
     //     p._scan.name,
     // )];
 
@@ -555,7 +555,7 @@ fn parseInner(
     const trimmed = std.mem.trimStart(u8, full_src, " \t\n");
     const framing_error: ?error{ MissingFrontmatter, OpenFrontmatter } = if (!std.mem.startsWith(u8, trimmed, "---"))
         error.MissingFrontmatter
-    else if (std.mem.indexOf(u8, trimmed[3..], "\n---") == null)
+    else if (std.mem.find(u8, trimmed[3..], "\n---") == null)
         error.OpenFrontmatter
     else
         null;
@@ -1275,7 +1275,7 @@ pub const Builtins = struct {
 
             const v = &ctx._meta.build.variants[p._scan.variant_id];
 
-            var buf: [std.fs.max_path_bytes]u8 = undefined;
+            var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
             const page_url = std.mem.print(&buf, "{f}", .{
                 p._scan.url.fmt(
                     &v.string_table,
@@ -1368,7 +1368,7 @@ pub const Builtins = struct {
             const index_html: StringTable.String = @fromBackingInt(@intCast(11));
             const v = &ctx._meta.build.variants[p._scan.variant_id];
 
-            var buf: [std.fs.max_path_bytes]u8 = undefined;
+            var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
             const page_url = std.mem.print(&buf, "{f}", .{
                 p._scan.url.fmt(
                     &v.string_table,
@@ -1431,7 +1431,7 @@ pub const Builtins = struct {
 
             const v = &ctx._meta.build.variants[p._scan.variant_id];
 
-            var buf: [std.fs.max_path_bytes]u8 = undefined;
+            var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
             const page_url = std.mem.print(&buf, "{f}", .{
                 p._scan.url.fmt(
                     &v.string_table,
@@ -1903,7 +1903,7 @@ pub const Builtins = struct {
 
             const v = &ctx._meta.build.variants[p._scan.variant_id];
             const s = v.sections.items[p._scan.parent_section_id];
-            const self_id = std.mem.indexOfScalar(
+            const self_id = std.mem.findScalar(
                 u32,
                 s.pages.items,
                 p._scan.page_id,
@@ -1977,7 +1977,7 @@ pub const Builtins = struct {
 
             const v = &ctx._meta.build.variants[p._scan.variant_id];
             const s = v.sections.items[p._scan.parent_section_id];
-            const self_id = std.mem.indexOfScalar(
+            const self_id = std.mem.findScalar(
                 u32,
                 s.pages.items,
                 p._scan.page_id,
@@ -2019,7 +2019,7 @@ pub const Builtins = struct {
 
             const v = &ctx._meta.build.variants[p._scan.variant_id];
             const s = v.sections.items[p._scan.parent_section_id];
-            const self_id = std.mem.indexOfScalar(
+            const self_id = std.mem.findScalar(
                 u32,
                 s.pages.items,
                 p._scan.page_id,
@@ -2060,7 +2060,7 @@ pub const Builtins = struct {
 
             const v = &ctx._meta.build.variants[p._scan.variant_id];
             const s = v.sections.items[p._scan.parent_section_id];
-            const self_id = std.mem.indexOfScalar(
+            const self_id = std.mem.findScalar(
                 u32,
                 s.pages.items,
                 p._scan.page_id,

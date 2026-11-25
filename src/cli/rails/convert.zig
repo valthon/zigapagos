@@ -442,7 +442,7 @@ fn stimulusAttrFor(key: []const u8, identifiers: []const []const u8) bool {
         const tail = rest[identifier.len + 1 ..];
         if (std.mem.eql(u8, tail, "target")) return true;
         if ((std.mem.endsWith(u8, tail, "-value") or std.mem.endsWith(u8, tail, "-class")) and
-            std.mem.indexOfScalar(u8, tail, '-') != null) return true;
+            std.mem.findScalar(u8, tail, '-') != null) return true;
     }
     return false;
 }
@@ -531,7 +531,7 @@ fn stripLexicalAttrs(gpa: Allocator, text: []const u8, mode: StripMode, identifi
     errdefer out.deinit(gpa);
     var dropped = false;
     var at: usize = 0;
-    while (std.mem.indexOfScalarPos(u8, text, at, '<')) |start| {
+    while (std.mem.findScalarPos(u8, text, at, '<')) |start| {
         try out.appendSlice(gpa, text[at..start]);
         const end = tagEnd(text, start) orelse {
             try out.appendSlice(gpa, text[start..]);
@@ -596,8 +596,8 @@ fn normalizeVoidElements(bytes: []u8) []u8 {
             raw = null;
         }
         if (std.mem.startsWith(u8, bytes[read..], "<!--")) {
-            const end = if (std.mem.indexOf(u8, bytes[read + 4 ..], "-->")) |offset| read + 4 + offset + 3 else bytes.len;
-            std.mem.copyForwards(u8, bytes[written..][0 .. end - read], bytes[read..end]);
+            const end = if (std.mem.find(u8, bytes[read + 4 ..], "-->")) |offset| read + 4 + offset + 3 else bytes.len;
+            @memmove(bytes[written..][0 .. end - read], bytes[read..end]);
             written += end - read;
             read = end;
             continue;
@@ -605,8 +605,8 @@ fn normalizeVoidElements(bytes: []u8) []u8 {
         // In foreign content CDATA is text through ]]>, including apparent
         // end tags and comment openers. Raw text was consumed above first.
         if (foreign_depth > 0 and std.mem.startsWith(u8, bytes[read..], "<![CDATA[")) {
-            const end = if (std.mem.indexOf(u8, bytes[read + 9 ..], "]]>")) |offset| read + 9 + offset + 3 else bytes.len;
-            std.mem.copyForwards(u8, bytes[written..][0 .. end - read], bytes[read..end]);
+            const end = if (std.mem.find(u8, bytes[read + 9 ..], "]]>")) |offset| read + 9 + offset + 3 else bytes.len;
+            @memmove(bytes[written..][0 .. end - read], bytes[read..end]);
             written += end - read;
             read = end;
             continue;
@@ -642,7 +642,7 @@ fn normalizeVoidElements(bytes: []u8) []u8 {
         }
         if (!closing and foreign_depth == 0) {
             if (std.ascii.eqlIgnoreCase(name, "plaintext")) {
-                std.mem.copyForwards(u8, bytes[written..][0 .. bytes.len - read], bytes[read..]);
+                @memmove(bytes[written..][0 .. bytes.len - read], bytes[read..]);
                 return bytes[0 .. written + bytes.len - read];
             }
             // HTML parsing's RAWTEXT, script-data and RCDATA elements.
@@ -654,7 +654,7 @@ fn normalizeVoidElements(bytes: []u8) []u8 {
         }
         const remove_slash = !closing and foreign_depth == 0 and is_void and self_closing;
         const kept_end = if (remove_slash) end - 2 else end;
-        std.mem.copyForwards(u8, bytes[written..][0 .. kept_end - read], bytes[read..kept_end]);
+        @memmove(bytes[written..][0 .. kept_end - read], bytes[read..kept_end]);
         written += kept_end - read;
         if (remove_slash) {
             bytes[written] = '>';
@@ -798,7 +798,7 @@ fn statementOpensBlock(node: fragments.Node) bool {
 fn codeOpensBlock(code: []const u8) bool {
     var s = std.mem.trimEnd(u8, code, " \t\r\n");
     if (s.len > 0 and s[s.len - 1] == '|') {
-        if (std.mem.lastIndexOfScalar(u8, s[0 .. s.len - 1], '|')) |open| {
+        if (std.mem.findScalarLast(u8, s[0 .. s.len - 1], '|')) |open| {
             s = std.mem.trimEnd(u8, s[0..open], " \t");
         }
     }
@@ -981,7 +981,7 @@ fn stripSigil(name: []const u8) []const u8 {
 ///
 /// Contract 1 (self-freeing): the returned line is the only allocation.
 fn oneLine(gpa: Allocator, code: []const u8) Allocator.Error![]u8 {
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
     var space = false;
     for (code) |ch| {
@@ -1031,7 +1031,7 @@ pub fn findingIdFor(finding_list: []const findings.Finding, path: []const u8, no
 
 // ---- the walk ------------------------------------------------------------
 
-const List = std.ArrayListUnmanaged(u8);
+const List = std.ArrayList(u8);
 
 /// One open block. `close` is the static markup the `block_end` appends
 /// (`</div>` for a `content_for` block, nothing for a finding region, whose
@@ -1063,34 +1063,34 @@ const Converter = struct {
     /// A view's named blocks, keyed by id. Each `Block` is heap-allocated so
     /// `sink` can point at one across an append to this list -- growing an
     /// `ArrayList` of by-value `List`s would dangle that pointer.
-    blocks: std.ArrayListUnmanaged(*Block) = .empty,
+    blocks: std.ArrayList(*Block) = .empty,
     /// LAYOUT only: the block ids the converted layout declares, minus the
     /// two that are always synthesised (`head`, `main`). Borrowed from the
     /// node that named them.
-    named_yields: std.ArrayListUnmanaged([]const u8) = .empty,
+    named_yields: std.ArrayList([]const u8) = .empty,
     /// LAYOUT only: a bare `yield` was converted in place, so the `id="main"`
     /// block already exists and `finishLayout` must not synthesise a second.
     saw_bare_yield: bool = false,
     /// Borrowed ids; duped only when the owned `Output` is assembled.
-    ids: std.ArrayListUnmanaged([]const u8) = .empty,
+    ids: std.ArrayList([]const u8) = .empty,
     /// Borrowed ids an island answered (#167 Stage 3), same lifetime rule as
     /// `ids`.
-    bound: std.ArrayListUnmanaged([]const u8) = .empty,
+    bound: std.ArrayList([]const u8) = .empty,
     /// The subset of `bound` that was answered by an ENCLOSING region's
     /// binding (#167 Stage 3, ruling S3-R6). Borrowed both ways, same
     /// lifetime rule as `ids`; handed to `Output.enclosed` as-is.
-    enclosed: std.ArrayListUnmanaged(Enclosure) = .empty,
+    enclosed: std.ArrayList(Enclosure) = .empty,
     /// One per bound region hit, in source order. `fields` is owned by the
     /// list element and handed to `Output`; `original` likewise.
-    islands: std.ArrayListUnmanaged(IslandSpec) = .empty,
+    islands: std.ArrayList(IslandSpec) = .empty,
     /// Owned notes.
-    dropped: std.ArrayListUnmanaged([]const u8) = .empty,
+    dropped: std.ArrayList([]const u8) = .empty,
     /// Partial paths currently being inlined -- the cycle guard.
-    stack: std.ArrayListUnmanaged([]const u8) = .empty,
+    stack: std.ArrayList([]const u8) = .empty,
     /// Active Stimulus `drop` extent and templates that already reported a
     /// Turbo Drive attribute removal.
     drop_identifiers: []const []const u8 = &.{},
-    turbo_noted_paths: std.ArrayListUnmanaged([]const u8) = .empty,
+    turbo_noted_paths: std.ArrayList([]const u8) = .empty,
     /// Nesting depth of finding regions; only depth 0 emits a marker.
     finding_depth: usize = 0,
     /// Finding regions in scope that have a real id. Unlike
@@ -1201,7 +1201,7 @@ const Converter = struct {
             // `</title>` is swallowed: `:text` fills an element that must be
             // EMPTY, so a `<title><%= yield(:title) %> · MyApp</title>` has
             // nowhere to keep the ` · MyApp`.
-            if (std.mem.indexOf(u8, clean, "</title>")) |at| {
+            if (std.mem.find(u8, clean, "</title>")) |at| {
                 try c.put(clean[0..at]);
                 try c.endTitleConsume();
                 try c.put(clean[at + "</title>".len ..]);
@@ -1521,8 +1521,8 @@ const Converter = struct {
         c: *Converter,
         path: []const u8,
         nodes: []const fragments.Node,
-    ) Allocator.Error!std.ArrayListUnmanaged(Absorbed) {
-        var out: std.ArrayListUnmanaged(Absorbed) = .empty;
+    ) Allocator.Error!std.ArrayList(Absorbed) {
+        var out: std.ArrayList(Absorbed) = .empty;
         errdefer out.deinit(c.gpa);
         if (c.ctx.bindings.len == 0) return out;
         for (nodes, 0..) |n, fi| {
@@ -1592,7 +1592,7 @@ const Converter = struct {
             }
         }
 
-        var fields: std.ArrayListUnmanaged(Field) = .empty;
+        var fields: std.ArrayList(Field) = .empty;
         errdefer fields.deinit(c.gpa);
         var submit_label: []const u8 = "Save";
         for (region) |m| {
@@ -1663,7 +1663,7 @@ const Converter = struct {
         nodes: []const fragments.Node,
         locals: []const fragments.Attr,
     ) Allocator.Error!void {
-        var frames: std.ArrayListUnmanaged(Frame) = .empty;
+        var frames: std.ArrayList(Frame) = .empty;
         defer frames.deinit(c.gpa);
 
         // Named for what it holds, not for the flag: `Binding.absorbed` a few
@@ -2000,7 +2000,7 @@ const Converter = struct {
             try c.put("<ctx :text=\"$page.title\"></ctx>");
             return;
         };
-        const gt = std.mem.indexOfScalarPos(u8, c.sink.items, start, '>') orelse start;
+        const gt = std.mem.findScalarPos(u8, c.sink.items, start, '>') orelse start;
         // The replacement element carries `:text` and nothing else, so a
         // `<title data-turbo-track="reload">` loses its attributes. Small, but
         // it is the author's markup: say so rather than deleting it quietly.
@@ -2023,13 +2023,13 @@ const Converter = struct {
     fn openTitleTag(c: *Converter) ?usize {
         var found: ?usize = null;
         var at: usize = 0;
-        while (std.mem.indexOfPos(u8, c.sink.items, at, "<title")) |idx| {
+        while (std.mem.findPos(u8, c.sink.items, at, "<title")) |idx| {
             at = idx + "<title".len;
             if (at < c.sink.items.len and c.sink.items[at] != '>' and !std.ascii.isWhitespace(c.sink.items[at])) continue;
             found = idx;
         }
         const start = found orelse return null;
-        if (std.mem.indexOfPos(u8, c.sink.items, start, "</title>") != null) return null;
+        if (std.mem.findPos(u8, c.sink.items, start, "</title>") != null) return null;
         return start;
     }
 
@@ -2252,13 +2252,13 @@ pub fn partialPathIn(
 ) ?[]const u8 {
     var dir: []const u8 = "";
     var base: []const u8 = target;
-    if (std.mem.lastIndexOfScalar(u8, target, '/')) |s| {
+    if (std.mem.findScalarLast(u8, target, '/')) |s| {
         dir = target[0..s];
         base = target[s + 1 ..];
     } else {
         const prefix = "app/views/";
         const rel = if (std.mem.startsWith(u8, current, prefix)) current[prefix.len..] else current;
-        if (std.mem.lastIndexOfScalar(u8, rel, '/')) |s| dir = rel[0..s];
+        if (std.mem.findScalarLast(u8, rel, '/')) |s| dir = rel[0..s];
     }
     if (base.len == 0) return null;
     var buf: [512]u8 = undefined;
@@ -2333,7 +2333,7 @@ pub fn singleLiteralChild(nodes: []const fragments.Node) ?[]const u8 {
 /// Contract 1 (self-freeing): the returned buffer is the only allocation.
 fn firstH1(gpa: Allocator, bytes: []const u8) Allocator.Error!?[]u8 {
     var search: usize = 0;
-    while (std.mem.indexOfPos(u8, bytes, search, "<h1")) |open| {
+    while (std.mem.findPos(u8, bytes, search, "<h1")) |open| {
         const after = open + "<h1".len;
         if (after >= bytes.len) return null;
         // `<h1>` or `<h1 class=…>`, never `<h1x>`.
@@ -2341,8 +2341,8 @@ fn firstH1(gpa: Allocator, bytes: []const u8) Allocator.Error!?[]u8 {
             search = after;
             continue;
         }
-        const gt = std.mem.indexOfScalarPos(u8, bytes, after, '>') orelse return null;
-        const close = std.mem.indexOfPos(u8, bytes, gt + 1, "</h1>") orelse return null;
+        const gt = std.mem.findScalarPos(u8, bytes, after, '>') orelse return null;
+        const close = std.mem.findPos(u8, bytes, gt + 1, "</h1>") orelse return null;
         return try plainText(gpa, bytes[gt + 1 .. close]);
     }
     return null;
@@ -2355,12 +2355,12 @@ fn firstH1(gpa: Allocator, bytes: []const u8) Allocator.Error!?[]u8 {
 /// Contract 1 (self-freeing).
 fn metaDescription(gpa: Allocator, bytes: []const u8) Allocator.Error!?[]u8 {
     var search: usize = 0;
-    while (std.mem.indexOfPos(u8, bytes, search, "<meta")) |open| {
-        const gt = std.mem.indexOfScalarPos(u8, bytes, open, '>') orelse return null;
+    while (std.mem.findPos(u8, bytes, search, "<meta")) |open| {
+        const gt = std.mem.findScalarPos(u8, bytes, open, '>') orelse return null;
         const tag = bytes[open .. gt + 1];
         search = gt + 1;
-        if (std.mem.indexOf(u8, tag, "name=\"description\"") == null and
-            std.mem.indexOf(u8, tag, "name='description'") == null) continue;
+        if (std.mem.find(u8, tag, "name=\"description\"") == null and
+            std.mem.find(u8, tag, "name='description'") == null) continue;
         const value = attrValue(tag, "content") orelse continue;
         return try plainText(gpa, value);
     }
@@ -2372,12 +2372,12 @@ fn metaDescription(gpa: Allocator, bytes: []const u8) Allocator.Error!?[]u8 {
 fn attrValue(tag: []const u8, key: []const u8) ?[]const u8 {
     var buf: [32]u8 = undefined;
     const needle = std.mem.print(&buf, "{s}=", .{key}) catch return null;
-    const at = std.mem.indexOf(u8, tag, needle) orelse return null;
+    const at = std.mem.find(u8, tag, needle) orelse return null;
     const q = at + needle.len;
     if (q >= tag.len) return null;
     const quote = tag[q];
     if (quote != '"' and quote != '\'') return null;
-    const end = std.mem.indexOfScalarPos(u8, tag, q + 1, quote) orelse return null;
+    const end = std.mem.findScalarPos(u8, tag, q + 1, quote) orelse return null;
     return tag[q + 1 .. end];
 }
 
@@ -2393,7 +2393,7 @@ fn plainText(gpa: Allocator, markup: []const u8) Allocator.Error!?[]u8 {
     var i: usize = 0;
     while (i < markup.len) {
         if (markup[i] == '<') {
-            i = (std.mem.indexOfScalarPos(u8, markup, i, '>') orelse markup.len - 1) + 1;
+            i = (std.mem.findScalarPos(u8, markup, i, '>') orelse markup.len - 1) + 1;
             continue;
         }
         try stripped.append(gpa, markup[i]);
@@ -2424,7 +2424,7 @@ fn lessThanString(_: void, a: []const u8, b: []const u8) bool {
 /// every string already duped is freed before propagating.
 fn finalizeBorrowed(gpa: Allocator, items: [][]const u8) Allocator.Error![][]const u8 {
     std.mem.sort([]const u8, items, {}, lessThanString);
-    var out: std.ArrayListUnmanaged([]const u8) = .empty;
+    var out: std.ArrayList([]const u8) = .empty;
     errdefer {
         for (out.items) |s| gpa.free(s);
         out.deinit(gpa);
@@ -2446,7 +2446,7 @@ fn finalizeBorrowed(gpa: Allocator, items: [][]const u8) Allocator.Error![][]con
 /// duplicates it drops, and hands the buffer over as the result.
 ///
 /// Contract 2 (owned-result), inherited from `convert`.
-fn finalizeOwned(gpa: Allocator, list: *std.ArrayListUnmanaged([]const u8)) Allocator.Error![][]const u8 {
+fn finalizeOwned(gpa: Allocator, list: *std.ArrayList([]const u8)) Allocator.Error![][]const u8 {
     std.mem.sort([]const u8, list.items, {}, lessThanString);
     var write: usize = 0;
     for (list.items, 0..) |s, idx| {
@@ -2505,7 +2505,7 @@ fn appendBlock(gpa: Allocator, out: *List, tag: []const u8, id: []const u8, body
 /// Contract 3 (caller-buffer): allocates nothing.
 fn findStartTag(bytes: []const u8, name: []const u8, from: usize) ?usize {
     var at = from;
-    while (std.mem.indexOfPos(u8, bytes, at, name)) |idx| {
+    while (std.mem.findPos(u8, bytes, at, name)) |idx| {
         at = idx + name.len;
         if (at >= bytes.len) return null;
         if (bytes[at] == '>' or std.ascii.isWhitespace(bytes[at])) return idx;
@@ -2531,24 +2531,24 @@ fn findStartTag(bytes: []const u8, name: []const u8, from: usize) ?usize {
 /// Contract 2 (owned-result), inherited from `convert`: only grows `out`.
 fn finishLayout(gpa: Allocator, out: *List, saw_bare_yield: bool) Allocator.Error!void {
     if (findStartTag(out.items, "<head", 0)) |head_at| {
-        const gt = std.mem.indexOfScalarPos(u8, out.items, head_at, '>') orelse out.items.len - 1;
+        const gt = std.mem.findScalarPos(u8, out.items, head_at, '>') orelse out.items.len - 1;
         // A `<head>` that already carries the id is one a previous pass (or a
         // hand-written layout) produced; inserting a second `id` attribute
         // would be invalid HTML.
-        if (std.mem.indexOf(u8, out.items[head_at..gt], "id=\"head\"") == null) {
+        if (std.mem.find(u8, out.items[head_at..gt], "id=\"head\"") == null) {
             try out.insertSlice(gpa, head_at + "<head".len, " id=\"head\"");
         }
-        const close = std.mem.indexOfPos(u8, out.items, head_at, "</head>") orelse out.items.len;
+        const close = std.mem.findPos(u8, out.items, head_at, "</head>") orelse out.items.len;
         try out.insertSlice(gpa, close, "<super>");
     } else if (findStartTag(out.items, "<html", 0)) |html_at| {
-        const gt = std.mem.indexOfScalarPos(u8, out.items, html_at, '>') orelse out.items.len - 1;
+        const gt = std.mem.findScalarPos(u8, out.items, html_at, '>') orelse out.items.len - 1;
         try out.insertSlice(gpa, gt + 1, "\n<head id=\"head\"><super></head>");
     } else {
         try out.insertSlice(gpa, 0, "<head id=\"head\"><super></head>\n");
     }
 
     if (saw_bare_yield) return;
-    if (std.mem.lastIndexOf(u8, out.items, "</body>")) |at| {
+    if (std.mem.findLast(u8, out.items, "</body>")) |at| {
         try out.insertSlice(gpa, at, "<div id=\"main\"><super></div>");
         return;
     }
@@ -2594,7 +2594,7 @@ pub fn convert(gpa: Allocator, ctx: Context, tpl: fragments.Template, kind: Kind
     var out: List = .empty;
     errdefer out.deinit(gpa);
 
-    var block_id_list: std.ArrayListUnmanaged([]const u8) = .empty;
+    var block_id_list: std.ArrayList([]const u8) = .empty;
     defer block_id_list.deinit(gpa);
 
     if (kind == .view and ctx.layout_stem != null) {
@@ -2847,7 +2847,7 @@ test "convert: nested Stimulus bindings emit independent wrappers" {
     try std.testing.expectEqual(@as(usize, 2), out.islands.len);
     try std.testing.expectEqual(@as(usize, 2), out.bound_finding_ids.len);
     try std.testing.expectEqual(@as(usize, 0), out.open_finding_ids.len);
-    try std.testing.expect(std.mem.indexOf(u8, out.bytes, "inner.island.tsx") != null);
+    try std.testing.expect(std.mem.find(u8, out.bytes, "inner.island.tsx") != null);
 }
 
 test "convert: lazy and inline Turbo frames preserve only the promised markup" {
@@ -3390,7 +3390,7 @@ test "convert: every conditional conversion failure emits an answerable finding"
         out.bytes,
     );
     try std.testing.expectEqual(@as(usize, 3), out.open_finding_ids.len);
-    try std.testing.expect(std.mem.indexOf(u8, out.bytes, "rails:unmapped") == null);
+    try std.testing.expect(std.mem.find(u8, out.bytes, "rails:unmapped") == null);
 }
 
 test "convert: a partial that renders itself is cut by the cycle guard" {
@@ -3701,11 +3701,11 @@ fn convertPair(
 
 /// Every `id="…"` a template declares a block or a `<super>` under, in order
 /// of appearance -- the interface the two halves must agree on.
-fn idsIn(gpa: std.mem.Allocator, bytes: []const u8, out: *std.ArrayListUnmanaged([]const u8)) !void {
+fn idsIn(gpa: std.mem.Allocator, bytes: []const u8, out: *std.ArrayList([]const u8)) !void {
     var at: usize = 0;
-    while (std.mem.indexOfPos(u8, bytes, at, "id=\"")) |idx| {
+    while (std.mem.findPos(u8, bytes, at, "id=\"")) |idx| {
         const start = idx + 4;
-        const end = std.mem.indexOfScalarPos(u8, bytes, start, '"') orelse break;
+        const end = std.mem.findScalarPos(u8, bytes, start, '"') orelse break;
         try out.append(gpa, bytes[start..end]);
         at = end;
     }
@@ -3748,10 +3748,10 @@ test "convert: ruling S7 -- layout and view agree on head/main whichever side de
         // Exactly one `<super>` per declared id in the layout, and exactly
         // one block per declared id in the view.
         try std.testing.expectEqual(@as(usize, 2), std.mem.count(u8, pair.layout.bytes, "<super>"));
-        var layout_ids: std.ArrayListUnmanaged([]const u8) = .empty;
+        var layout_ids: std.ArrayList([]const u8) = .empty;
         defer layout_ids.deinit(gpa);
         try idsIn(gpa, pair.layout.bytes, &layout_ids);
-        var view_ids: std.ArrayListUnmanaged([]const u8) = .empty;
+        var view_ids: std.ArrayList([]const u8) = .empty;
         defer view_ids.deinit(gpa);
         try idsIn(gpa, pair.view.bytes, &view_ids);
         try std.testing.expectEqual(layout_ids.items.len, view_ids.items.len);
@@ -3760,7 +3760,7 @@ test "convert: ruling S7 -- layout and view agree on head/main whichever side de
         for (layout_ids.items, view_ids.items) |l, v| try std.testing.expectEqualStrings(l, v);
         // The head block is a `<head>`, not a `<div>`: a div in the document
         // head is not valid HTML.
-        try std.testing.expect(std.mem.indexOf(u8, pair.view.bytes, "<head id=\"head\"") != null);
+        try std.testing.expect(std.mem.find(u8, pair.view.bytes, "<head id=\"head\"") != null);
     };
 }
 
@@ -3784,8 +3784,8 @@ test "convert: ruling S8 -- a <title> with text around the yield keeps only :tex
     // Exactly one `<title>` element, and no orphan `</title>`.
     try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, out_suffix.bytes, "<title"));
     try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, out_suffix.bytes, "</title>"));
-    try std.testing.expect(std.mem.indexOf(u8, out_suffix.bytes, "<title :text=\"$page.title\"></title>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out_suffix.bytes, "MyApp") == null);
+    try std.testing.expect(std.mem.find(u8, out_suffix.bytes, "<title :text=\"$page.title\"></title>") != null);
+    try std.testing.expect(std.mem.find(u8, out_suffix.bytes, "MyApp") == null);
     try std.testing.expectEqualStrings(
         "<title> suffix '&middot; MyApp' dropped: :text needs an empty element",
         out_suffix.dropped[0],
@@ -3799,7 +3799,7 @@ test "convert: ruling S8 -- a <title> with text around the yield keeps only :tex
     const out_prefix = try convert(gpa, ctx, mkTemplate("app/views/layouts/b.html.erb", &prefix), .layout);
     defer freeOutput(gpa, out_prefix);
     try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, out_prefix.bytes, "</title>"));
-    try std.testing.expect(std.mem.indexOf(u8, out_prefix.bytes, "MyApp") == null);
+    try std.testing.expect(std.mem.find(u8, out_prefix.bytes, "MyApp") == null);
     try std.testing.expectEqualStrings(
         "<title> prefix 'MyApp |' dropped: :text needs an empty element",
         out_prefix.dropped[0],
@@ -3824,8 +3824,8 @@ test "convert: ruling S10 -- yield(:title) outside a <title> interpolates throug
     // A `<div id="title"><super></div>` here would be a block nobody fills
     // (and invalid inside an `<h1>`); `<ctx>` carries the directive and is
     // itself never emitted.
-    try std.testing.expect(std.mem.indexOf(u8, out.bytes, "<h1><ctx :text=\"$page.title\"></ctx></h1>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out.bytes, "id=\"title\"") == null);
+    try std.testing.expect(std.mem.find(u8, out.bytes, "<h1><ctx :text=\"$page.title\"></ctx></h1>") != null);
+    try std.testing.expect(std.mem.find(u8, out.bytes, "id=\"title\"") == null);
 }
 
 test "convert: ruling S9 -- a named yield is a block a view fills, or an empty one, or a dropped content_for" {
@@ -3850,7 +3850,7 @@ test "convert: ruling S9 -- a named yield is a block a view fills, or an empty o
     try std.testing.expectEqualStrings("head", pair.layout.block_ids[0]);
     try std.testing.expectEqualStrings("main", pair.layout.block_ids[1]);
     try std.testing.expectEqualStrings("sidebar", pair.layout.block_ids[2]);
-    try std.testing.expect(std.mem.indexOf(u8, pair.layout.bytes, "<div id=\"sidebar\"><super></div>") != null);
+    try std.testing.expect(std.mem.find(u8, pair.layout.bytes, "<div id=\"sidebar\"><super></div>") != null);
     try std.testing.expectEqualStrings(
         \\<extend template="application.shtml">
         \\<head id="head"></head>
@@ -3869,7 +3869,7 @@ test "convert: ruling S9 -- a named yield is a block a view fills, or an empty o
     const pair2 = try convertPair(gpa, &layout_nodes, &unfilled);
     defer freeOutput(gpa, pair2.layout);
     defer freeOutput(gpa, pair2.view);
-    try std.testing.expect(std.mem.indexOf(u8, pair2.view.bytes, "<div id=\"sidebar\"></div>") != null);
+    try std.testing.expect(std.mem.find(u8, pair2.view.bytes, "<div id=\"sidebar\"></div>") != null);
 
     // A `content_for` naming an id no `<super>` carries: Rails never renders
     // it either, so it is dropped with a note rather than emitted as an
@@ -3883,8 +3883,8 @@ test "convert: ruling S9 -- a named yield is a block a view fills, or an empty o
     const pair3 = try convertPair(gpa, &layout_nodes, &stray);
     defer freeOutput(gpa, pair3.layout);
     defer freeOutput(gpa, pair3.view);
-    try std.testing.expect(std.mem.indexOf(u8, pair3.view.bytes, "orphan") == null);
-    try std.testing.expect(std.mem.indexOf(u8, pair3.view.bytes, "id=\"nope\"") == null);
+    try std.testing.expect(std.mem.find(u8, pair3.view.bytes, "orphan") == null);
+    try std.testing.expect(std.mem.find(u8, pair3.view.bytes, "id=\"nope\"") == null);
     try std.testing.expectEqualStrings(
         "content_for :nope dropped: the layout declares no block with that id",
         pair3.view.dropped[0],
@@ -4044,7 +4044,7 @@ test "convert: yield :main declares the main block once, like a bare yield" {
     try std.testing.expectEqualStrings("main", out.block_ids[1]);
     // The author's own position is kept: inside their `<main>`, not appended
     // before `</body>`.
-    try std.testing.expect(std.mem.indexOf(u8, out.bytes, "<main><div id=\"main\"><super></div></main>") != null);
+    try std.testing.expect(std.mem.find(u8, out.bytes, "<main><div id=\"main\"><super></div></main>") != null);
 }
 
 test "convert: an unclosed <title> cannot outlive the block it was opened in" {
@@ -4097,8 +4097,8 @@ test "convert: Turbo Drive attributes on a rewritten title use the template-leve
         .layout_stem = null,
     }, mkTemplate("app/views/layouts/a.html.erb", &nodes), .layout);
     defer freeOutput(gpa, out);
-    try std.testing.expect(std.mem.indexOf(u8, out.bytes, "<title :text=\"$page.title\"></title>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out.bytes, "data-turbo-track") == null);
+    try std.testing.expect(std.mem.find(u8, out.bytes, "<title :text=\"$page.title\"></title>") != null);
+    try std.testing.expect(std.mem.find(u8, out.bytes, "data-turbo-track") == null);
     try std.testing.expectEqualStrings(
         "data-turbo attributes dropped; Turbo Drive is ordinary navigation here",
         out.dropped[0],
@@ -4254,12 +4254,12 @@ test "convert: a bound region becomes one <island>, and every id inside it is an
     }, tpl, .view);
     defer freeOutput(gpa, out);
 
-    try std.testing.expect(std.mem.indexOf(
+    try std.testing.expect(std.mem.find(
         u8,
         out.bytes,
         "<island src=\"components/forms/posts_new.island.tsx\" client:load></island>",
     ) != null);
-    try std.testing.expect(std.mem.indexOf(u8, out.bytes, "rails:") == null);
+    try std.testing.expect(std.mem.find(u8, out.bytes, "rails:") == null);
     try std.testing.expectEqual(@as(usize, 0), out.open_finding_ids.len);
     try std.testing.expectEqual(@as(usize, 1), out.bound_finding_ids.len);
     try std.testing.expectEqualStrings(finding_list[0].id, out.bound_finding_ids[0]);
@@ -4333,7 +4333,7 @@ test "convert: an id inside a bound region is bound, and says which answer swall
     defer freeOutput(gpa, out);
 
     // The control is gone from the page: the island performs the logout.
-    try std.testing.expect(std.mem.indexOf(u8, out.bytes, "href=\"/session\"") == null);
+    try std.testing.expect(std.mem.find(u8, out.bytes, "href=\"/session\"") == null);
     try std.testing.expectEqual(@as(usize, 0), out.open_finding_ids.len);
     try std.testing.expectEqual(@as(usize, 2), out.bound_finding_ids.len);
 
@@ -4460,13 +4460,13 @@ test "convert: a bound button_to becomes an island instead of a link to the rout
     }, tpl, .partial);
     defer freeOutput(gpa, out);
 
-    try std.testing.expect(std.mem.indexOf(
+    try std.testing.expect(std.mem.find(
         u8,
         out.bytes,
         "<island src=\"components/forms/shared__nav.island.tsx\" client:load></island>",
     ) != null);
-    try std.testing.expect(std.mem.indexOf(u8, out.bytes, "<a href") == null);
-    try std.testing.expect(std.mem.indexOf(u8, out.bytes, "rails:") == null);
+    try std.testing.expect(std.mem.find(u8, out.bytes, "<a href") == null);
+    try std.testing.expect(std.mem.find(u8, out.bytes, "rails:") == null);
     try std.testing.expectEqual(@as(usize, 0), out.open_finding_ids.len);
     try std.testing.expectEqual(@as(usize, 1), out.bound_finding_ids.len);
     try std.testing.expectEqualStrings(finding_list[0].id, out.bound_finding_ids[0]);
@@ -4541,8 +4541,8 @@ test "convert: a bound link carries the record its route helper names, and an un
     try std.testing.expect(click.confirm == null);
 
     // …and the unbound link beside it is untouched.
-    try std.testing.expect(std.mem.indexOf(u8, out.bytes, "<a href=\"/\">Home</a>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out.bytes, "rails:") == null);
+    try std.testing.expect(std.mem.find(u8, out.bytes, "<a href=\"/\">Home</a>") != null);
+    try std.testing.expect(std.mem.find(u8, out.bytes, "rails:") == null);
 }
 
 test "convert: a literal-path target is not a record id" {
@@ -4674,10 +4674,10 @@ test "convert: the Turbo spellings are honoured on a bound link, and a data sent
     // The sentinel never reaches the page as markup, and the warning sits
     // beside the island it is about -- after the second `<island>`, not the
     // first.
-    try std.testing.expect(std.mem.indexOf(u8, out.bytes, nested_hash_sentinel) == null);
+    try std.testing.expect(std.mem.find(u8, out.bytes, nested_hash_sentinel) == null);
     const warning = "<!-- rails: data: on this control was not recovered; a confirm guard may be missing -->";
-    const second_island = std.mem.indexOf(u8, out.bytes, "pages_home_2.island.tsx") orelse return error.NoSecondIsland;
-    const at = std.mem.indexOf(u8, out.bytes, warning) orelse return error.NoWarning;
+    const second_island = std.mem.find(u8, out.bytes, "pages_home_2.island.tsx") orelse return error.NoSecondIsland;
+    const at = std.mem.find(u8, out.bytes, warning) orelse return error.NoWarning;
     try std.testing.expect(at > second_island);
     try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, out.bytes, warning));
     try std.testing.expectEqual(@as(usize, 1), out.dropped.len);
@@ -4734,8 +4734,8 @@ test "convert: an UNBOUND link emits neither the hash sentinel nor an inert meth
     );
     // Stated separately from the byte comparison so a future change to the
     // surrounding markup cannot let either of these back in unnoticed.
-    try std.testing.expect(std.mem.indexOf(u8, out.bytes, nested_hash_sentinel) == null);
-    try std.testing.expect(std.mem.indexOf(u8, out.bytes, "method=") == null);
+    try std.testing.expect(std.mem.find(u8, out.bytes, nested_hash_sentinel) == null);
+    try std.testing.expect(std.mem.find(u8, out.bytes, "method=") == null);
 }
 
 test "convert: a sentinel-valued attribute is dropped from an image_tag too" {
@@ -4770,11 +4770,11 @@ test "convert: a sentinel-valued attribute is dropped from an image_tag too" {
     }, tpl, .view);
     defer freeOutput(gpa, out);
 
-    try std.testing.expect(std.mem.indexOf(u8, out.bytes, nested_hash_sentinel) == null);
-    try std.testing.expect(std.mem.indexOf(u8, out.bytes, "alt=\"Logo\"") != null);
+    try std.testing.expect(std.mem.find(u8, out.bytes, nested_hash_sentinel) == null);
+    try std.testing.expect(std.mem.find(u8, out.bytes, "alt=\"Logo\"") != null);
     // `method` is dropped on the `<a>` only: it is meaningless there, but no
     // claim is being made about every other tag's attribute vocabulary.
-    try std.testing.expect(std.mem.indexOf(u8, out.bytes, "<img src=") != null);
+    try std.testing.expect(std.mem.find(u8, out.bytes, "<img src=") != null);
 }
 
 test "convert: an unbound mutating link is a region, and its finding stays open" {
@@ -4816,19 +4816,19 @@ test "convert: an unbound mutating link is a region, and its finding stays open"
     const out = try convert(gpa, ctx, tpl, .view);
     defer freeOutput(gpa, out);
 
-    try std.testing.expect(std.mem.indexOf(
+    try std.testing.expect(std.mem.find(
         u8,
         out.bytes,
         "<!-- rails:finding " ++ "RAILS_BACKEND_ENDPOINT.app/views/pages/home%2Ehtml%2Eerb.L1C4" ++ " --><!-- rails:end -->",
     ) != null);
-    try std.testing.expect(std.mem.indexOf(u8, out.bytes, "/logout") == null);
+    try std.testing.expect(std.mem.find(u8, out.bytes, "/logout") == null);
     try std.testing.expectEqual(@as(usize, 1), out.open_finding_ids.len);
     try std.testing.expectEqualStrings(finding_list[0].id, out.open_finding_ids[0]);
     try std.testing.expectEqual(@as(usize, 0), out.islands.len);
     try std.testing.expectEqual(@as(usize, 0), out.bound_finding_ids.len);
     // The navigation link beside it asks nothing and stays a link: the
     // predicate is "does it submit", not "is it a link".
-    try std.testing.expect(std.mem.indexOf(u8, out.bytes, "<a href=\"/\">Home</a>") != null);
+    try std.testing.expect(std.mem.find(u8, out.bytes, "<a href=\"/\">Home</a>") != null);
 
     // Ruling S6's net holds for a link too: the same control with its
     // finding missing from the list is `rails:unmapped`, never an `<a href>`,
@@ -4838,8 +4838,8 @@ test "convert: an unbound mutating link is a region, and its finding stays open"
     bare.findings = &.{};
     const out_bare = try convert(gpa, bare, tpl, .view);
     defer freeOutput(gpa, out_bare);
-    try std.testing.expect(std.mem.indexOf(u8, out_bare.bytes, "<!-- rails:unmapped link_to L1C4 -->") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out_bare.bytes, "/logout") == null);
+    try std.testing.expect(std.mem.find(u8, out_bare.bytes, "<!-- rails:unmapped link_to L1C4 -->") != null);
+    try std.testing.expect(std.mem.find(u8, out_bare.bytes, "/logout") == null);
     try std.testing.expectEqual(@as(usize, 0), out_bare.open_finding_ids.len);
 }
 
@@ -4901,14 +4901,14 @@ test "convert: a branch named after what it branches on is still a region" {
     // no marker of its own, and the `@posts` AFTER the `end` gets one.
     var at: usize = 0;
     var markers: usize = 0;
-    while (std.mem.indexOfPos(u8, out.bytes, at, "<!-- rails:finding ")) |k| {
+    while (std.mem.findPos(u8, out.bytes, at, "<!-- rails:finding ")) |k| {
         markers += 1;
         at = k + 1;
     }
     try std.testing.expectEqual(@as(usize, 3), markers);
-    try std.testing.expect(std.mem.indexOf(u8, out.bytes, ".L1C20") == null);
-    try std.testing.expect(std.mem.indexOf(u8, out.bytes, ".L2C1") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out.bytes, ".L3C1") != null);
+    try std.testing.expect(std.mem.find(u8, out.bytes, ".L1C20") == null);
+    try std.testing.expect(std.mem.find(u8, out.bytes, ".L2C1") != null);
+    try std.testing.expect(std.mem.find(u8, out.bytes, ".L3C1") != null);
     // Every id is still REPORTED, nested or not: the operator has to be able
     // to answer the inner one.
     try std.testing.expectEqual(@as(usize, 4), out.open_finding_ids.len);
@@ -4962,12 +4962,12 @@ test "convert: a positional binding reaches a journey form, which has no finding
 
     // The props ride on the tag: one component, two Rails views, and the
     // mode is the only thing that differs between them.
-    try std.testing.expect(std.mem.indexOf(
+    try std.testing.expect(std.mem.find(
         u8,
         out.bytes,
         "<island src=\"components/AuthForm.island.tsx\" client:load :props='.{ .mode = \"signin\" }'></island>",
     ) != null);
-    try std.testing.expect(std.mem.indexOf(u8, out.bytes, "rails:") == null);
+    try std.testing.expect(std.mem.find(u8, out.bytes, "rails:") == null);
     try std.testing.expectEqual(@as(usize, 1), out.islands.len);
     try std.testing.expectEqualStrings("password_field", out.islands[0].fields[0].helper);
 }
@@ -5019,7 +5019,7 @@ test "convert: a positional binding binds THAT node and no other with the same i
     defer freeOutput(gpa, out);
 
     try std.testing.expectEqual(@as(usize, 0), out.islands.len);
-    try std.testing.expect(std.mem.indexOf(u8, out.bytes, "<island") == null);
+    try std.testing.expect(std.mem.find(u8, out.bytes, "<island") == null);
 }
 
 test "convert: a bound form absorbs the errors summary its model names, and nothing else's" {
@@ -5067,12 +5067,12 @@ test "convert: a bound form absorbs the errors summary its model names, and noth
     defer freeOutput(gpa, out);
 
     // `@post.errors` is the form's own model: absorbed, local and all.
-    try std.testing.expect(std.mem.indexOf(u8, out.bytes, "L1C4") == null);
+    try std.testing.expect(std.mem.find(u8, out.bytes, "L1C4") == null);
     // `@user.errors` belongs to something else and stays a finding region.
     // Its `|m|` is owned by that answerable region rather than becoming a
     // second, id-less marker that no decision can name (#181).
-    try std.testing.expect(std.mem.indexOf(u8, out.bytes, "L2C4") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out.bytes, "rails:unmapped local") == null);
+    try std.testing.expect(std.mem.find(u8, out.bytes, "L2C4") != null);
+    try std.testing.expect(std.mem.find(u8, out.bytes, "rails:unmapped local") == null);
     try std.testing.expectEqual(@as(usize, 1), out.open_finding_ids.len);
     try std.testing.expectEqualStrings("RAILS_REQUEST_TIME_STATE.x.L2C4", out.open_finding_ids[0]);
     try std.testing.expectEqual(@as(usize, 2), out.bound_finding_ids.len);
@@ -5096,8 +5096,8 @@ test "convert: an id-less outer region cannot claim its nested block local" {
     }, mkTemplate("app/views/posts/new.html.erb", &nodes), .view);
     defer freeOutput(gpa, out);
 
-    try std.testing.expect(std.mem.indexOf(u8, out.bytes, "rails:unmapped errors") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out.bytes, "rails:unmapped local") != null);
+    try std.testing.expect(std.mem.find(u8, out.bytes, "rails:unmapped errors") != null);
+    try std.testing.expect(std.mem.find(u8, out.bytes, "rails:unmapped local") != null);
 }
 
 test "convert: a model-less form absorbs the template's error summary whatever it names" {
@@ -5168,8 +5168,8 @@ test "convert: with no bindings the same template converts exactly as before" {
     }, tpl, .view);
     defer freeOutput(gpa, out);
 
-    try std.testing.expect(std.mem.indexOf(u8, out.bytes, "<island") == null);
-    try std.testing.expect(std.mem.indexOf(u8, out.bytes, "rails:finding") != null);
+    try std.testing.expect(std.mem.find(u8, out.bytes, "<island") == null);
+    try std.testing.expect(std.mem.find(u8, out.bytes, "rails:finding") != null);
     try std.testing.expectEqual(@as(usize, 1), out.open_finding_ids.len);
     try std.testing.expectEqual(@as(usize, 0), out.bound_finding_ids.len);
     try std.testing.expectEqual(@as(usize, 0), out.islands.len);
@@ -5181,7 +5181,7 @@ test "convert: self-closing HTML void tags in views and layouts become SuperHTML
     for ([_]Kind{ .view, .layout }) |kind| {
         const out = try convert(gpa, .{ .routes = &.{}, .assets = &.{}, .fragments = &.{}, .findings = &.{}, .layout_stem = null }, mkTemplate("app/views/pages/about.html.erb", &nodes), kind);
         defer freeOutput(gpa, out);
-        try std.testing.expect(std.mem.indexOf(u8, out.bytes, "<p>hi<br>there</p><hr ><img alt=\"a > b\" src=\"/x\" >") != null);
+        try std.testing.expect(std.mem.find(u8, out.bytes, "<p>hi<br>there</p><hr ><img alt=\"a > b\" src=\"/x\" >") != null);
     }
 }
 

@@ -27,7 +27,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 pub const Summary = struct {
-    entries: std.ArrayListUnmanaged(Entry) = .empty,
+    entries: std.ArrayList(Entry) = .empty,
 
     pub const Entry = struct {
         category: Category,

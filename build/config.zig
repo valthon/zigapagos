@@ -85,7 +85,7 @@ fn gitCommit(b: *std.Build) []const u8 {
 // Adapted from ZigBase 9bd78289. Missing files must also invalidate configure:
 // this compiler cannot hash an absent file, so track its nearest existing parent.
 fn trackMissing(b: *std.Build, path: []const u8) void {
-    var parent = std.fs.path.dirname(path) orelse ".";
+    var parent = std.Io.Dir.path.dirname(path) orelse ".";
     while (true) {
         if (std.Io.Dir.cwd().openDir(b.graph.io, parent, .{})) |opened| {
             var dir = opened;
@@ -93,7 +93,7 @@ fn trackMissing(b: *std.Build, path: []const u8) void {
             b.dependOnDirectoryContents(b.graph.cwdRelativePath(parent));
             return;
         } else |_| {}
-        parent = std.fs.path.dirname(parent) orelse return;
+        parent = std.Io.Dir.path.dirname(parent) orelse return;
     }
 }
 
@@ -123,13 +123,13 @@ fn gitCommitFromFs(b: *std.Build) ?[]const u8 {
         const trimmed = std.mem.trim(u8, contents, " \t\r\n");
         if (!std.mem.startsWith(u8, trimmed, "gitdir:")) return null;
         const path = std.mem.trim(u8, trimmed[7..], " \t\r\n");
-        break :blk if (std.fs.path.isAbsolute(path)) path else b.fmt("{s}/{s}", .{ root, path });
+        break :blk if (std.Io.Dir.path.isAbsolute(path)) path else b.fmt("{s}/{s}", .{ root, path });
     };
     _ = readGitFile(b, b.fmt("{s}/gitdir", .{git_dir})) catch "";
     const common_dir = blk: {
         const cd = readGitFile(b, b.fmt("{s}/commondir", .{git_dir})) catch break :blk git_dir;
         const trimmed = std.mem.trim(u8, cd, " \t\r\n");
-        break :blk if (std.fs.path.isAbsolute(trimmed)) trimmed else b.fmt("{s}/{s}", .{ git_dir, trimmed });
+        break :blk if (std.Io.Dir.path.isAbsolute(trimmed)) trimmed else b.fmt("{s}/{s}", .{ git_dir, trimmed });
     };
     const head = readGitFile(b, b.fmt("{s}/HEAD", .{git_dir})) catch return null;
     const trimmed = std.mem.trim(u8, head, " \t\r\n");
@@ -142,7 +142,7 @@ fn gitCommitFromFs(b: *std.Build) ?[]const u8 {
         } else |_| {}
         var lines = std.mem.tokenizeScalar(u8, packed_refs, '\n');
         while (lines.next()) |line| {
-            const space = std.mem.indexOfScalar(u8, line, ' ') orelse continue;
+            const space = std.mem.findScalar(u8, line, ' ') orelse continue;
             if (std.mem.eql(u8, line[space + 1 ..], ref)) break :blk line[0..space];
         }
         return null;

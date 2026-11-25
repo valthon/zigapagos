@@ -19,8 +19,8 @@ pub const Fmt = struct {
 
     pub fn format(f: Fmt, w: *std.Io.Writer) std.Io.Writer.Error!void {
         const d = f.diag;
-        const src = if (d.opts.delimiter == .none) f.src else f.src[0..(std.mem.indexOfPos(u8, f.src, @min(3, f.src.len), "\n---") orelse f.src.len)];
-        if (std.mem.indexOfScalar(u8, src, '\r') != null) {
+        const src = if (d.opts.delimiter == .none) f.src else f.src[0..(std.mem.findPos(u8, f.src, @min(3, f.src.len), "\n---") orelse f.src.len)];
+        if (std.mem.findScalar(u8, src, '\r') != null) {
             try w.print("{s}: error: Ziggy 0.3.0 rejects carriage returns; run `python3 scripts/upgrade-ziggy.py .` to convert config and frontmatter to LF\n", .{d.path orelse "<stdin>"});
             return;
         }

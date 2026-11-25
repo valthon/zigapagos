@@ -168,7 +168,7 @@ pub const Command = struct {
         var data_dir: []const u8 = default_data_dir;
         var zigbase_path: ?[]const u8 = null;
         var no_download = false;
-        var zigbase_args: std.ArrayListUnmanaged([]const u8) = .empty;
+        var zigbase_args: std.ArrayList([]const u8) = .empty;
         var ready_path: []const u8 = "/";
         var ready_path_explicit = false;
         var url_path_prefix: ?[]const u8 = null;
@@ -178,7 +178,7 @@ pub const Command = struct {
         var debounce: u16 = 25;
         var live_reload = true;
         var reload_port: u16 = 0;
-        var watch_dirs: std.ArrayListUnmanaged([]const u8) = .empty;
+        var watch_dirs: std.ArrayList([]const u8) = .empty;
         var rebuild_argv: ?[]const []const u8 = null;
         var background = false;
         var force = false;
@@ -440,7 +440,7 @@ pub fn dev(
     const loaded = root.Config.load(io, gpa);
     var cfg = loaded[0];
     const base_dir_path = loaded[1];
-    var dirs_to_watch: std.ArrayListUnmanaged([:0]const u8) = .empty;
+    var dirs_to_watch: std.ArrayList([:0]const u8) = .empty;
 
     // Incremental rebuild classification. The watcher itself
     // only signals "something changed"; on each signal we re-derive WHICH files
@@ -458,9 +458,9 @@ pub fn dev(
     // A change fully localizable to content pages and/or manifest-known island
     // sources is the incremental fast path; everything else falls back to the
     // rebuild.
-    var content_roots: std.ArrayListUnmanaged(ContentRoot) = .empty;
-    var other_roots: std.ArrayListUnmanaged([]const u8) = .empty;
-    var island_roots: std.ArrayListUnmanaged(ContentRoot) = .empty;
+    var content_roots: std.ArrayList(ContentRoot) = .empty;
+    var other_roots: std.ArrayList([]const u8) = .empty;
+    var island_roots: std.ArrayList(ContentRoot) = .empty;
     try appendOtherRoot(gpa, &other_roots, base_dir_path, cfg.getAssetsDirPath());
     try appendOtherRoot(gpa, &other_roots, base_dir_path, cfg.getLayoutsDirPath());
     try appendWatchDir(gpa, &dirs_to_watch, base_dir_path, cfg.getAssetsDirPath());
@@ -475,7 +475,7 @@ pub fn dev(
     // accessibility pre-check below fatals on an unwatchable dir — so appending it
     // unconditionally would break `dev` for every site without a data dir.
     {
-        const data_abs = std.fs.path.join(gpa, &.{ base_dir_path, cfg.getDataDirPath() }) catch fatal.oom();
+        const data_abs = std.Io.Dir.path.join(gpa, &.{ base_dir_path, cfg.getDataDirPath() }) catch fatal.oom();
         defer gpa.free(data_abs);
         if (Io.Dir.cwd().access(io, data_abs, .{})) |_| {
             try appendOtherRoot(gpa, &other_roots, base_dir_path, cfg.getDataDirPath());
@@ -524,8 +524,8 @@ pub fn dev(
 
     // The served tree and the data dir must live OUTSIDE every watched dir,
     // or each rebuild / db write would retrigger the watcher forever.
-    const site_abs = std.fs.path.resolve(gpa, &.{ base_dir_path, cmd.site }) catch fatal.oom();
-    const data_dir_abs = std.fs.path.resolve(gpa, &.{ base_dir_path, cmd.data_dir }) catch fatal.oom();
+    const site_abs = std.Io.Dir.path.resolveAlloc(gpa, &.{ base_dir_path, cmd.site }) catch fatal.oom();
+    const data_dir_abs = std.Io.Dir.path.resolveAlloc(gpa, &.{ base_dir_path, cmd.data_dir }) catch fatal.oom();
     for (dirs_to_watch.items) |d| {
         if (pathIsInside(d, site_abs)) fatal.msg(
             "error: dev: the output tree '{s}' is inside the watched dir '{s}' — every rebuild would retrigger the watcher.\n" ++
@@ -552,7 +552,7 @@ pub fn dev(
         release_cli.applyUrlPathPrefix(&cfg, prefix);
         environ_map.put(release_cli.url_path_prefix_env, prefix) catch fatal.oom();
     }
-    const staging_root_abs = std.fs.path.join(gpa, &.{ data_dir_abs, ".served-root" }) catch fatal.oom();
+    const staging_root_abs = std.Io.Dir.path.join(gpa, &.{ data_dir_abs, ".served-root" }) catch fatal.oom();
     // Readiness probe path + banner URL: default to "/<prefix>/" so both
     // land on a page the staged root actually serves, unless the caller
     // overrode --ready-path= explicitly (see `Command.ready_path_explicit`'s
@@ -623,7 +623,7 @@ pub fn dev(
     // (unwatched) data dir. Set once for the whole session: EVERY disk build
     // (initial, full, incremental) refreshes it, and classifyChange reads it
     // to map island-source edits to the pages that mount them.
-    const island_manifest_path = std.fs.path.join(
+    const island_manifest_path = std.Io.Dir.path.join(
         gpa,
         &.{ data_dir_abs, "islands-manifest.json" },
     ) catch fatal.oom();
@@ -694,7 +694,7 @@ pub fn dev(
     const reload_server: *reload.Server = gpa.create(reload.Server) catch fatal.oom();
     reload_server.* = .init(io, gpa, reload_addr);
     if (!cmd.ignore_lock) {
-        const events_path = std.fs.path.join(gpa, &.{ data_dir_abs, "dev.ndjson" }) catch fatal.oom();
+        const events_path = std.Io.Dir.path.join(gpa, &.{ data_dir_abs, "dev.ndjson" }) catch fatal.oom();
         defer gpa.free(events_path);
         reload_server.events_file = Io.Dir.cwd().createFile(io, events_path, .{ .truncate = true }) catch |err|
             fatal.msg("error: dev: unable to open structured log: {s}\n", .{@errorName(err)});
@@ -759,7 +759,7 @@ pub fn dev(
     );
 
     // (4) Boot `zigbase serve` over the release tree.
-    var zb_argv: std.ArrayListUnmanaged([]const u8) = .empty;
+    var zb_argv: std.ArrayList([]const u8) = .empty;
     try zb_argv.append(gpa, located.path);
     for (cmd.zigbase_args) |template| try zb_argv.append(
         gpa,
@@ -852,7 +852,7 @@ pub fn dev(
     // Loop rebuilds capture stdout+stderr here instead of streaming, so the
     // status endpoint can carry a failure's tail; the initial build above
     // still streams (capture_path = null).
-    const capture_path = std.fs.path.join(gpa, &.{ data_dir_abs, "last-build.log" }) catch fatal.oom();
+    const capture_path = std.Io.Dir.path.join(gpa, &.{ data_dir_abs, "last-build.log" }) catch fatal.oom();
     var buf: [64]Event = undefined;
     var channel: Channel(Event) = .init(&buf);
     var debouncer: Debouncer = .{
@@ -1140,11 +1140,11 @@ fn freeIncremental(gpa: Allocator, inc: Incremental) void {
 /// Records `base/rel` (deduplicated) as a page-content root.
 fn appendContentRoot(
     gpa: Allocator,
-    roots: *std.ArrayListUnmanaged(ContentRoot),
+    roots: *std.ArrayList(ContentRoot),
     base_dir_path: []const u8,
     rel: []const u8,
 ) error{OutOfMemory}!void {
-    const abs = try std.fs.path.join(gpa, &.{ base_dir_path, rel });
+    const abs = try std.Io.Dir.path.join(gpa, &.{ base_dir_path, rel });
     for (roots.items) |r| if (std.mem.eql(u8, r.abs, abs)) {
         gpa.free(abs);
         return;
@@ -1156,11 +1156,11 @@ fn appendContentRoot(
 /// full rebuild" root (layouts, assets, i18n, island/SPA source dirs).
 fn appendOtherRoot(
     gpa: Allocator,
-    roots: *std.ArrayListUnmanaged([]const u8),
+    roots: *std.ArrayList([]const u8),
     base_dir_path: []const u8,
     rel: []const u8,
 ) error{OutOfMemory}!void {
-    const abs = try std.fs.path.join(gpa, &.{ base_dir_path, rel });
+    const abs = try std.Io.Dir.path.join(gpa, &.{ base_dir_path, rel });
     for (roots.items) |r| if (std.mem.eql(u8, r, abs)) {
         gpa.free(abs);
         return;
@@ -1227,7 +1227,7 @@ fn classifyChange(
     // filter; helpers and SPA sources land here too) as a base-relative
     // '/'-separated path — the same string space as the manifest's island keys
     // (both are website-root-relative).
-    var island_files: std.ArrayListUnmanaged([]const u8) = .empty;
+    var island_files: std.ArrayList([]const u8) = .empty;
     defer {
         for (island_files.items) |p| gpa.free(p);
         island_files.deinit(gpa);
@@ -1271,14 +1271,14 @@ fn classifyChange(
     }
 
     // Deduplicating page set (an edited page may ALSO mount an edited island).
-    var pages: std.StringArrayHashMapUnmanaged(void) = .empty;
+    var pages: std.array_hash_map.String(void) = .empty;
 
     // AUD-035: the per-file mounting-page counts, parallel to
     // `island_files.items`. Collected during resolution but NOT logged until
     // this call commits to `.incremental` below — a resolution the content-file
     // walk (or the empty-set check) later discards must leave no "island source
     // X -> N mounting page(s)" line claiming an incremental rebuild happened.
-    var mount_counts: std.ArrayListUnmanaged(usize) = .empty;
+    var mount_counts: std.ArrayList(usize) = .empty;
     defer mount_counts.deinit(gpa);
 
     if (island_files.items.len > 0) {
@@ -1347,7 +1347,7 @@ fn classifyChange(
     // never matches and the hot-swap silently falls back to a full reload.
     const island_modules: []const []const u8 = blk: {
         if (island_files.items.len == 0) break :blk &.{};
-        var mods: std.ArrayListUnmanaged([]const u8) = .empty;
+        var mods: std.ArrayList([]const u8) = .empty;
         for (island_files.items) |cf| mods.append(
             gpa,
             islandModuleUrl(gpa, url_path_prefix, moduleStem(cf)),
@@ -1398,8 +1398,8 @@ fn nextWalkEntry(
 /// (`./B.island`, `../c/B.island.tsx`, …), extension or not.
 fn moduleStem(path: []const u8) []const u8 {
     var name = path;
-    if (std.mem.lastIndexOfScalar(u8, name, '/')) |slash| name = name[slash + 1 ..];
-    if (std.mem.lastIndexOfScalar(u8, name, '.')) |dot| name = name[0..dot];
+    if (std.mem.findScalarLast(u8, name, '/')) |slash| name = name[slash + 1 ..];
+    if (std.mem.findScalarLast(u8, name, '.')) |dot| name = name[0..dot];
     return name;
 }
 
@@ -1467,7 +1467,7 @@ fn islandModuleUrl(gpa: Allocator, url_prefix: []const u8, stem: []const u8) []c
 /// True for files the island/SPA bundler can import (the only files whose
 /// imports can pull a changed island entry into ANOTHER bundle).
 fn isScriptFile(path: []const u8) bool {
-    const ext = std.fs.path.extension(path);
+    const ext = std.Io.Dir.path.extension(path);
     const script_exts = [_][]const u8{
         ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts",
     };
@@ -1529,13 +1529,13 @@ fn otherWatchedSourceReferences(
 /// contain any changed file's module stem?
 fn anyStemReferenced(text: []const u8, changed_files: []const []const u8) bool {
     for (changed_files) |cf| {
-        if (std.mem.indexOf(u8, text, moduleStem(cf)) != null) return true;
+        if (std.mem.find(u8, text, moduleStem(cf)) != null) return true;
     }
     return false;
 }
 
 /// Frees a partially-built page set (keys + storage) on a `.full` bail-out.
-fn freePageSet(gpa: Allocator, pages: *std.StringArrayHashMapUnmanaged(void)) void {
+fn freePageSet(gpa: Allocator, pages: *std.array_hash_map.String(void)) void {
     for (pages.keys()) |k| gpa.free(k);
     pages.deinit(gpa);
 }
@@ -1556,8 +1556,8 @@ fn resolveIslandPages(
     gpa: Allocator,
     manifest_path: []const u8,
     changed_files: []const []const u8,
-    pages: *std.StringArrayHashMapUnmanaged(void),
-    mount_counts: *std.ArrayListUnmanaged(usize),
+    pages: *std.array_hash_map.String(void),
+    mount_counts: *std.ArrayList(usize),
 ) bool {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
@@ -1595,7 +1595,7 @@ fn islandPagesFromManifest(
     gpa: Allocator,
     parsed: *const islands_manifest.Json,
     changed_files: []const []const u8,
-    pages: *std.StringArrayHashMapUnmanaged(void),
+    pages: *std.array_hash_map.String(void),
 ) error{OutOfMemory}!bool {
     for (changed_files) |cf| {
         const mounts = parsed.islands.map.get(cf) orelse return false;
@@ -1613,7 +1613,7 @@ fn islandPagesFromManifest(
 /// backslash separators in `entry_path` are normalized to '/'.
 fn relPagePath(gpa: Allocator, rel_prefix: []const u8, entry_path: []const u8) []const u8 {
     const out = gpa.print("{s}/{s}", .{ rel_prefix, entry_path }) catch fatal.oom();
-    if (std.fs.path.sep != '/') std.mem.replaceScalar(u8, out, std.fs.path.sep, '/');
+    if (std.Io.Dir.path.sep != '/') std.mem.replaceScalar(u8, out, std.Io.Dir.path.sep, '/');
     return out;
 }
 
@@ -1673,7 +1673,7 @@ fn defaultRebuildArgv(
     gpa: Allocator,
     site: []const u8,
 ) error{OutOfMemory}!Argv {
-    var items: std.ArrayListUnmanaged([]const u8) = .empty;
+    var items: std.ArrayList([]const u8) = .empty;
     errdefer {
         for (items.items) |it| gpa.free(it);
         items.deinit(gpa);
@@ -1722,7 +1722,7 @@ fn discoverWatchDirs(
     gpa: Allocator,
     base_dir_path: []const u8,
 ) error{OutOfMemory}![]const []const u8 {
-    var dirs: std.ArrayListUnmanaged([]const u8) = .empty;
+    var dirs: std.ArrayList([]const u8) = .empty;
     errdefer {
         for (dirs.items) |d| gpa.free(d);
         dirs.deinit(gpa);
@@ -1738,7 +1738,7 @@ fn discoverWatchDirs(
         for (entries) |e| {
             // `dirname` is null for a bare basename, i.e. an entry at the scan
             // root — the one case that must NOT be watched (see above).
-            const parent = std.fs.path.dirname(e) orelse continue;
+            const parent = std.Io.Dir.path.dirname(e) orelse continue;
             if (parent.len == 0 or std.mem.eql(u8, parent, ".")) continue;
             for (dirs.items) |d| {
                 if (std.mem.eql(u8, d, parent)) break;
@@ -1752,11 +1752,11 @@ fn discoverWatchDirs(
 /// because the macOS watcher needs sentinel paths.
 fn appendWatchDir(
     gpa: Allocator,
-    dirs: *std.ArrayListUnmanaged([:0]const u8),
+    dirs: *std.ArrayList([:0]const u8),
     base_dir_path: []const u8,
     dir: []const u8,
 ) error{OutOfMemory}!void {
-    const candidate = try std.fs.path.joinZ(gpa, &.{ base_dir_path, dir });
+    const candidate = try std.Io.Dir.path.joinZ(gpa, &.{ base_dir_path, dir });
     for (dirs.items) |d| if (std.mem.eql(u8, d, candidate)) {
         gpa.free(candidate);
         return;
@@ -1773,7 +1773,7 @@ fn pathIsInside(dir: []const u8, path: []const u8) bool {
     if (std.mem.eql(u8, dir, path)) return true;
     if (path.len <= dir.len) return false;
     if (!std.mem.startsWith(u8, path, dir)) return false;
-    return dir[dir.len - 1] == std.fs.path.sep or path[dir.len] == std.fs.path.sep;
+    return dir[dir.len - 1] == std.Io.Dir.path.sep or path[dir.len] == std.Io.Dir.path.sep;
 }
 
 pub const RebuildResult = struct { ok: bool, duration_ms: u64, error_tail: ?[]u8 = null };
@@ -2015,7 +2015,7 @@ test "dev rebuild default is this binary's own release into --site" {
     const argv = try defaultRebuildArgv(std.testing.io, gpa, "out/site");
     defer argv.deinit(gpa);
     try std.testing.expectEqual(@as(usize, 4), argv.items.len);
-    try std.testing.expect(std.fs.path.isAbsolute(argv.items[0]));
+    try std.testing.expect(std.Io.Dir.path.isAbsolute(argv.items[0]));
     try std.testing.expectEqualStrings("release", argv.items[1]);
     try std.testing.expectEqualStrings("--output=out/site", argv.items[2]);
     try std.testing.expectEqualStrings("--force", argv.items[3]);
@@ -2069,7 +2069,7 @@ test "dev relPagePath joins with '/' and matches the render pass's source format
 
 test "dev appendContentRoot / appendOtherRoot deduplicate" {
     const gpa = std.testing.allocator;
-    var croots: std.ArrayListUnmanaged(ContentRoot) = .empty;
+    var croots: std.ArrayList(ContentRoot) = .empty;
     defer {
         for (croots.items) |r| gpa.free(r.abs);
         croots.deinit(gpa);
@@ -2080,7 +2080,7 @@ test "dev appendContentRoot / appendOtherRoot deduplicate" {
     try std.testing.expectEqualStrings("/site/content", croots.items[0].abs);
     try std.testing.expectEqualStrings("content", croots.items[0].rel);
 
-    var oroots: std.ArrayListUnmanaged([]const u8) = .empty;
+    var oroots: std.ArrayList([]const u8) = .empty;
     defer {
         for (oroots.items) |r| gpa.free(r);
         oroots.deinit(gpa);
@@ -2105,7 +2105,7 @@ test "dev island manifest: changed island resolves to its mounting pages (dedupe
         \\  "components/Hero.island.tsx":["content/b.smd","content/c.smd"]}}
     );
 
-    var pages: std.StringArrayHashMapUnmanaged(void) = .empty;
+    var pages: std.array_hash_map.String(void) = .empty;
     defer freePageSet(gpa, &pages);
     const ok = try islandPagesFromManifest(gpa, &parsed, &.{
         "components/Counter.island.tsx",
@@ -2129,7 +2129,7 @@ test "dev island manifest: unknown changed file forces a full rebuild" {
         \\{"version":1,"islands":{"components/Counter.island.tsx":["content/a.smd"]}}
     );
 
-    var pages: std.StringArrayHashMapUnmanaged(void) = .empty;
+    var pages: std.array_hash_map.String(void) = .empty;
     defer freePageSet(gpa, &pages);
     // A helper module (or a brand-new island) is not a manifest key: the whole
     // change set is unresolvable, even though the first file IS known.
@@ -2234,16 +2234,16 @@ test "dev isNewer treats an mtime-preserving write as changed via ctime (AUD-017
 
 test "dev freeIncremental releases pages and island modules" {
     const gpa = std.testing.allocator;
-    var pages: std.ArrayListUnmanaged([]const u8) = .empty;
+    var pages: std.ArrayList([]const u8) = .empty;
     try pages.append(gpa, try gpa.dupe(u8, "content/a.md"));
-    var mods: std.ArrayListUnmanaged([]const u8) = .empty;
+    var mods: std.ArrayList([]const u8) = .empty;
     try mods.append(gpa, try gpa.dupe(u8, "/islands/A.js"));
     freeIncremental(gpa, .{
         .pages = try pages.toOwnedSlice(gpa),
         .island_modules = try mods.toOwnedSlice(gpa),
     });
     // The default (static empty) island_modules slice must also be safe.
-    var only_pages: std.ArrayListUnmanaged([]const u8) = .empty;
+    var only_pages: std.ArrayList([]const u8) = .empty;
     try only_pages.append(gpa, try gpa.dupe(u8, "content/b.md"));
     freeIncremental(gpa, .{ .pages = try only_pages.toOwnedSlice(gpa) });
 }
@@ -2307,13 +2307,13 @@ test "dev SPA fallback failures do not terminate the session and can recover" {
         const io = std.testing.io;
         var tmp = std.testing.tmpDir(.{ .iterate = true });
         defer tmp.cleanup();
-        var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+        var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
         const abs = path_buf[0..try tmp.dir.realPath(io, &path_buf)];
         const quiet = try SilencedStderr.begin(io);
         defer quiet.end(io);
         // Opening a file as the output directory must report and return.
         try tmp.dir.writeFile(io, .{ .sub_path = "not-a-dir", .data = "" });
-        const bad_path = try std.fs.path.join(std.testing.allocator, &.{ abs, "not-a-dir" });
+        const bad_path = try std.Io.Dir.path.join(std.testing.allocator, &.{ abs, "not-a-dir" });
         defer std.testing.allocator.free(bad_path);
         prepareSpaFallbacks(io, bad_path);
         // A directory at .spa forces marker creation to fail, even as root.
@@ -2346,7 +2346,7 @@ test "dev dirHasChangeSince: a walk it cannot finish answers 'changed', not 'unc
         sub.close(io);
         try tmp.dir.writeFile(io, .{ .sub_path = "partials/nav.html", .data = "<nav/>" });
 
-        var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+        var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
         const abs = path_buf[0..try tmp.dir.realPath(io, &path_buf)];
 
         // Nothing in the tree is newer than this cutoff, so a COMPLETED walk
@@ -2416,7 +2416,7 @@ test "dev rebuild result carries duration and failure tail" {
     defer tmp.cleanup();
     const capture = try tmp.dir.realPathFileAlloc(io, ".", gpa);
     defer gpa.free(capture);
-    const capture_path = try std.fs.path.join(gpa, &.{ capture, "last-build.log" });
+    const capture_path = try std.Io.Dir.path.join(gpa, &.{ capture, "last-build.log" });
     defer gpa.free(capture_path);
 
     var environ: std.process.Environ.Map = .init(gpa);
@@ -2427,7 +2427,7 @@ test "dev rebuild result carries duration and failure tail" {
     defer if (bad.error_tail) |t| gpa.free(t);
     try std.testing.expect(!bad.ok);
     try std.testing.expect(bad.error_tail != null);
-    try std.testing.expect(std.mem.indexOf(u8, bad.error_tail.?, "doomed") != null);
+    try std.testing.expect(std.mem.find(u8, bad.error_tail.?, "doomed") != null);
 
     // A succeeding command yields ok=true and no tail.
     const good = runRebuild(io, gpa, &.{ "/bin/sh", "-c", "exit 0" }, &environ, capture_path);
@@ -2470,7 +2470,7 @@ test "dev rebuild: a stale capture file is never replayed when the capture canno
 
     const dir_abs = try capdir.realPathFileAlloc(io, ".", gpa);
     defer gpa.free(dir_abs);
-    const capture_path = try std.fs.path.join(gpa, &.{ dir_abs, "last-build.log" });
+    const capture_path = try std.Io.Dir.path.join(gpa, &.{ dir_abs, "last-build.log" });
     defer gpa.free(capture_path);
 
     // Verify the fixture actually reproduces the failure this test relies

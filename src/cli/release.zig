@@ -251,9 +251,9 @@ fn releaseInner(
     const host_output_path = if (cmd.output_dir_path) |path|
         try gpa.dupe(u8, path)
     else
-        try std.fs.path.join(gpa, &.{ base_dir_path, "public" });
+        try std.Io.Dir.path.join(gpa, &.{ base_dir_path, "public" });
     defer gpa.free(host_output_path);
-    const csp_metadata_path = try std.fs.path.join(gpa, &.{ host_output_path, "csp-sources.json" });
+    const csp_metadata_path = try std.Io.Dir.path.join(gpa, &.{ host_output_path, "csp-sources.json" });
     defer gpa.free(csp_metadata_path);
     const had_csp_metadata = if (Io.Dir.cwd().access(io, csp_metadata_path, .{})) true else |err| switch (err) {
         error.FileNotFound => false,
@@ -276,7 +276,7 @@ fn releaseInner(
         }
     }
     if (rt_defaults) |rt| if (cmd.islands.len > 0 or cmd.spas.len > 0 or cfg.getCspExtraSources().len > 0 or had_csp_metadata) {
-        const report_dir = try std.fs.path.join(gpa, &.{ base_dir_path, bundle_cache_path });
+        const report_dir = try std.Io.Dir.path.join(gpa, &.{ base_dir_path, bundle_cache_path });
         defer gpa.free(report_dir);
         // Static sites with CSP declarations never run bundleClient, which
         // normally creates this directory. The report must work independently.
@@ -284,7 +284,7 @@ fn releaseInner(
             "error: host-config report directory '{s}': {t}\n",
             .{ report_dir, err },
         );
-        const report_path = try std.fs.path.join(gpa, &.{ report_dir, "host-config-report.json" });
+        const report_path = try std.Io.Dir.path.join(gpa, &.{ report_dir, "host-config-report.json" });
         defer gpa.free(report_path);
         const csp_sources = try std.json.Stringify.valueAlloc(gpa, cfg.getCspExtraSources(), .{});
         defer gpa.free(csp_sources);
@@ -352,7 +352,7 @@ fn missingSpaClientAsset(
 }
 
 fn hasBuildAssetInstallPath(
-    assets: *const std.StringArrayHashMapUnmanaged(BuildAsset),
+    assets: *const std.array_hash_map.String(BuildAsset),
     wanted: []const u8,
 ) bool {
     for (assets.values()) |asset| {
@@ -389,7 +389,7 @@ fn validateSpaClientAssets(gpa: Allocator, cmd: *Command) void {
 }
 
 fn markBuildAssetReferencedByInstallPath(
-    assets: *std.StringArrayHashMapUnmanaged(BuildAsset),
+    assets: *std.array_hash_map.String(BuildAsset),
     wanted: []const u8,
 ) void {
     for (assets.values()) |*asset| {
@@ -440,7 +440,7 @@ fn parseChangedFiles(
     environ_map: *const std.process.Environ.Map,
 ) []const []const u8 {
     const raw = environ_map.get(changed_files_env) orelse return &.{};
-    var list: std.ArrayListUnmanaged([]const u8) = .empty;
+    var list: std.ArrayList([]const u8) = .empty;
     var it = std.mem.splitScalar(u8, raw, '\n');
     while (it.next()) |line| {
         const trimmed = std.mem.trim(u8, line, " \t\r");
@@ -452,7 +452,7 @@ fn parseChangedFiles(
 
 pub const Command = struct {
     output_dir_path: ?[]const u8,
-    build_assets: std.StringArrayHashMapUnmanaged(BuildAsset),
+    build_assets: std.array_hash_map.String(BuildAsset),
     drafts: bool,
     force: bool,
     bun_path: ?[]const u8,
@@ -530,14 +530,14 @@ pub const Command = struct {
 
     pub fn parse(gpa: Allocator, args: []const []const u8) !Command {
         var output_dir_path: ?[]const u8 = null;
-        var build_assets: std.StringArrayHashMapUnmanaged(BuildAsset) = .empty;
+        var build_assets: std.array_hash_map.String(BuildAsset) = .empty;
         errdefer build_assets.deinit(gpa);
         var drafts = false;
         var force = false;
         var bun_path: ?[]const u8 = null;
         var island_sidecar: ?[]const u8 = null;
         var island_src_dir: ?[]const u8 = null;
-        var islands: std.ArrayListUnmanaged([]const u8) = .empty;
+        var islands: std.ArrayList([]const u8) = .empty;
         errdefer islands.deinit(gpa);
         var island_runtime_entry: ?[]const u8 = null;
         var island_bundle_driver: ?[]const u8 = null;
@@ -545,7 +545,7 @@ pub const Command = struct {
         var css_minify = false;
         var island_props_check: @import("../islands/props_check.zig").Mode = .err;
         var islands_slice: ?[]const u8 = null;
-        var spas: std.ArrayListUnmanaged(root.SpaSpec) = .empty;
+        var spas: std.ArrayList(root.SpaSpec) = .empty;
         errdefer spas.deinit(gpa);
         var spa_not_found: ?[]const u8 = null;
         var allow_missing_pages = false;
@@ -607,7 +607,7 @@ pub const Command = struct {
                 // declared base, which `spa.zig` treats as "skip the agreement
                 // check" and take the module's own.
                 const v = arg["--spa=".len..];
-                if (std.mem.indexOfScalar(u8, v, '|')) |i| {
+                if (std.mem.findScalar(u8, v, '|')) |i| {
                     try spas.append(gpa, .{ .src = v[0..i], .base = v[i + 1 ..] });
                 } else {
                     try spas.append(gpa, .{ .src = v, .base = "" });
@@ -843,33 +843,33 @@ pub const RuntimeDefaults = struct {
 pub fn runtimeDefaults(gpa: Allocator, dir: []const u8) Allocator.Error!RuntimeDefaults {
     // Every join is `errdefer`-guarded in declaration order so a failure part-way
     // through frees exactly what was built, rather than leaking the prefix.
-    const css_minify_driver = try std.fs.path.join(gpa, &.{ dir, "sidecar", "minify-css.ts" });
+    const css_minify_driver = try std.Io.Dir.path.join(gpa, &.{ dir, "sidecar", "minify-css.ts" });
     errdefer gpa.free(css_minify_driver);
-    const sidecar = try std.fs.path.join(gpa, &.{ dir, "sidecar", "standalone.ts" });
+    const sidecar = try std.Io.Dir.path.join(gpa, &.{ dir, "sidecar", "standalone.ts" });
     errdefer gpa.free(sidecar);
-    const runtime_entry = try std.fs.path.join(gpa, &.{ dir, "src", "browser-entry.ts" });
+    const runtime_entry = try std.Io.Dir.path.join(gpa, &.{ dir, "src", "browser-entry.ts" });
     errdefer gpa.free(runtime_entry);
-    const bundle_driver = try std.fs.path.join(gpa, &.{ dir, "sidecar", "bundle-island.ts" });
+    const bundle_driver = try std.Io.Dir.path.join(gpa, &.{ dir, "sidecar", "bundle-island.ts" });
     errdefer gpa.free(bundle_driver);
-    const spa_bundle_driver = try std.fs.path.join(gpa, &.{ dir, "sidecar", "bundle-standalone.ts" });
+    const spa_bundle_driver = try std.Io.Dir.path.join(gpa, &.{ dir, "sidecar", "bundle-standalone.ts" });
     errdefer gpa.free(spa_bundle_driver);
-    const spa_runtime_driver = try std.fs.path.join(gpa, &.{ dir, "scripts", "build-spa-runtime.ts" });
+    const spa_runtime_driver = try std.Io.Dir.path.join(gpa, &.{ dir, "scripts", "build-spa-runtime.ts" });
     errdefer gpa.free(spa_runtime_driver);
-    const spa_entry = try std.fs.path.join(gpa, &.{ dir, "src", "spa-entry.ts" });
+    const spa_entry = try std.Io.Dir.path.join(gpa, &.{ dir, "src", "spa-entry.ts" });
     errdefer gpa.free(spa_entry);
-    const host_module = try std.fs.path.join(gpa, &.{ dir, "src", "host.ts" });
+    const host_module = try std.Io.Dir.path.join(gpa, &.{ dir, "src", "host.ts" });
     errdefer gpa.free(host_module);
-    const ssr_env_module = try std.fs.path.join(gpa, &.{ dir, "src", "ssr-env.ts" });
+    const ssr_env_module = try std.Io.Dir.path.join(gpa, &.{ dir, "src", "ssr-env.ts" });
     errdefer gpa.free(ssr_env_module);
-    const islands_runtime_driver = try std.fs.path.join(gpa, &.{ dir, "scripts", "build-islands-runtime.ts" });
+    const islands_runtime_driver = try std.Io.Dir.path.join(gpa, &.{ dir, "scripts", "build-islands-runtime.ts" });
     errdefer gpa.free(islands_runtime_driver);
-    const islands_module = try std.fs.path.join(gpa, &.{ dir, "src", "islands.ts" });
+    const islands_module = try std.Io.Dir.path.join(gpa, &.{ dir, "src", "islands.ts" });
     errdefer gpa.free(islands_module);
-    const index_module = try std.fs.path.join(gpa, &.{ dir, "src", "index.ts" });
+    const index_module = try std.Io.Dir.path.join(gpa, &.{ dir, "src", "index.ts" });
     errdefer gpa.free(index_module);
-    const jsx_module = try std.fs.path.join(gpa, &.{ dir, "src", "jsx-runtime.ts" });
+    const jsx_module = try std.Io.Dir.path.join(gpa, &.{ dir, "src", "jsx-runtime.ts" });
     errdefer gpa.free(jsx_module);
-    const host_config_emitter = try std.fs.path.join(gpa, &.{ dir, "scripts", "emit-host-config.ts" });
+    const host_config_emitter = try std.Io.Dir.path.join(gpa, &.{ dir, "scripts", "emit-host-config.ts" });
     return .{
         .css_minify_driver = css_minify_driver,
         .sidecar = sidecar,
@@ -942,7 +942,7 @@ pub fn discoverEntries(
     src_dir: []const u8,
     suffix: []const u8,
 ) Allocator.Error![]const []const u8 {
-    var found: std.ArrayListUnmanaged([]const u8) = .empty;
+    var found: std.ArrayList([]const u8) = .empty;
     errdefer {
         for (found.items) |p| gpa.free(p);
         found.deinit(gpa);
@@ -1010,8 +1010,8 @@ pub const hot_islands_env = "ZIGAPAGOS_HOT_ISLANDS";
 /// pins the two against each other — a drift here is a 404 on every island.
 fn bundleName(src: []const u8) []const u8 {
     var name = src;
-    if (std.mem.lastIndexOfScalar(u8, name, '/')) |slash| name = name[slash + 1 ..];
-    if (std.mem.lastIndexOfScalar(u8, name, '.')) |dot| name = name[0..dot];
+    if (std.mem.findScalarLast(u8, name, '/')) |slash| name = name[slash + 1 ..];
+    if (std.mem.findScalarLast(u8, name, '.')) |dot| name = name[0..dot];
     return name;
 }
 
@@ -1111,7 +1111,7 @@ fn bundleClient(
     const bun_path = cmd.bun_path orelse "bun";
     const src_dir = cmd.island_src_dir orelse ".";
 
-    const cache_abs = try std.fs.path.resolve(gpa, &.{ base_dir_path, bundle_cache_path });
+    const cache_abs = try std.Io.Dir.path.resolveAlloc(gpa, &.{ base_dir_path, bundle_cache_path });
     Io.Dir.cwd().deleteTree(io, cache_abs) catch {};
     Io.Dir.cwd().createDirPath(io, cache_abs) catch |err| fatal.msg(
         "error: client bundle cache '{s}': {s}\n",
@@ -1165,10 +1165,10 @@ fn bundleSharedRuntime(
         "error: building for the browser requires --island-runtime-entry=<path> (runtime/src/browser-entry.ts)\n",
         .{},
     );
-    const rt_out = try std.fs.path.join(gpa, &.{ cache_abs, "zigapagos-runtime.js" });
-    const rt_dep = try std.fs.path.join(gpa, &.{ cache_abs, "zigapagos-runtime.d" });
+    const rt_out = try std.Io.Dir.path.join(gpa, &.{ cache_abs, "zigapagos-runtime.js" });
+    const rt_dep = try std.Io.Dir.path.join(gpa, &.{ cache_abs, "zigapagos-runtime.d" });
     const rt_map = try gpa.print("{s}.map", .{rt_out});
-    var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+    var argv: std.ArrayList([]const u8) = .empty;
     try argv.appendSlice(gpa, &.{
         driver,
         try gpa.print("--entry={s}", .{runtime_entry}),
@@ -1221,12 +1221,12 @@ fn bundleIslands(
 ) ![]const []const u8 {
     const gpa = arena.a;
     const driver = cmd.island_bundle_driver.?; // checked by bundleSharedRuntime
-    var built = try std.ArrayListUnmanaged([]const u8).initCapacity(gpa, cmd.islands.len);
+    var built = try std.ArrayList([]const u8).initCapacity(gpa, cmd.islands.len);
     for (cmd.islands) |src| {
         const name = bundleName(src);
         const out = try gpa.print("{s}/{s}.js", .{ cache_abs, name });
         const dep = try gpa.print("{s}/{s}.d", .{ cache_abs, name });
-        var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+        var argv: std.ArrayList([]const u8) = .empty;
         try argv.appendSlice(gpa, &.{
             driver,
             try gpa.print("--entry={s}", .{src}),
@@ -1307,7 +1307,7 @@ fn sliceIslandsRuntime(
     const outdir = try gpa.print("{s}/islands-rt", .{cache_abs});
     const manifest = try gpa.print("{s}/islands-slice.json", .{cache_abs});
 
-    var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+    var argv: std.ArrayList([]const u8) = .empty;
     try argv.append(gpa, rt.islands_runtime_driver);
     for (bundles) |b| try argv.append(gpa, try gpa.print("--bundle={s}", .{b}));
     try argv.appendSlice(gpa, &.{
@@ -1367,10 +1367,10 @@ fn bundleSpas(
         const outdir = try gpa.print("{s}/spa-{s}", .{ cache_abs, name });
         const chunks_json = try gpa.print("{s}/{s}-chunks.json", .{ cache_abs, name });
         const capture_json = try gpa.print("{s}/{s}-sources.json", .{ cache_abs, name });
-        var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+        var argv: std.ArrayList([]const u8) = .empty;
         try argv.appendSlice(gpa, &.{
             rt.spa_bundle_driver,
-            try gpa.print("--source-cache-dir={s}/client-source", .{std.fs.path.dirname(cache_abs).?}),
+            try gpa.print("--source-cache-dir={s}/client-source", .{std.Io.Dir.path.dirname(cache_abs).?}),
             try gpa.print("--source-capture={s}", .{capture_json}),
             try gpa.print("--entry={s}", .{sp.src}),
             try gpa.print("--outdir={s}", .{outdir}),
@@ -1397,7 +1397,7 @@ fn bundleSpas(
         // normal, which is why the empty directory is not an error here.
         const rt_outdir = try gpa.print("{s}/spa-rt-{s}", .{ cache_abs, name });
         const slice_json = try gpa.print("{s}/{s}-slice.json", .{ cache_abs, name });
-        var rt_argv: std.ArrayListUnmanaged([]const u8) = .empty;
+        var rt_argv: std.ArrayList([]const u8) = .empty;
         try rt_argv.appendSlice(gpa, &.{
             rt.spa_runtime_driver,
             try gpa.print("--source-capture={s}", .{capture_json}),
@@ -1746,7 +1746,7 @@ test "discoverEntries finds *.island.tsx and skips the trees that are not author
     // to the island bundler.
     try tmp.dir.writeFile(io, .{ .sub_path = "app/App.spa.tsx", .data = "" });
 
-    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const abs = path_buf[0..try tmp.dir.realPath(io, &path_buf)];
 
     const found = try discoverEntries(io, gpa, abs, ".island.tsx");

@@ -269,7 +269,7 @@ fn keyValueArray(gpa: Allocator, map: Map, filter: ?[]const u8) ![]const Value {
         var it = map.value.fields.iterator();
 
         while (it.next()) |next| {
-            if (std.mem.indexOf(u8, next.key_ptr.*, f) != null) {
+            if (std.mem.find(u8, next.key_ptr.*, f) != null) {
                 try buf.append(gpa, .{
                     .map_kv = .{
                         .key = next.key_ptr.*,

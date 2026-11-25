@@ -28,7 +28,7 @@ _meta: struct {
     // Indexed by language code, empty when building a simple site
     // Get by key when you have a language code, get by idx when you
     // have a variant_id.
-    sites: *const std.StringArrayHashMapUnmanaged(Site),
+    sites: *const std.array_hash_map.String(Site),
 },
 
 /// Per-RENDER pagination state — lives here and not on Page because the

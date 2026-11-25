@@ -11,24 +11,23 @@ const ref: Reference = .{
     .values = analyzeValues(),
 };
 
-pub fn main() !void {
-    var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const arena = init.arena.allocator();
 
-    const args = std.process.argsAlloc(arena) catch oom();
+    const args = init.minimal.args.toSlice(arena) catch oom();
     const out_path = args[1];
 
-    const out_file = Io.cwd().createFile(out_path, .{}) catch |err| {
+    const out_file = Io.Dir.cwd().createFile(io, out_path, .{}) catch |err| {
         fatal("error while creating output file: {s}\n{s}\n", .{
             out_path,
             @errorName(err),
         });
     };
-    defer out_file.close();
+    defer out_file.close(io);
 
     var buf: [4096]u8 = undefined;
-    var writer_state = out_file.writer(&buf);
+    var writer_state = out_file.writer(io, &buf);
     const w = &writer_state.interface;
 
     try w.writeAll(

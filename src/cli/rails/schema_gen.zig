@@ -462,8 +462,8 @@ fn overrideFor(
 /// `<module>.<Name>`, but a shorter name is a harmless no-op here rather
 /// than an out-of-bounds slice).
 fn localTypeName(type_name: []const u8) []const u8 {
-    const last_dot = std.mem.lastIndexOfScalar(u8, type_name, '.') orelse return type_name;
-    const second_last_dot = std.mem.lastIndexOfScalar(u8, type_name[0..last_dot], '.') orelse return type_name;
+    const last_dot = std.mem.findScalarLast(u8, type_name, '.') orelse return type_name;
+    const second_last_dot = std.mem.findScalarLast(u8, type_name[0..last_dot], '.') orelse return type_name;
     return type_name[second_last_dot + 1 ..];
 }
 
@@ -844,7 +844,7 @@ test "generate: routes[].id carries the 'not a unique key' override" {
         .get("routes").?.object.get("items").?.object
         .get("properties").?.object;
     const id_desc = route_props.get("id").?.object.get("description").?.string;
-    try testing.expect(std.mem.indexOf(u8, id_desc, "NOT a unique key") != null);
+    try testing.expect(std.mem.find(u8, id_desc, "NOT a unique key") != null);
 }
 
 test "generate: BlockerSource.line is nullable integer, not a bare integer" {
@@ -1105,10 +1105,10 @@ test "generate/generateHandoff: the two documents do not share an override table
     const h = try generateHandoff(gpa);
     defer gpa.free(h);
 
-    try testing.expect(std.mem.indexOf(u8, m, "NOT a unique key") != null);
-    try testing.expect(std.mem.indexOf(u8, h, "NOT a unique key") != null);
+    try testing.expect(std.mem.find(u8, m, "NOT a unique key") != null);
+    try testing.expect(std.mem.find(u8, h, "NOT a unique key") != null);
     // The manifest's own text, verbatim, must NOT have leaked across.
-    try testing.expect(std.mem.indexOf(u8, h, "a repeated id is a fact about the route table") == null);
-    try testing.expect(std.mem.indexOf(u8, m, "does not make the site broken to browse") == null);
-    try testing.expect(std.mem.indexOf(u8, h, "does not make the site broken to browse") != null);
+    try testing.expect(std.mem.find(u8, h, "a repeated id is a fact about the route table") == null);
+    try testing.expect(std.mem.find(u8, m, "does not make the site broken to browse") == null);
+    try testing.expect(std.mem.find(u8, h, "does not make the site broken to browse") != null);
 }

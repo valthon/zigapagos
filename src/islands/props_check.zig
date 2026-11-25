@@ -26,12 +26,12 @@ pub const PropsCheck = struct {
 /// matching `zigapagos migrate` output and the canonical islands). Mirrors the no-npm
 /// lint's text-scan approach — deliberately avoids pulling in the TS compiler API.
 pub fn hasExportedProps(source: []const u8) bool {
-    if (std.mem.indexOf(u8, source, "export interface Props") != null) return true;
-    if (std.mem.indexOf(u8, source, "export type Props") != null) return true;
+    if (std.mem.find(u8, source, "export interface Props") != null) return true;
+    if (std.mem.find(u8, source, "export type Props") != null) return true;
     // `export { ... Props ... }` re-export form.
     var i: usize = 0;
-    while (std.mem.indexOfPos(u8, source, i, "export {")) |open| {
-        const close = std.mem.indexOfScalarPos(u8, source, open, '}') orelse break;
+    while (std.mem.findPos(u8, source, i, "export {")) |open| {
+        const close = std.mem.findScalarPos(u8, source, open, '}') orelse break;
         const list = source[open + "export {".len .. close];
         var it = std.mem.tokenizeAny(u8, list, " ,\t\r\n");
         while (it.next()) |tok| if (std.mem.eql(u8, tok, "Props")) return true;
@@ -67,14 +67,14 @@ pub fn generateProgram(
     std.debug.assert(abs_srcs.len == checks.len);
 
     // Unique abs_src -> alias index.
-    var alias_of: std.StringArrayHashMapUnmanaged(usize) = .empty;
+    var alias_of: std.array_hash_map.String(usize) = .empty;
     // Unique "abs_src\x00props_json" -> already-emitted (so dedup const lines).
     var seen_pair: std.StringHashMapUnmanaged(void) = .empty;
 
-    var imports: std.ArrayListUnmanaged(u8) = .empty;
-    var body: std.ArrayListUnmanaged(u8) = .empty;
+    var imports: std.ArrayList(u8) = .empty;
+    var body: std.ArrayList(u8) = .empty;
     // Each emitted const remembers which `checks` index it represents.
-    var const_check_idx: std.ArrayListUnmanaged(usize) = .empty;
+    var const_check_idx: std.ArrayList(usize) = .empty;
 
     for (abs_srcs, checks, 0..) |abs, chk, idx| {
         const gop = try alias_of.getOrPut(arena.a, abs);
@@ -93,7 +93,7 @@ pub fn generateProgram(
     }
 
     // Layout: imports block, blank line, then one const per line. Track lines.
-    var source: std.ArrayListUnmanaged(u8) = .empty;
+    var source: std.ArrayList(u8) = .empty;
     try source.appendSlice(arena.a, imports.items);
     try source.append(arena.a, '\n');
     const body_first_line = std.mem.count(u8, source.items, "\n") + 1; // 1-based line of first const
@@ -147,21 +147,21 @@ pub fn parseDiagnostics(
     stdout: []const u8,
     program_basename: []const u8,
 ) ![]const Diag {
-    var diags: std.ArrayListUnmanaged(Diag) = .empty;
+    var diags: std.ArrayList(Diag) = .empty;
     const prefix = try arena.a.print("{s}(", .{program_basename});
     var it = std.mem.splitScalar(u8, stdout, '\n');
     while (it.next()) |line| {
         if (!std.mem.startsWith(u8, line, prefix)) continue;
         const lparen = prefix.len; // first char after "basename("
-        const comma = std.mem.indexOfScalarPos(u8, line, lparen, ',') orelse continue;
-        const rparen = std.mem.indexOfScalarPos(u8, line, comma, ')') orelse continue;
+        const comma = std.mem.findScalarPos(u8, line, lparen, ',') orelse continue;
+        const rparen = std.mem.findScalarPos(u8, line, comma, ')') orelse continue;
         const ln = std.fmt.parseInt(usize, line[lparen..comma], 10) catch continue;
         const col = std.fmt.parseInt(usize, line[comma + 1 .. rparen], 10) catch continue;
         // After "): " expect "error TSxxxx: msg".
         const tail = line[rparen + 1 ..];
-        const err_kw = std.mem.indexOf(u8, tail, "error TS") orelse continue;
+        const err_kw = std.mem.find(u8, tail, "error TS") orelse continue;
         const code_start = err_kw + "error ".len;
-        const colon = std.mem.indexOfScalarPos(u8, tail, code_start, ':') orelse continue;
+        const colon = std.mem.findScalarPos(u8, tail, code_start, ':') orelse continue;
         const code = tail[code_start..colon];
         const message = std.mem.trim(u8, tail[colon + 1 ..], " \t\r");
         try diags.append(arena.a, .{ .line = ln, .col = col, .code = try arena.a.dupe(u8, code), .message = try arena.a.dupe(u8, message) });
@@ -204,12 +204,12 @@ pub fn run(io: Io, gpa: std.mem.Allocator, checks: []const PropsCheck, opts: Run
 
     // Resolve each src to absolute; cache per-src "has exported Props".
     var props_ok: std.StringHashMapUnmanaged(bool) = .empty;
-    var abs_srcs: std.ArrayListUnmanaged([]const u8) = .empty;
-    var kept: std.ArrayListUnmanaged(PropsCheck) = .empty;
+    var abs_srcs: std.ArrayList([]const u8) = .empty;
+    var kept: std.ArrayList(PropsCheck) = .empty;
     var skipped: usize = 0;
 
     for (checks) |chk| {
-        const abs = try std.fs.path.resolve(arena.a, &.{ root_abs, chk.src });
+        const abs = try std.Io.Dir.path.resolveAlloc(arena.a, &.{ root_abs, chk.src });
         const gop = try props_ok.getOrPut(arena.a, abs);
         if (!gop.found_existing) {
             const source = std.Io.Dir.cwd().readFileAlloc(io, abs, arena.a, .limited(1 << 20)) catch |err| switch (err) {
@@ -233,21 +233,21 @@ pub fn run(io: Io, gpa: std.mem.Allocator, checks: []const PropsCheck, opts: Run
 
     // Write program + tsconfig under <root>/.zigapagos-cache/props-check/.
     const tmp_rel = ".zigapagos-cache/props-check";
-    const tmp_dir_abs = try std.fs.path.join(arena.a, &.{ root_abs, tmp_rel });
+    const tmp_dir_abs = try std.Io.Dir.path.join(arena.a, &.{ root_abs, tmp_rel });
     try std.Io.Dir.cwd().createDirPath(io, tmp_dir_abs);
 
     const program_basename = "__island_props_check.tsx";
     // tsc outputs paths relative to its cwd (website_root), so the prefix in its
     // output will be "<tmp_rel>/<program_basename>", not just the basename.
-    const program_rel = try std.fs.path.join(arena.a, &.{ tmp_rel, program_basename });
-    const program_abs = try std.fs.path.join(arena.a, &.{ tmp_dir_abs, program_basename });
-    const tsconfig_abs = try std.fs.path.join(arena.a, &.{ tmp_dir_abs, "tsconfig.props-check.json" });
-    var base_tsconfig_abs = try std.fs.path.join(arena.a, &.{ root_abs, "tsconfig.json" });
+    const program_rel = try std.Io.Dir.path.join(arena.a, &.{ tmp_rel, program_basename });
+    const program_abs = try std.Io.Dir.path.join(arena.a, &.{ tmp_dir_abs, program_basename });
+    const tsconfig_abs = try std.Io.Dir.path.join(arena.a, &.{ tmp_dir_abs, "tsconfig.props-check.json" });
+    var base_tsconfig_abs = try std.Io.Dir.path.join(arena.a, &.{ root_abs, "tsconfig.json" });
     std.Io.Dir.cwd().access(io, base_tsconfig_abs, .{}) catch |err| switch (err) {
         error.FileNotFound => {
             // Sites without a tsconfig still get props validation; never add
             // a project configuration file as a side effect of building.
-            base_tsconfig_abs = try std.fs.path.join(arena.a, &.{ tmp_dir_abs, "base.json" });
+            base_tsconfig_abs = try std.Io.Dir.path.join(arena.a, &.{ tmp_dir_abs, "base.json" });
             try writeFileAbs(io, base_tsconfig_abs,
                 \\{"compilerOptions":{"jsx":"preserve","moduleResolution":"bundler","target":"esnext","module":"esnext"}}
             );
@@ -316,7 +316,7 @@ pub fn run(io: Io, gpa: std.mem.Allocator, checks: []const PropsCheck, opts: Run
     // anomaly since our check was clean. The guard catches crashes, tsconfig parse
     // errors, launcher failures, and completely unexpected output formats.
     if (mismatches == 0 and (tsc_exit == null or tsc_exit.? != 0)) {
-        const has_any_tsc_diag = std.mem.indexOf(u8, stdout, "): error TS") != null;
+        const has_any_tsc_diag = std.mem.find(u8, stdout, "): error TS") != null;
         if (!has_any_tsc_diag) {
             const exit_repr: u8 = tsc_exit orelse 255; // 255 = signal/wait-error sentinel
             const snippet_len = @min(500, stdout.len);
@@ -343,8 +343,8 @@ pub fn run(io: Io, gpa: std.mem.Allocator, checks: []const PropsCheck, opts: Run
 }
 
 fn writeFileAbs(io: Io, abs_path: []const u8, bytes: []const u8) !void {
-    const dir = std.fs.path.dirname(abs_path) orelse "/";
-    const base = std.fs.path.basename(abs_path);
+    const dir = std.Io.Dir.path.dirname(abs_path) orelse "/";
+    const base = std.Io.Dir.path.basename(abs_path);
     var d = try std.Io.Dir.cwd().openDir(io, dir, .{});
     defer d.close(io);
     var f = try d.createFile(io, base, .{});
@@ -392,12 +392,12 @@ test "generateProgram: one import per unique src, one const per unique (src,json
 
     // Two unique srcs -> two `import type` lines (aliased P0, P1).
     try std.testing.expectEqual(@as(usize, 2), std.mem.count(u8, prog.source, "import type {"));
-    try std.testing.expect(std.mem.indexOf(u8, prog.source, "from \"/w/components/Hero.island.tsx\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, prog.source, "from \"/w/components/Counter.island.tsx\"") != null);
+    try std.testing.expect(std.mem.find(u8, prog.source, "from \"/w/components/Hero.island.tsx\"") != null);
+    try std.testing.expect(std.mem.find(u8, prog.source, "from \"/w/components/Counter.island.tsx\"") != null);
     // Three unique (src,json) -> three const assignments, each pinned to its alias.
     try std.testing.expectEqual(@as(usize, 3), std.mem.count(u8, prog.source, "const _"));
-    try std.testing.expect(std.mem.indexOf(u8, prog.source, "= {\"headline\":\"A\"};") != null);
-    try std.testing.expect(std.mem.indexOf(u8, prog.source, "= {\"start\":2};") != null);
+    try std.testing.expect(std.mem.find(u8, prog.source, "= {\"headline\":\"A\"};") != null);
+    try std.testing.expect(std.mem.find(u8, prog.source, "= {\"start\":2};") != null);
 
     // line_to_check: exactly 3 non-null entries, each a valid check index.
     var consts: usize = 0;
@@ -423,7 +423,7 @@ test "generateProgram: script-escaped props embed verbatim and dedup collapses i
     try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, prog.source, "const _"));
     try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, prog.source, "import type {"));
     // The < escapes survive verbatim into the TS literal.
-    try std.testing.expect(std.mem.indexOf(u8, prog.source, "\\u003Cb\\u003E") != null);
+    try std.testing.expect(std.mem.find(u8, prog.source, "\\u003Cb\\u003E") != null);
 }
 
 test "generateTsconfig: extends base, includes the program, sets the required options" {
@@ -431,11 +431,11 @@ test "generateTsconfig: extends base, includes the program, sets the required op
     const gpa = std.testing.allocator;
     const cfg = try generateTsconfig(gpa, "/w/tsconfig.json", "/tmp/zc/__island_props_check.tsx");
     defer gpa.free(cfg);
-    try std.testing.expect(std.mem.indexOf(u8, cfg, "\"extends\": \"/w/tsconfig.json\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, cfg, "\"noEmit\": true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, cfg, "\"skipLibCheck\": true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, cfg, "\"allowImportingTsExtensions\": true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, cfg, "/tmp/zc/__island_props_check.tsx") != null);
+    try std.testing.expect(std.mem.find(u8, cfg, "\"extends\": \"/w/tsconfig.json\"") != null);
+    try std.testing.expect(std.mem.find(u8, cfg, "\"noEmit\": true") != null);
+    try std.testing.expect(std.mem.find(u8, cfg, "\"skipLibCheck\": true") != null);
+    try std.testing.expect(std.mem.find(u8, cfg, "\"allowImportingTsExtensions\": true") != null);
+    try std.testing.expect(std.mem.find(u8, cfg, "/tmp/zc/__island_props_check.tsx") != null);
 }
 
 test "parseDiagnostics extracts only this program's error lines" {
@@ -454,7 +454,7 @@ test "parseDiagnostics extracts only this program's error lines" {
     try std.testing.expectEqual(@as(usize, 4), diags[0].line);
     try std.testing.expectEqual(@as(usize, 8), diags[0].col);
     try std.testing.expectEqualStrings("TS2741", diags[0].code);
-    try std.testing.expect(std.mem.indexOf(u8, diags[0].message, "Property 'label' is missing") != null);
+    try std.testing.expect(std.mem.find(u8, diags[0].message, "Property 'label' is missing") != null);
     try std.testing.expectEqualStrings("TS2322", diags[1].code);
 }
 
@@ -464,11 +464,11 @@ test "formatDiagnostic renders the engine-level message with page+src+id+json" {
     const chk = PropsCheck{ .src = "components/Counter.island.tsx", .props_json = "{\"start\":2}", .page_url = "/", .island_id = "z-island-0" };
     const msg = try formatDiagnostic(gpa, diag, chk);
     defer gpa.free(msg);
-    try std.testing.expect(std.mem.indexOf(u8, msg, "props mismatch on /") != null);
-    try std.testing.expect(std.mem.indexOf(u8, msg, "components/Counter.island.tsx") != null);
-    try std.testing.expect(std.mem.indexOf(u8, msg, "z-island-0") != null);
-    try std.testing.expect(std.mem.indexOf(u8, msg, "{\"start\":2}") != null);
-    try std.testing.expect(std.mem.indexOf(u8, msg, "(TS2741)") != null);
+    try std.testing.expect(std.mem.find(u8, msg, "props mismatch on /") != null);
+    try std.testing.expect(std.mem.find(u8, msg, "components/Counter.island.tsx") != null);
+    try std.testing.expect(std.mem.find(u8, msg, "z-island-0") != null);
+    try std.testing.expect(std.mem.find(u8, msg, "{\"start\":2}") != null);
+    try std.testing.expect(std.mem.find(u8, msg, "(TS2741)") != null);
 }
 
 test "run: a type-mismatched prop is reported as a mismatch (needs bun+tsc)" {

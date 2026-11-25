@@ -323,7 +323,7 @@ pub fn readCapped(
     root: Io.Dir,
     path: []const u8,
     code: []const u8,
-    blocker_list: *std.ArrayListUnmanaged(blockers.Blocker),
+    blocker_list: *std.ArrayList(blockers.Blocker),
 ) Allocator.Error!?[]u8 {
     const src = root.readFileAlloc(io, path, gpa, .limited(1024 * 1024)) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
@@ -361,7 +361,7 @@ test "readCapped: an unreadable file's blocker has no route_id -- it describes t
     var gemfile_dir = try tmp.dir.createDirPathOpen(io, "Gemfile", .{});
     gemfile_dir.close(io);
 
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const result = try readCapped(io, gpa, tmp.dir, "Gemfile", "RAILS_GEMFILE_UNREADABLE", &blocker_list);
@@ -395,7 +395,7 @@ pub fn gemfileDeclares(src: []const u8, name: []const u8) bool {
         if (rest.len < 2) continue;
         const quote = rest[0];
         if (quote != '"' and quote != '\'') continue;
-        const end = std.mem.indexOfScalar(u8, rest[1..], quote) orelse continue;
+        const end = std.mem.findScalar(u8, rest[1..], quote) orelse continue;
         if (std.mem.eql(u8, rest[1 .. 1 + end], name)) return true;
     }
     return false;
@@ -467,7 +467,7 @@ pub fn readGemfileLock(
     io: Io,
     gpa: Allocator,
     root: Io.Dir,
-    blocker_list: *std.ArrayListUnmanaged(blockers.Blocker),
+    blocker_list: *std.ArrayList(blockers.Blocker),
 ) Allocator.Error!?[]u8 {
     return root.readFileAlloc(io, "Gemfile.lock", gpa, .limited(1024 * 1024)) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
@@ -501,7 +501,7 @@ pub fn readGemfileLock(
 pub fn versionFromLock(
     gpa: Allocator,
     src: []const u8,
-    blocker_list: *std.ArrayListUnmanaged(blockers.Blocker),
+    blocker_list: *std.ArrayList(blockers.Blocker),
 ) Allocator.Error!Version {
     const found = lockedVersion(src, "rails") orelse {
         try blockers.append(gpa, blocker_list, "RAILS_GEMFILE_LOCK_UNAVAILABLE", "Gemfile.lock", "no locked \"rails\" entry found in Gemfile.lock", false, .warn, null, null);
@@ -525,7 +525,7 @@ pub fn detectVersion(
     io: Io,
     gpa: Allocator,
     root: Io.Dir,
-    blocker_list: *std.ArrayListUnmanaged(blockers.Blocker),
+    blocker_list: *std.ArrayList(blockers.Blocker),
 ) Allocator.Error!Version {
     const src = try readGemfileLock(io, gpa, root, blocker_list) orelse return .{};
     defer gpa.free(src);
@@ -578,7 +578,7 @@ pub fn lockedVersion(src: []const u8, name: []const u8) ?[]const u8 {
         while (i < rest.len and rest[i] == ' ') : (i += 1) {}
         if (i >= rest.len or rest[i] != '(') continue;
         i += 1;
-        const close = std.mem.indexOfScalarPos(u8, rest, i, ')') orelse continue;
+        const close = std.mem.findScalarPos(u8, rest, i, ')') orelse continue;
         return rest[i..close];
     }
     return null;
@@ -691,7 +691,7 @@ test "detectVersion: a real Gemfile.lock resolves value and the exact evidence s
     try lock.writeStreamingAll(io, sample_lock);
     lock.close(io);
 
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const v = try detectVersion(io, gpa, tmp.dir, &blocker_list);
@@ -709,7 +709,7 @@ test "detectVersion: an absent Gemfile.lock is null plus one warn blocker, not a
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const v = try detectVersion(io, gpa, tmp.dir, &blocker_list);
@@ -747,7 +747,7 @@ test "detectVersion: a lock file that never locks rails is null plus a warn bloc
     );
     lock.close(io);
 
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const v = try detectVersion(io, gpa, tmp.dir, &blocker_list);
@@ -771,7 +771,7 @@ test "detectVersion: an unreadable Gemfile.lock (IsDir) is null plus a warn bloc
     var lock_dir = try tmp.dir.createDirPathOpen(io, "Gemfile.lock", .{});
     lock_dir.close(io);
 
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const v = try detectVersion(io, gpa, tmp.dir, &blocker_list);

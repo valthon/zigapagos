@@ -46,8 +46,8 @@ pub fn parse(arena: RenderArena, text: []const u8) !Json {
     return parsed;
 }
 
-pub const PageSet = std.StringArrayHashMapUnmanaged(void);
-pub const Assembled = std.StringArrayHashMapUnmanaged(PageSet);
+pub const PageSet = std.array_hash_map.String(void);
+pub const Assembled = std.array_hash_map.String(PageSet);
 
 /// Build the island → page-set map for this build: start from `old` (null on
 /// a full build) minus every page in `rendered_pages` (those pages just

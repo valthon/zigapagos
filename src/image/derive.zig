@@ -69,7 +69,7 @@ pub fn run(io: Io, gpa: Allocator, d: Job) void {
         .path = @fromBackingInt(@intCast(d.ref.path)),
         .name = @fromBackingInt(@intCast(d.ref.name)),
     };
-    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const rel = std.mem.print(&path_buf, "{f}", .{
         pn.fmt(st, pt, null, "/"),
     }) catch unreachable;
@@ -98,7 +98,7 @@ pub fn run(io: Io, gpa: Allocator, d: Job) void {
     // sound by construction rather than by coincidence — so swapping the
     // original name for a PROVABLY LONGER variant basename can only push
     // the total past that bound by `max_basename_growth`, never more.
-    var dest_buf: [std.fs.max_path_bytes + plan.max_basename_growth]u8 = undefined;
+    var dest_buf: [std.Io.Dir.max_path_bytes + plan.max_basename_growth]u8 = undefined;
 
     const Decoded = struct {
         img: decode.Decoded,
@@ -120,7 +120,7 @@ pub fn run(io: Io, gpa: Allocator, d: Job) void {
     // this job — see the `cache_dir_abs == null` check in the `.avif` arm
     // below for why (#147, Task 12 follow-up).
     var cache_dir_abs: ?[]const u8 = null;
-    var cache_dir_abs_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var cache_dir_abs_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
 
     // Variants are grouped ADJACENT per width — webp, then an optional avif
     // at the SAME width (`plan.Planned.variants`' doc comment commits to
@@ -310,9 +310,9 @@ fn encodeAvif(
     // concurrent jobs whose bytes+params coincide must never share a tmp
     // inode even though they may both rename onto the same final cache
     // entry.
-    var tmp_png_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var tmp_png_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const tmp_png = tmpName(&tmp_png_buf, cache_nonce, ref, variant, ".png");
-    var tmp_avif_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var tmp_avif_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const tmp_avif = tmpName(&tmp_avif_buf, cache_nonce, ref, variant, ".avif");
 
     {
@@ -331,9 +331,9 @@ fn encodeAvif(
     // survives), not a real bug to surface (#147).
     defer cache_dir.deleteFile(io, tmp_png) catch {};
 
-    const png_abs = std.fs.path.join(gpa, &.{ cache_dir_abs, tmp_png }) catch fatal.oom();
+    const png_abs = std.Io.Dir.path.join(gpa, &.{ cache_dir_abs, tmp_png }) catch fatal.oom();
     defer gpa.free(png_abs);
-    const avif_abs = std.fs.path.join(gpa, &.{ cache_dir_abs, tmp_avif }) catch fatal.oom();
+    const avif_abs = std.Io.Dir.path.join(gpa, &.{ cache_dir_abs, tmp_avif }) catch fatal.oom();
     defer gpa.free(avif_abs);
 
     var child = std.process.spawn(io, .{
@@ -467,7 +467,7 @@ fn writeCacheAtomic(
     variant: plan.Variant,
     bytes: []const u8,
 ) !void {
-    var tmp_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var tmp_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const tmp = tmpName(&tmp_buf, cache_nonce, ref, variant, "");
     {
         const f = try cache_dir.createFile(io, tmp, .{});

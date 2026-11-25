@@ -215,7 +215,7 @@ const component_root_markers = [_]ComponentRootMarker{
 /// inside a comment, as in this file's test suite) only routes the page
 /// to `unresolved`, which costs a human one look at a diff. Over-detection
 /// is the cheap, safe failure mode, so this scanner never tries to be
-/// smarter than `std.mem.indexOf`.
+/// smarter than `std.mem.find`.
 ///
 /// A bare `<div id="app">` or `<div id="root">` is deliberately NOT
 /// component-root evidence, even though it's the idiomatic React/Vue
@@ -226,7 +226,7 @@ pub fn scan(src: []const u8) Markers {
     var markers: Markers = .{};
 
     for (request_state_markers) |marker| {
-        if (std.mem.indexOf(u8, src, marker)) |idx| {
+        if (std.mem.find(u8, src, marker)) |idx| {
             markers.request_state = src[idx .. idx + marker.len];
             break;
         }
@@ -243,7 +243,7 @@ pub fn scan(src: []const u8) Markers {
     // entry contributes a distinct `name`), which is exactly `ComponentRoots`'
     // capacity -- see that type's doc.
     for (component_root_markers) |marker| {
-        if (std.mem.indexOf(u8, src, marker.needle) != null) {
+        if (std.mem.find(u8, src, marker.needle) != null) {
             markers.component_roots.addUnique(marker.name);
         }
     }
@@ -277,14 +277,14 @@ pub fn scan(src: []const u8) Markers {
 fn scanStimulusControllers(src: []const u8, out: *StimulusControllers, malformed: *bool) void {
     const needle = "data-controller=";
     var i: usize = 0;
-    while (std.mem.indexOfPos(u8, src, i, needle)) |idx| {
+    while (std.mem.findPos(u8, src, i, needle)) |idx| {
         const after_eq = idx + needle.len;
         i = after_eq;
         var found_name = false;
 
         if (after_eq < src.len and (src[after_eq] == '"' or src[after_eq] == '\'')) {
             const quote = src[after_eq];
-            if (std.mem.indexOfScalarPos(u8, src, after_eq + 1, quote)) |close| {
+            if (std.mem.findScalarPos(u8, src, after_eq + 1, quote)) |close| {
                 const value = src[after_eq + 1 .. close];
                 var it = std.mem.tokenizeAny(u8, value, " \t\r\n");
                 while (it.next()) |name| {
@@ -330,7 +330,7 @@ fn boundedEvidence(rest: []const u8) []const u8 {
     // the evidence reads as "the render call" rather than trailing off into
     // "%>" or whatever markup follows it.
     var n: usize = @min(max_render_evidence_len, rest.len);
-    if (std.mem.indexOf(u8, rest[0..n], "%>")) |tag_close| n = tag_close;
+    if (std.mem.find(u8, rest[0..n], "%>")) |tag_close| n = tag_close;
     return std.mem.trimEnd(u8, rest[0..n], " \t\r\n");
 }
 
@@ -367,11 +367,11 @@ fn boundedEvidence(rest: []const u8) []const u8 {
 /// caller only cares about a `render` call that references PARTIAL content,
 /// which is the only thing this scanner's evidence bundle affects.
 pub fn scanRenders(gpa: Allocator, src: []const u8) Allocator.Error![]RenderTarget {
-    var out: std.ArrayListUnmanaged(RenderTarget) = .empty;
+    var out: std.ArrayList(RenderTarget) = .empty;
     errdefer out.deinit(gpa);
 
     var i: usize = 0;
-    while (std.mem.indexOfPos(u8, src, i, "render")) |call_start| {
+    while (std.mem.findPos(u8, src, i, "render")) |call_start| {
         i = call_start + "render".len;
         // Word-boundary guard on both sides: neither "prerendered" nor
         // "render_to_string"/"renderer" is a bare `render` call.
@@ -385,7 +385,7 @@ pub fn scanRenders(gpa: Allocator, src: []const u8) Allocator.Error![]RenderTarg
             const after = std.mem.trimStart(u8, rest["partial:".len..], " \t\r\n");
             if (after.len > 0 and (after[0] == '"' or after[0] == '\'')) {
                 const quote = after[0];
-                if (std.mem.indexOfScalar(u8, after[1..], quote)) |end| {
+                if (std.mem.findScalar(u8, after[1..], quote)) |end| {
                     try out.append(gpa, .{ .text = after[1 .. 1 + end], .resolved = true });
                     continue;
                 }
@@ -396,7 +396,7 @@ pub fn scanRenders(gpa: Allocator, src: []const u8) Allocator.Error![]RenderTarg
 
         if (rest.len > 0 and (rest[0] == '"' or rest[0] == '\'')) {
             const quote = rest[0];
-            if (std.mem.indexOfScalar(u8, rest[1..], quote)) |end| {
+            if (std.mem.findScalar(u8, rest[1..], quote)) |end| {
                 try out.append(gpa, .{ .text = rest[1 .. 1 + end], .resolved = true });
             }
             continue;
@@ -604,7 +604,7 @@ test "scanRenders treats render partial: <var> as unresolvable" {
     defer std.testing.allocator.free(got);
     try std.testing.expectEqual(@as(usize, 1), got.len);
     try std.testing.expect(!got[0].resolved);
-    try std.testing.expect(std.mem.indexOf(u8, got[0].text, "partial: some_var") != null);
+    try std.testing.expect(std.mem.find(u8, got[0].text, "partial: some_var") != null);
 }
 
 test "scanRenders treats render @x as unresolvable (implicit object-to-partial)" {
@@ -612,7 +612,7 @@ test "scanRenders treats render @x as unresolvable (implicit object-to-partial)"
     defer std.testing.allocator.free(got);
     try std.testing.expectEqual(@as(usize, 1), got.len);
     try std.testing.expect(!got[0].resolved);
-    try std.testing.expect(std.mem.indexOf(u8, got[0].text, "@post") != null);
+    try std.testing.expect(std.mem.find(u8, got[0].text, "@post") != null);
 }
 
 test "scanRenders ignores render calls that are not partial references" {

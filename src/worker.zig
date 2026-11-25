@@ -83,7 +83,7 @@ pub const Job = union(enum) {
     page_render: struct {
         progress: std.Progress.Node,
         build: *Build,
-        sites: *const std.StringArrayHashMapUnmanaged(context.Site),
+        sites: *const std.array_hash_map.String(context.Site),
         page: *Page,
         kind: RenderJobKind,
     },
@@ -292,7 +292,7 @@ fn analyzePageInner(
     }
 
     const v = &build.variants[variant_id];
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const page_path = std.mem.print(&buf, "{f}", .{
         page._scan.file.fmt(
             &v.string_table,
@@ -366,11 +366,11 @@ fn analyzeFrontmatter(page_arena: Allocator, p: *Page) error{OutOfMemory}!void {
 pub fn validOutputPath(path: []const u8) bool {
     if (path.len == 0) return false;
     for (path) |c| if (!std.ascii.isAscii(c)) return false;
-    if (std.mem.indexOfScalar(u8, path, '\\') != null) return false;
-    if (std.fs.path.extension(path).len == 0) return false;
-    if (std.mem.indexOfScalar(
+    if (std.mem.findScalar(u8, path, '\\') != null) return false;
+    if (std.Io.Dir.path.extension(path).len == 0) return false;
+    if (std.mem.findScalar(
         u8,
-        std.fs.path.dirnamePosix(path) orelse "",
+        std.Io.Dir.path.dirnamePosix(path) orelse "",
         '.',
     ) != null) return false;
     return true;
@@ -527,7 +527,7 @@ fn analyzeContent(
                 const path, const base_dir = switch (code.src.?) {
                     else => unreachable,
                     .page_asset => |pa| blk: {
-                        assert(std.mem.indexOfScalar(u8, pa.ref, '\\') == null);
+                        assert(std.mem.findScalar(u8, pa.ref, '\\') == null);
                         var buf: std.ArrayList(String) = .empty;
 
                         try buf.appendSlice(scratch, page._scan.url.slice(
@@ -1015,7 +1015,7 @@ fn analyzeContent(
                     },
 
                     .page_asset => |*pa| {
-                        assert(std.mem.indexOfScalar(u8, pa.ref, '\\') == null);
+                        assert(std.mem.findScalar(u8, pa.ref, '\\') == null);
                         var buf: std.ArrayList(String) = .empty;
 
                         try buf.appendSlice(
@@ -1103,11 +1103,11 @@ fn analyzeContent(
                         continue :outer;
                     },
                     .site_asset => |*sa| { //ref
-                        assert(std.mem.indexOfScalar(u8, sa.ref, '\\') == null);
+                        assert(std.mem.findScalar(u8, sa.ref, '\\') == null);
 
-                        const dirname = std.fs.path.dirnamePosix(sa.ref) orelse "";
+                        const dirname = std.Io.Dir.path.dirnamePosix(sa.ref) orelse "";
                         if (b.pt.getPathNoName(&b.st, &.{}, dirname)) |path| {
-                            const basename = std.fs.path.basenamePosix(sa.ref);
+                            const basename = std.Io.Dir.path.basenamePosix(sa.ref);
                             if (b.st.get(basename)) |name| {
                                 const pn: PathName = .{
                                     .path = path,
@@ -1455,7 +1455,7 @@ fn renderPage(
     arena: RenderArena,
     progress: std.Progress.Node,
     build: *Build,
-    sites: *const std.StringArrayHashMapUnmanaged(context.Site),
+    sites: *const std.array_hash_map.String(context.Site),
     page: *Page,
     kind: RenderJobKind,
 ) void {
@@ -1472,7 +1472,7 @@ fn renderPageInner(
     arena: RenderArena,
     progress: std.Progress.Node,
     build: *Build,
-    sites: *const std.StringArrayHashMapUnmanaged(context.Site),
+    sites: *const std.array_hash_map.String(context.Site),
     page: *Page,
     kind: RenderJobKind,
 ) !void {
@@ -1482,7 +1482,7 @@ fn renderPageInner(
     const variant_id = page._scan.variant_id;
     const variant = &build.variants[variant_id];
 
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const page_path = std.mem.print(&buf, "{f}", .{
         page._scan.file.fmt(
             &variant.string_table,
@@ -1681,9 +1681,9 @@ fn renderPageInner(
         // build error, not a pass-through. Cost of the reordering: one memchr per
         // page on sites that use no islands at all, which is noise next to
         // rendering the page.
-        if (std.mem.indexOf(u8, raw, "<island") == null and
-            std.mem.indexOf(u8, raw, "<z-island") == null and
-            std.mem.indexOf(u8, raw, "<z-markdown-slot-source ") == null) break :blk raw;
+        if (std.mem.find(u8, raw, "<island") == null and
+            std.mem.find(u8, raw, "<z-island") == null and
+            std.mem.find(u8, raw, "<z-markdown-slot-source ") == null) break :blk raw;
         // build is *Build (non-const), so |*s| yields a *Sidecar into the real field
         // (not a copy). If renderPage's `build` ever becomes *const, this capture fails.
         const sc: *@import("islands/sidecar.zig").Sidecar = if (build.island_sidecar) |*s| s else {
@@ -1764,11 +1764,11 @@ fn renderPageInner(
                 .disk => .fail,
                 .memory => .placeholder,
             };
-        var render_errors: std.ArrayListUnmanaged(islands.RenderErrorReport) = .empty;
+        var render_errors: std.ArrayList(islands.RenderErrorReport) = .empty;
         // Reports are logged synchronously below; the list backing (gpa) is freed
         // here — the string fields it points at are arena-owned (per-page arena).
         defer render_errors.deinit(gpa);
-        var content_prop_eval_errors: std.ArrayListUnmanaged(islands.ContentPropEvalErrorReport) = .empty;
+        var content_prop_eval_errors: std.ArrayList(islands.ContentPropEvalErrorReport) = .empty;
         defer content_prop_eval_errors.deinit(gpa);
         var content_prop_eval_ctx: ContentPropEvalContext = .{ .root = &ctx };
         const result = islands.process(gpa, arena, raw, island_pathname, sc, .{
@@ -1884,7 +1884,7 @@ fn renderPageInner(
             // '/'-separated, content-dir-prefixed source path — the exact
             // string the incremental changed-files set matches on (see
             // root.zig's render loop).
-            var src_buf: [std.fs.max_path_bytes]u8 = undefined;
+            var src_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
             const page_src_path = std.mem.print(&src_buf, "{f}", .{
                 page._scan.file.fmt(
                     &variant.string_table,
@@ -1975,7 +1975,7 @@ fn renderPageInner(
                     for (page.aliases) |a| {
                         const out_path = try suffixedOutputPath(arena.a, build.cfg, variant, page, a);
 
-                        if (std.fs.path.dirnamePosix(out_path)) |path| {
+                        if (std.Io.Dir.path.dirnamePosix(out_path)) |path| {
                             disk.output_dir.createDirPath(
                                 io,
                                 path,
@@ -2019,7 +2019,7 @@ fn renderPageInner(
                     const raw_path = page.alternatives[idx].output;
                     const out_path = try suffixedOutputPath(arena.a, build.cfg, variant, page, raw_path);
 
-                    if (std.fs.path.dirnamePosix(out_path)) |path| {
+                    if (std.Io.Dir.path.dirnamePosix(out_path)) |path| {
                         disk.output_dir.createDirPath(
                             io,
                             path,
@@ -2036,7 +2036,7 @@ fn renderPageInner(
                 .pagination => |n| blk: {
                     const style = page.pagination.?.url_style;
                     const out_path = try paginationOutputPath(arena.a, build.cfg, variant, page, style, n);
-                    if (std.fs.path.dirnamePosix(out_path)) |path| {
+                    if (std.Io.Dir.path.dirnamePosix(out_path)) |path| {
                         disk.output_dir.createDirPath(io, path) catch |err| fatal.dir(path, err);
                     }
                     break :blk disk.output_dir.createFile(io, out_path, .{}) catch |err| fatal.file(out_path, err);

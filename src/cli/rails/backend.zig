@@ -126,7 +126,7 @@ fn collectionShape(path: []const u8) ?PathShape {
         rest = rest[0 .. rest.len - records_segment.len];
     } else return null;
     if (rest.len == 0) return null;
-    if (std.mem.indexOfScalar(u8, rest, '/') != null) return null;
+    if (std.mem.findScalar(u8, rest, '/') != null) return null;
     return .{ .collection = rest, .item = item };
 }
 
@@ -246,12 +246,12 @@ pub fn parse(gpa: Allocator, bytes: []const u8, file_label: []const u8) ParseErr
 
     const paths = objectField(root, "paths") orelse return error.NoPaths;
 
-    var ops: std.ArrayListUnmanaged(Operation) = .empty;
+    var ops: std.ArrayList(Operation) = .empty;
     errdefer {
         for (ops.items) |op| freeOperation(gpa, op);
         ops.deinit(gpa);
     }
-    var auth: std.ArrayListUnmanaged([]const u8) = .empty;
+    var auth: std.ArrayList([]const u8) = .empty;
     errdefer {
         for (auth.items) |name| gpa.free(name);
         auth.deinit(gpa);
@@ -324,7 +324,7 @@ pub fn parse(gpa: Allocator, bytes: []const u8, file_label: []const u8) ParseErr
         };
     };
 
-    const file = try gpa.dupe(u8, std.fs.path.basename(file_label));
+    const file = try gpa.dupe(u8, std.Io.Dir.path.basename(file_label));
     errdefer gpa.free(file);
     const version_owned = try gpa.dupe(u8, contract_version);
     errdefer gpa.free(version_owned);
@@ -400,7 +400,7 @@ pub fn free(gpa: Allocator, doc: Document) void {
 /// and the resource's own collection operations come first because the
 /// standard `resources :posts` mapping is the answer nine times in ten.
 pub fn choicesFor(gpa: Allocator, doc: ?Document, verb: []const u8, resource: ?[]const u8) Allocator.Error![][]const u8 {
-    var out: std.ArrayListUnmanaged([]const u8) = .empty;
+    var out: std.ArrayList([]const u8) = .empty;
     errdefer out.deinit(gpa);
 
     if (doc) |d| {

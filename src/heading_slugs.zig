@@ -103,7 +103,13 @@ pub fn slugify(alloc: Allocator, text: []const u8) Allocator.Error![]u8 {
             i += 1;
             continue;
         }
-        const cp = std.unicode.utf8Decode(text[i .. i + seq_len]) catch {
+        const cp = switch (seq_len) {
+            1 => text[i],
+            2 => std.unicode.utf8Decode2(text[i..][0..2].*),
+            3 => std.unicode.utf8Decode3(text[i..][0..3].*),
+            4 => std.unicode.utf8Decode4(text[i..][0..4].*),
+            else => unreachable,
+        } catch {
             i += 1;
             continue;
         };
@@ -190,7 +196,7 @@ fn headingText(alloc: Allocator, heading: supermd.Node) Allocator.Error![]u8 {
 /// exists to stop.
 fn claimSlug(
     alloc: Allocator,
-    seen: *std.StringArrayHashMapUnmanaged(u32),
+    seen: *std.array_hash_map.String(u32),
     base: []const u8,
 ) Allocator.Error![]u8 {
     const gop = try seen.getOrPut(alloc, base);
@@ -242,7 +248,7 @@ pub fn apply(gpa: Allocator, ast: *supermd.Ast) Allocator.Error!void {
     defer scratch_state.deinit();
     const scratch = scratch_state.allocator();
 
-    var seen: std.StringArrayHashMapUnmanaged(u32) = .empty;
+    var seen: std.array_hash_map.String(u32) = .empty;
     for (ast.ids.keys()) |k| try seen.put(scratch, k, 1);
 
     var promoted = ast.arena.promote(gpa);

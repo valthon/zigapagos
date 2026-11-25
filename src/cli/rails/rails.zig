@@ -453,7 +453,7 @@ fn combineRuby(
     route_ruby: sidecar_client.Ruby,
     controllers_ruby: sidecar_client.Ruby,
     templates_ruby: sidecar_client.Ruby,
-    blocker_list: *std.ArrayListUnmanaged(blockers.Blocker),
+    blocker_list: *std.ArrayList(blockers.Blocker),
 ) Allocator.Error!RubyInfo {
     // Named halves, iterated once: `available`, the chosen version and the
     // mismatch check are three reads of the same list, and writing them as
@@ -511,7 +511,7 @@ fn combineRuby(
 }
 
 test "combineRuby: neither op answered -> available false" {
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const info = try combineRuby(
@@ -535,7 +535,7 @@ test "combineRuby: neither op answered -> available false" {
 // against that broken implementation just as easily as against the fix,
 // which is why this ONE-SIDED case gets its own test.
 test "combineRuby: only the controllers op answered (routes op never spawned Ruby) -> available true" {
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const info = try combineRuby(
@@ -554,7 +554,7 @@ test "combineRuby: only the controllers op answered (routes op never spawned Rub
 // app/controllers/-less app). Pinned separately from the sibling test above
 // so neither direction is the one left unchecked.
 test "combineRuby: only the routes op answered (controllers op never spawned Ruby) -> available true" {
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const info = try combineRuby(
@@ -575,7 +575,7 @@ test "combineRuby: only the routes op answered (controllers op never spawned Rub
 // in the `available` OR (or vice versa) would still pass every sibling test
 // here. Both halves of its contribution are asserted.
 test "combineRuby: only the templates op answered (routes/controllers ops never spawned Ruby) -> available true" {
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const info = try combineRuby(
@@ -595,7 +595,7 @@ test "combineRuby: only the templates op answered (routes/controllers ops never 
 // implementation that reported only the first disagreeing pair (and left
 // the third op's answer invisible) fails here.
 test "combineRuby: three ops, three different versions -> exactly ONE blocker naming all three" {
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const info = try combineRuby(
@@ -609,10 +609,10 @@ test "combineRuby: three ops, three different versions -> exactly ONE blocker na
     try std.testing.expectEqualStrings("3.3.6", info.version().?);
     try std.testing.expectEqual(@as(usize, 1), blocker_list.items.len);
     const detail = blocker_list.items[0].detail;
-    try std.testing.expect(std.mem.indexOf(u8, detail, "3.3.6") != null);
-    try std.testing.expect(std.mem.indexOf(u8, detail, "3.4.1") != null);
-    try std.testing.expect(std.mem.indexOf(u8, detail, "3.4.10") != null);
-    try std.testing.expect(std.mem.indexOf(u8, detail, "templates op") != null);
+    try std.testing.expect(std.mem.find(u8, detail, "3.3.6") != null);
+    try std.testing.expect(std.mem.find(u8, detail, "3.4.1") != null);
+    try std.testing.expect(std.mem.find(u8, detail, "3.4.10") != null);
+    try std.testing.expect(std.mem.find(u8, detail, "templates op") != null);
 }
 
 // The other shape of a three-op mismatch: the two ops that ANSWER agree,
@@ -642,7 +642,7 @@ test "combineRuby: three ops, three different versions -> exactly ONE blocker na
 /// read and stays owned by the caller.
 fn appendI18nErrorBlockers(
     gpa: Allocator,
-    blocker_list: *std.ArrayListUnmanaged(blockers.Blocker),
+    blocker_list: *std.ArrayList(blockers.Blocker),
     errs: []const fragments.I18nError,
 ) Allocator.Error!void {
     for (errs) |e| {
@@ -657,7 +657,7 @@ fn appendI18nErrorBlockers(
 // is what tells the operator which fact is actually true.
 test "appendI18nErrorBlockers: one warn, non-integrity blocker per failed locale file" {
     const gpa = std.testing.allocator;
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.freeList(gpa, &blocker_list);
 
     const errs = [_]fragments.I18nError{
@@ -687,14 +687,14 @@ test "appendI18nErrorBlockers: one warn, non-integrity blocker per failed locale
 
 test "appendI18nErrorBlockers: no failed locale files appends nothing" {
     const gpa = std.testing.allocator;
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.freeList(gpa, &blocker_list);
     try appendI18nErrorBlockers(gpa, &blocker_list, &.{});
     try std.testing.expectEqual(@as(usize, 0), blocker_list.items.len);
 }
 
 test "combineRuby: routes and templates agree, controllers disagrees -> still exactly one blocker" {
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const info = try combineRuby(
@@ -710,7 +710,7 @@ test "combineRuby: routes and templates agree, controllers disagrees -> still ex
 }
 
 test "combineRuby: every op answered with the SAME version -> no mismatch blocker" {
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const info = try combineRuby(
@@ -726,7 +726,7 @@ test "combineRuby: every op answered with the SAME version -> no mismatch blocke
 }
 
 test "combineRuby: both ops answered with DIFFERENT versions -> a warn, non-integrity mismatch blocker" {
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const info = try combineRuby(
@@ -750,8 +750,8 @@ test "combineRuby: both ops answered with DIFFERENT versions -> a warn, non-inte
     try std.testing.expectEqualStrings("sidecar/rails/analyze.rb", blocker_list.items[0].path);
     try std.testing.expectEqual(blockers.Severity.warn, blocker_list.items[0].severity);
     try std.testing.expect(!blocker_list.items[0].integrity);
-    try std.testing.expect(std.mem.indexOf(u8, blocker_list.items[0].detail, "3.3.6") != null);
-    try std.testing.expect(std.mem.indexOf(u8, blocker_list.items[0].detail, "3.4.1") != null);
+    try std.testing.expect(std.mem.find(u8, blocker_list.items[0].detail, "3.3.6") != null);
+    try std.testing.expect(std.mem.find(u8, blocker_list.items[0].detail, "3.4.1") != null);
 }
 
 // Fix round (task-2-3-fixes.md item 2): the sibling "RubyInfo.version..."
@@ -767,7 +767,7 @@ test "combineRuby: both ops answered with DIFFERENT versions -> a warn, non-inte
 // (not a length-only one) would even have a chance of noticing a
 // corrupted, still-32-byte, wrong-content result.
 test "combineRuby: a version string longer than the fixed buffer is truncated, not overflowed" {
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const too_long = "3." ++ @as([40]u8, @splat('9')); // 42 bytes, far past version_buf's 32
@@ -906,8 +906,8 @@ fn hasJsSource(sources: []const port.JsSource, path: []const u8) bool {
 /// app/javascript is refused rather than normalized into another app tree.
 fn relativeJsPath(gpa: Allocator, importer: []const u8, spec: []const u8) Allocator.Error!?[]u8 {
     if (!std.mem.startsWith(u8, spec, "./") and !std.mem.startsWith(u8, spec, "../")) return null;
-    const dir = std.fs.path.dirname(importer) orelse return null;
-    var parts: std.ArrayListUnmanaged([]const u8) = .empty;
+    const dir = std.Io.Dir.path.dirname(importer) orelse return null;
+    var parts: std.ArrayList([]const u8) = .empty;
     defer parts.deinit(gpa);
     var base_it = std.mem.splitScalar(u8, dir, '/');
     while (base_it.next()) |part| if (part.len > 0) try parts.append(gpa, part);
@@ -965,7 +965,7 @@ fn appendJsSource(
     gpa: Allocator,
     root: Io.Dir,
     entries: []const inventory.Entry,
-    sources: *std.ArrayListUnmanaged(port.JsSource),
+    sources: *std.ArrayList(port.JsSource),
     path: []const u8,
 ) Allocator.Error!bool {
     if (hasJsSource(sources.items, path)) return false;
@@ -991,7 +991,7 @@ fn discoverJsSources(
     entries: []const inventory.Entry,
     templates: []const fragments.Template,
 ) Allocator.Error![]port.JsSource {
-    var list: std.ArrayListUnmanaged(port.JsSource) = .empty;
+    var list: std.ArrayList(port.JsSource) = .empty;
     errdefer {
         for (list.items) |source| {
             gpa.free(source.path);
@@ -1176,7 +1176,7 @@ pub const DecisionsInput = struct {
     /// caller-freed (`decisions.freeProblems`) on every path including the
     /// error ones. When null, a private list is used and discarded -- fine
     /// for a caller that only needs the error variant.
-    problems: ?*std.ArrayListUnmanaged(decisions.Problem) = null,
+    problems: ?*std.ArrayList(decisions.Problem) = null,
     /// #167 Stage 3: the ZigBase OpenAPI document `--backend FILE` named,
     /// read and owned by `migrate.zig` (which reports its own parse errors
     /// as exit 1). It rides in on `DecisionsInput` rather than on a
@@ -1200,7 +1200,7 @@ pub fn discover(
     environ_map: *const std.process.Environ.Map,
     dec: DecisionsInput,
 ) DiscoverError!Discovery {
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     // Canonical release (fix round B / B8): every `Blocker` here was
     // appended via `blockers.append`/`appendCopy`, so `path`/`detail` are
     // always fresh `gpa` allocations and `code` is always a static literal
@@ -1213,7 +1213,7 @@ pub fn discover(
     // `defer` cannot propagate `toOwnedSlice`'s genuinely reachable
     // `error.OutOfMemory`, so `catch unreachable` was an assertion over a
     // real failure mode, not a proof. `freeList` operates on the
-    // `ArrayListUnmanaged` directly and never allocates.
+    // `ArrayList` directly and never allocates.
     //
     // Stage 4 Task 8: `defer` widened to `errdefer` -- `Discovery.blockers`
     // now escapes via `blocker_list.toOwnedSlice` at the very end of this
@@ -1355,7 +1355,7 @@ pub fn discover(
     // uses. `erb_paths` borrows those paths, so it must not outlive
     // `classify_result` -- it does not; it is a scratch list this function
     // deinits.
-    var erb_paths: std.ArrayListUnmanaged([]const u8) = .empty;
+    var erb_paths: std.ArrayList([]const u8) = .empty;
     defer erb_paths.deinit(gpa);
     for (classify_result.templates) |t| {
         if (t.engine == .erb) try erb_paths.append(gpa, t.path);
@@ -1426,9 +1426,9 @@ pub fn discover(
     //   `layout` declaration came from, and a `LayoutInfo` names only its
     //   controller key -- so the inventory's controller entries are
     //   re-keyed with `controllerKeyOf` (see its doc) to join the two.
-    var route_names: std.ArrayListUnmanaged([]const u8) = .empty;
+    var route_names: std.ArrayList([]const u8) = .empty;
     defer route_names.deinit(gpa);
-    var route_params: std.ArrayListUnmanaged(findings.RouteParam) = .empty;
+    var route_params: std.ArrayList(findings.RouteParam) = .empty;
     defer route_params.deinit(gpa);
     for (route_result.routes) |r| {
         if (!r.certain) continue;
@@ -1437,7 +1437,7 @@ pub fn discover(
             try route_params.append(gpa, .{ .name = n, .path = r.path });
         }
     }
-    var controller_files: std.ArrayListUnmanaged(findings.ControllerFile) = .empty;
+    var controller_files: std.ArrayList(findings.ControllerFile) = .empty;
     defer controller_files.deinit(gpa);
     for (wr.entries) |e| {
         if (e.kind != .controller) continue;
@@ -1446,7 +1446,7 @@ pub fn discover(
     // R16: a third borrowed scratch list, for the same lifetime reason as
     // the two above -- `derive` only reads the paths, and every string in
     // here belongs to `frag_result`, which outlives the call.
-    var i18n_error_paths: std.ArrayListUnmanaged([]const u8) = .empty;
+    var i18n_error_paths: std.ArrayList([]const u8) = .empty;
     defer i18n_error_paths.deinit(gpa);
     for (frag_result.i18n_errors) |e| try i18n_error_paths.append(gpa, e.path);
     // #167 Stage 2 (ruling S18): a fourth borrowed scratch list, built from
@@ -1454,7 +1454,7 @@ pub fn discover(
     // (`inventory.unsupportedEngineLabel`), so the blocker set and the
     // finding set are one set. Every string belongs to `wr.entries`, which
     // outlives the call.
-    var unsupported_templates: std.ArrayListUnmanaged(findings.UnsupportedTemplate) = .empty;
+    var unsupported_templates: std.ArrayList(findings.UnsupportedTemplate) = .empty;
     defer unsupported_templates.deinit(gpa);
     for (wr.entries) |e| {
         const label = inventory.unsupportedEngineLabel(e) orelse continue;
@@ -1465,7 +1465,7 @@ pub fn discover(
     // table, for the `RAILS_NO_TEMPLATE` row. Every slice belongs to
     // `classify_result`, which outlives the call and escapes as
     // `Discovery.route_templates`.
-    var route_template_lists: std.ArrayListUnmanaged([]const []const u8) = .empty;
+    var route_template_lists: std.ArrayList([]const []const u8) = .empty;
     defer route_template_lists.deinit(gpa);
     for (classify_result.route_templates) |rt| try route_template_lists.append(gpa, rt.templates);
     // #167 Stage 3: a sixth borrowed scratch list -- the VIEW each route
@@ -1474,7 +1474,7 @@ pub fn discover(
     // journey detection and the form row's resource cannot disagree with
     // either about which template belongs to which route. Every string
     // belongs to `classify_result`, which outlives the call.
-    var route_view_list: std.ArrayListUnmanaged(?[]const u8) = .empty;
+    var route_view_list: std.ArrayList(?[]const u8) = .empty;
     defer route_view_list.deinit(gpa);
     for (classify_result.route_templates, 0..) |rt, i| {
         const r = route_result.routes[i];
@@ -1493,9 +1493,9 @@ pub fn discover(
     // depth-capped at `max_partial_depth`); `findings.zig` only reads them.
     // Every string belongs to `classify_result.templates`, which outlives
     // this call and escapes as `Discovery.templates`.
-    var render_graph: std.ArrayListUnmanaged(findings.TemplateRenders) = .empty;
+    var render_graph: std.ArrayList(findings.TemplateRenders) = .empty;
     defer render_graph.deinit(gpa);
-    var stimulus_markers: std.ArrayListUnmanaged(findings.TemplateStimulusMarkers) = .empty;
+    var stimulus_markers: std.ArrayList(findings.TemplateStimulusMarkers) = .empty;
     defer stimulus_markers.deinit(gpa);
     for (classify_result.templates) |t| {
         try render_graph.append(gpa, .{ .path = t.path, .renders = t.renders });
@@ -1569,7 +1569,7 @@ pub fn discover(
     // than arriving after the list has been handed away.
     var parsed_decisions: decisions.Parsed = .empty;
     errdefer decisions.free(gpa, parsed_decisions);
-    var backend_collections: std.ArrayListUnmanaged([]const u8) = .empty;
+    var backend_collections: std.ArrayList([]const u8) = .empty;
     defer backend_collections.deinit(gpa);
     if (dec.backend) |doc| {
         for (doc.operations) |operation| {
@@ -1589,7 +1589,7 @@ pub fn discover(
     if (dec.bytes) |decision_bytes| {
         // A private list when the caller wants none: `parse` writes to it on
         // every rejection, so it can never be optional at the callee.
-        var local_problems: std.ArrayListUnmanaged(decisions.Problem) = .empty;
+        var local_problems: std.ArrayList(decisions.Problem) = .empty;
         defer if (dec.problems == null) decisions.freeProblems(gpa, &local_problems);
         parsed_decisions = try decisions.parseWithCollections(
             gpa,
@@ -1681,7 +1681,7 @@ pub fn discover(
     // Stage 4 Task 8: the LAST read of `blocker_list.items` in this
     // function (the counts loop above and `report.build` just above both
     // already finished with it) -- `toOwnedSlice` invalidates the
-    // `ArrayListUnmanaged`, handing this function's own `blocker_list`
+    // `ArrayList`, handing this function's own `blocker_list`
     // storage over to `Discovery.blockers` (see that field's own doc). Every
     // `errdefer` above that still names `blocker_list`/`&blocker_list`
     // remains correct up to this point (the list still owns its storage
@@ -1764,7 +1764,7 @@ fn controllerEvidenceAvailable(controller_blockers: []const blockers.Blocker) bo
 /// allocating: `controller` may itself contain a `/` (a namespaced
 /// controller's PATH key, e.g. `admin/users`, which is what
 /// `discoverControllers` keys `ActionInfo.controller` on), so this is a
-/// plain prefix/segment check, not a `std.fs.path.join` + compare. The
+/// plain prefix/segment check, not a `std.Io.Dir.path.join` + compare. The
 /// trailing `.` check on `after_action` guards against `action` being a
 /// prefix of a longer sibling action's basename (e.g. action "show" must
 /// not match a file named "shower.html.erb"). Contract 3 (caller-buffer):
@@ -1814,7 +1814,7 @@ fn resolveViewEntry(entries: []const inventory.Entry, controller: []const u8, ac
         if (e.kind != .view and e.kind != .mailer_view) continue;
         if (!matchesRouteView(e.path, controller, action)) continue;
         if (e.engine == .jbuilder or e.engine == .builder) continue;
-        if (std.mem.indexOf(u8, e.path, ".html.") != null) {
+        if (std.mem.find(u8, e.path, ".html.") != null) {
             if (html_match == null) html_match = e;
         } else if (other_match == null) {
             other_match = e;
@@ -1828,7 +1828,7 @@ fn resolveViewEntry(entries: []const inventory.Entry, controller: []const u8, ac
 /// no-slash `render` target (e.g. `"post"`) resolves relative to. Contract
 /// 3 (caller-buffer): returns a slice into `path`, allocates nothing.
 fn templateDirOf(path: []const u8) []const u8 {
-    const slash = std.mem.lastIndexOfScalar(u8, path, '/') orelse return path;
+    const slash = std.mem.findScalarLast(u8, path, '/') orelse return path;
     return path[0..slash];
 }
 
@@ -1837,7 +1837,7 @@ fn templateDirOf(path: []const u8) []const u8 {
 /// `app/views/layouts/posts.html.erb`, `name == "admin/users"` matches
 /// `app/views/layouts/admin/users.html.erb`. Mirrors `matchesRouteView`'s
 /// segment-check style (plain prefix + trailing-dot check, not a
-/// `std.fs.path.join` + compare) for the identical reason: `name` may
+/// `std.Io.Dir.path.join` + compare) for the identical reason: `name` may
 /// itself contain '/' (a namespaced controller's path key). Contract 3
 /// (caller-buffer): allocates nothing.
 fn matchesLayoutName(path: []const u8, name: []const u8) bool {
@@ -1855,7 +1855,7 @@ fn matchesLayoutFor(entries: []const inventory.Entry, name: []const u8) ?invento
     for (entries) |e| {
         if (e.kind != .layout) continue;
         if (!matchesLayoutName(e.path, name)) continue;
-        if (std.mem.indexOf(u8, e.path, ".html.") != null) {
+        if (std.mem.find(u8, e.path, ".html.") != null) {
             if (html_match == null) html_match = e;
         } else if (other_match == null) {
             other_match = e;
@@ -1967,7 +1967,7 @@ fn matchesPartialTarget(path: []const u8, containing_dir: []const u8, target: []
 
     var dir: []const u8 = undefined;
     var name: []const u8 = undefined;
-    if (std.mem.lastIndexOfScalar(u8, target, '/')) |slash| {
+    if (std.mem.findScalarLast(u8, target, '/')) |slash| {
         dir = target[0..slash];
         name = target[slash + 1 ..];
     } else {
@@ -2120,7 +2120,7 @@ const TransitiveScan = struct {
     /// test) -- `.markers` and `.unresolved_render` are meaningless without
     /// the view's own content, so they are not consulted when this is set.
     view_unreadable: bool = false,
-    buffers: std.ArrayListUnmanaged([]u8) = .empty,
+    buffers: std.ArrayList([]u8) = .empty,
     /// The resolved layout's `inventory.Entry.path` (borrowed from
     /// `entries`, same as everywhere else in this file), or `null` when
     /// `resolveLayoutEntry` resolved none -- which since #167 Stage 1 means
@@ -2143,7 +2143,7 @@ const TransitiveScan = struct {
     /// sorted order and `scanRenders`' fixed source-occurrence order, but
     /// not alphabetical; `buildRouteTemplates` sorts by path itself where
     /// the manifest's determinism rule requires it.
-    graph: std.ArrayListUnmanaged(GraphNode) = .empty,
+    graph: std.ArrayList(GraphNode) = .empty,
 };
 
 /// Contract 2 counterpart to `transitiveScan`: releases every buffer plus
@@ -2263,15 +2263,15 @@ fn transitiveScan(
     /// it reads: `classifyRoutes` already holds the `layouts` slice.
     declared_layout: ?controllers.LayoutInfo,
     route_id: []const u8,
-    blocker_list: *std.ArrayListUnmanaged(blockers.Blocker),
-    reported_unreadable_templates: *std.ArrayListUnmanaged([]const u8),
+    blocker_list: *std.ArrayList(blockers.Blocker),
+    reported_unreadable_templates: *std.ArrayList([]const u8),
 ) Allocator.Error!TransitiveScan {
     var result: TransitiveScan = .{};
     errdefer freeTransitiveScan(gpa, &result);
 
-    var queue: std.ArrayListUnmanaged(QueueItem) = .empty;
+    var queue: std.ArrayList(QueueItem) = .empty;
     defer queue.deinit(gpa);
-    var visited: std.ArrayListUnmanaged([]const u8) = .empty;
+    var visited: std.ArrayList([]const u8) = .empty;
     defer visited.deinit(gpa);
 
     try queue.append(gpa, .{ .entry = view_entry, .depth = 0 });
@@ -2358,7 +2358,7 @@ fn transitiveScan(
         // this node's own targets (see `GraphNode`'s doc for why that means
         // an EMPTY `renders`, not a resolved-but-not-followed one -- this
         // scan genuinely never looked).
-        var node_renders: std.ArrayListUnmanaged([]const u8) = .empty;
+        var node_renders: std.ArrayList([]const u8) = .empty;
         errdefer node_renders.deinit(gpa);
 
         if (targets.len > 0) {
@@ -2511,7 +2511,7 @@ pub const TemplateNode = struct {
 /// used to sit on that dupe, now generalized here) -- is written once
 /// rather than three times.
 fn dupeNameList(gpa: Allocator, names: []const []const u8) Allocator.Error![][]const u8 {
-    var out: std.ArrayListUnmanaged([]const u8) = .empty;
+    var out: std.ArrayList([]const u8) = .empty;
     errdefer {
         for (out.items) |n| gpa.free(n);
         out.deinit(gpa);
@@ -2635,7 +2635,7 @@ fn buildRouteTemplates(gpa: Allocator, scan_result: *const TransitiveScan) Alloc
     if (scan_result.layout_path) |lp| layout = try gpa.dupe(u8, lp);
     errdefer if (layout) |l| gpa.free(l);
 
-    var templates: std.ArrayListUnmanaged([]const u8) = .empty;
+    var templates: std.ArrayList([]const u8) = .empty;
     errdefer {
         for (templates.items) |t| gpa.free(t);
         templates.deinit(gpa);
@@ -2679,7 +2679,7 @@ fn buildRouteTemplates(gpa: Allocator, scan_result: *const TransitiveScan) Alloc
 /// LATER step in the loop (not this call itself) fails.
 fn mergeGlobalTemplates(
     gpa: Allocator,
-    template_nodes: *std.ArrayListUnmanaged(TemplateNode),
+    template_nodes: *std.ArrayList(TemplateNode),
     scan_result: *const TransitiveScan,
 ) Allocator.Error!void {
     for (scan_result.graph.items) |edge| {
@@ -2794,7 +2794,7 @@ fn classifyRoutes(
     /// than inventing a declaration.
     layouts: []const controllers.LayoutInfo,
     controller_evidence_available: bool,
-    blocker_list: *std.ArrayListUnmanaged(blockers.Blocker),
+    blocker_list: *std.ArrayList(blockers.Blocker),
 ) Allocator.Error!ClassifyResult {
     const out = try gpa.alloc(classify.Verdict, route_list.len);
     errdefer gpa.free(out);
@@ -2806,13 +2806,13 @@ fn classifyRoutes(
     // their own partial-failure cleanup -- an `errdefer` freeing whatever
     // had already been appended, mirroring `freeRouteTemplates`/
     // `freeTemplateNodes`'s per-element logic but operating on the
-    // in-progress `ArrayListUnmanaged` rather than a finished slice.
-    var route_templates: std.ArrayListUnmanaged(RouteTemplates) = .empty;
+    // in-progress `ArrayList` rather than a finished slice.
+    var route_templates: std.ArrayList(RouteTemplates) = .empty;
     errdefer {
         freeRouteTemplatesElements(gpa, route_templates.items);
         route_templates.deinit(gpa);
     }
-    var template_nodes: std.ArrayListUnmanaged(TemplateNode) = .empty;
+    var template_nodes: std.ArrayList(TemplateNode) = .empty;
     errdefer {
         freeTemplateNodesElements(gpa, template_nodes.items);
         template_nodes.deinit(gpa);
@@ -2823,7 +2823,7 @@ fn classifyRoutes(
     // see `transitiveScan`'s doc. Holds borrowed `entries` paths (never
     // freed independently; `entries` outlives this function), so this list
     // owns only its own backing array.
-    var reported_unreadable_templates: std.ArrayListUnmanaged([]const u8) = .empty;
+    var reported_unreadable_templates: std.ArrayList([]const u8) = .empty;
     defer reported_unreadable_templates.deinit(gpa);
 
     for (route_list, 0..) |r, i| {
@@ -3040,7 +3040,7 @@ test "classifyRoutes reads the matched template and classifies from real markers
         .{ .controller = "posts", .action = "index" },
     };
 
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
@@ -3072,7 +3072,7 @@ test "classifyRoutes: an unreadable template becomes a non-integrity blocker, ro
         .{ .controller = "posts", .action = "index" },
     };
 
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
@@ -3124,7 +3124,7 @@ test "classifyRoutes: two routes with two DIFFERENT unreadable templates each ca
         .{ .controller = "comments", .action = "index" },
     };
 
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
@@ -3173,7 +3173,7 @@ test "classifyRoutes: two routes sharing one unreadable template emit ONE RAILS_
         .{ .controller = "posts", .action = "index" },
     };
 
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
@@ -3209,7 +3209,7 @@ test "classifyRoutes: a jbuilder-only view resolves to no view, not a false unsu
     const acts = [_]controllers.ActionInfo{
         .{ .controller = "posts", .action = "index" },
     };
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
@@ -3249,7 +3249,7 @@ test "classifyRoutes degradation: no controllers recovered, view present -> unre
     };
     const acts: []const controllers.ActionInfo = &.{}; // controller analysis unavailable
 
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, acts, &.{}, true, &blocker_list);
@@ -3266,7 +3266,7 @@ test "classifyRoutes degradation: no controllers recovered, view present -> unre
 // --- A1: transitive template scanning (layout + partials) ------------------
 
 fn writeTemplate(tmp: std.testing.TmpDir, io: Io, sub_path: []const u8, data: []const u8) !void {
-    const dir_path = std.fs.path.dirname(sub_path) orelse ".";
+    const dir_path = std.Io.Dir.path.dirname(sub_path) orelse ".";
     var d = try tmp.dir.createDirPathOpen(io, dir_path, .{});
     d.close(io);
     try tmp.dir.writeFile(io, .{ .sub_path = sub_path, .data = data });
@@ -3365,7 +3365,7 @@ test "classifyRoutes threads the controller's declared layout, not just the conv
         .{ .controller = "posts", .value = "marketing", .disabled = false, .dynamic = false, .line = 2 },
     };
 
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &layouts, true, &blocker_list);
@@ -3421,7 +3421,7 @@ test "transitive scan: a clean layout and a clean partial still reach content (m
         .{ .verb = "GET", .path = "/posts", .controller = "posts", .action = "index", .name = null, .certain = true, .origin = .static_ast },
     };
     const acts = [_]controllers.ActionInfo{.{ .controller = "posts", .action = "index" }};
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
@@ -3450,7 +3450,7 @@ test "transitive scan: a marker in the LAYOUT (not the view) forces unresolved, 
         .{ .verb = "GET", .path = "/posts", .controller = "posts", .action = "index", .name = null, .certain = true, .origin = .static_ast },
     };
     const acts = [_]controllers.ActionInfo{.{ .controller = "posts", .action = "index" }};
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
@@ -3478,7 +3478,7 @@ test "transitive scan: a marker in a RENDERED PARTIAL (view and layout clean) fo
         .{ .verb = "GET", .path = "/posts", .controller = "posts", .action = "index", .name = null, .certain = true, .origin = .static_ast },
     };
     const acts = [_]controllers.ActionInfo{.{ .controller = "posts", .action = "index" }};
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
@@ -3506,7 +3506,7 @@ test "transitive scan: the view's own marker wins priority over the layout's (vi
         .{ .verb = "GET", .path = "/posts", .controller = "posts", .action = "index", .name = null, .certain = true, .origin = .static_ast },
     };
     const acts = [_]controllers.ActionInfo{.{ .controller = "posts", .action = "index" }};
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
@@ -3537,7 +3537,7 @@ test "transitive scan: stimulus in a partial still reaches island (stimulus ORs 
         .{ .verb = "GET", .path = "/posts", .controller = "posts", .action = "index", .name = null, .certain = true, .origin = .static_ast },
     };
     const acts = [_]controllers.ActionInfo{.{ .controller = "posts", .action = "index" }};
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
@@ -3577,7 +3577,7 @@ test "transitive scan: a MALFORMED data-controller attribute in a rendered parti
         .{ .verb = "GET", .path = "/posts", .controller = "posts", .action = "index", .name = null, .certain = true, .origin = .static_ast },
     };
     const acts = [_]controllers.ActionInfo{.{ .controller = "posts", .action = "index" }};
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
@@ -3602,7 +3602,7 @@ test "transitive scan: a dynamic render target (render @post) forces unresolved,
         .{ .verb = "GET", .path = "/posts", .controller = "posts", .action = "index", .name = null, .certain = true, .origin = .static_ast },
     };
     const acts = [_]controllers.ActionInfo{.{ .controller = "posts", .action = "index" }};
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
@@ -3630,7 +3630,7 @@ test "transitive scan: a literal render target matching no inventory entry force
         .{ .verb = "GET", .path = "/posts", .controller = "posts", .action = "index", .name = null, .certain = true, .origin = .static_ast },
     };
     const acts = [_]controllers.ActionInfo{.{ .controller = "posts", .action = "index" }};
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
@@ -3660,7 +3660,7 @@ test "transitive scan: an unresolvable render does NOT downgrade a verdict that 
         .{ .verb = "GET", .path = "/posts", .controller = "posts", .action = "index", .name = null, .certain = true, .origin = .static_ast },
     };
     const acts = [_]controllers.ActionInfo{.{ .controller = "posts", .action = "index" }};
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
@@ -3698,7 +3698,7 @@ test "transitive scan: partial nesting past the depth cap emits a blocker and fo
         .{ .verb = "GET", .path = "/posts", .controller = "posts", .action = "index", .name = null, .certain = true, .origin = .static_ast },
     };
     const acts = [_]controllers.ActionInfo{.{ .controller = "posts", .action = "index" }};
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
@@ -3740,7 +3740,7 @@ test "transitive scan: a shared partial rendered from two places (a cycle-safe g
         .{ .verb = "GET", .path = "/posts", .controller = "posts", .action = "index", .name = null, .certain = true, .origin = .static_ast },
     };
     const acts = [_]controllers.ActionInfo{.{ .controller = "posts", .action = "index" }};
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
@@ -3770,7 +3770,7 @@ test "transitive scan: an unreadable PARTIAL (not the view itself) forces unreso
         .{ .verb = "GET", .path = "/posts", .controller = "posts", .action = "index", .name = null, .certain = true, .origin = .static_ast },
     };
     const acts = [_]controllers.ActionInfo{.{ .controller = "posts", .action = "index" }};
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
@@ -3811,7 +3811,7 @@ test "Task 4: renders[] names the RESOLVED partial path, not the literal render 
         .{ .verb = "GET", .path = "/posts", .controller = "posts", .action = "index", .name = null, .certain = true, .origin = .static_ast },
     };
     const acts = [_]controllers.ActionInfo{.{ .controller = "posts", .action = "index" }};
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
@@ -3875,7 +3875,7 @@ test "Task 4: two routes sharing one view produce ONE global templates[] entry, 
         .{ .verb = "GET", .path = "/posts", .controller = "posts", .action = "index", .name = null, .certain = true, .origin = .static_ast },
     };
     const acts = [_]controllers.ActionInfo{.{ .controller = "posts", .action = "index" }};
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
@@ -3913,7 +3913,7 @@ test "Task 4: an unresolved render target (a dynamic expression) contributes not
         .{ .verb = "GET", .path = "/posts", .controller = "posts", .action = "index", .name = null, .certain = true, .origin = .static_ast },
     };
     const acts = [_]controllers.ActionInfo{.{ .controller = "posts", .action = "index" }};
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
@@ -3966,7 +3966,7 @@ test "Task 4: a node past the depth cap contributes an EMPTY renders[] -- the sc
         .{ .verb = "GET", .path = "/posts", .controller = "posts", .action = "index", .name = null, .certain = true, .origin = .static_ast },
     };
     const acts = [_]controllers.ActionInfo{.{ .controller = "posts", .action = "index" }};
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
@@ -4011,7 +4011,7 @@ test "Task 4: a route whose view was never resolved gets the zero-value RouteTem
         .{ .verb = "POST", .path = "/posts", .controller = "posts", .action = "create", .name = null, .certain = true, .origin = .static_ast },
     };
     const acts = [_]controllers.ActionInfo{.{ .controller = "posts", .action = "index" }};
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list);
@@ -4047,7 +4047,7 @@ test "classifyRoutes A3: controller evidence unavailable wholesale -> a view-les
         .{ .verb = "GET", .path = "/admin/health", .controller = "admin", .action = "health", .name = null, .certain = true, .origin = .static_ast },
     };
     const acts: []const controllers.ActionInfo = &.{};
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const result = try classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, acts, &.{}, false, &blocker_list);
@@ -4094,7 +4094,7 @@ test "transitive scan: an OOM at any point in a multi-file scan leaks nothing" {
         var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
         const gpa = failing.allocator();
 
-        var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+        var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
         defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
         if (classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list)) |result| {
@@ -4150,7 +4150,7 @@ test "mergeGlobalTemplates: an OOM at any point while duping stimulus_controller
         var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
         const gpa = failing.allocator();
 
-        var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+        var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
         defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
         if (classifyRoutes(io, gpa, tmp.dir, &entries, &route_list, &acts, &.{}, true, &blocker_list)) |result| {
@@ -4302,8 +4302,8 @@ test "discover: the fixture's assets discriminate -- logo.png is deterministic, 
     // The non-deterministic asset's reason is visible in the rendered
     // report, not just in the in-memory `Discovery.assets` this test reads
     // directly -- a human running `zigapagos migrate` sees the same fact.
-    try std.testing.expect(std.mem.indexOf(u8, d.report, "RAILS_ASSET_DIGEST_UNAVAILABLE") != null);
-    try std.testing.expect(std.mem.indexOf(u8, d.report, "app/assets/stylesheets/application.css.erb") != null);
+    try std.testing.expect(std.mem.find(u8, d.report, "RAILS_ASSET_DIGEST_UNAVAILABLE") != null);
+    try std.testing.expect(std.mem.find(u8, d.report, "app/assets/stylesheets/application.css.erb") != null);
 }
 
 test "discover: reachability -- source.version, per-route source{file,line}/certain, and per-template stimulus_controllers are all present on a real Discovery, not merely produced somewhere" {
@@ -4339,7 +4339,7 @@ test "discover: reachability -- source.version, per-route source{file,line}/cert
     try std.testing.expectEqual(@as(usize, 2), d.js_sources.len);
     try std.testing.expectEqualStrings("app/javascript/application.js", d.js_sources[0].path);
     try std.testing.expectEqualStrings("app/javascript/controllers/reveal_controller.js", d.js_sources[1].path);
-    try std.testing.expect(std.mem.indexOf(u8, d.js_sources[1].bytes, "export default class") != null);
+    try std.testing.expect(std.mem.find(u8, d.js_sources[1].bytes, "export default class") != null);
     try std.testing.expectEqualStrings("app/javascript/application.js", d.js_entry.?);
     try std.testing.expectEqual(@as(usize, 0), d.npm_dependencies.len);
 
@@ -4520,8 +4520,8 @@ test "discover: config/routes.rb absent but app/controllers/ present still repor
     defer freeDiscovery(gpa, d);
 
     if (!d.ruby.available) {
-        if (std.mem.indexOf(u8, d.report, "RAILS_RUBY_UNAVAILABLE") != null or
-            std.mem.indexOf(u8, d.report, "RAILS_CONTROLLERS_UNAVAILABLE") != null)
+        if (std.mem.find(u8, d.report, "RAILS_RUBY_UNAVAILABLE") != null or
+            std.mem.find(u8, d.report, "RAILS_CONTROLLERS_UNAVAILABLE") != null)
         {
             return error.SkipZigTest; // no working ruby on this runner
         }
@@ -4538,7 +4538,7 @@ test "discover: config/routes.rb absent but app/controllers/ present still repor
     // is not a test that accidentally works because ruby.available is true
     // for some unrelated reason.
     try std.testing.expectEqualStrings("none", d.route_mode);
-    try std.testing.expect(std.mem.indexOf(u8, d.report, "RAILS_ROUTES_MISSING") != null);
+    try std.testing.expect(std.mem.find(u8, d.report, "RAILS_ROUTES_MISSING") != null);
 }
 
 // ---- #167 Stage 2: the decisions file -------------------------------------
@@ -4603,7 +4603,7 @@ test "discover: a stale decision becomes one warn RAILS_DECISION_STALE blocker a
         try std.testing.expectEqualStrings("out/MIGRATION.decisions.json", b.path);
         // The detail names the dead id -- the whole point of the blocker is
         // that the operator can find and delete the entry.
-        try std.testing.expect(std.mem.indexOf(u8, b.detail, "RAILS_HELPER_UNKNOWN.app/views/gone%2Ehtml%2Eerb.L1C1") != null);
+        try std.testing.expect(std.mem.find(u8, b.detail, "RAILS_HELPER_UNKNOWN.app/views/gone%2Ehtml%2Eerb.L1C1") != null);
     }
     try std.testing.expectEqual(@as(usize, 1), stale_blockers);
     // It is counted like every other blocker: appended BEFORE the counting
@@ -4623,7 +4623,7 @@ test "discover: a malformed decisions entry fails the whole run and names the of
     var env_map = try emptyAppEnv(gpa);
     defer env_map.deinit();
 
-    var problems: std.ArrayListUnmanaged(decisions.Problem) = .empty;
+    var problems: std.ArrayList(decisions.Problem) = .empty;
     defer decisions.freeProblems(gpa, &problems);
 
     // Two faults in one file, deliberately: `parse` accumulates rather than
@@ -4643,7 +4643,7 @@ test "discover: a malformed decisions entry fails the whole run and names the of
     try std.testing.expectError(error.Invalid, err);
     try std.testing.expectEqual(@as(usize, 2), problems.items.len);
     try std.testing.expectEqualStrings("A.L1", problems.items[0].id.?);
-    try std.testing.expect(std.mem.indexOf(u8, problems.items[0].message, "rationale") != null);
+    try std.testing.expect(std.mem.find(u8, problems.items[0].message, "rationale") != null);
     try std.testing.expectEqual(@as(usize, 1), problems.items[1].index);
 }
 

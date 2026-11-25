@@ -32,15 +32,15 @@ test "dev control: status text rendering" {
     };
     const text = try renderStatusText(gpa, lf, "{\"ok\":true,\"pid\":4242,\"url\":\"http://127.0.0.1:1990/\",\"started_at\":\"2026-08-07T12:34:56Z\",\"build\":{\"generation\":7,\"status\":\"ok\",\"duration_ms\":412,\"error\":null}}");
     defer gpa.free(text);
-    try std.testing.expect(std.mem.indexOf(u8, text, "http://127.0.0.1:1990/") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "pid 4242") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "background") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "build #7 ok (412 ms)") != null);
+    try std.testing.expect(std.mem.find(u8, text, "http://127.0.0.1:1990/") != null);
+    try std.testing.expect(std.mem.find(u8, text, "pid 4242") != null);
+    try std.testing.expect(std.mem.find(u8, text, "background") != null);
+    try std.testing.expect(std.mem.find(u8, text, "build #7 ok (412 ms)") != null);
 
     // Control server unreachable → status still prints, degraded.
     const degraded = try renderStatusText(gpa, lf, null);
     defer gpa.free(degraded);
-    try std.testing.expect(std.mem.indexOf(u8, degraded, "build: unknown (control server unreachable)") != null);
+    try std.testing.expect(std.mem.find(u8, degraded, "build: unknown (control server unreachable)") != null);
 }
 
 test "dev control: status json rendering wraps running + lockfile + build" {
@@ -58,9 +58,9 @@ test "dev control: status json rendering wraps running + lockfile + build" {
     };
     const json = try renderStatusJson(gpa, lf, "{\"ok\":true,\"pid\":1,\"url\":\"u\",\"started_at\":\"s\",\"build\":{\"generation\":2,\"status\":\"failed\",\"duration_ms\":9,\"error\":\"boom\"}}");
     defer gpa.free(json);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"running\":true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"generation\":2") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"zigbase_pid\":2") != null);
+    try std.testing.expect(std.mem.find(u8, json, "\"running\":true") != null);
+    try std.testing.expect(std.mem.find(u8, json, "\"generation\":2") != null);
+    try std.testing.expect(std.mem.find(u8, json, "\"zigbase_pid\":2") != null);
 }
 
 test "dev control: renderStatusText degrades (never panics) on a malformed control-endpoint body" {
@@ -93,7 +93,7 @@ test "dev control: renderStatusText degrades (never panics) on a malformed contr
     for (bodies) |body| {
         const text = try renderStatusText(gpa, lf, body);
         defer gpa.free(text);
-        try std.testing.expect(std.mem.indexOf(u8, text, degraded_marker) != null);
+        try std.testing.expect(std.mem.find(u8, text, degraded_marker) != null);
     }
 }
 
@@ -116,7 +116,7 @@ test "dev control: renderStatusJson degrades (never panics) when the root isn't 
     for ([_][]const u8{ "[1,2,3]", "{}", "{\"build\":5}" }) |body| {
         const json = try renderStatusJson(gpa, lf, body);
         defer gpa.free(json);
-        try std.testing.expect(std.mem.indexOf(u8, json, "\"running\":true") != null);
+        try std.testing.expect(std.mem.find(u8, json, "\"running\":true") != null);
     }
 }
 
@@ -731,7 +731,7 @@ fn scanDataDirArg(args: []const []const u8) []const u8 {
 fn resolveDataDir(io: Io, gpa: Allocator, args: []const []const u8) []const u8 {
     const data_dir = scanDataDirArg(args);
     _, const base_dir_path = root.Config.load(io, gpa);
-    return std.fs.path.resolve(gpa, &.{ base_dir_path, data_dir }) catch fatal.oom();
+    return std.Io.Dir.path.resolveAlloc(gpa, &.{ base_dir_path, data_dir }) catch fatal.oom();
 }
 
 /// Safe field access into a parsed `std.json.Value`: each returns the typed
@@ -863,7 +863,7 @@ fn fetchBodyWithTimeout(io: Io, gpa: Allocator, address: Io.net.IpAddress, path:
     // dev control. This escape hatch is POSIX-only (our current host targets);
     // Windows daemon control remains unavailable. The
     // connect-timeout limitation above is separate from this read deadline.
-    var all: std.ArrayListUnmanaged(u8) = .empty;
+    var all: std.ArrayList(u8) = .empty;
     defer all.deinit(gpa);
     while (all.items.len < 64 * 1024) {
         const remaining = deadline - Io.Clock.awake.now(io).toMilliseconds();
@@ -876,7 +876,7 @@ fn fetchBodyWithTimeout(io: Io, gpa: Allocator, address: Io.net.IpAddress, path:
     }
     if (all.items.len >= 64 * 1024) return error.ResponseTooLarge;
     const raw = all.items;
-    const split = std.mem.indexOf(u8, raw, "\r\n\r\n") orelse return error.MalformedResponse;
+    const split = std.mem.find(u8, raw, "\r\n\r\n") orelse return error.MalformedResponse;
     return gpa.dupe(u8, raw[split + 4 ..]);
 }
 
@@ -1052,7 +1052,7 @@ fn probeHealth(io: Io, gpa: Allocator, host: []const u8, port: u16) bool {
     const addr = Io.net.IpAddress.parse(probeHost(host), port) catch return false;
     const body = fetchBody(io, gpa, addr, "/api/health") catch return false;
     defer gpa.free(body);
-    return std.mem.indexOf(u8, body, "\"status\"") != null;
+    return std.mem.find(u8, body, "\"status\"") != null;
 }
 
 /// Kill an orphaned zigbase recorded in the lockfile — but only after
@@ -1133,7 +1133,7 @@ pub fn sweepOrphan(io: Io, gpa: Allocator, data_dir_abs: []const u8) void {
 /// belonging to the rebuild command, not to `dev` itself). Contract 1: caller
 /// frees the slice (the strings are borrowed from raw_args).
 fn filterBackgroundArgs(gpa: Allocator, raw_args: []const []const u8) error{OutOfMemory}![]const []const u8 {
-    var out: std.ArrayListUnmanaged([]const u8) = .empty;
+    var out: std.ArrayList([]const u8) = .empty;
     errdefer out.deinit(gpa);
     var past_separator = false;
     for (raw_args) |arg| {
@@ -1257,13 +1257,13 @@ pub fn background(
         }
     }
 
-    const log_path = std.fs.path.join(gpa, &.{ data_dir_abs, log_name }) catch fatal.oom();
+    const log_path = std.Io.Dir.path.join(gpa, &.{ data_dir_abs, log_name }) catch fatal.oom();
     const log_file = Io.Dir.cwd().createFile(io, log_path, .{ .truncate = true }) catch |err| fatal.msg(
         "error: dev: unable to open the log file '{s}': {s}\n",
         .{ log_path, @errorName(err) },
     );
 
-    var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+    var argv: std.ArrayList([]const u8) = .empty;
     const self_z = std.process.executablePathAlloc(io, gpa) catch |err| fatal.msg(
         "error: dev: this executable's own path is unavailable ({s})\n",
         .{@errorName(err)},
@@ -1373,7 +1373,7 @@ fn logsVerb(io: Io, gpa: Allocator, args: []const []const u8) error{OutOfMemory}
         .{},
     );
 
-    const log_path = std.fs.path.join(gpa, &.{ data_dir_abs, if (json) "dev.ndjson" else log_name }) catch fatal.oom();
+    const log_path = std.Io.Dir.path.join(gpa, &.{ data_dir_abs, if (json) "dev.ndjson" else log_name }) catch fatal.oom();
     const contents = Io.Dir.cwd().readFileAlloc(io, log_path, gpa, .limited(16 * 1024 * 1024)) catch |err| {
         if (err == error.StreamTooLong) {
             fatal.msg(

@@ -25,7 +25,7 @@ const plan = @import("plan.zig");
 // threaded through the caller's `io` rather than a bare `.lock()`. It is
 // a no-op spin/futex either way under `-Dsingle-threaded`.
 var mu: Io.Mutex = .init;
-var requests: std.AutoArrayHashMapUnmanaged(plan.SourceRef, void) = .empty;
+var requests: std.array_hash_map.Auto(plan.SourceRef, void) = .empty;
 // Recorded from the first `register()` of a build cycle and never
 // overwritten thereafter — purely a witness for the same-allocator
 // contract's assert below, not a value either function actually needs to

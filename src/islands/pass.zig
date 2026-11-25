@@ -165,13 +165,13 @@ pub const ProcessOptions = struct {
     /// for BOTH policies — so the caller surfaces the JS message + stack (at
     /// .err, with page context) instead of pass.zig logging directly. Appended
     /// with `gpa`; string fields are owned by the `arena` passed to `process`.
-    render_errors: ?*std.ArrayListUnmanaged(RenderErrorReport) = null,
+    render_errors: ?*std.ArrayList(RenderErrorReport) = null,
     /// Evaluates `prop-NAME="$expr"` attributes only on islands carrying the
     /// explicit `scripty:props` marker. Null preserves verbatim content-fence
     /// behavior and is the default for non-page-renderer callers and tests.
     content_prop_evaluator: ?ContentPropEvaluator = null,
     /// Optional caller-owned sink for failed marked expressions.
-    content_prop_eval_errors: ?*std.ArrayListUnmanaged(ContentPropEvalErrorReport) = null,
+    content_prop_eval_errors: ?*std.ArrayList(ContentPropEvalErrorReport) = null,
     /// The per-site SLICED islands runtime URL (`/islands/_runtime.js`), or null
     /// when this build produced no slice — which is also the default, so every
     /// existing caller keeps the shared runtime byte-identically. Un-prefixed:
@@ -239,8 +239,8 @@ pub fn speculationRulesTag(alloc: std.mem.Allocator, url_prefix: []const u8) ![]
 /// NO_SLOP.md §2.2a contract 1: one allocation (the spliced buffer) escapes;
 /// nothing else is held past the call.
 pub fn injectBeforeHeadEnd(alloc: std.mem.Allocator, html: []const u8, tag: []const u8) !?[]u8 {
-    const idx = std.mem.indexOf(u8, html, "</head>") orelse return null;
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    const idx = std.mem.find(u8, html, "</head>") orelse return null;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(alloc);
     try out.ensureTotalCapacityPrecise(alloc, html.len + tag.len);
     out.appendSliceAssumeCapacity(html[0..idx]);
@@ -268,8 +268,8 @@ test "importMapFor points every specifier at a sliced runtime URL" {
     const map = try importMapFor(gpa, "/spa/public-runtime.js");
     defer gpa.free(map);
     // no residual shared-runtime target, and @z/runtime routes to the slice
-    try std.testing.expect(std.mem.indexOf(u8, map, shared_runtime_url) == null);
-    try std.testing.expect(std.mem.indexOf(u8, map, "\"@z/runtime\":\"/spa/public-runtime.js\"") != null);
+    try std.testing.expect(std.mem.find(u8, map, shared_runtime_url) == null);
+    try std.testing.expect(std.mem.find(u8, map, "\"@z/runtime\":\"/spa/public-runtime.js\"") != null);
 }
 
 test "speculationRulesTag emits the exact unprefixed block" {
@@ -331,7 +331,7 @@ fn preloadLinks(alloc: std.mem.Allocator, instances: []const IslandInstance, run
     if (instances.len == 0) return "";
     var seen: std.StringHashMapUnmanaged(void) = .empty;
     defer seen.deinit(alloc);
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(alloc);
     // Fast path: the shared runtime with no prefix is the precomputed constant
     // (byte-identical to the pre-`ProcessOptions` output).
@@ -369,7 +369,7 @@ pub const Result = struct {
 /// stack goes to the build log; the placeholder stays compact. Returns gpa-owned
 /// HTML (freed by the caller like a normal SSR result).
 fn renderErrorPlaceholder(gpa: std.mem.Allocator, src: []const u8, rerr: sidecar.RenderError) ![]u8 {
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
     try out.appendSlice(gpa, "<div data-z-island-error role=\"alert\" style=\"" ++
         "border:2px solid #c00;background:#fff5f5;color:#900;" ++
@@ -385,7 +385,7 @@ fn renderErrorPlaceholder(gpa: std.mem.Allocator, src: []const u8, rerr: sidecar
 /// Append `s` to `out` with the HTML-special chars escaped, so a JS error
 /// message (untrusted-ish, may contain `<`/`>`/`&`/`"`) can't break out of the
 /// placeholder markup.
-fn appendHtmlEscaped(gpa: std.mem.Allocator, out: *std.ArrayListUnmanaged(u8), s: []const u8) !void {
+fn appendHtmlEscaped(gpa: std.mem.Allocator, out: *std.ArrayList(u8), s: []const u8) !void {
     for (s) |c| switch (c) {
         '&' => try out.appendSlice(gpa, "&amp;"),
         '<' => try out.appendSlice(gpa, "&lt;"),
@@ -428,26 +428,26 @@ fn extractMarkdownSlotSources(
 ) !ExtractedMarkdownSlots {
     const open_marker = "<z-markdown-slot-source ";
     const close_marker = "</z-markdown-slot-source>";
-    if (std.mem.indexOf(u8, html, open_marker) == null) return .{
+    if (std.mem.find(u8, html, open_marker) == null) return .{
         .html = html,
         .owned_html = null,
         .sources = &.{},
     };
 
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
-    var sources: std.ArrayListUnmanaged(MarkdownSlotSource) = .empty;
+    var sources: std.ArrayList(MarkdownSlotSource) = .empty;
     errdefer sources.deinit(gpa);
 
     var cursor: usize = 0;
-    while (std.mem.indexOfPos(u8, html, cursor, open_marker)) |start| {
+    while (std.mem.findPos(u8, html, cursor, open_marker)) |start| {
         try out.appendSlice(gpa, html[cursor..start]);
-        const open_end = std.mem.indexOfScalarPos(u8, html, start + open_marker.len, '>') orelse
+        const open_end = std.mem.findScalarPos(u8, html, start + open_marker.len, '>') orelse
             return error.MalformedMarkdownSlotSource;
         const tag_text = html[start .. open_end + 1];
         const id = attrDouble(tag_text, "data-z-id") orelse
             return error.MalformedMarkdownSlotSource;
-        const close = std.mem.indexOfPos(u8, html, open_end + 1, close_marker) orelse
+        const close = std.mem.findPos(u8, html, open_end + 1, close_marker) orelse
             return error.MalformedMarkdownSlotSource;
 
         for (sources.items) |source| {
@@ -513,7 +513,7 @@ fn expandMarkdownSlots(
     src: []const u8,
     sources: []MarkdownSlotSource,
 ) !?[]u8 {
-    var refs: std.ArrayListUnmanaged(Attr) = .empty;
+    var refs: std.ArrayList(Attr) = .empty;
     defer refs.deinit(gpa);
     var attrs = AttrIterator.init(tag_text);
     while (attrs.next()) |attr| {
@@ -538,7 +538,7 @@ fn expandMarkdownSlots(
     }
     if (refs.items.len == 0) return null;
 
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
     try out.appendSlice(gpa, raw_slot_html);
     for (refs.items) |ref| {
@@ -610,7 +610,7 @@ pub fn process(
     renderer: anytype,
     opts: ProcessOptions,
 ) !Result {
-    var instances: std.ArrayListUnmanaged(IslandInstance) = .empty;
+    var instances: std.ArrayList(IslandInstance) = .empty;
     // instances items are arena-owned; the slice itself is too
     errdefer instances.deinit(arena.a);
 
@@ -651,7 +651,7 @@ pub fn process(
         if (inst.client.len > 0) break true;
     } else false;
     if (has_client) {
-        if (std.mem.indexOf(u8, body, "</head>")) |head_end| {
+        if (std.mem.find(u8, body, "</head>")) |head_end| {
             // Which runtime this PAGE loads. The per-site slice serves only the
             // island bundles the build proved it covers, so a page carrying ANY
             // other island — one that imports @z/runtime/compat, bare `react`,
@@ -670,7 +670,7 @@ pub fn process(
             } else false;
             const runtime_url_raw = if (use_sliced) opts.sliced_runtime_url.? else shared_runtime_url;
 
-            var injected: std.ArrayListUnmanaged(u8) = .empty;
+            var injected: std.ArrayList(u8) = .empty;
             errdefer injected.deinit(gpa);
             try injected.appendSlice(gpa, body[0..head_end]);
             // The import map must be emitted before ANY modulepreload: per the
@@ -735,13 +735,13 @@ fn rewrite(
     html: []const u8,
     renderer: anytype,
     page_url: []const u8,
-    instances: *std.ArrayListUnmanaged(IslandInstance),
+    instances: *std.ArrayList(IslandInstance),
     counter: *usize,
     url_prefix: []const u8,
     on_render_error: OnRenderError,
-    render_errors: ?*std.ArrayListUnmanaged(RenderErrorReport),
+    render_errors: ?*std.ArrayList(RenderErrorReport),
     content_prop_evaluator: ?ContentPropEvaluator,
-    content_prop_eval_errors: ?*std.ArrayListUnmanaged(ContentPropEvalErrorReport),
+    content_prop_eval_errors: ?*std.ArrayList(ContentPropEvalErrorReport),
     markdown_slot_sources: []MarkdownSlotSource,
 ) anyerror![]u8 {
     // anyerror: this function is recursive (slot content is re-processed), which
@@ -791,7 +791,7 @@ fn rewrite(
     else
         try prefixed(arena.a, url_prefix, page_url);
 
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
 
     var i: usize = 0;
@@ -948,7 +948,7 @@ fn rewrite(
             // overwhelmingly common case — the slot slice passes through
             // untouched and this whole block allocates nothing.
             if (!found) break :blk slots;
-            var kept: std.ArrayListUnmanaged(Slot) = .empty;
+            var kept: std.ArrayList(Slot) = .empty;
             for (slots) |s| {
                 if (std.mem.eql(u8, s.name, fallback_slot_name)) continue;
                 try kept.append(arena.a, s);
@@ -1136,7 +1136,7 @@ const IslandStart = struct {
 /// markup that contains no island at all.
 fn nextIslandStart(html: []const u8, from: usize) ?IslandStart {
     var p = from;
-    while (std.mem.indexOfScalarPos(u8, html, p, '<')) |lt| {
+    while (std.mem.findScalarPos(u8, html, p, '<')) |lt| {
         if (std.mem.startsWith(u8, html[lt..], "<!--")) {
             p = commentEnd(html, lt) orelse return null; // always > lt
             continue;
@@ -1179,7 +1179,7 @@ fn commentEnd(html: []const u8, lt: usize) ?usize {
     var p = lt + "<!--".len;
     if (p < html.len and html[p] == '>') return p + 1; // <!-->
     if (p + 1 < html.len and html[p] == '-' and html[p + 1] == '>') return p + 2; // <!--->
-    while (std.mem.indexOfPos(u8, html, p, "--")) |dashes| {
+    while (std.mem.findPos(u8, html, p, "--")) |dashes| {
         const after = dashes + 2;
         if (after < html.len and html[after] == '>') return after + 1; // -->
         if (after + 1 < html.len and html[after] == '!' and html[after + 1] == '>') return after + 2; // --!>
@@ -1210,14 +1210,14 @@ fn rawTextEnd(html: []const u8, lt: usize) ?usize {
 /// begins at `from`, or `html.len` when there is none.
 fn closeTagEnd(html: []const u8, from: usize, name: []const u8) usize {
     var p = from;
-    while (std.mem.indexOfScalarPos(u8, html, p, '<')) |lt| {
+    while (std.mem.findScalarPos(u8, html, p, '<')) |lt| {
         const name_start = lt + 2;
         const name_end = name_start + name.len;
         if (name_end <= html.len and html[lt + 1] == '/' and
             std.ascii.eqlIgnoreCase(html[name_start..name_end], name) and
             (name_end == html.len or isTagNameBoundary(html[name_end])))
         {
-            const gt = std.mem.indexOfScalarPos(u8, html, name_end, '>') orelse return html.len;
+            const gt = std.mem.findScalarPos(u8, html, name_end, '>') orelse return html.len;
             return gt + 1;
         }
         p = lt + 1;
@@ -1262,12 +1262,12 @@ fn matchingClose(html: []const u8, from: usize, tag: IslandTag) ?usize {
     var depth: usize = 0;
     var p = from;
     while (p < html.len) {
-        const close = std.mem.indexOfPos(u8, html, p, tag.close) orelse return null;
+        const close = std.mem.findPos(u8, html, p, tag.close) orelse return null;
         // Find the first *real* nested `<NAME ...>` opening (same spelling
         // only) before this close.
         var nested: ?usize = null;
         var scan = p;
-        while (std.mem.indexOfPos(u8, html, scan, tag.open)) |o| {
+        while (std.mem.findPos(u8, html, scan, tag.open)) |o| {
             if (o >= close) break;
             const we = o + tag.open.len;
             const is_tag = we < html.len and isTagNameBoundary(html[we]);
@@ -1347,8 +1347,8 @@ fn islandExtent(html: []const u8, tok: IslandStart) ?IslandExtent {
 /// Contract 3: allocates nothing; the result is a slice of `src`.
 pub fn islandModuleName(src: []const u8) []const u8 {
     var name = src;
-    if (std.mem.lastIndexOfScalar(u8, name, '/')) |slash| name = name[slash + 1 ..];
-    if (std.mem.lastIndexOfScalar(u8, name, '.')) |dot| name = name[0..dot]; // strip final ext
+    if (std.mem.findScalarLast(u8, name, '/')) |slash| name = name[slash + 1 ..];
+    if (std.mem.findScalarLast(u8, name, '.')) |dot| name = name[0..dot]; // strip final ext
     return name;
 }
 
@@ -1374,19 +1374,19 @@ fn containsName(names: []const []const u8, needle: []const u8) bool {
 /// per-pair frees would be bookkeeping only (2), and they die with the page
 /// render (3).
 fn collectDynProps(arena: RenderArena, tag_text: []const u8) ![]const props.Pair {
-    var pairs: std.ArrayListUnmanaged(props.Pair) = .empty;
+    var pairs: std.ArrayList(props.Pair) = .empty;
     const marker = " prop-";
     var i: usize = 0;
-    while (std.mem.indexOfPos(u8, tag_text, i, marker)) |p| {
+    while (std.mem.findPos(u8, tag_text, i, marker)) |p| {
         const name_start = p + marker.len;
-        const eq = std.mem.indexOfScalarPos(u8, tag_text, name_start, '=') orelse break;
+        const eq = std.mem.findScalarPos(u8, tag_text, name_start, '=') orelse break;
         const name = tag_text[name_start..eq];
         if (eq + 1 >= tag_text.len or tag_text[eq + 1] != '"') {
             i = eq + 1;
             continue;
         }
         const vstart = eq + 2;
-        const vend = std.mem.indexOfScalarPos(u8, tag_text, vstart, '"') orelse break;
+        const vend = std.mem.findScalarPos(u8, tag_text, vstart, '"') orelse break;
         try pairs.append(arena.a, .{
             .name = try arena.a.dupe(u8, name),
             // SuperHTML HTML-escapes attribute values (& > < ' "), so the raw
@@ -1415,9 +1415,9 @@ fn evaluateContentProps(
     src: []const u8,
     pairs: []const props.Pair,
     evaluator: ContentPropEvaluator,
-    errors: ?*std.ArrayListUnmanaged(ContentPropEvalErrorReport),
+    errors: ?*std.ArrayList(ContentPropEvalErrorReport),
 ) ![]const props.Pair {
-    var evaluated: std.ArrayListUnmanaged(props.Pair) = .empty;
+    var evaluated: std.ArrayList(props.Pair) = .empty;
     errdefer evaluated.deinit(arena.a);
     for (pairs) |pair| {
         if (!std.mem.startsWith(u8, pair.value, "$")) {
@@ -1452,7 +1452,7 @@ fn evaluateContentProps(
 /// instead of borrowing `s`, so the caller can free unconditionally without
 /// knowing which path ran.
 fn htmlUnescapeAttr(alloc: std.mem.Allocator, s: []const u8) ![]const u8 {
-    if (std.mem.indexOfScalar(u8, s, '&') == null) return alloc.dupe(u8, s);
+    if (std.mem.findScalar(u8, s, '&') == null) return alloc.dupe(u8, s);
 
     const entities = .{
         .{ "&amp;", "&" },
@@ -1465,7 +1465,7 @@ fn htmlUnescapeAttr(alloc: std.mem.Allocator, s: []const u8) ![]const u8 {
     };
 
     // Unescaping only shrinks, so the input length is a sufficient capacity.
-    var out: std.ArrayListUnmanaged(u8) = try .initCapacity(alloc, s.len);
+    var out: std.ArrayList(u8) = try .initCapacity(alloc, s.len);
     errdefer out.deinit(alloc);
     var i: usize = 0;
     outer: while (i < s.len) {
@@ -1522,7 +1522,7 @@ pub fn escapeScriptContent(alloc: std.mem.Allocator, input: []const u8) ![]const
     // Count occurrences to pre-size the output buffer.
     var count: usize = 0;
     var pos: usize = 0;
-    while (std.mem.indexOfPos(u8, input, pos, needle)) |found| {
+    while (std.mem.findPos(u8, input, pos, needle)) |found| {
         count += 1;
         pos = found + needle.len;
     }
@@ -1602,7 +1602,7 @@ fn findFallbackSlots(inner: []const u8) FallbackSlots {
         // The marker ends at the closing quote, so `slot="fallbackish"` cannot
         // match — exactly the boundary `collectSlots` gets by reading to the
         // next quote.
-        const marker_at = std.mem.indexOfPos(u8, inner, i, marker);
+        const marker_at = std.mem.findPos(u8, inner, i, marker);
         // Whichever comes first decides the next step: a nested island before the
         // next marker means everything up to its close belongs to that island.
         if (nextIslandStart(inner, i)) |tok| {
@@ -1613,8 +1613,8 @@ fn findFallbackSlots(inner: []const u8) FallbackSlots {
             }
         }
         const t = marker_at orelse return out;
-        const open_end = std.mem.indexOfScalarPos(u8, inner, t + marker.len, '>') orelse return out;
-        const close = std.mem.indexOfPos(u8, inner, open_end + 1, "</template>") orelse return out;
+        const open_end = std.mem.findScalarPos(u8, inner, t + marker.len, '>') orelse return out;
+        const close = std.mem.findPos(u8, inner, open_end + 1, "</template>") orelse return out;
         out.count += 1;
         if (out.first == null) out.first = inner[open_end + 1 .. close];
         i = close + "</template>".len;
@@ -1633,18 +1633,18 @@ fn findFallbackSlots(inner: []const u8) FallbackSlots {
 /// `inner` — so which of the returned slices is owned is not visible to the
 /// caller and it cannot free them (1, 2). They die with the page render (3).
 fn collectSlots(arena: RenderArena, inner: []const u8) ![]const Slot {
-    var slots: std.ArrayListUnmanaged(Slot) = .empty;
-    var default_buf: std.ArrayListUnmanaged(u8) = .empty;
+    var slots: std.ArrayList(Slot) = .empty;
+    var default_buf: std.ArrayList(u8) = .empty;
     const marker = "<template slot=\"";
 
     var i: usize = 0;
-    while (std.mem.indexOfPos(u8, inner, i, marker)) |t| {
+    while (std.mem.findPos(u8, inner, i, marker)) |t| {
         try default_buf.appendSlice(arena.a, inner[i..t]);
         const name_start = t + marker.len;
-        const name_end = std.mem.indexOfScalarPos(u8, inner, name_start, '"') orelse break;
+        const name_end = std.mem.findScalarPos(u8, inner, name_start, '"') orelse break;
         const name = inner[name_start..name_end];
-        const open_end = std.mem.indexOfScalarPos(u8, inner, name_end, '>') orelse break;
-        const close = std.mem.indexOfPos(u8, inner, open_end + 1, "</template>") orelse break;
+        const open_end = std.mem.findScalarPos(u8, inner, name_end, '>') orelse break;
+        const close = std.mem.findPos(u8, inner, open_end + 1, "</template>") orelse break;
         try slots.append(arena.a, .{ .name = name, .html = inner[open_end + 1 .. close] });
         i = close + "</template>".len;
     }
@@ -1851,7 +1851,7 @@ const StubRenderer = struct {
         self.last_slots_json = slots_json;
         // Echo enough to assert against: the src basename and the props JSON.
         var name = src;
-        if (std.mem.lastIndexOfScalar(u8, name, '/')) |s| name = name[s + 1 ..];
+        if (std.mem.findScalarLast(u8, name, '/')) |s| name = name[s + 1 ..];
         return arena.a.print("<stub data-src=\"{s}\">{s}</stub>", .{ name, props_json });
     }
 };
@@ -1886,9 +1886,9 @@ test "structured prop-NAME (HTML-escaped JSON) deserializes into a typed collect
     defer gpa.free(result.html);
 
     // SSR stub echoes the resolved props JSON.
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<stub data-src=\"Faq.zig\">{\"items\":[{\"q\":\"Q1\",\"a\":\"A1\"},{\"q\":\"Q2\",\"a\":\"A2\"}]}</stub>") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<stub data-src=\"Faq.zig\">{\"items\":[{\"q\":\"Q1\",\"a\":\"A1\"},{\"q\":\"Q2\",\"a\":\"A2\"}]}</stub>") != null);
     // The client props JSON carries the structured data too (quotes intact).
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "{\"items\":[{\"q\":\"Q1\",\"a\":\"A1\"},{\"q\":\"Q2\",\"a\":\"A2\"}]}") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "{\"items\":[{\"q\":\"Q1\",\"a\":\"A1\"},{\"q\":\"Q2\",\"a\":\"A2\"}]}") != null);
 }
 
 test "process forwards page_url to the renderer as pathname" {
@@ -1914,7 +1914,7 @@ test "process forwards page_url to the renderer as pathname" {
     defer gpa.free(result.html);
 
     // page_url "/booking/" reached the renderer's pathname arg.
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "path: /booking/") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "path: /booking/") != null);
 }
 
 test "process forwards the URL-PREFIXED page_url as the island's SSR pathname" {
@@ -1961,10 +1961,10 @@ test "process forwards the URL-PREFIXED page_url as the island's SSR pathname" {
         var ps: PathnameStub = .{};
         const result = try process(gpa, arena, input, "/guides/", &ps, .{ .url_prefix = "myrepo" });
         defer gpa.free(result.html);
-        try std.testing.expect(std.mem.indexOf(u8, result.html, "path: /myrepo/guides/") != null);
+        try std.testing.expect(std.mem.find(u8, result.html, "path: /myrepo/guides/") != null);
         // The bare form must NOT survive: asserting only the presence of the
         // prefixed string would also pass if BOTH were emitted somewhere.
-        try std.testing.expect(std.mem.indexOf(u8, result.html, "path: /guides/") == null);
+        try std.testing.expect(std.mem.find(u8, result.html, "path: /guides/") == null);
     }
 
     {
@@ -1972,8 +1972,8 @@ test "process forwards the URL-PREFIXED page_url as the island's SSR pathname" {
         var ps: PathnameStub = .{};
         const result = try process(gpa, arena, input, "/guides/", &ps, .{ .url_prefix = "" });
         defer gpa.free(result.html);
-        try std.testing.expect(std.mem.indexOf(u8, result.html, "path: /guides/") != null);
-        try std.testing.expect(std.mem.indexOf(u8, result.html, "/myrepo") == null);
+        try std.testing.expect(std.mem.find(u8, result.html, "path: /guides/") != null);
+        try std.testing.expect(std.mem.find(u8, result.html, "/myrepo") == null);
     }
 
     {
@@ -2000,7 +2000,7 @@ test "process forwards the URL-PREFIXED page_url as the island's SSR pathname" {
         for (ps.seen[0..ps.n]) |p| try std.testing.expectEqualStrings("/myrepo/guides/", p);
         // The compounding failure mode, asserted on the output too: a
         // double-prefixed path must appear nowhere, at any nesting depth.
-        try std.testing.expect(std.mem.indexOf(u8, result.html, "/myrepo/myrepo") == null);
+        try std.testing.expect(std.mem.find(u8, result.html, "/myrepo/myrepo") == null);
     }
 }
 
@@ -2022,12 +2022,12 @@ test "process replaces an island with SSR markup + props script" {
     try std.testing.expectEqual(@as(usize, 1), result.instances.len);
     try std.testing.expectEqualStrings("z-island-0", result.instances[0].id);
     // SSR'd placeholder wrapper present:
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<div data-z-island id=\"z-island-0\" data-z-src=\"components/Counter.island.tsx\" data-z-client=\"load\" data-z-module=\"/islands/Counter.island.js\">") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<div data-z-island id=\"z-island-0\" data-z-src=\"components/Counter.island.tsx\" data-z-client=\"load\" data-z-module=\"/islands/Counter.island.js\">") != null);
     try std.testing.expectEqualStrings("/islands/Counter.island.js", result.instances[0].module_url);
     // Stub SSR output with echoed props JSON:
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<stub data-src=\"Counter.island.tsx\">{\"start\":2,\"label\":\"hi\"}</stub>") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<stub data-src=\"Counter.island.tsx\">{\"start\":2,\"label\":\"hi\"}</stub>") != null);
     // Props script:
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<script type=\"application/json\" data-z-props=\"z-island-0\">{\"start\":2,\"label\":\"hi\"}</script>") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<script type=\"application/json\" data-z-props=\"z-island-0\">{\"start\":2,\"label\":\"hi\"}</script>") != null);
     // surrounding HTML preserved:
     try std.testing.expect(std.mem.startsWith(u8, result.html, "<main>"));
     try std.testing.expect(std.mem.endsWith(u8, result.html, "</main>"));
@@ -2063,10 +2063,10 @@ test "quote-aware tag scan: > inside :props value does not truncate the tag" {
 
     try std.testing.expectEqual(@as(usize, 1), result.instances.len);
     // Stub SSR output is present.
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<stub data-src=\"Counter.zig\">") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<stub data-src=\"Counter.zig\">") != null);
     // The props JSON must have the escaped label (< and > escaped via \uXXXX).
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "\\u003E") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "\\u003C") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "\\u003E") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "\\u003C") != null);
     // Surrounding HTML preserved.
     try std.testing.expect(std.mem.startsWith(u8, result.html, "<main>"));
     try std.testing.expect(std.mem.endsWith(u8, result.html, "</main>"));
@@ -2084,12 +2084,12 @@ test "head injection: import map + runtime module script when islands present" {
         "</body></html>";
     const result = try process(gpa, arena, input, "/", &stub, .{});
     defer gpa.free(result.html);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<script type=\"importmap\">") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "\"@z/runtime\":\"/zigapagos-runtime.js\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<script type=\"module\" src=\"/zigapagos-runtime.js\">") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<script type=\"importmap\">") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "\"@z/runtime\":\"/zigapagos-runtime.js\"") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<script type=\"module\" src=\"/zigapagos-runtime.js\">") != null);
     // both injected before </head>:
-    const head_end = std.mem.indexOf(u8, result.html, "</head>").?;
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "importmap").? < head_end);
+    const head_end = std.mem.find(u8, result.html, "</head>").?;
+    try std.testing.expect(std.mem.find(u8, result.html, "importmap").? < head_end);
 }
 
 test "no runtime script injected when page has no islands" {
@@ -2102,7 +2102,7 @@ test "no runtime script injected when page has no islands" {
     const result = try process(gpa, arena, input, "/", &stub, .{});
     defer gpa.free(result.html);
     try std.testing.expectEqualStrings(input, result.html);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "zigapagos-runtime.js") == null);
+    try std.testing.expect(std.mem.find(u8, result.html, "zigapagos-runtime.js") == null);
 }
 
 test "default slot: slots_json forwarded to renderer; data-z-slots script emitted; no z-slot wrapper" {
@@ -2120,15 +2120,15 @@ test "default slot: slots_json forwarded to renderer; data-z-slots script emitte
     defer gpa.free(result.html);
 
     // (a) The slots_json captured by the renderer contains the "default" key.
-    try std.testing.expect(std.mem.indexOf(u8, stub.last_slots_json, "\"default\"") != null);
+    try std.testing.expect(std.mem.find(u8, stub.last_slots_json, "\"default\"") != null);
     // The slot body text appears in the JSON value (not escaped by JSON, since "slotted body" is plain text).
-    try std.testing.expect(std.mem.indexOf(u8, stub.last_slots_json, "slotted body") != null);
+    try std.testing.expect(std.mem.find(u8, stub.last_slots_json, "slotted body") != null);
     // (b) The emitted markup contains the data-z-slots script for this island id.
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<script type=\"application/json\" data-z-slots=\"z-island-0\">") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<script type=\"application/json\" data-z-slots=\"z-island-0\">") != null);
     // The slot text appears somewhere in the output (inside the JSON script).
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "slotted body") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "slotted body") != null);
     // (c) pass.zig no longer appends manual <z-slot> wrappers — double-wrap is gone.
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<z-slot") == null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<z-slot") == null);
 }
 
 test "named slots: <template slot> routes to the named slot; both keys in slots_json; data-z-slots script emitted" {
@@ -2147,13 +2147,13 @@ test "named slots: <template slot> routes to the named slot; both keys in slots_
     defer gpa.free(result.html);
 
     // (a) slots_json passed to the renderer contains both "title" and "default" keys.
-    try std.testing.expect(std.mem.indexOf(u8, stub.last_slots_json, "\"title\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, stub.last_slots_json, "\"default\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, stub.last_slots_json, "body") != null);
+    try std.testing.expect(std.mem.find(u8, stub.last_slots_json, "\"title\"") != null);
+    try std.testing.expect(std.mem.find(u8, stub.last_slots_json, "\"default\"") != null);
+    try std.testing.expect(std.mem.find(u8, stub.last_slots_json, "body") != null);
     // (b) data-z-slots script emitted in the output.
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<script type=\"application/json\" data-z-slots=\"z-island-0\">") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<script type=\"application/json\" data-z-slots=\"z-island-0\">") != null);
     // (c) No manual <z-slot> wrappers — the double-wrap is gone.
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<z-slot") == null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<z-slot") == null);
 }
 
 test "nested island in slot content: both rewritten; nested id appears inside outer's slots_json" {
@@ -2176,14 +2176,14 @@ test "nested island in slot content: both rewritten; nested id appears inside ou
     try std.testing.expectEqual(@as(usize, 2), result.instances.len);
     // (d) The outer's slots_json (last render call) contains the nested island's id.
     //     The Counter placeholder HTML is JSON-encoded inside the default slot value.
-    try std.testing.expect(std.mem.indexOf(u8, stub.last_slots_json, "z-island-1") != null);
+    try std.testing.expect(std.mem.find(u8, stub.last_slots_json, "z-island-1") != null);
     // (b) The outer's data-z-slots script is present and encodes the nested id.
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<script type=\"application/json\" data-z-slots=\"z-island-0\">") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "z-island-1") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<script type=\"application/json\" data-z-slots=\"z-island-0\">") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "z-island-1") != null);
     // (c) No manual <z-slot> wrappers anywhere in the output.
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<z-slot") == null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<z-slot") == null);
     // The outer placeholder's id and src are present; surrounding HTML preserved.
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "id=\"z-island-0\" data-z-src=\"components/Card.zig\"") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "id=\"z-island-0\" data-z-src=\"components/Card.zig\"") != null);
     try std.testing.expect(std.mem.startsWith(u8, result.html, "<main>"));
     try std.testing.expect(std.mem.endsWith(u8, result.html, "</main>"));
 }
@@ -2203,18 +2203,18 @@ test "client:only with slots: empty div but data-z-slots script still emitted" {
     defer gpa.free(result.html);
 
     // (e) client:only: renderer is not called, so placeholder is empty.
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<stub") == null);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "data-z-client=\"only\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "></div>") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<stub") == null);
+    try std.testing.expect(std.mem.find(u8, result.html, "data-z-client=\"only\"") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "></div>") != null);
     // Props script still emitted.
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<script type=\"application/json\" data-z-props=\"z-island-0\">") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<script type=\"application/json\" data-z-props=\"z-island-0\">") != null);
     // (e) data-z-slots script ALSO emitted for client:only when slots are present —
     //     the client needs slot HTML to build children for the fresh mount.
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<script type=\"application/json\" data-z-slots=\"z-island-0\">") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<script type=\"application/json\" data-z-slots=\"z-island-0\">") != null);
     // Slot content text is present inside the JSON script.
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "client slot") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "client slot") != null);
     // (c) No manual <z-slot> wrapper.
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<z-slot") == null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<z-slot") == null);
 }
 
 test "client:only fallback slot renders into the placeholder and is NOT shipped as a slot (#58)" {
@@ -2233,17 +2233,17 @@ test "client:only fallback slot renders into the placeholder and is NOT shipped 
     defer gpa.free(result.html);
 
     // The wrapper div is no longer empty: it carries the fallback markup verbatim.
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "data-z-module=\"/islands/Chart.island.js\"><div class=\"chart-skeleton\">Loading chart…</div></div>") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "data-z-module=\"/islands/Chart.island.js\"><div class=\"chart-skeleton\">Loading chart…</div></div>") != null);
     // …and the component was still NOT server-rendered.
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<stub") == null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<stub") == null);
 
     // The data-z-slots payload carries the default slot but NOT the fallback:
     // the fallback is build-time markup for the placeholder, not a slot prop.
-    const slots_at = std.mem.indexOf(u8, result.html, "data-z-slots=\"z-island-0\">").?;
+    const slots_at = std.mem.find(u8, result.html, "data-z-slots=\"z-island-0\">").?;
     const slots_json = result.html[slots_at..];
-    try std.testing.expect(std.mem.indexOf(u8, slots_json, "\"default\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, slots_json, "\"fallback\"") == null);
-    try std.testing.expect(std.mem.indexOf(u8, slots_json, "chart-skeleton") == null);
+    try std.testing.expect(std.mem.find(u8, slots_json, "\"default\"") != null);
+    try std.testing.expect(std.mem.find(u8, slots_json, "\"fallback\"") == null);
+    try std.testing.expect(std.mem.find(u8, slots_json, "chart-skeleton") == null);
 }
 
 test "a nested client:only fallback is NOT attributed to a client:load parent (#58)" {
@@ -2278,12 +2278,12 @@ test "a nested client:only fallback is NOT attributed to a client:load parent (#
     // renderer, like the real sidecar, weaves slots itself). Assert there: the
     // skeleton sits INSIDE the Chart placeholder, i.e. after the attribute that
     // opens it.
-    const chart_at = std.mem.indexOf(u8, stub.last_slots_json, "/islands/Chart.island.js").?;
-    const skeleton_at = std.mem.indexOf(u8, stub.last_slots_json, "chart-skeleton").?;
+    const chart_at = std.mem.find(u8, stub.last_slots_json, "/islands/Chart.island.js").?;
+    const skeleton_at = std.mem.find(u8, stub.last_slots_json, "chart-skeleton").?;
     try std.testing.expect(skeleton_at > chart_at);
     // …and the outer island received no `fallback` slot prop of its own (slot
     // names are unescaped JSON keys, so this would match if one existed).
-    try std.testing.expect(std.mem.indexOf(u8, stub.last_slots_json, "\"fallback\":") == null);
+    try std.testing.expect(std.mem.find(u8, stub.last_slots_json, "\"fallback\":") == null);
 }
 
 test "two nested client:only islands may each carry their own fallback (#58)" {
@@ -2314,10 +2314,10 @@ test "two nested client:only islands may each carry their own fallback (#58)" {
     // attribute and before B's, B's after B's. (Encoded in the outer island's
     // slots JSON — see the sibling test for why.)
     const slots = stub.last_slots_json;
-    const a_at = std.mem.indexOf(u8, slots, "/islands/A.island.js").?;
-    const b_at = std.mem.indexOf(u8, slots, "/islands/B.island.js").?;
-    const a_skel = std.mem.indexOf(u8, slots, "a-skeleton").?;
-    const b_skel = std.mem.indexOf(u8, slots, "b-skeleton").?;
+    const a_at = std.mem.find(u8, slots, "/islands/A.island.js").?;
+    const b_at = std.mem.find(u8, slots, "/islands/B.island.js").?;
+    const a_skel = std.mem.find(u8, slots, "a-skeleton").?;
+    const b_skel = std.mem.find(u8, slots, "b-skeleton").?;
     try std.testing.expect(a_at < a_skel and a_skel < b_at and b_at < b_skel);
 }
 
@@ -2469,9 +2469,9 @@ test "a client:only island whose ONLY slot is the fallback emits NO data-z-slots
     const result = try process(gpa, arena, input, "/", &stub, .{});
     defer gpa.free(result.html);
 
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "data-z-slots") == null);
+    try std.testing.expect(std.mem.find(u8, result.html, "data-z-slots") == null);
     // The fallback still reached the placeholder.
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<p>skeleton</p></div>") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<p>skeleton</p></div>") != null);
 }
 
 test "leaf island: no data-z-slots script emitted (byte-identical regression guard)" {
@@ -2488,9 +2488,9 @@ test "leaf island: no data-z-slots script emitted (byte-identical regression gua
     defer gpa.free(result.html);
 
     // (f) No data-z-slots script for a leaf island (no slot content at all).
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "data-z-slots") == null);
+    try std.testing.expect(std.mem.find(u8, result.html, "data-z-slots") == null);
     // Props script is still emitted.
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "data-z-props") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "data-z-props") != null);
 }
 
 test "island following a nested island gets the next id (counter shared through recursion)" {
@@ -2511,8 +2511,8 @@ test "island following a nested island gets the next id (counter shared through 
 
     // Outer Card = 0, nested Counter = 1, the following top-level Counter = 2.
     try std.testing.expectEqual(@as(usize, 3), result.instances.len);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "id=\"z-island-2\" data-z-src=\"components/Counter.zig\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<stub data-src=\"Counter.zig\">{\"start\":2,\"label\":\"b\"}</stub>") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "id=\"z-island-2\" data-z-src=\"components/Counter.zig\"") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<stub data-src=\"Counter.zig\">{\"start\":2,\"label\":\"b\"}</stub>") != null);
 }
 
 test "client:media emits data-z-media with the query" {
@@ -2530,10 +2530,10 @@ test "client:media emits data-z-media with the query" {
     defer gpa.free(result.html);
 
     try std.testing.expectEqualStrings("media", result.instances[0].client);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "data-z-client=\"media\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "data-z-media=\"(min-width: 600px)\"") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "data-z-client=\"media\"") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "data-z-media=\"(min-width: 600px)\"") != null);
     // media islands are still SSR'd (content present without JS):
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<stub data-src=\"Counter.zig\">{\"start\":0,\"label\":\"x\"}</stub>") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<stub data-src=\"Counter.zig\">{\"start\":0,\"label\":\"x\"}</stub>") != null);
 }
 
 test "dynamic props: prop-NAME attrs override :props and are coerced to field types" {
@@ -2551,9 +2551,9 @@ test "dynamic props: prop-NAME attrs override :props and are coerced to field ty
     defer gpa.free(result.html);
 
     // Stub output reflects the resolved (overridden) props.
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<stub data-src=\"Counter.zig\">{\"start\":3,\"label\":\"Hello\"}</stub>") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<stub data-src=\"Counter.zig\">{\"start\":3,\"label\":\"Hello\"}</stub>") != null);
     // Embedded props JSON is the resolved value (start coerced from "3" to 3).
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "{\"start\":3,\"label\":\"Hello\"}") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "{\"start\":3,\"label\":\"Hello\"}") != null);
 }
 
 test "content prop evaluator resolves expressions and preserves literals" {
@@ -2594,7 +2594,7 @@ test "failed content prop expressions are reported" {
 
     const input = [_]props.Pair{.{ .name = "title", .value = "$page.missing" }};
     var calls: usize = 0;
-    var reports: std.ArrayListUnmanaged(ContentPropEvalErrorReport) = .empty;
+    var reports: std.ArrayList(ContentPropEvalErrorReport) = .empty;
     defer {
         for (reports.items) |report| {
             gpa.free(report.src);
@@ -2634,12 +2634,12 @@ test "client:only is not server-rendered (empty placeholder) but keeps props" {
 
     try std.testing.expectEqualStrings("only", result.instances[0].client);
     // No SSR'd stub output inside the placeholder.
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<stub") == null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<stub") == null);
     // Empty placeholder div present.
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "data-z-client=\"only\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "></div>") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "data-z-client=\"only\"") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "></div>") != null);
     // Props still emitted for the client mount.
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<script type=\"application/json\" data-z-props=\"z-island-0\">{\"start\":9,\"label\":\"y\"}</script>") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<script type=\"application/json\" data-z-props=\"z-island-0\">{\"start\":9,\"label\":\"y\"}</script>") != null);
 }
 
 test "preloadLinks: runtime link first, island modules deduped, client:only included" {
@@ -2662,10 +2662,10 @@ test "preloadLinks: runtime link first, island modules deduped, client:only incl
     // Hero module appears exactly once (deduped) despite two instances.
     try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, links, "href=\"/islands/Hero.island.js\""));
     // client:only Counter module IS included.
-    try std.testing.expect(std.mem.indexOf(u8, links, "href=\"/islands/Counter.island.js\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, links, "Deferred.island.js") == null);
-    try std.testing.expect(std.mem.indexOf(u8, links, "Idle.island.js") == null);
-    try std.testing.expect(std.mem.indexOf(u8, links, "Media.island.js") == null);
+    try std.testing.expect(std.mem.find(u8, links, "href=\"/islands/Counter.island.js\"") != null);
+    try std.testing.expect(std.mem.find(u8, links, "Deferred.island.js") == null);
+    try std.testing.expect(std.mem.find(u8, links, "Idle.island.js") == null);
+    try std.testing.expect(std.mem.find(u8, links, "Media.island.js") == null);
 }
 
 test "preloadLinks: empty instances -> empty string" {
@@ -2688,22 +2688,22 @@ test "process injects the import map before any modulepreload links, only when i
     const result = try process(gpa, arena, input, "/", &stub, .{});
     defer gpa.free(result.html);
     // preload link present.
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<link rel=\"modulepreload\" href=\"/zigapagos-runtime.js\">") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<link rel=\"modulepreload\" href=\"/islands/Counter.island.js\">") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<link rel=\"modulepreload\" href=\"/zigapagos-runtime.js\">") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<link rel=\"modulepreload\" href=\"/islands/Counter.island.js\">") != null);
     // import map appears BEFORE any modulepreload: per the import-maps spec, a
     // map is only processed if it appears before any module loading starts, and
     // a <link rel="modulepreload"> starts one — so a later map is disregarded.
-    const pl = std.mem.indexOf(u8, result.html, "modulepreload").?;
-    const im = std.mem.indexOf(u8, result.html, "importmap").?;
+    const pl = std.mem.find(u8, result.html, "modulepreload").?;
+    const im = std.mem.find(u8, result.html, "importmap").?;
     try std.testing.expect(im < pl);
     // all before </head>.
-    const head_end = std.mem.indexOf(u8, result.html, "</head>").?;
+    const head_end = std.mem.find(u8, result.html, "</head>").?;
     try std.testing.expect(im < head_end);
     const static_result = try process(gpa, arena, "<html><head></head><body><island src=\"components/Static.island.tsx\"></island></body></html>", "/", &stub, .{});
     defer gpa.free(static_result.html);
     try std.testing.expectEqual(@as(usize, 1), static_result.instances.len);
-    try std.testing.expect(std.mem.indexOf(u8, static_result.html, "<script") == null);
-    try std.testing.expect(std.mem.indexOf(u8, static_result.html, "data-z-client=") == null);
+    try std.testing.expect(std.mem.find(u8, static_result.html, "<script") == null);
+    try std.testing.expect(std.mem.find(u8, static_result.html, "data-z-client=") == null);
 }
 
 test "islandModuleName is the slice manifest's join key for every spelling of src (#52)" {
@@ -2738,12 +2738,12 @@ test "a page whose every island is covered loads the SLICED runtime and nothing 
     defer gpa.free(result.html);
 
     // Import map, modulepreload and the module <script> all name the slice…
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "\"@z/runtime\":\"/islands/_runtime.js\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<link rel=\"modulepreload\" href=\"/islands/_runtime.js\">") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<script type=\"module\" src=\"/islands/_runtime.js\"></script>") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "\"@z/runtime\":\"/islands/_runtime.js\"") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<link rel=\"modulepreload\" href=\"/islands/_runtime.js\">") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<script type=\"module\" src=\"/islands/_runtime.js\"></script>") != null);
     // …and the shared runtime appears NOWHERE. Presence-only assertions pass
     // even when BOTH runtimes are emitted, which is the two-Preact catastrophe.
-    try std.testing.expect(std.mem.indexOf(u8, result.html, shared_runtime_url) == null);
+    try std.testing.expect(std.mem.find(u8, result.html, shared_runtime_url) == null);
 }
 
 test "ONE uncovered island on the page forces the shared runtime for the whole page (#52)" {
@@ -2766,10 +2766,10 @@ test "ONE uncovered island on the page forces the shared runtime for the whole p
     });
     defer gpa.free(result.html);
 
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "\"@z/runtime\":\"/zigapagos-runtime.js\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<script type=\"module\" src=\"/zigapagos-runtime.js\"></script>") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "\"@z/runtime\":\"/zigapagos-runtime.js\"") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<script type=\"module\" src=\"/zigapagos-runtime.js\"></script>") != null);
     // The slice URL survives nowhere — not in the map, not as a preload.
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "_runtime.js") == null);
+    try std.testing.expect(std.mem.find(u8, result.html, "_runtime.js") == null);
 }
 
 test "a sliced page on a url_path_prefix site prefixes every runtime URL (#52)" {
@@ -2790,14 +2790,14 @@ test "a sliced page on a url_path_prefix site prefixes every runtime URL (#52)" 
     });
     defer gpa.free(result.html);
 
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "\"@z/runtime\":\"/myrepo/islands/_runtime.js\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<link rel=\"modulepreload\" href=\"/myrepo/islands/_runtime.js\">") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<script type=\"module\" src=\"/myrepo/islands/_runtime.js\"></script>") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "\"@z/runtime\":\"/myrepo/islands/_runtime.js\"") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<link rel=\"modulepreload\" href=\"/myrepo/islands/_runtime.js\">") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<script type=\"module\" src=\"/myrepo/islands/_runtime.js\"></script>") != null);
     // Neither the UNPREFIXED slice URL nor the shared runtime survives: an
     // unprefixed href on a project-path site is a 404, which reads as "the
     // island silently didn't hydrate".
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "\"/islands/_runtime.js\"") == null);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "zigapagos-runtime.js") == null);
+    try std.testing.expect(std.mem.find(u8, result.html, "\"/islands/_runtime.js\"") == null);
+    try std.testing.expect(std.mem.find(u8, result.html, "zigapagos-runtime.js") == null);
 }
 
 test "a slice URL with no covered islands never wins (empty sliced_islands) (#52)" {
@@ -2819,8 +2819,8 @@ test "a slice URL with no covered islands never wins (empty sliced_islands) (#52
         .sliced_islands = &.{},
     });
     defer gpa.free(result.html);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "_runtime.js") == null);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<script type=\"module\" src=\"/zigapagos-runtime.js\"></script>") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "_runtime.js") == null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<script type=\"module\" src=\"/zigapagos-runtime.js\"></script>") != null);
 }
 
 test "self-closing island renders correctly" {
@@ -2841,9 +2841,9 @@ test "self-closing island renders correctly" {
     try std.testing.expectEqual(@as(usize, 1), result.instances.len);
     try std.testing.expectEqualStrings("z-island-0", result.instances[0].id);
     // Stub SSR output present.
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<stub data-src=\"Counter.zig\">{\"start\":3,\"label\":\"x\"}</stub>") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<stub data-src=\"Counter.zig\">{\"start\":3,\"label\":\"x\"}</stub>") != null);
     // Props script present.
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<script type=\"application/json\"") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<script type=\"application/json\"") != null);
     // Surrounding HTML preserved.
     try std.testing.expect(std.mem.startsWith(u8, result.html, "<header></header>"));
     try std.testing.expect(std.mem.endsWith(u8, result.html, "<footer></footer>"));
@@ -2867,10 +2867,10 @@ test "process with url_prefix rewrites runtime + island module URLs" {
     const result = try process(gpa, arena, input, "/", &stub, .{ .url_prefix = "zigapagos" });
     defer gpa.free(result.html);
 
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "\"/zigapagos/zigapagos-runtime.js\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "/zigapagos/islands/") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "\"/zigapagos-runtime.js\"") == null or
-        std.mem.indexOf(u8, result.html, "\"/zigapagos/zigapagos-runtime.js\"") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "\"/zigapagos/zigapagos-runtime.js\"") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "/zigapagos/islands/") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "\"/zigapagos-runtime.js\"") == null or
+        std.mem.find(u8, result.html, "\"/zigapagos/zigapagos-runtime.js\"") != null);
 }
 
 test "process with empty url_prefix is byte-identical to legacy output" {
@@ -2953,17 +2953,17 @@ test "slotsToJson: </script> in slot HTML is escaped to <\\/script> in the data-
 
     // The data-z-slots script must be present (slot content is non-empty).
     const slots_open = "<script type=\"application/json\" data-z-slots=\"z-island-0\">";
-    try std.testing.expect(std.mem.indexOf(u8, result.html, slots_open) != null);
+    try std.testing.expect(std.mem.find(u8, result.html, slots_open) != null);
 
     // Isolate the data-z-slots script content (between the open tag and its </script>).
-    const slots_start = std.mem.indexOf(u8, result.html, slots_open).? + slots_open.len;
-    const slots_end = std.mem.indexOfPos(u8, result.html, slots_start, "</script>").?;
+    const slots_start = std.mem.find(u8, result.html, slots_open).? + slots_open.len;
+    const slots_end = std.mem.findPos(u8, result.html, slots_start, "</script>").?;
     const slots_content = result.html[slots_start..slots_end];
 
     // No raw </script> inside the JSON value — escapeScriptContent must have fired.
-    try std.testing.expect(std.mem.indexOf(u8, slots_content, "</script>") == null);
+    try std.testing.expect(std.mem.find(u8, slots_content, "</script>") == null);
     // The backslash-escaped form <\/ must be present inside the JSON value.
-    try std.testing.expect(std.mem.indexOf(u8, slots_content, "<\\/script") != null);
+    try std.testing.expect(std.mem.find(u8, slots_content, "<\\/script") != null);
 }
 
 test "validateClientDirective accepts the five known directives and absence" {
@@ -2996,7 +2996,7 @@ test "rewrite fails loudly on an unknown client directive" {
     const arena = RenderArena.from(&arena_state);
 
     var stub = StubRenderer{};
-    var instances: std.ArrayListUnmanaged(IslandInstance) = .empty;
+    var instances: std.ArrayList(IslandInstance) = .empty;
     var counter: usize = 0;
     const html = "<island src=\"components/A.island.tsx\" client:visable></island>";
     try std.testing.expectError(error.UnknownClientDirective, rewrite(gpa, arena, html, &stub, "/", &instances, &counter, "", .fail, null, null, null, &.{}));
@@ -3185,8 +3185,8 @@ test "a page whose only island is commented out ships zero JavaScript" {
 
     try std.testing.expectEqual(@as(usize, 0), result.instances.len);
     try std.testing.expectEqualStrings(input, result.html);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "zigapagos-runtime.js") == null);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "importmap") == null);
+    try std.testing.expect(std.mem.find(u8, result.html, "zigapagos-runtime.js") == null);
+    try std.testing.expect(std.mem.find(u8, result.html, "importmap") == null);
 }
 
 test "an island inside raw-text element content is not processed" {
@@ -3249,11 +3249,11 @@ test "skipping a comment or raw-text region still processes the islands around i
     try std.testing.expectEqualStrings("z-island-0", result.instances[0].id);
     try std.testing.expectEqualStrings("z-island-1", result.instances[1].id);
     // The skipped regions are still present, unmodified.
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<!-- <island src=\"components/Old.island.tsx\" client:load /> -->") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<script>\"<island src=\\\"components/Fake.island.tsx\\\" client:load />\"</script>") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<!-- <island src=\"components/Old.island.tsx\" client:load /> -->") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<script>\"<island src=\\\"components/Fake.island.tsx\\\" client:load />\"</script>") != null);
     // Neither skipped src was SSR'd or bundled.
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "Old.island.js") == null);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<stub data-src=\"Fake.island.tsx\">") == null);
+    try std.testing.expect(std.mem.find(u8, result.html, "Old.island.js") == null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<stub data-src=\"Fake.island.tsx\">") == null);
 }
 
 test "a commented-out island inside another island's slot content is not processed" {
@@ -3281,12 +3281,12 @@ test "a commented-out island inside another island's slot content is not process
     // SSR'd, nor given a module URL to bundle.
     try std.testing.expectEqual(@as(usize, 1), result.instances.len);
     try std.testing.expectEqualStrings("components/Card.island.tsx", result.instances[0].src);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "Old.island.js") == null);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "z-island-1") == null);
+    try std.testing.expect(std.mem.find(u8, result.html, "Old.island.js") == null);
+    try std.testing.expect(std.mem.find(u8, result.html, "z-island-1") == null);
     // The comment reached the slot JSON as ordinary (unrewritten) slot markup:
     // the raw `<island …>` text is still there, with no placeholder wrapper.
-    try std.testing.expect(std.mem.indexOf(u8, stub.last_slots_json, "Old.island.tsx") != null);
-    try std.testing.expect(std.mem.indexOf(u8, stub.last_slots_json, "data-z-island") == null);
+    try std.testing.expect(std.mem.find(u8, stub.last_slots_json, "Old.island.tsx") != null);
+    try std.testing.expect(std.mem.find(u8, stub.last_slots_json, "data-z-island") == null);
 }
 
 test "every comment terminator a browser honors ends the skip region" {
@@ -3373,7 +3373,7 @@ test "on_render_error=.fail propagates a render error and records the structured
 
     const input = "<main><island src=\"components/Widget.island.tsx\" client:load :props='{}'></island></main>";
     var er: ErroringRenderer = .{};
-    var reports: std.ArrayListUnmanaged(RenderErrorReport) = .empty;
+    var reports: std.ArrayList(RenderErrorReport) = .empty;
     defer reports.deinit(gpa);
     // .fail is the default; be explicit here. The error surfaces to the caller,
     // and the sink captured the failing island's src/route/message/stack first
@@ -3414,7 +3414,7 @@ test "a render error the sidecar never described still records the error name" {
 
     const input = "<main><island src=\"components/Widget.island.tsx\" client:load :props='{}'></island></main>";
     var dr: DesyncingRenderer = .{};
-    var reports: std.ArrayListUnmanaged(RenderErrorReport) = .empty;
+    var reports: std.ArrayList(RenderErrorReport) = .empty;
     defer reports.deinit(gpa);
     try std.testing.expectError(error.SidecarDesync, process(gpa, arena, input, "/booking/", &dr, .{
         .on_render_error = .fail,
@@ -3438,7 +3438,7 @@ test "on_render_error=.placeholder emits a visible placeholder, records the erro
 
     const input = "<main><island src=\"components/Widget.island.tsx\" client:load :props='{}'></island></main>";
     var er: ErroringRenderer = .{};
-    var reports: std.ArrayListUnmanaged(RenderErrorReport) = .empty;
+    var reports: std.ArrayList(RenderErrorReport) = .empty;
     defer reports.deinit(gpa);
     const result = try process(gpa, arena, input, "/", &er, .{
         .on_render_error = .placeholder,
@@ -3448,10 +3448,10 @@ test "on_render_error=.placeholder emits a visible placeholder, records the erro
 
     // The page did NOT collapse: surrounding markup is preserved, and a visible
     // placeholder carrying the failing src + JS message replaced the island's SSR.
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<main>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "data-z-island-error") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "components/Widget.island.tsx") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "boom: undefined is not a function") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<main>") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "data-z-island-error") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "components/Widget.island.tsx") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "boom: undefined is not a function") != null);
     // The island instance is still registered so the client can hydrate it once fixed.
     try std.testing.expectEqual(@as(usize, 1), result.instances.len);
     // The error is also reported to the caller (for the dev warning log).
@@ -3485,11 +3485,11 @@ test "a <z-island> is rewritten exactly like <island>: SSR markup + props script
     try std.testing.expectEqualStrings("z-island-0", result.instances[0].id);
     // SSR'd placeholder wrapper present (data-z-src carries the ORIGINAL src
     // attribute value, unrelated to the <z-island> tag-name spelling).
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<div data-z-island id=\"z-island-0\" data-z-src=\"components/Counter.island.tsx\" data-z-client=\"load\" data-z-module=\"/islands/Counter.island.js\">") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<stub data-src=\"Counter.island.tsx\">{\"start\":2,\"label\":\"hi\"}</stub>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<script type=\"application/json\" data-z-props=\"z-island-0\">{\"start\":2,\"label\":\"hi\"}</script>") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<div data-z-island id=\"z-island-0\" data-z-src=\"components/Counter.island.tsx\" data-z-client=\"load\" data-z-module=\"/islands/Counter.island.js\">") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<stub data-src=\"Counter.island.tsx\">{\"start\":2,\"label\":\"hi\"}</stub>") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<script type=\"application/json\" data-z-props=\"z-island-0\">{\"start\":2,\"label\":\"hi\"}</script>") != null);
     // No literal <z-island tag survives in the output.
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<z-island") == null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<z-island") == null);
     try std.testing.expect(std.mem.startsWith(u8, result.html, "<p>before</p>"));
     try std.testing.expect(std.mem.endsWith(u8, result.html, "<p>after</p>"));
 }
@@ -3510,7 +3510,7 @@ test "a self-closing <z-island /> is rewritten correctly" {
     defer gpa.free(result.html);
 
     try std.testing.expectEqual(@as(usize, 1), result.instances.len);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<stub data-src=\"Counter.zig\">{\"start\":3,\"label\":\"x\"}</stub>") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<stub data-src=\"Counter.zig\">{\"start\":3,\"label\":\"x\"}</stub>") != null);
     try std.testing.expect(std.mem.startsWith(u8, result.html, "<header></header>"));
     try std.testing.expect(std.mem.endsWith(u8, result.html, "<footer></footer>"));
 }
@@ -3588,8 +3588,8 @@ test "nested per-spelling depth: <z-island> nested inside <island>'s slot is rew
     try std.testing.expectEqualStrings("components/Card.zig", result.instances[1].src);
     try std.testing.expectEqualStrings("z-island-0", result.instances[1].id);
     // Outer's slots_json (last render call) carries the nested island's id.
-    try std.testing.expect(std.mem.indexOf(u8, stub.last_slots_json, "z-island-1") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "id=\"z-island-0\" data-z-src=\"components/Card.zig\"") != null);
+    try std.testing.expect(std.mem.find(u8, stub.last_slots_json, "z-island-1") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "id=\"z-island-0\" data-z-src=\"components/Card.zig\"") != null);
     try std.testing.expect(std.mem.startsWith(u8, result.html, "<main>"));
     try std.testing.expect(std.mem.endsWith(u8, result.html, "</main>"));
 }
@@ -3620,8 +3620,8 @@ test "nested per-spelling depth: <island> nested inside <z-island>'s slot is rew
     try std.testing.expectEqualStrings("z-island-1", result.instances[0].id);
     try std.testing.expectEqualStrings("components/Card.zig", result.instances[1].src);
     try std.testing.expectEqualStrings("z-island-0", result.instances[1].id);
-    try std.testing.expect(std.mem.indexOf(u8, stub.last_slots_json, "z-island-1") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "id=\"z-island-0\" data-z-src=\"components/Card.zig\"") != null);
+    try std.testing.expect(std.mem.find(u8, stub.last_slots_json, "z-island-1") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "id=\"z-island-0\" data-z-src=\"components/Card.zig\"") != null);
     try std.testing.expect(std.mem.startsWith(u8, result.html, "<main>"));
     try std.testing.expect(std.mem.endsWith(u8, result.html, "</main>"));
 }
@@ -3644,6 +3644,6 @@ test "a <z-island> nested in a same-spelling <z-island>'s slot still counts dept
 
     // Outer Card = 0, nested Counter = 1, the following top-level Counter = 2.
     try std.testing.expectEqual(@as(usize, 3), result.instances.len);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "id=\"z-island-2\" data-z-src=\"components/Counter.zig\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.html, "<stub data-src=\"Counter.zig\">{\"start\":2,\"label\":\"b\"}</stub>") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "id=\"z-island-2\" data-z-src=\"components/Counter.zig\"") != null);
+    try std.testing.expect(std.mem.find(u8, result.html, "<stub data-src=\"Counter.zig\">{\"start\":2,\"label\":\"b\"}</stub>") != null);
 }

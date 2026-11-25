@@ -226,7 +226,7 @@ pub fn discoverRoutes(
     gpa: Allocator,
     root: Io.Dir,
     root_path: []const u8,
-    blocker_list: *std.ArrayListUnmanaged(blockers.Blocker),
+    blocker_list: *std.ArrayList(blockers.Blocker),
     environ_map: *const std.process.Environ.Map,
 ) Allocator.Error!Result {
     // Every one of `discoverRoutes`'s own degradation branches returns this
@@ -250,7 +250,7 @@ pub fn discoverRoutes(
         return none;
     }
 
-    const script_path = try std.fs.path.join(gpa, &.{ runtime_dir, "sidecar", "rails", "analyze.rb" });
+    const script_path = try std.Io.Dir.path.join(gpa, &.{ runtime_dir, "sidecar", "rails", "analyze.rb" });
     defer gpa.free(script_path);
 
     // Resolved to absolute up front (mirrors `Sidecar.spawn`'s
@@ -553,7 +553,7 @@ fn decodeResponse(
     gpa: Allocator,
     line: []const u8,
     src_path: []const u8,
-    blocker_list: *std.ArrayListUnmanaged(blockers.Blocker),
+    blocker_list: *std.ArrayList(blockers.Blocker),
 ) Allocator.Error!DecodedRoutes {
     var parsed = std.json.parseFromSlice(WireResponse, gpa, line, .{ .ignore_unknown_fields = true }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
@@ -630,7 +630,7 @@ test "a sidecar response decodes into routes, preserving certainty" {
         \\"unresolved":[{"code":"RAILS_ROUTE_LOOP","detail":"each","line":12}],
         \\"ruby":{"available":true,"version":"3.3.6"}}
     ;
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const res = try decodeResponse(std.testing.allocator, line, "config/routes.rb", &blocker_list);
@@ -676,7 +676,7 @@ test "unresolved entries at different wire lines decode to different blocker.lin
         \\{"code":"RAILS_ROUTE_DYNAMIC_PATH","detail":"no line at all"}
         \\]}
     ;
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const res = try decodeResponse(std.testing.allocator, line, "config/routes.rb", &blocker_list);
@@ -704,7 +704,7 @@ test "two routes at different wire lines decode to two different source.line val
         \\{"verb":"GET","path":"/b","controller":"b","action":"index","name":null,"certain":true,"line":41}],
         \\"unresolved":[]}
     ;
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const res = try decodeResponse(std.testing.allocator, line, "config/routes.rb", &blocker_list);
@@ -723,7 +723,7 @@ test "an ok:false response becomes one RAILS_SIDECAR_FAILED blocker, zero routes
     const line =
         \\{"ok":false,"error":"boom: NoMethodError","ruby":{"available":true,"version":"3.4.1"}}
     ;
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const res = try decodeResponse(std.testing.allocator, line, "config/routes.rb", &blocker_list);
@@ -751,7 +751,7 @@ test "an ok:false response with no ruby key at all degrades ruby.available to fa
     const line =
         \\{"ok":false,"error":"routes: \"root\" must be a non-empty string"}
     ;
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const res = try decodeResponse(std.testing.allocator, line, "config/routes.rb", &blocker_list);
@@ -764,7 +764,7 @@ test "an ok:false response with no ruby key at all degrades ruby.available to fa
 
 test "a malformed response line becomes one RAILS_SIDECAR_FAILED blocker, zero routes, and ruby.available false" {
     const line = "not json";
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const res = try decodeResponse(std.testing.allocator, line, "config/routes.rb", &blocker_list);
@@ -787,7 +787,7 @@ test "routes decode sorted by (path, verb) regardless of wire order" {
         \\{"verb":"GET","path":"/","controller":"home","action":"index","name":null,"certain":true,"line":2}],
         \\"unresolved":[]}
     ;
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const res = try decodeResponse(std.testing.allocator, line, "config/routes.rb", &blocker_list);
@@ -806,7 +806,7 @@ test "an unrecognized unresolved code is not dropped: it folds into detail under
     const line =
         \\{"ok":true,"routes":[],"unresolved":[{"code":"RAILS_ROUTE_FUTURE_THING","detail":"whatever","line":3}]}
     ;
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(std.testing.allocator, blocker_list.toOwnedSlice(std.testing.allocator) catch unreachable);
 
     const res = try decodeResponse(std.testing.allocator, line, "config/routes.rb", &blocker_list);
@@ -815,7 +815,7 @@ test "an unrecognized unresolved code is not dropped: it folds into detail under
 
     try std.testing.expectEqual(@as(usize, 1), blocker_list.items.len);
     try std.testing.expectEqualStrings("RAILS_ROUTE_UNRESOLVED", blocker_list.items[0].code);
-    try std.testing.expect(std.mem.indexOf(u8, blocker_list.items[0].detail, "RAILS_ROUTE_FUTURE_THING") != null);
+    try std.testing.expect(std.mem.find(u8, blocker_list.items[0].detail, "RAILS_ROUTE_FUTURE_THING") != null);
     try std.testing.expect(!blocker_list.items[0].integrity);
     // The fallback bucket is still a per-route finding, not a wholesale
     // failure -- warn, same as every other member of the unresolved family.
@@ -844,7 +844,7 @@ test "discoverRoutes spawns the real Ruby sidecar and recovers a route from conf
     var app_dir = Io.Dir.cwd().openDir(io, "tests/migrate/rails-sample", .{}) catch return error.SkipZigTest;
     defer app_dir.close(io);
 
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const result = try discoverRoutes(io, gpa, app_dir, "tests/migrate/rails-sample", &blocker_list, &env_map);
@@ -900,7 +900,7 @@ test "discoverRoutes: no config/routes.rb appends RAILS_ROUTES_MISSING and degra
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     // No env vars matter for this path -- `discoverRoutes` returns before
@@ -947,7 +947,7 @@ test "discoverRoutes: ZIGAPAGOS_RUBY pointing at a nonexistent binary yields RAI
     var app_dir = Io.Dir.cwd().openDir(io, "tests/migrate/rails-sample", .{}) catch return error.SkipZigTest;
     defer app_dir.close(io);
 
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const result = try discoverRoutes(io, gpa, app_dir, "tests/migrate/rails-sample", &blocker_list, &env_map);
@@ -963,7 +963,7 @@ test "discoverRoutes: ZIGAPAGOS_RUBY pointing at a nonexistent binary yields RAI
     // locations emit different manifest bytes for the same blocker. The
     // interpreter is still named, but only in free-text `detail`.
     try std.testing.expectEqualStrings("sidecar/rails/analyze.rb", blocker_list.items[0].path);
-    try std.testing.expect(std.mem.indexOf(u8, blocker_list.items[0].detail, "/nonexistent/ruby-binary-does-not-exist-xyz") != null);
+    try std.testing.expect(std.mem.find(u8, blocker_list.items[0].detail, "/nonexistent/ruby-binary-does-not-exist-xyz") != null);
     // Non-integrity: see the module doc -- a missing interpreter means no
     // route graph, not an untrustworthy inventory.
     try std.testing.expect(!blocker_list.items[0].integrity);
@@ -996,7 +996,7 @@ test "discoverRoutes: config/routes.rb present but ZIGAPAGOS_RUNTIME_DIR unset y
     const routes_rb = try tmp.dir.createFile(io, "config/routes.rb", .{});
     routes_rb.close(io);
 
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     var env_map: std.process.Environ.Map = .init(gpa);
@@ -1045,7 +1045,7 @@ test "discoverRoutes: ZIGAPAGOS_RUNTIME_DIR with no sidecar/rails/analyze.rb yie
     var app_dir = Io.Dir.cwd().openDir(io, "tests/migrate/rails-sample", .{}) catch return error.SkipZigTest;
     defer app_dir.close(io);
 
-    var blocker_list: std.ArrayListUnmanaged(blockers.Blocker) = .empty;
+    var blocker_list: std.ArrayList(blockers.Blocker) = .empty;
     defer blockers.free(gpa, blocker_list.toOwnedSlice(gpa) catch unreachable);
 
     const result = try discoverRoutes(io, gpa, app_dir, "tests/migrate/rails-sample", &blocker_list, &env_map);
@@ -1061,8 +1061,8 @@ test "discoverRoutes: ZIGAPAGOS_RUNTIME_DIR with no sidecar/rails/analyze.rb yie
     // different report bytes on two machines. It is not lost: it moves into
     // `detail`, which carries no determinism contract.
     try std.testing.expectEqualStrings("sidecar/rails/analyze.rb", blocker_list.items[0].path);
-    try std.testing.expect(std.mem.indexOf(u8, blocker_list.items[0].detail, runtime_dir_abs) != null);
-    try std.testing.expect(std.mem.indexOf(u8, blocker_list.items[0].detail, "FileNotFound") != null);
+    try std.testing.expect(std.mem.find(u8, blocker_list.items[0].detail, runtime_dir_abs) != null);
+    try std.testing.expect(std.mem.find(u8, blocker_list.items[0].detail, "FileNotFound") != null);
     // Non-integrity: see the module doc -- a missing sidecar script means no
     // route graph, not an untrustworthy inventory.
     try std.testing.expect(!blocker_list.items[0].integrity);

@@ -318,7 +318,7 @@ pub const turbo_stream_issue: usize = 189;
 /// mapping reversible: a decoder can undo `%2E` -> `.` and then
 /// `%25` -> `%` and land exactly back on `part`.
 pub fn escapePart(gpa: Allocator, part: []const u8) Allocator.Error![]u8 {
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
     for (part) |c| {
         switch (c) {
@@ -712,7 +712,7 @@ fn routeNameUnknown(route_names: []const []const u8, name: []const u8) bool {
 /// half-built entry.
 fn appendFinding(
     gpa: Allocator,
-    list: *std.ArrayListUnmanaged(Finding),
+    list: *std.ArrayList(Finding),
     code: []const u8,
     severity: Severity,
     path: []const u8,
@@ -753,7 +753,7 @@ fn appendFinding(
 /// propagating.
 fn appendRouteFinding(
     gpa: Allocator,
-    list: *std.ArrayListUnmanaged(Finding),
+    list: *std.ArrayList(Finding),
     code: []const u8,
     severity: Severity,
     line: u64,
@@ -846,7 +846,7 @@ const journey_controllers = [_][]const u8{ "sessions", "registrations" };
 fn templateHasPasswordForm(gpa: Allocator, tpl: fragments.Template) Allocator.Error!bool {
     // Every open block gets a frame, not just forms: a `<% if %>` inside a
     // form must not pop the form's own frame when its `end` arrives.
-    var frames: std.ArrayListUnmanaged(bool) = .empty;
+    var frames: std.ArrayList(bool) = .empty;
     defer frames.deinit(gpa);
     var forms: usize = 0;
     for (tpl.nodes) |node| {
@@ -923,7 +923,7 @@ fn detectJourney(gpa: Allocator, in: DeriveInput) Allocator.Error!Journey {
     // `route[]` below -- fix round 1 (I-2) took away its power to suppress
     // anything on its own, because a password partial that no journey route
     // reaches has a real, answerable backend question of its own.
-    var password_views: std.ArrayListUnmanaged([]const u8) = .empty;
+    var password_views: std.ArrayList([]const u8) = .empty;
     defer password_views.deinit(gpa);
     for (in.templates) |tpl| {
         if (try templateHasPasswordForm(gpa, tpl)) try password_views.append(gpa, tpl.path);
@@ -947,7 +947,7 @@ fn detectJourney(gpa: Allocator, in: DeriveInput) Allocator.Error!Journey {
     // appears on is still covered -- the journey's `island` answer scaffolds
     // the `AuthForm` that region becomes wherever it is rendered. The other
     // direction would leave the sign-in form asked about twice.
-    var views: std.ArrayListUnmanaged([]const u8) = .empty;
+    var views: std.ArrayList([]const u8) = .empty;
     errdefer views.deinit(gpa);
     for (route, 0..) |j, i| {
         if (!j) continue;
@@ -1036,7 +1036,7 @@ pub fn journeyRouteFlags(
     route_views: []const ?[]const u8,
     templates: []const fragments.Template,
 ) Allocator.Error![]bool {
-    var password_views: std.ArrayListUnmanaged([]const u8) = .empty;
+    var password_views: std.ArrayList([]const u8) = .empty;
     defer password_views.deinit(gpa);
     for (templates) |tpl| {
         if (try templateHasPasswordForm(gpa, tpl)) try password_views.append(gpa, tpl.path);
@@ -1064,7 +1064,7 @@ pub fn journeyRouteFlags(
 /// scratch, so there is nothing to free on the error path either.
 fn appendUnseen(
     gpa: Allocator,
-    list: *std.ArrayListUnmanaged([]const u8),
+    list: *std.ArrayList([]const u8),
     path: []const u8,
 ) Allocator.Error!void {
     for (list.items) |v| {
@@ -1237,12 +1237,12 @@ const authGuardFor = controllers.authGuardFor;
 /// `list` escapes.
 fn deriveRouteFindings(
     gpa: Allocator,
-    list: *std.ArrayListUnmanaged(Finding),
+    list: *std.ArrayList(Finding),
     in: DeriveInput,
     row: RouteRow,
     journey: Journey,
 ) Allocator.Error!void {
-    var hits: std.ArrayListUnmanaged(RouteHit) = .empty;
+    var hits: std.ArrayList(RouteHit) = .empty;
     defer {
         for (hits.items) |h| {
             gpa.free(h.id);
@@ -1373,7 +1373,7 @@ fn deriveRouteFindings(
             (!group_by_verb or sameBackendGroup(hits.items[j], hits.items[i]))) j += 1;
         const head = hits.items[i];
 
-        var message: std.ArrayListUnmanaged(u8) = .empty;
+        var message: std.ArrayList(u8) = .empty;
         defer message.deinit(gpa);
         // A prefix that names a specific route -- the guard's controller, the
         // winner of a content-path collision -- can only speak for the
@@ -1440,11 +1440,11 @@ fn journeyRoute(journey: Journey, i: usize) bool {
 /// Contract 2 (owned-result), inherited from `derive`.
 fn deriveAuthJourney(
     gpa: Allocator,
-    list: *std.ArrayListUnmanaged(Finding),
+    list: *std.ArrayList(Finding),
     in: DeriveInput,
     journey: Journey,
 ) Allocator.Error!void {
-    var hits: std.ArrayListUnmanaged(RouteHit) = .empty;
+    var hits: std.ArrayList(RouteHit) = .empty;
     defer {
         for (hits.items) |h| gpa.free(h.id);
         hits.deinit(gpa);
@@ -1458,7 +1458,7 @@ fn deriveAuthJourney(
     if (hits.items.len == 0) return;
     std.mem.sort(RouteHit, hits.items, {}, routeHitLessThan);
 
-    var message: std.ArrayListUnmanaged(u8) = .empty;
+    var message: std.ArrayList(u8) = .empty;
     defer message.deinit(gpa);
     try message.appendSlice(gpa, "auth journey: ");
     for (hits.items, 0..) |h, k| {
@@ -1703,7 +1703,7 @@ pub fn linkTargetRoute(route_list: []const routes.Route, node: fragments.Node, v
 /// Contract 2 (owned-result), inherited from `derive`.
 fn deriveMutationLink(
     gpa: Allocator,
-    list: *std.ArrayListUnmanaged(Finding),
+    list: *std.ArrayList(Finding),
     in: DeriveInput,
     path: []const u8,
     node: fragments.Node,
@@ -1736,7 +1736,7 @@ fn deriveMutationLink(
     const loc = try nodeLoc(gpa, node);
     defer gpa.free(loc);
 
-    var summary: std.ArrayListUnmanaged(u8) = .empty;
+    var summary: std.ArrayList(u8) = .empty;
     defer summary.deinit(gpa);
     try summary.appendSlice(gpa, "link performs a mutation: ");
     try summary.appendSlice(gpa, if (std.mem.startsWith(u8, node.code, "button_to")) "button_to" else "link_to");
@@ -1796,7 +1796,7 @@ fn nestedStimulus(nodes: []const fragments.Node, index: usize) ?fragments.Node {
 
 /// Contract 1 (self-freeing): only the reconstructed extent bytes escape.
 fn extentBytes(gpa: Allocator, nodes: []const fragments.Node, start: usize, end: usize) Allocator.Error![]u8 {
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
     for (nodes[start .. end + 1]) |node| {
         if (node.text) |text| try out.appendSlice(gpa, text) else try out.appendSlice(gpa, node.code);
@@ -1820,7 +1820,7 @@ fn stringLessThan(_: void, a: []const u8, b: []const u8) bool {
 
 /// Contract 2 (owned-result), inherited from the caller's output list:
 /// formatting scratch is freed before return and only appended bytes remain.
-fn appendFmt(gpa: Allocator, out: *std.ArrayListUnmanaged(u8), comptime fmt: []const u8, args: anytype) Allocator.Error!void {
+fn appendFmt(gpa: Allocator, out: *std.ArrayList(u8), comptime fmt: []const u8, args: anytype) Allocator.Error!void {
     const text = try gpa.print(fmt, args);
     defer gpa.free(text);
     try out.appendSlice(gpa, text);
@@ -1835,7 +1835,7 @@ fn stimulusMessage(
     index: usize,
 ) Allocator.Error!struct { message: []u8, portable: bool } {
     const node = nodes[index];
-    var message: std.ArrayListUnmanaged(u8) = .empty;
+    var message: std.ArrayList(u8) = .empty;
     errdefer message.deinit(gpa);
     try appendFmt(gpa, &message, "stimulus `{s}` on <{s}>", .{ node.name orelse "", node.value orelse "element" });
     if (node.missing or elementEnd(nodes, index) == null) {
@@ -1851,12 +1851,12 @@ fn stimulusMessage(
 
     var identifiers = std.mem.tokenizeAny(u8, node.name orelse "", " \t\r\n");
     var source_path: ?[]const u8 = null;
-    var action_labels: std.ArrayListUnmanaged([]u8) = .empty;
+    var action_labels: std.ArrayList([]u8) = .empty;
     defer {
         for (action_labels.items) |label| gpa.free(label);
         action_labels.deinit(gpa);
     }
-    var targets: std.ArrayListUnmanaged([]const u8) = .empty;
+    var targets: std.ArrayList([]const u8) = .empty;
     defer targets.deinit(gpa);
     while (identifiers.next()) |identifier| {
         const controller = (try port.stimulusSource(gpa, identifier, in.js_sources)) orelse {
@@ -1923,7 +1923,7 @@ fn frameUrl(gpa: Allocator, in: DeriveInput, node: fragments.Node) Allocator.Err
     const stem = node.value orelse return null;
     for (in.route_params) |route| {
         if (!std.mem.eql(u8, route.name, stem)) continue;
-        var out: std.ArrayListUnmanaged(u8) = .empty;
+        var out: std.ArrayList(u8) = .empty;
         errdefer out.deinit(gpa);
         var arg: usize = 0;
         var segments = std.mem.splitScalar(u8, route.path, '/');
@@ -1977,8 +1977,8 @@ fn componentSource(in: DeriveInput, name: []const u8) ?port.JsSource {
 /// the returned source is borrowed from `in.js_sources`.
 fn relativeImportSource(gpa: Allocator, in: DeriveInput, importer: []const u8, spec: []const u8) Allocator.Error!?port.JsSource {
     if (!std.mem.startsWith(u8, spec, "./") and !std.mem.startsWith(u8, spec, "../")) return null;
-    const dir = std.fs.path.dirname(importer) orelse return null;
-    var parts: std.ArrayListUnmanaged([]const u8) = .empty;
+    const dir = std.Io.Dir.path.dirname(importer) orelse return null;
+    var parts: std.ArrayList([]const u8) = .empty;
     defer parts.deinit(gpa);
     var base_it = std.mem.splitScalar(u8, dir, '/');
     while (base_it.next()) |part| if (part.len > 0) try parts.append(gpa, part);
@@ -2007,7 +2007,7 @@ fn relativeImportSource(gpa: Allocator, in: DeriveInput, importer: []const u8, s
 /// Contract 1 (self-freeing): returns an owned refusal message, or null when
 /// the root and every source in its copied closure are bundleable.
 fn componentProblem(gpa: Allocator, in: DeriveInput, root: port.JsSource) Allocator.Error!?[]u8 {
-    var queue: std.ArrayListUnmanaged(port.JsSource) = .empty;
+    var queue: std.ArrayList(port.JsSource) = .empty;
     defer queue.deinit(gpa);
     try queue.append(gpa, root);
     var i: usize = 0;
@@ -2015,13 +2015,13 @@ fn componentProblem(gpa: Allocator, in: DeriveInput, root: port.JsSource) Alloca
         const source = queue.items[i];
         const imports = try port.reactImports(gpa, source.bytes);
         defer gpa.free(imports.list);
-        if (imports.unsupported) |why| return try gpa.print("port cannot follow {s}: {s}", .{ std.fs.path.basename(source.path), why });
+        if (imports.unsupported) |why| return try gpa.print("port cannot follow {s}: {s}", .{ std.Io.Dir.path.basename(source.path), why });
         for (imports.list) |imp| {
             if (!imp.relative) {
                 if (port.isBridgeResolved(imp.spec) or npmHas(in.npm_dependencies, imp.spec)) continue;
-                return try gpa.print("import \"{s}\" from {s} has no version in package.json", .{ imp.spec, std.fs.path.basename(source.path) });
+                return try gpa.print("import \"{s}\" from {s} has no version in package.json", .{ imp.spec, std.Io.Dir.path.basename(source.path) });
             }
-            const child = (try relativeImportSource(gpa, in, source.path, imp.spec)) orelse return try gpa.print("import \"{s}\" from {s} cannot be bundled", .{ imp.spec, std.fs.path.basename(source.path) });
+            const child = (try relativeImportSource(gpa, in, source.path, imp.spec)) orelse return try gpa.print("import \"{s}\" from {s} cannot be bundled", .{ imp.spec, std.Io.Dir.path.basename(source.path) });
             var seen = false;
             for (queue.items) |queued| {
                 if (std.mem.eql(u8, queued.path, child.path)) seen = true;
@@ -2033,10 +2033,10 @@ fn componentProblem(gpa: Allocator, in: DeriveInput, root: port.JsSource) Alloca
 }
 
 fn blockParam(code: []const u8) ?[]const u8 {
-    const first = std.mem.indexOfScalar(u8, code, '|') orelse return null;
-    const last_rel = std.mem.indexOfScalar(u8, code[first + 1 ..], '|') orelse return null;
+    const first = std.mem.findScalar(u8, code, '|') orelse return null;
+    const last_rel = std.mem.findScalar(u8, code[first + 1 ..], '|') orelse return null;
     const value = std.mem.trim(u8, code[first + 1 .. first + 1 + last_rel], " \t\r\n");
-    if (value.len == 0 or std.mem.indexOfScalar(u8, value, ',') != null) return null;
+    if (value.len == 0 or std.mem.findScalar(u8, value, ',') != null) return null;
     return value;
 }
 
@@ -2049,7 +2049,7 @@ fn collectionMatches(stem: []const u8, collection: []const u8) bool {
 /// released here and only bytes appended to the finding message survive.
 fn deriveIvar(
     gpa: Allocator,
-    list: *std.ArrayListUnmanaged(Finding),
+    list: *std.ArrayList(Finding),
     in: DeriveInput,
     path: []const u8,
     nodes: []const fragments.Node,
@@ -2059,7 +2059,7 @@ fn deriveIvar(
     const loc = try nodeLoc(gpa, node);
     defer gpa.free(loc);
     const name = node.name orelse "";
-    var message: std.ArrayListUnmanaged(u8) = .empty;
+    var message: std.ArrayList(u8) = .empty;
     defer message.deinit(gpa);
     try appendFmt(gpa, &message, "request-time state `{s}`", .{name});
 
@@ -2092,7 +2092,7 @@ fn deriveIvar(
 
     if (in.backend) |doc| {
         const stem = std.mem.trim(u8, name, "@");
-        var collections: std.ArrayListUnmanaged([]const u8) = .empty;
+        var collections: std.ArrayList([]const u8) = .empty;
         defer collections.deinit(gpa);
         for (doc.operations) |operation| {
             const collection = operation.collection orelse continue;
@@ -2132,7 +2132,7 @@ fn deriveIvar(
 /// Contract 2 (owned-result), inherited from `derive`.
 fn deriveNode(
     gpa: Allocator,
-    list: *std.ArrayListUnmanaged(Finding),
+    list: *std.ArrayList(Finding),
     in: DeriveInput,
     path: []const u8,
     node: fragments.Node,
@@ -2418,7 +2418,7 @@ fn deriveNode(
             if (journey_view) return;
             const loc = try nodeLoc(gpa, node);
             defer gpa.free(loc);
-            var summary: std.ArrayListUnmanaged(u8) = .empty;
+            var summary: std.ArrayList(u8) = .empty;
             defer summary.deinit(gpa);
             try summary.appendSlice(gpa, "form submits to a Rails action: ");
             // A `form` node's `name` is the MODEL's param key (`post` from
@@ -2534,10 +2534,10 @@ fn deriveNode(
                 try appendFinding(gpa, list, code_component_props_dynamic, .warn, path, node.line, loc, message, &choices_retain_blocked);
                 return;
             }
-            var message: std.ArrayListUnmanaged(u8) = .empty;
+            var message: std.ArrayList(u8) = .empty;
             defer message.deinit(gpa);
             try appendFmt(gpa, &message, "React root `{s}` props {{", .{name});
-            var prop_names: std.ArrayListUnmanaged([]const u8) = .empty;
+            var prop_names: std.ArrayList([]const u8) = .empty;
             defer prop_names.deinit(gpa);
             for (node.attrs) |attr| try prop_names.append(gpa, attr.key);
             std.mem.sort([]const u8, prop_names.items, {}, stringLessThan);
@@ -2566,7 +2566,7 @@ fn deriveNode(
 }
 
 fn isPartialTemplatePath(path: []const u8) bool {
-    const base = if (std.mem.lastIndexOfScalar(u8, path, '/')) |slash| path[slash + 1 ..] else path;
+    const base = if (std.mem.findScalarLast(u8, path, '/')) |slash| path[slash + 1 ..] else path;
     return base.len > 0 and base[0] == '_';
 }
 
@@ -2587,9 +2587,9 @@ fn templateByPath(templates: []const fragments.Template, path: []const u8) ?frag
 /// here and every appended finding is owned by `derive`'s result list.
 const ContextFailureWalker = struct {
     gpa: Allocator,
-    list: *std.ArrayListUnmanaged(Finding),
+    list: *std.ArrayList(Finding),
     templates: []const fragments.Template,
-    stack: std.ArrayListUnmanaged([]const u8) = .empty,
+    stack: std.ArrayList([]const u8) = .empty,
 
     fn deinit(w: *ContextFailureWalker) void {
         w.stack.deinit(w.gpa);
@@ -2632,7 +2632,7 @@ const ContextFailureWalker = struct {
     }
 
     fn walk(w: *ContextFailureWalker, path: []const u8, nodes: []const fragments.Node, locals: []const fragments.Attr, initial_answerable_depth: usize) Allocator.Error!void {
-        var frames: std.ArrayListUnmanaged(bool) = .empty;
+        var frames: std.ArrayList(bool) = .empty;
         defer frames.deinit(w.gpa);
         var answerable_depth = initial_answerable_depth;
 
@@ -2675,7 +2675,7 @@ const ContextFailureWalker = struct {
 
 /// Contract 2 (owned-result), inherited from `derive` through
 /// `ContextFailureWalker` above.
-fn deriveContextFailures(gpa: Allocator, list: *std.ArrayListUnmanaged(Finding), templates: []const fragments.Template) Allocator.Error!void {
+fn deriveContextFailures(gpa: Allocator, list: *std.ArrayList(Finding), templates: []const fragments.Template) Allocator.Error!void {
     var walker: ContextFailureWalker = .{ .gpa = gpa, .list = list, .templates = templates };
     defer walker.deinit();
     for (templates) |tpl| {
@@ -2703,7 +2703,7 @@ fn deriveContextFailures(gpa: Allocator, list: *std.ArrayListUnmanaged(Finding),
 /// `FailingAllocator` wrapping it in tests -- reclaims it, same as any
 /// other still-live allocation an aborted function leaves behind).
 pub fn derive(gpa: Allocator, in: DeriveInput) Allocator.Error![]Finding {
-    var list: std.ArrayListUnmanaged(Finding) = .empty;
+    var list: std.ArrayList(Finding) = .empty;
     errdefer {
         for (list.items) |f| freeOne(gpa, f);
         list.deinit(gpa);
@@ -2726,7 +2726,7 @@ pub fn derive(gpa: Allocator, in: DeriveInput) Allocator.Error![]Finding {
     // suppressed by it -- correct, since that field is not lexically inside
     // anything, and `convert.zig`'s own region nesting reads the stream the
     // same way (both go through `convert.opensBlock`).
-    var frames: std.ArrayListUnmanaged(bool) = .empty;
+    var frames: std.ArrayList(bool) = .empty;
     defer frames.deinit(gpa);
 
     for (in.templates) |tpl| {
@@ -2818,10 +2818,10 @@ pub fn derive(gpa: Allocator, in: DeriveInput) Allocator.Error![]Finding {
     try deriveContextFailures(gpa, &list, in.templates);
 
     if (in.js_entry) |entry| {
-        var message: std.ArrayListUnmanaged(u8) = .empty;
+        var message: std.ArrayList(u8) = .empty;
         defer message.deinit(gpa);
         try appendFmt(gpa, &message, "JS entry {s} was not inspected; imports: ", .{entry});
-        var specs: std.ArrayListUnmanaged([]const u8) = .empty;
+        var specs: std.ArrayList([]const u8) = .empty;
         defer specs.deinit(gpa);
         if (sourceByPath(in.js_sources, entry)) |source| {
             const imports = try port.reactImports(gpa, source.bytes);
@@ -2936,7 +2936,7 @@ test "derive: one finding per triggering node, with code/choices/loc from the ta
     try std.testing.expectEqualStrings("RAILS_HELPER_UNKNOWN.app/views/posts/index%2Ehtml%2Eerb.L1C9", out[0].id);
     try std.testing.expectEqualStrings("app/controllers/posts_controller.rb", out[2].path);
     try std.testing.expectEqual(@as(?u64, 2), out[2].line);
-    try std.testing.expectEqualStrings("ghost", out[5].message[std.mem.indexOf(u8, out[5].message, "ghost").?..][0..5]);
+    try std.testing.expectEqualStrings("ghost", out[5].message[std.mem.find(u8, out[5].message, "ghost").?..][0..5]);
     try std.testing.expectEqual(blockers.Severity.@"error", out[6].severity);
     try std.testing.expectEqualStrings("retain", out[6].choices[0]);
     try std.testing.expect(out[0].route_id == null);
@@ -3065,14 +3065,14 @@ test "derive: render_dynamic, route_helper_dynamic, control, link_to-unknown, an
     };
     try std.testing.expectEqual(expect_codes.len, out.len);
     for (expect_codes, out) |c, f| try std.testing.expectEqualStrings(c, f.code);
-    try std.testing.expect(std.mem.indexOf(u8, out[0].message, "partial_name") != null);
+    try std.testing.expect(std.mem.find(u8, out[0].message, "partial_name") != null);
 
     // A null `error_line` still gets a finding, with `line = null` on the
     // `Finding` even though the id's loc folds it to "L0".
     const parse_err = out[4];
     try std.testing.expectEqual(@as(?u64, null), parse_err.line);
     try std.testing.expectEqualStrings("RAILS_TEMPLATE_PARSE_ERROR.app/views/y%2Ehtml%2Eerb.L0", parse_err.id);
-    try std.testing.expect(std.mem.indexOf(u8, parse_err.message, "premature end of input") != null);
+    try std.testing.expect(std.mem.find(u8, parse_err.message, "premature end of input") != null);
 }
 
 // Fix round 1 (Task 9 review, Critical): a real text run decodes with
@@ -3415,8 +3415,8 @@ test "derive: an asset helper with no deterministic target raises RAILS_ASSET_TR
     try std.testing.expectEqualStrings("blocked", out[0].choices[1]);
     // The two causes read differently: one names the file that exists but
     // cannot be pinned, the other says nothing matched at all.
-    try std.testing.expect(std.mem.indexOf(u8, out[0].message, "app/assets/images/hero.png") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out[1].message, "ghost.png") != null);
+    try std.testing.expect(std.mem.find(u8, out[0].message, "app/assets/images/hero.png") != null);
+    try std.testing.expect(std.mem.find(u8, out[1].message, "ghost.png") != null);
 }
 
 // Ruling S23, the derivation half of `convert.zig`'s absolute-URL passthrough.
@@ -3480,7 +3480,7 @@ test "derive: a multi-argument asset helper asks about the first argument that d
 
     try std.testing.expectEqual(@as(usize, 1), out.len);
     try std.testing.expectEqualStrings("RAILS_ASSET_TRANSFORM.app/views/shared/_nav%2Ehtml%2Eerb.L1C1", out[0].id);
-    try std.testing.expect(std.mem.indexOf(u8, out[0].message, "ghost") != null);
+    try std.testing.expect(std.mem.find(u8, out[0].message, "ghost") != null);
 }
 
 // `DeriveInput.assets` defaults to empty ONLY so the pre-Stage-2 call
@@ -3668,7 +3668,7 @@ test "derive: a dynamic GET route raises RAILS_ROUTE_DYNAMIC_SEGMENT, one per de
     try std.testing.expectEqualStrings("blocked", dyn.choices[2]);
     // Both routes of the shared declaration are named in the message, so the
     // one `route_id` naming only the first is not the only evidence left.
-    try std.testing.expect(std.mem.indexOf(u8, dyn.message, "GET /posts/:id/edit") != null);
+    try std.testing.expect(std.mem.find(u8, dyn.message, "GET /posts/:id/edit") != null);
 }
 
 test "derive: a redirect route raises RAILS_REDIRECT_HOST_CONFIG, whatever its path shape" {
@@ -3880,15 +3880,15 @@ test "derive: a form is one answerable RAILS_BACKEND_ENDPOINT, not one per field
     try std.testing.expectEqual(@as(usize, 2), out.len);
     try std.testing.expectEqualStrings("RAILS_BACKEND_ENDPOINT", out[0].code);
     try std.testing.expectEqualStrings("RAILS_BACKEND_ENDPOINT.app/views/posts/new%2Ehtml%2Eerb.L1C1", out[0].id);
-    try std.testing.expect(std.mem.indexOf(u8, out[0].message, "form submits to a Rails action") != null);
+    try std.testing.expect(std.mem.find(u8, out[0].message, "form submits to a Rails action") != null);
     // The model's param key, which is what a form node's `name` carries.
-    try std.testing.expect(std.mem.indexOf(u8, out[0].message, "model `post`") != null);
+    try std.testing.expect(std.mem.find(u8, out[0].message, "model `post`") != null);
     try std.testing.expectEqual(@as(usize, 2), out[0].choices.len);
     try std.testing.expectEqualStrings("retain", out[0].choices[0]);
     try std.testing.expectEqualStrings("blocked", out[0].choices[1]);
 
     try std.testing.expectEqualStrings("RAILS_REQUEST_TIME_STATE", out[1].code);
-    try std.testing.expect(std.mem.indexOf(u8, out[1].message, "validation errors of `post`") != null);
+    try std.testing.expect(std.mem.find(u8, out[1].message, "validation errors of `post`") != null);
     // #167 Stage 3 widened this one with `island`: the bound form island now
     // renders `ZigbaseError.data` where the ERB rendered `full_messages`, so
     // "present it client-side" is a choice this stage can carry out. The
@@ -3914,7 +3914,7 @@ test "derive: a form_field outside any form asks its own question" {
     defer free(gpa, out);
     try std.testing.expectEqual(@as(usize, 1), out.len);
     try std.testing.expectEqualStrings("RAILS_BACKEND_ENDPOINT", out[0].code);
-    try std.testing.expect(std.mem.indexOf(u8, out[0].message, "field `text_field` name=q") != null);
+    try std.testing.expect(std.mem.find(u8, out[0].message, "field `text_field` name=q") != null);
 }
 
 // ---- #167 Stage 3: the backend boundary ----------------------------------
@@ -4608,7 +4608,7 @@ test "derive: which authentication filter a guarded route names does not depend 
     const b = try derive(gpa, b_in);
     defer free(gpa, b);
     try std.testing.expectEqualStrings(a[0].message, b[0].message);
-    try std.testing.expect(std.mem.indexOf(u8, a[0].message, "authenticate_user!") != null);
+    try std.testing.expect(std.mem.find(u8, a[0].message, "authenticate_user!") != null);
 }
 
 test "derive: a dynamic before_action guards nothing -- there is no symbol to read" {
@@ -5371,8 +5371,8 @@ test "derive: Stage 4 interactivity rows expose only buildable choices" {
     try std.testing.expectEqualStrings("RAILS_JS_ENTRY", out[2].code);
     try std.testing.expectEqual(@as(?u64, null), out[2].line);
     try std.testing.expectEqualStrings(code_stimulus_controller, out[3].code);
-    try std.testing.expect(std.mem.indexOf(u8, out[3].message, "actions: click->reveal#toggle") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out[3].message, "targets: details") != null);
+    try std.testing.expect(std.mem.find(u8, out[3].message, "actions: click->reveal#toggle") != null);
+    try std.testing.expect(std.mem.find(u8, out[3].message, "targets: details") != null);
     for ([_][]const u8{ "island", "drop", "retain", "blocked" }, out[3].choices) |want, got| try std.testing.expectEqualStrings(want, got);
     try std.testing.expectEqualStrings(code_turbo_frame, out[4].code);
     try std.testing.expectEqualStrings("turbo-frame `latest` src=/posts", out[4].message);
@@ -5380,7 +5380,7 @@ test "derive: Stage 4 interactivity rows expose only buildable choices" {
     try std.testing.expectEqualStrings("turbo-frame `static` (no src)", out[5].message);
     for ([_][]const u8{ "inline", "retain", "blocked" }, out[5].choices) |want, got| try std.testing.expectEqualStrings(want, got);
     try std.testing.expectEqualStrings(code_turbo_stream, out[6].code);
-    try std.testing.expect(std.mem.indexOf(u8, out[6].message, "a realtime subscription has no converter") != null);
+    try std.testing.expect(std.mem.find(u8, out[6].message, "a realtime subscription has no converter") != null);
 }
 
 test "derive: only literal supported Turbo Stream shapes offer island-realtime" {
@@ -5406,7 +5406,7 @@ test "derive: only literal supported Turbo Stream shapes offer island-realtime" 
     try std.testing.expectEqualStrings("turbo-stream `posts` subscription can become a realtime island", out[0].message);
     try std.testing.expectEqualStrings("turbo-stream `posts` action append can become a realtime island", out[1].message);
     for ([_][]const u8{ "retain", "blocked" }, out[2].choices) |want, got| try std.testing.expectEqualStrings(want, got);
-    try std.testing.expect(std.mem.indexOf(u8, out[2].message, "request-time stream target") != null);
+    try std.testing.expect(std.mem.find(u8, out[2].message, "request-time stream target") != null);
     for ([_][]const u8{ "retain", "blocked" }, out[3].choices) |want, got| try std.testing.expectEqualStrings(want, got);
 }
 
@@ -5483,7 +5483,7 @@ test "derive: ERB-split Stimulus markers are diffed by name, never count" {
     // two leftovers here because the marker set and node list are not the
     // same cardinality domain.
     try std.testing.expectEqual(@as(usize, 2), out.len);
-    try std.testing.expect(std.mem.indexOf(u8, out[0].message, "stimulus `split`") != null);
+    try std.testing.expect(std.mem.find(u8, out[0].message, "stimulus `split`") != null);
     try std.testing.expectEqual(@as(usize, 2), out[0].choices.len);
     try std.testing.expectEqualStrings("retain", out[0].choices[0]);
 }
@@ -5518,13 +5518,13 @@ test "derive: interactivity refusal paths never offer an emitter they cannot run
     for (out) |finding| {
         if (finding.line == 2) {
             try std.testing.expectEqualStrings("island", finding.choices[0]);
-            try std.testing.expect(std.mem.indexOf(u8, finding.message, "nested inside") != null);
+            try std.testing.expect(std.mem.find(u8, finding.message, "nested inside") != null);
         } else if (finding.line == 4) {
             try std.testing.expectEqualStrings("drop", finding.choices[0]);
-            try std.testing.expect(std.mem.indexOf(u8, finding.message, "not closed") != null);
+            try std.testing.expect(std.mem.find(u8, finding.message, "not closed") != null);
         } else if (finding.line == 5) {
             try std.testing.expectEqual(@as(usize, 2), finding.choices.len);
-            try std.testing.expect(std.mem.indexOf(u8, finding.message, "d3") != null);
+            try std.testing.expect(std.mem.find(u8, finding.message, "d3") != null);
         } else if (finding.line == 6) {
             try std.testing.expectEqualStrings(code_component_props_dynamic, finding.code);
         } else if (finding.line == 7) {

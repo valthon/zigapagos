@@ -123,7 +123,7 @@ fn run(io: Io, gpa: Allocator, cmd: Command) !bool {
             const path = try gpa.dupe(u8, entry.path);
             errdefer gpa.free(path);
             // Canonical report paths use URL separators on every host.
-            for (path) |*c| if (std.fs.path.sep == '\\' and c.* == '\\') {
+            for (path) |*c| if (std.Io.Dir.path.sep == '\\' and c.* == '\\') {
                 c.* = '/';
             };
             try files.append(gpa, .{ .path = path, .kind = kind });
@@ -212,7 +212,7 @@ fn run(io: Io, gpa: Allocator, cmd: Command) !bool {
 }
 
 fn fileKind(path: []const u8) ?Kind {
-    const ext = std.fs.path.extension(path);
+    const ext = std.Io.Dir.path.extension(path);
     if (std.ascii.eqlIgnoreCase(ext, ".html") or std.ascii.eqlIgnoreCase(ext, ".htm")) return .html;
     if (std.ascii.eqlIgnoreCase(ext, ".css")) return .css;
     for ([_][]const u8{ ".js", ".mjs", ".cjs" }) |js| if (std.ascii.eqlIgnoreCase(ext, js)) return .js;
@@ -240,7 +240,7 @@ fn reportPage(w: *Io.Writer, format: diag.Format, path: []const u8, source: []co
             const type_attr = attribute(node, source, ast, "type");
             const script_type = type_attr orelse "";
             const language = if (type_attr == null) attribute(node, source, ast, "language") orelse "" else "";
-            const executable: ?bool = if (std.mem.indexOfScalar(u8, script_type, '&') != null or std.mem.indexOfScalar(u8, language, '&') != null) null else scriptIsJavaScript(script_type, language);
+            const executable: ?bool = if (std.mem.findScalar(u8, script_type, '&') != null or std.mem.findScalar(u8, language, '&') != null) null else scriptIsJavaScript(script_type, language);
             if (executable == null) encoded_classification += 1;
             if (attribute(node, source, ast, "src")) |url| {
                 try reportReference(w, format, path, "script_src", url, script_type);
@@ -258,7 +258,7 @@ fn reportPage(w: *Io.Writer, format: diag.Format, path: []const u8, source: []co
         }
         if (node.kind == .link) {
             const rel = attribute(node, source, ast, "rel") orelse continue;
-            if (std.mem.indexOfScalar(u8, rel, '&') != null) {
+            if (std.mem.findScalar(u8, rel, '&') != null) {
                 encoded_classification += 1;
                 if (attribute(node, source, ast, "href")) |url| {
                     try reportReference(w, format, path, "link_href_unclassified", url, "");

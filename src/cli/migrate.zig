@@ -242,7 +242,7 @@ pub const ScanResult = struct {
 /// Run the two-pass Astro scan over `root` and return the results.
 /// `entries` and `island_names` are gpa-owned; call `freeScanResult` when done.
 pub fn scan(io: Io, gpa: Allocator, root: Io.Dir) ScanResult {
-    var entries: std.ArrayListUnmanaged(Entry) = .empty;
+    var entries: std.ArrayList(Entry) = .empty;
     var island_names: std.StringHashMapUnmanaged(void) = .empty;
 
     // Pass 1: collect entries + the client:* usage set.
@@ -278,7 +278,7 @@ pub fn scan(io: Io, gpa: Allocator, root: Io.Dir) ScanResult {
     var has_astro_sitemap = false;
     if (root.readFileAlloc(io, "package.json", gpa, .limited(16 * 1024 * 1024))) |content| {
         defer gpa.free(content);
-        has_astro_sitemap = std.mem.indexOf(u8, content, "@astrojs/sitemap") != null;
+        has_astro_sitemap = std.mem.find(u8, content, "@astrojs/sitemap") != null;
     } else |_| {}
 
     return .{
@@ -423,7 +423,7 @@ fn scanTopLevelFiles(
     gpa: Allocator,
     base: Io.Dir,
     kind: Kind,
-    out: *std.ArrayListUnmanaged(Entry),
+    out: *std.ArrayList(Entry),
     island_names: *std.StringHashMapUnmanaged(void),
 ) void {
     var dir = base.openDir(io, ".", .{ .iterate = true }) catch return;
@@ -438,9 +438,9 @@ fn scanTopLevelFiles(
 }
 
 fn eleventyPagePath(path: []const u8) bool {
-    return std.mem.indexOf(u8, path, "/_includes/") == null and
-        std.mem.indexOf(u8, path, "/_layouts/") == null and
-        std.mem.indexOf(u8, path, "/_data/") == null and
+    return std.mem.find(u8, path, "/_includes/") == null and
+        std.mem.find(u8, path, "/_layouts/") == null and
+        std.mem.find(u8, path, "/_data/") == null and
         !std.mem.startsWith(u8, path, "_includes/") and
         !std.mem.startsWith(u8, path, "_layouts/") and
         !std.mem.startsWith(u8, path, "_data/");
@@ -450,8 +450,8 @@ fn nextAppRouteModule(path: []const u8) bool {
     if (!std.mem.startsWith(u8, path, "app/") and
         !std.mem.startsWith(u8, path, "src/app/")) return false;
 
-    const basename = std.fs.path.basename(path);
-    const stem = std.fs.path.stem(basename);
+    const basename = std.Io.Dir.path.basename(path);
+    const stem = std.Io.Dir.path.stem(basename);
     for ([_][]const u8{
         "page",
         "route",
@@ -471,7 +471,7 @@ fn nextAppRouteModule(path: []const u8) bool {
 }
 
 fn scanOther(io: Io, gpa: Allocator, root: Io.Dir, source: Source, report_path: ?[]const u8) ScanResult {
-    var entries: std.ArrayListUnmanaged(Entry) = .empty;
+    var entries: std.ArrayList(Entry) = .empty;
     var names: std.StringHashMapUnmanaged(void) = .empty;
 
     switch (source) {
@@ -573,7 +573,7 @@ fn scanOther(io: Io, gpa: Allocator, root: Io.Dir, source: Source, report_path: 
 
     for (entries.items) |*entry| {
         if (source == .nextjs and entry.kind == .page) {
-            const basename = std.fs.path.basename(entry.path);
+            const basename = std.Io.Dir.path.basename(entry.path);
             if (std.mem.startsWith(u8, basename, "layout.") or
                 std.mem.startsWith(u8, basename, "_app.") or
                 std.mem.startsWith(u8, basename, "_document."))
@@ -583,8 +583,8 @@ fn scanOther(io: Io, gpa: Allocator, root: Io.Dir, source: Source, report_path: 
                 const is_client = blk: {
                     const content = readFileContent(io, gpa, root, entry.path) catch break :blk false;
                     defer gpa.free(content);
-                    break :blk std.mem.indexOf(u8, content, "\"use client\"") != null or
-                        std.mem.indexOf(u8, content, "'use client'") != null;
+                    break :blk std.mem.find(u8, content, "\"use client\"") != null or
+                        std.mem.find(u8, content, "'use client'") != null;
                 };
                 // A `use client` directive controls the rendering boundary; it
                 // does not stop reserved App Router modules from being routes.
@@ -641,7 +641,7 @@ fn scanOther(io: Io, gpa: Allocator, root: Io.Dir, source: Source, report_path: 
 /// all traversal scratch is freed here. This is a conservative inventory, not
 /// a framework config evaluator: retain possible custom-root/collection pages
 /// without turning them into conversion candidates. Never follow symlinks.
-fn scanUnhandledContent(io: Io, gpa: Allocator, root: Io.Dir, rel: []const u8, source: Source, out: *std.ArrayListUnmanaged(Entry), inventoried: *std.StringHashMapUnmanaged(void)) void {
+fn scanUnhandledContent(io: Io, gpa: Allocator, root: Io.Dir, rel: []const u8, source: Source, out: *std.ArrayList(Entry), inventoried: *std.StringHashMapUnmanaged(void)) void {
     var dir = root.openDir(io, rel, .{ .iterate = true }) catch |err| fatal.dir(rel, err);
     defer dir.close(io);
     var it = dir.iterateAssumeFirstIteration();
@@ -660,7 +660,7 @@ fn scanUnhandledContent(io: Io, gpa: Allocator, root: Io.Dir, rel: []const u8, s
         const path = if (std.mem.eql(u8, rel, "."))
             gpa.dupe(u8, entry.name) catch fatal.oom()
         else
-            std.fs.path.join(gpa, &.{ rel, entry.name }) catch fatal.oom();
+            std.Io.Dir.path.join(gpa, &.{ rel, entry.name }) catch fatal.oom();
         defer gpa.free(path);
         if (entry.kind == .directory) {
             scanUnhandledContent(io, gpa, root, path, source, out, inventoried);
@@ -850,7 +850,7 @@ fn railsAppName(source_path: []const u8, target: []const u8) []const u8 {
 }
 
 fn usableBasename(path: []const u8) ?[]const u8 {
-    const b = std.fs.path.basename(path);
+    const b = std.Io.Dir.path.basename(path);
     if (b.len == 0) return null;
     if (std.mem.eql(u8, b, ".") or std.mem.eql(u8, b, "..")) return null;
     return b;
@@ -1061,7 +1061,7 @@ test "railsRootEvidence: an unreadable probe is not rendered as evidence" {
 
 /// Derives the manifest's sibling path from the report's own `out_path`
 /// (design spec, "The manifest": "written beside the report"). Strips
-/// `out_path`'s own extension via `std.fs.path.stem` (default `MIGRATION.md`
+/// `out_path`'s own extension via `std.Io.Dir.path.stem` (default `MIGRATION.md`
 /// -> `MIGRATION.manifest.json`) rather than a fixed sibling name: `tests/
 /// migrate/rails.sh` writes many differently-`-o`'d reports into the SAME
 /// directory across one run (`one.md`, `degraded.md`, `empty-routes.md`,
@@ -1076,11 +1076,11 @@ test "railsRootEvidence: an unreadable probe is not rendered as evidence" {
 /// returned path; the intermediate `name` formatting is freed before
 /// returning.
 fn railsManifestPath(gpa: Allocator, out_path: []const u8) []const u8 {
-    const dir = std.fs.path.dirname(out_path);
-    const stem = std.fs.path.stem(std.fs.path.basename(out_path));
+    const dir = std.Io.Dir.path.dirname(out_path);
+    const stem = std.Io.Dir.path.stem(std.Io.Dir.path.basename(out_path));
     const name = gpa.print("{s}.manifest.json", .{stem}) catch fatal.oom();
     defer gpa.free(name);
-    if (dir) |d| return std.fs.path.join(gpa, &.{ d, name }) catch fatal.oom();
+    if (dir) |d| return std.Io.Dir.path.join(gpa, &.{ d, name }) catch fatal.oom();
     return gpa.dupe(u8, name) catch fatal.oom();
 }
 
@@ -1097,7 +1097,7 @@ test "railsManifestPath: beside the report, extension replaced, directory preser
 
 test "railsManifestPath: two different -o STEMS in the same directory never collide" {
     // F7 (phase-2-review.md): the collision domain is the STEM
-    // (`std.fs.path.stem` strips the extension before this function ever
+    // (`std.Io.Dir.path.stem` strips the extension before this function ever
     // sees it), not the basename -- `-o a.md` and `-o a.txt` in the SAME
     // directory both produce `a.manifest.json` and DO collide. This test
     // (and its name) previously claimed "basenames", which is broader than
@@ -1359,7 +1359,7 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
         defer if (default_decisions_buf) |p| gpa.free(p);
         const effective_decisions_path: ?[]const u8 = if (decisions_path) |p| p else blk: {
             const target = target_dir orelse break :blk null;
-            const joined = std.fs.path.join(gpa, &.{ target, rails_decisions_basename }) catch fatal.oom();
+            const joined = std.Io.Dir.path.join(gpa, &.{ target, rails_decisions_basename }) catch fatal.oom();
             // Existence-gated, not read-gated: the FIRST run of every
             // migration has no answers file, and that is the normal state,
             // not a failure. An explicit --decisions is held to a higher
@@ -1388,11 +1388,11 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
         // the manifest. The basename still points at the right file, and the
         // stderr messages (which are not artifacts) print the full path.
         const decisions_label: []const u8 = if (effective_decisions_path) |p|
-            std.fs.path.basename(p)
+            std.Io.Dir.path.basename(p)
         else
             rails_decisions_basename;
 
-        var decision_problems: std.ArrayListUnmanaged(rails.decisions.Problem) = .empty;
+        var decision_problems: std.ArrayList(rails.decisions.Problem) = .empty;
         defer rails.decisions.freeProblems(gpa, &decision_problems);
         // Resolve the source once, up front. The report titles itself by the
         // source's basename and the scaffold names the site by it, and `.`
@@ -1472,7 +1472,7 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
             }
             var target_root = Io.Dir.cwd().createDirPathOpen(io, target, .{}) catch |err| fatal.dir(target, err);
             target_root.close(io);
-            const joined = std.fs.path.join(gpa, &.{ target, "MIGRATION.md" }) catch fatal.oom();
+            const joined = std.Io.Dir.path.join(gpa, &.{ target, "MIGRATION.md" }) catch fatal.oom();
             target_out_path_buf = joined;
             break :blk joined;
         } else out_path;
@@ -1729,20 +1729,20 @@ pub fn migrate(io: Io, gpa: Allocator, args: []const []const u8, environ_map: *c
         if (target_dir != null) break :blk scanOther(io, gpa, root, source, null);
         // Resolve the parent through the filesystem before joining the basename:
         // lexically collapsing '..' first changes paths such as link/../report.md.
-        const report_parent = std.fs.path.dirname(out_path) orelse ".";
+        const report_parent = std.Io.Dir.path.dirname(out_path) orelse ".";
         const report_parent_abs = Io.Dir.cwd().realPathFileAlloc(io, report_parent, gpa) catch |err| switch (err) {
             error.FileNotFound => break :blk scanOther(io, gpa, root, source, null),
             error.OutOfMemory => fatal.oom(),
             else => fatal.dir(report_parent, err),
         };
         defer gpa.free(report_parent_abs);
-        const report_abs = std.fs.path.join(gpa, &.{ report_parent_abs, std.fs.path.basename(out_path) }) catch fatal.oom();
+        const report_abs = std.Io.Dir.path.join(gpa, &.{ report_parent_abs, std.Io.Dir.path.basename(out_path) }) catch fatal.oom();
         defer gpa.free(report_abs);
         const cwd_abs = Io.Dir.cwd().realPathFileAlloc(io, ".", gpa) catch |err| fatal.dir(".", err);
         defer gpa.free(cwd_abs);
         const source_abs = Io.Dir.cwd().realPathFileAlloc(io, dir_path, gpa) catch |err| fatal.dir(dir_path, err);
         defer gpa.free(source_abs);
-        const report_rel = std.fs.path.relative(gpa, cwd_abs, environ_map, source_abs, report_abs) catch fatal.oom();
+        const report_rel = std.Io.Dir.path.relativeAlloc(gpa, cwd_abs, environ_map, source_abs, report_abs) catch fatal.oom();
         defer gpa.free(report_rel);
         break :blk scanOther(io, gpa, root, source, report_rel);
     };
@@ -1799,7 +1799,7 @@ fn scanDir(
     base: Io.Dir,
     rel: []const u8,
     kind: Kind,
-    out: *std.ArrayListUnmanaged(Entry),
+    out: *std.ArrayList(Entry),
     island_names: *std.StringHashMapUnmanaged(void),
 ) void {
     var dir = base.openDir(io, rel, .{ .iterate = true }) catch return;
@@ -1808,7 +1808,7 @@ fn scanDir(
     var it = dir.iterateAssumeFirstIteration();
     while (it.next(io) catch null) |entry| {
         if (entry.name.len == 0 or entry.name[0] == '.') continue;
-        const child = std.fs.path.join(gpa, &.{ rel, entry.name }) catch fatal.oom();
+        const child = std.Io.Dir.path.join(gpa, &.{ rel, entry.name }) catch fatal.oom();
         switch (entry.kind) {
             // `scanFile` takes ownership of `child` (stored verbatim as
             // `Entry.path`, freed by `freeScanResult`). A directory has no
@@ -1830,7 +1830,7 @@ fn scanFile(
     base: Io.Dir,
     path: []const u8,
     kind: Kind,
-    out: *std.ArrayListUnmanaged(Entry),
+    out: *std.ArrayList(Entry),
     island_names: *std.StringHashMapUnmanaged(void),
 ) void {
     // An unreadable source still belongs in the worklist (the porter has to
@@ -1846,7 +1846,7 @@ fn scanFile(
     defer gpa.free(content);
     // Any source file may host a `<Component client:*>` call site.
     detect.collectClientUsages(gpa, content, island_names) catch fatal.oom();
-    const uses = std.mem.indexOf(u8, content, "client:") != null;
+    const uses = std.mem.find(u8, content, "client:") != null;
     const paginate = if (kind == .page) detect.detectPaginate(path, content) else null;
     out.append(gpa, .{ .path = path, .kind = kind, .uses_islands = uses, .paginate = paginate }) catch fatal.oom();
 }
@@ -1916,7 +1916,7 @@ const OutLine = struct {
 fn processImportLine(
     gpa: Allocator,
     line: []const u8,
-    flagged: *std.ArrayListUnmanaged([]const u8),
+    flagged: *std.ArrayList([]const u8),
 ) ?OutLine {
     const verbatim: OutLine = .{ .text = line, .owned = false };
     const trimmed = std.mem.trimStart(u8, line, " \t");
@@ -1927,7 +1927,7 @@ fn processImportLine(
         return verbatim;
 
     // Locate " from " to extract the module specifier.
-    const from_pos = std.mem.indexOf(u8, line, " from ") orelse return verbatim;
+    const from_pos = std.mem.find(u8, line, " from ") orelse return verbatim;
     const after_from = from_pos + " from ".len; // points at the opening quote
     if (after_from >= line.len) return verbatim;
 
@@ -1935,7 +1935,7 @@ fn processImportLine(
     if (q != '"' and q != '\'') return verbatim;
 
     const spec_start = after_from + 1;
-    const spec_end = std.mem.indexOfScalarPos(u8, line, spec_start, q) orelse return verbatim;
+    const spec_end = std.mem.findScalarPos(u8, line, spec_start, q) orelse return verbatim;
     const specifier = line[spec_start..spec_end];
 
     switch (detect.classifyImport(specifier)) {
@@ -1944,7 +1944,7 @@ fn processImportLine(
             // named exports that can survive the rewrite → drop the whole line.
             // e.g. `import React from "react"` or `import * as React from "react"`.
             const before_from = line[0..from_pos];
-            const brace_pos = std.mem.indexOf(u8, before_from, "{") orelse {
+            const brace_pos = std.mem.find(u8, before_from, "{") orelse {
                 return null; // drop: only a default/namespace binding, nothing useful remains
             };
             // A mixed import like `import React, { useState } from "react"` has both
@@ -2001,7 +2001,7 @@ fn writeIslandSkeleton(
     var fw = out_file.writer(io, &buf);
     const w = &fw.interface;
 
-    const has_default_export = std.mem.indexOf(u8, src_content, "export default") != null;
+    const has_default_export = std.mem.find(u8, src_content, "export default") != null;
 
     if (src_content.len > 0 and has_default_export) {
         // Real port: rewrite React imports → @z/runtime, flag other npm imports.
@@ -2011,7 +2011,7 @@ fn writeIslandSkeleton(
             .{astro_src_rel},
         ) catch |err| fatal.file(out_path, err);
 
-        var flagged: std.ArrayListUnmanaged([]const u8) = .empty;
+        var flagged: std.ArrayList([]const u8) = .empty;
         defer {
             for (flagged.items) |spec| gpa.free(spec);
             flagged.deinit(gpa);
@@ -2178,7 +2178,7 @@ pub fn scaffoldIslands(io: Io, gpa: Allocator, astro_root: Io.Dir, scaffold_dir:
 
         const base_name = gpa.print("{s}.island.tsx", .{name}) catch fatal.oom();
         defer gpa.free(base_name);
-        const out_path = std.fs.path.join(gpa, &.{ scaffold_dir, base_name }) catch fatal.oom();
+        const out_path = std.Io.Dir.path.join(gpa, &.{ scaffold_dir, base_name }) catch fatal.oom();
         defer gpa.free(out_path);
 
         const out = openMigrationOutput(io, gpa, out_path, force);
@@ -2236,9 +2236,9 @@ fn convertOneContent(
     defer gpa.free(src);
     const rendered = content_convert.render(gpa, source, entry.path, src);
     defer gpa.free(rendered.bytes);
-    const out_path = std.fs.path.join(gpa, &.{ out_root, relative }) catch fatal.oom();
+    const out_path = std.Io.Dir.path.join(gpa, &.{ out_root, relative }) catch fatal.oom();
     defer gpa.free(out_path);
-    if (std.fs.path.dirname(out_path)) |parent| {
+    if (std.Io.Dir.path.dirname(out_path)) |parent| {
         var parent_dir = Io.Dir.cwd().createDirPathOpen(io, parent, .{}) catch |err|
             fatal.dir(parent, err);
         parent_dir.close(io);
@@ -2369,7 +2369,7 @@ fn parseHexoSettings(src: []const u8) HexoSettings {
     var lines = std.mem.splitScalar(u8, src, '\n');
     while (lines.next()) |raw_line| {
         if (raw_line.len == 0 or raw_line[0] == ' ' or raw_line[0] == '\t' or raw_line[0] == '#') continue;
-        const separator = std.mem.indexOfScalar(u8, raw_line, ':') orelse continue;
+        const separator = std.mem.findScalar(u8, raw_line, ':') orelse continue;
         const key = std.mem.trim(u8, raw_line[0..separator], " \t\r");
         const value = yamlScalar(raw_line[separator + 1 ..]);
         if (value.len == 0) continue;
@@ -2386,7 +2386,7 @@ fn hexoThemeSource(io: Io, gpa: Allocator, source_root: Io.Dir, theme: []const u
     var it = themes.iterateAssumeFirstIteration();
     while (it.next(io) catch return null) |entry| {
         if (entry.kind != .directory or !std.ascii.eqlIgnoreCase(entry.name, theme)) continue;
-        return std.fs.path.join(gpa, &.{ "themes", entry.name, "source" }) catch fatal.oom();
+        return std.Io.Dir.path.join(gpa, &.{ "themes", entry.name, "source" }) catch fatal.oom();
     }
     return null;
 }
@@ -2486,11 +2486,11 @@ fn copyAssetRoot(io: Io, gpa: Allocator, source_root: Io.Dir, out_root: []const 
         const relative = if (asset_root.target_prefix.len == 0)
             gpa.dupe(u8, entry.path) catch fatal.oom()
         else
-            std.fs.path.join(gpa, &.{ asset_root.target_prefix, entry.path }) catch fatal.oom();
+            std.Io.Dir.path.join(gpa, &.{ asset_root.target_prefix, entry.path }) catch fatal.oom();
         defer gpa.free(relative);
-        const out_path = std.fs.path.join(gpa, &.{ out_root, relative }) catch fatal.oom();
+        const out_path = std.Io.Dir.path.join(gpa, &.{ out_root, relative }) catch fatal.oom();
         defer gpa.free(out_path);
-        if (std.fs.path.dirname(out_path)) |parent| Io.Dir.cwd().createDirPath(io, parent) catch |err| fatal.dir(parent, err);
+        if (std.Io.Dir.path.dirname(out_path)) |parent| Io.Dir.cwd().createDirPath(io, parent) catch |err| fatal.dir(parent, err);
 
         const input = entry.dir.openFile(io, entry.basename, .{}) catch |err| fatal.file(entry.path, err);
         defer input.close(io);
@@ -2613,7 +2613,7 @@ const target_gitignore =
 fn pathIsInside(parent: []const u8, child: []const u8) bool {
     if (std.mem.eql(u8, parent, child)) return true;
     if (!std.mem.startsWith(u8, child, parent) or child.len <= parent.len) return false;
-    return std.fs.path.isSep(child[parent.len]);
+    return std.Io.Dir.path.isSep(child[parent.len]);
 }
 
 fn targetHasEntries(io: Io, path: []const u8) bool {
@@ -2678,19 +2678,19 @@ fn targetPathExists(io: Io, path: []const u8) bool {
 /// final directory exists. NO_SLOP.md section 2.2a contract 2 (owned-result):
 /// the returned slice is `gpa`-owned; all non-result scratch is freed here.
 fn canonicalTargetPath(io: Io, gpa: Allocator, cwd_abs: []const u8, target: []const u8) []const u8 {
-    const target_abs = std.fs.path.resolve(gpa, &.{ cwd_abs, target }) catch fatal.oom();
+    const target_abs = std.Io.Dir.path.resolveAlloc(gpa, &.{ cwd_abs, target }) catch fatal.oom();
     var ancestor: []const u8 = target_abs;
     while (true) {
         if (Io.Dir.cwd().realPathFileAlloc(io, ancestor, gpa)) |real_ancestor| {
             const suffix_with_sep = target_abs[ancestor.len..];
             var suffix_start: usize = 0;
-            while (suffix_start < suffix_with_sep.len and std.fs.path.isSep(suffix_with_sep[suffix_start])) suffix_start += 1;
+            while (suffix_start < suffix_with_sep.len and std.Io.Dir.path.isSep(suffix_with_sep[suffix_start])) suffix_start += 1;
             const suffix = suffix_with_sep[suffix_start..];
             if (suffix.len == 0) {
                 gpa.free(target_abs);
                 return real_ancestor;
             }
-            const result = std.fs.path.resolve(gpa, &.{ real_ancestor, suffix }) catch fatal.oom();
+            const result = std.Io.Dir.path.resolveAlloc(gpa, &.{ real_ancestor, suffix }) catch fatal.oom();
             gpa.free(real_ancestor);
             gpa.free(target_abs);
             return result;
@@ -2699,16 +2699,16 @@ fn canonicalTargetPath(io: Io, gpa: Allocator, cwd_abs: []const u8, target: []co
             error.OutOfMemory => fatal.oom(),
             else => fatal.file(ancestor, err),
         }
-        ancestor = std.fs.path.dirname(ancestor) orelse return target_abs;
+        ancestor = std.Io.Dir.path.dirname(ancestor) orelse return target_abs;
     }
 }
 
 /// NO_SLOP.md section 2.2a contract 1 (self-freeing): `full` is temporary and
 /// released before return; `bytes` remains caller-owned.
 fn writeTargetFile(io: Io, gpa: Allocator, target: []const u8, relative: []const u8, bytes: []const u8) void {
-    const full = std.fs.path.join(gpa, &.{ target, relative }) catch fatal.oom();
+    const full = std.Io.Dir.path.join(gpa, &.{ target, relative }) catch fatal.oom();
     defer gpa.free(full);
-    if (std.fs.path.dirname(full)) |parent| Io.Dir.cwd().createDirPath(io, parent) catch |err| fatal.dir(parent, err);
+    if (std.Io.Dir.path.dirname(full)) |parent| Io.Dir.cwd().createDirPath(io, parent) catch |err| fatal.dir(parent, err);
     const file = Io.Dir.cwd().createFile(io, full, .{ .exclusive = true }) catch |err| fatal.file(full, err);
     defer file.close(io);
     var writer = file.writer(io, &.{});
@@ -2716,7 +2716,7 @@ fn writeTargetFile(io: Io, gpa: Allocator, target: []const u8, relative: []const
 }
 
 fn targetProjectName(gpa: Allocator, target: []const u8) []const u8 {
-    const base = std.fs.path.basename(target);
+    const base = std.Io.Dir.path.basename(target);
     if (base.len == 0) return gpa.dupe(u8, "migrated_site") catch fatal.oom();
     const result = gpa.alloc(u8, base.len) catch fatal.oom();
     for (base, 0..) |c, i| result[i] = if (std.ascii.isAlphanumeric(c)) std.ascii.toLower(c) else '_';
@@ -2755,7 +2755,7 @@ fn urlOrigin(url: []const u8) ?[]const u8 {
     else
         return null;
     const tail = url[authority_start..];
-    const authority_end = std.mem.indexOfAny(u8, tail, "/?#") orelse tail.len;
+    const authority_end = std.mem.findAny(u8, tail, "/?#") orelse tail.len;
     if (authority_end == 0) return null;
     return url[0 .. authority_start + authority_end];
 }
@@ -2857,13 +2857,13 @@ fn assembleTarget(
     var target_root = Io.Dir.cwd().createDirPathOpen(io, target, .{}) catch |err| fatal.dir(target, err);
     target_root.close(io);
     for ([_][]const u8{ "assets", "components", "content", "layouts" }) |dir_name| {
-        const path = std.fs.path.join(a, &.{ target, dir_name }) catch fatal.oom();
+        const path = std.Io.Dir.path.join(a, &.{ target, dir_name }) catch fatal.oom();
         Io.Dir.cwd().createDirPath(io, path) catch |err| fatal.dir(path, err);
     }
 
-    const components = std.fs.path.join(a, &.{ target, "components" }) catch fatal.oom();
-    const content = std.fs.path.join(a, &.{ target, "content" }) catch fatal.oom();
-    const assets = std.fs.path.join(a, &.{ target, "assets" }) catch fatal.oom();
+    const components = std.Io.Dir.path.join(a, &.{ target, "components" }) catch fatal.oom();
+    const content = std.Io.Dir.path.join(a, &.{ target, "content" }) catch fatal.oom();
+    const assets = std.Io.Dir.path.join(a, &.{ target, "assets" }) catch fatal.oom();
     if (source.supportsScaffold()) scaffoldIslands(io, gpa, source_root, components, res.entries, false);
     const content_summary = if (source.contentSource()) |content_source|
         convertContentSummary(io, gpa, source_root, content, content_source, res.entries)
@@ -2875,7 +2875,7 @@ fn assembleTarget(
     for (res.entries) |entry| if (entry.is_island) {
         island_count += 1;
     };
-    const root_content = std.fs.path.join(a, &.{ content, "index.smd" }) catch fatal.oom();
+    const root_content = std.Io.Dir.path.join(a, &.{ content, "index.smd" }) catch fatal.oom();
     if (!targetPathExists(io, root_content)) writeTargetFile(io, gpa, target, "content/index.smd", target_placeholder);
     if (asset_summary.copied == 0) writeTargetFile(io, gpa, target, "assets/.gitkeep", "");
     writeTargetFile(io, gpa, target, "layouts/index.shtml", target_layout);
@@ -3481,13 +3481,13 @@ test "non-Astro report names the source and marks ambiguous conversion for revie
     };
     const report = buildOtherReport(gpa, .nextjs, "next-site", &entries, true, false, false, null);
     defer gpa.free(report);
-    try std.testing.expect(std.mem.indexOf(u8, report, "Next.js") != null);
-    try std.testing.expect(std.mem.indexOf(u8, report, "src/pages/index.tsx") != null);
-    try std.testing.expect(std.mem.indexOf(u8, report, "src/components/Counter.tsx") != null);
-    try std.testing.expect(std.mem.indexOf(u8, report, "Generated by `zigapagos migrate`.") != null);
-    try std.testing.expect(std.mem.indexOf(u8, report, "Generated by `zigapagos migrate --from") == null);
-    try std.testing.expect(std.mem.indexOf(u8, report, "ambiguous framework") != null);
-    try std.testing.expect(std.mem.indexOf(u8, report, "semantics stay review items") != null);
+    try std.testing.expect(std.mem.find(u8, report, "Next.js") != null);
+    try std.testing.expect(std.mem.find(u8, report, "src/pages/index.tsx") != null);
+    try std.testing.expect(std.mem.find(u8, report, "src/components/Counter.tsx") != null);
+    try std.testing.expect(std.mem.find(u8, report, "Generated by `zigapagos migrate`.") != null);
+    try std.testing.expect(std.mem.find(u8, report, "Generated by `zigapagos migrate --from") == null);
+    try std.testing.expect(std.mem.find(u8, report, "ambiguous framework") != null);
+    try std.testing.expect(std.mem.find(u8, report, "semantics stay review items") != null);
 }
 
 test "Hugo content conversion writes valid-looking non-clobbering output" {
@@ -3512,13 +3512,13 @@ test "Hugo content conversion writes valid-looking non-clobbering output" {
     convertContent(testing_io, gpa, tmp.dir, out, .hugo, &entries);
     convertContent(testing_io, gpa, tmp.dir, out, .hugo, &entries);
 
-    const first_path = try std.fs.path.join(gpa, &.{ out, "blog/post.smd" });
+    const first_path = try std.Io.Dir.path.join(gpa, &.{ out, "blog/post.smd" });
     defer gpa.free(first_path);
     const first = try Io.Dir.cwd().readFileAlloc(testing_io, first_path, gpa, .limited(64 * 1024));
     defer gpa.free(first);
-    try std.testing.expect(std.mem.indexOf(u8, first, ".title = \"Post\"") != null);
+    try std.testing.expect(std.mem.find(u8, first, ".title = \"Post\"") != null);
     try std.testing.expect(std.mem.endsWith(u8, first, "# Preserved body\n"));
-    const versioned_path = try std.fs.path.join(gpa, &.{ out, "blog/post.smd.new" });
+    const versioned_path = try std.Io.Dir.path.join(gpa, &.{ out, "blog/post.smd.new" });
     defer gpa.free(versioned_path);
     const versioned = try Io.Dir.cwd().readFileAlloc(testing_io, versioned_path, gpa, .limited(64 * 1024));
     defer gpa.free(versioned);
@@ -3551,7 +3551,7 @@ test "readFileContent reads a source larger than 64 KiB in full (no truncation)"
     defer gpa.free(got);
     try std.testing.expectEqual(@as(usize, big_len), got.len);
     // The post-64K marker survives, so island detection sees the whole file.
-    try std.testing.expect(std.mem.indexOf(u8, got, "client:load") != null);
+    try std.testing.expect(std.mem.find(u8, got, "client:load") != null);
 }
 
 /// Build a cwd-relative path into a `std.testing.tmpDir`. The scaffold writes
@@ -3661,12 +3661,12 @@ test "scaffoldIslands never truncates a hand-edited .new file" {
     // and the collision is visible on disk.
     const versioned = try tmp.dir.readFileAlloc(testing_io, "components/Counter.island.tsx.new.2", gpa, .limited(64 * 1024));
     defer gpa.free(versioned);
-    try std.testing.expect(std.mem.indexOf(u8, versioned, "port the body from Counter.astro") != null);
+    try std.testing.expect(std.mem.find(u8, versioned, "port the body from Counter.astro") != null);
 
     // The original island file is untouched by every non-force run.
     const original = try tmp.dir.readFileAlloc(testing_io, "components/Counter.island.tsx", gpa, .limited(64 * 1024));
     defer gpa.free(original);
-    try std.testing.expect(std.mem.indexOf(u8, original, "export default function Counter") != null);
+    try std.testing.expect(std.mem.find(u8, original, "export default function Counter") != null);
 }
 
 test "scaffoldIslands honours --force by overwriting the island in place" {
@@ -3702,7 +3702,7 @@ test "scaffoldIslands honours --force by overwriting the island in place" {
     );
     const out = try tmp.dir.readFileAlloc(testing_io, "components/Counter.island.tsx", gpa, .limited(64 * 1024));
     defer gpa.free(out);
-    try std.testing.expect(std.mem.indexOf(u8, out, "export default function Counter") != null);
+    try std.testing.expect(std.mem.find(u8, out, "export default function Counter") != null);
 }
 
 test "scaffoldIslands real-port path rewrites React imports and frees its scratch" {
@@ -3738,9 +3738,9 @@ test "scaffoldIslands real-port path rewrites React imports and frees its scratc
 
     const out = try tmp.dir.readFileAlloc(testing_io, "components/Form.island.tsx", gpa, .limited(64 * 1024));
     defer gpa.free(out);
-    try std.testing.expect(std.mem.indexOf(u8, out, "import { useState } from \"@z/runtime\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "NO-NPM-GUARDRAIL") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "react-google-recaptcha") != null);
+    try std.testing.expect(std.mem.find(u8, out, "import { useState } from \"@z/runtime\"") != null);
+    try std.testing.expect(std.mem.find(u8, out, "NO-NPM-GUARDRAIL") != null);
+    try std.testing.expect(std.mem.find(u8, out, "react-google-recaptcha") != null);
 }
 
 test "paginate: scan flags a paginated route and buildReport prescribes the conversion" {
@@ -3785,14 +3785,14 @@ test "paginate: scan flags a paginated route and buildReport prescribes the conv
     const report = buildReport(gpa, "astro-sample", res.entries, res.has_config, false, res.has_astro_sitemap, false, null);
     defer gpa.free(report);
 
-    try std.testing.expect(std.mem.indexOf(u8, report, "`src/pages/blog/[page].astro`") != null);
-    try std.testing.expect(std.mem.indexOf(u8, report, "delete the route file") != null);
-    try std.testing.expect(std.mem.indexOf(
+    try std.testing.expect(std.mem.find(u8, report, "`src/pages/blog/[page].astro`") != null);
+    try std.testing.expect(std.mem.find(u8, report, "delete the route file") != null);
+    try std.testing.expect(std.mem.find(
         u8,
         report,
         ".pagination = .{ .page_size = 4, .url_style = .plain_dir }",
     ) != null);
-    try std.testing.expect(std.mem.indexOf(u8, report, "content/blog/index.smd") != null);
+    try std.testing.expect(std.mem.find(u8, report, "content/blog/index.smd") != null);
 }
 
 test "scan detects @astrojs/sitemap in package.json and buildReport flags it in the worklist" {
@@ -3822,8 +3822,8 @@ test "scan detects @astrojs/sitemap in package.json and buildReport flags it in 
 
     const report = buildReport(gpa, "astro-sample", res.entries, res.has_config, false, res.has_astro_sitemap, false, null);
     defer gpa.free(report);
-    try std.testing.expect(std.mem.indexOf(u8, report, "@astrojs/sitemap") != null);
-    try std.testing.expect(std.mem.indexOf(u8, report, "sitemap = true") != null);
+    try std.testing.expect(std.mem.find(u8, report, "@astrojs/sitemap") != null);
+    try std.testing.expect(std.mem.find(u8, report, "sitemap = true") != null);
 }
 
 test "scan reports no @astrojs/sitemap when package.json is absent or silent about it" {
@@ -3840,19 +3840,19 @@ test "scan reports no @astrojs/sitemap when package.json is absent or silent abo
 
     const report = buildReport(gpa, "astro-sample", res.entries, res.has_config, false, res.has_astro_sitemap, false, null);
     defer gpa.free(report);
-    try std.testing.expect(std.mem.indexOf(u8, report, "@astrojs/sitemap") == null);
+    try std.testing.expect(std.mem.find(u8, report, "@astrojs/sitemap") == null);
 }
 
 test "usage defines the read-only source and deterministic output contract" {
     const usage_text = usage;
-    try std.testing.expect(std.mem.indexOf(u8, usage_text, "Source files are read-only") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage_text, "performs the deterministic React part") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage_text, "Pages, layouts") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage_text, "--scaffold") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage_text, "--convert-content") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage_text, "--target") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage_text, "or empty directory") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage_text, "normalized to Ziggy") != null);
+    try std.testing.expect(std.mem.find(u8, usage_text, "Source files are read-only") != null);
+    try std.testing.expect(std.mem.find(u8, usage_text, "performs the deterministic React part") != null);
+    try std.testing.expect(std.mem.find(u8, usage_text, "Pages, layouts") != null);
+    try std.testing.expect(std.mem.find(u8, usage_text, "--scaffold") != null);
+    try std.testing.expect(std.mem.find(u8, usage_text, "--convert-content") != null);
+    try std.testing.expect(std.mem.find(u8, usage_text, "--target") != null);
+    try std.testing.expect(std.mem.find(u8, usage_text, "or empty directory") != null);
+    try std.testing.expect(std.mem.find(u8, usage_text, "normalized to Ziggy") != null);
 }
 
 test "target containment uses path component boundaries" {
@@ -3868,16 +3868,16 @@ test "target config publishes copied assets only when the copy wrote files" {
     defer gpa.free(with_assets);
     const without_assets = emitTargetConfig(gpa, .{}, false);
     defer gpa.free(without_assets);
-    try std.testing.expect(std.mem.indexOf(u8, with_assets, ".static_assets = [\"**\"]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, without_assets, ".static_assets") == null);
+    try std.testing.expect(std.mem.find(u8, with_assets, ".static_assets = [\"**\"]") != null);
+    try std.testing.expect(std.mem.find(u8, without_assets, ".static_assets") == null);
 }
 
 test "target TypeScript config supports runtime JSX types" {
-    try std.testing.expect(std.mem.indexOf(u8, target_tsconfig, "\"jsxImportSource\": \"@z/runtime\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, target_tsconfig, "\"module\": \"ESNext\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, target_tsconfig, "\"target\": \"ESNext\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, target_tsconfig, "\"allowImportingTsExtensions\": true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, target_tsconfig, "\"noEmit\": true") != null);
+    try std.testing.expect(std.mem.find(u8, target_tsconfig, "\"jsxImportSource\": \"@z/runtime\"") != null);
+    try std.testing.expect(std.mem.find(u8, target_tsconfig, "\"module\": \"ESNext\"") != null);
+    try std.testing.expect(std.mem.find(u8, target_tsconfig, "\"target\": \"ESNext\"") != null);
+    try std.testing.expect(std.mem.find(u8, target_tsconfig, "\"allowImportingTsExtensions\": true") != null);
+    try std.testing.expect(std.mem.find(u8, target_tsconfig, "\"noEmit\": true") != null);
 }
 
 test "Hexo top-level settings produce safe target metadata" {
@@ -3894,7 +3894,7 @@ test "Hexo top-level settings produce safe target metadata" {
     try std.testing.expectEqualStrings("blog", metadata.url_path_prefix.?);
     const config = emitTargetConfig(std.testing.allocator, metadata, true);
     defer std.testing.allocator.free(config);
-    try std.testing.expect(std.mem.indexOf(u8, config, ".url_path_prefix = \"blog\"") != null);
+    try std.testing.expect(std.mem.find(u8, config, ".url_path_prefix = \"blog\"") != null);
 }
 
 test "Hexo YAML comments respect whitespace and quoted hashes" {

@@ -9,7 +9,7 @@ const builtin = @import("builtin");
 const StringTable = @import("StringTable.zig");
 const String = StringTable.String;
 
-path_components: std.ArrayListUnmanaged(String),
+path_components: std.ArrayList(String),
 path_map: Path.Map,
 
 pub const empty: PathTable = .{
@@ -54,13 +54,13 @@ pub const PathName = packed struct {
             assert(pt.get(&.{}) == empty_path);
         }
 
-        const base = std.fs.path.dirnamePosix(src) orelse {
+        const base = std.Io.Dir.path.dirnamePosix(src) orelse {
             const name = st.get(src) orelse return null;
             return .{ .path = empty_path, .name = name };
         };
 
         const path = pt.getPathNoName(st, &.{}, base) orelse return null;
-        const name = st.get(std.fs.path.basenamePosix(src[base.len..])) orelse return null;
+        const name = st.get(std.Io.Dir.path.basenamePosix(src[base.len..])) orelse return null;
         return .{ .path = path, .name = name };
     }
 
@@ -205,7 +205,7 @@ pub fn internPath(
 ) !Path {
     assert(string_table.string_bytes.items.len > 0); // string_table must contain a zero elem
     assert(string_table.string_bytes.items[0] == 0); // the zero elem must be the empty string
-    var it = std.mem.tokenizeScalar(u8, path, std.fs.path.sep);
+    var it = std.mem.tokenizeScalar(u8, path, std.Io.Dir.path.sep);
     const component_count = blk: {
         var count: u32 = 0;
         while (it.next() != null) count += 1;
@@ -307,7 +307,7 @@ pub fn internExtend(
 }
 
 pub fn ArrayHashMap(T: type) type {
-    return std.AutoArrayHashMapUnmanaged(Path, T);
+    return std.array_hash_map.Auto(Path, T);
 }
 
 pub fn HashMap(T: type) type {
@@ -354,7 +354,7 @@ pub const Path = enum(u32) {
         }
 
         pub fn hash(_: @This(), adapted_key: []const u8) u64 {
-            assert(mem.indexOfScalar(
+            assert(mem.findScalar(
                 String,
                 @alignCast(mem.bytesAsSlice(String, adapted_key)),
                 @fromBackingInt(@intCast(0)),
@@ -365,7 +365,7 @@ pub const Path = enum(u32) {
 
     pub fn slice(index: Path, pt: *const PathTable) []const String {
         const start_slice = pt.path_components.items[@backingInt(index)..];
-        return start_slice[0..mem.indexOfScalar(String, start_slice, @fromBackingInt(@intCast(0))).?];
+        return start_slice[0..mem.findScalar(String, start_slice, @fromBackingInt(@intCast(0))).?];
     }
 
     // pub fn bytesSlice(
@@ -377,7 +377,7 @@ pub const Path = enum(u32) {
     //     // extra path component to add at the end
     //     name: ?StringTable.String,
     // ) usize {
-    //     var out = std.ArrayListUnmanaged(u8).initBuffer(buf);
+    //     var out = std.ArrayList(u8).initBuffer(buf);
     //     const components = index.slice(pt);
     //     for (components) |c| {
     //         const bytes = c.slice(st);
