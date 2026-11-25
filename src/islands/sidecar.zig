@@ -613,7 +613,7 @@ test "buildRenderRequest emits \"prefix\" only when url_prefix is non-empty" {
     const gpa = std.testing.allocator;
     const concrete = try Sidecar.buildRenderRequest(gpa, 1, "/abs/App.spa.tsx", "{}", "", "/club/42", "", true);
     defer gpa.free(concrete);
-    try std.testing.expect(std.mem.indexOf(u8, concrete, "\"prerender\":\"concrete\"") != null);
+    try std.testing.expect(std.mem.find(u8, concrete, "\"prerender\":\"concrete\"") != null);
 
     const with_prefix = try Sidecar.buildRenderRequest(gpa, 1, "/abs/App.island.tsx", "{}", "", "/myrepo/about", "/myrepo", false);
     defer gpa.free(with_prefix);
@@ -959,6 +959,6 @@ test "sidecar weaves slots into Panel island HTML" {
     );
 
     // The bun sidecar (Task 2) weaves slots into z-slot wrapper elements.
-    try std.testing.expect(std.mem.indexOf(u8, html, "<z-slot data-z-slot=\"heading\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, html, "<h2>Q</h2>") != null);
+    try std.testing.expect(std.mem.find(u8, html, "<z-slot data-z-slot=\"heading\"") != null);
+    try std.testing.expect(std.mem.find(u8, html, "<h2>Q</h2>") != null);
 }

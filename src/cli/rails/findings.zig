@@ -2033,10 +2033,10 @@ fn componentProblem(gpa: Allocator, in: DeriveInput, root: port.JsSource) Alloca
 }
 
 fn blockParam(code: []const u8) ?[]const u8 {
-    const first = std.mem.indexOfScalar(u8, code, '|') orelse return null;
-    const last_rel = std.mem.indexOfScalar(u8, code[first + 1 ..], '|') orelse return null;
+    const first = std.mem.findScalar(u8, code, '|') orelse return null;
+    const last_rel = std.mem.findScalar(u8, code[first + 1 ..], '|') orelse return null;
     const value = std.mem.trim(u8, code[first + 1 .. first + 1 + last_rel], " \t\r\n");
-    if (value.len == 0 or std.mem.indexOfScalar(u8, value, ',') != null) return null;
+    if (value.len == 0 or std.mem.findScalar(u8, value, ',') != null) return null;
     return value;
 }
 
@@ -2566,7 +2566,7 @@ fn deriveNode(
 }
 
 fn isPartialTemplatePath(path: []const u8) bool {
-    const base = if (std.mem.lastIndexOfScalar(u8, path, '/')) |slash| path[slash + 1 ..] else path;
+    const base = if (std.mem.findScalarLast(u8, path, '/')) |slash| path[slash + 1 ..] else path;
     return base.len > 0 and base[0] == '_';
 }
 
@@ -2936,7 +2936,7 @@ test "derive: one finding per triggering node, with code/choices/loc from the ta
     try std.testing.expectEqualStrings("RAILS_HELPER_UNKNOWN.app/views/posts/index%2Ehtml%2Eerb.L1C9", out[0].id);
     try std.testing.expectEqualStrings("app/controllers/posts_controller.rb", out[2].path);
     try std.testing.expectEqual(@as(?u64, 2), out[2].line);
-    try std.testing.expectEqualStrings("ghost", out[5].message[std.mem.indexOf(u8, out[5].message, "ghost").?..][0..5]);
+    try std.testing.expectEqualStrings("ghost", out[5].message[std.mem.find(u8, out[5].message, "ghost").?..][0..5]);
     try std.testing.expectEqual(blockers.Severity.@"error", out[6].severity);
     try std.testing.expectEqualStrings("retain", out[6].choices[0]);
     try std.testing.expect(out[0].route_id == null);
@@ -3065,14 +3065,14 @@ test "derive: render_dynamic, route_helper_dynamic, control, link_to-unknown, an
     };
     try std.testing.expectEqual(expect_codes.len, out.len);
     for (expect_codes, out) |c, f| try std.testing.expectEqualStrings(c, f.code);
-    try std.testing.expect(std.mem.indexOf(u8, out[0].message, "partial_name") != null);
+    try std.testing.expect(std.mem.find(u8, out[0].message, "partial_name") != null);
 
     // A null `error_line` still gets a finding, with `line = null` on the
     // `Finding` even though the id's loc folds it to "L0".
     const parse_err = out[4];
     try std.testing.expectEqual(@as(?u64, null), parse_err.line);
     try std.testing.expectEqualStrings("RAILS_TEMPLATE_PARSE_ERROR.app/views/y%2Ehtml%2Eerb.L0", parse_err.id);
-    try std.testing.expect(std.mem.indexOf(u8, parse_err.message, "premature end of input") != null);
+    try std.testing.expect(std.mem.find(u8, parse_err.message, "premature end of input") != null);
 }
 
 // Fix round 1 (Task 9 review, Critical): a real text run decodes with
@@ -3415,8 +3415,8 @@ test "derive: an asset helper with no deterministic target raises RAILS_ASSET_TR
     try std.testing.expectEqualStrings("blocked", out[0].choices[1]);
     // The two causes read differently: one names the file that exists but
     // cannot be pinned, the other says nothing matched at all.
-    try std.testing.expect(std.mem.indexOf(u8, out[0].message, "app/assets/images/hero.png") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out[1].message, "ghost.png") != null);
+    try std.testing.expect(std.mem.find(u8, out[0].message, "app/assets/images/hero.png") != null);
+    try std.testing.expect(std.mem.find(u8, out[1].message, "ghost.png") != null);
 }
 
 // Ruling S23, the derivation half of `convert.zig`'s absolute-URL passthrough.
@@ -3480,7 +3480,7 @@ test "derive: a multi-argument asset helper asks about the first argument that d
 
     try std.testing.expectEqual(@as(usize, 1), out.len);
     try std.testing.expectEqualStrings("RAILS_ASSET_TRANSFORM.app/views/shared/_nav%2Ehtml%2Eerb.L1C1", out[0].id);
-    try std.testing.expect(std.mem.indexOf(u8, out[0].message, "ghost") != null);
+    try std.testing.expect(std.mem.find(u8, out[0].message, "ghost") != null);
 }
 
 // `DeriveInput.assets` defaults to empty ONLY so the pre-Stage-2 call
@@ -3668,7 +3668,7 @@ test "derive: a dynamic GET route raises RAILS_ROUTE_DYNAMIC_SEGMENT, one per de
     try std.testing.expectEqualStrings("blocked", dyn.choices[2]);
     // Both routes of the shared declaration are named in the message, so the
     // one `route_id` naming only the first is not the only evidence left.
-    try std.testing.expect(std.mem.indexOf(u8, dyn.message, "GET /posts/:id/edit") != null);
+    try std.testing.expect(std.mem.find(u8, dyn.message, "GET /posts/:id/edit") != null);
 }
 
 test "derive: a redirect route raises RAILS_REDIRECT_HOST_CONFIG, whatever its path shape" {
@@ -3880,15 +3880,15 @@ test "derive: a form is one answerable RAILS_BACKEND_ENDPOINT, not one per field
     try std.testing.expectEqual(@as(usize, 2), out.len);
     try std.testing.expectEqualStrings("RAILS_BACKEND_ENDPOINT", out[0].code);
     try std.testing.expectEqualStrings("RAILS_BACKEND_ENDPOINT.app/views/posts/new%2Ehtml%2Eerb.L1C1", out[0].id);
-    try std.testing.expect(std.mem.indexOf(u8, out[0].message, "form submits to a Rails action") != null);
+    try std.testing.expect(std.mem.find(u8, out[0].message, "form submits to a Rails action") != null);
     // The model's param key, which is what a form node's `name` carries.
-    try std.testing.expect(std.mem.indexOf(u8, out[0].message, "model `post`") != null);
+    try std.testing.expect(std.mem.find(u8, out[0].message, "model `post`") != null);
     try std.testing.expectEqual(@as(usize, 2), out[0].choices.len);
     try std.testing.expectEqualStrings("retain", out[0].choices[0]);
     try std.testing.expectEqualStrings("blocked", out[0].choices[1]);
 
     try std.testing.expectEqualStrings("RAILS_REQUEST_TIME_STATE", out[1].code);
-    try std.testing.expect(std.mem.indexOf(u8, out[1].message, "validation errors of `post`") != null);
+    try std.testing.expect(std.mem.find(u8, out[1].message, "validation errors of `post`") != null);
     // #167 Stage 3 widened this one with `island`: the bound form island now
     // renders `ZigbaseError.data` where the ERB rendered `full_messages`, so
     // "present it client-side" is a choice this stage can carry out. The
@@ -3914,7 +3914,7 @@ test "derive: a form_field outside any form asks its own question" {
     defer free(gpa, out);
     try std.testing.expectEqual(@as(usize, 1), out.len);
     try std.testing.expectEqualStrings("RAILS_BACKEND_ENDPOINT", out[0].code);
-    try std.testing.expect(std.mem.indexOf(u8, out[0].message, "field `text_field` name=q") != null);
+    try std.testing.expect(std.mem.find(u8, out[0].message, "field `text_field` name=q") != null);
 }
 
 // ---- #167 Stage 3: the backend boundary ----------------------------------
@@ -4608,7 +4608,7 @@ test "derive: which authentication filter a guarded route names does not depend 
     const b = try derive(gpa, b_in);
     defer free(gpa, b);
     try std.testing.expectEqualStrings(a[0].message, b[0].message);
-    try std.testing.expect(std.mem.indexOf(u8, a[0].message, "authenticate_user!") != null);
+    try std.testing.expect(std.mem.find(u8, a[0].message, "authenticate_user!") != null);
 }
 
 test "derive: a dynamic before_action guards nothing -- there is no symbol to read" {
@@ -5371,8 +5371,8 @@ test "derive: Stage 4 interactivity rows expose only buildable choices" {
     try std.testing.expectEqualStrings("RAILS_JS_ENTRY", out[2].code);
     try std.testing.expectEqual(@as(?u64, null), out[2].line);
     try std.testing.expectEqualStrings(code_stimulus_controller, out[3].code);
-    try std.testing.expect(std.mem.indexOf(u8, out[3].message, "actions: click->reveal#toggle") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out[3].message, "targets: details") != null);
+    try std.testing.expect(std.mem.find(u8, out[3].message, "actions: click->reveal#toggle") != null);
+    try std.testing.expect(std.mem.find(u8, out[3].message, "targets: details") != null);
     for ([_][]const u8{ "island", "drop", "retain", "blocked" }, out[3].choices) |want, got| try std.testing.expectEqualStrings(want, got);
     try std.testing.expectEqualStrings(code_turbo_frame, out[4].code);
     try std.testing.expectEqualStrings("turbo-frame `latest` src=/posts", out[4].message);
@@ -5380,7 +5380,7 @@ test "derive: Stage 4 interactivity rows expose only buildable choices" {
     try std.testing.expectEqualStrings("turbo-frame `static` (no src)", out[5].message);
     for ([_][]const u8{ "inline", "retain", "blocked" }, out[5].choices) |want, got| try std.testing.expectEqualStrings(want, got);
     try std.testing.expectEqualStrings(code_turbo_stream, out[6].code);
-    try std.testing.expect(std.mem.indexOf(u8, out[6].message, "a realtime subscription has no converter") != null);
+    try std.testing.expect(std.mem.find(u8, out[6].message, "a realtime subscription has no converter") != null);
 }
 
 test "derive: only literal supported Turbo Stream shapes offer island-realtime" {
@@ -5406,7 +5406,7 @@ test "derive: only literal supported Turbo Stream shapes offer island-realtime" 
     try std.testing.expectEqualStrings("turbo-stream `posts` subscription can become a realtime island", out[0].message);
     try std.testing.expectEqualStrings("turbo-stream `posts` action append can become a realtime island", out[1].message);
     for ([_][]const u8{ "retain", "blocked" }, out[2].choices) |want, got| try std.testing.expectEqualStrings(want, got);
-    try std.testing.expect(std.mem.indexOf(u8, out[2].message, "request-time stream target") != null);
+    try std.testing.expect(std.mem.find(u8, out[2].message, "request-time stream target") != null);
     for ([_][]const u8{ "retain", "blocked" }, out[3].choices) |want, got| try std.testing.expectEqualStrings(want, got);
 }
 
@@ -5483,7 +5483,7 @@ test "derive: ERB-split Stimulus markers are diffed by name, never count" {
     // two leftovers here because the marker set and node list are not the
     // same cardinality domain.
     try std.testing.expectEqual(@as(usize, 2), out.len);
-    try std.testing.expect(std.mem.indexOf(u8, out[0].message, "stimulus `split`") != null);
+    try std.testing.expect(std.mem.find(u8, out[0].message, "stimulus `split`") != null);
     try std.testing.expectEqual(@as(usize, 2), out[0].choices.len);
     try std.testing.expectEqualStrings("retain", out[0].choices[0]);
 }
@@ -5518,13 +5518,13 @@ test "derive: interactivity refusal paths never offer an emitter they cannot run
     for (out) |finding| {
         if (finding.line == 2) {
             try std.testing.expectEqualStrings("island", finding.choices[0]);
-            try std.testing.expect(std.mem.indexOf(u8, finding.message, "nested inside") != null);
+            try std.testing.expect(std.mem.find(u8, finding.message, "nested inside") != null);
         } else if (finding.line == 4) {
             try std.testing.expectEqualStrings("drop", finding.choices[0]);
-            try std.testing.expect(std.mem.indexOf(u8, finding.message, "not closed") != null);
+            try std.testing.expect(std.mem.find(u8, finding.message, "not closed") != null);
         } else if (finding.line == 5) {
             try std.testing.expectEqual(@as(usize, 2), finding.choices.len);
-            try std.testing.expect(std.mem.indexOf(u8, finding.message, "d3") != null);
+            try std.testing.expect(std.mem.find(u8, finding.message, "d3") != null);
         } else if (finding.line == 6) {
             try std.testing.expectEqualStrings(code_component_props_dynamic, finding.code);
         } else if (finding.line == 7) {

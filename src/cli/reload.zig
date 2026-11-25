@@ -540,7 +540,7 @@ fn injectFile(io: Io, gpa: Allocator, dir: Io.Dir, name: []const u8, port: u16, 
 
     // Defensive: never inject twice (a rebuild rewrites files, so this is only
     // hit if some other pass already added the snippet).
-    if (std.mem.indexOf(u8, html, marker) != null) return;
+    if (std.mem.find(u8, html, marker) != null) return;
 
     const snippet = gpa.print(snippet_fmt, .{port}) catch return;
     defer gpa.free(snippet);
@@ -627,18 +627,18 @@ test "dev live-reload: snippet lands before </body>" {
     const snippet = try gpa.print(snippet_fmt, .{4321});
     defer gpa.free(snippet);
     // The port and marker are both present in the rendered snippet.
-    try std.testing.expect(std.mem.indexOf(u8, snippet, ":4321/") != null);
-    try std.testing.expect(std.mem.indexOf(u8, snippet, marker) != null);
-    try std.testing.expect(std.mem.indexOf(u8, snippet, "data-zigapagos-live-reload") != null);
+    try std.testing.expect(std.mem.find(u8, snippet, ":4321/") != null);
+    try std.testing.expect(std.mem.find(u8, snippet, marker) != null);
+    try std.testing.expect(std.mem.find(u8, snippet, "data-zigapagos-live-reload") != null);
     // The client actually wires up an EventSource + reload handler.
-    try std.testing.expect(std.mem.indexOf(u8, snippet, "new EventSource") != null);
-    try std.testing.expect(std.mem.indexOf(u8, snippet, "location.reload()") != null);
+    try std.testing.expect(std.mem.find(u8, snippet, "new EventSource") != null);
+    try std.testing.expect(std.mem.find(u8, snippet, "location.reload()") != null);
     // It routes island messages to the runtime HMR global, dispatches the
     // restorable-state event before a full reload, and JSON-parses the payload.
-    try std.testing.expect(std.mem.indexOf(u8, snippet, "JSON.parse(ev.data)") != null);
-    try std.testing.expect(std.mem.indexOf(u8, snippet, "__zigapagos_hmr") != null);
-    try std.testing.expect(std.mem.indexOf(u8, snippet, "applyIsland(m.modules)") != null);
-    try std.testing.expect(std.mem.indexOf(u8, snippet, "zigapagos:beforereload") != null);
+    try std.testing.expect(std.mem.find(u8, snippet, "JSON.parse(ev.data)") != null);
+    try std.testing.expect(std.mem.find(u8, snippet, "__zigapagos_hmr") != null);
+    try std.testing.expect(std.mem.find(u8, snippet, "applyIsland(m.modules)") != null);
+    try std.testing.expect(std.mem.find(u8, snippet, "zigapagos:beforereload") != null);
 }
 
 test "dev live-reload: island payload is well-formed JSON with escaped modules" {
@@ -699,7 +699,7 @@ test "dev live-reload: injectFile swaps the page in atomically, never rewriting 
     // The snippet landed, spliced before </body> and leaving the page intact.
     const html = try tmp.dir.readFileAlloc(io, "index.html", gpa, .unlimited);
     defer gpa.free(html);
-    try std.testing.expect(std.mem.indexOf(u8, html, marker) != null);
+    try std.testing.expect(std.mem.find(u8, html, marker) != null);
     try std.testing.expect(std.mem.startsWith(u8, html, "<html><body><h1>hi</h1>"));
     try std.testing.expect(std.mem.endsWith(u8, html, "</body></html>"));
 
@@ -766,9 +766,9 @@ test "dev live-reload: status json reflects identity and build state" {
     {
         const json = try s.renderStatusJson(gpa);
         defer gpa.free(json);
-        try std.testing.expect(std.mem.indexOf(u8, json, "\"generation\":1") != null);
-        try std.testing.expect(std.mem.indexOf(u8, json, "\"status\":\"ok\"") != null);
-        try std.testing.expect(std.mem.indexOf(u8, json, "\"duration_ms\":412") != null);
+        try std.testing.expect(std.mem.find(u8, json, "\"generation\":1") != null);
+        try std.testing.expect(std.mem.find(u8, json, "\"status\":\"ok\"") != null);
+        try std.testing.expect(std.mem.find(u8, json, "\"duration_ms\":412") != null);
     }
 
     // A failed build carries a bounded, JSON-escaped error tail.
@@ -777,9 +777,9 @@ test "dev live-reload: status json reflects identity and build state" {
     {
         const json = try s.renderStatusJson(gpa);
         defer gpa.free(json);
-        try std.testing.expect(std.mem.indexOf(u8, json, "\"generation\":2") != null);
-        try std.testing.expect(std.mem.indexOf(u8, json, "\"status\":\"failed\"") != null);
-        try std.testing.expect(std.mem.indexOf(u8, json, "\\\"quoted\\\"") != null);
+        try std.testing.expect(std.mem.find(u8, json, "\"generation\":2") != null);
+        try std.testing.expect(std.mem.find(u8, json, "\"status\":\"failed\"") != null);
+        try std.testing.expect(std.mem.find(u8, json, "\\\"quoted\\\"") != null);
     }
     // Free the duped error tail the server owns.
     s.setBuildFinished(true, 1, null);
@@ -803,18 +803,18 @@ test "dev wait: debounce and changes during a build remain pending" {
     _ = s.watch_generation.fetchAdd(1, .monotonic);
     const debounce = try s.renderStatusJson(gpa);
     defer gpa.free(debounce);
-    try std.testing.expect(std.mem.indexOf(u8, debounce, "\"pending\":true") != null);
+    try std.testing.expect(std.mem.find(u8, debounce, "\"pending\":true") != null);
     s.setBuilding();
     _ = s.watch_generation.fetchAdd(1, .monotonic);
     s.setBuildFinished(true, 1, null);
     const queued = try s.renderStatusJson(gpa);
     defer gpa.free(queued);
-    try std.testing.expect(std.mem.indexOf(u8, queued, "\"pending\":true") != null);
+    try std.testing.expect(std.mem.find(u8, queued, "\"pending\":true") != null);
     s.setBuilding();
     s.setBuildFinished(true, 1, null);
     const settled = try s.renderStatusJson(gpa);
     defer gpa.free(settled);
-    try std.testing.expect(std.mem.indexOf(u8, settled, "\"pending\":false") != null);
+    try std.testing.expect(std.mem.find(u8, settled, "\"pending\":false") != null);
     // Activity after a debounced event was published must not be consumed by
     // starting the older event's build, even if it arrived before that start.
     _ = s.watch_generation.fetchAdd(2, .monotonic);
@@ -822,7 +822,7 @@ test "dev wait: debounce and changes during a build remain pending" {
     s.setBuildFinished(true, 1, null);
     const newer_event = try s.renderStatusJson(gpa);
     defer gpa.free(newer_event);
-    try std.testing.expect(std.mem.indexOf(u8, newer_event, "\"pending\":true") != null);
+    try std.testing.expect(std.mem.find(u8, newer_event, "\"pending\":true") != null);
 }
 
 test "dev logs: structured build events are ordered and valid NDJSON" {

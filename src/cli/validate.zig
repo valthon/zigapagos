@@ -403,7 +403,7 @@ fn expectFailedPageMetadata(gpa: Allocator, src: []const u8) !void {
         try std.testing.expectEqual(0, p._parse.fm.offset);
         try std.testing.expectEqual(0, p._parse.fm.lines);
     }
-    if (std.mem.indexOf(u8, src, ".unknown") != null) {
+    if (std.mem.find(u8, src, ".unknown") != null) {
         try std.testing.expect(p._parse.status == .ziggy);
         try std.testing.expectEqual(error.UnknownField, p._parse.status.ziggy.err.?);
     }

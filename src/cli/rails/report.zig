@@ -68,8 +68,8 @@ test "routes render with their origin, and uncertain ones are marked" {
     });
     defer std.testing.allocator.free(md);
 
-    try std.testing.expect(std.mem.indexOf(u8, md, "## Routes") != null);
-    try std.testing.expect(std.mem.indexOf(u8, md, "static_ast") != null);
+    try std.testing.expect(std.mem.find(u8, md, "## Routes") != null);
+    try std.testing.expect(std.mem.find(u8, md, "static_ast") != null);
     // Pin the exact rendered LINE for each route, not just "the word
     // 'uncertain' appears somewhere in the document". The section's
     // unconditional intro sentence explains the marker using that same
@@ -81,8 +81,8 @@ test "routes render with their origin, and uncertain ones are marked" {
     // uncertainty marker AND its class -- they are independent claims. This
     // also pins that the root route ("/") actually rendered, rather than
     // "GET /" merely being a substring of "GET /x".
-    try std.testing.expect(std.mem.indexOf(u8, md, "- `GET /` → `home#index` — content (test stub)\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, md, "- `GET /x` — **uncertain** — unresolved (test stub)\n") != null);
+    try std.testing.expect(std.mem.find(u8, md, "- `GET /` → `home#index` — content (test stub)\n") != null);
+    try std.testing.expect(std.mem.find(u8, md, "- `GET /x` — **uncertain** — unresolved (test stub)\n") != null);
 }
 
 test "a known controller with no action still renders, not silently dropped" {
@@ -105,7 +105,7 @@ test "a known controller with no action still renders, not silently dropped" {
         .classifications = &vs,
     });
     defer std.testing.allocator.free(md);
-    try std.testing.expect(std.mem.indexOf(
+    try std.testing.expect(std.mem.find(
         u8,
         md,
         "- `GET /x` → controller `a`, action unknown — unresolved (test stub)\n",
@@ -127,7 +127,7 @@ test "a known action with no controller still renders, not silently dropped" {
         .classifications = &vs,
     });
     defer std.testing.allocator.free(md);
-    try std.testing.expect(std.mem.indexOf(
+    try std.testing.expect(std.mem.find(
         u8,
         md,
         "- `GET /x` → action `show`, controller unknown — unresolved (test stub)\n",
@@ -156,7 +156,7 @@ test "zero routes, mode none: discovery did not run, points at Blockers" {
         .route_mode = "none",
     });
     defer std.testing.allocator.free(md);
-    try std.testing.expect(std.mem.indexOf(
+    try std.testing.expect(std.mem.find(
         u8,
         md,
         "No routes were recovered (route_mode: `none`). See Blockers below for why.\n",
@@ -175,7 +175,7 @@ test "zero routes, mode static_ast with a route blocker: points at Blockers" {
         .route_mode = "static_ast",
     });
     defer std.testing.allocator.free(md);
-    try std.testing.expect(std.mem.indexOf(
+    try std.testing.expect(std.mem.find(
         u8,
         md,
         "No routes were recovered (route_mode: `static_ast`). See Blockers below for why.\n",
@@ -195,13 +195,13 @@ test "zero routes, mode static_ast with no route blocker: says routes.rb declare
         .route_mode = "static_ast",
     });
     defer std.testing.allocator.free(md);
-    try std.testing.expect(std.mem.indexOf(
+    try std.testing.expect(std.mem.find(
         u8,
         md,
         "`config/routes.rb` declares no routes.\n",
     ) != null);
     // Must NOT point at a Blockers section that says nothing about routes.
-    try std.testing.expect(std.mem.indexOf(u8, md, "See Blockers below for why") == null);
+    try std.testing.expect(std.mem.find(u8, md, "See Blockers below for why") == null);
 }
 
 test "zero routes, mode static_ast, an unrelated blocker present: still says routes.rb declares none" {
@@ -219,7 +219,7 @@ test "zero routes, mode static_ast, an unrelated blocker present: still says rou
         .route_mode = "static_ast",
     });
     defer std.testing.allocator.free(md);
-    try std.testing.expect(std.mem.indexOf(
+    try std.testing.expect(std.mem.find(
         u8,
         md,
         "`config/routes.rb` declares no routes.\n",
@@ -255,9 +255,9 @@ test "routes render in (path, verb) order regardless of input order" {
     });
     defer std.testing.allocator.free(md);
 
-    const root_pos = std.mem.indexOf(u8, md, "`GET /`").?;
-    const posts_get_pos = std.mem.indexOf(u8, md, "`GET /posts`").?;
-    const posts_post_pos = std.mem.indexOf(u8, md, "`POST /posts`").?;
+    const root_pos = std.mem.find(u8, md, "`GET /`").?;
+    const posts_get_pos = std.mem.find(u8, md, "`GET /posts`").?;
+    const posts_post_pos = std.mem.find(u8, md, "`POST /posts`").?;
     // "/" < "/posts" lexically, and within "/posts", GET < POST.
     try std.testing.expect(root_pos < posts_get_pos);
     try std.testing.expect(posts_get_pos < posts_post_pos);
@@ -301,10 +301,10 @@ test "routes tying on (path, verb) still sort deterministically, by controller/a
     });
     defer std.testing.allocator.free(md_reverse);
 
-    const alpha_pos_fwd = std.mem.indexOf(u8, md_forward, "alpha#show").?;
-    const zebra_pos_fwd = std.mem.indexOf(u8, md_forward, "zebra#show").?;
-    const alpha_pos_rev = std.mem.indexOf(u8, md_reverse, "alpha#show").?;
-    const zebra_pos_rev = std.mem.indexOf(u8, md_reverse, "zebra#show").?;
+    const alpha_pos_fwd = std.mem.find(u8, md_forward, "alpha#show").?;
+    const zebra_pos_fwd = std.mem.find(u8, md_forward, "zebra#show").?;
+    const alpha_pos_rev = std.mem.find(u8, md_reverse, "alpha#show").?;
+    const zebra_pos_rev = std.mem.find(u8, md_reverse, "zebra#show").?;
 
     // "alpha" < "zebra" lexically: alpha must render first regardless of
     // which order the two rows were PASSED in.
@@ -330,7 +330,7 @@ test "each route renders with its classification, and an uncertain route still n
     });
     defer std.testing.allocator.free(md);
 
-    try std.testing.expect(std.mem.indexOf(u8, md, "- `GET /posts` → `posts#index` — content (test stub)\n") != null);
+    try std.testing.expect(std.mem.find(u8, md, "- `GET /posts` → `posts#index` — content (test stub)\n") != null);
     // The brief's sketch for the second route only checked
     // `indexOf(md, "unresolved") != null` -- that passes even if the
     // classification summary table (added by this same task, a few lines
@@ -339,7 +339,7 @@ test "each route renders with its classification, and an uncertain route still n
     // rendered line for /mystery is what actually proves THIS route's join
     // produced `unresolved`, not merely that the word occurs somewhere in
     // the document.
-    try std.testing.expect(std.mem.indexOf(u8, md, "- `GET /mystery` — unresolved (test stub)\n") != null);
+    try std.testing.expect(std.mem.find(u8, md, "- `GET /mystery` — unresolved (test stub)\n") != null);
 }
 
 test "two routes unresolved for DIFFERENT rules render DIFFERENT reasons -- not a constant" {
@@ -386,8 +386,8 @@ test "two routes unresolved for DIFFERENT rules render DIFFERENT reasons -- not 
     });
     defer std.testing.allocator.free(md);
 
-    try std.testing.expect(std.mem.indexOf(u8, md, "- `GET /a` — unresolved (no view template to classify)\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, md, "- `GET /b` → `b#show` — unresolved (unsupported template engine, never converted)\n") != null);
+    try std.testing.expect(std.mem.find(u8, md, "- `GET /a` — unresolved (no view template to classify)\n") != null);
+    try std.testing.expect(std.mem.find(u8, md, "- `GET /b` → `b#show` — unresolved (unsupported template engine, never converted)\n") != null);
 }
 
 test "a classification summary counts every class" {
@@ -414,12 +414,12 @@ test "a classification summary counts every class" {
     });
     defer std.testing.allocator.free(md);
 
-    try std.testing.expect(std.mem.indexOf(u8, md, "| content | 1 |\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, md, "| island | 0 |\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, md, "| spa | 0 |\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, md, "| backend | 2 |\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, md, "| redirect | 0 |\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, md, "| unresolved | 0 |\n") != null);
+    try std.testing.expect(std.mem.find(u8, md, "| content | 1 |\n") != null);
+    try std.testing.expect(std.mem.find(u8, md, "| island | 0 |\n") != null);
+    try std.testing.expect(std.mem.find(u8, md, "| spa | 0 |\n") != null);
+    try std.testing.expect(std.mem.find(u8, md, "| backend | 2 |\n") != null);
+    try std.testing.expect(std.mem.find(u8, md, "| redirect | 0 |\n") != null);
+    try std.testing.expect(std.mem.find(u8, md, "| unresolved | 0 |\n") != null);
 }
 
 test "report lists counts, integrations, and flags unsupported engines" {
@@ -452,15 +452,15 @@ test "report lists counts, integrations, and flags unsupported engines" {
     });
     defer std.testing.allocator.free(md);
 
-    try std.testing.expect(std.mem.indexOf(u8, md, "# Migrating my-app") != null);
-    try std.testing.expect(std.mem.indexOf(u8, md, "Views | 3") != null);
-    try std.testing.expect(std.mem.indexOf(u8, md, "propshaft") != null);
+    try std.testing.expect(std.mem.find(u8, md, "# Migrating my-app") != null);
+    try std.testing.expect(std.mem.find(u8, md, "Views | 3") != null);
+    try std.testing.expect(std.mem.find(u8, md, "propshaft") != null);
     // The Haml and Slim views must both be named as blockers, never silently
     // counted as done.
-    try std.testing.expect(std.mem.indexOf(u8, md, "RAILS_TEMPLATE_ENGINE_UNSUPPORTED") != null);
-    try std.testing.expect(std.mem.indexOf(u8, md, "app/views/posts/index.html.haml") != null);
-    try std.testing.expect(std.mem.indexOf(u8, md, "Slim") != null);
-    try std.testing.expect(std.mem.indexOf(u8, md, "app/views/posts/legacy.html.slim") != null);
+    try std.testing.expect(std.mem.find(u8, md, "RAILS_TEMPLATE_ENGINE_UNSUPPORTED") != null);
+    try std.testing.expect(std.mem.find(u8, md, "app/views/posts/index.html.haml") != null);
+    try std.testing.expect(std.mem.find(u8, md, "Slim") != null);
+    try std.testing.expect(std.mem.find(u8, md, "app/views/posts/legacy.html.slim") != null);
 }
 
 test "blockers render in (code, path) order regardless of input order" {
@@ -477,9 +477,9 @@ test "blockers render in (code, path) order regardless of input order" {
     });
     defer std.testing.allocator.free(md);
 
-    const inventory_pos = std.mem.indexOf(u8, md, "RAILS_INVENTORY_UNREADABLE").?;
-    const first_haml_pos = std.mem.indexOf(u8, md, "app/views/a.html.haml").?;
-    const second_haml_pos = std.mem.indexOf(u8, md, "app/views/z.html.haml").?;
+    const inventory_pos = std.mem.find(u8, md, "RAILS_INVENTORY_UNREADABLE").?;
+    const first_haml_pos = std.mem.find(u8, md, "app/views/a.html.haml").?;
+    const second_haml_pos = std.mem.find(u8, md, "app/views/z.html.haml").?;
     // "RAILS_INVENTORY_UNREADABLE" < "RAILS_TEMPLATE_ENGINE_UNSUPPORTED"
     // lexically, and within the latter code, a.html.haml < z.html.haml.
     try std.testing.expect(inventory_pos < first_haml_pos);
@@ -511,10 +511,10 @@ test "blockers tying on (code, path) still sort deterministically, by detail (B7
     });
     defer std.testing.allocator.free(md_reverse);
 
-    const alpha_pos_fwd = std.mem.indexOf(u8, md_forward, "alpha reason").?;
-    const zebra_pos_fwd = std.mem.indexOf(u8, md_forward, "zebra reason").?;
-    const alpha_pos_rev = std.mem.indexOf(u8, md_reverse, "alpha reason").?;
-    const zebra_pos_rev = std.mem.indexOf(u8, md_reverse, "zebra reason").?;
+    const alpha_pos_fwd = std.mem.find(u8, md_forward, "alpha reason").?;
+    const zebra_pos_fwd = std.mem.find(u8, md_forward, "zebra reason").?;
+    const alpha_pos_rev = std.mem.find(u8, md_reverse, "alpha reason").?;
+    const zebra_pos_rev = std.mem.find(u8, md_reverse, "zebra reason").?;
 
     // "alpha reason" < "zebra reason" lexically: alpha must render first
     // regardless of which order the two rows were PASSED in.
@@ -616,16 +616,16 @@ test "build: a Findings section lists count-per-code and one exact line per find
     };
     const md = try build(std.testing.allocator, .{ .app_path = "app", .entries = &.{}, .integrations = &.{}, .blockers = &.{}, .findings = &fs });
     defer std.testing.allocator.free(md);
-    try std.testing.expect(std.mem.indexOf(u8, md, "\n## Findings\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, md, "\n- RAILS_HELPER_UNKNOWN: 1\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, md, "\n- RAILS_LAYOUT_DYNAMIC: 1\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, md, "\n- `RAILS_HELPER_UNKNOWN` `app/views/posts/index.html.erb:1` — unknown helper `number_to_currency` (choices: retain, blocked)\n") != null);
+    try std.testing.expect(std.mem.find(u8, md, "\n## Findings\n") != null);
+    try std.testing.expect(std.mem.find(u8, md, "\n- RAILS_HELPER_UNKNOWN: 1\n") != null);
+    try std.testing.expect(std.mem.find(u8, md, "\n- RAILS_LAYOUT_DYNAMIC: 1\n") != null);
+    try std.testing.expect(std.mem.find(u8, md, "\n- `RAILS_HELPER_UNKNOWN` `app/views/posts/index.html.erb:1` — unknown helper `number_to_currency` (choices: retain, blocked)\n") != null);
 }
 
 test "build: zero findings still renders the section, saying so" {
     const md = try build(std.testing.allocator, .{ .app_path = "app", .entries = &.{}, .integrations = &.{}, .blockers = &.{} });
     defer std.testing.allocator.free(md);
-    try std.testing.expect(std.mem.indexOf(u8, md, "\n## Findings\n\nNone.\n") != null);
+    try std.testing.expect(std.mem.find(u8, md, "\n## Findings\n\nNone.\n") != null);
 }
 
 /// Contract 1 (self-freeing): all scratch is released; the returned markdown is
@@ -1203,7 +1203,7 @@ test "handoffSection: a complete run says so and points at the build, not at dec
     , md);
     // The discriminating half: a complete run must NOT tell the operator to
     // go on answering findings.
-    try std.testing.expect(std.mem.indexOf(u8, md, "MIGRATION.decisions.json") == null);
+    try std.testing.expect(std.mem.find(u8, md, "MIGRATION.decisions.json") == null);
 }
 
 test "handoffSection: a --backend run names the document and counts the bindings" {
@@ -1264,7 +1264,7 @@ test "handoffSection: every backend route bound renders N of the N, not an off-b
         .endpoints = 3,
     });
     defer std.testing.allocator.free(md);
-    try std.testing.expect(std.mem.indexOf(
+    try std.testing.expect(std.mem.find(
         u8,
         md,
         "\nendpoints: 3 of the 3 `backend` route(s) are bound to a ZigBase operation.\n",
@@ -1282,7 +1282,7 @@ test "handoffSection: a document with no contract version still renders one line
         .backend_doc = .{ .file = "openapi.json", .contract_version = "" },
     });
     defer std.testing.allocator.free(md);
-    try std.testing.expect(std.mem.indexOf(u8, md, "\nbackend: openapi.json ()\n") != null);
+    try std.testing.expect(std.mem.find(u8, md, "\nbackend: openapi.json ()\n") != null);
 }
 
 test "handoffSection: the section appends onto build()'s output as the last section" {
@@ -1295,8 +1295,8 @@ test "handoffSection: the section appends onto build()'s output as the last sect
     defer gpa.free(joined);
     // `build` ends with the Findings section; the handoff must follow it, not
     // precede it (the operator reads the findings, then what to do about them).
-    const findings_at = std.mem.indexOf(u8, joined, "\n## Findings\n").?;
-    const handoff_at = std.mem.indexOf(u8, joined, "\n## Handoff\n").?;
+    const findings_at = std.mem.find(u8, joined, "\n## Findings\n").?;
+    const handoff_at = std.mem.find(u8, joined, "\n## Handoff\n").?;
     try std.testing.expect(findings_at < handoff_at);
 }
 
@@ -1311,6 +1311,6 @@ test "report: the title is the app basename, never the path as given (#178)" {
         .blockers = &rail_blockers,
     });
     defer std.testing.allocator.free(md);
-    try std.testing.expect(std.mem.indexOf(u8, md, "# Migrating my-app to Zigapagos") != null);
-    try std.testing.expect(std.mem.indexOf(u8, md, "/home/someone") == null);
+    try std.testing.expect(std.mem.find(u8, md, "# Migrating my-app to Zigapagos") != null);
+    try std.testing.expect(std.mem.find(u8, md, "/home/someone") == null);
 }

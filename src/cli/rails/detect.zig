@@ -395,7 +395,7 @@ pub fn gemfileDeclares(src: []const u8, name: []const u8) bool {
         if (rest.len < 2) continue;
         const quote = rest[0];
         if (quote != '"' and quote != '\'') continue;
-        const end = std.mem.indexOfScalar(u8, rest[1..], quote) orelse continue;
+        const end = std.mem.findScalar(u8, rest[1..], quote) orelse continue;
         if (std.mem.eql(u8, rest[1 .. 1 + end], name)) return true;
     }
     return false;
@@ -578,7 +578,7 @@ pub fn lockedVersion(src: []const u8, name: []const u8) ?[]const u8 {
         while (i < rest.len and rest[i] == ' ') : (i += 1) {}
         if (i >= rest.len or rest[i] != '(') continue;
         i += 1;
-        const close = std.mem.indexOfScalarPos(u8, rest, i, ')') orelse continue;
+        const close = std.mem.findScalarPos(u8, rest, i, ')') orelse continue;
         return rest[i..close];
     }
     return null;

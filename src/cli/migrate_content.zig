@@ -17,7 +17,7 @@ pub const Rendered = struct {
 
 fn fallbackTitle(source_path: []const u8) []const u8 {
     var name = std.fs.path.basename(source_path);
-    if (std.mem.lastIndexOfScalar(u8, name, '.')) |dot| name = name[0..dot];
+    if (std.mem.findScalarLast(u8, name, '.')) |dot| name = name[0..dot];
     if (name.len > 11 and name[4] == '-' and name[7] == '-' and name[10] == '-') name = name[11..];
     if (std.mem.eql(u8, name, "_index") or std.mem.eql(u8, name, "index")) {
         const parent = std.fs.path.dirname(source_path) orelse return "Home";
@@ -136,8 +136,8 @@ fn normalizeHexoBody(gpa: Allocator, body: []const u8) []const u8 {
             w.writeAll(">") catch fatal.oom();
             if (trimmed.len > 0) w.writeByte(' ') catch fatal.oom();
             if (std.mem.startsWith(u8, trimmed, "<footer") and std.mem.endsWith(u8, trimmed, "</footer>")) {
-                const open_end = std.mem.indexOfScalar(u8, trimmed, '>') orelse 0;
-                const close_start = std.mem.lastIndexOf(u8, trimmed, "</footer>") orelse trimmed.len;
+                const open_end = std.mem.findScalar(u8, trimmed, '>') orelse 0;
+                const close_start = std.mem.findLast(u8, trimmed, "</footer>") orelse trimmed.len;
                 if (open_end < close_start) w.writeAll(std.mem.trim(u8, trimmed[open_end + 1 .. close_start], " \t")) catch fatal.oom();
             } else {
                 w.writeAll(trimmed) catch fatal.oom();
@@ -171,7 +171,7 @@ fn normalizeJekyllBody(gpa: Allocator, body: []const u8) []const u8 {
             }
             if (source_fence == null and std.mem.startsWith(u8, trimmed, "{% highlight ") and std.mem.endsWith(u8, trimmed, "%}")) {
                 const options = std.mem.trim(u8, trimmed["{% highlight ".len .. trimmed.len - "%}".len], " \t");
-                const language_end = std.mem.indexOfAny(u8, options, " \t") orelse options.len;
+                const language_end = std.mem.findAny(u8, options, " \t") orelse options.len;
                 w.writeAll("```") catch fatal.oom();
                 w.writeAll(options[0..language_end]) catch fatal.oom();
                 highlight = true;
@@ -236,7 +236,7 @@ pub fn render(gpa: Allocator, source: Source, source_path: []const u8, src: []co
 }
 
 fn replaceExtension(gpa: Allocator, path: []const u8) []const u8 {
-    const dot = std.mem.lastIndexOfScalar(u8, path, '.') orelse path.len;
+    const dot = std.mem.findScalarLast(u8, path, '.') orelse path.len;
     return gpa.print("{s}.smd", .{path[0..dot]}) catch fatal.oom();
 }
 
@@ -290,12 +290,12 @@ test "YAML frontmatter and Markdown body convert to Ziggy" {
     );
     const got = result.bytes;
     defer gpa.free(got);
-    try std.testing.expect(std.mem.indexOf(u8, got, ".title = \"Hello world\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, got, ".date(\"2026-08-15T00:00:00\")") != null);
-    try std.testing.expect(std.mem.indexOf(u8, got, ".draft = true") != null);
+    try std.testing.expect(std.mem.find(u8, got, ".title = \"Hello world\"") != null);
+    try std.testing.expect(std.mem.find(u8, got, ".date(\"2026-08-15T00:00:00\")") != null);
+    try std.testing.expect(std.mem.find(u8, got, ".draft = true") != null);
     try std.testing.expect(result.has_unconverted_frontmatter);
-    try std.testing.expect(std.mem.indexOf(u8, got, "\"migration_frontmatter\": ") != null);
-    try std.testing.expect(std.mem.indexOf(u8, got, "tags: [news]") != null);
+    try std.testing.expect(std.mem.find(u8, got, "\"migration_frontmatter\": ") != null);
+    try std.testing.expect(std.mem.find(u8, got, "tags: [news]") != null);
     try std.testing.expect(std.mem.endsWith(u8, got, "# Body\n"));
 }
 
@@ -310,8 +310,8 @@ test "TOML frontmatter and fallback title convert" {
     );
     const got = result.bytes;
     defer gpa.free(got);
-    try std.testing.expect(std.mem.indexOf(u8, got, ".title = \"guides\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, got, ".description = \"Guide index\"") != null);
+    try std.testing.expect(std.mem.find(u8, got, ".title = \"guides\"") != null);
+    try std.testing.expect(std.mem.find(u8, got, ".description = \"Guide index\"") != null);
     try std.testing.expect(std.mem.endsWith(u8, got, "Welcome.\n"));
 }
 
@@ -320,16 +320,16 @@ test "invalid source date falls back to a valid reviewable placeholder" {
     const result = render(gpa, .hugo, "content/bad.md", "---\ndate: 2026-02-30\n---\nBody\n");
     const got = result.bytes;
     defer gpa.free(got);
-    try std.testing.expect(std.mem.indexOf(u8, got, ".date(\"1970-01-01T00:00:00\")") != null);
+    try std.testing.expect(std.mem.find(u8, got, ".date(\"1970-01-01T00:00:00\")") != null);
     try std.testing.expect(result.invalid_date);
-    try std.testing.expect(std.mem.indexOf(u8, got, "\"migration_invalid_date\": \"2026-02-30\"") != null);
+    try std.testing.expect(std.mem.find(u8, got, "\"migration_invalid_date\": \"2026-02-30\"") != null);
 }
 
 test "Hexo slash-form date normalizes to Ziggy ISO form" {
     const gpa = std.testing.allocator;
     const result = render(gpa, .hexo, "source/_posts/hello.md", "---\ndate: 2016/08/19\n---\nBody\n");
     defer gpa.free(result.bytes);
-    try std.testing.expect(std.mem.indexOf(u8, result.bytes, ".date(\"2016-08-19T00:00:00\")") != null);
+    try std.testing.expect(std.mem.find(u8, result.bytes, ".date(\"2016-08-19T00:00:00\")") != null);
     try std.testing.expect(!result.invalid_date);
 }
 
@@ -338,8 +338,8 @@ test "non-scalar recognized fields retain the complete source frontmatter" {
     const result = render(gpa, .hugo, "content/complex.md", "---\ntitle: >\n  A multiline title\ndraft: yes\n---\nBody\n");
     defer gpa.free(result.bytes);
     try std.testing.expect(result.has_unconverted_frontmatter);
-    try std.testing.expect(std.mem.indexOf(u8, result.bytes, "title: >\\n  A multiline title\\ndraft: yes") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.bytes, ".title = \"complex\"") != null);
+    try std.testing.expect(std.mem.find(u8, result.bytes, "title: >\\n  A multiline title\\ndraft: yes") != null);
+    try std.testing.expect(std.mem.find(u8, result.bytes, ".title = \"complex\"") != null);
 }
 
 test "output paths preserve reviewable source structure" {
@@ -363,16 +363,16 @@ test "Hexo drafts are marked draft from their source directory" {
     const gpa = std.testing.allocator;
     const result = render(gpa, .hexo, "source/_drafts/idea.md", "---\ntitle: Idea\n---\nBody\n");
     defer gpa.free(result.bytes);
-    try std.testing.expect(std.mem.indexOf(u8, result.bytes, ".draft = true") != null);
+    try std.testing.expect(std.mem.find(u8, result.bytes, ".draft = true") != null);
 }
 
 test "Hexo excerpt markers and simple blockquotes normalize outside code fences" {
     const gpa = std.testing.allocator;
     const result = render(gpa, .hexo, "source/_posts/post.md", "---\ntitle: Post\n---\nIntro\n<!-- more -->\n<blockquote>\n  Quoted\n  <footer>--Author</footer>\n</blockquote>\n```html\n<!-- more -->\n```\n");
     defer gpa.free(result.bytes);
-    try std.testing.expect(std.mem.indexOf(u8, result.bytes, "\n<!-- more -->\n<blockquote>") == null);
-    try std.testing.expect(std.mem.indexOf(u8, result.bytes, "> Quoted\n> --Author") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.bytes, "```html\n<!-- more -->\n```") != null);
+    try std.testing.expect(std.mem.find(u8, result.bytes, "\n<!-- more -->\n<blockquote>") == null);
+    try std.testing.expect(std.mem.find(u8, result.bytes, "> Quoted\n> --Author") != null);
+    try std.testing.expect(std.mem.find(u8, result.bytes, "```html\n<!-- more -->\n```") != null);
 }
 
 test "Jekyll highlight tags become fenced code blocks" {

@@ -142,7 +142,7 @@ fn gitCommitFromFs(b: *std.Build) ?[]const u8 {
         } else |_| {}
         var lines = std.mem.tokenizeScalar(u8, packed_refs, '\n');
         while (lines.next()) |line| {
-            const space = std.mem.indexOfScalar(u8, line, ' ') orelse continue;
+            const space = std.mem.findScalar(u8, line, ' ') orelse continue;
             if (std.mem.eql(u8, line[space + 1 ..], ref)) break :blk line[0..space];
         }
         return null;

@@ -1925,7 +1925,7 @@ pub fn run(
                 const full_src = p._parse.full_src;
                 // Parsing already validated this fence; retain its offset when
                 // reconstructing locations for analysis errors.
-                const ziggy_start = std.mem.indexOf(u8, full_src, "---").? + 3;
+                const ziggy_start = std.mem.find(u8, full_src, "---").? + 3;
                 const ast = ziggy.Ast.init(arena, full_src, .{ .delimiter = .{ .dashes = @intCast(ziggy_start) } }) catch fatal.oom();
 
                 for (fm_errors.items) |err| {
@@ -2279,9 +2279,9 @@ pub fn run(
                     // structural invariants the asserts below encode (and, on an
                     // empty string, read a[0] out of bounds). See AUD-002.
                     if (!worker.validOutputPath(a)) continue;
-                    assert(std.mem.indexOfScalar(u8, a, '\\') == null);
+                    assert(std.mem.findScalar(u8, a, '\\') == null);
                     assert(std.fs.path.extension(a).len > 0);
-                    assert(std.mem.indexOfScalar(
+                    assert(std.mem.findScalar(
                         u8,
                         std.fs.path.dirnamePosix(a) orelse "",
                         '.',
@@ -2372,9 +2372,9 @@ pub fn run(
                     // output (already a frontmatter error) rather than asserting
                     // on user input. See AUD-002.
                     if (!worker.validOutputPath(alt.output)) continue;
-                    assert(std.mem.indexOfScalar(u8, alt.output, '\\') == null);
+                    assert(std.mem.findScalar(u8, alt.output, '\\') == null);
                     assert(std.fs.path.extension(alt.output).len > 0);
-                    assert(std.mem.indexOfScalar(
+                    assert(std.mem.findScalar(
                         u8,
                         std.fs.path.dirnamePosix(alt.output) orelse "",
                         '.',
@@ -4368,7 +4368,7 @@ fn printSuperMdErrorsInner(
         };
         const homepage_hint = err.kind == .scripty and
             std.mem.eql(u8, err.kind.scripty.err, "path is empty") and
-            std.mem.indexOf(u8, formatter.preview().code, ".page(") != null;
+            std.mem.find(u8, formatter.preview().code, ".page(") != null;
         const rendered = try gpa.print("{f}{s}\n", .{
             formatter,
             if (homepage_hint) "|   note: to link to the site homepage, use $link.site()\n" else "",
@@ -4514,7 +4514,7 @@ pub fn validatePath(
     if (path[0] == '/') return error.AbsolutePath;
 
     // Paths cannot contain Windows-style separators
-    if (std.mem.indexOfScalar(u8, path, '\\') != null) return error.Backslash;
+    if (std.mem.findScalar(u8, path, '\\') != null) return error.Backslash;
 
     // Path cannot contain any relative component (. or ..)
     var it = std.mem.splitScalar(u8, path, '/');
@@ -4546,7 +4546,7 @@ fn emitSuperMdDiagnostic(
         });
         defer gpa.free(prefix);
         const message = rendered[prefix.len..];
-        const end = std.mem.indexOfScalar(u8, message, '\n') orelse message.len;
+        const end = std.mem.findScalar(u8, message, '\n') orelse message.len;
         const headline = message[0..end];
         diag.emit(.{
             .code = .ZP_SUPERMD,
@@ -4594,6 +4594,6 @@ test "validate: duplicate ID memory diagnostic includes the original definition"
     try printSuperMdErrorsInner(gpa, gpa, &build, &variant, file, &ast, &.{}, src, 4);
     try std.testing.expectEqual(1, build.mode.memory.errors.items.len);
     const message = build.mode.memory.errors.items[0].msg;
-    try std.testing.expect(std.mem.indexOf(u8, message, "first definition was on line 5 col 1") != null);
-    try std.testing.expect(std.mem.indexOf(u8, message, "[original]") != null);
+    try std.testing.expect(std.mem.find(u8, message, "first definition was on line 5 col 1") != null);
+    try std.testing.expect(std.mem.find(u8, message, "[original]") != null);
 }

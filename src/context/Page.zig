@@ -555,7 +555,7 @@ fn parseInner(
     const trimmed = std.mem.trimStart(u8, full_src, " \t\n");
     const framing_error: ?error{ MissingFrontmatter, OpenFrontmatter } = if (!std.mem.startsWith(u8, trimmed, "---"))
         error.MissingFrontmatter
-    else if (std.mem.indexOf(u8, trimmed[3..], "\n---") == null)
+    else if (std.mem.find(u8, trimmed[3..], "\n---") == null)
         error.OpenFrontmatter
     else
         null;
@@ -1903,7 +1903,7 @@ pub const Builtins = struct {
 
             const v = &ctx._meta.build.variants[p._scan.variant_id];
             const s = v.sections.items[p._scan.parent_section_id];
-            const self_id = std.mem.indexOfScalar(
+            const self_id = std.mem.findScalar(
                 u32,
                 s.pages.items,
                 p._scan.page_id,
@@ -1977,7 +1977,7 @@ pub const Builtins = struct {
 
             const v = &ctx._meta.build.variants[p._scan.variant_id];
             const s = v.sections.items[p._scan.parent_section_id];
-            const self_id = std.mem.indexOfScalar(
+            const self_id = std.mem.findScalar(
                 u32,
                 s.pages.items,
                 p._scan.page_id,
@@ -2019,7 +2019,7 @@ pub const Builtins = struct {
 
             const v = &ctx._meta.build.variants[p._scan.variant_id];
             const s = v.sections.items[p._scan.parent_section_id];
-            const self_id = std.mem.indexOfScalar(
+            const self_id = std.mem.findScalar(
                 u32,
                 s.pages.items,
                 p._scan.page_id,
@@ -2060,7 +2060,7 @@ pub const Builtins = struct {
 
             const v = &ctx._meta.build.variants[p._scan.variant_id];
             const s = v.sections.items[p._scan.parent_section_id];
-            const self_id = std.mem.indexOfScalar(
+            const self_id = std.mem.findScalar(
                 u32,
                 s.pages.items,
                 p._scan.page_id,

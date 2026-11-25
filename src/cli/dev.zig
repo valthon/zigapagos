@@ -1398,8 +1398,8 @@ fn nextWalkEntry(
 /// (`./B.island`, `../c/B.island.tsx`, …), extension or not.
 fn moduleStem(path: []const u8) []const u8 {
     var name = path;
-    if (std.mem.lastIndexOfScalar(u8, name, '/')) |slash| name = name[slash + 1 ..];
-    if (std.mem.lastIndexOfScalar(u8, name, '.')) |dot| name = name[0..dot];
+    if (std.mem.findScalarLast(u8, name, '/')) |slash| name = name[slash + 1 ..];
+    if (std.mem.findScalarLast(u8, name, '.')) |dot| name = name[0..dot];
     return name;
 }
 
@@ -1529,7 +1529,7 @@ fn otherWatchedSourceReferences(
 /// contain any changed file's module stem?
 fn anyStemReferenced(text: []const u8, changed_files: []const []const u8) bool {
     for (changed_files) |cf| {
-        if (std.mem.indexOf(u8, text, moduleStem(cf)) != null) return true;
+        if (std.mem.find(u8, text, moduleStem(cf)) != null) return true;
     }
     return false;
 }
@@ -2427,7 +2427,7 @@ test "dev rebuild result carries duration and failure tail" {
     defer if (bad.error_tail) |t| gpa.free(t);
     try std.testing.expect(!bad.ok);
     try std.testing.expect(bad.error_tail != null);
-    try std.testing.expect(std.mem.indexOf(u8, bad.error_tail.?, "doomed") != null);
+    try std.testing.expect(std.mem.find(u8, bad.error_tail.?, "doomed") != null);
 
     // A succeeding command yields ok=true and no tail.
     const good = runRebuild(io, gpa, &.{ "/bin/sh", "-c", "exit 0" }, &environ, capture_path);

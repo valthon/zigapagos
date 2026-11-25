@@ -27,7 +27,7 @@ const State = struct {
 };
 
 pub fn validPagePath(path: []const u8) bool {
-    if (path.len == 0 or path[0] == '/' or std.mem.indexOfAny(u8, path, "\\?#") != null) return false;
+    if (path.len == 0 or path[0] == '/' or std.mem.findAny(u8, path, "\\?#") != null) return false;
     var parts = std.mem.splitScalar(u8, path, '/');
     while (parts.next()) |part| {
         if (part.len == 0 or std.mem.eql(u8, part, ".") or std.mem.eql(u8, part, "..")) return false;
@@ -66,7 +66,7 @@ pub fn report(io: Io, gpa: Allocator, root: Io.Dir, w: *Io.Writer, format: diag.
             const type_attr = html.attribute(node, source, ast, "type");
             const script_type = type_attr orelse "";
             const language = if (type_attr == null) html.attribute(node, source, ast, "language") orelse "" else "";
-            if (std.mem.indexOfScalar(u8, script_type, '&') != null or std.mem.indexOfScalar(u8, language, '&') != null) {
+            if (std.mem.findScalar(u8, script_type, '&') != null or std.mem.findScalar(u8, language, '&') != null) {
                 state.complete = false;
                 try emitCoverage(w, format, page, "encoded_script_type_unsupported");
             } else if (html.scriptIsJavaScript(script_type, language)) {
@@ -77,7 +77,7 @@ pub fn report(io: Io, gpa: Allocator, root: Io.Dir, w: *Io.Writer, format: diag.
         }
         if (node.kind == .style) {
             const style_type = html.attribute(node, source, ast, "type") orelse "";
-            if (std.mem.indexOfScalar(u8, style_type, '&') != null) {
+            if (std.mem.findScalar(u8, style_type, '&') != null) {
                 state.complete = false;
                 try emitCoverage(w, format, page, "encoded_style_type_unsupported");
             } else if (style_type.len == 0 or std.ascii.eqlIgnoreCase(std.mem.trim(u8, style_type, " \t\r\n\x0c"), "text/css")) try addInline(node, .css, &state);
@@ -87,7 +87,7 @@ pub fn report(io: Io, gpa: Allocator, root: Io.Dir, w: *Io.Writer, format: diag.
         }
         if (node.kind == .link) {
             const rel = html.attribute(node, source, ast, "rel") orelse continue;
-            if (std.mem.indexOfScalar(u8, rel, '&') != null) {
+            if (std.mem.findScalar(u8, rel, '&') != null) {
                 state.complete = false;
                 try emitCoverage(w, format, page, "encoded_link_rel_unsupported");
                 continue;
@@ -209,9 +209,9 @@ fn resolve(buf: []u8, page: []const u8, prefix: []const u8, raw: []const u8) Res
     const url = std.mem.trim(u8, raw, " \t\r\n\x0c");
     if (url.len == 0) return error.EmptyUrl;
     var path = url;
-    if (std.mem.indexOfAny(u8, path, "?#")) |i| path = path[0..i];
+    if (std.mem.findAny(u8, path, "?#")) |i| path = path[0..i];
     if (path.len > 0 and !paths.isLocalLink(path)) return error.NonlocalUrl;
-    if (std.mem.indexOfAny(u8, path, "\\&") != null) return error.UnsupportedUrlEncoding;
+    if (std.mem.findAny(u8, path, "\\&") != null) return error.UnsupportedUrlEncoding;
     var decoded_buf: [std.fs.max_path_bytes]u8 = undefined;
     const decoded = try paths.percentDecode(&decoded_buf, path);
     for (decoded) |c| if (c < ' ' or c == '\\' or c == 127) return error.UnsupportedUrlEncoding;

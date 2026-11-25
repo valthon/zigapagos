@@ -1417,7 +1417,7 @@ test "an unrecognized unresolved code is not dropped: it folds into detail under
 
     try std.testing.expectEqual(@as(usize, 1), blocker_list.items.len);
     try std.testing.expectEqualStrings("RAILS_CONTROLLER_UNRESOLVED", blocker_list.items[0].code);
-    try std.testing.expect(std.mem.indexOf(u8, blocker_list.items[0].detail, "RAILS_CONTROLLER_FUTURE_THING") != null);
+    try std.testing.expect(std.mem.find(u8, blocker_list.items[0].detail, "RAILS_CONTROLLER_FUTURE_THING") != null);
     try std.testing.expect(!blocker_list.items[0].integrity);
     try std.testing.expectEqual(blockers.Severity.warn, blocker_list.items[0].severity);
 }
@@ -2105,7 +2105,7 @@ test "discoverControllers spawns the real Ruby sidecar and recovers PostsControl
     if (result.actions.len == 0 and blocker_list.items.len > 0) {
         if (blocker_list.items.len == 1 and
             std.mem.eql(u8, blocker_list.items[0].code, "RAILS_CONTROLLERS_UNAVAILABLE") and
-            std.mem.indexOf(u8, blocker_list.items[0].detail, "FileNotFound") != null)
+            std.mem.find(u8, blocker_list.items[0].detail, "FileNotFound") != null)
             return error.SkipZigTest;
         std.debug.print("discoverControllers degraded unexpectedly: {s}: {s}\n", .{
             blocker_list.items[blocker_list.items.len - 1].code,
@@ -2236,7 +2236,7 @@ test "discoverControllers: ZIGAPAGOS_RUBY pointing at a nonexistent binary yield
     // identical assertion for why. The interpreter is still named, but
     // only in free-text `detail`.
     try std.testing.expectEqualStrings("sidecar/rails/analyze.rb", blocker_list.items[0].path);
-    try std.testing.expect(std.mem.indexOf(u8, blocker_list.items[0].detail, "/nonexistent/ruby-binary-does-not-exist-xyz") != null);
+    try std.testing.expect(std.mem.find(u8, blocker_list.items[0].detail, "/nonexistent/ruby-binary-does-not-exist-xyz") != null);
     try std.testing.expect(!blocker_list.items[0].integrity);
     // The spawn itself failed (ENOENT) -- no interpreter ever ran.
     try std.testing.expect(!result.ruby.available);
@@ -2274,8 +2274,8 @@ test "discoverControllers: ZIGAPAGOS_RUNTIME_DIR with no sidecar/rails/analyze.r
     // different report bytes on two machines. It is not lost: it moves into
     // `detail`, which carries no determinism contract.
     try std.testing.expectEqualStrings("sidecar/rails/analyze.rb", blocker_list.items[0].path);
-    try std.testing.expect(std.mem.indexOf(u8, blocker_list.items[0].detail, runtime_dir_abs) != null);
-    try std.testing.expect(std.mem.indexOf(u8, blocker_list.items[0].detail, "FileNotFound") != null);
+    try std.testing.expect(std.mem.find(u8, blocker_list.items[0].detail, runtime_dir_abs) != null);
+    try std.testing.expect(std.mem.find(u8, blocker_list.items[0].detail, "FileNotFound") != null);
     try std.testing.expect(!blocker_list.items[0].integrity);
     try std.testing.expect(!result.ruby.available);
 }

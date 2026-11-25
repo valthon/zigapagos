@@ -278,7 +278,7 @@ pub fn scan(io: Io, gpa: Allocator, root: Io.Dir) ScanResult {
     var has_astro_sitemap = false;
     if (root.readFileAlloc(io, "package.json", gpa, .limited(16 * 1024 * 1024))) |content| {
         defer gpa.free(content);
-        has_astro_sitemap = std.mem.indexOf(u8, content, "@astrojs/sitemap") != null;
+        has_astro_sitemap = std.mem.find(u8, content, "@astrojs/sitemap") != null;
     } else |_| {}
 
     return .{
@@ -438,9 +438,9 @@ fn scanTopLevelFiles(
 }
 
 fn eleventyPagePath(path: []const u8) bool {
-    return std.mem.indexOf(u8, path, "/_includes/") == null and
-        std.mem.indexOf(u8, path, "/_layouts/") == null and
-        std.mem.indexOf(u8, path, "/_data/") == null and
+    return std.mem.find(u8, path, "/_includes/") == null and
+        std.mem.find(u8, path, "/_layouts/") == null and
+        std.mem.find(u8, path, "/_data/") == null and
         !std.mem.startsWith(u8, path, "_includes/") and
         !std.mem.startsWith(u8, path, "_layouts/") and
         !std.mem.startsWith(u8, path, "_data/");
@@ -583,8 +583,8 @@ fn scanOther(io: Io, gpa: Allocator, root: Io.Dir, source: Source, report_path: 
                 const is_client = blk: {
                     const content = readFileContent(io, gpa, root, entry.path) catch break :blk false;
                     defer gpa.free(content);
-                    break :blk std.mem.indexOf(u8, content, "\"use client\"") != null or
-                        std.mem.indexOf(u8, content, "'use client'") != null;
+                    break :blk std.mem.find(u8, content, "\"use client\"") != null or
+                        std.mem.find(u8, content, "'use client'") != null;
                 };
                 // A `use client` directive controls the rendering boundary; it
                 // does not stop reserved App Router modules from being routes.
@@ -1846,7 +1846,7 @@ fn scanFile(
     defer gpa.free(content);
     // Any source file may host a `<Component client:*>` call site.
     detect.collectClientUsages(gpa, content, island_names) catch fatal.oom();
-    const uses = std.mem.indexOf(u8, content, "client:") != null;
+    const uses = std.mem.find(u8, content, "client:") != null;
     const paginate = if (kind == .page) detect.detectPaginate(path, content) else null;
     out.append(gpa, .{ .path = path, .kind = kind, .uses_islands = uses, .paginate = paginate }) catch fatal.oom();
 }
@@ -1927,7 +1927,7 @@ fn processImportLine(
         return verbatim;
 
     // Locate " from " to extract the module specifier.
-    const from_pos = std.mem.indexOf(u8, line, " from ") orelse return verbatim;
+    const from_pos = std.mem.find(u8, line, " from ") orelse return verbatim;
     const after_from = from_pos + " from ".len; // points at the opening quote
     if (after_from >= line.len) return verbatim;
 
@@ -1935,7 +1935,7 @@ fn processImportLine(
     if (q != '"' and q != '\'') return verbatim;
 
     const spec_start = after_from + 1;
-    const spec_end = std.mem.indexOfScalarPos(u8, line, spec_start, q) orelse return verbatim;
+    const spec_end = std.mem.findScalarPos(u8, line, spec_start, q) orelse return verbatim;
     const specifier = line[spec_start..spec_end];
 
     switch (detect.classifyImport(specifier)) {
@@ -1944,7 +1944,7 @@ fn processImportLine(
             // named exports that can survive the rewrite → drop the whole line.
             // e.g. `import React from "react"` or `import * as React from "react"`.
             const before_from = line[0..from_pos];
-            const brace_pos = std.mem.indexOf(u8, before_from, "{") orelse {
+            const brace_pos = std.mem.find(u8, before_from, "{") orelse {
                 return null; // drop: only a default/namespace binding, nothing useful remains
             };
             // A mixed import like `import React, { useState } from "react"` has both
@@ -2001,7 +2001,7 @@ fn writeIslandSkeleton(
     var fw = out_file.writer(io, &buf);
     const w = &fw.interface;
 
-    const has_default_export = std.mem.indexOf(u8, src_content, "export default") != null;
+    const has_default_export = std.mem.find(u8, src_content, "export default") != null;
 
     if (src_content.len > 0 and has_default_export) {
         // Real port: rewrite React imports → @z/runtime, flag other npm imports.
@@ -2369,7 +2369,7 @@ fn parseHexoSettings(src: []const u8) HexoSettings {
     var lines = std.mem.splitScalar(u8, src, '\n');
     while (lines.next()) |raw_line| {
         if (raw_line.len == 0 or raw_line[0] == ' ' or raw_line[0] == '\t' or raw_line[0] == '#') continue;
-        const separator = std.mem.indexOfScalar(u8, raw_line, ':') orelse continue;
+        const separator = std.mem.findScalar(u8, raw_line, ':') orelse continue;
         const key = std.mem.trim(u8, raw_line[0..separator], " \t\r");
         const value = yamlScalar(raw_line[separator + 1 ..]);
         if (value.len == 0) continue;
@@ -2755,7 +2755,7 @@ fn urlOrigin(url: []const u8) ?[]const u8 {
     else
         return null;
     const tail = url[authority_start..];
-    const authority_end = std.mem.indexOfAny(u8, tail, "/?#") orelse tail.len;
+    const authority_end = std.mem.findAny(u8, tail, "/?#") orelse tail.len;
     if (authority_end == 0) return null;
     return url[0 .. authority_start + authority_end];
 }
@@ -3481,13 +3481,13 @@ test "non-Astro report names the source and marks ambiguous conversion for revie
     };
     const report = buildOtherReport(gpa, .nextjs, "next-site", &entries, true, false, false, null);
     defer gpa.free(report);
-    try std.testing.expect(std.mem.indexOf(u8, report, "Next.js") != null);
-    try std.testing.expect(std.mem.indexOf(u8, report, "src/pages/index.tsx") != null);
-    try std.testing.expect(std.mem.indexOf(u8, report, "src/components/Counter.tsx") != null);
-    try std.testing.expect(std.mem.indexOf(u8, report, "Generated by `zigapagos migrate`.") != null);
-    try std.testing.expect(std.mem.indexOf(u8, report, "Generated by `zigapagos migrate --from") == null);
-    try std.testing.expect(std.mem.indexOf(u8, report, "ambiguous framework") != null);
-    try std.testing.expect(std.mem.indexOf(u8, report, "semantics stay review items") != null);
+    try std.testing.expect(std.mem.find(u8, report, "Next.js") != null);
+    try std.testing.expect(std.mem.find(u8, report, "src/pages/index.tsx") != null);
+    try std.testing.expect(std.mem.find(u8, report, "src/components/Counter.tsx") != null);
+    try std.testing.expect(std.mem.find(u8, report, "Generated by `zigapagos migrate`.") != null);
+    try std.testing.expect(std.mem.find(u8, report, "Generated by `zigapagos migrate --from") == null);
+    try std.testing.expect(std.mem.find(u8, report, "ambiguous framework") != null);
+    try std.testing.expect(std.mem.find(u8, report, "semantics stay review items") != null);
 }
 
 test "Hugo content conversion writes valid-looking non-clobbering output" {
@@ -3516,7 +3516,7 @@ test "Hugo content conversion writes valid-looking non-clobbering output" {
     defer gpa.free(first_path);
     const first = try Io.Dir.cwd().readFileAlloc(testing_io, first_path, gpa, .limited(64 * 1024));
     defer gpa.free(first);
-    try std.testing.expect(std.mem.indexOf(u8, first, ".title = \"Post\"") != null);
+    try std.testing.expect(std.mem.find(u8, first, ".title = \"Post\"") != null);
     try std.testing.expect(std.mem.endsWith(u8, first, "# Preserved body\n"));
     const versioned_path = try std.fs.path.join(gpa, &.{ out, "blog/post.smd.new" });
     defer gpa.free(versioned_path);
@@ -3551,7 +3551,7 @@ test "readFileContent reads a source larger than 64 KiB in full (no truncation)"
     defer gpa.free(got);
     try std.testing.expectEqual(@as(usize, big_len), got.len);
     // The post-64K marker survives, so island detection sees the whole file.
-    try std.testing.expect(std.mem.indexOf(u8, got, "client:load") != null);
+    try std.testing.expect(std.mem.find(u8, got, "client:load") != null);
 }
 
 /// Build a cwd-relative path into a `std.testing.tmpDir`. The scaffold writes
@@ -3661,12 +3661,12 @@ test "scaffoldIslands never truncates a hand-edited .new file" {
     // and the collision is visible on disk.
     const versioned = try tmp.dir.readFileAlloc(testing_io, "components/Counter.island.tsx.new.2", gpa, .limited(64 * 1024));
     defer gpa.free(versioned);
-    try std.testing.expect(std.mem.indexOf(u8, versioned, "port the body from Counter.astro") != null);
+    try std.testing.expect(std.mem.find(u8, versioned, "port the body from Counter.astro") != null);
 
     // The original island file is untouched by every non-force run.
     const original = try tmp.dir.readFileAlloc(testing_io, "components/Counter.island.tsx", gpa, .limited(64 * 1024));
     defer gpa.free(original);
-    try std.testing.expect(std.mem.indexOf(u8, original, "export default function Counter") != null);
+    try std.testing.expect(std.mem.find(u8, original, "export default function Counter") != null);
 }
 
 test "scaffoldIslands honours --force by overwriting the island in place" {
@@ -3702,7 +3702,7 @@ test "scaffoldIslands honours --force by overwriting the island in place" {
     );
     const out = try tmp.dir.readFileAlloc(testing_io, "components/Counter.island.tsx", gpa, .limited(64 * 1024));
     defer gpa.free(out);
-    try std.testing.expect(std.mem.indexOf(u8, out, "export default function Counter") != null);
+    try std.testing.expect(std.mem.find(u8, out, "export default function Counter") != null);
 }
 
 test "scaffoldIslands real-port path rewrites React imports and frees its scratch" {
@@ -3738,9 +3738,9 @@ test "scaffoldIslands real-port path rewrites React imports and frees its scratc
 
     const out = try tmp.dir.readFileAlloc(testing_io, "components/Form.island.tsx", gpa, .limited(64 * 1024));
     defer gpa.free(out);
-    try std.testing.expect(std.mem.indexOf(u8, out, "import { useState } from \"@z/runtime\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "NO-NPM-GUARDRAIL") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "react-google-recaptcha") != null);
+    try std.testing.expect(std.mem.find(u8, out, "import { useState } from \"@z/runtime\"") != null);
+    try std.testing.expect(std.mem.find(u8, out, "NO-NPM-GUARDRAIL") != null);
+    try std.testing.expect(std.mem.find(u8, out, "react-google-recaptcha") != null);
 }
 
 test "paginate: scan flags a paginated route and buildReport prescribes the conversion" {
@@ -3785,14 +3785,14 @@ test "paginate: scan flags a paginated route and buildReport prescribes the conv
     const report = buildReport(gpa, "astro-sample", res.entries, res.has_config, false, res.has_astro_sitemap, false, null);
     defer gpa.free(report);
 
-    try std.testing.expect(std.mem.indexOf(u8, report, "`src/pages/blog/[page].astro`") != null);
-    try std.testing.expect(std.mem.indexOf(u8, report, "delete the route file") != null);
-    try std.testing.expect(std.mem.indexOf(
+    try std.testing.expect(std.mem.find(u8, report, "`src/pages/blog/[page].astro`") != null);
+    try std.testing.expect(std.mem.find(u8, report, "delete the route file") != null);
+    try std.testing.expect(std.mem.find(
         u8,
         report,
         ".pagination = .{ .page_size = 4, .url_style = .plain_dir }",
     ) != null);
-    try std.testing.expect(std.mem.indexOf(u8, report, "content/blog/index.smd") != null);
+    try std.testing.expect(std.mem.find(u8, report, "content/blog/index.smd") != null);
 }
 
 test "scan detects @astrojs/sitemap in package.json and buildReport flags it in the worklist" {
@@ -3822,8 +3822,8 @@ test "scan detects @astrojs/sitemap in package.json and buildReport flags it in 
 
     const report = buildReport(gpa, "astro-sample", res.entries, res.has_config, false, res.has_astro_sitemap, false, null);
     defer gpa.free(report);
-    try std.testing.expect(std.mem.indexOf(u8, report, "@astrojs/sitemap") != null);
-    try std.testing.expect(std.mem.indexOf(u8, report, "sitemap = true") != null);
+    try std.testing.expect(std.mem.find(u8, report, "@astrojs/sitemap") != null);
+    try std.testing.expect(std.mem.find(u8, report, "sitemap = true") != null);
 }
 
 test "scan reports no @astrojs/sitemap when package.json is absent or silent about it" {
@@ -3840,19 +3840,19 @@ test "scan reports no @astrojs/sitemap when package.json is absent or silent abo
 
     const report = buildReport(gpa, "astro-sample", res.entries, res.has_config, false, res.has_astro_sitemap, false, null);
     defer gpa.free(report);
-    try std.testing.expect(std.mem.indexOf(u8, report, "@astrojs/sitemap") == null);
+    try std.testing.expect(std.mem.find(u8, report, "@astrojs/sitemap") == null);
 }
 
 test "usage defines the read-only source and deterministic output contract" {
     const usage_text = usage;
-    try std.testing.expect(std.mem.indexOf(u8, usage_text, "Source files are read-only") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage_text, "performs the deterministic React part") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage_text, "Pages, layouts") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage_text, "--scaffold") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage_text, "--convert-content") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage_text, "--target") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage_text, "or empty directory") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage_text, "normalized to Ziggy") != null);
+    try std.testing.expect(std.mem.find(u8, usage_text, "Source files are read-only") != null);
+    try std.testing.expect(std.mem.find(u8, usage_text, "performs the deterministic React part") != null);
+    try std.testing.expect(std.mem.find(u8, usage_text, "Pages, layouts") != null);
+    try std.testing.expect(std.mem.find(u8, usage_text, "--scaffold") != null);
+    try std.testing.expect(std.mem.find(u8, usage_text, "--convert-content") != null);
+    try std.testing.expect(std.mem.find(u8, usage_text, "--target") != null);
+    try std.testing.expect(std.mem.find(u8, usage_text, "or empty directory") != null);
+    try std.testing.expect(std.mem.find(u8, usage_text, "normalized to Ziggy") != null);
 }
 
 test "target containment uses path component boundaries" {
@@ -3868,16 +3868,16 @@ test "target config publishes copied assets only when the copy wrote files" {
     defer gpa.free(with_assets);
     const without_assets = emitTargetConfig(gpa, .{}, false);
     defer gpa.free(without_assets);
-    try std.testing.expect(std.mem.indexOf(u8, with_assets, ".static_assets = [\"**\"]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, without_assets, ".static_assets") == null);
+    try std.testing.expect(std.mem.find(u8, with_assets, ".static_assets = [\"**\"]") != null);
+    try std.testing.expect(std.mem.find(u8, without_assets, ".static_assets") == null);
 }
 
 test "target TypeScript config supports runtime JSX types" {
-    try std.testing.expect(std.mem.indexOf(u8, target_tsconfig, "\"jsxImportSource\": \"@z/runtime\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, target_tsconfig, "\"module\": \"ESNext\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, target_tsconfig, "\"target\": \"ESNext\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, target_tsconfig, "\"allowImportingTsExtensions\": true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, target_tsconfig, "\"noEmit\": true") != null);
+    try std.testing.expect(std.mem.find(u8, target_tsconfig, "\"jsxImportSource\": \"@z/runtime\"") != null);
+    try std.testing.expect(std.mem.find(u8, target_tsconfig, "\"module\": \"ESNext\"") != null);
+    try std.testing.expect(std.mem.find(u8, target_tsconfig, "\"target\": \"ESNext\"") != null);
+    try std.testing.expect(std.mem.find(u8, target_tsconfig, "\"allowImportingTsExtensions\": true") != null);
+    try std.testing.expect(std.mem.find(u8, target_tsconfig, "\"noEmit\": true") != null);
 }
 
 test "Hexo top-level settings produce safe target metadata" {
@@ -3894,7 +3894,7 @@ test "Hexo top-level settings produce safe target metadata" {
     try std.testing.expectEqualStrings("blog", metadata.url_path_prefix.?);
     const config = emitTargetConfig(std.testing.allocator, metadata, true);
     defer std.testing.allocator.free(config);
-    try std.testing.expect(std.mem.indexOf(u8, config, ".url_path_prefix = \"blog\"") != null);
+    try std.testing.expect(std.mem.find(u8, config, ".url_path_prefix = \"blog\"") != null);
 }
 
 test "Hexo YAML comments respect whitespace and quoted hashes" {

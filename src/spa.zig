@@ -938,7 +938,7 @@ fn headHrefAssetPath(href: []const u8, url_path_prefix: []const u8) ?[]const u8 
     if (href.len < 2 or href[0] != '/') return null;
     if (href[1] == '/') return null; // protocol-relative → external
     var rest = href[1..];
-    if (std.mem.indexOfAny(u8, rest, "?#")) |i| rest = rest[0..i];
+    if (std.mem.findAny(u8, rest, "?#")) |i| rest = rest[0..i];
     const prefix = std.mem.trim(u8, url_path_prefix, "/");
     if (prefix.len != 0 and std.mem.startsWith(u8, rest, prefix)) {
         if (rest.len == prefix.len) return null; // href IS the prefix dir
@@ -970,9 +970,9 @@ fn fingerprintedHref(
     href: []const u8,
     hashed: []const u8,
 ) ![]const u8 {
-    const cut = std.mem.indexOfAny(u8, href, "?#") orelse href.len;
+    const cut = std.mem.findAny(u8, href, "?#") orelse href.len;
     const path = href[0..cut];
-    const slash = std.mem.lastIndexOfScalar(u8, path, '/') orelse 0;
+    const slash = std.mem.findScalarLast(u8, path, '/') orelse 0;
     return alloc.print("{s}{s}{s}", .{
         path[0 .. slash + 1],
         hashed,
@@ -1218,7 +1218,7 @@ pub fn spaName(src: []const u8) []const u8 {
     if (std.mem.endsWith(u8, base, ".spa.tsx")) {
         return base[0 .. base.len - ".spa.tsx".len];
     }
-    if (std.mem.lastIndexOfScalar(u8, base, '.')) |dot| return base[0..dot];
+    if (std.mem.findScalarLast(u8, base, '.')) |dot| return base[0..dot];
     return base;
 }
 
@@ -1317,7 +1317,7 @@ fn isSafePathSegment(seg: []const u8) bool {
     if (std.mem.eql(u8, seg, ".") or std.mem.eql(u8, seg, "..")) return false;
     for (seg) |c| {
         if (std.ascii.isAlphanumeric(c)) continue;
-        if (std.mem.indexOfScalar(u8, "-_.!~*'()", c) != null) continue;
+        if (std.mem.findScalar(u8, "-_.!~*'()", c) != null) continue;
         return false;
     }
     return true;
@@ -1465,7 +1465,7 @@ fn findRedirectViolation(routes: []const sidecar.RouteMeta) ?RedirectViolation {
         var hops: usize = 0;
         while (true) {
             const decl = routes[at];
-            if (!validateConcretePath(target) or std.mem.indexOfAny(u8, target, "?#") != null) {
+            if (!validateConcretePath(target) or std.mem.findAny(u8, target, "?#") != null) {
                 return .{ .route_path = decl.path, .target = target, .reason = .not_concrete };
             }
             // First route in table order matching the target (the client
@@ -1780,8 +1780,8 @@ test "renderManifest normalizes a root base to \"/\" and produces valid, escaped
     const manifest = try renderManifest(gpa, "/", &statics, &dynamics, &.{}, "/index.html", "/spa/App.js", "zigbase", "", &.{"/spa/shared-hash.js.map"});
     defer gpa.free(manifest);
 
-    try std.testing.expect(std.mem.indexOf(u8, manifest, "\"base\":\"/\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, manifest, "\"immutableAssets\":[\"/spa/shared-hash.js.map\"]") != null);
+    try std.testing.expect(std.mem.find(u8, manifest, "\"base\":\"/\"") != null);
+    try std.testing.expect(std.mem.find(u8, manifest, "\"immutableAssets\":[\"/spa/shared-hash.js.map\"]") != null);
 
     const Parsed = struct {
         base: []const u8,
@@ -1812,26 +1812,26 @@ test "renderManifest carries url_path_prefix as its own field, and omits it enti
 
     const prefixed_manifest = try renderManifest(gpa, "/app", &statics, &dynamics, &.{}, "/app/index.html", "/myrepo/spa/App.js", "nginx", "/myrepo", &.{});
     defer gpa.free(prefixed_manifest);
-    try std.testing.expect(std.mem.indexOf(u8, prefixed_manifest, "\"url_path_prefix\":\"/myrepo\"") != null);
+    try std.testing.expect(std.mem.find(u8, prefixed_manifest, "\"url_path_prefix\":\"/myrepo\"") != null);
     // The route values stay TREE-RELATIVE — they name positions inside the
     // built output tree, which has no prefix directory. Asserting the prefix
     // field alone would pass just as well if they had ALSO been prefixed, which
     // is the bug this design exists to avoid.
-    try std.testing.expect(std.mem.indexOf(u8, prefixed_manifest, "\"base\":\"/app\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, prefixed_manifest, "\"fallback\":\"/app/index.html\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, prefixed_manifest, "\"pattern\":\"/app/club/:id\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, prefixed_manifest, "\"shell\":\"/app/club/_shell.html\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, prefixed_manifest, "\"/myrepo/app") == null);
+    try std.testing.expect(std.mem.find(u8, prefixed_manifest, "\"base\":\"/app\"") != null);
+    try std.testing.expect(std.mem.find(u8, prefixed_manifest, "\"fallback\":\"/app/index.html\"") != null);
+    try std.testing.expect(std.mem.find(u8, prefixed_manifest, "\"pattern\":\"/app/club/:id\"") != null);
+    try std.testing.expect(std.mem.find(u8, prefixed_manifest, "\"shell\":\"/app/club/_shell.html\"") != null);
+    try std.testing.expect(std.mem.find(u8, prefixed_manifest, "\"/myrepo/app") == null);
     // `bundle` is the deliberate exception: it is baked verbatim into shell
     // script tags, so it arrives already prefixed.
-    try std.testing.expect(std.mem.indexOf(u8, prefixed_manifest, "\"bundle\":\"/myrepo/spa/App.js\"") != null);
+    try std.testing.expect(std.mem.find(u8, prefixed_manifest, "\"bundle\":\"/myrepo/spa/App.js\"") != null);
 
     // Empty prefix: the key is absent ENTIRELY, not emitted as "". This is what
     // keeps an unprefixed site's manifest byte-identical to one built before
     // the field existed.
     const bare = try renderManifest(gpa, "/app", &statics, &dynamics, &.{}, "/app/index.html", "/spa/App.js", "nginx", "", &.{});
     defer gpa.free(bare);
-    try std.testing.expect(std.mem.indexOf(u8, bare, "url_path_prefix") == null);
+    try std.testing.expect(std.mem.find(u8, bare, "url_path_prefix") == null);
 }
 
 test "renderManifest escapes a quote inside a string value" {
@@ -1844,7 +1844,7 @@ test "renderManifest escapes a quote inside a string value" {
 
     // The raw JSON must contain an escaped quote, not a bare one that would
     // terminate the string value early.
-    try std.testing.expect(std.mem.indexOf(u8, manifest, "\\\"quote") != null);
+    try std.testing.expect(std.mem.find(u8, manifest, "\\\"quote") != null);
 
     const Parsed = struct { static: []const []const u8 };
     const parsed = try std.json.parseFromSlice(Parsed, gpa, manifest, .{ .ignore_unknown_fields = true });
@@ -1860,14 +1860,14 @@ test "renderShell HTML-escapes the title and reuses the shared runtime constants
 
     const html = try renderShell(gpa, "A & B <script> \"x\"", true, "/spa/App.js", pass.shared_runtime_url, null, "", null, null, .{}, "<div>skeleton</div>");
     defer gpa.free(html);
-    try std.testing.expect(std.mem.indexOf(u8, html, "<title>A &amp; B &lt;script&gt; &quot;x&quot;</title>") != null);
+    try std.testing.expect(std.mem.find(u8, html, "<title>A &amp; B &lt;script&gt; &quot;x&quot;</title>") != null);
     // The raw, unescaped title text must not appear anywhere in the shell.
-    try std.testing.expect(std.mem.indexOf(u8, html, "A & B <script>") == null);
+    try std.testing.expect(std.mem.find(u8, html, "A & B <script>") == null);
 
     // Fix 3 (DRY): the runtime preload/script tags are the exact shared
     // constants from islands/pass.zig, not hand-duplicated literals.
-    try std.testing.expect(std.mem.indexOf(u8, html, pass.runtime_preload) != null);
-    try std.testing.expect(std.mem.indexOf(u8, html, pass.runtime_script) != null);
+    try std.testing.expect(std.mem.find(u8, html, pass.runtime_preload) != null);
+    try std.testing.expect(std.mem.find(u8, html, pass.runtime_script) != null);
 }
 
 test "renderShell emits a modulepreload for a lazy route's chunk (and none without one)" {
@@ -1875,16 +1875,16 @@ test "renderShell emits a modulepreload for a lazy route's chunk (and none witho
 
     const with = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, "/spa/Heavy-abc123.js", "", null, null, .{}, "<div>sk</div>");
     defer gpa.free(with);
-    try std.testing.expect(std.mem.indexOf(u8, with, "<link rel=\"modulepreload\" href=\"/spa/Heavy-abc123.js\">") != null);
+    try std.testing.expect(std.mem.find(u8, with, "<link rel=\"modulepreload\" href=\"/spa/Heavy-abc123.js\">") != null);
     // the entry bundle is still preloaded too
-    try std.testing.expect(std.mem.indexOf(u8, with, "<link rel=\"modulepreload\" href=\"/spa/app.js\">") != null);
+    try std.testing.expect(std.mem.find(u8, with, "<link rel=\"modulepreload\" href=\"/spa/app.js\">") != null);
 
     const without = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, "", null, null, .{}, "<div>sk</div>");
     defer gpa.free(without);
-    try std.testing.expect(std.mem.indexOf(u8, without, "Heavy-") == null);
+    try std.testing.expect(std.mem.find(u8, without, "Heavy-") == null);
     const fallback = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, "/spa/Heavy-abc123.js", "", null, null, .{ .reusable_fallback = true }, "<div>sk</div>");
     defer gpa.free(fallback);
-    try std.testing.expect(std.mem.indexOf(u8, fallback, "Heavy-") == null);
+    try std.testing.expect(std.mem.find(u8, fallback, "Heavy-") == null);
     // the chunk preload adds exactly one modulepreload over the no-chunk shell
     // (which already has the runtime + entry preloads).
     try std.testing.expect(std.mem.count(u8, with, "rel=\"modulepreload\"") ==
@@ -1916,14 +1916,14 @@ test "renderShell under a url_path_prefix bakes prefixed runtime/bundle/chunk UR
     defer gpa.free(html);
     // Entry bundle, lazy chunk, and the module bootstrap all reference the
     // prefixed URLs.
-    try std.testing.expect(std.mem.indexOf(u8, html, "<link rel=\"modulepreload\" href=\"/myrepo/spa/App.js\">") != null);
-    try std.testing.expect(std.mem.indexOf(u8, html, "<link rel=\"modulepreload\" href=\"/myrepo/spa/Heavy-abc123.js\">") != null);
-    try std.testing.expect(std.mem.indexOf(u8, html, "import*as m from\"/myrepo/spa/App.js\"") != null);
+    try std.testing.expect(std.mem.find(u8, html, "<link rel=\"modulepreload\" href=\"/myrepo/spa/App.js\">") != null);
+    try std.testing.expect(std.mem.find(u8, html, "<link rel=\"modulepreload\" href=\"/myrepo/spa/Heavy-abc123.js\">") != null);
+    try std.testing.expect(std.mem.find(u8, html, "import*as m from\"/myrepo/spa/App.js\"") != null);
     // The import map routes @z/runtime at the prefixed runtime URL.
-    try std.testing.expect(std.mem.indexOf(u8, html, "/myrepo/zigapagos-runtime.js") != null);
+    try std.testing.expect(std.mem.find(u8, html, "/myrepo/zigapagos-runtime.js") != null);
     // No bare (unprefixed) asset URL leaks into the shell.
-    try std.testing.expect(std.mem.indexOf(u8, html, "\"/spa/App.js\"") == null);
-    try std.testing.expect(std.mem.indexOf(u8, html, "\"/zigapagos-runtime.js\"") == null);
+    try std.testing.expect(std.mem.find(u8, html, "\"/spa/App.js\"") == null);
+    try std.testing.expect(std.mem.find(u8, html, "\"/zigapagos-runtime.js\"") == null);
 
     // Empty prefix: byte-identical to the pre-prefix shell.
     const bare_bundle = try pass.prefixed(gpa, "", "/spa/App.js");
@@ -1954,18 +1954,18 @@ test "renderShell under a url_path_prefix emits data-z-prefix on #z-spa-root, an
 
     const html = try renderShell(gpa, "App", true, bundle_url, runtime_url, null, "/myrepo", null, null, .{}, "<div>sk</div>");
     defer gpa.free(html);
-    try std.testing.expect(std.mem.indexOf(u8, html, "<div id=\"z-spa-root\" data-z-spa data-z-prefix=\"/myrepo\">") != null);
+    try std.testing.expect(std.mem.find(u8, html, "<div id=\"z-spa-root\" data-z-spa data-z-prefix=\"/myrepo\">") != null);
     // Still carries the prefixed asset URLs (AUDF-005) alongside the new
     // attribute — the two prefixing mechanisms compose, they don't collide.
-    try std.testing.expect(std.mem.indexOf(u8, html, "/myrepo/spa/App.js") != null);
+    try std.testing.expect(std.mem.find(u8, html, "/myrepo/spa/App.js") != null);
 
     // Empty prefix (the common case): no attribute at all, not
     // `data-z-prefix=""` — an unprefixed shell must stay byte-identical to
     // one built before this field existed.
     const bare = try renderShell(gpa, "App", true, "/spa/App.js", pass.shared_runtime_url, null, "", null, null, .{}, "<div>sk</div>");
     defer gpa.free(bare);
-    try std.testing.expect(std.mem.indexOf(u8, bare, "data-z-prefix") == null);
-    try std.testing.expect(std.mem.indexOf(u8, bare, "<div id=\"z-spa-root\" data-z-spa>") != null);
+    try std.testing.expect(std.mem.find(u8, bare, "data-z-prefix") == null);
+    try std.testing.expect(std.mem.find(u8, bare, "<div id=\"z-spa-root\" data-z-spa>") != null);
 }
 
 test "renderShell HTML-escapes the url_prefix attribute value" {
@@ -1976,8 +1976,8 @@ test "renderShell HTML-escapes the url_prefix attribute value" {
     // out of the attribute.
     const html = try renderShell(gpa, "App", true, "/spa/App.js", pass.shared_runtime_url, null, "/a\"b", null, null, .{}, "<div>sk</div>");
     defer gpa.free(html);
-    try std.testing.expect(std.mem.indexOf(u8, html, "data-z-prefix=\"/a&quot;b\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, html, "data-z-prefix=\"/a\"b\"") == null);
+    try std.testing.expect(std.mem.find(u8, html, "data-z-prefix=\"/a&quot;b\"") != null);
+    try std.testing.expect(std.mem.find(u8, html, "data-z-prefix=\"/a\"b\"") == null);
 }
 
 test "renderShell emits the import map before any modulepreload or module script" {
@@ -1988,9 +1988,9 @@ test "renderShell emits the import map before any modulepreload or module script
     // Per the import-maps spec, a map is only processed if it appears before
     // any module loading starts, and a <link rel="modulepreload"> (or a
     // module <script>) starts one — so the map must come first.
-    const im = std.mem.indexOf(u8, html, "importmap").?;
-    const mp = std.mem.indexOf(u8, html, "modulepreload").?;
-    const mod_script = std.mem.indexOf(u8, html, "<script type=\"module\"").?;
+    const im = std.mem.find(u8, html, "importmap").?;
+    const mp = std.mem.find(u8, html, "modulepreload").?;
+    const mod_script = std.mem.find(u8, html, "<script type=\"module\"").?;
     try std.testing.expect(im < mp);
     try std.testing.expect(im < mod_script);
 }
@@ -2061,7 +2061,7 @@ test "renderFlagsSnapshot escapes </ in a flag name so it cannot close the scrip
     // The literal `</script>` may appear exactly once: the real closing tag.
     try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, snapshot, "</script>"));
     // The flag name's `</` is escaped to the JSON-valid `<\/`.
-    try std.testing.expect(std.mem.indexOf(u8, snapshot, "a<\\/script>b") != null);
+    try std.testing.expect(std.mem.find(u8, snapshot, "a<\\/script>b") != null);
 }
 
 test "renderShell embeds the flags snapshot and stays byte-identical without one" {
@@ -2074,11 +2074,11 @@ test "renderShell embeds the flags snapshot and stays byte-identical without one
     const with = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, "", null, flags, .{}, "<div>sk</div>");
     defer gpa.free(with);
     const block = "<script type=\"application/json\" data-z-flags>{\"flags\":{\"bookAsGuest\":true},\"experiments\":{}}</script>";
-    const at = std.mem.indexOf(u8, with, block).?;
+    const at = std.mem.find(u8, with, block).?;
     // The data block sits in <head>, before the runtime preload/bootstrap.
-    try std.testing.expect(at < std.mem.indexOf(u8, with, "rel=\"modulepreload\"").?);
+    try std.testing.expect(at < std.mem.find(u8, with, "rel=\"modulepreload\"").?);
     // Import-map-first invariant is unaffected (a data block loads no modules).
-    try std.testing.expect(std.mem.indexOf(u8, with, "importmap").? < at);
+    try std.testing.expect(std.mem.find(u8, with, "importmap").? < at);
 
     // No flags and empty flags are both byte-identical to each other.
     const without = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, "", null, null, .{}, "<div>sk</div>");
@@ -2087,7 +2087,7 @@ test "renderShell embeds the flags snapshot and stays byte-identical without one
     const with_empty = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, "", null, empty, .{}, "<div>sk</div>");
     defer gpa.free(with_empty);
     try std.testing.expectEqualStrings(without, with_empty);
-    try std.testing.expect(std.mem.indexOf(u8, without, "data-z-flags") == null);
+    try std.testing.expect(std.mem.find(u8, without, "data-z-flags") == null);
 }
 
 test "renderShell renders head entries as ordered <link> tags between the import map and the first modulepreload" {
@@ -2106,10 +2106,10 @@ test "renderShell renders head entries as ordered <link> tags between the import
     const html = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, "", &head, null, .{}, "<div>sk</div>");
     defer gpa.free(html);
 
-    const link1 = std.mem.indexOf(u8, html, "<link rel=\"stylesheet\" href=\"/styles.css\">").?;
-    const link2 = std.mem.indexOf(u8, html, "<link rel=\"preconnect\" href=\"https://fonts.example.com\">").?;
-    const im = std.mem.indexOf(u8, html, "importmap").?;
-    const first_modulepreload = std.mem.indexOf(u8, html, "rel=\"modulepreload\"").?;
+    const link1 = std.mem.find(u8, html, "<link rel=\"stylesheet\" href=\"/styles.css\">").?;
+    const link2 = std.mem.find(u8, html, "<link rel=\"preconnect\" href=\"https://fonts.example.com\">").?;
+    const im = std.mem.find(u8, html, "importmap").?;
+    const first_modulepreload = std.mem.find(u8, html, "rel=\"modulepreload\"").?;
 
     try std.testing.expect(link1 < link2); // declaration order preserved
     try std.testing.expect(im < link1); // after the import map
@@ -2127,9 +2127,9 @@ test "renderShell HTML-escapes head attribute values" {
 
     const html = try renderShell(gpa, "App", true, "/spa/app.js", pass.shared_runtime_url, null, "", &head, null, .{}, "<div>sk</div>");
     defer gpa.free(html);
-    try std.testing.expect(std.mem.indexOf(u8, html, "href=\"/a&amp;b&quot;.css\"") != null);
+    try std.testing.expect(std.mem.find(u8, html, "href=\"/a&amp;b&quot;.css\"") != null);
     // the raw, unescaped value must not appear anywhere in the shell.
-    try std.testing.expect(std.mem.indexOf(u8, html, "/a&b\".css") == null);
+    try std.testing.expect(std.mem.find(u8, html, "/a&b\".css") == null);
 }
 
 test "renderHeadLinks rejects an invalid attribute name" {
@@ -2851,9 +2851,9 @@ test "renderShell installable app metadata preserves order and escapes shell att
     const spa = parsed.value;
     const html = try renderShell(gpa, "App", false, "/spa/app.js", pass.shared_runtime_url, null, "", spa.head, null, .{ .lang = spa.lang, .viewport = spa.viewport }, "");
     defer gpa.free(html);
-    try std.testing.expect(std.mem.indexOf(u8, html, "<html lang=\"en&quot;&lt;&amp;\">") != null);
-    try std.testing.expect(std.mem.indexOf(u8, html, "content=\"width=device-width,initial-scale=1,viewport-fit=cover&quot;\">") != null);
-    try std.testing.expect(std.mem.indexOf(u8, html, "<meta name=\"theme-color\" content=\"#111\" media=\"(prefers-color-scheme: dark)\"><meta name=\"description\" content=\"A &amp; B\"><link rel=\"manifest\" href=\"/app.webmanifest\">") != null);
+    try std.testing.expect(std.mem.find(u8, html, "<html lang=\"en&quot;&lt;&amp;\">") != null);
+    try std.testing.expect(std.mem.find(u8, html, "content=\"width=device-width,initial-scale=1,viewport-fit=cover&quot;\">") != null);
+    try std.testing.expect(std.mem.find(u8, html, "<meta name=\"theme-color\" content=\"#111\" media=\"(prefers-color-scheme: dark)\"><meta name=\"description\" content=\"A &amp; B\"><link rel=\"manifest\" href=\"/app.webmanifest\">") != null);
 }
 
 test "spa meta entries reject invalid attributes and malformed entry shapes" {

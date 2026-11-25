@@ -407,7 +407,7 @@ test "validate: the REAL fixture manifest validates against the generated schema
 
     // Sanity that this test actually exercised the field F1 broke on, not
     // an accidentally-empty assets[] that would trivially pass too.
-    try testing.expect(std.mem.indexOf(u8, manifest_bytes, "\"pipeline\": null") != null);
+    try testing.expect(std.mem.find(u8, manifest_bytes, "\"pipeline\": null") != null);
 
     const errors = try validate(gpa, schema_parsed.value, instance_parsed.value);
     defer freeErrors(gpa, errors);
@@ -448,7 +448,7 @@ test "validate: catches a pre-fix nullable enum schema rejecting null (regressio
     const errors = try validate(gpa, schema_parsed.value, instance_parsed.value);
     defer freeErrors(gpa, errors);
     try testing.expectEqual(@as(usize, 1), errors.len);
-    try testing.expect(std.mem.indexOf(u8, errors[0], "enum") != null);
+    try testing.expect(std.mem.find(u8, errors[0], "enum") != null);
 }
 
 test "validate: an unknown property is rejected when additionalProperties is false" {
@@ -465,7 +465,7 @@ test "validate: an unknown property is rejected when additionalProperties is fal
     const errors = try validate(gpa, schema_parsed.value, instance_parsed.value);
     defer freeErrors(gpa, errors);
     try testing.expectEqual(@as(usize, 1), errors.len);
-    try testing.expect(std.mem.indexOf(u8, errors[0], "/b") != null);
+    try testing.expect(std.mem.find(u8, errors[0], "/b") != null);
 }
 
 test "validate: a missing required property is reported by name" {
@@ -482,7 +482,7 @@ test "validate: a missing required property is reported by name" {
     const errors = try validate(gpa, schema_parsed.value, instance_parsed.value);
     defer freeErrors(gpa, errors);
     try testing.expectEqual(@as(usize, 1), errors.len);
-    try testing.expect(std.mem.indexOf(u8, errors[0], "'a'") != null);
+    try testing.expect(std.mem.find(u8, errors[0], "'a'") != null);
 }
 
 test "validate: array items are checked by index, one error per bad element" {
@@ -499,6 +499,6 @@ test "validate: array items are checked by index, one error per bad element" {
     const errors = try validate(gpa, schema_parsed.value, instance_parsed.value);
     defer freeErrors(gpa, errors);
     try testing.expectEqual(@as(usize, 2), errors.len);
-    try testing.expect(std.mem.indexOf(u8, errors[0], "/1") != null);
-    try testing.expect(std.mem.indexOf(u8, errors[1], "/3") != null);
+    try testing.expect(std.mem.find(u8, errors[0], "/1") != null);
+    try testing.expect(std.mem.find(u8, errors[1], "/3") != null);
 }

@@ -69,7 +69,7 @@ pub const Builtins = struct {
                 else => return bad_arg,
             };
 
-            return Value.from(gpa, std.mem.indexOf(u8, str.value, needle) != null);
+            return Value.from(gpa, std.mem.find(u8, str.value, needle) != null);
         }
     };
 

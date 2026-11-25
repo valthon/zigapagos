@@ -408,9 +408,9 @@ fn probeStatus(io: Io, address: Io.net.IpAddress, path: []const u8) !u16 {
 
 /// Parses the numeric code out of an HTTP status line ("HTTP/1.1 200 OK").
 fn parseStatusCode(line: []const u8) !u16 {
-    const sp1 = std.mem.indexOfScalar(u8, line, ' ') orelse return error.MalformedStatusLine;
+    const sp1 = std.mem.findScalar(u8, line, ' ') orelse return error.MalformedStatusLine;
     const rest = line[sp1 + 1 ..];
-    const sp2 = std.mem.indexOfScalar(u8, rest, ' ') orelse rest.len;
+    const sp2 = std.mem.findScalar(u8, rest, ' ') orelse rest.len;
     return std.fmt.parseInt(u16, rest[0..sp2], 10) catch error.MalformedStatusLine;
 }
 
@@ -717,7 +717,7 @@ test "e2e default zigbase invocation matches the verified serve CLI" {
     // No template token smuggles an '=' value — the real parser would treat
     // the whole token as an (unknown) flag name and reject it.
     for (default_zigbase_args) |a| {
-        if (a[0] == '-') try std.testing.expect(std.mem.indexOfScalar(u8, a, '=') == null);
+        if (a[0] == '-') try std.testing.expect(std.mem.findScalar(u8, a, '=') == null);
     }
 }
 

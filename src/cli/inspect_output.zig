@@ -240,7 +240,7 @@ fn reportPage(w: *Io.Writer, format: diag.Format, path: []const u8, source: []co
             const type_attr = attribute(node, source, ast, "type");
             const script_type = type_attr orelse "";
             const language = if (type_attr == null) attribute(node, source, ast, "language") orelse "" else "";
-            const executable: ?bool = if (std.mem.indexOfScalar(u8, script_type, '&') != null or std.mem.indexOfScalar(u8, language, '&') != null) null else scriptIsJavaScript(script_type, language);
+            const executable: ?bool = if (std.mem.findScalar(u8, script_type, '&') != null or std.mem.findScalar(u8, language, '&') != null) null else scriptIsJavaScript(script_type, language);
             if (executable == null) encoded_classification += 1;
             if (attribute(node, source, ast, "src")) |url| {
                 try reportReference(w, format, path, "script_src", url, script_type);
@@ -258,7 +258,7 @@ fn reportPage(w: *Io.Writer, format: diag.Format, path: []const u8, source: []co
         }
         if (node.kind == .link) {
             const rel = attribute(node, source, ast, "rel") orelse continue;
-            if (std.mem.indexOfScalar(u8, rel, '&') != null) {
+            if (std.mem.findScalar(u8, rel, '&') != null) {
                 encoded_classification += 1;
                 if (attribute(node, source, ast, "href")) |url| {
                     try reportReference(w, format, path, "link_href_unclassified", url, "");

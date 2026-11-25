@@ -26,12 +26,12 @@ pub const PropsCheck = struct {
 /// matching `zigapagos migrate` output and the canonical islands). Mirrors the no-npm
 /// lint's text-scan approach — deliberately avoids pulling in the TS compiler API.
 pub fn hasExportedProps(source: []const u8) bool {
-    if (std.mem.indexOf(u8, source, "export interface Props") != null) return true;
-    if (std.mem.indexOf(u8, source, "export type Props") != null) return true;
+    if (std.mem.find(u8, source, "export interface Props") != null) return true;
+    if (std.mem.find(u8, source, "export type Props") != null) return true;
     // `export { ... Props ... }` re-export form.
     var i: usize = 0;
-    while (std.mem.indexOfPos(u8, source, i, "export {")) |open| {
-        const close = std.mem.indexOfScalarPos(u8, source, open, '}') orelse break;
+    while (std.mem.findPos(u8, source, i, "export {")) |open| {
+        const close = std.mem.findScalarPos(u8, source, open, '}') orelse break;
         const list = source[open + "export {".len .. close];
         var it = std.mem.tokenizeAny(u8, list, " ,\t\r\n");
         while (it.next()) |tok| if (std.mem.eql(u8, tok, "Props")) return true;
@@ -153,15 +153,15 @@ pub fn parseDiagnostics(
     while (it.next()) |line| {
         if (!std.mem.startsWith(u8, line, prefix)) continue;
         const lparen = prefix.len; // first char after "basename("
-        const comma = std.mem.indexOfScalarPos(u8, line, lparen, ',') orelse continue;
-        const rparen = std.mem.indexOfScalarPos(u8, line, comma, ')') orelse continue;
+        const comma = std.mem.findScalarPos(u8, line, lparen, ',') orelse continue;
+        const rparen = std.mem.findScalarPos(u8, line, comma, ')') orelse continue;
         const ln = std.fmt.parseInt(usize, line[lparen..comma], 10) catch continue;
         const col = std.fmt.parseInt(usize, line[comma + 1 .. rparen], 10) catch continue;
         // After "): " expect "error TSxxxx: msg".
         const tail = line[rparen + 1 ..];
-        const err_kw = std.mem.indexOf(u8, tail, "error TS") orelse continue;
+        const err_kw = std.mem.find(u8, tail, "error TS") orelse continue;
         const code_start = err_kw + "error ".len;
-        const colon = std.mem.indexOfScalarPos(u8, tail, code_start, ':') orelse continue;
+        const colon = std.mem.findScalarPos(u8, tail, code_start, ':') orelse continue;
         const code = tail[code_start..colon];
         const message = std.mem.trim(u8, tail[colon + 1 ..], " \t\r");
         try diags.append(arena.a, .{ .line = ln, .col = col, .code = try arena.a.dupe(u8, code), .message = try arena.a.dupe(u8, message) });
@@ -316,7 +316,7 @@ pub fn run(io: Io, gpa: std.mem.Allocator, checks: []const PropsCheck, opts: Run
     // anomaly since our check was clean. The guard catches crashes, tsconfig parse
     // errors, launcher failures, and completely unexpected output formats.
     if (mismatches == 0 and (tsc_exit == null or tsc_exit.? != 0)) {
-        const has_any_tsc_diag = std.mem.indexOf(u8, stdout, "): error TS") != null;
+        const has_any_tsc_diag = std.mem.find(u8, stdout, "): error TS") != null;
         if (!has_any_tsc_diag) {
             const exit_repr: u8 = tsc_exit orelse 255; // 255 = signal/wait-error sentinel
             const snippet_len = @min(500, stdout.len);
@@ -392,12 +392,12 @@ test "generateProgram: one import per unique src, one const per unique (src,json
 
     // Two unique srcs -> two `import type` lines (aliased P0, P1).
     try std.testing.expectEqual(@as(usize, 2), std.mem.count(u8, prog.source, "import type {"));
-    try std.testing.expect(std.mem.indexOf(u8, prog.source, "from \"/w/components/Hero.island.tsx\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, prog.source, "from \"/w/components/Counter.island.tsx\"") != null);
+    try std.testing.expect(std.mem.find(u8, prog.source, "from \"/w/components/Hero.island.tsx\"") != null);
+    try std.testing.expect(std.mem.find(u8, prog.source, "from \"/w/components/Counter.island.tsx\"") != null);
     // Three unique (src,json) -> three const assignments, each pinned to its alias.
     try std.testing.expectEqual(@as(usize, 3), std.mem.count(u8, prog.source, "const _"));
-    try std.testing.expect(std.mem.indexOf(u8, prog.source, "= {\"headline\":\"A\"};") != null);
-    try std.testing.expect(std.mem.indexOf(u8, prog.source, "= {\"start\":2};") != null);
+    try std.testing.expect(std.mem.find(u8, prog.source, "= {\"headline\":\"A\"};") != null);
+    try std.testing.expect(std.mem.find(u8, prog.source, "= {\"start\":2};") != null);
 
     // line_to_check: exactly 3 non-null entries, each a valid check index.
     var consts: usize = 0;
@@ -423,7 +423,7 @@ test "generateProgram: script-escaped props embed verbatim and dedup collapses i
     try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, prog.source, "const _"));
     try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, prog.source, "import type {"));
     // The < escapes survive verbatim into the TS literal.
-    try std.testing.expect(std.mem.indexOf(u8, prog.source, "\\u003Cb\\u003E") != null);
+    try std.testing.expect(std.mem.find(u8, prog.source, "\\u003Cb\\u003E") != null);
 }
 
 test "generateTsconfig: extends base, includes the program, sets the required options" {
@@ -431,11 +431,11 @@ test "generateTsconfig: extends base, includes the program, sets the required op
     const gpa = std.testing.allocator;
     const cfg = try generateTsconfig(gpa, "/w/tsconfig.json", "/tmp/zc/__island_props_check.tsx");
     defer gpa.free(cfg);
-    try std.testing.expect(std.mem.indexOf(u8, cfg, "\"extends\": \"/w/tsconfig.json\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, cfg, "\"noEmit\": true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, cfg, "\"skipLibCheck\": true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, cfg, "\"allowImportingTsExtensions\": true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, cfg, "/tmp/zc/__island_props_check.tsx") != null);
+    try std.testing.expect(std.mem.find(u8, cfg, "\"extends\": \"/w/tsconfig.json\"") != null);
+    try std.testing.expect(std.mem.find(u8, cfg, "\"noEmit\": true") != null);
+    try std.testing.expect(std.mem.find(u8, cfg, "\"skipLibCheck\": true") != null);
+    try std.testing.expect(std.mem.find(u8, cfg, "\"allowImportingTsExtensions\": true") != null);
+    try std.testing.expect(std.mem.find(u8, cfg, "/tmp/zc/__island_props_check.tsx") != null);
 }
 
 test "parseDiagnostics extracts only this program's error lines" {
@@ -454,7 +454,7 @@ test "parseDiagnostics extracts only this program's error lines" {
     try std.testing.expectEqual(@as(usize, 4), diags[0].line);
     try std.testing.expectEqual(@as(usize, 8), diags[0].col);
     try std.testing.expectEqualStrings("TS2741", diags[0].code);
-    try std.testing.expect(std.mem.indexOf(u8, diags[0].message, "Property 'label' is missing") != null);
+    try std.testing.expect(std.mem.find(u8, diags[0].message, "Property 'label' is missing") != null);
     try std.testing.expectEqualStrings("TS2322", diags[1].code);
 }
 
@@ -464,11 +464,11 @@ test "formatDiagnostic renders the engine-level message with page+src+id+json" {
     const chk = PropsCheck{ .src = "components/Counter.island.tsx", .props_json = "{\"start\":2}", .page_url = "/", .island_id = "z-island-0" };
     const msg = try formatDiagnostic(gpa, diag, chk);
     defer gpa.free(msg);
-    try std.testing.expect(std.mem.indexOf(u8, msg, "props mismatch on /") != null);
-    try std.testing.expect(std.mem.indexOf(u8, msg, "components/Counter.island.tsx") != null);
-    try std.testing.expect(std.mem.indexOf(u8, msg, "z-island-0") != null);
-    try std.testing.expect(std.mem.indexOf(u8, msg, "{\"start\":2}") != null);
-    try std.testing.expect(std.mem.indexOf(u8, msg, "(TS2741)") != null);
+    try std.testing.expect(std.mem.find(u8, msg, "props mismatch on /") != null);
+    try std.testing.expect(std.mem.find(u8, msg, "components/Counter.island.tsx") != null);
+    try std.testing.expect(std.mem.find(u8, msg, "z-island-0") != null);
+    try std.testing.expect(std.mem.find(u8, msg, "{\"start\":2}") != null);
+    try std.testing.expect(std.mem.find(u8, msg, "(TS2741)") != null);
 }
 
 test "run: a type-mismatched prop is reported as a mismatch (needs bun+tsc)" {

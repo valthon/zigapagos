@@ -32,15 +32,15 @@ test "dev control: status text rendering" {
     };
     const text = try renderStatusText(gpa, lf, "{\"ok\":true,\"pid\":4242,\"url\":\"http://127.0.0.1:1990/\",\"started_at\":\"2026-08-07T12:34:56Z\",\"build\":{\"generation\":7,\"status\":\"ok\",\"duration_ms\":412,\"error\":null}}");
     defer gpa.free(text);
-    try std.testing.expect(std.mem.indexOf(u8, text, "http://127.0.0.1:1990/") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "pid 4242") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "background") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "build #7 ok (412 ms)") != null);
+    try std.testing.expect(std.mem.find(u8, text, "http://127.0.0.1:1990/") != null);
+    try std.testing.expect(std.mem.find(u8, text, "pid 4242") != null);
+    try std.testing.expect(std.mem.find(u8, text, "background") != null);
+    try std.testing.expect(std.mem.find(u8, text, "build #7 ok (412 ms)") != null);
 
     // Control server unreachable → status still prints, degraded.
     const degraded = try renderStatusText(gpa, lf, null);
     defer gpa.free(degraded);
-    try std.testing.expect(std.mem.indexOf(u8, degraded, "build: unknown (control server unreachable)") != null);
+    try std.testing.expect(std.mem.find(u8, degraded, "build: unknown (control server unreachable)") != null);
 }
 
 test "dev control: status json rendering wraps running + lockfile + build" {
@@ -58,9 +58,9 @@ test "dev control: status json rendering wraps running + lockfile + build" {
     };
     const json = try renderStatusJson(gpa, lf, "{\"ok\":true,\"pid\":1,\"url\":\"u\",\"started_at\":\"s\",\"build\":{\"generation\":2,\"status\":\"failed\",\"duration_ms\":9,\"error\":\"boom\"}}");
     defer gpa.free(json);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"running\":true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"generation\":2") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"zigbase_pid\":2") != null);
+    try std.testing.expect(std.mem.find(u8, json, "\"running\":true") != null);
+    try std.testing.expect(std.mem.find(u8, json, "\"generation\":2") != null);
+    try std.testing.expect(std.mem.find(u8, json, "\"zigbase_pid\":2") != null);
 }
 
 test "dev control: renderStatusText degrades (never panics) on a malformed control-endpoint body" {
@@ -93,7 +93,7 @@ test "dev control: renderStatusText degrades (never panics) on a malformed contr
     for (bodies) |body| {
         const text = try renderStatusText(gpa, lf, body);
         defer gpa.free(text);
-        try std.testing.expect(std.mem.indexOf(u8, text, degraded_marker) != null);
+        try std.testing.expect(std.mem.find(u8, text, degraded_marker) != null);
     }
 }
 
@@ -116,7 +116,7 @@ test "dev control: renderStatusJson degrades (never panics) when the root isn't 
     for ([_][]const u8{ "[1,2,3]", "{}", "{\"build\":5}" }) |body| {
         const json = try renderStatusJson(gpa, lf, body);
         defer gpa.free(json);
-        try std.testing.expect(std.mem.indexOf(u8, json, "\"running\":true") != null);
+        try std.testing.expect(std.mem.find(u8, json, "\"running\":true") != null);
     }
 }
 
@@ -876,7 +876,7 @@ fn fetchBodyWithTimeout(io: Io, gpa: Allocator, address: Io.net.IpAddress, path:
     }
     if (all.items.len >= 64 * 1024) return error.ResponseTooLarge;
     const raw = all.items;
-    const split = std.mem.indexOf(u8, raw, "\r\n\r\n") orelse return error.MalformedResponse;
+    const split = std.mem.find(u8, raw, "\r\n\r\n") orelse return error.MalformedResponse;
     return gpa.dupe(u8, raw[split + 4 ..]);
 }
 
@@ -1052,7 +1052,7 @@ fn probeHealth(io: Io, gpa: Allocator, host: []const u8, port: u16) bool {
     const addr = Io.net.IpAddress.parse(probeHost(host), port) catch return false;
     const body = fetchBody(io, gpa, addr, "/api/health") catch return false;
     defer gpa.free(body);
-    return std.mem.indexOf(u8, body, "\"status\"") != null;
+    return std.mem.find(u8, body, "\"status\"") != null;
 }
 
 /// Kill an orphaned zigbase recorded in the lockfile — but only after

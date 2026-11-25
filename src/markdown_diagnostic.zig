@@ -169,7 +169,7 @@ test "validate: every Markdown diagnostic bounds primary and related ranges" {
     for ([_][]const u8{ "", "    \n", "last" }) |src| {
         const text = try std.fmt.allocPrint(gpa, "{f}", .{baseline.fmt(4, src, "index.smd")});
         defer gpa.free(text);
-        try std.testing.expect(std.mem.indexOf(u8, text, "first heading") != null);
+        try std.testing.expect(std.mem.find(u8, text, "first heading") != null);
     }
     const nesting: Diagnostic = .{
         .err = .{ .main = ranges[0], .kind = .{ .html = .{
@@ -184,7 +184,7 @@ test "validate: every Markdown diagnostic bounds primary and related ranges" {
     };
     const rendered = try std.fmt.allocPrint(gpa, "{f}", .{nesting});
     defer gpa.free(rendered);
-    try std.testing.expect(std.mem.indexOf(u8, rendered, "invalid nesting: bad nesting") != null);
+    try std.testing.expect(std.mem.find(u8, rendered, "invalid nesting: bad nesting") != null);
     const no_previous: Diagnostic = .{
         .err = .{ .main = ranges[4], .kind = .{ .heading_skip = .{ .have = 3, .last = null } } },
         .src = "",
@@ -193,5 +193,5 @@ test "validate: every Markdown diagnostic bounds primary and related ranges" {
     };
     const heading = try std.fmt.allocPrint(gpa, "{f}", .{no_previous});
     defer gpa.free(heading);
-    try std.testing.expect(std.mem.indexOf(u8, heading, "start at heading level 1") != null);
+    try std.testing.expect(std.mem.find(u8, heading, "start at heading level 1") != null);
 }

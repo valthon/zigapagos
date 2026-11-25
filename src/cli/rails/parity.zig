@@ -312,8 +312,8 @@ fn attrTrue(attrs: []const fragments.Attr, name: []const u8) bool {
 }
 
 fn fieldValue(helper: []const u8, name: []const u8) []const u8 {
-    if (std.mem.eql(u8, helper, "email_field") or std.mem.indexOf(u8, name, "email") != null) return "parity@example.invalid";
-    if (std.mem.eql(u8, helper, "password_field") or std.mem.indexOf(u8, name, "password") != null) return "zigapagos-parity-password";
+    if (std.mem.eql(u8, helper, "email_field") or std.mem.find(u8, name, "email") != null) return "parity@example.invalid";
+    if (std.mem.eql(u8, helper, "password_field") or std.mem.find(u8, name, "password") != null) return "zigapagos-parity-password";
     if (std.mem.eql(u8, helper, "check_box")) return "true";
     return "zigapagos parity";
 }
@@ -486,7 +486,7 @@ pub fn build(gpa: Allocator, discovery: *const rails.Discovery, scaffold_result:
     for (scaffold_result.routes) |outcome| {
         const route = discovery.routes[outcome.route_index];
         if (outcome.status == .migrated and (std.mem.eql(u8, route.verb, "GET") or std.mem.eql(u8, route.verb, "HEAD")) and
-            std.mem.indexOfAny(u8, route.path, ":*") == null)
+            std.mem.findAny(u8, route.path, ":*") == null)
         {
             const presentation = try presentationFor(gpa, discovery, outcome.route_index);
             errdefer {

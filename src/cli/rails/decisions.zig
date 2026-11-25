@@ -610,7 +610,7 @@ fn codedFixture(code: []const u8, id: []const u8, choices: []const []const u8, r
 }
 
 fn expectMessageContains(problem: Problem, needle: []const u8) !void {
-    std.testing.expect(std.mem.indexOf(u8, problem.message, needle) != null) catch |err| {
+    std.testing.expect(std.mem.find(u8, problem.message, needle) != null) catch |err| {
         std.debug.print("expected message to contain \"{s}\", got \"{s}\"\n", .{ needle, problem.message });
         return err;
     };

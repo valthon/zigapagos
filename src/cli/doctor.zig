@@ -591,7 +591,7 @@ fn checkOneLink(
     if (!isLocalLink(value)) return;
 
     var stripped = value;
-    if (std.mem.indexOfAny(u8, stripped, "#?")) |i| stripped = stripped[0..i];
+    if (std.mem.findAny(u8, stripped, "#?")) |i| stripped = stripped[0..i];
 
     var decode_buf: [std.fs.max_path_bytes]u8 = undefined;
     const decoded = percentDecode(&decode_buf, stripped) catch |err| {
@@ -600,8 +600,8 @@ fn checkOneLink(
     };
     // Browser backslash handling and HTML character references are not a
     // filesystem spelling. Do not certify a path under a different spelling.
-    if (std.mem.indexOfAny(u8, stripped, "\\&") != null or
-        std.mem.indexOfAny(u8, decoded, "\\\x00") != null or
+    if (std.mem.findAny(u8, stripped, "\\&") != null or
+        std.mem.findAny(u8, decoded, "\\\x00") != null or
         std.mem.count(u8, stripped, "/") != std.mem.count(u8, decoded, "/"))
     {
         try report(ctx, check_dangling_internal_link, doc.path, "{s} '{s}' uses unsupported path characters; doctor cannot resolve it", .{ attr_name, original });
@@ -689,7 +689,7 @@ pub fn isLocalLink(value: []const u8) bool {
 /// deployment prefix. Caller-buffer contract; no allocation or filesystem IO.
 pub fn localUrlPath(buf: []u8, document: []const u8, prefix: []const u8, path: []const u8) NormalizeError![]const u8 {
     if (isRootRelative(path)) return normalizeLexical(buf, path[1..]);
-    const directory = if (std.mem.lastIndexOfAny(u8, document, "/\\")) |i| document[0 .. i + 1] else "";
+    const directory = if (std.mem.findLastAny(u8, document, "/\\")) |i| document[0 .. i + 1] else "";
     var joined_buf: [std.fs.max_path_bytes]u8 = undefined;
     const joined = if (prefix.len == 0)
         std.mem.print(&joined_buf, "{s}{s}", .{ directory, path })

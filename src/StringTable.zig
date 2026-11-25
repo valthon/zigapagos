@@ -96,14 +96,14 @@ pub const String = enum(u32) {
         }
 
         pub fn hash(_: @This(), adapted_key: []const u8) u64 {
-            assert(mem.indexOfScalar(u8, adapted_key, 0) == null);
+            assert(mem.findScalar(u8, adapted_key, 0) == null);
             return std.hash_map.hashString(adapted_key);
         }
     };
 
     pub fn slice(index: String, st: *const StringTable) [:0]const u8 {
         const start_slice = st.string_bytes.items[@backingInt(index)..];
-        return start_slice[0..mem.indexOfScalar(u8, start_slice, 0).? :0];
+        return start_slice[0..mem.findScalar(u8, start_slice, 0).? :0];
     }
 };
 

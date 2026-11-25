@@ -92,7 +92,7 @@ test "a non-entrypoint file under app/javascript/ is a js_module, not a js_entry
 }
 
 fn basename(path: []const u8) []const u8 {
-    const slash = std.mem.lastIndexOfScalar(u8, path, '/') orelse return path;
+    const slash = std.mem.findScalarLast(u8, path, '/') orelse return path;
     return path[slash + 1 ..];
 }
 
@@ -131,13 +131,13 @@ pub fn classify(rel_path: []const u8) Kind {
         if (basename(rel_path).len > 0 and basename(rel_path)[0] == '_') return .partial;
         if (std.mem.startsWith(u8, rel_path, "app/views/layouts/")) return .layout;
         const rest = rel_path["app/views/".len..];
-        if (std.mem.lastIndexOfScalar(u8, rest, '/')) |slash| {
+        if (std.mem.findScalarLast(u8, rest, '/')) |slash| {
             // A mailer renders from the directory named after it, which is the
             // LAST segment before the template: `Admin::UserMailer` renders
             // from `app/views/admin/user_mailer/`. Checking the first segment
             // instead sees `admin` and misses every namespaced mailer.
             const dir = rest[0..slash];
-            const leaf = if (std.mem.lastIndexOfScalar(u8, dir, '/')) |cut| dir[cut + 1 ..] else dir;
+            const leaf = if (std.mem.findScalarLast(u8, dir, '/')) |cut| dir[cut + 1 ..] else dir;
             if (std.mem.endsWith(u8, leaf, "_mailer")) return .mailer_view;
         }
         return .view;
@@ -156,7 +156,7 @@ pub fn classify(rel_path: []const u8) Kind {
     }
     if (std.mem.startsWith(u8, rel_path, "app/javascript/")) {
         const rest = rel_path["app/javascript/".len..];
-        const is_direct_child = std.mem.indexOfScalar(u8, rest, '/') == null;
+        const is_direct_child = std.mem.findScalar(u8, rest, '/') == null;
         // Matches the jsbundling-rails convention: only a top-level file
         // directly under app/javascript/ is a built entrypoint. Everything
         // else (nested files, and top-level files with no script

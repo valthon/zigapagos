@@ -525,7 +525,7 @@ fn analyzeBuiltins(comptime T: type) []const Builtin {
 /// false positive costs a slightly-less-precise parameter type on one row, and
 /// there is no other way to ask "would this decl compile?".
 fn isDirectiveSetter(comptime D: type) bool {
-    return std.mem.indexOf(u8, @typeName(D), "directiveBuiltin") != null;
+    return std.mem.find(u8, @typeName(D), "directiveBuiltin") != null;
 }
 
 /// The parameter type of a `directiveBuiltin` setter, recovered from the field
@@ -621,8 +621,8 @@ fn shortTypeName(comptime T: type) []const u8 {
     // A generic instantiation's name carries its arguments —
     // `superhtml.utils.Ctx(context.Value)` — and the last dot is inside those.
     // Cut at the first '(' before looking for it.
-    const head = full[0 .. std.mem.indexOfScalar(u8, full, '(') orelse full.len];
-    const dot = std.mem.lastIndexOfScalar(u8, head, '.') orelse return head;
+    const head = full[0 .. std.mem.findScalar(u8, full, '(') orelse full.len];
+    const dot = std.mem.findScalarLast(u8, head, '.') orelse return head;
     return head[dot + 1 ..];
 }
 

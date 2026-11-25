@@ -815,7 +815,7 @@ test "an unrecognized unresolved code is not dropped: it folds into detail under
 
     try std.testing.expectEqual(@as(usize, 1), blocker_list.items.len);
     try std.testing.expectEqualStrings("RAILS_ROUTE_UNRESOLVED", blocker_list.items[0].code);
-    try std.testing.expect(std.mem.indexOf(u8, blocker_list.items[0].detail, "RAILS_ROUTE_FUTURE_THING") != null);
+    try std.testing.expect(std.mem.find(u8, blocker_list.items[0].detail, "RAILS_ROUTE_FUTURE_THING") != null);
     try std.testing.expect(!blocker_list.items[0].integrity);
     // The fallback bucket is still a per-route finding, not a wholesale
     // failure -- warn, same as every other member of the unresolved family.
@@ -963,7 +963,7 @@ test "discoverRoutes: ZIGAPAGOS_RUBY pointing at a nonexistent binary yields RAI
     // locations emit different manifest bytes for the same blocker. The
     // interpreter is still named, but only in free-text `detail`.
     try std.testing.expectEqualStrings("sidecar/rails/analyze.rb", blocker_list.items[0].path);
-    try std.testing.expect(std.mem.indexOf(u8, blocker_list.items[0].detail, "/nonexistent/ruby-binary-does-not-exist-xyz") != null);
+    try std.testing.expect(std.mem.find(u8, blocker_list.items[0].detail, "/nonexistent/ruby-binary-does-not-exist-xyz") != null);
     // Non-integrity: see the module doc -- a missing interpreter means no
     // route graph, not an untrustworthy inventory.
     try std.testing.expect(!blocker_list.items[0].integrity);
@@ -1061,8 +1061,8 @@ test "discoverRoutes: ZIGAPAGOS_RUNTIME_DIR with no sidecar/rails/analyze.rb yie
     // different report bytes on two machines. It is not lost: it moves into
     // `detail`, which carries no determinism contract.
     try std.testing.expectEqualStrings("sidecar/rails/analyze.rb", blocker_list.items[0].path);
-    try std.testing.expect(std.mem.indexOf(u8, blocker_list.items[0].detail, runtime_dir_abs) != null);
-    try std.testing.expect(std.mem.indexOf(u8, blocker_list.items[0].detail, "FileNotFound") != null);
+    try std.testing.expect(std.mem.find(u8, blocker_list.items[0].detail, runtime_dir_abs) != null);
+    try std.testing.expect(std.mem.find(u8, blocker_list.items[0].detail, "FileNotFound") != null);
     // Non-integrity: see the module doc -- a missing sidecar script means no
     // route graph, not an untrustworthy inventory.
     try std.testing.expect(!blocker_list.items[0].integrity);

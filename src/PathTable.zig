@@ -354,7 +354,7 @@ pub const Path = enum(u32) {
         }
 
         pub fn hash(_: @This(), adapted_key: []const u8) u64 {
-            assert(mem.indexOfScalar(
+            assert(mem.findScalar(
                 String,
                 @alignCast(mem.bytesAsSlice(String, adapted_key)),
                 @fromBackingInt(@intCast(0)),
@@ -365,7 +365,7 @@ pub const Path = enum(u32) {
 
     pub fn slice(index: Path, pt: *const PathTable) []const String {
         const start_slice = pt.path_components.items[@backingInt(index)..];
-        return start_slice[0..mem.indexOfScalar(String, start_slice, @fromBackingInt(@intCast(0))).?];
+        return start_slice[0..mem.findScalar(String, start_slice, @fromBackingInt(@intCast(0))).?];
     }
 
     // pub fn bytesSlice(

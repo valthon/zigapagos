@@ -70,14 +70,14 @@ pub fn collectClientUsages(
 ) !void {
     const needle = "client:";
     var i: usize = 0;
-    while (std.mem.indexOfPos(u8, src, i, needle)) |pos| {
+    while (std.mem.findPos(u8, src, i, needle)) |pos| {
         i = pos + needle.len;
         const tag = tagOpeningAt(src, pos) orelse continue;
         // Components are Capitalised; lowercase tags are plain HTML elements.
         if (tag.len == 0 or !std.ascii.isUpper(tag[0])) continue;
         // Use the last dotted segment as the bare name (`ui.Button` → `Button`).
         var name = tag;
-        if (std.mem.lastIndexOfScalar(u8, name, '.')) |d| name = name[d + 1 ..];
+        if (std.mem.findScalarLast(u8, name, '.')) |d| name = name[d + 1 ..];
         if (name.len == 0 or !std.ascii.isUpper(name[0])) continue;
         if (set.contains(name)) continue;
         try set.put(gpa, try gpa.dupe(u8, name), {});
@@ -93,16 +93,16 @@ pub fn detectPaginate(path: []const u8, src: []const u8) ?PaginateSpec {
     const pages_prefix = "src/pages/";
     if (!std.mem.startsWith(u8, path, pages_prefix)) return null;
     const rel = path[pages_prefix.len..];
-    const basename = if (std.mem.lastIndexOfScalar(u8, rel, '/')) |i| rel[i + 1 ..] else rel;
+    const basename = if (std.mem.findScalarLast(u8, rel, '/')) |i| rel[i + 1 ..] else rel;
     const route_form: @FieldType(PaginateSpec, "route_form") =
         if (std.mem.eql(u8, basename, "[...page].astro")) .rest else if (std.mem.eql(u8, basename, "[page].astro")) .numbered else return null;
-    const section = if (std.mem.lastIndexOfScalar(u8, rel, '/')) |i| rel[0..i] else "";
+    const section = if (std.mem.findScalarLast(u8, rel, '/')) |i| rel[0..i] else "";
 
     // Scope to the leading frontmatter fence: nothing in the template body
     // counts. The fence is `---\n ... \n---`.
     const fence = frontmatterFence(src) orelse return null;
-    if (std.mem.indexOf(u8, fence, "getStaticPaths") == null) return null;
-    const paginate_idx = std.mem.indexOf(u8, fence, "paginate(") orelse return null;
+    if (std.mem.find(u8, fence, "getStaticPaths") == null) return null;
+    const paginate_idx = std.mem.find(u8, fence, "paginate(") orelse return null;
 
     // `pageSize` must be searched from the `paginate(` call onward, not the
     // whole fence: a fence can carry earlier text that also contains the
@@ -111,7 +111,7 @@ pub fn detectPaginate(path: []const u8, src: []const u8) ?PaginateSpec {
     // take THAT occurrence instead of the one inside `paginate(...)`.
     var page_size: u32 = 10; // Astro's documented default
     var literal = true;
-    if (std.mem.indexOf(u8, fence[paginate_idx..], "pageSize")) |rel_i| {
+    if (std.mem.find(u8, fence[paginate_idx..], "pageSize")) |rel_i| {
         var j = paginate_idx + rel_i + "pageSize".len;
         while (j < fence.len and (fence[j] == ':' or fence[j] == ' ' or fence[j] == '\t')) j += 1;
         var k = j;
@@ -155,10 +155,10 @@ pub fn paginateNote(w: anytype, spec: PaginateSpec) !void {
 /// has no complete fence. New helper: nothing in this module scoped to
 /// the fence before.
 fn frontmatterFence(src: []const u8) ?[]const u8 {
-    const trimmed_start = std.mem.indexOf(u8, src, "---") orelse return null;
+    const trimmed_start = std.mem.find(u8, src, "---") orelse return null;
     if (trimmed_start != 0 and !std.mem.eql(u8, std.mem.trimStart(u8, src[0..trimmed_start], " \t\r\n"), "")) return null;
     const body_start = trimmed_start + 3;
-    const rel_end = std.mem.indexOf(u8, src[body_start..], "\n---") orelse return null;
+    const rel_end = std.mem.find(u8, src[body_start..], "\n---") orelse return null;
     return src[body_start .. body_start + rel_end];
 }
 
@@ -205,8 +205,8 @@ pub fn componentRole(path: []const u8, island_names: *const std.StringHashMapUnm
 /// "src/components/Counter.astro" -> "Counter".
 pub fn moduleName(path: []const u8) []const u8 {
     var name = path;
-    if (std.mem.lastIndexOfScalar(u8, name, '/')) |s| name = name[s + 1 ..];
-    if (std.mem.lastIndexOfScalar(u8, name, '.')) |d| name = name[0..d];
+    if (std.mem.findScalarLast(u8, name, '/')) |s| name = name[s + 1 ..];
+    if (std.mem.findScalarLast(u8, name, '.')) |d| name = name[0..d];
     return name;
 }
 
@@ -236,12 +236,12 @@ fn findPropsBlock(src: []const u8) ?[]const u8 {
     };
     var start: ?usize = null;
     for (patterns) |pat| {
-        if (std.mem.indexOf(u8, src, pat)) |idx| {
+        if (std.mem.find(u8, src, pat)) |idx| {
             if (start == null or idx < start.?) start = idx;
         }
     }
     const s = start orelse return null;
-    const brace = std.mem.indexOfScalarPos(u8, src, s, '{') orelse return null;
+    const brace = std.mem.findScalarPos(u8, src, s, '{') orelse return null;
     var depth: usize = 0;
     var j: usize = brace;
     while (j < src.len) : (j += 1) {
@@ -269,12 +269,12 @@ pub fn findPropsSpan(src: []const u8) ?[]const u8 {
     };
     var start: ?usize = null;
     for (patterns) |pat| {
-        if (std.mem.indexOf(u8, src, pat)) |idx| {
+        if (std.mem.find(u8, src, pat)) |idx| {
             if (start == null or idx < start.?) start = idx;
         }
     }
     const s = start orelse return null;
-    const brace = std.mem.indexOfScalarPos(u8, src, s, '{') orelse return null;
+    const brace = std.mem.findScalarPos(u8, src, s, '{') orelse return null;
     var depth: usize = 0;
     var j: usize = brace;
     while (j < src.len) : (j += 1) {
@@ -310,12 +310,12 @@ fn parsePropsBlock(gpa: Allocator, block: []const u8) ![]PropField {
         // Split name from type at the first top-level ':'.
         const colon = topLevelColon(entry) orelse continue;
         var name = std.mem.trim(u8, entry[0..colon], " \t?\r\n"); // strip optional marker
-        if (std.mem.indexOfScalar(u8, name, '[')) |bi| name = name[0..bi];
+        if (std.mem.findScalar(u8, name, '[')) |bi| name = name[0..bi];
         name = std.mem.trim(u8, name, " \t");
         if (!isIdent(name)) continue;
         // Type is everything after ':' minus a trailing `//` comment.
         var type_str = entry[colon + 1 ..];
-        if (std.mem.indexOf(u8, type_str, "//")) |ci| type_str = type_str[0..ci];
+        if (std.mem.find(u8, type_str, "//")) |ci| type_str = type_str[0..ci];
         type_str = std.mem.trim(u8, type_str, " \t\r\n,");
         if (type_str.len == 0) continue;
         const name_copy = try gpa.dupe(u8, name);
@@ -386,7 +386,7 @@ fn isIdent(s: []const u8) bool {
 /// No type information available — ts_type is left empty.
 fn parseDestructuring(gpa: Allocator, src: []const u8) ![]PropField {
     const needle = "Astro.props";
-    const pos = std.mem.indexOf(u8, src, needle) orelse return &.{};
+    const pos = std.mem.find(u8, src, needle) orelse return &.{};
     var open: ?usize = null;
     var j: usize = pos;
     while (j > 0) : (j -= 1) {
@@ -397,7 +397,7 @@ fn parseDestructuring(gpa: Allocator, src: []const u8) ![]PropField {
         if (src[j] == '\n') break;
     }
     const ob = open orelse return &.{};
-    const cb = std.mem.indexOfScalarPos(u8, src, ob, '}') orelse return &.{};
+    const cb = std.mem.findScalarPos(u8, src, ob, '}') orelse return &.{};
     const inner = src[ob + 1 .. cb];
     var fields: std.ArrayListUnmanaged(PropField) = .empty;
     errdefer {
@@ -407,8 +407,8 @@ fn parseDestructuring(gpa: Allocator, src: []const u8) ![]PropField {
     var it = std.mem.splitScalar(u8, inner, ',');
     while (it.next()) |raw| {
         var name = std.mem.trim(u8, raw, " \t\r\n");
-        if (std.mem.indexOfScalar(u8, name, '=')) |ei| name = name[0..ei];
-        if (std.mem.indexOfScalar(u8, name, ':')) |ci| name = name[0..ci];
+        if (std.mem.findScalar(u8, name, '=')) |ei| name = name[0..ei];
+        if (std.mem.findScalar(u8, name, ':')) |ci| name = name[0..ci];
         name = std.mem.trim(u8, name, " \t");
         if (!isIdent(name)) continue;
         const name_copy = try gpa.dupe(u8, name);
@@ -487,7 +487,7 @@ pub fn extractImports(gpa: Allocator, src: []const u8) ![]ImportStmt {
 
     while (i < src.len) {
         const kw = "import";
-        const pos = std.mem.indexOfPos(u8, src, i, kw) orelse break;
+        const pos = std.mem.findPos(u8, src, i, kw) orelse break;
 
         // Statement boundary: position 0, or preceded by \n / ; / whitespace.
         if (pos > 0) {
@@ -513,8 +513,8 @@ pub fn extractImports(gpa: Allocator, src: []const u8) ![]ImportStmt {
 
         // Fix 2: skip 'import' tokens that appear after '//' on the same line.
         {
-            const line_start: usize = if (std.mem.lastIndexOfScalar(u8, src[0..pos], '\n')) |nl| nl + 1 else 0;
-            if (std.mem.indexOf(u8, src[line_start..pos], "//") != null) {
+            const line_start: usize = if (std.mem.findScalarLast(u8, src[0..pos], '\n')) |nl| nl + 1 else 0;
+            if (std.mem.find(u8, src[line_start..pos], "//") != null) {
                 i = pos + kw.len;
                 continue;
             }
@@ -590,7 +590,7 @@ pub fn extractImports(gpa: Allocator, src: []const u8) ![]ImportStmt {
         } else if (src[i] != '*') {
             // Combined default+named: `import Default, { named1, named2 } from …`
             // Scan forward to the ' from ' boundary looking for a ', {' sequence.
-            const scan_limit = std.mem.indexOfPos(u8, src, i, " from ") orelse src.len;
+            const scan_limit = std.mem.findPos(u8, src, i, " from ") orelse src.len;
             var scan = i;
             while (scan < scan_limit) : (scan += 1) {
                 if (src[scan] == ',') {
@@ -622,7 +622,7 @@ pub fn extractImports(gpa: Allocator, src: []const u8) ![]ImportStmt {
 
         // Find the "from " keyword to reach the specifier.
         const from_needle = "from ";
-        const from_pos = std.mem.indexOfPos(u8, src, i, from_needle) orelse continue;
+        const from_pos = std.mem.findPos(u8, src, i, from_needle) orelse continue;
         i = from_pos + from_needle.len;
 
         // Skip whitespace between "from" and the opening quote.
@@ -641,7 +641,7 @@ pub fn extractImports(gpa: Allocator, src: []const u8) ![]ImportStmt {
                 var entry = std.mem.trim(u8, raw, " \t\r\n");
                 if (entry.len == 0) continue;
                 // Strip alias:  `useTransition as ut`  →  `useTransition`
-                if (std.mem.indexOf(u8, entry, " as ")) |as_pos| {
+                if (std.mem.find(u8, entry, " as ")) |as_pos| {
                     entry = entry[0..as_pos];
                 }
                 entry = std.mem.trim(u8, entry, " \t");
@@ -825,12 +825,12 @@ pub fn analyze(gpa: Allocator, component: []const u8, src: []const u8) !PortRepo
             try shared_out.append(gpa, .{ .symbol = nm, .target = tgt });
         };
     }
-    for (host_smells) |hs| if (std.mem.indexOf(u8, src, hs.pat) != null) {
+    for (host_smells) |hs| if (std.mem.find(u8, src, hs.pat) != null) {
         try host_needs_out.append(gpa, .{ .smell = hs.pat, .binding = hs.binding });
     };
     return .{
         .component = component,
-        .has_default_export = std.mem.indexOf(u8, src, "export default") != null,
+        .has_default_export = std.mem.find(u8, src, "export default") != null,
         .hooks = try hooks.toOwnedSlice(gpa),
         .host_needs = try host_needs_out.toOwnedSlice(gpa),
         .imports = try imports_out.toOwnedSlice(gpa),
@@ -1023,8 +1023,8 @@ const testing = std.testing;
 
 test "capabilities section: shipped host bindings are listed Supported, not as gaps" {
     const sec = capabilities_section;
-    const supported_start = std.mem.indexOf(u8, sec, "Supported:").?;
-    const gaps_start = std.mem.indexOf(u8, sec, "Gaps (use workarounds):").?;
+    const supported_start = std.mem.find(u8, sec, "Supported:").?;
+    const gaps_start = std.mem.find(u8, sec, "Gaps (use workarounds):").?;
     const supported = sec[supported_start..gaps_start];
     const gaps = sec[gaps_start..];
 
@@ -1035,13 +1035,13 @@ test "capabilities section: shipped host bindings are listed Supported, not as g
         "fetchShared", "useVariant", "host.cookies", "pagination",
     };
     for (shipped) |cap| {
-        try testing.expect(std.mem.indexOf(u8, supported, cap) != null);
-        try testing.expect(std.mem.indexOf(u8, gaps, cap) == null);
+        try testing.expect(std.mem.find(u8, supported, cap) != null);
+        try testing.expect(std.mem.find(u8, gaps, cap) == null);
     }
 
     // And a couple of genuine gaps must still be listed as gaps.
-    try testing.expect(std.mem.indexOf(u8, gaps, "[slug]") != null);
-    try testing.expect(std.mem.indexOf(u8, gaps, "streaming") != null);
+    try testing.expect(std.mem.find(u8, gaps, "[slug]") != null);
+    try testing.expect(std.mem.find(u8, gaps, "streaming") != null);
 }
 
 test "island detection: only components used with client:* are islands" {
@@ -1171,8 +1171,8 @@ test "findPropsSpan: returns verbatim interface text" {
     const span = findPropsSpan(src).?;
     try testing.expect(std.mem.startsWith(u8, span, "interface Props"));
     try testing.expect(std.mem.endsWith(u8, span, "}"));
-    try testing.expect(std.mem.indexOf(u8, span, "headline: string") != null);
-    try testing.expect(std.mem.indexOf(u8, span, "count: number") != null);
+    try testing.expect(std.mem.find(u8, span, "headline: string") != null);
+    try testing.expect(std.mem.find(u8, span, "count: number") != null);
 }
 
 fn freeProps(gpa: Allocator, props: []PropField) void {
@@ -1256,10 +1256,10 @@ test "classifyImport base allowed-set is pinned to lint-island-imports.ts BASE_A
         std.Io.Limit.limited(64 * 1024),
     );
     defer testing.allocator.free(lint);
-    try testing.expect(std.mem.indexOf(u8, lint, "@z\\/runtime") != null);
-    try testing.expect(std.mem.indexOf(u8, lint, "\\.\\.?\\/") != null); // the relative pattern
+    try testing.expect(std.mem.find(u8, lint, "@z\\/runtime") != null);
+    try testing.expect(std.mem.find(u8, lint, "\\.\\.?\\/") != null); // the relative pattern
     // The hardcoded first-party scope must be GONE from the lint (now project config).
-    try testing.expect(std.mem.indexOf(u8, lint, "@your-org\\/shared-lite") == null);
+    try testing.expect(std.mem.find(u8, lint, "@your-org\\/shared-lite") == null);
 }
 
 test "extractImports: single-line, multi-line, default, namespace, side-effect" {
@@ -1339,7 +1339,7 @@ fn hookSupported(rep: PortReport, name: []const u8) bool {
 }
 
 fn hasHostSmell(rep: PortReport, pat: []const u8) bool {
-    for (rep.host_needs) |hn| if (std.mem.indexOf(u8, hn.smell, pat) != null) return true;
+    for (rep.host_needs) |hn| if (std.mem.find(u8, hn.smell, pat) != null) return true;
     return false;
 }
 
@@ -1383,10 +1383,10 @@ test "analyze: ContactForm-shaped component — hooks, host needs, imports, shar
     try testing.expect(hasHostSmell(rep, "matchMedia"));
     // imports: react→rewrite, react-google-recaptcha→forbidden with a shim suggestion
     try testing.expect(importClassIs(rep, "react-google-recaptcha", .forbidden_npm));
-    try testing.expect(std.mem.indexOf(u8, importSuggested(rep, "react-google-recaptcha"), "@z/runtime/compat") != null);
+    try testing.expect(std.mem.find(u8, importSuggested(rep, "react-google-recaptcha"), "@z/runtime/compat") != null);
     // shared: FlagsProvider + useCustomer mapped
-    try testing.expect(std.mem.indexOf(u8, sharedTarget(rep, "FlagsProvider"), "@z/runtime/compat") != null);
-    try testing.expect(std.mem.indexOf(u8, sharedTarget(rep, "useCustomer"), "@your-org/shared-lite") != null);
+    try testing.expect(std.mem.find(u8, sharedTarget(rep, "FlagsProvider"), "@z/runtime/compat") != null);
+    try testing.expect(std.mem.find(u8, sharedTarget(rep, "useCustomer"), "@your-org/shared-lite") != null);
     // one guardrail violation (react-google-recaptcha)
     try testing.expectEqual(@as(usize, 1), rep.violations());
 }
@@ -1402,7 +1402,7 @@ test "supported-hook set is pinned to runtime/src/index.ts" {
     );
     defer testing.allocator.free(index_ts);
     for (supported_hooks) |hook| {
-        try testing.expect(std.mem.indexOf(u8, index_ts, hook) != null);
+        try testing.expect(std.mem.find(u8, index_ts, hook) != null);
     }
 }
 
@@ -1414,14 +1414,14 @@ test "renderDoctorHuman: checklist contains hooks, host needs, imports, violatio
     var aw: std.Io.Writer.Allocating = .init(a);
     try renderDoctorHuman(&aw.writer, rep);
     const out = aw.written();
-    try testing.expect(std.mem.indexOf(u8, out, "Port doctor: ContactForm") != null);
-    try testing.expect(std.mem.indexOf(u8, out, "useState") != null);
-    try testing.expect(std.mem.indexOf(u8, out, "useId") != null);
-    try testing.expect(std.mem.indexOf(u8, out, "rework") != null); // useId unsupported
-    try testing.expect(std.mem.indexOf(u8, out, "host.fetchOpts") != null); // fetch host-need
-    try testing.expect(std.mem.indexOf(u8, out, "FORBIDDEN") != null);
-    try testing.expect(std.mem.indexOf(u8, out, "@z/runtime/compat") != null); // recaptcha shim hint
-    try testing.expect(std.mem.indexOf(u8, out, "1 guardrail violation") != null);
+    try testing.expect(std.mem.find(u8, out, "Port doctor: ContactForm") != null);
+    try testing.expect(std.mem.find(u8, out, "useState") != null);
+    try testing.expect(std.mem.find(u8, out, "useId") != null);
+    try testing.expect(std.mem.find(u8, out, "rework") != null); // useId unsupported
+    try testing.expect(std.mem.find(u8, out, "host.fetchOpts") != null); // fetch host-need
+    try testing.expect(std.mem.find(u8, out, "FORBIDDEN") != null);
+    try testing.expect(std.mem.find(u8, out, "@z/runtime/compat") != null); // recaptcha shim hint
+    try testing.expect(std.mem.find(u8, out, "1 guardrail violation") != null);
 }
 
 test "renderDoctorHuman: pagination line appears when detectPaginate fires (same sentence as the worklist)" {
@@ -1436,9 +1436,9 @@ test "renderDoctorHuman: pagination line appears when detectPaginate fires (same
     var aw: std.Io.Writer.Allocating = .init(a);
     try renderDoctorHuman(&aw.writer, rep);
     const out = aw.written();
-    try testing.expect(std.mem.indexOf(u8, out, "## Pagination") != null);
-    try testing.expect(std.mem.indexOf(u8, out, "delete the route file") != null);
-    try testing.expect(std.mem.indexOf(u8, out, "content/blog/index.smd") != null);
+    try testing.expect(std.mem.find(u8, out, "## Pagination") != null);
+    try testing.expect(std.mem.find(u8, out, "delete the route file") != null);
+    try testing.expect(std.mem.find(u8, out, "content/blog/index.smd") != null);
 }
 
 test "renderDoctorJson: valid-ish JSON with escaped strings + violation count" {
@@ -1449,9 +1449,9 @@ test "renderDoctorJson: valid-ish JSON with escaped strings + violation count" {
     var aw: std.Io.Writer.Allocating = .init(a);
     try renderDoctorJson(&aw.writer, rep);
     const out = aw.written();
-    try testing.expect(std.mem.indexOf(u8, out, "\"component\": \"ContactForm\"") != null);
-    try testing.expect(std.mem.indexOf(u8, out, "\"guardrailViolations\": 1") != null);
-    try testing.expect(std.mem.indexOf(u8, out, "\"class\": \"forbidden_npm\"") != null);
+    try testing.expect(std.mem.find(u8, out, "\"component\": \"ContactForm\"") != null);
+    try testing.expect(std.mem.find(u8, out, "\"guardrailViolations\": 1") != null);
+    try testing.expect(std.mem.find(u8, out, "\"class\": \"forbidden_npm\"") != null);
 }
 
 test "writeJsonString escapes quotes and backslashes" {
@@ -1707,7 +1707,7 @@ fn hexoMappingScalar(raw: []const u8) bool {
         }
         return true;
     }
-    if (std.mem.indexOfScalar(u8, "[],{}&*!|>%@`", value[0]) != null) return false;
+    if (std.mem.findScalar(u8, "[],{}&*!|>%@`", value[0]) != null) return false;
     if ((value[0] == '-' or value[0] == '?' or value[0] == ':') and
         (value.len == 1 or value[1] == ' ' or value[1] == '\t')) return false;
     for (value, 0..) |c, i| {
@@ -1728,7 +1728,7 @@ fn hexoMappingPrefix(raw: []const u8) bool {
         const trimmed = std.mem.trim(u8, line, " \t\r");
         if (trimmed.len == 0 or trimmed[0] == '#') continue;
         if (line[0] == ' ' or line[0] == '\t') return false;
-        const colon = std.mem.indexOfScalar(u8, trimmed, ':') orelse return false;
+        const colon = std.mem.findScalar(u8, trimmed, ':') orelse return false;
         if (colon + 1 < trimmed.len and trimmed[colon + 1] != ' ' and trimmed[colon + 1] != '\t') return false;
         const key = std.mem.trimEnd(u8, trimmed[0..colon], " \t");
         if (key.len == 0 or (!std.ascii.isAlphabetic(key[0]) and key[0] != '_')) return false;
@@ -1757,7 +1757,7 @@ fn contentBoolean(value: []const u8, yaml: bool) ?bool {
 /// The converter reads scalar mappings, rather than evaluating language engines.
 pub fn parseContentFields(src: []const u8, source: ContentSource) ContentFields {
     var result: ContentFields = .{ .body = src };
-    const first_end = std.mem.indexOfScalar(u8, src, '\n') orelse src.len;
+    const first_end = std.mem.findScalar(u8, src, '\n') orelse src.len;
     const first = std.mem.trimEnd(u8, src[0..first_end], " \t\r");
     // Language names start with a letter; additional hyphens alone are a
     // Markdown thematic break, not an executable front-matter opener.
@@ -1779,7 +1779,7 @@ pub fn parseContentFields(src: []const u8, source: ContentSource) ContentFields 
     var cursor = if (fenceless) if (first_end < src.len) first_end + 1 else src.len else opening_end;
     var closing_start: ?usize = null;
     while (cursor <= src.len) {
-        const line_end = std.mem.indexOfScalarPos(u8, src, cursor, '\n') orelse src.len;
+        const line_end = std.mem.findScalarPos(u8, src, cursor, '\n') orelse src.len;
         const line = std.mem.trimEnd(u8, src[cursor..line_end], "\r");
         // rFrontMatterNew matches a run of >= 3 hyphens at column zero,
         // without requiring a newline after the run (---Body is accepted).
@@ -1816,8 +1816,8 @@ pub fn parseContentFields(src: []const u8, source: ContentSource) ContentFields 
     while (lines.next()) |raw_line| {
         const line = std.mem.trim(u8, raw_line, " \t\r");
         if (line.len == 0 or line[0] == '#') continue;
-        const colon = std.mem.indexOfScalar(u8, line, ':');
-        const equals = std.mem.indexOfScalar(u8, line, '=');
+        const colon = std.mem.findScalar(u8, line, ':');
+        const equals = std.mem.findScalar(u8, line, '=');
         const sep = if (colon) |c| if (equals) |e| @min(c, e) else c else equals orelse {
             result.has_unconverted = true;
             continue;

@@ -609,10 +609,10 @@ test "combineRuby: three ops, three different versions -> exactly ONE blocker na
     try std.testing.expectEqualStrings("3.3.6", info.version().?);
     try std.testing.expectEqual(@as(usize, 1), blocker_list.items.len);
     const detail = blocker_list.items[0].detail;
-    try std.testing.expect(std.mem.indexOf(u8, detail, "3.3.6") != null);
-    try std.testing.expect(std.mem.indexOf(u8, detail, "3.4.1") != null);
-    try std.testing.expect(std.mem.indexOf(u8, detail, "3.4.10") != null);
-    try std.testing.expect(std.mem.indexOf(u8, detail, "templates op") != null);
+    try std.testing.expect(std.mem.find(u8, detail, "3.3.6") != null);
+    try std.testing.expect(std.mem.find(u8, detail, "3.4.1") != null);
+    try std.testing.expect(std.mem.find(u8, detail, "3.4.10") != null);
+    try std.testing.expect(std.mem.find(u8, detail, "templates op") != null);
 }
 
 // The other shape of a three-op mismatch: the two ops that ANSWER agree,
@@ -750,8 +750,8 @@ test "combineRuby: both ops answered with DIFFERENT versions -> a warn, non-inte
     try std.testing.expectEqualStrings("sidecar/rails/analyze.rb", blocker_list.items[0].path);
     try std.testing.expectEqual(blockers.Severity.warn, blocker_list.items[0].severity);
     try std.testing.expect(!blocker_list.items[0].integrity);
-    try std.testing.expect(std.mem.indexOf(u8, blocker_list.items[0].detail, "3.3.6") != null);
-    try std.testing.expect(std.mem.indexOf(u8, blocker_list.items[0].detail, "3.4.1") != null);
+    try std.testing.expect(std.mem.find(u8, blocker_list.items[0].detail, "3.3.6") != null);
+    try std.testing.expect(std.mem.find(u8, blocker_list.items[0].detail, "3.4.1") != null);
 }
 
 // Fix round (task-2-3-fixes.md item 2): the sibling "RubyInfo.version..."
@@ -1814,7 +1814,7 @@ fn resolveViewEntry(entries: []const inventory.Entry, controller: []const u8, ac
         if (e.kind != .view and e.kind != .mailer_view) continue;
         if (!matchesRouteView(e.path, controller, action)) continue;
         if (e.engine == .jbuilder or e.engine == .builder) continue;
-        if (std.mem.indexOf(u8, e.path, ".html.") != null) {
+        if (std.mem.find(u8, e.path, ".html.") != null) {
             if (html_match == null) html_match = e;
         } else if (other_match == null) {
             other_match = e;
@@ -1828,7 +1828,7 @@ fn resolveViewEntry(entries: []const inventory.Entry, controller: []const u8, ac
 /// no-slash `render` target (e.g. `"post"`) resolves relative to. Contract
 /// 3 (caller-buffer): returns a slice into `path`, allocates nothing.
 fn templateDirOf(path: []const u8) []const u8 {
-    const slash = std.mem.lastIndexOfScalar(u8, path, '/') orelse return path;
+    const slash = std.mem.findScalarLast(u8, path, '/') orelse return path;
     return path[0..slash];
 }
 
@@ -1855,7 +1855,7 @@ fn matchesLayoutFor(entries: []const inventory.Entry, name: []const u8) ?invento
     for (entries) |e| {
         if (e.kind != .layout) continue;
         if (!matchesLayoutName(e.path, name)) continue;
-        if (std.mem.indexOf(u8, e.path, ".html.") != null) {
+        if (std.mem.find(u8, e.path, ".html.") != null) {
             if (html_match == null) html_match = e;
         } else if (other_match == null) {
             other_match = e;
@@ -1967,7 +1967,7 @@ fn matchesPartialTarget(path: []const u8, containing_dir: []const u8, target: []
 
     var dir: []const u8 = undefined;
     var name: []const u8 = undefined;
-    if (std.mem.lastIndexOfScalar(u8, target, '/')) |slash| {
+    if (std.mem.findScalarLast(u8, target, '/')) |slash| {
         dir = target[0..slash];
         name = target[slash + 1 ..];
     } else {
@@ -4302,8 +4302,8 @@ test "discover: the fixture's assets discriminate -- logo.png is deterministic, 
     // The non-deterministic asset's reason is visible in the rendered
     // report, not just in the in-memory `Discovery.assets` this test reads
     // directly -- a human running `zigapagos migrate` sees the same fact.
-    try std.testing.expect(std.mem.indexOf(u8, d.report, "RAILS_ASSET_DIGEST_UNAVAILABLE") != null);
-    try std.testing.expect(std.mem.indexOf(u8, d.report, "app/assets/stylesheets/application.css.erb") != null);
+    try std.testing.expect(std.mem.find(u8, d.report, "RAILS_ASSET_DIGEST_UNAVAILABLE") != null);
+    try std.testing.expect(std.mem.find(u8, d.report, "app/assets/stylesheets/application.css.erb") != null);
 }
 
 test "discover: reachability -- source.version, per-route source{file,line}/certain, and per-template stimulus_controllers are all present on a real Discovery, not merely produced somewhere" {
@@ -4339,7 +4339,7 @@ test "discover: reachability -- source.version, per-route source{file,line}/cert
     try std.testing.expectEqual(@as(usize, 2), d.js_sources.len);
     try std.testing.expectEqualStrings("app/javascript/application.js", d.js_sources[0].path);
     try std.testing.expectEqualStrings("app/javascript/controllers/reveal_controller.js", d.js_sources[1].path);
-    try std.testing.expect(std.mem.indexOf(u8, d.js_sources[1].bytes, "export default class") != null);
+    try std.testing.expect(std.mem.find(u8, d.js_sources[1].bytes, "export default class") != null);
     try std.testing.expectEqualStrings("app/javascript/application.js", d.js_entry.?);
     try std.testing.expectEqual(@as(usize, 0), d.npm_dependencies.len);
 
@@ -4520,8 +4520,8 @@ test "discover: config/routes.rb absent but app/controllers/ present still repor
     defer freeDiscovery(gpa, d);
 
     if (!d.ruby.available) {
-        if (std.mem.indexOf(u8, d.report, "RAILS_RUBY_UNAVAILABLE") != null or
-            std.mem.indexOf(u8, d.report, "RAILS_CONTROLLERS_UNAVAILABLE") != null)
+        if (std.mem.find(u8, d.report, "RAILS_RUBY_UNAVAILABLE") != null or
+            std.mem.find(u8, d.report, "RAILS_CONTROLLERS_UNAVAILABLE") != null)
         {
             return error.SkipZigTest; // no working ruby on this runner
         }
@@ -4538,7 +4538,7 @@ test "discover: config/routes.rb absent but app/controllers/ present still repor
     // is not a test that accidentally works because ruby.available is true
     // for some unrelated reason.
     try std.testing.expectEqualStrings("none", d.route_mode);
-    try std.testing.expect(std.mem.indexOf(u8, d.report, "RAILS_ROUTES_MISSING") != null);
+    try std.testing.expect(std.mem.find(u8, d.report, "RAILS_ROUTES_MISSING") != null);
 }
 
 // ---- #167 Stage 2: the decisions file -------------------------------------
@@ -4603,7 +4603,7 @@ test "discover: a stale decision becomes one warn RAILS_DECISION_STALE blocker a
         try std.testing.expectEqualStrings("out/MIGRATION.decisions.json", b.path);
         // The detail names the dead id -- the whole point of the blocker is
         // that the operator can find and delete the entry.
-        try std.testing.expect(std.mem.indexOf(u8, b.detail, "RAILS_HELPER_UNKNOWN.app/views/gone%2Ehtml%2Eerb.L1C1") != null);
+        try std.testing.expect(std.mem.find(u8, b.detail, "RAILS_HELPER_UNKNOWN.app/views/gone%2Ehtml%2Eerb.L1C1") != null);
     }
     try std.testing.expectEqual(@as(usize, 1), stale_blockers);
     // It is counted like every other blocker: appended BEFORE the counting
@@ -4643,7 +4643,7 @@ test "discover: a malformed decisions entry fails the whole run and names the of
     try std.testing.expectError(error.Invalid, err);
     try std.testing.expectEqual(@as(usize, 2), problems.items.len);
     try std.testing.expectEqualStrings("A.L1", problems.items[0].id.?);
-    try std.testing.expect(std.mem.indexOf(u8, problems.items[0].message, "rationale") != null);
+    try std.testing.expect(std.mem.find(u8, problems.items[0].message, "rationale") != null);
     try std.testing.expectEqual(@as(usize, 1), problems.items[1].index);
 }
 

@@ -272,7 +272,7 @@ pub fn checkIslands(gpa: Allocator, islands: []const migrate.Entry) IslandCheckE
     for (islands) |e| {
         const name = detect.moduleName(e.path);
         // Reject names containing chars that would break a Zig string literal.
-        if (std.mem.indexOfAny(u8, name, "\"\\") != null) return error.BadSrcChar;
+        if (std.mem.findAny(u8, name, "\"\\") != null) return error.BadSrcChar;
         // Reject duplicate basenames (colliding /islands/<name>.js bundles).
         const gop = seen.getOrPut(gpa, name) catch fatal.oom();
         if (gop.found_existing) return error.BasenameCollision;
@@ -367,7 +367,7 @@ pub fn parseAstroSite(config_src: []const u8) ?[]const u8 {
     var i: usize = 0;
     while (i + 4 <= config_src.len) {
         // Locate the next occurrence of "site".
-        const rel = std.mem.indexOf(u8, config_src[i..], "site") orelse break;
+        const rel = std.mem.find(u8, config_src[i..], "site") orelse break;
         const site_pos = i + rel;
 
         // Advance past this occurrence so the next iteration doesn't re-examine it.
@@ -705,7 +705,7 @@ fn parseJsonName(json: []const u8) ?[]const u8 {
     const key = "\"name\"";
     var i: usize = 0;
     while (true) {
-        const rel = std.mem.indexOf(u8, json[i..], key) orelse return null;
+        const rel = std.mem.find(u8, json[i..], key) orelse return null;
         i += rel + key.len;
         while (i < json.len and std.ascii.isWhitespace(json[i])) i += 1;
         if (i >= json.len or json[i] != ':') continue;
@@ -913,14 +913,14 @@ test "parseArgs: --from-astro required, flags captured, default out" {
 
 test "emitTsconfig is the verbatim one-Preact contract" {
     const ts = emitTsconfig();
-    try std.testing.expect(std.mem.indexOf(u8, ts, "\"jsx\": \"react-jsx\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, ts, "\"jsxImportSource\": \"@z/runtime\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, ts, "\"module\": \"ESNext\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, ts, "\"moduleResolution\": \"bundler\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, ts, "\"target\": \"ESNext\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, ts, "\"allowJs\": true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, ts, "\"allowImportingTsExtensions\": true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, ts, "\"noEmit\": true") != null);
+    try std.testing.expect(std.mem.find(u8, ts, "\"jsx\": \"react-jsx\"") != null);
+    try std.testing.expect(std.mem.find(u8, ts, "\"jsxImportSource\": \"@z/runtime\"") != null);
+    try std.testing.expect(std.mem.find(u8, ts, "\"module\": \"ESNext\"") != null);
+    try std.testing.expect(std.mem.find(u8, ts, "\"moduleResolution\": \"bundler\"") != null);
+    try std.testing.expect(std.mem.find(u8, ts, "\"target\": \"ESNext\"") != null);
+    try std.testing.expect(std.mem.find(u8, ts, "\"allowJs\": true") != null);
+    try std.testing.expect(std.mem.find(u8, ts, "\"allowImportingTsExtensions\": true") != null);
+    try std.testing.expect(std.mem.find(u8, ts, "\"noEmit\": true") != null);
 }
 
 test "emitPackageJson declares exactly one dep @z/runtime at the given path" {
@@ -929,12 +929,12 @@ test "emitPackageJson declares exactly one dep @z/runtime at the given path" {
     const gpa = std.testing.allocator;
     const pj = emitPackageJson(gpa, "mysite", "../zigapagos/runtime");
     defer gpa.free(pj);
-    try std.testing.expect(std.mem.indexOf(u8, pj, "\"@z/runtime\": \"file:../zigapagos/runtime\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, pj, "\"name\": \"mysite\"") != null);
+    try std.testing.expect(std.mem.find(u8, pj, "\"@z/runtime\": \"file:../zigapagos/runtime\"") != null);
+    try std.testing.expect(std.mem.find(u8, pj, "\"name\": \"mysite\"") != null);
     // exactly one dependency: no comma inside the dependencies object.
-    const deps = pj[std.mem.indexOf(u8, pj, "\"dependencies\"").?..];
-    const obj = deps[std.mem.indexOf(u8, deps, "{").?..std.mem.indexOf(u8, deps, "}").?];
-    try std.testing.expect(std.mem.indexOfScalar(u8, obj, ',') == null);
+    const deps = pj[std.mem.find(u8, pj, "\"dependencies\"").?..];
+    const obj = deps[std.mem.find(u8, deps, "{").?..std.mem.find(u8, deps, "}").?];
+    try std.testing.expect(std.mem.findScalar(u8, obj, ',') == null);
 }
 
 test "writeFile non-clobber: second write produces .new" {
@@ -970,11 +970,11 @@ test "emitBuildSh lists one --island= per detected island, src == components pat
     };
     const sh = emitBuildSh(gpa, &islands);
     defer gpa.free(sh);
-    try std.testing.expect(std.mem.indexOf(u8, sh, "--island=components/Counter.island.tsx") != null);
-    try std.testing.expect(std.mem.indexOf(u8, sh, "--island=components/ContactForm.island.tsx") != null);
-    try std.testing.expect(std.mem.indexOf(u8, sh, "release") != null);
+    try std.testing.expect(std.mem.find(u8, sh, "--island=components/Counter.island.tsx") != null);
+    try std.testing.expect(std.mem.find(u8, sh, "--island=components/ContactForm.island.tsx") != null);
+    try std.testing.expect(std.mem.find(u8, sh, "release") != null);
     // Nothing about a Zig build graph may reach a scaffolded project.
-    try std.testing.expect(std.mem.indexOf(u8, sh, "zig build") == null);
+    try std.testing.expect(std.mem.find(u8, sh, "zig build") == null);
 }
 
 test "checkIslands rejects basename collision" {
@@ -1029,9 +1029,9 @@ test "emitZigapagosZiggy uses overrides and the fixed dir paths" {
     const gpa = std.testing.allocator;
     const z = emitZigapagosZiggy(gpa, "My Site", "https://my.site");
     defer gpa.free(z);
-    try std.testing.expect(std.mem.indexOf(u8, z, ".title = \"My Site\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, z, ".host_url = \"https://my.site\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, z, ".content_dir_path = \"content\"") != null);
+    try std.testing.expect(std.mem.find(u8, z, ".title = \"My Site\"") != null);
+    try std.testing.expect(std.mem.find(u8, z, ".host_url = \"https://my.site\"") != null);
+    try std.testing.expect(std.mem.find(u8, z, ".content_dir_path = \"content\"") != null);
 }
 
 test "emitZigapagosZiggy escapes double-quotes in title and host_url" {
@@ -1039,7 +1039,7 @@ test "emitZigapagosZiggy escapes double-quotes in title and host_url" {
     const z = emitZigapagosZiggy(gpa, "Site \"X\"", "https://ex.com");
     defer gpa.free(z);
     // The emitted string should have escaped quotes: .title = "Site \"X\""
-    try std.testing.expect(std.mem.indexOf(u8, z, ".title = \"Site \\\"X\\\"\"") != null);
+    try std.testing.expect(std.mem.find(u8, z, ".title = \"Site \\\"X\\\"\"") != null);
 }
 
 test "emitLayoutStub pre-wires every detected island with a matching src" {
@@ -1047,9 +1047,9 @@ test "emitLayoutStub pre-wires every detected island with a matching src" {
     const islands = [_]migrate.Entry{.{ .path = "src/components/Counter.jsx", .kind = .component, .is_island = true }};
     const ly = emitLayoutStub(gpa, "index", &islands);
     defer gpa.free(ly);
-    try std.testing.expect(std.mem.indexOf(u8, ly, "<island src=\"components/Counter.island.tsx\" client:load") != null);
-    try std.testing.expect(std.mem.indexOf(u8, ly, ":text=\"$page.title\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, ly, ":html=\"$page.content()\"") != null);
+    try std.testing.expect(std.mem.find(u8, ly, "<island src=\"components/Counter.island.tsx\" client:load") != null);
+    try std.testing.expect(std.mem.find(u8, ly, ":text=\"$page.title\"") != null);
+    try std.testing.expect(std.mem.find(u8, ly, ":html=\"$page.content()\"") != null);
 }
 
 test "emitContentStub produces valid frontmatter and a plain SuperMD body" {
@@ -1057,12 +1057,12 @@ test "emitContentStub produces valid frontmatter and a plain SuperMD body" {
     const c = emitContentStub(gpa, "about", "<h1>About</h1>");
     defer gpa.free(c);
     // Frontmatter fields must be present.
-    try std.testing.expect(std.mem.indexOf(u8, c, ".layout =") != null);
-    try std.testing.expect(std.mem.indexOf(u8, c, ".title =") != null);
-    try std.testing.expect(std.mem.indexOf(u8, c, "TODO") != null);
+    try std.testing.expect(std.mem.find(u8, c, ".layout =") != null);
+    try std.testing.expect(std.mem.find(u8, c, ".title =") != null);
+    try std.testing.expect(std.mem.find(u8, c, "TODO") != null);
     // SuperMD forbids raw HTML: no HTML comment or inline HTML must appear.
-    try std.testing.expect(std.mem.indexOf(u8, c, "<!--") == null);
-    try std.testing.expect(std.mem.indexOf(u8, c, "<h1>") == null);
+    try std.testing.expect(std.mem.find(u8, c, "<!--") == null);
+    try std.testing.expect(std.mem.find(u8, c, "<h1>") == null);
 }
 
 test "emitContentStub body does not contain raw HTML regardless of orig_astro_markup" {
@@ -1070,10 +1070,10 @@ test "emitContentStub body does not contain raw HTML regardless of orig_astro_ma
     // Even when called with HTML markup, the stub must not embed it (html_is_forbidden).
     const c = emitContentStub(gpa, "x", "<p>a--></p>");
     defer gpa.free(c);
-    try std.testing.expect(std.mem.indexOf(u8, c, "<p>") == null);
-    try std.testing.expect(std.mem.indexOf(u8, c, "<!--") == null);
+    try std.testing.expect(std.mem.find(u8, c, "<p>") == null);
+    try std.testing.expect(std.mem.find(u8, c, "<!--") == null);
     // The --&gt; escape logic is gone; plain text only.
-    try std.testing.expect(std.mem.indexOf(u8, c, "--&gt;") == null);
+    try std.testing.expect(std.mem.find(u8, c, "--&gt;") == null);
 }
 
 test "emitContentStub escapes double-quotes in title to produce well-formed Ziggy frontmatter" {
@@ -1084,10 +1084,10 @@ test "emitContentStub escapes double-quotes in title to produce well-formed Zigg
     const c = emitContentStub(gpa, "My \"X\" Site", "");
     defer gpa.free(c);
     // The escaped form \" must appear inside the title string.
-    try std.testing.expect(std.mem.indexOf(u8, c, ".title = \"My \\\"X\\\" Site\"") != null);
+    try std.testing.expect(std.mem.find(u8, c, ".title = \"My \\\"X\\\" Site\"") != null);
     // Raw unescaped inner quote must NOT appear (would break the Ziggy string).
     // We check by verifying the title value is not the broken form.
-    try std.testing.expect(std.mem.indexOf(u8, c, ".title = \"My \"X\" Site\"") == null);
+    try std.testing.expect(std.mem.find(u8, c, ".title = \"My \"X\" Site\"") == null);
 }
 
 test "paginate: emitSectionIndexStub carries the pagination frontmatter" {
@@ -1099,33 +1099,33 @@ test "paginate: emitSectionIndexStub carries the pagination frontmatter" {
     };
     const out = emitSectionIndexStub(std.testing.allocator, "blog", spec);
     defer std.testing.allocator.free(out);
-    try std.testing.expect(std.mem.indexOf(u8, out, ".pagination = .{ .page_size = 4, .url_style = .plain_dir },") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, ".layout = \"index.shtml\",") != null);
+    try std.testing.expect(std.mem.find(u8, out, ".pagination = .{ .page_size = 4, .url_style = .plain_dir },") != null);
+    try std.testing.expect(std.mem.find(u8, out, ".layout = \"index.shtml\",") != null);
     try std.testing.expect(std.mem.startsWith(u8, out, "---\n"));
 }
 
 test "emitSsrSh is de-repo'd (no ../../runtime, no git restore) and asserts on zig-out/site" {
     const sh = emitSsrSh();
-    try std.testing.expect(std.mem.indexOf(u8, sh, "../../runtime") == null);
-    try std.testing.expect(std.mem.indexOf(u8, sh, "git -C ../.. ") == null);
-    try std.testing.expect(std.mem.indexOf(u8, sh, "zig-out/site") != null);
-    try std.testing.expect(std.mem.indexOf(u8, sh, "data-z-island") != null);
+    try std.testing.expect(std.mem.find(u8, sh, "../../runtime") == null);
+    try std.testing.expect(std.mem.find(u8, sh, "git -C ../.. ") == null);
+    try std.testing.expect(std.mem.find(u8, sh, "zig-out/site") != null);
+    try std.testing.expect(std.mem.find(u8, sh, "data-z-island") != null);
 }
 
 test "emitSsrSh contains bun install, the build script, and an @z/runtime external check" {
     const sh = emitSsrSh();
-    try std.testing.expect(std.mem.indexOf(u8, sh, "bun install") != null);
-    try std.testing.expect(std.mem.indexOf(u8, sh, "bash build.sh") != null);
-    try std.testing.expect(std.mem.indexOf(u8, sh, "@z/runtime") != null);
+    try std.testing.expect(std.mem.find(u8, sh, "bun install") != null);
+    try std.testing.expect(std.mem.find(u8, sh, "bash build.sh") != null);
+    try std.testing.expect(std.mem.find(u8, sh, "@z/runtime") != null);
     // A scaffolded project must never need a Zig toolchain to render itself.
-    try std.testing.expect(std.mem.indexOf(u8, sh, "zig build") == null);
+    try std.testing.expect(std.mem.find(u8, sh, "zig build") == null);
 }
 
 test "emitHydrateSh is de-repo'd and calls ssr.sh and playwright" {
     const sh = emitHydrateSh();
-    try std.testing.expect(std.mem.indexOf(u8, sh, "git -C ../.. ") == null);
-    try std.testing.expect(std.mem.indexOf(u8, sh, "test/ssr.sh") != null);
-    try std.testing.expect(std.mem.indexOf(u8, sh, "hydrate_playwright.py") != null);
+    try std.testing.expect(std.mem.find(u8, sh, "git -C ../.. ") == null);
+    try std.testing.expect(std.mem.find(u8, sh, "test/ssr.sh") != null);
+    try std.testing.expect(std.mem.find(u8, sh, "hydrate_playwright.py") != null);
 }
 
 test "emitBuildSh with empty islands produces island-free build.sh (--no-islands contract)" {
@@ -1133,11 +1133,11 @@ test "emitBuildSh with empty islands produces island-free build.sh (--no-islands
     const sh = emitBuildSh(gpa, &[_]migrate.Entry{});
     defer gpa.free(sh);
     // No .island.tsx path reference must appear in the generated script.
-    try std.testing.expect(std.mem.indexOf(u8, sh, ".island.tsx") == null);
+    try std.testing.expect(std.mem.find(u8, sh, ".island.tsx") == null);
     // ...but it must say how to add one, or an author has no way to find out.
-    try std.testing.expect(std.mem.indexOf(u8, sh, "No islands were detected") != null);
+    try std.testing.expect(std.mem.find(u8, sh, "No islands were detected") != null);
     // The file must still be a runnable build (the release invocation survives).
-    try std.testing.expect(std.mem.indexOf(u8, sh, "release") != null);
+    try std.testing.expect(std.mem.find(u8, sh, "release") != null);
 }
 
 test "emitLayoutStub with empty islands produces no <island> tags (--no-islands contract)" {
@@ -1145,8 +1145,8 @@ test "emitLayoutStub with empty islands produces no <island> tags (--no-islands 
     const ly = emitLayoutStub(gpa, "index", &[_]migrate.Entry{});
     defer gpa.free(ly);
     // No <island> element must appear in the generated layout.
-    try std.testing.expect(std.mem.indexOf(u8, ly, "<island") == null);
+    try std.testing.expect(std.mem.find(u8, ly, "<island") == null);
     // The layout must still be a valid SuperHTML stub.
-    try std.testing.expect(std.mem.indexOf(u8, ly, ":text=\"$page.title\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, ly, ":html=\"$page.content()\"") != null);
+    try std.testing.expect(std.mem.find(u8, ly, ":text=\"$page.title\"") != null);
+    try std.testing.expect(std.mem.find(u8, ly, ":html=\"$page.content()\"") != null);
 }

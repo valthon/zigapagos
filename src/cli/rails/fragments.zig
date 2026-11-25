@@ -1427,7 +1427,7 @@ test "discoverTemplates: ZIGAPAGOS_RUBY pointing at a nonexistent binary yields 
     // F3: `path` names the sidecar script, never the machine-specific
     // `ZIGAPAGOS_RUBY` value -- which is still reported, in `detail`.
     try std.testing.expectEqualStrings("sidecar/rails/analyze.rb", list.items[0].path);
-    try std.testing.expect(std.mem.indexOf(u8, list.items[0].detail, "/nonexistent/ruby-binary-does-not-exist-xyz") != null);
+    try std.testing.expect(std.mem.find(u8, list.items[0].detail, "/nonexistent/ruby-binary-does-not-exist-xyz") != null);
     try std.testing.expect(!r.ruby.available);
 }
 
@@ -1458,7 +1458,7 @@ test "discoverTemplates spawns the real Ruby sidecar and recovers a node stream"
     if (list.items.len > 0) {
         if (list.items.len == 1 and
             std.mem.eql(u8, list.items[0].code, unavailable_code) and
-            std.mem.indexOf(u8, list.items[0].detail, "FileNotFound") != null)
+            std.mem.find(u8, list.items[0].detail, "FileNotFound") != null)
             return error.SkipZigTest;
         std.debug.print("discoverTemplates degraded unexpectedly: {s}: {s}\n", .{
             list.items[list.items.len - 1].code,
@@ -1505,8 +1505,8 @@ test "discoverTemplates: an unresolvable sidecar script reports a machine-stable
     try std.testing.expectEqualStrings("sidecar/rails/analyze.rb", list.items[0].path);
     // The attempted path is not lost -- it moves into free-text `detail`,
     // which carries no determinism contract.
-    try std.testing.expect(std.mem.indexOf(u8, list.items[0].detail, "no-such-runtime-dir-xyz") != null);
-    try std.testing.expect(std.mem.indexOf(u8, list.items[0].detail, "FileNotFound") != null);
+    try std.testing.expect(std.mem.find(u8, list.items[0].detail, "no-such-runtime-dir-xyz") != null);
+    try std.testing.expect(std.mem.find(u8, list.items[0].detail, "FileNotFound") != null);
     try std.testing.expect(!r.ruby.available);
 }
 
@@ -1563,7 +1563,7 @@ test "invalid positions retain independent finding and decision identities withi
     const out = try convert.convert(gpa, ctx, result.templates[0], .view);
     defer convert.freeOutput(gpa, out);
     try std.testing.expectEqual(@as(usize, 2), out.open_finding_ids.len);
-    for (fs) |f| try std.testing.expect(std.mem.indexOf(u8, out.bytes, f.id) != null);
+    for (fs) |f| try std.testing.expect(std.mem.find(u8, out.bytes, f.id) != null);
     // Re-read those saved answers after an unrelated insertion, and use the
     // saved second id as a component binding. It must still replace bar only.
     const inserted = try decodeResponse(gpa,
@@ -1588,7 +1588,7 @@ test "invalid positions retain independent finding and decision identities withi
     try std.testing.expectEqual(@as(usize, 2), converted.open_finding_ids.len);
     try std.testing.expectEqual(@as(usize, 1), converted.bound_finding_ids.len);
     try std.testing.expectEqualStrings(bar, converted.bound_finding_ids[0]);
-    try std.testing.expect(std.mem.indexOf(u8, converted.bytes, foo) != null);
+    try std.testing.expect(std.mem.find(u8, converted.bytes, foo) != null);
 
     // Answer either fragment alone: the other must remain open.
     for (0..2) |i| {

@@ -314,15 +314,15 @@ test "e2e zigbase: empty environment yields null (and a message that still guide
     try std.testing.expect((try locate(std.testing.io, gpa, &env, null)) == null);
     const msg = try missingMessage(gpa, &env);
     defer gpa.free(msg);
-    try std.testing.expect(std.mem.indexOf(u8, msg, "zigbase binary not found") != null);
-    try std.testing.expect(std.mem.indexOf(u8, msg, pinned_version) != null);
+    try std.testing.expect(std.mem.find(u8, msg, "zigbase binary not found") != null);
+    try std.testing.expect(std.mem.find(u8, msg, pinned_version) != null);
     // Both escape hatches are named, because this one message is reached from
     // BOTH commands and their download policies are opposites: `dev` fetches by
     // default (so the reader got here via --no-download) while `e2e` fetches
     // only on --download-zigbase. Naming just one leaves half the readers with
     // advice that does not apply to the command they ran.
-    try std.testing.expect(std.mem.indexOf(u8, msg, "--download-zigbase") != null);
-    try std.testing.expect(std.mem.indexOf(u8, msg, "--no-download") != null);
+    try std.testing.expect(std.mem.find(u8, msg, "--download-zigbase") != null);
+    try std.testing.expect(std.mem.find(u8, msg, "--no-download") != null);
     // The npm route is a real answer to option 1, verified end to end: the
     // dependency's bin lands in node_modules/.bin, which `locate` scans, so `dev`
     // boots with no flag. It is named here because this message is where a user
@@ -338,13 +338,13 @@ test "e2e zigbase: empty environment yields null (and a message that still guide
     // guidance instead of the manifest. That the two agree right now is exactly
     // why the wording has to name the alias rather than the version.
     try std.testing.expect(
-        std.mem.indexOf(u8, msg, "npm i -D @zigbase/server@" ++ pinned_version[1..]) != null,
+        std.mem.find(u8, msg, "npm i -D @zigbase/server@" ++ pinned_version[1..]) != null,
     );
-    try std.testing.expect(std.mem.indexOf(u8, msg, "not the bare") != null);
+    try std.testing.expect(std.mem.find(u8, msg, "not the bare") != null);
     // ...along with the one condition that makes it fail: outside `npm run`/`npx`,
     // node_modules/.bin is not on PATH, and then the advice above looks broken.
-    try std.testing.expect(std.mem.indexOf(u8, msg, "node_modules/.bin") != null);
-    try std.testing.expect(std.mem.indexOf(u8, msg, "bare shell") != null);
+    try std.testing.expect(std.mem.find(u8, msg, "node_modules/.bin") != null);
+    try std.testing.expect(std.mem.find(u8, msg, "bare shell") != null);
 }
 
 test "e2e zigbase: cachedPath honors XDG_CACHE_HOME, then HOME/.cache" {

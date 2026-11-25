@@ -2380,11 +2380,11 @@ fn dataIslandPath(gpa: Allocator, built: []const convert.Binding, view_path: []c
 }
 
 fn dataBlockParam(code: []const u8) ?[]const u8 {
-    const first = std.mem.indexOfScalar(u8, code, '|') orelse return null;
+    const first = std.mem.findScalar(u8, code, '|') orelse return null;
     const rest = code[first + 1 ..];
-    const last = std.mem.indexOfScalar(u8, rest, '|') orelse return null;
+    const last = std.mem.findScalar(u8, rest, '|') orelse return null;
     const value = std.mem.trim(u8, rest[0..last], " \t\r\n");
-    if (value.len == 0 or std.mem.indexOfScalar(u8, value, ',') != null) return null;
+    if (value.len == 0 or std.mem.findScalar(u8, value, ',') != null) return null;
     return value;
 }
 
@@ -3395,9 +3395,9 @@ fn findingIsIvar(ctx: *Ctx, id: []const u8) bool {
 }
 
 fn firstBacktickValue(message: []const u8) []const u8 {
-    const start = std.mem.indexOfScalar(u8, message, '`') orelse return message;
+    const start = std.mem.findScalar(u8, message, '`') orelse return message;
     const tail = message[start + 1 ..];
-    const end = std.mem.indexOfScalar(u8, tail, '`') orelse return tail;
+    const end = std.mem.findScalar(u8, tail, '`') orelse return tail;
     return tail[0..end];
 }
 
@@ -4632,7 +4632,7 @@ fn emitAuthForm(gpa: Allocator, j: JourneyScaffold) Allocator.Error![]u8 {
 /// practice (`templates.rb` emits a statement's source as one line). The
 /// guard is here because "in practice" is not a guarantee about author text.
 fn oneLineCode(code: []const u8) []const u8 {
-    if (std.mem.indexOfAny(u8, code, "\r\n")) |i| return code[0..i];
+    if (std.mem.findAny(u8, code, "\r\n")) |i| return code[0..i];
     return code;
 }
 
@@ -5292,9 +5292,9 @@ fn dupeStrings(gpa: Allocator, list: []const []const u8) Allocator.Error![][]con
 /// Contract 1 (self-freeing): the returned kind is the only allocation.
 fn firstUnmappedKind(gpa: Allocator, bytes: []const u8) Allocator.Error!?[]const u8 {
     const marker = "<!-- rails:unmapped ";
-    const at = std.mem.indexOf(u8, bytes, marker) orelse return null;
+    const at = std.mem.find(u8, bytes, marker) orelse return null;
     const rest = bytes[at + marker.len ..];
-    const end = std.mem.indexOfAny(u8, rest, " -") orelse rest.len;
+    const end = std.mem.findAny(u8, rest, " -") orelse rest.len;
     return try gpa.dupe(u8, rest[0..end]);
 }
 
@@ -6217,7 +6217,7 @@ fn emitPackageCompat(
     defer gpa.free(base);
     if (compat.len == 0) return gpa.dupe(u8, base);
     const marker = " }\n}\n";
-    const at = std.mem.lastIndexOf(u8, base, marker) orelse return gpa.dupe(u8, base);
+    const at = std.mem.findLast(u8, base, marker) orelse return gpa.dupe(u8, base);
     var out: std.ArrayListUnmanaged(u8) = .empty;
     errdefer out.deinit(gpa);
     try out.appendSlice(gpa, base[0..at]);
@@ -6391,28 +6391,28 @@ test "writeParityRunners pins fixed bytes, absence, and exclusive-create" {
     defer gpa.free(journey);
     try testing.expectEqualStrings(parity_runner_ts, parity);
     try testing.expectEqualStrings(journey_runner_py, journey);
-    try testing.expect(std.mem.indexOf(u8, parity, "MIGRATION.handoff.json") != null);
-    try testing.expect(std.mem.indexOf(u8, journey, "MIGRATION.handoff.json") != null);
+    try testing.expect(std.mem.find(u8, parity, "MIGRATION.handoff.json") != null);
+    try testing.expect(std.mem.find(u8, journey, "MIGRATION.handoff.json") != null);
     // P4: null is an explicit "not statically knowable" marker, not a claim
     // that the target renderer must omit its own fallback title or heading.
-    try testing.expect(std.mem.indexOf(u8, parity, "row.expect.title !== null") != null);
-    try testing.expect(std.mem.indexOf(u8, parity, "row.expect.h1 !== null") != null);
+    try testing.expect(std.mem.find(u8, parity, "row.expect.title !== null") != null);
+    try testing.expect(std.mem.find(u8, parity, "row.expect.h1 !== null") != null);
     // Literal href facts are target bytes, including relative URLs, queries,
     // and fragments. Resolving them through URL.pathname would erase that
     // evidence and make a correct generated anchor fail parity.
-    try testing.expect(std.mem.indexOf(u8, parity, "(m) => decodeHtml(m[1] ?? m[2] ?? m[3])") != null);
-    try testing.expect(std.mem.indexOf(u8, parity, "new URL(decodeHtml") == null);
+    try testing.expect(std.mem.find(u8, parity, "(m) => decodeHtml(m[1] ?? m[2] ?? m[3])") != null);
+    try testing.expect(std.mem.find(u8, parity, "new URL(decodeHtml") == null);
     // The mutation collection is the operation's target (`posts`), not the
     // auth collection (`users`). Authentication comes from the completed auth
     // phase instead of inventing a relation the OpenAPI document does not say.
-    try testing.expect(std.mem.indexOf(u8, parity, "Array.from(clients.values()).find") != null);
+    try testing.expect(std.mem.find(u8, parity, "Array.from(clients.values()).find") != null);
     // Fetch rejects GET/HEAD requests carrying bodies. Denied endpoint rows
     // may describe either method, so the fixed runner must suppress both the
     // JSON body and its content type before it reaches the runtime.
-    try testing.expect(std.mem.indexOf(u8, parity, "method !== \"GET\" && method !== \"HEAD\"") != null);
-    try testing.expect(std.mem.indexOf(u8, parity, "body: carriesBody ? JSON.stringify(body) : undefined") != null);
-    try testing.expect(std.mem.indexOf(u8, journey, "with page.expect_navigation") != null);
-    try testing.expect(std.mem.indexOf(u8, journey, "consume_validation_console(errors)") != null);
+    try testing.expect(std.mem.find(u8, parity, "method !== \"GET\" && method !== \"HEAD\"") != null);
+    try testing.expect(std.mem.find(u8, parity, "body: carriesBody ? JSON.stringify(body) : undefined") != null);
+    try testing.expect(std.mem.find(u8, journey, "with page.expect_navigation") != null);
+    try testing.expect(std.mem.find(u8, journey, "consume_validation_console(errors)") != null);
 
     try testing.expectError(error.TargetWrite, writeParityRunners(testing.io, gpa, target, true, &error_path, &error_cause));
     try testing.expectEqual(error.PathAlreadyExists, error_cause.?);
@@ -6528,12 +6528,12 @@ test "write: a static content route becomes a layout, a view and a content page"
     // `package.json` and no `bun install` in build.sh.
     const config = try readTarget(gpa, &tmp, "zigapagos.ziggy");
     defer gpa.free(config);
-    try testing.expect(std.mem.indexOf(u8, config, ".title = \"Blog\"") != null);
-    try testing.expect(std.mem.indexOf(u8, config, "static_assets") == null);
+    try testing.expect(std.mem.find(u8, config, ".title = \"Blog\"") != null);
+    try testing.expect(std.mem.find(u8, config, "static_assets") == null);
     const build_sh = try readTarget(gpa, &tmp, "build.sh");
     defer gpa.free(build_sh);
-    try testing.expect(std.mem.indexOf(u8, build_sh, "bun install") == null);
-    try testing.expect(std.mem.indexOf(u8, build_sh, "--spa=") == null);
+    try testing.expect(std.mem.find(u8, build_sh, "bun install") == null);
+    try testing.expect(std.mem.find(u8, build_sh, "--spa=") == null);
     try testing.expect(!targetHas(&tmp, "package.json"));
     try testing.expect(targetHas(&tmp, "AGENTS.md"));
     try testing.expect(targetHas(&tmp, "CLAUDE.md"));
@@ -7139,7 +7139,7 @@ test "write: an unbound local is answerable and participates in route acknowledg
         defer freeResult(gpa, res);
         try testing.expectEqual(Status.retained, res.routes[0].status);
         try testing.expectEqualStrings(finding_list[0].id, res.routes[0].decision_id.?);
-        try testing.expect(res.routes[0].note == null or std.mem.indexOf(u8, res.routes[0].note.?, "unmapped") == null);
+        try testing.expect(res.routes[0].note == null or std.mem.find(u8, res.routes[0].note.?, "unmapped") == null);
     }
 
     // Answered `island`: still open (the helper choice is deferred), and the
@@ -7170,7 +7170,7 @@ test "write: an unbound local is answerable and participates in route acknowledg
         }, &err_path, &err_cause);
         defer freeResult(gpa, res);
         try testing.expectEqual(Status.open, res.routes[0].status);
-        try testing.expect(std.mem.indexOf(u8, res.routes[0].note.?, "choice island deferred") != null);
+        try testing.expect(std.mem.find(u8, res.routes[0].note.?, "choice island deferred") != null);
         try testing.expect(contains(res.routes[0].open_finding_ids, local_id.?));
     }
 }
@@ -7250,7 +7250,7 @@ test "write: all issue 181 conditional gaps are named and can block the route" {
         try testing.expectEqual(Status.open, res.routes[0].status);
         try testing.expectEqual(@as(usize, 3), res.routes[0].open_finding_ids.len);
         for (issue_ids) |id| try testing.expect(contains(res.routes[0].open_finding_ids, id));
-        try testing.expect(res.routes[0].note == null or std.mem.indexOf(u8, res.routes[0].note.?, "converter gap") == null);
+        try testing.expect(res.routes[0].note == null or std.mem.find(u8, res.routes[0].note.?, "converter gap") == null);
     }
 
     // Every placeholder is independently answerable. Blocking those answers
@@ -7413,7 +7413,7 @@ test "write: a dynamic route is open until a spa decision scaffolds one .spa.tsx
 
         const pkg = try readTarget(gpa, &tmp, "package.json");
         defer gpa.free(pkg);
-        try testing.expect(std.mem.indexOf(u8, pkg, "\"file:../runtime\"") != null);
+        try testing.expect(std.mem.find(u8, pkg, "\"file:../runtime\"") != null);
         try testing.expect(targetHas(&tmp, "tsconfig.json"));
     }
 }
@@ -7521,7 +7521,7 @@ test "write: a deterministic asset is copied, and the config then declares stati
 
     const config = try readTarget(gpa, &tmp, "zigapagos.ziggy");
     defer gpa.free(config);
-    try testing.expect(std.mem.indexOf(u8, config, ".static_assets = [\"**\"],") != null);
+    try testing.expect(std.mem.find(u8, config, ".static_assets = [\"**\"],") != null);
 }
 
 test "write: the compiled pipeline output under public/assets is never copied (ruling S17)" {
@@ -7916,10 +7916,10 @@ test "write: a layout's named yield becomes a block the view fills, empty when i
     var pair = try scaffoldPair(gpa, &layout_nodes, &view_nodes);
     defer pair.deinit(gpa);
 
-    try testing.expect(std.mem.indexOf(u8, pair.layout, "id=\"sidebar\"") != null);
-    try testing.expect(std.mem.indexOf(u8, pair.view, "<div id=\"sidebar\"></div>") != null);
-    try testing.expect(std.mem.indexOf(u8, pair.view, "<div id=\"main\">") != null);
-    try testing.expect(std.mem.indexOf(u8, pair.view, "<h1>About</h1>") != null);
+    try testing.expect(std.mem.find(u8, pair.layout, "id=\"sidebar\"") != null);
+    try testing.expect(std.mem.find(u8, pair.view, "<div id=\"sidebar\"></div>") != null);
+    try testing.expect(std.mem.find(u8, pair.view, "<div id=\"main\">") != null);
+    try testing.expect(std.mem.find(u8, pair.view, "<h1>About</h1>") != null);
     // An empty block it had nothing to put in is not a defect: nothing was
     // lost, so the route is finished.
     try testing.expectEqual(Status.migrated, pair.status);
@@ -7954,13 +7954,13 @@ test "write: a content_for the layout does not declare is dropped, and the route
     var pair = try scaffoldPair(gpa, &layout_nodes, &view_nodes);
     defer pair.deinit(gpa);
 
-    try testing.expect(std.mem.indexOf(u8, pair.layout, "id=\"sidebar\"") == null);
-    try testing.expect(std.mem.indexOf(u8, pair.view, "id=\"sidebar\"") == null);
-    try testing.expect(std.mem.indexOf(u8, pair.view, "links") == null);
+    try testing.expect(std.mem.find(u8, pair.layout, "id=\"sidebar\"") == null);
+    try testing.expect(std.mem.find(u8, pair.view, "id=\"sidebar\"") == null);
+    try testing.expect(std.mem.find(u8, pair.view, "links") == null);
     // The loss is reported, not silent -- and it is reported as a REASON,
     // which is what keeps a human looking at this route.
     try testing.expect(pair.note != null);
-    try testing.expect(std.mem.indexOf(u8, pair.note.?, "sidebar") != null);
+    try testing.expect(std.mem.find(u8, pair.note.?, "sidebar") != null);
     try testing.expectEqual(Status.open, pair.status);
 }
 
@@ -7984,7 +7984,7 @@ test "write: a csrf drop stays informational -- the route is still migrated" {
     defer pair.deinit(gpa);
 
     try testing.expect(pair.note != null);
-    try testing.expect(std.mem.indexOf(u8, pair.note.?, "csrf_meta_tags dropped") != null);
+    try testing.expect(std.mem.find(u8, pair.note.?, "csrf_meta_tags dropped") != null);
     try testing.expectEqual(Status.migrated, pair.status);
 }
 
@@ -8113,7 +8113,7 @@ test "write: staticPaths is emitted only for a spa entry whose own path is dynam
     const spa_src = try readTarget(gpa, &tmp, "spa/posts.spa.tsx");
     defer gpa.free(spa_src);
     // `/posts/:id` -> `/:id`: dynamic, so it enumerates.
-    try testing.expect(std.mem.indexOf(u8, spa_src, "{ path: \"/:id\", component: PostsShow, skeleton: false as const, staticPaths: [] }") != null);
+    try testing.expect(std.mem.find(u8, spa_src, "{ path: \"/:id\", component: PostsShow, skeleton: false as const, staticPaths: [] }") != null);
     // `/posts/new` is NOT dynamic, so it never reached the SPA at all -- it
     // took the content path. Only the dynamic one is here.
     try testing.expectEqual(@as(usize, 1), std.mem.count(u8, spa_src, "path: \""));
@@ -8125,7 +8125,7 @@ test "write: staticPaths is emitted only for a spa entry whose own path is dynam
     // Quoted: see `emitBuildSh`. A substring check like this one is what let
     // the unquoted form ship, so it is paired with the replay test at the
     // bottom of this file rather than trusted on its own.
-    try testing.expect(std.mem.indexOf(u8, build_sh, "--spa='spa/posts.spa.tsx|/posts'") != null);
+    try testing.expect(std.mem.find(u8, build_sh, "--spa='spa/posts.spa.tsx|/posts'") != null);
 }
 
 test "spaRoutePath + isDynamicRoutePath is the gate staticPaths is emitted behind" {
@@ -8574,7 +8574,7 @@ test "write: a finding inside an inlined partial reaches the route" {
     });
     defer findings.free(gpa, finding_list);
     try testing.expectEqual(@as(usize, 1), finding_list.len);
-    try testing.expect(std.mem.indexOf(u8, finding_list[0].id, "_nav") != null);
+    try testing.expect(std.mem.find(u8, finding_list[0].id, "_nav") != null);
 
     var rs = [_]route_mod.Route{tRoute("GET", "/about", "pages", "about", 2)};
     var vs = [_]classify.Verdict{tVerdict(.content)};
@@ -8668,10 +8668,10 @@ test "write: a computed content_for title can be blocked through its finding" {
         try testing.expectEqualStrings(finding_list[0].id, res.routes[0].open_finding_ids[0]);
         const view = try readTarget(gpa, &tmp, "layouts/pages/about.shtml");
         defer gpa.free(view);
-        try testing.expect(std.mem.indexOf(u8, view, "<!-- rails:finding RAILS_CONTENT_FOR_DYNAMIC.") != null);
-        try testing.expect(std.mem.indexOf(u8, view, "rails:unmapped content_for") == null);
-        try testing.expect(std.mem.indexOf(u8, view, "<span>Account</span>") == null);
-        try testing.expect(std.mem.indexOf(u8, view, "<p>Body</p>") != null);
+        try testing.expect(std.mem.find(u8, view, "<!-- rails:finding RAILS_CONTENT_FOR_DYNAMIC.") != null);
+        try testing.expect(std.mem.find(u8, view, "rails:unmapped content_for") == null);
+        try testing.expect(std.mem.find(u8, view, "<span>Account</span>") == null);
+        try testing.expect(std.mem.find(u8, view, "<p>Body</p>") != null);
     }
 
     // The same id is a real decision boundary, so blocked emits no page.
@@ -8752,10 +8752,10 @@ test "write: a description and a quoted title survive into Ziggy frontmatter" {
 
     const page = try readTarget(gpa, &tmp, "content/about/index.smd");
     defer gpa.free(page);
-    try testing.expect(std.mem.indexOf(u8, page, ".title = \"The \\\"best\\\" C:\\\\path\",") != null);
+    try testing.expect(std.mem.find(u8, page, ".title = \"The \\\"best\\\" C:\\\\path\",") != null);
     // The description is plain text by the time it gets here: the HTML entity
     // is already resolved, and must not be double-unescaped.
-    try testing.expect(std.mem.indexOf(u8, page, ".description = \"Tea & cake\",") != null);
+    try testing.expect(std.mem.find(u8, page, ".description = \"Tea & cake\",") != null);
 }
 
 test "write: a spa scaffolded with no runtime path says the package.json needs an edit" {
@@ -8812,7 +8812,7 @@ test "write: a spa scaffolded with no runtime path says the package.json needs a
     try testing.expectEqualStrings("set dependencies.@z/runtime in package.json", res.routes[0].note.?);
     const pkg = try readTarget(gpa, &tmp, "package.json");
     defer gpa.free(pkg);
-    try testing.expect(std.mem.indexOf(u8, pkg, "TODO-SET-RUNTIME-PATH") != null);
+    try testing.expect(std.mem.find(u8, pkg, "TODO-SET-RUNTIME-PATH") != null);
 }
 
 // ---- the generated build.sh has to actually RUN ---------------------------
@@ -8896,7 +8896,7 @@ test "emitBuildSh: the emitted script parses, and each --spa/--island reaches th
 /// The last non-empty line of `s`. Contract 3 (caller-buffer): a sub-slice.
 fn lastLine(s: []const u8) []const u8 {
     const trimmed = std.mem.trimEnd(u8, s, "\n");
-    const nl = std.mem.lastIndexOfScalar(u8, trimmed, '\n') orelse return trimmed;
+    const nl = std.mem.findScalarLast(u8, trimmed, '\n') orelse return trimmed;
     return trimmed[nl + 1 ..];
 }
 
@@ -8992,7 +8992,7 @@ test "write: two routes sharing a view under the SAME layout share its file" {
     try testing.expectEqual(Status.migrated, r.second);
     try testing.expect(r.first_note == null);
     try testing.expect(r.second_note == null);
-    try testing.expect(std.mem.indexOf(u8, r.view, "application.shtml") != null);
+    try testing.expect(std.mem.find(u8, r.view, "application.shtml") != null);
 }
 
 test "write: the same view under a DIFFERENT layout leaves the second route open" {
@@ -9022,7 +9022,7 @@ test "write: the same view under a DIFFERENT layout leaves the second route open
     // does not match it.
     try testing.expectEqual(@as(usize, 0), r.artifact_count);
     // And the file that IS there belongs to the first route.
-    try testing.expect(std.mem.indexOf(u8, r.view, "application.shtml") != null);
+    try testing.expect(std.mem.find(u8, r.view, "application.shtml") != null);
 }
 
 test "write: a view under a layout, then under none, is the same clash" {
@@ -9304,15 +9304,15 @@ test "write: a bound form becomes an island, and the ERB region it replaced is g
     defer gpa.free(view);
     // The whole form is ONE `<island>`: no `rails:finding` marker, no
     // `rails:end`, no placeholder for the fields inside it.
-    try testing.expect(std.mem.indexOf(
+    try testing.expect(std.mem.find(
         u8,
         view,
         "<island src=\"" ++ bound_island ++ "\" client:load></island>",
     ) != null);
-    try testing.expect(std.mem.indexOf(u8, view, "rails:finding") == null);
+    try testing.expect(std.mem.find(u8, view, "rails:finding") == null);
     // The applied `errors` binding consumes its `|m|` block local with the
     // region, just as the open finding owns it before an answer is applied.
-    try testing.expect(std.mem.indexOf(u8, view, "rails:unmapped") == null);
+    try testing.expect(std.mem.find(u8, view, "rails:unmapped") == null);
 
     const outcome = bound.route("GET", "/posts/new");
     try testing.expectEqual(Status.migrated, outcome.status);
@@ -9410,8 +9410,8 @@ test "write: one lib/zb.ts, one package.json dependency pair, one --island flag"
 
     const build_sh = try readTarget(gpa, &bound.tmp, "build.sh");
     defer gpa.free(build_sh);
-    try testing.expect(std.mem.indexOf(u8, build_sh, "bun install") != null);
-    try testing.expect(std.mem.indexOf(u8, build_sh, " --island='" ++ bound_island ++ "'") != null);
+    try testing.expect(std.mem.find(u8, build_sh, "bun install") != null);
+    try testing.expect(std.mem.find(u8, build_sh, " --island='" ++ bound_island ++ "'") != null);
 }
 
 test "write: a custom:/<path> answer sends the form through zb.send with the Rails verb" {
@@ -9423,12 +9423,12 @@ test "write: a custom:/<path> answer sends the form through zb.send with the Rai
 
     const island = try readTarget(gpa, &bound.tmp, bound_island);
     defer gpa.free(island);
-    try testing.expect(std.mem.indexOf(
+    try testing.expect(std.mem.find(
         u8,
         island,
         "await zb.send(\"POST\", \"/api/contact\", { body: values });",
     ) != null);
-    try testing.expect(std.mem.indexOf(u8, island, "zb.collection(") == null);
+    try testing.expect(std.mem.find(u8, island, "zb.collection(") == null);
 
     // A `custom:` answer needs no document, so it still reaches the paired
     // route as an endpoint -- with `custom` as the operation id.
@@ -9465,16 +9465,16 @@ test "write: the redirect after a successful submit is the paired action's own" 
     defer with.deinit(gpa);
     const a = try readTarget(gpa, &with.tmp, bound_island);
     defer gpa.free(a);
-    try testing.expect(std.mem.indexOf(u8, a, "location.assign(\"/\");") != null);
-    try testing.expect(std.mem.indexOf(u8, a, "setDone(true)") == null);
+    try testing.expect(std.mem.find(u8, a, "location.assign(\"/\");") != null);
+    try testing.expect(std.mem.find(u8, a, "setDone(true)") == null);
 
     // With no `redirect_to` to read, the island must NOT invent a destination.
     var without = try runBound(gpa, .{ .with_redirect = false });
     defer without.deinit(gpa);
     const b = try readTarget(gpa, &without.tmp, bound_island);
     defer gpa.free(b);
-    try testing.expect(std.mem.indexOf(u8, b, "location.assign") == null);
-    try testing.expect(std.mem.indexOf(u8, b, "setDone(true);") != null);
+    try testing.expect(std.mem.find(u8, b, "location.assign") == null);
+    try testing.expect(std.mem.find(u8, b, "setDone(true);") != null);
 }
 
 test "write: forms reached through a view or layout bind under their own name" {
@@ -9572,7 +9572,7 @@ test "write: forms reached through a view or layout bind under their own name" {
         ));
         const view = try readTarget(gpa, &tmp, if (layout_only) "layouts/templates/application.shtml" else "layouts/posts/new.shtml");
         defer gpa.free(view);
-        try testing.expect(std.mem.indexOf(u8, view, "<island src=\"" ++ partial_island ++ "\"") != null);
+        try testing.expect(std.mem.find(u8, view, "<island src=\"" ++ partial_island ++ "\"") != null);
         for (res.routes) |o| {
             if (!std.mem.eql(u8, rs[o.route_index].path, "/posts/new")) continue;
             try testing.expectEqual(Status.migrated, o.status);
@@ -9587,11 +9587,11 @@ test "write: an unanswered form stays an answerable finding region, not an islan
 
     const view = try readTarget(gpa, &bound.tmp, "layouts/posts/new.shtml");
     defer gpa.free(view);
-    try testing.expect(std.mem.indexOf(u8, view, "<island") == null);
+    try testing.expect(std.mem.find(u8, view, "<island") == null);
     // The `|m|` block local belongs to the surrounding errors finding. It
     // must not add an id-less marker beside that answerable region (#181).
-    try testing.expect(std.mem.indexOf(u8, view, "rails:unmapped local") == null);
-    try testing.expect(std.mem.indexOf(u8, view, "rails:finding") != null);
+    try testing.expect(std.mem.find(u8, view, "rails:unmapped local") == null);
+    try testing.expect(std.mem.find(u8, view, "rails:finding") != null);
     try testing.expect(!targetHas(&bound.tmp, bound_island));
     try testing.expectEqual(Status.open, bound.route("GET", "/posts/new").status);
 }
@@ -9604,7 +9604,7 @@ test "write: #179 -- ZIGAPAGOS_RUNTIME_DIR fills the runtime dependency, and not
         defer bound.deinit(gpa);
         const pkg = try readTarget(gpa, &bound.tmp, "package.json");
         defer gpa.free(pkg);
-        try testing.expect(std.mem.indexOf(u8, pkg, "\"file:/home/x/zigapagos/runtime\"") != null);
+        try testing.expect(std.mem.find(u8, pkg, "\"file:/home/x/zigapagos/runtime\"") != null);
     }
     {
         // `--runtime-path` is an explicit answer and beats the ambient one.
@@ -9615,7 +9615,7 @@ test "write: #179 -- ZIGAPAGOS_RUNTIME_DIR fills the runtime dependency, and not
         defer bound.deinit(gpa);
         const pkg = try readTarget(gpa, &bound.tmp, "package.json");
         defer gpa.free(pkg);
-        try testing.expect(std.mem.indexOf(u8, pkg, "\"file:../flag\"") != null);
+        try testing.expect(std.mem.find(u8, pkg, "\"file:../flag\"") != null);
     }
     {
         // Neither: the visible placeholder, unchanged from Stage 2.
@@ -9623,7 +9623,7 @@ test "write: #179 -- ZIGAPAGOS_RUNTIME_DIR fills the runtime dependency, and not
         defer bound.deinit(gpa);
         const pkg = try readTarget(gpa, &bound.tmp, "package.json");
         defer gpa.free(pkg);
-        try testing.expect(std.mem.indexOf(u8, pkg, "\"file:TODO-SET-RUNTIME-PATH\"") != null);
+        try testing.expect(std.mem.find(u8, pkg, "\"file:TODO-SET-RUNTIME-PATH\"") != null);
     }
 }
 
@@ -9749,12 +9749,12 @@ test "write: an update binding with no id field says so instead of emitting a br
     defer bound.deinit(gpa);
     const island = try readTarget(gpa, &bound.tmp, bound_island);
     defer gpa.free(island);
-    try testing.expect(std.mem.indexOf(
+    try testing.expect(std.mem.find(
         u8,
         island,
         "TODO: this form acts on one record; pass its id",
     ) != null);
-    try testing.expect(std.mem.indexOf(u8, island, "zb.collection") == null);
+    try testing.expect(std.mem.find(u8, island, "zb.collection") == null);
 }
 
 test "write: a delete binding with no id field says so instead of emitting a broken submit" {
@@ -9772,12 +9772,12 @@ test "write: a delete binding with no id field says so instead of emitting a bro
     defer bound.deinit(gpa);
     const island = try readTarget(gpa, &bound.tmp, bound_island);
     defer gpa.free(island);
-    try testing.expect(std.mem.indexOf(
+    try testing.expect(std.mem.find(
         u8,
         island,
         "TODO: this form acts on one record; pass its id",
     ) != null);
-    try testing.expect(std.mem.indexOf(u8, island, "zb.collection") == null);
+    try testing.expect(std.mem.find(u8, island, "zb.collection") == null);
 }
 
 test "write: a redirect route names where it goes (Stage 2's `to` was always null)" {
@@ -9880,7 +9880,7 @@ test "write: a redirect this run cannot resolve says so instead of inventing one
     try testing.expectEqual(@as(usize, 1), res.redirects.len);
     try testing.expect(res.redirects[0].to == null);
     try testing.expect(res.routes[0].note != null);
-    try testing.expect(std.mem.indexOf(
+    try testing.expect(std.mem.find(
         u8,
         res.routes[0].note.?,
         "redirect target is request-time state",
@@ -10095,7 +10095,7 @@ test "write: island on the auth journey with no collection to name scaffolds not
     for (res.routes) |o| {
         if (!std.mem.eql(u8, j.routes[o.route_index].verb, "GET")) continue;
         try testing.expectEqual(Status.open, o.status);
-        try testing.expect(std.mem.indexOf(
+        try testing.expect(std.mem.find(
             u8,
             o.note orelse "",
             "choice island on RAILS_AUTH_JOURNEY needs the auth scaffolds",
@@ -10176,7 +10176,7 @@ test "write: `public` on an auth guard ships the page and records the decision (
 
     try testing.expectEqual(Status.migrated, res.routes[0].status);
     try testing.expectEqual(@as(usize, 0), res.routes[0].open_finding_ids.len);
-    try testing.expect(std.mem.indexOf(
+    try testing.expect(std.mem.find(
         u8,
         res.routes[0].note orelse "",
         "guarded by before_action :require_login; shipped public by decision",
@@ -10255,8 +10255,8 @@ test "write: the `public` note names the same guard the finding named" {
     }
     try testing.expect(guard_id.len > 0);
     // The finding's own pick, restated so a change to it fails here too.
-    try testing.expect(std.mem.indexOf(u8, guard_message, "authenticate_user!") != null);
-    try testing.expect(std.mem.indexOf(u8, guard_message, "require_login") == null);
+    try testing.expect(std.mem.find(u8, guard_message, "authenticate_user!") != null);
+    try testing.expect(std.mem.find(u8, guard_message, "require_login") == null);
 
     var decided = [_]decisions.Decision{.{
         .id = guard_id,
@@ -10293,12 +10293,12 @@ test "write: the `public` note names the same guard the finding named" {
     defer freeResult(gpa, res);
 
     const note = res.routes[0].note orelse return error.NoNote;
-    try testing.expect(std.mem.indexOf(
+    try testing.expect(std.mem.find(
         u8,
         note,
         "guarded by before_action :authenticate_user!; shipped public by decision",
     ) != null);
-    try testing.expect(std.mem.indexOf(u8, note, "require_login") == null);
+    try testing.expect(std.mem.find(u8, note, "require_login") == null);
 }
 
 // ---- ruling S3-R7: every answer on a route is applied ---------------------
@@ -10479,7 +10479,7 @@ test "write: a bound mutation and a `public` guard on one route both apply (ruli
     const page = r7Page(&r7);
     try testing.expectEqual(Status.migrated, page.status);
     try testing.expectEqual(@as(usize, 0), page.open_finding_ids.len);
-    try testing.expect(std.mem.indexOf(
+    try testing.expect(std.mem.find(
         u8,
         page.note orelse "",
         "guarded by before_action :require_login; shipped public by decision",
@@ -10506,7 +10506,7 @@ test "write: a `retain` still outranks a `public` on the same route (ruling S3-R
     // And the answers BELOW the acknowledgement do not run: `retain` moots
     // them, and `public`'s note says a guarded page is shipping -- which on a
     // route that stays on Rails would be a note about work not happening.
-    try testing.expect(std.mem.indexOf(
+    try testing.expect(std.mem.find(
         u8,
         page.note orelse "",
         "shipped public by decision",
@@ -10595,7 +10595,7 @@ test "write: data backend choice without a document names the required list oper
     defer freeResult(gpa, res);
 
     try testing.expectEqual(Status.open, res.routes[0].status);
-    try testing.expect(std.mem.indexOf(
+    try testing.expect(std.mem.find(
         u8,
         res.routes[0].note orelse "",
         "choice backend on RAILS_REQUEST_TIME_STATE needs a --backend document with a list operation for collection `posts`",
@@ -10691,15 +10691,15 @@ test "write: a second bound form in one view gets its own island, numbered in so
     const second = try readTarget(gpa, &tmp, "components/forms/posts_new_2.island.tsx");
     defer gpa.free(second);
     // Named after the file, so the two components cannot collide either.
-    try testing.expect(std.mem.indexOf(u8, second, "export default function PostsNew2(") != null);
-    try testing.expect(std.mem.indexOf(u8, second, "{\"Second\"}</button>") != null);
+    try testing.expect(std.mem.find(u8, second, "export default function PostsNew2(") != null);
+    try testing.expect(std.mem.find(u8, second, "{\"Second\"}</button>") != null);
 
     // `build.sh` lists both, sorted -- the flag list is output, and output is
     // byte-identical for identical input.
     const build_sh = try readTarget(gpa, &tmp, "build.sh");
     defer gpa.free(build_sh);
-    const a = std.mem.indexOf(u8, build_sh, "--island='" ++ bound_island ++ "'").?;
-    const b = std.mem.indexOf(u8, build_sh, "--island='components/forms/posts_new_2.island.tsx'").?;
+    const a = std.mem.find(u8, build_sh, "--island='" ++ bound_island ++ "'").?;
+    const b = std.mem.find(u8, build_sh, "--island='components/forms/posts_new_2.island.tsx'").?;
     try testing.expect(a < b);
 }
 
@@ -10831,12 +10831,12 @@ test "write: two views whose stems flatten to one island name get two islands, n
     defer gpa.free(island_a);
     const island_b = try readTarget(gpa, &tmp, src_b);
     defer gpa.free(island_b);
-    try testing.expect(std.mem.indexOf(u8, island_a, "zb.send(\"POST\", \"/api/alpha\"") != null);
-    try testing.expect(std.mem.indexOf(u8, island_b, "zb.send(\"POST\", \"/api/beta\"") != null);
+    try testing.expect(std.mem.find(u8, island_a, "zb.send(\"POST\", \"/api/alpha\"") != null);
+    try testing.expect(std.mem.find(u8, island_b, "zb.send(\"POST\", \"/api/beta\"") != null);
     // …generated from its own template, so the header an operator reviews
     // against the ERB names the file they would actually open.
-    try testing.expect(std.mem.indexOf(u8, island_a, "from " ++ collide_view_a ++ ":2.") != null);
-    try testing.expect(std.mem.indexOf(u8, island_b, "from " ++ collide_view_b ++ ":2.") != null);
+    try testing.expect(std.mem.find(u8, island_a, "from " ++ collide_view_a ++ ":2.") != null);
+    try testing.expect(std.mem.find(u8, island_b, "from " ++ collide_view_b ++ ":2.") != null);
 }
 
 /// The `src` of the first `<island …>` in `bytes`.
@@ -10844,16 +10844,16 @@ test "write: two views whose stems flatten to one island name get two islands, n
 /// Contract 1 (self-freeing): the returned path is the only allocation.
 fn islandSrcOf(gpa: Allocator, bytes: []const u8) ![]u8 {
     const marker = "<island src=\"";
-    const at = std.mem.indexOf(u8, bytes, marker) orelse return error.NoIsland;
+    const at = std.mem.find(u8, bytes, marker) orelse return error.NoIsland;
     const rest = bytes[at + marker.len ..];
-    const end = std.mem.indexOfScalar(u8, rest, '"') orelse return error.NoIsland;
+    const end = std.mem.findScalar(u8, rest, '"') orelse return error.NoIsland;
     return gpa.dupe(u8, rest[0..end]);
 }
 
 fn countOccurrences(haystack: []const u8, needle: []const u8) usize {
     var n: usize = 0;
     var at: usize = 0;
-    while (std.mem.indexOfPos(u8, haystack, at, needle)) |i| {
+    while (std.mem.findPos(u8, haystack, at, needle)) |i| {
         n += 1;
         at = i + needle.len;
     }
@@ -11060,7 +11060,7 @@ test "write: a bound button_to becomes a click island, and its endpoint lands on
     // produced is gone.
     const layout = try readTarget(gpa, &linked.tmp, "layouts/a_b/new.shtml");
     defer gpa.free(layout);
-    try testing.expect(std.mem.indexOf(u8, layout, "<a href") == null);
+    try testing.expect(std.mem.find(u8, layout, "<a href") == null);
     const src = try islandSrcOf(gpa, layout);
     defer gpa.free(src);
     const island = try readTarget(gpa, &linked.tmp, src);
@@ -11069,12 +11069,12 @@ test "write: a bound button_to becomes a click island, and its endpoint lands on
     // A button, not a form; the link's own text as the label; Rails'
     // `data-confirm` still in front of the request; the answered call; and
     // the target action's own `redirect_to` after it.
-    try testing.expect(std.mem.indexOf(u8, island, "<form") == null);
-    try testing.expect(std.mem.indexOf(u8, island, "<button type=\"button\" onClick={onClick}>{\"Sign out\"}</button>") != null);
-    try testing.expect(std.mem.indexOf(u8, island, "if (!window.confirm(\"Sure?\")) return;") != null);
-    try testing.expect(std.mem.indexOf(u8, island, "await zb.send(\"DELETE\", \"/api/logout\");") != null);
-    try testing.expect(std.mem.indexOf(u8, island, "location.assign(\"/x\");") != null);
-    try testing.expect(std.mem.indexOf(u8, island, "isZigbaseError(err)") != null);
+    try testing.expect(std.mem.find(u8, island, "<form") == null);
+    try testing.expect(std.mem.find(u8, island, "<button type=\"button\" onClick={onClick}>{\"Sign out\"}</button>") != null);
+    try testing.expect(std.mem.find(u8, island, "if (!window.confirm(\"Sure?\")) return;") != null);
+    try testing.expect(std.mem.find(u8, island, "await zb.send(\"DELETE\", \"/api/logout\");") != null);
+    try testing.expect(std.mem.find(u8, island, "location.assign(\"/x\");") != null);
+    try testing.expect(std.mem.find(u8, island, "isZigbaseError(err)") != null);
     try testing.expect(std.mem.startsWith(
         u8,
         island,
@@ -11160,9 +11160,9 @@ test "write: an unanswered mutating link keeps its page open, naming the link's 
     defer gpa.free(layout);
     const marker = try gpa.print("<!-- rails:finding {s} -->", .{link_id});
     defer gpa.free(marker);
-    try testing.expect(std.mem.indexOf(u8, layout, marker) != null);
-    try testing.expect(std.mem.indexOf(u8, layout, "<a href") == null);
-    try testing.expect(std.mem.indexOf(u8, layout, "<island") == null);
+    try testing.expect(std.mem.find(u8, layout, marker) != null);
+    try testing.expect(std.mem.find(u8, layout, "<a href") == null);
+    try testing.expect(std.mem.find(u8, layout, "<island") == null);
 
     // No click island was written for it -- only the form's, which is the
     // one `--island=` flag -- and no endpoint was paired onto the route the
@@ -11271,15 +11271,15 @@ test "emitClickIsland: update and create call shapes, and the TODO for a record 
 
     const update = try emitClickIsland(gpa, tClickSpec(tClickBinding("PATCH", "posts"), with_id), with_id);
     defer gpa.free(update);
-    try testing.expect(std.mem.indexOf(u8, update, "      await zb.collection(\"posts\").update(\"1\", {});\n") != null);
-    try testing.expect(std.mem.indexOf(u8, update, "window.confirm") == null);
+    try testing.expect(std.mem.find(u8, update, "      await zb.collection(\"posts\").update(\"1\", {});\n") != null);
+    try testing.expect(std.mem.find(u8, update, "window.confirm") == null);
 
     // A `create` addresses no record: no id needed, none emitted, and no
     // TODO. `{}` and not `values`: a link has no fields.
     const create = try emitClickIsland(gpa, tClickSpec(tClickBinding("POST", "posts"), no_id), no_id);
     defer gpa.free(create);
-    try testing.expect(std.mem.indexOf(u8, create, "      await zb.collection(\"posts\").create({});\n") != null);
-    try testing.expect(std.mem.indexOf(u8, create, "TODO") == null);
+    try testing.expect(std.mem.find(u8, create, "      await zb.collection(\"posts\").create({});\n") != null);
+    try testing.expect(std.mem.find(u8, create, "TODO") == null);
 
     // A `delete` (or `update`) with no id is a control whose call can only
     // fail at runtime, so the island is the TODO and nothing else: no state,
@@ -11287,21 +11287,21 @@ test "emitClickIsland: update and create call shapes, and the TODO for a record 
     // leads back to the ERB.
     const todo = try emitClickIsland(gpa, tClickSpec(tClickBinding("DELETE", "posts"), no_id), no_id);
     defer gpa.free(todo);
-    try testing.expect(std.mem.indexOf(u8, todo, "  return <p>{\"TODO: this control acts on one record; pass its id\"}</p>;\n}\n") != null);
-    try testing.expect(std.mem.indexOf(u8, todo, "useState(") == null);
-    try testing.expect(std.mem.indexOf(u8, todo, "useState<") == null);
-    try testing.expect(std.mem.indexOf(u8, todo, "<button") == null);
-    try testing.expect(std.mem.indexOf(u8, todo, "export default function PostsShow(_props: Props) {\n") != null);
+    try testing.expect(std.mem.find(u8, todo, "  return <p>{\"TODO: this control acts on one record; pass its id\"}</p>;\n}\n") != null);
+    try testing.expect(std.mem.find(u8, todo, "useState(") == null);
+    try testing.expect(std.mem.find(u8, todo, "useState<") == null);
+    try testing.expect(std.mem.find(u8, todo, "<button") == null);
+    try testing.expect(std.mem.find(u8, todo, "export default function PostsShow(_props: Props) {\n") != null);
     const todo_update = try emitClickIsland(gpa, tClickSpec(tClickBinding("PATCH", "posts"), no_id), no_id);
     defer gpa.free(todo_update);
-    try testing.expect(std.mem.indexOf(u8, todo_update, "TODO: this control acts on one record") != null);
+    try testing.expect(std.mem.find(u8, todo_update, "TODO: this control acts on one record") != null);
 
     // A `custom:` answer has no collection and no record to address: a
     // missing id is not a TODO there, because `zb.send` needs none.
     const custom = try emitClickIsland(gpa, tClickSpec(tClickBinding("DELETE", null), no_id), no_id);
     defer gpa.free(custom);
-    try testing.expect(std.mem.indexOf(u8, custom, "      await zb.send(\"DELETE\", \"/api/collections/posts/records\");\n") != null);
-    try testing.expect(std.mem.indexOf(u8, custom, "TODO") == null);
+    try testing.expect(std.mem.find(u8, custom, "      await zb.send(\"DELETE\", \"/api/collections/posts/records\");\n") != null);
+    try testing.expect(std.mem.find(u8, custom, "TODO") == null);
 }
 
 test "emitClickIsland: leaks nothing under a FailingAllocator" {
@@ -11464,7 +11464,7 @@ test "write: the click-island branches leak nothing under a FailingAllocator" {
             defer freeResult(fa, res);
             try testing.expect(targetHas(&tmp, "components/forms/a_b_new.island.tsx"));
             const page = outcomeFor(res, 0) orelse return error.NoRoute;
-            try testing.expect(std.mem.indexOf(u8, page.note orelse "", "a confirm guard may be missing") != null);
+            try testing.expect(std.mem.find(u8, page.note orelse "", "a confirm guard may be missing") != null);
             break; // past the last allocation: the sweep is complete.
         } else |err| switch (err) {
             error.OutOfMemory => {},
@@ -11646,7 +11646,7 @@ fn runSharedForm(
     var route_views: [n]?[]const u8 = undefined;
     for (0..n) |i| {
         const stem = resolve.viewStem(view_paths[i]);
-        const slash = std.mem.indexOfScalar(u8, stem, '/').?;
+        const slash = std.mem.findScalar(u8, stem, '/').?;
         rs[i] = tNamed(
             "GET",
             route_paths[i],
@@ -11748,8 +11748,8 @@ test "write: one bound partial rendered by two views is ONE island file, not a c
     defer gpa.free(a);
     const b = try readTarget(gpa, &shared.tmp, "layouts/pages/contact.shtml");
     defer gpa.free(b);
-    try testing.expect(std.mem.indexOf(u8, a, "<island src=\"" ++ shared_island ++ "\"") != null);
-    try testing.expect(std.mem.indexOf(u8, b, "<island src=\"" ++ shared_island ++ "\"") != null);
+    try testing.expect(std.mem.find(u8, a, "<island src=\"" ++ shared_island ++ "\"") != null);
+    try testing.expect(std.mem.find(u8, b, "<island src=\"" ++ shared_island ++ "\"") != null);
 
     // …and the run finished, with the whole project written.
     try testing.expect(targetHas(&shared.tmp, shared_island));
@@ -11763,7 +11763,7 @@ test "write: one bound partial rendered by two views is ONE island file, not a c
     defer gpa.free(build_sh);
     var count: usize = 0;
     var at: usize = 0;
-    while (std.mem.indexOfPos(u8, build_sh, at, "--island=")) |i| {
+    while (std.mem.findPos(u8, build_sh, at, "--island=")) |i| {
         count += 1;
         at = i + 1;
     }
@@ -11812,14 +11812,14 @@ test "write: two bound forms in one shared partial stay two islands, deduped onc
     const b = try readTarget(gpa, &shared.tmp, "layouts/pages/contact.shtml");
     defer gpa.free(b);
     for ([_][]const u8{ a, b }) |page| {
-        try testing.expect(std.mem.indexOf(u8, page, "<island src=\"" ++ shared_island ++ "\"") != null);
-        try testing.expect(std.mem.indexOf(u8, page, "<island src=\"" ++ shared_island_2 ++ "\"") != null);
+        try testing.expect(std.mem.find(u8, page, "<island src=\"" ++ shared_island ++ "\"") != null);
+        try testing.expect(std.mem.find(u8, page, "<island src=\"" ++ shared_island_2 ++ "\"") != null);
     }
 
     // …and `_2` is the SECOND form, in source order.
     const second = try readTarget(gpa, &shared.tmp, shared_island_2);
     defer gpa.free(second);
-    try testing.expect(std.mem.indexOf(u8, second, "{\"Second\"}</button>") != null);
+    try testing.expect(std.mem.find(u8, second, "{\"Second\"}</button>") != null);
 }
 
 test "write: build.sh lists its islands in PATH order, not in the order they were written" {
@@ -11870,7 +11870,7 @@ test "write: build.sh lists its islands in PATH order, not in the order they wer
     var n: usize = 0;
     for (finding_list) |f| {
         if (!std.mem.eql(u8, f.code, findings.code_backend_endpoint)) continue;
-        if (std.mem.indexOf(u8, f.path, "config/routes") != null) continue;
+        if (std.mem.find(u8, f.path, "config/routes") != null) continue;
         if (n < 2) decided[n] = .{
             .id = f.id,
             .choice = "createPosts",
@@ -11910,8 +11910,8 @@ test "write: build.sh lists its islands in PATH order, not in the order they wer
 
     const build_sh = try readTarget(gpa, &tmp, "build.sh");
     defer gpa.free(build_sh);
-    const apple = std.mem.indexOf(u8, build_sh, "--island='components/forms/apple_new.island.tsx'").?;
-    const zebra = std.mem.indexOf(u8, build_sh, "--island='components/forms/zebra_new.island.tsx'").?;
+    const apple = std.mem.find(u8, build_sh, "--island='components/forms/apple_new.island.tsx'").?;
+    const zebra = std.mem.find(u8, build_sh, "--island='components/forms/zebra_new.island.tsx'").?;
     // `apple` was written SECOND (route `/b`) and must be listed FIRST.
     try testing.expect(apple < zebra);
 }
@@ -12353,7 +12353,7 @@ fn runJourney(gpa: Allocator, opts: JourneyOpts) !JourneyRun {
     // backend question of their own, so the only one in the app is the
     // `button_to` in a partial the LAYOUT renders (never a journey view).
     try testing.expect(button_id.len > 0);
-    try testing.expect(std.mem.indexOf(u8, button_id, "sessions") == null);
+    try testing.expect(std.mem.find(u8, button_id, "sessions") == null);
     try testing.expect(errors_id.len > 0);
 
     // The shadow row goes FIRST, so `convert.findingIdFor` -- which matches on
@@ -12490,7 +12490,7 @@ test "write: the journey's two views mount ONE AuthForm, told apart by a prop" {
 
     const signin = try readTarget(gpa, &j.tmp, "layouts/sessions/new.shtml");
     defer gpa.free(signin);
-    try testing.expect(std.mem.indexOf(
+    try testing.expect(std.mem.find(
         u8,
         signin,
         "<island src=\"" ++ auth_form_island_path ++ "\" client:load :props='.{ .mode = \"signin\" }'></island>",
@@ -12498,14 +12498,14 @@ test "write: the journey's two views mount ONE AuthForm, told apart by a prop" {
 
     const signup = try readTarget(gpa, &j.tmp, "layouts/registrations/new.shtml");
     defer gpa.free(signup);
-    try testing.expect(std.mem.indexOf(
+    try testing.expect(std.mem.find(
         u8,
         signup,
         "<island src=\"" ++ auth_form_island_path ++ "\" client:load :props='.{ .mode = \"signup\" }'></island>",
     ) != null);
     // The error summary above the form is the island's job now, and the `|m|`
     // loop local inside it never becomes an id-less `rails:unmapped`.
-    try testing.expect(std.mem.indexOf(u8, signup, "rails:unmapped") == null);
+    try testing.expect(std.mem.find(u8, signup, "rails:unmapped") == null);
 
     // ONE file, written once, however many views mount it.
     try testing.expect(targetHas(&j.tmp, auth_form_island_path));
@@ -12513,7 +12513,7 @@ test "write: the journey's two views mount ONE AuthForm, told apart by a prop" {
     defer gpa.free(build_sh);
     var at: usize = 0;
     var count: usize = 0;
-    while (std.mem.indexOfPos(u8, build_sh, at, "--island='" ++ auth_form_island_path ++ "'")) |k| {
+    while (std.mem.findPos(u8, build_sh, at, "--island='" ++ auth_form_island_path ++ "'")) |k| {
         count += 1;
         at = k + 1;
     }
@@ -12598,13 +12598,13 @@ test "write: the current_user region becomes AuthStatus, and the button_to insid
     // mounts it.
     const layout = try readTarget(gpa, &j.tmp, "layouts/templates/marketing.shtml");
     defer gpa.free(layout);
-    try testing.expect(std.mem.indexOf(
+    try testing.expect(std.mem.find(
         u8,
         layout,
         "<island src=\"" ++ auth_status_island_path ++ "\" client:load></island>",
     ) != null);
-    try testing.expect(std.mem.indexOf(u8, layout, "rails:finding") == null);
-    try testing.expect(std.mem.indexOf(u8, layout, "rails:unmapped") == null);
+    try testing.expect(std.mem.find(u8, layout, "rails:finding") == null);
+    try testing.expect(std.mem.find(u8, layout, "rails:unmapped") == null);
 
     const island = try readTarget(gpa, &j.tmp, auth_status_island_path);
     defer gpa.free(island);
@@ -12738,7 +12738,7 @@ test "write: the auth journey answered island settles every route it rides on" {
         } else {
             try testing.expectEqual(Status.backend, o.status);
         }
-        try testing.expect(std.mem.indexOf(
+        try testing.expect(std.mem.find(
             u8,
             o.note orelse "",
             "needs the auth scaffolds",
@@ -12778,11 +12778,11 @@ test "write: an answer on a control INSIDE a bound region is accepted, and named
     // finding they answered and cannot otherwise tell which answer made
     // theirs redundant.
     const note = root.note orelse "";
-    try testing.expect(std.mem.indexOf(u8, note, "superseded by the island answering") != null);
-    try testing.expect(std.mem.indexOf(u8, note, j.button_id) != null);
-    try testing.expect(std.mem.indexOf(u8, note, j.status_id) != null);
+    try testing.expect(std.mem.find(u8, note, "superseded by the island answering") != null);
+    try testing.expect(std.mem.find(u8, note, j.button_id) != null);
+    try testing.expect(std.mem.find(u8, note, j.status_id) != null);
     // The misleading half of the old behaviour, pinned as absent.
-    try testing.expect(std.mem.indexOf(u8, note, "needs the --backend document") == null);
+    try testing.expect(std.mem.find(u8, note, "needs the --backend document") == null);
 }
 
 test "write: the superseded note does not depend on where the nav is rendered from" {
@@ -12812,9 +12812,9 @@ test "write: the superseded note does not depend on where the nav is rendered fr
     try testing.expect(!contains(root.open_finding_ids, j.button_id));
 
     const note = root.note orelse "";
-    try testing.expect(std.mem.indexOf(u8, note, "superseded by the island answering") != null);
-    try testing.expect(std.mem.indexOf(u8, note, j.button_id) != null);
-    try testing.expect(std.mem.indexOf(u8, note, j.status_id) != null);
+    try testing.expect(std.mem.find(u8, note, "superseded by the island answering") != null);
+    try testing.expect(std.mem.find(u8, note, j.button_id) != null);
+    try testing.expect(std.mem.find(u8, note, j.status_id) != null);
     // And no click island for the swallowed control: the phantom binding is
     // still not something to emit, it is only something to explain.
     try testing.expect(!targetHas(&j.tmp, "components/forms/shared__nav.island.tsx"));
@@ -12841,15 +12841,15 @@ test "write: the error summary a bound auth form absorbed is named as superseded
     try testing.expect(!contains(signup.open_finding_ids, j.errors_id));
 
     const note = signup.note orelse return error.NoNote;
-    try testing.expect(std.mem.indexOf(u8, note, "superseded by the island answering") != null);
-    try testing.expect(std.mem.indexOf(u8, note, j.errors_id) != null);
+    try testing.expect(std.mem.find(u8, note, "superseded by the island answering") != null);
+    try testing.expect(std.mem.find(u8, note, j.errors_id) != null);
     // The superseder is the JOURNEY, not an `AuthStatus`, which is exactly
     // why ruling S3-R7's silence rule does not cover this one: no status
     // region encloses the summary, so no `mounts nothing of its own` note is
     // coming, and naming the answer that swallowed it is the only way the
     // operator learns where their errors went.
-    try testing.expect(std.mem.indexOf(u8, note, j.journey_id) != null);
-    try testing.expect(std.mem.indexOf(u8, note, "deferred to Stage 4") == null);
+    try testing.expect(std.mem.find(u8, note, j.journey_id) != null);
+    try testing.expect(std.mem.find(u8, note, "deferred to Stage 4") == null);
 }
 
 test "write: with the nested control unanswered the route is finished and says nothing about it" {
@@ -12864,7 +12864,7 @@ test "write: with the nested control unanswered the route is finished and says n
     const root = j.route("GET", "/");
     try testing.expectEqual(Status.migrated, root.status);
     try testing.expect(!contains(root.open_finding_ids, j.button_id));
-    try testing.expect(std.mem.indexOf(u8, root.note orelse "", "superseded") == null);
+    try testing.expect(std.mem.find(u8, root.note orelse "", "superseded") == null);
 }
 
 test "write: retain on the nested control still outranks the island around it" {
@@ -12883,7 +12883,7 @@ test "write: retain on the nested control still outranks the island around it" {
     const root = j.route("GET", "/");
     try testing.expectEqualStrings(j.button_id, root.decision_id orelse "");
     try testing.expectEqual(Status.retained, root.status);
-    try testing.expect(std.mem.indexOf(u8, root.note orelse "", "superseded") == null);
+    try testing.expect(std.mem.find(u8, root.note orelse "", "superseded") == null);
     const placeholder = try readTarget(gpa, &j.tmp, "content/index.smd");
     defer gpa.free(placeholder);
     try testing.expectEqualStrings(root_placeholder, placeholder);
@@ -12917,8 +12917,8 @@ test "write: a journey with no sessions#new route renders no sign-in link" {
 
     const island = try readTarget(gpa, &j.tmp, auth_status_island_path);
     defer gpa.free(island);
-    try testing.expect(std.mem.indexOf(u8, island, "<a href=") == null);
-    try testing.expect(std.mem.indexOf(
+    try testing.expect(std.mem.find(u8, island, "<a href=") == null);
+    try testing.expect(std.mem.find(
         u8,
         island,
         "// This journey has no `sessions#new` route, so there is nowhere to link.\n    return null;",
@@ -13020,7 +13020,7 @@ test "write: island on a request_state that is not the auth status keeps the Sta
         if (std.mem.eql(u8, rs[o.route_index].path, "/")) break o;
     } else unreachable;
     try testing.expectEqual(Status.open, home.status);
-    try testing.expect(std.mem.indexOf(
+    try testing.expect(std.mem.find(
         u8,
         home.note orelse "",
         "choice island deferred to Stage 4",
@@ -13369,8 +13369,8 @@ test "write: a form past the journey's render depth is still bound by its own an
     // replaced is gone from the page.
     const page = try readTarget(gpa, &j.tmp, "layouts/sessions/new.shtml");
     defer gpa.free(page);
-    try testing.expect(std.mem.indexOf(u8, page, j.errors_id) == null);
-    try testing.expect(std.mem.indexOf(u8, page, "<island src=\"components/forms/") != null);
+    try testing.expect(std.mem.find(u8, page, j.errors_id) == null);
+    try testing.expect(std.mem.find(u8, page, "<island src=\"components/forms/") != null);
 
     // The island file is on disk and calls the path the answer named. Read
     // through the route's own artifact list rather than by spelling the name,
@@ -13383,7 +13383,7 @@ test "write: a form past the journey's render depth is still bound by its own an
     try testing.expect(island_path != null);
     const island = try readTarget(gpa, &j.tmp, island_path.?);
     defer gpa.free(island);
-    try testing.expect(std.mem.indexOf(u8, island, "/api/password-resets") != null);
+    try testing.expect(std.mem.find(u8, island, "/api/password-resets") != null);
     try testing.expect(targetHas(&j.tmp, client_lib_path));
 }
 
@@ -13461,7 +13461,7 @@ test "write: a password_confirmation field makes a form sign-up under any contro
 
     const view = try readTarget(gpa, &tmp, "layouts/accounts/new.shtml");
     defer gpa.free(view);
-    try testing.expect(std.mem.indexOf(u8, view, ":props='.{ .mode = \"signup\" }'") != null);
+    try testing.expect(std.mem.find(u8, view, ":props='.{ .mode = \"signup\" }'") != null);
 }
 
 test "write: an unanswered current_user region scaffolds no AuthStatus" {
@@ -13477,7 +13477,7 @@ test "write: an unanswered current_user region scaffolds no AuthStatus" {
     // ... and the region is still a question the operator can answer.
     const layout = try readTarget(gpa, &j.tmp, "layouts/templates/marketing.shtml");
     defer gpa.free(layout);
-    try testing.expect(std.mem.indexOf(u8, layout, j.status_id) != null);
+    try testing.expect(std.mem.find(u8, layout, j.status_id) != null);
 
     // `retain` is the other half, and a different code path: the id IS in the
     // decisions file, so the binding is refused by the CHOICE and not by the
@@ -13514,8 +13514,8 @@ test "write: an island answer on a DIFFERENT code at the region's position scaff
     // evidence about the code, so the code must be checked separately.)
     const layout = try readTarget(gpa, &j.tmp, "layouts/templates/marketing.shtml");
     defer gpa.free(layout);
-    try testing.expect(std.mem.indexOf(u8, layout, "<!-- rails:finding ") != null);
-    try testing.expect(std.mem.indexOf(u8, layout, "<island") == null);
+    try testing.expect(std.mem.find(u8, layout, "<!-- rails:finding ") != null);
+    try testing.expect(std.mem.find(u8, layout, "<island") == null);
 }
 
 test "write: lib/zb.ts names no auth collection when no scaffold reached the target" {
@@ -13623,8 +13623,8 @@ test "write: lib/zb.ts names no auth collection when no scaffold reached the tar
     try testing.expect(targetHas(&tmp, client_lib_path));
     const lib = try readTarget(gpa, &tmp, client_lib_path);
     defer gpa.free(lib);
-    try testing.expect(std.mem.indexOf(u8, lib, "authCollection") == null);
-    try testing.expect(std.mem.indexOf(u8, lib, "new LocalAuthStore()") != null);
+    try testing.expect(std.mem.find(u8, lib, "authCollection") == null);
+    try testing.expect(std.mem.find(u8, lib, "new LocalAuthStore()") != null);
 }
 
 test "write: the auth scaffolds and two colliding form stems each get their own file, written once" {
@@ -13801,7 +13801,7 @@ test "write: the auth scaffolds and two colliding form stems each get their own 
     for (paths) |p| {
         var at: usize = 0;
         var count: usize = 0;
-        while (std.mem.indexOfPos(u8, build_sh, at, p)) |k| {
+        while (std.mem.findPos(u8, build_sh, at, p)) |k| {
             count += 1;
             at = k + 1;
         }
@@ -13815,8 +13815,8 @@ test "write: the auth scaffolds and two colliding form stems each get their own 
     defer gpa.free(alpha);
     const beta = try readTarget(gpa, &tmp, "components/forms/a_b_new_2.island.tsx");
     defer gpa.free(beta);
-    try testing.expect(std.mem.indexOf(u8, alpha, "/api/alpha") != null);
-    try testing.expect(std.mem.indexOf(u8, beta, "/api/beta") != null);
+    try testing.expect(std.mem.find(u8, alpha, "/api/alpha") != null);
+    try testing.expect(std.mem.find(u8, beta, "/api/beta") != null);
 
     // …and the journey's two views still mount ONE component, told apart by a
     // prop: the same-path case the id-keyed skip is what makes correct.
@@ -13824,10 +13824,10 @@ test "write: the auth scaffolds and two colliding form stems each get their own 
     defer gpa.free(signin);
     const signup = try readTarget(gpa, &tmp, "layouts/registrations/new.shtml");
     defer gpa.free(signup);
-    try testing.expect(std.mem.indexOf(u8, signin, "\" client:load :props='.{ .mode = \"signin\" }'") != null);
-    try testing.expect(std.mem.indexOf(u8, signup, "\" client:load :props='.{ .mode = \"signup\" }'") != null);
-    try testing.expect(std.mem.indexOf(u8, signin, auth_form_island_path) != null);
-    try testing.expect(std.mem.indexOf(u8, signup, auth_form_island_path) != null);
+    try testing.expect(std.mem.find(u8, signin, "\" client:load :props='.{ .mode = \"signin\" }'") != null);
+    try testing.expect(std.mem.find(u8, signup, "\" client:load :props='.{ .mode = \"signup\" }'") != null);
+    try testing.expect(std.mem.find(u8, signin, auth_form_island_path) != null);
+    try testing.expect(std.mem.find(u8, signup, auth_form_island_path) != null);
 }
 
 test "write: two answered status regions in ONE template share the one AuthStatus file" {
@@ -13850,8 +13850,8 @@ test "write: two answered status regions in ONE template share the one AuthStatu
     // Both regions were replaced -- neither is still a marker on the page.
     const layout = try readTarget(gpa, &j.tmp, "layouts/templates/marketing.shtml");
     defer gpa.free(layout);
-    try testing.expect(std.mem.indexOf(u8, layout, j.status_id) == null);
-    try testing.expect(std.mem.indexOf(u8, layout, j.status2_id) == null);
+    try testing.expect(std.mem.find(u8, layout, j.status_id) == null);
+    try testing.expect(std.mem.find(u8, layout, j.status2_id) == null);
     // ONE mount, not two. `AuthStatus` renders BOTH branches itself, so
     // mounting it at each half of a complementary pair renders the whole
     // control twice: "Sign in" twice in one `<nav>` for a visitor with no
@@ -13860,7 +13860,7 @@ test "write: two answered status regions in ONE template share the one AuthStatu
     // is absorbed (see `bindAuthStatus`).
     var at: usize = 0;
     var mounts: usize = 0;
-    while (std.mem.indexOfPos(u8, layout, at, "<island src=\"" ++ auth_status_island_path ++ "\"")) |k| {
+    while (std.mem.findPos(u8, layout, at, "<island src=\"" ++ auth_status_island_path ++ "\"")) |k| {
         mounts += 1;
         at = k + 1;
     }
@@ -13874,8 +13874,8 @@ test "write: two answered status regions in ONE template share the one AuthStatu
     // ...and the route says WHICH region was folded in, so the operator can
     // see why one of their two answers produced no second component.
     const note = root.note orelse return error.TestUnexpectedResult;
-    try testing.expect(std.mem.indexOf(u8, note, journey_nav) != null);
-    try testing.expect(std.mem.indexOf(u8, note, "unless current_user") != null);
+    try testing.expect(std.mem.find(u8, note, journey_nav) != null);
+    try testing.expect(std.mem.find(u8, note, "unless current_user") != null);
 
     // ONE file, and one `--island=` flag: two would make `release` bundle the
     // same entry twice.
@@ -13883,7 +13883,7 @@ test "write: two answered status regions in ONE template share the one AuthStatu
     defer gpa.free(build_sh);
     at = 0;
     var flags: usize = 0;
-    while (std.mem.indexOfPos(u8, build_sh, at, "--island='" ++ auth_status_island_path ++ "'")) |k| {
+    while (std.mem.findPos(u8, build_sh, at, "--island='" ++ auth_status_island_path ++ "'")) |k| {
         flags += 1;
         at = k + 1;
     }
@@ -13907,15 +13907,15 @@ test "write: two answered status regions in DIFFERENT templates share the one Au
     defer gpa.free(layout);
     const home = try readTarget(gpa, &j.tmp, "layouts/pages/home.shtml");
     defer gpa.free(home);
-    try testing.expect(std.mem.indexOf(u8, layout, "<island src=\"" ++ auth_status_island_path ++ "\"") != null);
-    try testing.expect(std.mem.indexOf(u8, home, "<island src=\"" ++ auth_status_island_path ++ "\"") != null);
-    try testing.expect(std.mem.indexOf(u8, home, j.home_status_id) == null);
+    try testing.expect(std.mem.find(u8, layout, "<island src=\"" ++ auth_status_island_path ++ "\"") != null);
+    try testing.expect(std.mem.find(u8, home, "<island src=\"" ++ auth_status_island_path ++ "\"") != null);
+    try testing.expect(std.mem.find(u8, home, j.home_status_id) == null);
 
     const build_sh = try readTarget(gpa, &j.tmp, "build.sh");
     defer gpa.free(build_sh);
     var at: usize = 0;
     var flags: usize = 0;
-    while (std.mem.indexOfPos(u8, build_sh, at, "--island='" ++ auth_status_island_path ++ "'")) |k| {
+    while (std.mem.findPos(u8, build_sh, at, "--island='" ++ auth_status_island_path ++ "'")) |k| {
         flags += 1;
         at = k + 1;
     }
@@ -14052,7 +14052,7 @@ test "write: a retained route writes no AuthStatus, and the route that keeps its
     try testing.expect(targetHas(&tmp, auth_status_island_path));
     const b_page = try readTarget(gpa, &tmp, "layouts/pages/b.shtml");
     defer gpa.free(b_page);
-    try testing.expect(std.mem.indexOf(u8, b_page, "<island src=\"" ++ auth_status_island_path ++ "\"") != null);
+    try testing.expect(std.mem.find(u8, b_page, "<island src=\"" ++ auth_status_island_path ++ "\"") != null);
 
     for (res.routes) |o| {
         if (std.mem.eql(u8, rs[o.route_index].path, "/a")) {
@@ -14198,12 +14198,12 @@ test "write: the AuthStatus fold note is a migrated route's, not a retained rout
         if (std.mem.eql(u8, rs[o.route_index].path, "/a")) {
             saw_a = true;
             try testing.expectEqual(Status.retained, o.status);
-            try testing.expect(std.mem.indexOf(u8, note, "folded into the AuthStatus island") == null);
+            try testing.expect(std.mem.find(u8, note, "folded into the AuthStatus island") == null);
         }
         if (std.mem.eql(u8, rs[o.route_index].path, "/b")) {
             saw_b = true;
             try testing.expectEqual(Status.migrated, o.status);
-            try testing.expect(std.mem.indexOf(u8, note, "app/views/pages/b.html.erb:2 `unless current_user` folded into the AuthStatus island above it") != null);
+            try testing.expect(std.mem.find(u8, note, "app/views/pages/b.html.erb:2 `unless current_user` folded into the AuthStatus island above it") != null);
         }
     }
     try testing.expect(saw_a);
@@ -14320,8 +14320,8 @@ test "write: a status region nested inside another one is named as such, not lef
     // The header names the inner region AND says why it mounted nothing.
     const island = try readTarget(gpa, &tmp, auth_status_island_path);
     defer gpa.free(island);
-    try testing.expect(std.mem.indexOf(u8, island, "//   app/views/pages/home.html.erb:1 -- if signed_in?\n") != null);
-    try testing.expect(std.mem.indexOf(
+    try testing.expect(std.mem.find(u8, island, "//   app/views/pages/home.html.erb:1 -- if signed_in?\n") != null);
+    try testing.expect(std.mem.find(
         u8,
         island,
         "//   app/views/pages/home.html.erb:2 -- current_user.email (inside the region above, which this replaces)\n",
@@ -14334,7 +14334,7 @@ test "write: a status region nested inside another one is named as such, not lef
         saw = true;
         try testing.expectEqual(Status.migrated, o.status);
         const note = o.note orelse return error.NoNote;
-        try testing.expect(std.mem.indexOf(u8, note, "app/views/pages/home.html.erb:2 `current_user.email` is inside the region the AuthStatus island replaced, so it mounts nothing of its own") != null);
+        try testing.expect(std.mem.find(u8, note, "app/views/pages/home.html.erb:2 `current_user.email` is inside the region the AuthStatus island replaced, so it mounts nothing of its own") != null);
         // Ruling S3-R7: ONCE, in those words, and not also in
         // `settleSuperseded`'s. The inner region is answered here (all three
         // `island` answers above), so with every answer applied it now
@@ -14345,7 +14345,7 @@ test "write: a status region nested inside another one is named as such, not lef
         // and line the operator actually wrote. The second is the one worth
         // keeping, and it is the one that appears whether the inner region
         // was answered or not.
-        try testing.expect(std.mem.indexOf(u8, note, "superseded by the island answering") == null);
+        try testing.expect(std.mem.find(u8, note, "superseded by the island answering") == null);
     }
     try testing.expect(saw);
 }
@@ -14376,7 +14376,7 @@ test "write: the journey's endpoints outrank the ones a paired form would derive
     // answer to outrank. Without this the test would pass for the wrong reason.
     const page = try readTarget(gpa, &j.tmp, "layouts/sessions/new.shtml");
     defer gpa.free(page);
-    try testing.expect(std.mem.indexOf(u8, page, "<island src=\"components/forms/") != null);
+    try testing.expect(std.mem.find(u8, page, "<island src=\"components/forms/") != null);
 
     const create = j.route("POST", "/session");
     const e = create.endpoint orelse return error.TestUnexpectedResult;
@@ -14409,7 +14409,7 @@ const PairRun = struct {
         defer gpa.free(page);
         var at: usize = 0;
         var n: usize = 0;
-        while (std.mem.indexOfPos(u8, page, at, "<island src=\"" ++ auth_status_island_path ++ "\"")) |k| {
+        while (std.mem.findPos(u8, page, at, "<island src=\"" ++ auth_status_island_path ++ "\"")) |k| {
             n += 1;
             at = k + 1;
         }
@@ -14684,15 +14684,15 @@ test "write: an if/else region was always one mount, and stays one" {
     defer gpa.free(page);
     var at: usize = 0;
     var mounts: usize = 0;
-    while (std.mem.indexOfPos(u8, page, at, "<island src=\"" ++ auth_status_island_path ++ "\"")) |k| {
+    while (std.mem.findPos(u8, page, at, "<island src=\"" ++ auth_status_island_path ++ "\"")) |k| {
         mounts += 1;
         at = k + 1;
     }
     try testing.expectEqual(@as(usize, 1), mounts);
     // The `else` arm went with the region: the island renders both branches,
     // so neither the signed-in markup nor the signed-out markup is left behind.
-    try testing.expect(std.mem.indexOf(u8, page, "rails:else") == null);
-    try testing.expect(std.mem.indexOf(u8, page, "Sign in</a>") == null);
+    try testing.expect(std.mem.find(u8, page, "rails:else") == null);
+    try testing.expect(std.mem.find(u8, page, "Sign in</a>") == null);
 }
 
 test "write: a shared AuthStatus is listed once in a route's artifacts" {
@@ -14728,15 +14728,15 @@ test "write: the shared AuthStatus header names every region it replaced" {
 
     const island = try readTarget(gpa, &j.tmp, auth_status_island_path);
     defer gpa.free(island);
-    const home = std.mem.indexOf(u8, island, "app/views/pages/home.html.erb:2") orelse
+    const home = std.mem.find(u8, island, "app/views/pages/home.html.erb:2") orelse
         return error.TestUnexpectedResult;
-    const nav = std.mem.indexOf(u8, island, "app/views/shared/_nav.html.erb:2") orelse
+    const nav = std.mem.find(u8, island, "app/views/shared/_nav.html.erb:2") orelse
         return error.TestUnexpectedResult;
     // Source order, by path then line -- not the order the pages were written,
     // which is route order and would make these bytes depend on the route
     // table.
     try testing.expect(home < nav);
-    try testing.expect(std.mem.indexOf(u8, island, "if current_user") != null);
+    try testing.expect(std.mem.find(u8, island, "if current_user") != null);
 }
 
 test "regionBranch reads the polarity off the code, and stops at a word boundary" {
@@ -14894,8 +14894,8 @@ test "write: the AuthStatus header is in source order, not fragment-stream order
 
     const island = try readTarget(gpa, &tmp, auth_status_island_path);
     defer gpa.free(island);
-    const home = std.mem.indexOf(u8, island, "app/views/pages/home.html.erb:1").?;
-    const nav = std.mem.indexOf(u8, island, "app/views/shared/_nav.html.erb:1").?;
+    const home = std.mem.find(u8, island, "app/views/pages/home.html.erb:1").?;
+    const nav = std.mem.find(u8, island, "app/views/shared/_nav.html.erb:1").?;
     try testing.expect(home < nav);
 }
 
@@ -14903,11 +14903,11 @@ test "Stage 4 shared interactivity emitters have their runtime contracts" {
     const gpa = testing.allocator;
     const frame = try emitFrameIsland(gpa);
     defer gpa.free(frame);
-    try testing.expect(std.mem.indexOf(u8, frame, "fetch(props.src") != null);
-    try testing.expect(std.mem.indexOf(u8, frame, "dangerouslySetInnerHTML") != null);
-    try testing.expect(std.mem.indexOf(u8, stimulus_runtime, "owner.querySelectorAll<HTMLElement>(\"[data-action]\")") != null);
-    try testing.expect(std.mem.indexOf(u8, stimulus_runtime, "matchesKey(e, filter)") != null);
-    try testing.expect(std.mem.indexOf(u8, stimulus_runtime, "removeEventListener(event, wrapped, options)") != null);
+    try testing.expect(std.mem.find(u8, frame, "fetch(props.src") != null);
+    try testing.expect(std.mem.find(u8, frame, "dangerouslySetInnerHTML") != null);
+    try testing.expect(std.mem.find(u8, stimulus_runtime, "owner.querySelectorAll<HTMLElement>(\"[data-action]\")") != null);
+    try testing.expect(std.mem.find(u8, stimulus_runtime, "matchesKey(e, filter)") != null);
+    try testing.expect(std.mem.find(u8, stimulus_runtime, "removeEventListener(event, wrapped, options)") != null);
 }
 
 test "write: a Stimulus-only island emits its shared runtime without ZigBase" {
@@ -14978,7 +14978,7 @@ test "write: a Stimulus-only island emits its shared runtime without ZigBase" {
     try testing.expect(!targetHas(&tmp, client_lib_path));
     const package = try readTarget(gpa, &tmp, "package.json");
     defer gpa.free(package);
-    try testing.expect(std.mem.indexOf(u8, package, "@zigbase/client") == null);
+    try testing.expect(std.mem.find(u8, package, "@zigbase/client") == null);
 
     var fail_index: usize = 0;
     while (fail_index < 500) : (fail_index += 1) {
@@ -15029,18 +15029,18 @@ test "Stage 4 interactivity paths and React project metadata are deterministic" 
     defer gpa.free(config);
     const client_config = try emitReactBridgeConfig(gpa, &.{}, true);
     defer gpa.free(client_config);
-    try testing.expect(std.mem.indexOf(u8, client_config, "\"firstParty\":[\"@zigbase/client\"]") != null);
+    try testing.expect(std.mem.find(u8, client_config, "\"firstParty\":[\"@zigbase/client\"]") != null);
     try testing.expectEqualStrings("{\"islandImports\":{\"firstParty\":[],\"npmCompat\":[\"d3\",\"zod\"]},\"resolve\":{\"react\":\"@z/runtime/compat\",\"react-dom\":\"@z/runtime/compat\",\"react-dom/client\":\"@z/runtime/compat/client\",\"react/jsx-runtime\":\"@z/runtime/jsx-runtime\",\"react/jsx-dev-runtime\":\"@z/runtime/jsx-dev-runtime\"}}\n", config);
     const deps = [_]@import("integrations.zig").NpmDep{.{ .name = "d3", .version = "7.9.0" }};
     const package = try emitPackageCompat(gpa, "Charts", "../runtime", false, &.{"d3"}, &deps);
     defer gpa.free(package);
-    try testing.expect(std.mem.indexOf(u8, package, "\"d3\": \"7.9.0\"") != null);
-    try testing.expect(std.mem.indexOf(u8, target_tsconfig, "\"jsxImportSource\": \"@z/runtime\"") != null);
-    try testing.expect(std.mem.indexOf(u8, target_tsconfig, "\"module\": \"ESNext\"") != null);
-    try testing.expect(std.mem.indexOf(u8, target_tsconfig, "\"target\": \"ESNext\"") != null);
-    try testing.expect(std.mem.indexOf(u8, target_tsconfig, "\"allowJs\": true") != null);
-    try testing.expect(std.mem.indexOf(u8, target_tsconfig, "\"allowImportingTsExtensions\": true") != null);
-    try testing.expect(std.mem.indexOf(u8, target_tsconfig, "\"noEmit\": true") != null);
+    try testing.expect(std.mem.find(u8, package, "\"d3\": \"7.9.0\"") != null);
+    try testing.expect(std.mem.find(u8, target_tsconfig, "\"jsxImportSource\": \"@z/runtime\"") != null);
+    try testing.expect(std.mem.find(u8, target_tsconfig, "\"module\": \"ESNext\"") != null);
+    try testing.expect(std.mem.find(u8, target_tsconfig, "\"target\": \"ESNext\"") != null);
+    try testing.expect(std.mem.find(u8, target_tsconfig, "\"allowJs\": true") != null);
+    try testing.expect(std.mem.find(u8, target_tsconfig, "\"allowImportingTsExtensions\": true") != null);
+    try testing.expect(std.mem.find(u8, target_tsconfig, "\"noEmit\": true") != null);
 }
 
 test "emitStimulusIsland: every allocation failure is clean" {
@@ -15077,9 +15077,9 @@ test "emitDataIsland carries the ported record body and collection contract" {
     const spec: convert.IslandSpec = .{ .island = binding.island, .fields = &.{}, .errors_model = null, .submit_label = "Save", .click = null, .binding = binding, .original = "@posts.each do |post|", .line = 1, .source = "app/views/posts/index.html.erb", .port = @constCast("h += \"<h2>\" + esc(String(rec.title ?? \"\")) + \"</h2>\";\n") };
     const bytes = try emitDataIsland(gpa, spec);
     defer gpa.free(bytes);
-    try testing.expect(std.mem.indexOf(u8, bytes, "zb.collection(\"posts\").getList(1, 50)") != null);
-    try testing.expect(std.mem.indexOf(u8, bytes, "  h += \"<h2>\"") != null);
-    try testing.expect(std.mem.indexOf(u8, bytes, "dangerouslySetInnerHTML") != null);
+    try testing.expect(std.mem.find(u8, bytes, "zb.collection(\"posts\").getList(1, 50)") != null);
+    try testing.expect(std.mem.find(u8, bytes, "  h += \"<h2>\"") != null);
+    try testing.expect(std.mem.find(u8, bytes, "dangerouslySetInnerHTML") != null);
 }
 
 test "data island paths number a second region and emitter OOM paths are clean" {
@@ -15164,7 +15164,7 @@ test "write: island and backend choices emit the same document-backed data islan
         const bytes = try readTarget(gpa, &tmp, "components/data/posts_index.island.tsx");
         const collection_call = try gpa.print("zb.collection(\"{s}\").getList", .{case.collection});
         defer gpa.free(collection_call);
-        try testing.expect(std.mem.indexOf(u8, bytes, collection_call) != null);
+        try testing.expect(std.mem.find(u8, bytes, collection_call) != null);
         if (run_index == 0) {
             first_bytes = bytes;
         } else if (run_index == 1) {
@@ -15235,8 +15235,8 @@ test "write: island-realtime replaces a portable Turbo Stream with a subscribed 
     try testing.expectEqual(Status.migrated, result.routes[0].status);
     const island = try readTarget(gpa, &tmp, "components/TurboStream.island.tsx");
     defer gpa.free(island);
-    try testing.expect(std.mem.indexOf(u8, island, "zb.realtime.subscribe(props.stream") != null);
-    try testing.expect(std.mem.indexOf(u8, island, "zigapagos:turbo-stream") != null);
+    try testing.expect(std.mem.find(u8, island, "zb.realtime.subscribe(props.stream") != null);
+    try testing.expect(std.mem.find(u8, island, "zigapagos:turbo-stream") != null);
     const client = try readTarget(gpa, &tmp, client_lib_path);
     defer gpa.free(client);
     try testing.expectEqualStrings(
@@ -15342,10 +15342,10 @@ test "write: a dynamic route ports its record view into the SPA and carries layo
     }
     const spa = try readTarget(gpa, &tmp, "spa/posts.spa.tsx");
     defer gpa.free(spa);
-    try testing.expect(std.mem.indexOf(u8, spa, "head: [{ rel: \"stylesheet\", href: \"/stylesheets/application.css\" }]") != null);
-    try testing.expect(std.mem.indexOf(u8, spa, "zb.collection(\"posts\").getOne(params.id)") != null);
-    try testing.expect(std.mem.indexOf(u8, spa, "h += esc(String(rec.title ?? \"\"));") != null);
-    try testing.expect(std.mem.indexOf(u8, spa, "TODO: port GET /posts/:id/edit (posts#edit)") != null);
+    try testing.expect(std.mem.find(u8, spa, "head: [{ rel: \"stylesheet\", href: \"/stylesheets/application.css\" }]") != null);
+    try testing.expect(std.mem.find(u8, spa, "zb.collection(\"posts\").getOne(params.id)") != null);
+    try testing.expect(std.mem.find(u8, spa, "h += esc(String(rec.title ?? \"\"));") != null);
+    try testing.expect(std.mem.find(u8, spa, "TODO: port GET /posts/:id/edit (posts#edit)") != null);
     try testing.expect(targetHas(&tmp, client_lib_path));
 }
 

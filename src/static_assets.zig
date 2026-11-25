@@ -44,7 +44,7 @@ pub fn expand(io: std.Io, gpa: Allocator, build: *Build) Allocator.Error!Selecti
         const raw_path = if (glob) entry[0 .. entry.len - 2] else entry;
         const path = std.mem.trimEnd(u8, raw_path, "/");
         const invalid = root.validatePathMessage(raw_path, .{ .empty = glob and path.len == 0 }) orelse
-            @as(?[]const u8, if (std.mem.indexOfScalar(u8, path, 0) != null) "NUL is not allowed in a path" else null) orelse
+            @as(?[]const u8, if (std.mem.findScalar(u8, path, 0) != null) "NUL is not allowed in a path" else null) orelse
             @as(?[]const u8, if (builtin.target.os.tag == .windows and path.len >= 2 and std.ascii.isAlphabetic(path[0]) and path[1] == ':') "drive-qualified paths are not allowed" else null);
         if (invalid) |reason| {
             try reporter.emit(entry_idx, .ZP_STATIC_ASSET_INVALID, "invalid static_assets entry '{s}': {s}", .{ entry, reason });

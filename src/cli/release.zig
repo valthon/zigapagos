@@ -607,7 +607,7 @@ pub const Command = struct {
                 // declared base, which `spa.zig` treats as "skip the agreement
                 // check" and take the module's own.
                 const v = arg["--spa=".len..];
-                if (std.mem.indexOfScalar(u8, v, '|')) |i| {
+                if (std.mem.findScalar(u8, v, '|')) |i| {
                     try spas.append(gpa, .{ .src = v[0..i], .base = v[i + 1 ..] });
                 } else {
                     try spas.append(gpa, .{ .src = v, .base = "" });
@@ -1010,8 +1010,8 @@ pub const hot_islands_env = "ZIGAPAGOS_HOT_ISLANDS";
 /// pins the two against each other — a drift here is a 404 on every island.
 fn bundleName(src: []const u8) []const u8 {
     var name = src;
-    if (std.mem.lastIndexOfScalar(u8, name, '/')) |slash| name = name[slash + 1 ..];
-    if (std.mem.lastIndexOfScalar(u8, name, '.')) |dot| name = name[0..dot];
+    if (std.mem.findScalarLast(u8, name, '/')) |slash| name = name[slash + 1 ..];
+    if (std.mem.findScalarLast(u8, name, '.')) |dot| name = name[0..dot];
     return name;
 }
 

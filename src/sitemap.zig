@@ -220,7 +220,7 @@ test "sitemap: composeRawUrl trims a trailing-slash host_url instead of doubling
     try std.testing.expectEqualStrings("https://example.com/myprefix/app/", got);
     // Scoped past the scheme's own "//" -- this is the doubled-slash defect
     // shape specifically (host immediately followed by a second "/").
-    try std.testing.expect(std.mem.indexOf(u8, got, "example.com//") == null);
+    try std.testing.expect(std.mem.find(u8, got, "example.com//") == null);
 }
 
 test "sitemap: composePageUrl composes host_url + url_path_prefix + page path with no pagination tail at n=1" {

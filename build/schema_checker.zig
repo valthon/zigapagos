@@ -18,7 +18,7 @@ pub fn main(init: std.process.Init) !u8 {
     const path = args[1];
     const src = try std.Io.Dir.cwd().readFileAllocOptions(init.io, path, gpa, .limited(ziggy.max_size), .@"1", 0);
     // The tokenizer treats NUL as EOF. Never let a file hide a suffix behind it.
-    if (std.mem.indexOfScalar(u8, src, 0) != null) {
+    if (std.mem.findScalar(u8, src, 0) != null) {
         std.debug.print("{s}: schema not checked: embedded NUL\n", .{path});
         return 1;
     }
@@ -234,7 +234,7 @@ const Check = struct {
         const skip = if (ziggy.getOptions(T)) |opts| opts.skip_fields else &.{};
         inline for (comptime fieldNames(T), 0..) |field_name, slot| field_block: {
             @setEvalBranchQuota(100_000);
-            if (info == .@"struct" and comptime std.mem.indexOfScalar(std.meta.FieldEnum(T), skip, std.meta.stringToEnum(std.meta.FieldEnum(T), field_name).?) != null) {
+            if (info == .@"struct" and comptime std.mem.findScalar(std.meta.FieldEnum(T), skip, std.meta.stringToEnum(std.meta.FieldEnum(T), field_name).?) != null) {
                 if (fields.contains(field_name)) c.fail(idx, "field '{s}' is skipped by Ziggy options but present in schema", .{field_name});
                 break :field_block;
             }

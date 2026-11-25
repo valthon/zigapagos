@@ -165,19 +165,19 @@ test "detectPipeline: sprockets-rails alone" {
 test "detectPipeline: a commented-out gem does not count" {
     const d = detectPipeline("# gem \"propshaft\"\n", null);
     try std.testing.expectEqual(@as(?Pipeline, null), d.pipeline);
-    try std.testing.expect(std.mem.indexOf(u8, d.unknown_reason.?, "neither") != null);
+    try std.testing.expect(std.mem.find(u8, d.unknown_reason.?, "neither") != null);
 }
 
 test "detectPipeline: neither gem declared names 'neither' in the reason" {
     const d = detectPipeline("gem \"rails\"\n", null);
     try std.testing.expectEqual(@as(?Pipeline, null), d.pipeline);
-    try std.testing.expect(std.mem.indexOf(u8, d.unknown_reason.?, "neither") != null);
+    try std.testing.expect(std.mem.find(u8, d.unknown_reason.?, "neither") != null);
 }
 
 test "detectPipeline: both gems declared names 'both' in the reason, not 'neither'" {
     const d = detectPipeline("gem \"propshaft\"\ngem \"sprockets-rails\"\n", null);
     try std.testing.expectEqual(@as(?Pipeline, null), d.pipeline);
-    try std.testing.expect(std.mem.indexOf(u8, d.unknown_reason.?, "both") != null);
+    try std.testing.expect(std.mem.find(u8, d.unknown_reason.?, "both") != null);
 }
 
 test "detectPipeline: no Gemfile at all" {
@@ -419,7 +419,7 @@ fn manifestLookup(manifest: std.json.Value, nested_key: ?[]const u8, path: []con
     // top-level `app/assets/logo.png` has no first segment to drop, and
     // stripping one would silently fall through to `obj.object.get("")`
     // (or worse, an out-of-range slice) rather than a real second key.
-    if (std.mem.indexOfScalar(u8, rel, '/')) |slash| {
+    if (std.mem.findScalar(u8, rel, '/')) |slash| {
         const load_path_relative = rel[slash + 1 ..];
         if (obj.object.get(load_path_relative)) |v| {
             if (v == .string) return v.string;
@@ -810,7 +810,7 @@ test "discriminate: within ONE scan, a propshaft asset listed in the manifest is
     try std.testing.expectEqualStrings("app/assets/stylesheets/application.css.erb", r.blockers[0].path);
     try std.testing.expect(!r.blockers[0].integrity);
     try std.testing.expectEqual(blockers.Severity.warn, r.blockers[0].severity);
-    try std.testing.expect(std.mem.indexOf(u8, r.blockers[0].detail, "not listed") != null);
+    try std.testing.expect(std.mem.find(u8, r.blockers[0].detail, "not listed") != null);
 }
 
 test "propshaft pipeline with no compiled manifest present: RAILS_ASSET_MANIFEST_MISSING" {
@@ -866,7 +866,7 @@ test "an unreadable propshaft manifest degrades to non-deterministic with a bloc
     try std.testing.expectEqual(@as(?[]const u8, null), r.assets[0].public_url);
     try std.testing.expectEqual(@as(usize, 1), r.blockers.len);
     try std.testing.expectEqualStrings("RAILS_ASSET_MANIFEST_MISSING", r.blockers[0].code);
-    try std.testing.expect(std.mem.indexOf(u8, r.blockers[0].detail, "could not be read") != null);
+    try std.testing.expect(std.mem.find(u8, r.blockers[0].detail, "could not be read") != null);
 }
 
 test "no pipeline gem declared: every app/assets entry is non-deterministic with RAILS_ASSET_PIPELINE_UNKNOWN, detail says 'neither'" {
@@ -890,7 +890,7 @@ test "no pipeline gem declared: every app/assets entry is non-deterministic with
     try std.testing.expectEqual(@as(?Pipeline, null), r.assets[0].pipeline);
     try std.testing.expectEqual(@as(usize, 1), r.blockers.len);
     try std.testing.expectEqualStrings("RAILS_ASSET_PIPELINE_UNKNOWN", r.blockers[0].code);
-    try std.testing.expect(std.mem.indexOf(u8, r.blockers[0].detail, "neither") != null);
+    try std.testing.expect(std.mem.find(u8, r.blockers[0].detail, "neither") != null);
 }
 
 test "both propshaft and sprockets-rails declared: the SAME RAILS_ASSET_PIPELINE_UNKNOWN code fires, detail says 'both'" {
@@ -911,7 +911,7 @@ test "both propshaft and sprockets-rails declared: the SAME RAILS_ASSET_PIPELINE
 
     try std.testing.expectEqual(@as(usize, 1), r.blockers.len);
     try std.testing.expectEqualStrings("RAILS_ASSET_PIPELINE_UNKNOWN", r.blockers[0].code);
-    try std.testing.expect(std.mem.indexOf(u8, r.blockers[0].detail, "both") != null);
+    try std.testing.expect(std.mem.find(u8, r.blockers[0].detail, "both") != null);
 }
 
 test "sprockets pipeline with no compiled manifest present: RAILS_ASSET_MANIFEST_MISSING" {
@@ -1086,7 +1086,7 @@ test "sprockets manifest present but this asset is not listed in it: RAILS_ASSET
     try std.testing.expect(!r.assets[0].deterministic);
     try std.testing.expectEqual(@as(usize, 1), r.blockers.len);
     try std.testing.expectEqualStrings("RAILS_ASSET_DIGEST_UNAVAILABLE", r.blockers[0].code);
-    try std.testing.expect(std.mem.indexOf(u8, r.blockers[0].detail, "not listed") != null);
+    try std.testing.expect(std.mem.find(u8, r.blockers[0].detail, "not listed") != null);
 }
 
 test "sprockets manifest lookup falls back to the load-path-relative key when the app/assets/-relative one is absent" {
@@ -1203,7 +1203,7 @@ test "a malformed sprockets manifest degrades to RAILS_ASSET_MANIFEST_MISSING wi
     try std.testing.expect(!r.assets[0].deterministic);
     try std.testing.expectEqual(@as(usize, 1), r.blockers.len);
     try std.testing.expectEqualStrings("RAILS_ASSET_MANIFEST_MISSING", r.blockers[0].code);
-    try std.testing.expect(std.mem.indexOf(u8, r.blockers[0].detail, "parsed") != null);
+    try std.testing.expect(std.mem.find(u8, r.blockers[0].detail, "parsed") != null);
 }
 
 test "non-.asset entries are skipped entirely -- scan is not a second inventory walk" {

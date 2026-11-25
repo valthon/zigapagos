@@ -174,14 +174,14 @@ pub fn Table(E: type, Size: type) type {
                 }
 
                 pub fn hash(_: @This(), adapted_key: []const u8) u64 {
-                    assert(mem.indexOfScalar(E, @alignCast(mem.bytesAsSlice(E, adapted_key)), 0) == null);
+                    assert(mem.findScalar(E, @alignCast(mem.bytesAsSlice(E, adapted_key)), 0) == null);
                     return std.hash_map.hashString(adapted_key);
                 }
             };
 
             pub fn slice(index: Element, table: *const Self) [:0]const E {
                 const start_slice = table.elements.items[@backingInt(index)..];
-                return start_slice[0..mem.indexOfScalar(E, start_slice, 0).? :0];
+                return start_slice[0..mem.findScalar(E, start_slice, 0).? :0];
             }
         };
     };

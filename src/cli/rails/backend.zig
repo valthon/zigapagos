@@ -126,7 +126,7 @@ fn collectionShape(path: []const u8) ?PathShape {
         rest = rest[0 .. rest.len - records_segment.len];
     } else return null;
     if (rest.len == 0) return null;
-    if (std.mem.indexOfScalar(u8, rest, '/') != null) return null;
+    if (std.mem.findScalar(u8, rest, '/') != null) return null;
     return .{ .collection = rest, .item = item };
 }
 

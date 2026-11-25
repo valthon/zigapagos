@@ -366,9 +366,9 @@ fn analyzeFrontmatter(page_arena: Allocator, p: *Page) error{OutOfMemory}!void {
 pub fn validOutputPath(path: []const u8) bool {
     if (path.len == 0) return false;
     for (path) |c| if (!std.ascii.isAscii(c)) return false;
-    if (std.mem.indexOfScalar(u8, path, '\\') != null) return false;
+    if (std.mem.findScalar(u8, path, '\\') != null) return false;
     if (std.fs.path.extension(path).len == 0) return false;
-    if (std.mem.indexOfScalar(
+    if (std.mem.findScalar(
         u8,
         std.fs.path.dirnamePosix(path) orelse "",
         '.',
@@ -527,7 +527,7 @@ fn analyzeContent(
                 const path, const base_dir = switch (code.src.?) {
                     else => unreachable,
                     .page_asset => |pa| blk: {
-                        assert(std.mem.indexOfScalar(u8, pa.ref, '\\') == null);
+                        assert(std.mem.findScalar(u8, pa.ref, '\\') == null);
                         var buf: std.ArrayList(String) = .empty;
 
                         try buf.appendSlice(scratch, page._scan.url.slice(
@@ -1015,7 +1015,7 @@ fn analyzeContent(
                     },
 
                     .page_asset => |*pa| {
-                        assert(std.mem.indexOfScalar(u8, pa.ref, '\\') == null);
+                        assert(std.mem.findScalar(u8, pa.ref, '\\') == null);
                         var buf: std.ArrayList(String) = .empty;
 
                         try buf.appendSlice(
@@ -1103,7 +1103,7 @@ fn analyzeContent(
                         continue :outer;
                     },
                     .site_asset => |*sa| { //ref
-                        assert(std.mem.indexOfScalar(u8, sa.ref, '\\') == null);
+                        assert(std.mem.findScalar(u8, sa.ref, '\\') == null);
 
                         const dirname = std.fs.path.dirnamePosix(sa.ref) orelse "";
                         if (b.pt.getPathNoName(&b.st, &.{}, dirname)) |path| {
@@ -1681,9 +1681,9 @@ fn renderPageInner(
         // build error, not a pass-through. Cost of the reordering: one memchr per
         // page on sites that use no islands at all, which is noise next to
         // rendering the page.
-        if (std.mem.indexOf(u8, raw, "<island") == null and
-            std.mem.indexOf(u8, raw, "<z-island") == null and
-            std.mem.indexOf(u8, raw, "<z-markdown-slot-source ") == null) break :blk raw;
+        if (std.mem.find(u8, raw, "<island") == null and
+            std.mem.find(u8, raw, "<z-island") == null and
+            std.mem.find(u8, raw, "<z-markdown-slot-source ") == null) break :blk raw;
         // build is *Build (non-const), so |*s| yields a *Sidecar into the real field
         // (not a copy). If renderPage's `build` ever becomes *const, this capture fails.
         const sc: *@import("islands/sidecar.zig").Sidecar = if (build.island_sidecar) |*s| s else {

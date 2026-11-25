@@ -819,9 +819,9 @@ const frozen = @embedFile("diag-codes.frozen");
 
 fn frozenSection(comptime header: []const u8) []const u8 {
     const start_marker = "[" ++ header ++ "]";
-    const start = std.mem.indexOf(u8, frozen, start_marker).? + start_marker.len;
+    const start = std.mem.find(u8, frozen, start_marker).? + start_marker.len;
     const rest = frozen[start..];
-    const end = std.mem.indexOf(u8, rest, "\n[") orelse rest.len;
+    const end = std.mem.find(u8, rest, "\n[") orelse rest.len;
     return rest[0..end];
 }
 
