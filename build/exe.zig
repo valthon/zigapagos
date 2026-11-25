@@ -68,7 +68,7 @@ pub fn addZigapagosExe(zb: *std.Build, cfg: ZigapagosExeConfig) *std.Build.Step.
         .freebsd => {},
         .windows => {},
         .macos => {
-            const frameworks = zb.lazyDependency("frameworks", .{}) orelse return zigapagos_exe;
+            const frameworks = zb.dependencyLazy("frameworks", .{}) catch return zigapagos_exe;
             zigapagos_exe.root_module.addIncludePath(frameworks.path("include"));
             zigapagos_exe.root_module.addFrameworkPath(frameworks.path("Frameworks"));
             zigapagos_exe.root_module.addLibraryPath(frameworks.path("lib"));

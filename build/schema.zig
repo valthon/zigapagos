@@ -47,12 +47,12 @@ pub fn setup(b: *std.Build, check: *std.Build.Step) *std.Build.Step {
         });
         checker.root_module.addImport("ziggy", up.ziggy);
         checker.root_module.addImport("types", types);
-        run_tests.addArtifactArg(checker);
+        run_tests.addArtifactArg2(checker, .{});
         run_tests.addFileArg(b.path("tests/schema/" ++ name ++ ".ziggy-schema"));
         check.dependOn(&checker.step);
     }
     inline for (real_checkers, .{ "src/schemas/zigapagos.ziggy-schema", "src/schemas/page.ziggy-schema" }) |checker, path| {
-        run_tests.addArtifactArg(checker);
+        run_tests.addArtifactArg2(checker, .{});
         run_tests.addFileArg(b.path(path));
     }
     regression.dependOn(&run_tests.step);
